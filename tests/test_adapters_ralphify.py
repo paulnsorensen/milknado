@@ -41,7 +41,12 @@ class TestCreateRun:
             quality_gates=["uv run ruff check"],
         )
 
-        mock_config_cls.assert_called_once_with(project_root=Path("/project"))
+        mock_config_cls.assert_called_once_with(
+            agent="claude",
+            ralph_dir=Path("/project"),
+            ralph_file=Path("/project/RALPH.md"),
+            project_root=Path("/project"),
+        )
         mock_manager.create_run.assert_called_once_with(mock_config)
         assert result.id == "run-1"
 

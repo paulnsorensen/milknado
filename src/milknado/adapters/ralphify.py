@@ -20,7 +20,12 @@ class RalphifyAdapter:
         commands: list[str],
         quality_gates: list[str],
     ) -> Any:
-        config = RunConfig(project_root=ralph_dir)
+        config = RunConfig(
+            agent=agent,
+            ralph_dir=ralph_dir,
+            ralph_file=ralph_file,
+            project_root=ralph_dir,
+        )
         return self._manager.create_run(config)
 
     def start_run(self, run_id: str) -> None:
