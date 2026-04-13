@@ -8,13 +8,6 @@ from milknado.domains.common import NodeStatus
 from milknado.domains.graph import MikadoGraph
 
 
-@pytest.fixture()
-def graph(tmp_path: Path) -> MikadoGraph:
-    g = MikadoGraph(tmp_path / "test.db")
-    yield g
-    g.close()
-
-
 class TestAddNode:
     def test_add_root_node(self, graph: MikadoGraph) -> None:
         node = graph.add_node("root goal")

@@ -98,13 +98,6 @@ class FakeCrg:
 
 
 @pytest.fixture()
-def graph(tmp_path: Path) -> MikadoGraph:
-    g = MikadoGraph(tmp_path / "test.db")
-    yield g
-    g.close()
-
-
-@pytest.fixture()
 def config(tmp_path: Path) -> ExecutionConfig:
     return ExecutionConfig(
         agent_command="claude",

@@ -3,14 +3,7 @@ from __future__ import annotations
 import pytest
 
 from milknado.domains.common import NodeStatus
-from milknado.domains.graph import MikadoGraph, render_tree, summarize
-
-
-@pytest.fixture()
-def graph(tmp_path):
-    g = MikadoGraph(tmp_path / "test.db")
-    yield g
-    g.close()
+from milknado.domains.graph import render_tree, summarize
 
 
 class TestSummarize:
