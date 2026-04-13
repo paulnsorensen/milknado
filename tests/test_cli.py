@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,6 +10,18 @@ from typer.testing import CliRunner
 from milknado.cli import app
 
 runner = CliRunner()
+
+
+def _unique_run_factory() -> MagicMock:
+    counter = itertools.count(1)
+
+    def _create_run(*args: object, **kwargs: object) -> MagicMock:
+        run = MagicMock()
+        run.id = f"run-{next(counter)}"
+        return run
+
+    mock = MagicMock(side_effect=_create_run)
+    return mock
 
 
 @pytest.fixture()
@@ -320,6 +333,8 @@ class TestRunCommand:
         mock_ralph_cls.return_value.generate_ralph_md.return_value = (
             project_dir / "RALPH.md"
         )
+        mock_ralph_cls.return_value.is_run_complete.return_value = True
+        mock_ralph_cls.return_value.is_run_success.return_value = True
         mock_crg_cls.return_value.get_impact_radius.return_value = {}
 
         result = runner.invoke(
@@ -327,8 +342,8 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "Dispatched node 1" in result.output
-        assert "1 node(s) dispatched" in result.output
+        assert "Starting execution loop" in result.output
+        assert "Root goal achieved" in result.output
 
     @patch("milknado.adapters.RalphifyAdapter")
     @patch("milknado.adapters.GitAdapter")
@@ -351,12 +366,12 @@ class TestRunCommand:
         graph.add_node("leaf-b", parent_id=root.id)
         graph.close()
 
-        fake_run = MagicMock()
-        fake_run.id = "run-1"
-        mock_ralph_cls.return_value.create_run.return_value = fake_run
+        mock_ralph_cls.return_value.create_run = _unique_run_factory()
         mock_ralph_cls.return_value.generate_ralph_md.return_value = (
             project_dir / "RALPH.md"
         )
+        mock_ralph_cls.return_value.is_run_complete.return_value = True
+        mock_ralph_cls.return_value.is_run_success.return_value = True
         mock_crg_cls.return_value.get_impact_radius.return_value = {}
 
         result = runner.invoke(
@@ -364,7 +379,7 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "2 node(s) dispatched" in result.output
+        assert "Root goal achieved" in result.output
 
     @patch("milknado.adapters.RalphifyAdapter")
     @patch("milknado.adapters.GitAdapter")
@@ -389,12 +404,12 @@ class TestRunCommand:
         graph.set_file_ownership(b.id, ["shared.py"])
         graph.close()
 
-        fake_run = MagicMock()
-        fake_run.id = "run-1"
-        mock_ralph_cls.return_value.create_run.return_value = fake_run
+        mock_ralph_cls.return_value.create_run = _unique_run_factory()
         mock_ralph_cls.return_value.generate_ralph_md.return_value = (
             project_dir / "RALPH.md"
         )
+        mock_ralph_cls.return_value.is_run_complete.return_value = True
+        mock_ralph_cls.return_value.is_run_success.return_value = True
         mock_crg_cls.return_value.get_impact_radius.return_value = {}
 
         result = runner.invoke(
@@ -402,4 +417,4 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "1 node(s) dispatched" in result.output
+        assert "Root goal achieved" in result.output

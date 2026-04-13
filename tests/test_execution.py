@@ -75,6 +75,12 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
+    def is_run_complete(self, run_id: str) -> bool:
+        return True
+
+    def is_run_success(self, run_id: str) -> bool:
+        return True
+
     def generate_ralph_md(
         self,
         node: MikadoNode,

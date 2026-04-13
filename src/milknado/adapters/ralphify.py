@@ -40,6 +40,18 @@ class RalphifyAdapter:
     def get_run(self, run_id: str) -> Any | None:
         return self._manager.get_run(run_id)
 
+    def is_run_complete(self, run_id: str) -> bool:
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return True
+        return getattr(run, "status", None) in ("completed", "failed")
+
+    def is_run_success(self, run_id: str) -> bool:
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return False
+        return getattr(run, "status", None) == "completed"
+
     def generate_ralph_md(
         self,
         node: MikadoNode,

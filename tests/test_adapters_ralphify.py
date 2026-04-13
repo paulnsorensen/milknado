@@ -86,6 +86,57 @@ class TestListAndGetRuns:
         assert adapter.get_run("missing") is None
 
 
+class TestIsRunComplete:
+    def test_complete_when_run_missing(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = None
+        assert adapter.is_run_complete("run-1") is True
+
+    def test_complete_when_status_completed(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock(status="completed")
+        mock_manager.get_run.return_value = run
+        assert adapter.is_run_complete("run-1") is True
+
+    def test_complete_when_status_failed(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock(status="failed")
+        mock_manager.get_run.return_value = run
+        assert adapter.is_run_complete("run-1") is True
+
+    def test_not_complete_when_running(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock(status="running")
+        mock_manager.get_run.return_value = run
+        assert adapter.is_run_complete("run-1") is False
+
+
+class TestIsRunSuccess:
+    def test_success_when_completed(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock(status="completed")
+        mock_manager.get_run.return_value = run
+        assert adapter.is_run_success("run-1") is True
+
+    def test_not_success_when_failed(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock(status="failed")
+        mock_manager.get_run.return_value = run
+        assert adapter.is_run_success("run-1") is False
+
+    def test_not_success_when_missing(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = None
+        assert adapter.is_run_success("run-1") is False
+
+
 class TestGenerateRalphMd:
     def test_writes_file(self, adapter: RalphifyAdapter, tmp_path: Path) -> None:
         node = MikadoNode(id=1, description="Extract interface")

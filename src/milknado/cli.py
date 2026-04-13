@@ -165,6 +165,7 @@ def run(
     from milknado.domains.execution import (
         ExecutionConfig,
         Executor,
+        RunLoop,
         get_dispatchable_nodes,
     )
 
@@ -190,17 +191,22 @@ def run(
             project_root=project_root,
         )
 
-        dispatched = []
-        for node_id in dispatchable:
-            result = executor.dispatch(node_id, exec_config)
-            dispatched.append(result)
-            console.print(
-                f"Dispatched node {result.node_id} → {result.worktree}"
-            )
-
-        console.print(
-            f"\n[bold]{len(dispatched)} node(s) dispatched.[/bold]"
+        feature_branch = git.current_branch()
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
+        result = loop.run(
+            config=exec_config,
+            feature_branch=feature_branch,
+            concurrency_limit=config.concurrency_limit,
         )
+
+        if result.root_done:
+            console.print("[green]All nodes complete. Root goal achieved.[/green]")
+        else:
+            console.print(
+                f"[yellow]Loop ended: {result.completed_total} completed, "
+                f"{result.failed_total} failed.[/yellow]"
+            )
     finally:
         graph.close()
 
