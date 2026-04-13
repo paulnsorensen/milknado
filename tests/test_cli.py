@@ -74,6 +74,65 @@ class TestStatus:
         assert "1/2" in result.output
         assert "50%" in result.output
 
+    def test_shows_tree_structure(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Root goal")
+        graph.add_node("Leaf A", parent_id=root.id)
+        graph.add_node("Leaf B", parent_id=root.id)
+        graph.close()
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        assert result.exit_code == 0
+        assert "Root goal" in result.output
+        assert "Leaf A" in result.output
+        assert "Leaf B" in result.output
+        assert "Ready" in result.output
+
+    def test_shows_file_conflicts(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Root")
+        a = graph.add_node("Node A", parent_id=root.id)
+        b = graph.add_node("Node B", parent_id=root.id)
+        graph.set_file_ownership(a.id, ["shared.py"])
+        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.close()
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        assert result.exit_code == 0
+        assert "Conflict" in result.output
+        assert "shared.py" in result.output
+
+    def test_shows_running_worktree(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Root")
+        c = graph.add_node("Worker", parent_id=root.id)
+        graph.mark_running(c.id)
+        graph._conn.execute(
+            "UPDATE nodes SET worktree_path = ? WHERE id = ?",
+            ("/tmp/milknado-wt", c.id),
+        )
+        graph._conn.commit()
+        graph.close()
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        assert result.exit_code == 0
+        assert "/tmp/milknado-wt" in result.output
+
 
 class TestAddNode:
     def test_add_root(self, project_dir: Path) -> None:

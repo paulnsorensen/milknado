@@ -5,7 +5,6 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.table import Table
 
 from milknado.domains.common import (
     MilknadoConfig,
@@ -13,7 +12,7 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, render_tree
 
 app = typer.Typer(name="milknado", help="Mikado execution engine")
 console = Console()
@@ -77,40 +76,8 @@ def status(
             console.print("No nodes in graph. Run [bold]milknado plan[/bold] to start.")
             return
 
-        done = sum(1 for n in nodes if n.status.value == "done")
-        total = len(nodes)
-        pct = (done / total * 100) if total else 0
-
-        console.print(f"\n[bold]Progress:[/bold] {done}/{total} ({pct:.0f}%)\n")
-
-        ready = graph.get_ready_nodes()
-        ready_ids = {n.id for n in ready}
-
-        table = Table(title="Mikado Graph")
-        table.add_column("ID", style="dim")
-        table.add_column("Description")
-        table.add_column("Status")
-        table.add_column("Ready")
-
-        status_colors = {
-            "pending": "yellow",
-            "running": "blue",
-            "done": "green",
-            "blocked": "red",
-            "failed": "red bold",
-        }
-
-        for node in nodes:
-            color = status_colors.get(node.status.value, "white")
-            is_ready = "✓" if node.id in ready_ids else ""
-            table.add_row(
-                str(node.id),
-                node.description,
-                f"[{color}]{node.status.value}[/{color}]",
-                is_ready,
-            )
-
-        console.print(table)
+        output = render_tree(graph)
+        console.print(output)
     finally:
         graph.close()
 
