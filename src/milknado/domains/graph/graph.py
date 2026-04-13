@@ -135,14 +135,14 @@ class MikadoGraph:
         return [self._row_to_node(r) for r in rows]
 
     def get_ready_nodes(self) -> list[MikadoNode]:
-        leaves = self.get_leaves()
+        all_nodes = self.get_all_nodes()
         ready = []
-        for leaf in leaves:
-            children = self.get_children(leaf.id)
+        for node in all_nodes:
+            children = self.get_children(node.id)
             if not children or all(
                 c.status == NodeStatus.DONE for c in children
             ):
-                ready.append(leaf)
+                ready.append(node)
         return ready
 
     def get_root(self) -> MikadoNode | None:
@@ -181,8 +181,16 @@ class MikadoGraph:
     def mark_failed(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.FAILED)
 
-    def mark_running(self, node_id: int) -> None:
+    def mark_running(
+        self, node_id: int, worktree_path: str | None = None, branch_name: str | None = None,
+    ) -> None:
         self._transition_status(node_id, NodeStatus.RUNNING)
+        if worktree_path or branch_name:
+            self._conn.execute(
+                "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ?",
+                (worktree_path, branch_name, node_id),
+            )
+            self._conn.commit()
 
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)
