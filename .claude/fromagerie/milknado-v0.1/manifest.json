@@ -1,0 +1,34 @@
+{
+  "slug": "milknado-v0.1",
+  "spec_path": ".claude/specs/milknado-v0.1.md",
+  "created": "2026-04-13T14:30:00Z",
+  "phase": "gate_approved",
+  "quality_gates": ["uv run pytest", "uv run ruff check", "uv run ty check"],
+  "spec_summary": "Milknado is a Python CLI that decomposes development goals into Mikado dependency graphs and executes them as parallel ralph loops in isolated git worktrees. Wraps ralphify RunManager for execution, code-review-graph for planning, SQLite for DAG storage. Sliced Bread architecture with domains/{graph,planning,execution,common}, adapters/{ralphify,crg,git}, app/cli_app.",
+  "seed": {
+    "items": [
+      {"id": "S1", "description": "Build config + package skeleton", "files": ["pyproject.toml", "src/milknado/__init__.py"], "estimated_tokens": 1500, "status": "pending"},
+      {"id": "S2", "description": "Shared kernel (domains/common)", "files": ["src/milknado/domains/__init__.py", "src/milknado/domains/common/__init__.py", "src/milknado/domains/common/types.py", "src/milknado/domains/common/config.py", "src/milknado/domains/common/protocols.py"], "estimated_tokens": 4500, "status": "pending"}
+    ]
+  },
+  "atoms": [
+    {"id": 1, "description": "CLI entry + init command", "files": ["src/milknado/cli.py", "tests/test_cli_init.py"], "estimated_tokens": 6000, "test_targets": {"command": "uv run pytest tests/test_cli_init.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 2, "description": "Mikado graph SQLite DAG", "files": ["src/milknado/domains/graph/__init__.py", "src/milknado/domains/graph/graph.py", "tests/test_graph.py"], "estimated_tokens": 12000, "test_targets": {"command": "uv run pytest tests/test_graph.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 3, "description": "CRG adapter", "files": ["src/milknado/adapters/__init__.py", "src/milknado/adapters/crg.py", "tests/test_crg_adapter.py"], "estimated_tokens": 5000, "test_targets": {"command": "uv run pytest tests/test_crg_adapter.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 4, "description": "Git adapter", "files": ["src/milknado/adapters/git.py", "tests/test_git_adapter.py"], "estimated_tokens": 6000, "test_targets": {"command": "uv run pytest tests/test_git_adapter.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 5, "description": "Ralphify adapter", "files": ["src/milknado/adapters/ralphify.py", "tests/test_ralphify_adapter.py"], "estimated_tokens": 6000, "test_targets": {"command": "uv run pytest tests/test_ralphify_adapter.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 6, "description": "Planning domain", "files": ["src/milknado/domains/planning/__init__.py", "src/milknado/domains/planning/planner.py", "tests/test_planner.py"], "estimated_tokens": 8000, "test_targets": {"command": "uv run pytest tests/test_planner.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 7, "description": "Execution domain", "files": ["src/milknado/domains/execution/__init__.py", "src/milknado/domains/execution/executor.py", "tests/test_executor.py"], "estimated_tokens": 15000, "test_targets": {"command": "uv run pytest tests/test_executor.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 8, "description": "Status display", "files": ["src/milknado/domains/graph/display.py", "tests/test_display.py"], "estimated_tokens": 5000, "test_targets": {"command": "uv run pytest tests/test_display.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null},
+    {"id": 9, "description": "Plugin scaffold", "files": ["src/milknado/plugins/__init__.py", "src/milknado/plugins/scaffold.py", "tests/test_plugin_scaffold.py"], "estimated_tokens": 4500, "test_targets": {"command": "uv run pytest tests/test_plugin_scaffold.py"}, "status": "pending", "worktree_path": null, "branch": null, "retry_count": 0, "error": null}
+  ],
+  "wiring": [
+    {"id": "W1", "type": "barrel_export", "file": "src/milknado/domains/graph/__init__.py", "depends_on": [], "estimated_tokens": 500, "status": "pending"},
+    {"id": "W2", "type": "barrel_verify", "file": "src/milknado/domains/planning/__init__.py", "depends_on": [], "estimated_tokens": 200, "status": "pending"},
+    {"id": "W3", "type": "barrel_verify", "file": "src/milknado/domains/execution/__init__.py", "depends_on": [], "estimated_tokens": 200, "status": "pending"},
+    {"id": "W4", "type": "di_registration", "file": "src/milknado/app/cli_app.py", "depends_on": ["W1", "W2", "W3"], "estimated_tokens": 3000, "status": "pending"},
+    {"id": "W5", "type": "route_wiring", "file": "src/milknado/cli.py", "depends_on": ["W4"], "estimated_tokens": 4000, "status": "pending"},
+    {"id": "W6", "type": "config_entry", "file": "tests/conftest.py", "depends_on": [], "estimated_tokens": 2000, "status": "pending"}
+  ],
+  "prs": []
+}
