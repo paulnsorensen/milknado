@@ -158,8 +158,27 @@ def plan(
     ] = Path("."),
 ) -> None:
     """Launch interactive planning session to decompose a goal."""
-    console.print("[yellow]Plan command not yet implemented.[/yellow]")
-    raise typer.Exit(code=1)
+    from milknado.adapters.crg import CrgAdapter
+    from milknado.domains.planning import Planner
+
+    project_root = project_root.resolve()
+    config = _load_or_default(project_root)
+    graph = _ensure_db(config)
+
+    try:
+        crg = CrgAdapter(project_root)
+        planner = Planner(graph, crg, config.agent_command)
+        console.print(f"[bold]Planning:[/bold] {goal}")
+        result = planner.launch(goal, project_root)
+        if result.success:
+            console.print("[green]Planning session complete.[/green]")
+        else:
+            console.print(
+                f"[red]Planning session exited with code {result.exit_code}.[/red]"
+            )
+            raise typer.Exit(code=result.exit_code)
+    finally:
+        graph.close()
 
 
 @app.command()
