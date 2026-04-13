@@ -43,6 +43,8 @@ def init(
     ] = Path("."),
 ) -> None:
     """Initialize milknado in a project directory."""
+    from milknado.adapters.crg import CrgAdapter
+
     project_root = project_root.resolve()
     config_path = _find_config(project_root)
 
@@ -57,6 +59,10 @@ def init(
     graph = _ensure_db(config)
     graph.close()
     console.print(f"Database ready: {config.db_path}")
+
+    crg = CrgAdapter(project_root)
+    crg.ensure_graph(project_root)
+    console.print("Code-review-graph ready.")
 
 
 @app.command()

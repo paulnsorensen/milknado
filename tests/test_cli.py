@@ -17,24 +17,42 @@ def project_dir(tmp_path: Path) -> Path:
 
 
 class TestInit:
-    def test_creates_config_and_db(self, project_dir: Path) -> None:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_creates_config_and_db(
+        self, _mock_crg: MagicMock, project_dir: Path
+    ) -> None:
         result = runner.invoke(app, ["init", str(project_dir)])
         assert result.exit_code == 0
         assert (project_dir / "milknado.toml").exists()
         assert (project_dir / ".milknado" / "milknado.db").exists()
 
-    def test_idempotent(self, project_dir: Path) -> None:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_idempotent(self, _mock_crg: MagicMock, project_dir: Path) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(app, ["init", str(project_dir)])
         assert result.exit_code == 0
         assert "already exists" in result.output
 
-    def test_config_has_defaults(self, project_dir: Path) -> None:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_config_has_defaults(
+        self, _mock_crg: MagicMock, project_dir: Path
+    ) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         content = (project_dir / "milknado.toml").read_text()
         assert "agent_command" in content
         assert "quality_gates" in content
         assert "concurrency_limit" in content
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_calls_ensure_graph(
+        self, mock_crg_cls: MagicMock, project_dir: Path
+    ) -> None:
+        result = runner.invoke(app, ["init", str(project_dir)])
+        assert result.exit_code == 0
+        mock_crg_cls.return_value.ensure_graph.assert_called_once_with(
+            project_dir
+        )
+        assert "Code-review-graph ready" in result.output
 
 
 class TestStatus:

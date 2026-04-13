@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,23 +14,116 @@ def adapter(tmp_path: Path) -> CrgAdapter:
     return CrgAdapter(tmp_path)
 
 
+def _make_crg_db(root: Path) -> Path:
+    crg_dir = root / ".code-review-graph"
+    crg_dir.mkdir(parents=True, exist_ok=True)
+    db = crg_dir / "graph.db"
+    db.touch()
+    return db
+
+
+class TestIsBuilt:
+    def test_false_when_no_crg_dir(self, adapter: CrgAdapter) -> None:
+        assert adapter._is_built() is False
+
+    def test_true_when_db_exists(self, tmp_path: Path) -> None:
+        _make_crg_db(tmp_path)
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_built() is True
+
+
+class TestIsStale:
+    def test_false_when_no_db(self, adapter: CrgAdapter) -> None:
+        assert adapter._is_stale() is False
+
+    def test_false_when_no_src(self, tmp_path: Path) -> None:
+        _make_crg_db(tmp_path)
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is False
+
+    def test_false_when_sources_older_than_db(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "main.py").write_text("x = 1")
+        time.sleep(0.05)
+        _make_crg_db(tmp_path)
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is False
+
+    def test_true_when_source_newer_than_db(self, tmp_path: Path) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        src = tmp_path / "src"
+        src.mkdir()
+        py_file = src / "main.py"
+        py_file.write_text("x = 1")
+        import os
+        os.utime(py_file, (db_mtime + 10, db_mtime + 10))
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is True
+
+    def test_ignores_non_source_files(self, tmp_path: Path) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        src = tmp_path / "src"
+        src.mkdir()
+        txt = src / "notes.txt"
+        txt.write_text("not source")
+        import os
+        os.utime(txt, (db_mtime + 10, db_mtime + 10))
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is False
+
+
 class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
-    def test_creates_store_for_project(
-        self, mock_store_cls: MagicMock, tmp_path: Path
+    @patch("milknado.adapters.crg.subprocess.run")
+    def test_builds_when_not_built(
+        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
         adapter = CrgAdapter(tmp_path)
-        new_root = tmp_path / "other"
-        adapter.ensure_graph(new_root)
-        expected_db = new_root / ".code-review-graph" / "graph.db"
-        mock_store_cls.assert_called_once_with(expected_db)
+        adapter.ensure_graph(tmp_path)
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0] == ["code-review-graph", "build"]
 
     @patch("milknado.adapters.crg.GraphStore")
-    def test_resets_cached_store(
-        self, mock_store_cls: MagicMock, adapter: CrgAdapter
+    @patch("milknado.adapters.crg.subprocess.run")
+    def test_updates_when_stale(
+        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        src = tmp_path / "src"
+        src.mkdir()
+        py = src / "app.py"
+        py.write_text("x = 1")
+        import os
+        os.utime(py, (db_mtime + 10, db_mtime + 10))
+
+        adapter = CrgAdapter(tmp_path)
+        adapter.ensure_graph(tmp_path)
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0] == ["code-review-graph", "update"]
+
+    @patch("milknado.adapters.crg.GraphStore")
+    @patch("milknado.adapters.crg.subprocess.run")
+    def test_skips_when_built_and_fresh(
+        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        _make_crg_db(tmp_path)
+        adapter = CrgAdapter(tmp_path)
+        adapter.ensure_graph(tmp_path)
+        mock_run.assert_not_called()
+
+    @patch("milknado.adapters.crg.GraphStore")
+    @patch("milknado.adapters.crg.subprocess.run")
+    def test_resets_cached_store(
+        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+    ) -> None:
+        _make_crg_db(tmp_path)
+        adapter = CrgAdapter(tmp_path)
         adapter._get_store()
-        adapter.ensure_graph(adapter._root)
+        adapter.ensure_graph(tmp_path)
         assert mock_store_cls.call_count == 2
 
 
