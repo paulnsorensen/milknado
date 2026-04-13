@@ -188,8 +188,48 @@ def run(
     ] = Path("."),
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
-    console.print("[yellow]Run command not yet implemented.[/yellow]")
-    raise typer.Exit(code=1)
+    from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
+    from milknado.domains.execution import (
+        ExecutionConfig,
+        Executor,
+        get_dispatchable_nodes,
+    )
+
+    project_root = project_root.resolve()
+    config = _load_or_default(project_root)
+    graph = _ensure_db(config)
+
+    try:
+        dispatchable = get_dispatchable_nodes(graph)
+        if not dispatchable:
+            console.print("No nodes ready for execution.")
+            return
+
+        git = GitAdapter(project_root)
+        ralph = RalphifyAdapter()
+        crg = CrgAdapter(project_root)
+        executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
+
+        exec_config = ExecutionConfig(
+            agent_command=config.agent_command,
+            quality_gates=config.quality_gates,
+            worktree_pattern=config.worktree_pattern,
+            project_root=project_root,
+        )
+
+        dispatched = []
+        for node_id in dispatchable:
+            result = executor.dispatch(node_id, exec_config)
+            dispatched.append(result)
+            console.print(
+                f"Dispatched node {result.node_id} → {result.worktree}"
+            )
+
+        console.print(
+            f"\n[bold]{len(dispatched)} node(s) dispatched.[/bold]"
+        )
+    finally:
+        graph.close()
 
 
 plugin_app = typer.Typer(name="plugin", help="Plugin management commands")

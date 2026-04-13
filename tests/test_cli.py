@@ -192,11 +192,137 @@ class TestPlanCommand:
         assert result.exit_code == 1
 
 
-class TestRunStub:
-    def test_not_implemented(self, project_dir: Path) -> None:
+class TestRunCommand:
+    def test_no_nodes_ready(self, project_dir: Path) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(
             app,
             ["run", "--project-root", str(project_dir)],
         )
-        assert result.exit_code == 1
-        assert "not yet implemented" in result.output
+        assert result.exit_code == 0
+        assert "No nodes ready" in result.output
+
+    def test_no_nodes_ready_all_done(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        graph.add_node("root")
+        graph.mark_running(1)
+        graph.mark_done(1)
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "No nodes ready" in result.output
+
+    @patch("milknado.adapters.RalphifyAdapter")
+    @patch("milknado.adapters.GitAdapter")
+    @patch("milknado.adapters.CrgAdapter")
+    def test_dispatches_ready_nodes(
+        self,
+        mock_crg_cls: MagicMock,
+        _mock_git_cls: MagicMock,
+        mock_ralph_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        runner.invoke(
+            app,
+            ["add-node", "leaf task", "--project-root", str(project_dir)],
+        )
+
+        fake_run = MagicMock()
+        fake_run.id = "run-1"
+        mock_ralph_cls.return_value.create_run.return_value = fake_run
+        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
+            project_dir / "RALPH.md"
+        )
+        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "Dispatched node 1" in result.output
+        assert "1 node(s) dispatched" in result.output
+
+    @patch("milknado.adapters.RalphifyAdapter")
+    @patch("milknado.adapters.GitAdapter")
+    @patch("milknado.adapters.CrgAdapter")
+    def test_dispatches_multiple_parallel_leaves(
+        self,
+        mock_crg_cls: MagicMock,
+        _mock_git_cls: MagicMock,
+        mock_ralph_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.add_node("leaf-b", parent_id=root.id)
+        graph.close()
+
+        fake_run = MagicMock()
+        fake_run.id = "run-1"
+        mock_ralph_cls.return_value.create_run.return_value = fake_run
+        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
+            project_dir / "RALPH.md"
+        )
+        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "2 node(s) dispatched" in result.output
+
+    @patch("milknado.adapters.RalphifyAdapter")
+    @patch("milknado.adapters.GitAdapter")
+    @patch("milknado.adapters.CrgAdapter")
+    def test_skips_conflicting_nodes(
+        self,
+        mock_crg_cls: MagicMock,
+        _mock_git_cls: MagicMock,
+        mock_ralph_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        a = graph.add_node("leaf-a", parent_id=root.id)
+        b = graph.add_node("leaf-b", parent_id=root.id)
+        graph.set_file_ownership(a.id, ["shared.py"])
+        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.close()
+
+        fake_run = MagicMock()
+        fake_run.id = "run-1"
+        mock_ralph_cls.return_value.create_run.return_value = fake_run
+        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
+            project_dir / "RALPH.md"
+        )
+        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "1 node(s) dispatched" in result.output
