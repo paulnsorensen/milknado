@@ -4,6 +4,7 @@ from milknado.domains.common.config import (
     load_config,
     save_config,
 )
+from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
@@ -21,6 +22,8 @@ __all__ = [
     "MikadoNode",
     "MilknadoConfig",
     "NodeStatus",
+    "PluginHook",
+    "PluginMeta",
     "RalphPort",
     "VALID_TRANSITIONS",
     "default_config",

@@ -190,3 +190,27 @@ def run(
     """Execute ready leaf nodes as parallel ralph loops."""
     console.print("[yellow]Run command not yet implemented.[/yellow]")
     raise typer.Exit(code=1)
+
+
+plugin_app = typer.Typer(name="plugin", help="Plugin management commands")
+app.add_typer(plugin_app)
+
+
+@plugin_app.command("init")
+def plugin_init(
+    name: Annotated[str, typer.Argument(help="Plugin name")],
+    target_dir: Annotated[
+        Path, typer.Option("--target-dir", "-d", help="Directory to create plugin in")
+    ] = Path("."),
+) -> None:
+    """Scaffold a new milknado plugin."""
+    from milknado.plugins import scaffold_plugin
+
+    try:
+        result = scaffold_plugin(name, target_dir.resolve())
+        console.print(f"Created plugin [bold]{name}[/bold] at {result.plugin_dir}")
+        for f in result.files_created:
+            console.print(f"  {f}")
+    except FileExistsError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1) from None
