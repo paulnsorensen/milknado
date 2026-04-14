@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from milknado.domains.execution import ExecutionConfig
+    from milknado.domains.execution.run_loop import RunLoopResult
 
 import typer
 from rich.console import Console
@@ -19,6 +23,23 @@ console = Console()
 
 CONFIG_FILE = "milknado.toml"
 
+def _ensure_plugins_loaded(config: MilknadoConfig) -> None:
+    from milknado.plugins import discover_entry_point_plugins, load_plugins
+
+    for plugin in load_plugins(config.plugins):
+        console.print(f"  Plugin loaded: {plugin.meta.name}")
+    for plugin in discover_entry_point_plugins():
+        console.print(f"  Plugin loaded: {plugin.meta.name} (entry point)")
+
+
+def _maybe_block_parent(graph: MikadoGraph, parent: int | None) -> None:
+    if parent is None:
+        return
+    parent_node = graph.get_node(parent)
+    if parent_node and parent_node.status.value == "running":
+        graph.mark_blocked(parent)
+        console.print(f"Parent node {parent} marked as blocked.")
+
 
 def _find_config(project_root: Path) -> Path:
     return project_root / CONFIG_FILE
@@ -27,8 +48,11 @@ def _find_config(project_root: Path) -> Path:
 def _load_or_default(project_root: Path) -> MilknadoConfig:
     config_path = _find_config(project_root)
     if config_path.exists():
-        return load_config(config_path)
-    return default_config(project_root)
+        config = load_config(config_path)
+    else:
+        config = default_config(project_root)
+    _ensure_plugins_loaded(config)
+    return config
 
 
 def _ensure_db(config: MilknadoConfig) -> MikadoGraph:
@@ -56,6 +80,7 @@ def init(
         save_config(config, config_path)
         console.print(f"Created config: {config_path}")
 
+    _ensure_plugins_loaded(config)
     graph = _ensure_db(config)
     graph.close()
     console.print(f"Database ready: {config.db_path}")
@@ -112,12 +137,7 @@ def add_node(
         if files:
             graph.set_file_ownership(node.id, files)
 
-        if parent is not None:
-            parent_node = graph.get_node(parent)
-            if parent_node and parent_node.status.value == "running":
-                graph.mark_blocked(parent)
-                console.print(f"Parent node {parent} marked as blocked.")
-
+        _maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
     finally:
         graph.close()
@@ -154,6 +174,29 @@ def plan(
         graph.close()
 
 
+def _build_exec_config(
+    config: MilknadoConfig, project_root: Path,
+) -> ExecutionConfig:
+    from milknado.domains.execution import ExecutionConfig
+
+    return ExecutionConfig(
+        agent_command=config.agent_command,
+        quality_gates=config.quality_gates,
+        worktree_pattern=config.worktree_pattern,
+        project_root=project_root,
+    )
+
+
+def _print_run_result(result: RunLoopResult) -> None:
+    if result.root_done:
+        console.print("[green]All nodes complete. Root goal achieved.[/green]")
+    else:
+        console.print(
+            f"[yellow]Loop ended: {result.completed_total} completed, "
+            f"{result.failed_total} failed.[/yellow]"
+        )
+
+
 @app.command()
 def run(
     project_root: Annotated[
@@ -162,20 +205,14 @@ def run(
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
-    from milknado.domains.execution import (
-        ExecutionConfig,
-        Executor,
-        RunLoop,
-        get_dispatchable_nodes,
-    )
+    from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
 
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
     graph = _ensure_db(config)
 
     try:
-        dispatchable = get_dispatchable_nodes(graph)
-        if not dispatchable:
+        if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return
 
@@ -184,29 +221,15 @@ def run(
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
 
-        exec_config = ExecutionConfig(
-            agent_command=config.agent_command,
-            quality_gates=config.quality_gates,
-            worktree_pattern=config.worktree_pattern,
-            project_root=project_root,
-        )
-
         feature_branch = git.current_branch()
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
         result = loop.run(
-            config=exec_config,
+            config=_build_exec_config(config, project_root),
             feature_branch=feature_branch,
             concurrency_limit=config.concurrency_limit,
         )
-
-        if result.root_done:
-            console.print("[green]All nodes complete. Root goal achieved.[/green]")
-        else:
-            console.print(
-                f"[yellow]Loop ended: {result.completed_total} completed, "
-                f"{result.failed_total} failed.[/yellow]"
-            )
+        _print_run_result(result)
     finally:
         graph.close()
 

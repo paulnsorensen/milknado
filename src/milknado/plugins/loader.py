@@ -37,3 +37,19 @@ def load_plugins(plugin_names: tuple[str, ...]) -> list[PluginHook]:
         except ImportError:
             logger.warning("Could not import plugin: %s", name)
     return loaded
+
+
+def discover_entry_point_plugins() -> list[PluginHook]:
+    from importlib.metadata import entry_points
+
+    loaded: list[PluginHook] = []
+    for ep in entry_points(group="milknado.plugins"):
+        try:
+            cls = ep.load()
+            instance = cls()
+            meta: PluginMeta = instance.meta
+            logger.info("Loaded plugin: %s v%s (entry point)", meta.name, meta.version)
+            loaded.append(instance)
+        except Exception:
+            logger.warning("Failed to load entry point plugin: %s", ep.name)
+    return loaded

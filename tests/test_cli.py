@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
+from milknado.domains.planning import Planner
 
 runner = CliRunner()
 
@@ -24,9 +25,34 @@ def _unique_run_factory() -> MagicMock:
     return mock
 
 
+def _configure_ralph_mocks(
+    ralph_cls: MagicMock, project_dir: Path, *, unique: bool = False,
+) -> None:
+    if unique:
+        ralph_cls.return_value.create_run = _unique_run_factory()
+    else:
+        fake_run = MagicMock()
+        fake_run.id = "run-1"
+        ralph_cls.return_value.create_run.return_value = fake_run
+    ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
+    ralph_cls.return_value.is_run_complete.return_value = True
+    ralph_cls.return_value.is_run_success.return_value = True
+
+
 @pytest.fixture()
 def project_dir(tmp_path: Path) -> Path:
     return tmp_path
+
+
+@pytest.fixture()
+def mock_adapters():
+    with (
+        patch("milknado.adapters.RalphifyAdapter") as ralph,
+        patch("milknado.adapters.GitAdapter") as git,
+        patch("milknado.adapters.CrgAdapter") as crg,
+    ):
+        crg.return_value.get_impact_radius.return_value = {}
+        yield ralph, git, crg
 
 
 class TestInit:
@@ -249,14 +275,13 @@ class TestAddNode:
 
 class TestPlanCommand:
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch.object(Planner, "_run_agent", return_value=0)
     def test_plan_success(
         self,
-        mock_run: MagicMock,
+        _mock_run_agent: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
         result = runner.invoke(
             app,
@@ -266,14 +291,13 @@ class TestPlanCommand:
         assert "Planning" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch.object(Planner, "_run_agent", return_value=1)
     def test_plan_failure(
         self,
-        mock_run: MagicMock,
+        _mock_run_agent: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
         result = runner.invoke(
             app,
@@ -311,31 +335,18 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "No nodes ready" in result.output
 
-    @patch("milknado.adapters.RalphifyAdapter")
-    @patch("milknado.adapters.GitAdapter")
-    @patch("milknado.adapters.CrgAdapter")
     def test_dispatches_ready_nodes(
         self,
-        mock_crg_cls: MagicMock,
-        _mock_git_cls: MagicMock,
-        mock_ralph_cls: MagicMock,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
         project_dir: Path,
     ) -> None:
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
         runner.invoke(
             app,
             ["add-node", "leaf task", "--project-root", str(project_dir)],
         )
-
-        fake_run = MagicMock()
-        fake_run.id = "run-1"
-        mock_ralph_cls.return_value.create_run.return_value = fake_run
-        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
-            project_dir / "RALPH.md"
-        )
-        mock_ralph_cls.return_value.is_run_complete.return_value = True
-        mock_ralph_cls.return_value.is_run_success.return_value = True
-        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+        _configure_ralph_mocks(mock_ralph_cls, project_dir)
 
         result = runner.invoke(
             app,
@@ -345,19 +356,15 @@ class TestRunCommand:
         assert "Starting execution loop" in result.output
         assert "Root goal achieved" in result.output
 
-    @patch("milknado.adapters.RalphifyAdapter")
-    @patch("milknado.adapters.GitAdapter")
-    @patch("milknado.adapters.CrgAdapter")
     def test_dispatches_multiple_parallel_leaves(
         self,
-        mock_crg_cls: MagicMock,
-        _mock_git_cls: MagicMock,
-        mock_ralph_cls: MagicMock,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
         project_dir: Path,
     ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -366,13 +373,7 @@ class TestRunCommand:
         graph.add_node("leaf-b", parent_id=root.id)
         graph.close()
 
-        mock_ralph_cls.return_value.create_run = _unique_run_factory()
-        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
-            project_dir / "RALPH.md"
-        )
-        mock_ralph_cls.return_value.is_run_complete.return_value = True
-        mock_ralph_cls.return_value.is_run_success.return_value = True
-        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+        _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)
 
         result = runner.invoke(
             app,
@@ -381,19 +382,15 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "Root goal achieved" in result.output
 
-    @patch("milknado.adapters.RalphifyAdapter")
-    @patch("milknado.adapters.GitAdapter")
-    @patch("milknado.adapters.CrgAdapter")
     def test_skips_conflicting_nodes(
         self,
-        mock_crg_cls: MagicMock,
-        _mock_git_cls: MagicMock,
-        mock_ralph_cls: MagicMock,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
         project_dir: Path,
     ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -404,13 +401,7 @@ class TestRunCommand:
         graph.set_file_ownership(b.id, ["shared.py"])
         graph.close()
 
-        mock_ralph_cls.return_value.create_run = _unique_run_factory()
-        mock_ralph_cls.return_value.generate_ralph_md.return_value = (
-            project_dir / "RALPH.md"
-        )
-        mock_ralph_cls.return_value.is_run_complete.return_value = True
-        mock_ralph_cls.return_value.is_run_success.return_value = True
-        mock_crg_cls.return_value.get_impact_radius.return_value = {}
+        _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)
 
         result = runner.invoke(
             app,
