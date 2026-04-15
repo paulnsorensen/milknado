@@ -76,5 +76,17 @@ def build_planning_subprocess(
         argv = parts + [body]
         return argv, {}
 
+    # If users override agent_command for a preset, honor it for planning too.
+    # We stream the prompt via stdin by appending "-" to preserve prompt-size safety.
+    command_override = agent_command.strip()
+    preset_default = EXECUTION_AGENT_BY_PRESET[p]
+    if command_override and command_override != preset_default:
+        parts = shlex.split(command_override, posix=True)
+        if not parts:
+            parts = list(_PLANNING_ARGV_BY_PRESET[p])
+        if "-" not in parts:
+            parts.append("-")
+        return parts, {"input": body, "text": True}
+
     argv = list(_PLANNING_ARGV_BY_PRESET[p])
     return argv, {"input": body, "text": True}

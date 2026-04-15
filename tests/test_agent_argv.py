@@ -68,6 +68,20 @@ def test_build_planning_claude_stdin(tmp_path: Path) -> None:
     assert extra.get("input") == "stdin body"
 
 
+def test_build_planning_preset_honors_command_override(tmp_path: Path) -> None:
+    p = tmp_path / "ctx.md"
+    p.write_text("stdin body", encoding="utf-8")
+    argv, extra = build_planning_subprocess(
+        p,
+        "claude",
+        "my-claude-wrapper --flag",
+    )
+    assert argv[:2] == ["my-claude-wrapper", "--flag"]
+    assert argv[-1] == "-"
+    assert extra.get("text") is True
+    assert extra.get("input") == "stdin body"
+
+
 def test_load_config_roundtrip_preset(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg = MilknadoConfig(

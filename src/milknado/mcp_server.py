@@ -31,6 +31,7 @@ def _open_graph(root: Path):
 
     cfg_path = root / "milknado.toml"
     cfg = load_config(cfg_path) if cfg_path.exists() else default_config(root)
+    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
     return MikadoGraph(cfg.db_path), cfg
 
 

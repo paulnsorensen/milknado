@@ -55,7 +55,7 @@ class Planner:
         milknado_dir = project_root / ".milknado"
         milknado_dir.mkdir(parents=True, exist_ok=True)
         path = milknado_dir / "planning-context.md"
-        path.write_text(context)
+        path.write_text(context, encoding="utf-8")
         return path
 
     def _run_agent(
