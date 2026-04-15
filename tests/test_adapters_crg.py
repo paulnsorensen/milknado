@@ -36,7 +36,7 @@ class TestIsStale:
     def test_false_when_no_db(self, adapter: CrgAdapter) -> None:
         assert adapter._is_stale() is False
 
-    def test_false_when_no_src(self, tmp_path: Path) -> None:
+    def test_false_when_no_sources(self, tmp_path: Path) -> None:
         _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is False
@@ -62,6 +62,28 @@ class TestIsStale:
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is True
 
+    def test_detects_stale_outside_src(self, tmp_path: Path) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        py_file = tests_dir / "test_foo.py"
+        py_file.write_text("assert True")
+        import os
+        os.utime(py_file, (db_mtime + 10, db_mtime + 10))
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is True
+
+    def test_detects_stale_at_project_root(self, tmp_path: Path) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        py_file = tmp_path / "setup.py"
+        py_file.write_text("setup()")
+        import os
+        os.utime(py_file, (db_mtime + 10, db_mtime + 10))
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is True
+
     def test_ignores_non_source_files(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
         db_mtime = db.stat().st_mtime
@@ -71,6 +93,18 @@ class TestIsStale:
         txt.write_text("not source")
         import os
         os.utime(txt, (db_mtime + 10, db_mtime + 10))
+        adapter = CrgAdapter(tmp_path)
+        assert adapter._is_stale() is False
+
+    def test_skips_excluded_dirs(self, tmp_path: Path) -> None:
+        db = _make_crg_db(tmp_path)
+        db_mtime = db.stat().st_mtime
+        venv = tmp_path / ".venv" / "lib"
+        venv.mkdir(parents=True)
+        py_file = venv / "site.py"
+        py_file.write_text("x = 1")
+        import os
+        os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is False
 

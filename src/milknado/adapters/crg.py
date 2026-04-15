@@ -12,6 +12,12 @@ _SOURCE_EXTENSIONS = frozenset({
     ".java", ".rb", ".c", ".cpp", ".h", ".hpp", ".cs",
 })
 
+_SKIP_DIRS = frozenset({
+    ".git", ".code-review-graph", ".venv", ".tox", ".mypy_cache",
+    ".ruff_cache", "__pycache__", "node_modules", ".next", "target",
+    "dist", "build", ".eggs", "ralphs",
+})
+
 
 class CrgAdapter:
     def __init__(self, project_root: Path) -> None:
@@ -37,22 +43,38 @@ class CrgAdapter:
         if not db.exists():
             return False
         db_mtime = db.stat().st_mtime
-        src = self._root / "src"
-        if not src.exists():
-            return False
-        for f in src.rglob("*"):
-            if f.suffix in _SOURCE_EXTENSIONS and f.stat().st_mtime > db_mtime:
+        for f in self._walk_sources():
+            if f.stat().st_mtime > db_mtime:
                 return True
         return False
+
+    def _walk_sources(self) -> list[Path]:
+        sources: list[Path] = []
+        dirs = [self._root]
+        while dirs:
+            current = dirs.pop()
+            for child in current.iterdir():
+                if child.is_dir():
+                    if child.name not in _SKIP_DIRS:
+                        dirs.append(child)
+                elif child.suffix in _SOURCE_EXTENSIONS:
+                    sources.append(child)
+        return sources
 
     def _run_crg(self, command: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["code-review-graph", command],
             cwd=self._root,
-            capture_output=True,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
+            check=True,
         )
+
+    def build_graph(self, project_root: Path) -> None:
+        self._root = project_root
+        self._store = None
+        self._run_crg("build")
+        self._get_store()
 
     def ensure_graph(self, project_root: Path) -> None:
         self._root = project_root
