@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
+
+from milknado.domains.common.types import RebaseResult
+
+_CONFLICT_FILE_RE = re.compile(
+    r"^CONFLICT \(.*?\): (?:Merge conflict in |.*? -> )(.+)$",
+    re.MULTILINE,
+)
 
 
 class GitAdapter:
@@ -24,7 +32,7 @@ class GitAdapter:
     def remove_worktree(self, path: Path) -> None:
         self._run(["worktree", "remove", "--force", str(path)])
 
-    def rebase(self, worktree: Path, onto: str) -> bool:
+    def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         result = subprocess.run(
             ["git", "rebase", onto],
             cwd=worktree,
@@ -32,14 +40,20 @@ class GitAdapter:
             text=True,
         )
         if result.returncode != 0:
+            combined = result.stdout + result.stderr
+            files = tuple(_CONFLICT_FILE_RE.findall(combined))
             subprocess.run(
                 ["git", "rebase", "--abort"],
                 cwd=worktree,
                 capture_output=True,
                 text=True,
             )
-            return False
-        return True
+            return RebaseResult(
+                success=False,
+                conflicting_files=files,
+                detail=combined.strip(),
+            )
+        return RebaseResult(success=True)
 
     def current_branch(self) -> str:
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])

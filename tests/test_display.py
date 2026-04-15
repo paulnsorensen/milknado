@@ -134,11 +134,57 @@ class TestRenderTree:
     def test_running_shows_worktree(self, graph):
         root = graph.add_node("Root")
         c1 = graph.add_node("Worker", parent_id=root.id)
-        graph.mark_running(c1.id)
-        graph._conn.execute(
-            "UPDATE nodes SET worktree_path = ? WHERE id = ?",
-            ("/tmp/wt-1", c1.id),
-        )
-        graph._conn.commit()
+        graph.mark_running(c1.id, worktree_path="/tmp/wt-1")
         output = render_tree(graph)
         assert "/tmp/wt-1" in output
+
+    def test_active_worktrees_section(self, graph):
+        root = graph.add_node("Root")
+        c1 = graph.add_node("Task A", parent_id=root.id)
+        c2 = graph.add_node("Task B", parent_id=root.id)
+        graph.mark_running(c1.id, worktree_path="/tmp/wt-a", branch_name="milknado/2-task-a")
+        graph.mark_running(c2.id, worktree_path="/tmp/wt-b", branch_name="milknado/3-task-b")
+        output = render_tree(graph)
+        assert "Active Worktrees (2)" in output
+        assert "/tmp/wt-a" in output
+        assert "/tmp/wt-b" in output
+
+    def test_no_active_worktrees_when_none_running(self, graph):
+        graph.add_node("Root")
+        output = render_tree(graph)
+        assert "Active Worktrees" not in output
+
+    def test_ralph_run_state_displayed(self, graph):
+        root = graph.add_node("Root")
+        c1 = graph.add_node("Worker", parent_id=root.id)
+        graph.mark_running(c1.id, worktree_path="/tmp/wt-1", run_id="run-abc")
+        output = render_tree(graph, run_states={"run-abc": "running"})
+        assert "ralph: running" in output
+
+    def test_ralph_state_omitted_when_no_run_states(self, graph):
+        root = graph.add_node("Root")
+        c1 = graph.add_node("Worker", parent_id=root.id)
+        graph.mark_running(c1.id, worktree_path="/tmp/wt-1", run_id="run-abc")
+        output = render_tree(graph)
+        assert "ralph:" not in output
+
+
+class TestSummarizeActiveWorktrees:
+    def test_active_worktrees_populated(self, graph):
+        root = graph.add_node("Root")
+        c1 = graph.add_node("Task", parent_id=root.id)
+        graph.mark_running(c1.id, worktree_path="/tmp/wt")
+        s = summarize(graph)
+        assert len(s.active_worktrees) == 1
+        assert s.active_worktrees[0].id == c1.id
+
+    def test_no_active_worktrees_when_pending(self, graph):
+        graph.add_node("Root")
+        s = summarize(graph)
+        assert s.active_worktrees == []
+
+    def test_running_without_worktree_excluded(self, graph):
+        node = graph.add_node("Task")
+        graph.mark_running(node.id)
+        s = summarize(graph)
+        assert s.active_worktrees == []

@@ -8,7 +8,7 @@ from pathlib import Path
 @dataclass(frozen=True)
 class MilknadoConfig:
     agent_command: str = "claude"
-    quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check")
+    quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check", "uv run ty check")
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
     project_root: Path = Path(".")
@@ -32,7 +32,10 @@ def load_config(path: Path) -> MilknadoConfig:
 
     return MilknadoConfig(
         agent_command=milknado.get("agent_command", "claude"),
-        quality_gates=tuple(milknado.get("quality_gates", ["uv run pytest", "uv run ruff check"])),
+        quality_gates=tuple(milknado.get(
+            "quality_gates",
+            ["uv run pytest", "uv run ruff check", "uv run ty check"],
+        )),
         worktree_pattern=milknado.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         concurrency_limit=milknado.get("concurrency_limit", 4),
         project_root=project_root,

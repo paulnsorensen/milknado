@@ -28,6 +28,7 @@ class MikadoGraph:
                 parent_id INTEGER,
                 worktree_path TEXT,
                 branch_name TEXT,
+                run_id TEXT,
                 created_at TEXT NOT NULL,
                 completed_at TEXT
             );
@@ -54,8 +55,9 @@ class MikadoGraph:
             parent_id=row[3],
             worktree_path=row[4],
             branch_name=row[5],
-            created_at=datetime.fromisoformat(row[6]),
-            completed_at=datetime.fromisoformat(row[7]) if row[7] else None,
+            run_id=row[6],
+            created_at=datetime.fromisoformat(row[7]),
+            completed_at=datetime.fromisoformat(row[8]) if row[8] else None,
         )
 
     def add_node(
@@ -180,17 +182,42 @@ class MikadoGraph:
 
     def mark_failed(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.FAILED)
+        self._conn.execute(
+            "UPDATE nodes SET worktree_path = NULL, branch_name = NULL,"
+            " run_id = NULL WHERE id = ?",
+            (node_id,),
+        )
+        self._conn.commit()
 
     def mark_running(
-        self, node_id: int, worktree_path: str | None = None, branch_name: str | None = None,
+        self,
+        node_id: int,
+        worktree_path: str | None = None,
+        branch_name: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self._transition_status(node_id, NodeStatus.RUNNING)
-        if worktree_path or branch_name:
+        if worktree_path or branch_name or run_id:
             self._conn.execute(
-                "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ?",
-                (worktree_path, branch_name, node_id),
+                "UPDATE nodes SET worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
+                (worktree_path, branch_name, run_id, node_id),
             )
             self._conn.commit()
+
+    def set_run_id(self, node_id: int, run_id: str) -> None:
+        self._conn.execute(
+            "UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id),
+        )
+        self._conn.commit()
+
+    def mark_pending(self, node_id: int) -> None:
+        self._transition_status(node_id, NodeStatus.PENDING)
+        self._conn.execute(
+            "UPDATE nodes SET worktree_path = NULL, branch_name = NULL,"
+            " run_id = NULL WHERE id = ?",
+            (node_id,),
+        )
+        self._conn.commit()
 
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)

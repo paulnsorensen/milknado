@@ -57,13 +57,14 @@ class Planner:
     def _run_agent(
         self, context_path: Path, project_root: Path
     ) -> int:
-        cmd = self._build_command(context_path)
+        context = context_path.read_text()
+        cmd = self._build_command(context)
         result = subprocess.run(
             cmd, cwd=project_root, check=False
         )
         return result.returncode
 
-    def _build_command(self, context_path: Path) -> list[str]:
+    def _build_command(self, prompt: str) -> list[str]:
         parts = self._agent_command.split()
-        parts.extend(["--print", str(context_path)])
+        parts.append(prompt)
         return parts

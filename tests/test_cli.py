@@ -18,7 +18,7 @@ def _unique_run_factory() -> MagicMock:
 
     def _create_run(*args: object, **kwargs: object) -> MagicMock:
         run = MagicMock()
-        run.id = f"run-{next(counter)}"
+        run.state.run_id = f"run-{next(counter)}"
         return run
 
     mock = MagicMock(side_effect=_create_run)
@@ -32,11 +32,16 @@ def _configure_ralph_mocks(
         ralph_cls.return_value.create_run = _unique_run_factory()
     else:
         fake_run = MagicMock()
-        fake_run.id = "run-1"
+        fake_run.state.run_id = "run-1"
         ralph_cls.return_value.create_run.return_value = fake_run
     ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
-    ralph_cls.return_value.is_run_complete.return_value = True
-    ralph_cls.return_value.is_run_success.return_value = True
+
+    def _wait_for_next_completion(active_run_ids: set[str]) -> tuple[str, bool]:
+        return next(iter(active_run_ids)), True
+
+    ralph_cls.return_value.wait_for_next_completion.side_effect = (
+        _wait_for_next_completion
+    )
 
 
 @pytest.fixture()

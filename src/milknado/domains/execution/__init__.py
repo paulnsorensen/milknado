@@ -3,6 +3,7 @@ from milknado.domains.execution.executor import (
     DispatchResult,
     ExecutionConfig,
     Executor,
+    RebaseConflict,
     get_dispatchable_nodes,
 )
 from milknado.domains.execution.run_loop import RunLoop, RunLoopResult
@@ -12,6 +13,7 @@ __all__ = [
     "DispatchResult",
     "ExecutionConfig",
     "Executor",
+    "RebaseConflict",
     "RunLoop",
     "RunLoopResult",
     "get_dispatchable_nodes",

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus
+from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
 from milknado.domains.execution import (
     ExecutionConfig,
     Executor,
@@ -16,24 +16,30 @@ from milknado.domains.graph import MikadoGraph
 
 
 @dataclass
+class FakeRunState:
+    run_id: str = "run-1"
+
+
+@dataclass
 class FakeRun:
-    id: str = "run-1"
+    state: FakeRunState = field(default_factory=FakeRunState)
 
 
 class FakeGit:
     def __init__(self) -> None:
         self.created: list[tuple[Path, str]] = []
         self.removed: list[Path] = []
-        self.rebase_result: bool = True
+        self.rebase_result: RebaseResult = RebaseResult(success=True)
 
     def create_worktree(self, path: Path, branch: str) -> Path:
         self.created.append((path, branch))
+        path.mkdir(parents=True, exist_ok=True)
         return path
 
     def remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
-    def rebase(self, worktree: Path, onto: str) -> bool:
+    def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         return self.rebase_result
 
     def current_branch(self) -> str:
@@ -57,9 +63,8 @@ class FakeCrg:
 class FakeRalph:
     def __init__(self) -> None:
         self._run_counter = 0
-        self._complete_after: dict[str, int] = {}
-        self._poll_counts: dict[str, int] = {}
         self._success: dict[str, bool] = {}
+        self._pending_completions: list[tuple[str, bool]] = []
 
     def create_run(
         self,
@@ -71,10 +76,9 @@ class FakeRalph:
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
-        self._complete_after.setdefault(run_id, 1)
-        self._poll_counts[run_id] = 0
-        self._success.setdefault(run_id, True)
-        return FakeRun(id=run_id)
+        success = self._success.get(run_id, True)
+        self._pending_completions.append((run_id, success))
+        return FakeRun(state=FakeRunState(run_id=run_id))
 
     def start_run(self, run_id: str) -> None:
         pass
@@ -88,12 +92,14 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
-    def is_run_complete(self, run_id: str) -> bool:
-        self._poll_counts[run_id] = self._poll_counts.get(run_id, 0) + 1
-        return self._poll_counts[run_id] >= self._complete_after[run_id]
-
-    def is_run_success(self, run_id: str) -> bool:
-        return self._success.get(run_id, True)
+    def wait_for_next_completion(
+        self, active_run_ids: set[str],
+    ) -> tuple[str, bool]:
+        for i, (run_id, success) in enumerate(self._pending_completions):
+            if run_id in active_run_ids:
+                self._pending_completions.pop(i)
+                return run_id, success
+        raise RuntimeError("No pending completions for active runs")
 
     def generate_ralph_md(
         self,
@@ -103,9 +109,6 @@ class FakeRalph:
         output_path: Path,
     ) -> Path:
         return output_path
-
-    def set_completes_after(self, run_id: str, polls: int) -> None:
-        self._complete_after[run_id] = polls
 
     def set_run_fails(self, run_id: str) -> None:
         self._success[run_id] = False
@@ -163,7 +166,7 @@ class TestRunLoopSingleNode:
         config: ExecutionConfig,
     ) -> None:
         graph.add_node("root goal")
-        result = run_loop.run(config, "main", poll_interval=0.0)
+        result = run_loop.run(config, "main")
 
         assert result.dispatched_total == 1
         assert result.completed_total == 1
@@ -177,7 +180,7 @@ class TestRunLoopSingleNode:
         config: ExecutionConfig,
     ) -> None:
         graph.add_node("root goal")
-        run_loop.run(config, "main", poll_interval=0.0)
+        run_loop.run(config, "main")
 
         root = graph.get_node(1)
         assert root is not None
@@ -194,7 +197,7 @@ class TestRunLoopParentChild:
         root = graph.add_node("root")
         graph.add_node("leaf", parent_id=root.id)
 
-        result = run_loop.run(config, "main", poll_interval=0.0)
+        result = run_loop.run(config, "main")
 
         assert result.dispatched_total == 2
         assert result.completed_total == 2
@@ -209,7 +212,7 @@ class TestRunLoopParentChild:
         root = graph.add_node("root")
         graph.add_node("leaf", parent_id=root.id)
 
-        run_loop.run(config, "main", poll_interval=0.0)
+        run_loop.run(config, "main")
 
         for node in graph.get_all_nodes():
             assert node.status == NodeStatus.DONE
@@ -226,7 +229,7 @@ class TestRunLoopParallelLeaves:
         graph.add_node("leaf-a", parent_id=root.id)
         graph.add_node("leaf-b", parent_id=root.id)
 
-        result = run_loop.run(config, "main", poll_interval=0.0)
+        result = run_loop.run(config, "main")
 
         assert result.dispatched_total == 3
         assert result.completed_total == 3
@@ -245,9 +248,7 @@ class TestRunLoopConcurrencyLimit:
         graph.add_node("b", parent_id=root.id)
         graph.add_node("c", parent_id=root.id)
 
-        result = run_loop.run(
-            config, "main", concurrency_limit=2, poll_interval=0.0,
-        )
+        result = run_loop.run(config, "main", concurrency_limit=2)
 
         assert result.dispatched_total == 4
         assert result.completed_total == 4
@@ -269,7 +270,7 @@ class TestRunLoopFailure:
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         graph.add_node("will fail")
-        result = loop.run(config, "main", poll_interval=0.0)
+        result = loop.run(config, "main")
 
         assert result.failed_total == 1
         assert result.root_done is False
@@ -292,7 +293,7 @@ class TestRunLoopFailure:
 
         root = graph.add_node("root")
         graph.add_node("leaf", parent_id=root.id)
-        result = loop.run(config, "main", poll_interval=0.0)
+        result = loop.run(config, "main")
 
         assert result.failed_total == 1
         assert result.root_done is False
@@ -308,11 +309,108 @@ class TestRunLoopResult:
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        result = run_loop.run(config, "main", poll_interval=0.0)
+        result = run_loop.run(config, "main")
 
         assert result.dispatched_total == 0
         assert result.completed_total == 0
         assert result.root_done is False
+
+
+class TestRunLoopDispatchFailure:
+    def test_dispatch_failure_marks_node_failed(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        ralph.generate_ralph_md = lambda *_a, **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+            RuntimeError("ralph exploded"),
+        )
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        graph.add_node("doomed")
+        result = loop.run(config, "main")
+
+        assert result.dispatched_total == 0
+        assert result.root_done is False
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.FAILED
+
+    def test_dispatch_failure_does_not_crash_loop(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        call_count = 0
+        original_generate = ralph.generate_ralph_md
+
+        def fail_first_only(*args: Any, **kwargs: Any) -> Path:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("ralph exploded")
+            return original_generate(*args, **kwargs)
+
+        ralph.generate_ralph_md = fail_first_only  # type: ignore[assignment]
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root")
+        graph.add_node("doomed-leaf", parent_id=root.id)
+        graph.add_node("good-leaf", parent_id=root.id)
+
+        result = loop.run(config, "main")
+
+        assert result.root_done is False
+        good_leaf = graph.get_node(3)
+        assert good_leaf is not None
+        assert good_leaf.status == NodeStatus.DONE
+
+
+class TestRunLoopRebaseConflicts:
+    def test_rebase_conflict_details_surfaced_in_result(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_crg: FakeCrg,
+    ) -> None:
+        fake_git = FakeGit()
+        fake_git.rebase_result = RebaseResult(
+            success=False,
+            conflicting_files=("src/models.py", "src/views.py"),
+            detail="CONFLICT (content): Merge conflict in src/models.py",
+        )
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        graph.add_node("conflicting node")
+        result = loop.run(config, "main")
+
+        assert result.failed_total == 1
+        assert len(result.rebase_conflicts) == 1
+        conflict = result.rebase_conflicts[0]
+        assert conflict.node_id == 1
+        assert conflict.conflicting_files == ("src/models.py", "src/views.py")
+        assert "Merge conflict" in conflict.detail
+
+    def test_no_conflicts_yields_empty_tuple(
+        self,
+        run_loop: RunLoop,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        graph.add_node("clean node")
+        result = run_loop.run(config, "main")
+
+        assert result.rebase_conflicts == ()
 
 
 class TestRunLoopFileConflicts:
@@ -335,7 +433,7 @@ class TestRunLoopFileConflicts:
         graph.set_file_ownership(a.id, ["shared.py"])
         graph.set_file_ownership(b.id, ["shared.py"])
 
-        result = loop.run(config, "main", poll_interval=0.0)
+        result = loop.run(config, "main")
 
         assert result.dispatched_total == 3
         assert result.completed_total == 3

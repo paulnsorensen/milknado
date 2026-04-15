@@ -63,7 +63,8 @@ class TestRebase:
     ) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         wt = Path("/tmp/wt")
-        assert adapter.rebase(wt, "main") is True
+        result = adapter.rebase(wt, "main")
+        assert result.success is True
 
     @patch("milknado.adapters.git.subprocess.run")
     def test_failed_rebase_aborts_and_returns_false(
@@ -73,7 +74,8 @@ class TestRebase:
         success = subprocess.CompletedProcess([], 0, "", "")
         mock_run.side_effect = [fail, success]
 
-        assert adapter.rebase(Path("/tmp/wt"), "main") is False
+        result = adapter.rebase(Path("/tmp/wt"), "main")
+        assert result.success is False
         assert mock_run.call_count == 2
         abort_call = mock_run.call_args_list[1]
         assert "rebase" in abort_call.args[0]

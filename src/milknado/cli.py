@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -11,7 +12,9 @@ import typer
 from rich.console import Console
 
 from milknado.domains.common import (
+    MikadoNode,
     MilknadoConfig,
+    NodeStatus,
     default_config,
     load_config,
     save_config,
@@ -86,8 +89,36 @@ def init(
     console.print(f"Database ready: {config.db_path}")
 
     crg = CrgAdapter(project_root)
-    crg.ensure_graph(project_root)
-    console.print("Code-review-graph ready.")
+    try:
+        crg.ensure_graph(project_root)
+        console.print("Code-review-graph ready.")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]CRG build failed (exit {e.returncode}).[/red]")
+        if e.stderr:
+            console.print(e.stderr)
+        raise typer.Exit(code=1) from None
+
+
+@app.command()
+def index(
+    project_root: Annotated[
+        Path, typer.Argument(help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Rebuild the code-review-graph index."""
+    from milknado.adapters.crg import CrgAdapter
+
+    project_root = project_root.resolve()
+    _load_or_default(project_root)
+    crg = CrgAdapter(project_root)
+    try:
+        crg.build_graph(project_root)
+        console.print("Code-review-graph rebuilt.")
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]CRG build failed (exit {e.returncode}).[/red]")
+        if e.stderr:
+            console.print(e.stderr)
+        raise typer.Exit(code=1) from None
 
 
 @app.command()
@@ -107,10 +138,51 @@ def status(
             console.print("No nodes in graph. Run [bold]milknado plan[/bold] to start.")
             return
 
-        output = render_tree(graph)
+        run_states = _fetch_run_states(nodes)
+        output = render_tree(graph, run_states=run_states)
         console.print(output)
     finally:
         graph.close()
+
+
+def _fetch_run_states(nodes: list[MikadoNode]) -> dict[str, str] | None:
+    run_ids = [n.run_id for n in nodes if n.run_id and n.status == NodeStatus.RUNNING]
+    if not run_ids:
+        return None
+    try:
+        from milknado.adapters.ralphify import RalphifyAdapter
+
+        ralph = RalphifyAdapter()
+        states: dict[str, str] = {}
+        for run_id in run_ids:
+            run = ralph.get_run(run_id)
+            if run:
+                states[run_id] = getattr(run, "status", "unknown")
+        return states or None
+    except Exception:
+        return None
+
+
+@app.command()
+def crg(
+    project_root: Annotated[
+        Path, typer.Argument(help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Show the code-review-graph architecture overview."""
+    import json
+
+    from milknado.adapters.crg import CrgAdapter
+
+    project_root = project_root.resolve()
+    if not (project_root / ".code-review-graph" / "graph.db").exists():
+        console.print("[dim]No CRG index. Run [bold]milknado index[/bold] to build.[/dim]")
+        raise typer.Exit(code=1)
+
+    adapter = CrgAdapter(project_root)
+    overview = adapter.get_architecture_overview()
+    formatted = json.dumps(overview, indent=2, default=str)
+    console.print(formatted)
 
 
 @app.command("add-node")
@@ -195,6 +267,17 @@ def _print_run_result(result: RunLoopResult) -> None:
             f"[yellow]Loop ended: {result.completed_total} completed, "
             f"{result.failed_total} failed.[/yellow]"
         )
+
+    for conflict in result.rebase_conflicts:
+        console.print(
+            f"\n[red bold]Rebase conflict — node {conflict.node_id}:[/red bold] "
+            f"{conflict.description}",
+        )
+        if conflict.conflicting_files:
+            for f in conflict.conflicting_files:
+                console.print(f"  [red]•[/red] {f}")
+        if conflict.detail:
+            console.print(f"  [dim]{conflict.detail}[/dim]")
 
 
 @app.command()

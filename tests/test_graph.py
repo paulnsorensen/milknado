@@ -195,6 +195,40 @@ class TestStatusTransitions:
         with pytest.raises(ValueError, match="Cannot transition"):
             graph.mark_running(node.id)
 
+    def test_running_to_pending_rollback(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("task")
+        graph.mark_running(node.id, worktree_path="/tmp/wt", branch_name="b")
+        graph.mark_pending(node.id)
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.status == NodeStatus.PENDING
+        assert updated.worktree_path is None
+        assert updated.branch_name is None
+        assert updated.run_id is None
+
+    def test_mark_running_stores_run_id(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("task")
+        graph.mark_running(node.id, worktree_path="/tmp/wt", run_id="run-42")
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.run_id == "run-42"
+
+    def test_set_run_id(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("task")
+        graph.mark_running(node.id)
+        graph.set_run_id(node.id, "run-99")
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.run_id == "run-99"
+
+    def test_failed_clears_run_id(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("task")
+        graph.mark_running(node.id, run_id="run-1")
+        graph.mark_failed(node.id)
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.run_id is None
+
     def test_transition_nonexistent_node_raises(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="not found"):
             graph.mark_running(999)

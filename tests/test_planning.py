@@ -59,6 +59,42 @@ class TestBuildPlanningContext:
         assert "[1] root goal (pending)" in ctx
         assert "[2] child task (pending)" in ctx
 
+    def test_includes_dependency_edges(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        tmp_graph.add_node("child a", parent_id=1)
+        tmp_graph.add_node("child b", parent_id=1)
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "deps: [2, 3]" in ctx
+
+    def test_includes_file_ownership(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        tmp_graph.set_file_ownership(1, ["src/auth.py", "src/models.py"])
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "src/auth.py" in ctx
+        assert "src/models.py" in ctx
+
+    def test_includes_ready_nodes(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        tmp_graph.add_node("leaf task", parent_id=1)
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Ready to Execute" in ctx
+        assert "[2] leaf task" in ctx
+
+    def test_no_ready_section_when_all_done(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        tmp_graph.mark_running(1)
+        tmp_graph.mark_done(1)
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Ready to Execute" not in ctx
+
     def test_includes_instructions(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -71,6 +107,55 @@ class TestBuildPlanningContext:
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert ctx.count("# ") >= 4
+
+    def test_fresh_start_instructions(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "# Instructions\n" in ctx
+        assert "resuming" not in ctx
+        assert "Decompose the goal" in ctx
+
+    def test_resume_instructions_when_nodes_exist(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Instructions (resuming)" in ctx
+        assert "Do NOT recreate" in ctx
+        assert "milknado add-node" in ctx
+
+    def test_progress_summary(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root")
+        tmp_graph.add_node("done child", parent_id=1)
+        tmp_graph.add_node("pending child", parent_id=1)
+        tmp_graph.mark_running(2)
+        tmp_graph.mark_done(2)
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Progress:" in ctx
+        assert "3 total" in ctx
+        assert "1 done" in ctx
+        assert "2 pending" in ctx
+
+    def test_failed_nodes_section(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root")
+        tmp_graph.add_node("broken task", parent_id=1)
+        tmp_graph.mark_running(2)
+        tmp_graph.mark_failed(2)
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Failed (need re-planning)" in ctx
+        assert "[2] broken task" in ctx
+
+    def test_no_failed_section_when_none_failed(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root")
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "Failed" not in ctx
 
 
 class TestPlanner:
@@ -114,7 +199,9 @@ class TestPlanner:
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "claude"
-        assert "--print" in cmd
+        assert "--print" not in cmd
+        assert len(cmd) == 2
+        assert "my goal" in cmd[1]
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_launch_failure(

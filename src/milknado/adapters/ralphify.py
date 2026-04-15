@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import queue
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from ralphify import RunConfig, RunManager
+from ralphify import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
-from milknado.domains.common.types import MikadoNode
+from milknado.domains.common.types import CompletionEvent, MikadoNode
 
 
 class RalphifyAdapter:
     def __init__(self) -> None:
         self._manager = RunManager()
+        self._queue: queue.Queue[Any] = queue.Queue()
+        self._emitter = QueueEmitter(self._queue)
 
     def create_run(
         self,
@@ -26,7 +30,9 @@ class RalphifyAdapter:
             ralph_file=ralph_file,
             project_root=ralph_dir,
         )
-        return self._manager.create_run(config)
+        run = self._manager.create_run(config)
+        run.add_listener(self._emitter)
+        return run
 
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)
@@ -40,17 +46,16 @@ class RalphifyAdapter:
     def get_run(self, run_id: str) -> Any | None:
         return self._manager.get_run(run_id)
 
-    def is_run_complete(self, run_id: str) -> bool:
-        run = self._manager.get_run(run_id)
-        if run is None:
-            return True
-        return getattr(run, "status", None) in ("completed", "failed")
-
-    def is_run_success(self, run_id: str) -> bool:
-        run = self._manager.get_run(run_id)
-        if run is None:
-            return False
-        return getattr(run, "status", None) == "completed"
+    def completion_events(self) -> Iterator[CompletionEvent]:
+        while True:
+            event = self._queue.get()
+            if event.type != EventType.RUN_STOPPED:
+                continue
+            run = self._manager.get_run(event.run_id)
+            success = (
+                run is not None and run.state.status == RunStatus.COMPLETED
+            )
+            yield CompletionEvent(run_id=event.run_id, success=success)
 
     def generate_ralph_md(
         self,
