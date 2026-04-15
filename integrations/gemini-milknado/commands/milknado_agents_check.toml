@@ -1,0 +1,7 @@
+description = "Print milknado agent preset and planning argv sample."
+
+prompt = """
+## Milknado agents check
+
+!{uv run milknado agents check}
+"""

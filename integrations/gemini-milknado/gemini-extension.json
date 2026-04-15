@@ -1,0 +1,13 @@
+{
+  "name": "milknado",
+  "version": "0.1.0",
+  "mcpServers": {
+    "milknado": {
+      "command": "uv",
+      "args": ["run", "milknado-mcp"],
+      "env": {
+        "MILKNADO_PROJECT_ROOT": "${workspacePath}"
+      }
+    }
+  }
+}

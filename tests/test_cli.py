@@ -81,6 +81,7 @@ class TestInit:
     ) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         content = (project_dir / "milknado.toml").read_text()
+        assert "agent_preset" in content
         assert "agent_command" in content
         assert "quality_gates" in content
         assert "concurrency_limit" in content
@@ -307,6 +308,22 @@ class TestPlanCommand:
             ["plan", "extract service", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 1
+
+
+class TestAgentsCheck:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_agents_check_prints_preset(
+        self, _mock_crg: MagicMock, project_dir: Path,
+    ) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        result = runner.invoke(
+            app,
+            ["agents", "check", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "agent_preset" in result.output
+        assert "execution" in result.output
+        assert "planning argv" in result.output
 
 
 class TestRunCommand:
