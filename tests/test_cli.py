@@ -6,41 +6,40 @@ import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.domains.common.types import CompletionEvent
 from milknado.domains.planning import Planner
 
 runner = CliRunner()
 
 
+def _unique_run_factory() -> MagicMock:
+    counter = itertools.count(1)
+
+    def _create_run(*_args: object, **_kwargs: object) -> MagicMock:
+        run = MagicMock()
+        run.state.run_id = f"run-{next(counter)}"
+        return run
+
+    mock = MagicMock(side_effect=_create_run)
+    return mock
+
+
 def _configure_ralph_mocks(
     ralph_cls: MagicMock, project_dir: Path, *, unique: bool = False,
 ) -> None:
-    pending_events: list[CompletionEvent] = []
-
     if unique:
-        counter = itertools.count(1)
-
-        def _create_run(*_args: object, **_kwargs: object) -> MagicMock:
-            run = MagicMock()
-            run_id = f"run-{next(counter)}"
-            run.state.run_id = run_id
-            pending_events.append(CompletionEvent(run_id=run_id, success=True))
-            return run
-
-        ralph_cls.return_value.create_run = MagicMock(side_effect=_create_run)
+        ralph_cls.return_value.create_run = _unique_run_factory()
     else:
         fake_run = MagicMock()
         fake_run.state.run_id = "run-1"
         ralph_cls.return_value.create_run.return_value = fake_run
-        pending_events.append(CompletionEvent(run_id="run-1", success=True))
-
     ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
 
-    def _completion_events():
-        while pending_events:
-            yield pending_events.pop(0)
+    def _wait_for_next_completion(active_run_ids: set[str]) -> tuple[str, bool]:
+        return next(iter(active_run_ids)), True
 
-    ralph_cls.return_value.completion_events = _completion_events
+    ralph_cls.return_value.wait_for_next_completion.side_effect = (
+        _wait_for_next_completion
+    )
 
 
 @pytest.fixture()
