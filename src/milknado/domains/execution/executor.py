@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common.types import NodeStatus
+from milknado.domains.common.types import NodeStatus, RebaseResult
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
@@ -32,6 +32,15 @@ class CompletionResult:
     node_id: int
     rebased: bool
     newly_ready: list[int]
+    rebase_conflict: RebaseConflict | None = None
+
+
+@dataclass(frozen=True)
+class RebaseConflict:
+    node_id: int
+    description: str
+    conflicting_files: tuple[str, ...]
+    detail: str
 
 
 def _slugify(text: str) -> str:
@@ -99,6 +108,7 @@ class Executor:
                 quality_gates=list(config.quality_gates),
             )
             run_id = run.state.run_id
+            self._graph.set_run_id(node_id, run_id)
             self._ralph.start_run(run_id)
         except Exception:
             self._graph.mark_pending(node_id)
@@ -118,29 +128,45 @@ class Executor:
 
         worktree = Path(node.worktree_path) if node.worktree_path else None
         try:
-            rebased = self._rebase_and_merge(worktree, feature_branch)
+            rebase_result = self._rebase_and_merge(
+                worktree, feature_branch, node.id, node.description,
+            )
         except Exception:
-            rebased = False
+            rebase_result = RebaseResult(success=False)
 
-        if rebased:
+        conflict: RebaseConflict | None = None
+        if rebase_result.success:
             self._graph.mark_done(node_id)
         else:
             self._graph.mark_failed(node_id)
+            if rebase_result.conflicting_files or rebase_result.detail:
+                conflict = RebaseConflict(
+                    node_id=node_id,
+                    description=node.description,
+                    conflicting_files=rebase_result.conflicting_files,
+                    detail=rebase_result.detail,
+                )
 
-        newly_ready = get_dispatchable_nodes(self._graph) if rebased else []
+        newly_ready = get_dispatchable_nodes(self._graph) if rebase_result.success else []
         return CompletionResult(
-            node_id=node_id, rebased=rebased, newly_ready=newly_ready,
+            node_id=node_id,
+            rebased=rebase_result.success,
+            newly_ready=newly_ready,
+            rebase_conflict=conflict,
         )
 
     def _rebase_and_merge(
         self,
         worktree: Path | None,
         feature_branch: str,
-    ) -> bool:
+        node_id: int,
+        description: str,
+    ) -> RebaseResult:
         if not worktree or not worktree.exists():
-            return True
+            return RebaseResult(success=True)
         try:
-            self._git.commit_all(worktree, "feat(milknado): complete node")
+            msg = f"feat(milknado-{node_id}): {description}"
+            self._git.commit_all(worktree, msg)
             return self._git.rebase(worktree, feature_branch)
         finally:
             self._git.remove_worktree(worktree)

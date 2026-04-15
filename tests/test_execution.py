@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus
+from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
 from milknado.domains.execution import (
     CompletionResult,
     DispatchResult,
@@ -32,7 +32,7 @@ class FakeGit:
         self.created: list[tuple[Path, str]] = []
         self.removed: list[Path] = []
         self.commits: list[tuple[Path, str]] = []
-        self.rebase_result: bool = True
+        self.rebase_result: RebaseResult = RebaseResult(success=True)
 
     def create_worktree(self, path: Path, branch: str) -> Path:
         self.created.append((path, branch))
@@ -41,7 +41,7 @@ class FakeGit:
     def remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
-    def rebase(self, worktree: Path, onto: str) -> bool:
+    def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         return self.rebase_result
 
     def current_branch(self) -> str:
@@ -80,11 +80,11 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
-    def is_run_complete(self, run_id: str) -> bool:
-        return True
-
-    def is_run_success(self, run_id: str) -> bool:
-        return True
+    def wait_for_next_completion(
+        self, active_run_ids: set[str],
+    ) -> tuple[str, bool]:
+        run_id = next(iter(active_run_ids))
+        return run_id, True
 
     def generate_ralph_md(
         self,
@@ -266,6 +266,20 @@ class TestExecutorDispatch:
         ex.dispatch(1, config)
         assert fake_ralph.runs_started == ["run-1"]
 
+    def test_stores_run_id_in_graph(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        ex = Executor(
+            graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg(),
+        )
+        graph.add_node("track run")
+        ex.dispatch(1, config)
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.run_id == "run-1"
+
     def test_cleans_up_worktree_on_dispatch_failure(
         self,
         graph: MikadoGraph,
@@ -328,7 +342,7 @@ class TestExecutorComplete:
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.rebase_result = False
+        fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
             graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
         )
@@ -361,7 +375,7 @@ class TestExecutorComplete:
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.rebase_result = False
+        fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
             graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
         )
@@ -394,7 +408,7 @@ class TestExecutorComplete:
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.rebase_result = False
+        fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
             graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
         )
@@ -419,6 +433,23 @@ class TestExecutorComplete:
         graph.mark_running(child.id)
         result = ex.complete(child.id, "main")
         assert root.id in result.newly_ready
+
+    def test_commit_message_includes_node_id_and_description(
+        self, graph: MikadoGraph, tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+        )
+        graph.add_node("Add user authentication")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        ex.complete(1, "main")
+
+        assert len(fake_git.commits) == 1
+        _, msg = fake_git.commits[0]
+        assert msg == "feat(milknado-1): Add user authentication"
 
     def test_complete_nonexistent_raises(
         self, executor: Executor,
