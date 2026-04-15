@@ -5,7 +5,7 @@ description: Run milknado parallel leaf execution (ralph loops)
 
 # milknado run
 
-From the project root:
+From the project root.
 
 ```bash
 uv run milknado run --project-root .

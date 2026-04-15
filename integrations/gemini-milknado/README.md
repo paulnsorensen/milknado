@@ -31,3 +31,11 @@ Restart Gemini CLI after install or update.
 ## Variables
 
 `gemini-extension.json` uses `${workspacePath}` for `MILKNADO_PROJECT_ROOT` per extension variable rules. If your CLI version differs, set the env in user `settings.json` instead.
+
+## Generated commands
+
+Command TOML files in `commands/` are generated from `integrations/spec/commands.yaml`:
+
+```bash
+uv run python integrations/spec/generate_integrations.py
+```

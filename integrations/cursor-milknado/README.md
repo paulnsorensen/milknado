@@ -14,3 +14,9 @@ Cursor plugin layout per [Plugins reference](https://cursor.com/docs/reference/p
 ## Commands
 
 Markdown commands under `commands/` wrap the Typer CLI (`plan`, `run`, `status`, `agents check`).
+
+These files are generated from `integrations/spec/commands.yaml` via:
+
+```bash
+uv run python integrations/spec/generate_integrations.py
+```

@@ -5,7 +5,7 @@ description: Run milknado plan with a goal (Mikado decomposition)
 
 # milknado plan
 
-Run from the project root where `milknado.toml` lives:
+Run from the project root where `milknado.toml` lives.
 
 ```bash
 uv run milknado plan "<goal>" --project-root .

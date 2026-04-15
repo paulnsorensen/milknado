@@ -232,7 +232,12 @@ def plan(
 
     try:
         crg = CrgAdapter(project_root)
-        planner = Planner(graph, crg, config.agent_command)
+        planner = Planner(
+            graph,
+            crg,
+            config.agent_command,
+            agent_preset=config.agent_preset,
+        )
         console.print(f"[bold]Planning:[/bold] {goal}")
         result = planner.launch(goal, project_root)
         if result.success:
@@ -315,6 +320,39 @@ def run(
         _print_run_result(result)
     finally:
         graph.close()
+
+
+agents_app = typer.Typer(name="agents", help="Agent CLI compatibility")
+app.add_typer(agents_app)
+
+
+@agents_app.command("check")
+def agents_check(
+    project_root: Annotated[
+        Path, typer.Option("--project-root", help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Print resolved agent preset, execution command, and a sample planning argv."""
+    from milknado.domains.common.agent_argv import build_planning_subprocess
+
+    project_root = project_root.resolve()
+    config = _load_or_default(project_root)
+    console.print(f"[bold]agent_preset[/bold]: {config.agent_preset}")
+    console.print(f"[bold]execution (ralphify)[/bold]: {config.agent_command}")
+
+    sample = project_root / ".milknado" / ".agent-check-sample.md"
+    sample.parent.mkdir(parents=True, exist_ok=True)
+    sample.write_text("# sample planning context\n", encoding="utf-8")
+    try:
+        argv, extra = build_planning_subprocess(
+            sample, config.agent_preset, config.agent_command,
+        )
+        redacted = {k: ("<stdin>" if k == "input" else v) for k, v in extra.items()}
+        console.print(f"[bold]planning argv[/bold]: {argv}")
+        if redacted:
+            console.print(f"[bold]planning extras[/bold]: {redacted}")
+    finally:
+        sample.unlink(missing_ok=True)
 
 
 plugin_app = typer.Typer(name="plugin", help="Plugin management commands")
