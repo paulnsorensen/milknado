@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -18,8 +18,13 @@ from milknado.domains.graph import MikadoGraph
 
 
 @dataclass
+class FakeRunState:
+    run_id: str = "run-1"
+
+
+@dataclass
 class FakeRun:
-    id: str = "run-1"
+    state: FakeRunState = field(default_factory=FakeRunState)
 
 
 class FakeGit:
@@ -261,6 +266,45 @@ class TestExecutorDispatch:
         ex.dispatch(1, config)
         assert fake_ralph.runs_started == ["run-1"]
 
+    def test_cleans_up_worktree_on_dispatch_failure(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_git = FakeGit()
+        fake_ralph = FakeRalph()
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+            RuntimeError("ralph exploded"),
+        )
+        ex = Executor(
+            graph=graph, git=fake_git, ralph=fake_ralph, crg=FakeCrg(),
+        )
+        graph.add_node("doomed task")
+        with pytest.raises(RuntimeError, match="ralph exploded"):
+            ex.dispatch(1, config)
+        assert len(fake_git.removed) == 1
+
+    def test_resets_node_to_pending_on_dispatch_failure(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_ralph = FakeRalph()
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+            RuntimeError("ralph exploded"),
+        )
+        ex = Executor(
+            graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg(),
+        )
+        graph.add_node("doomed task")
+        with pytest.raises(RuntimeError, match="ralph exploded"):
+            ex.dispatch(1, config)
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.PENDING
+        assert node.worktree_path is None
+        assert node.branch_name is None
+
 
 class TestExecutorComplete:
     def test_marks_done_on_success(
@@ -313,7 +357,7 @@ class TestExecutorComplete:
         ex.complete(1, "main")
         assert wt in fake_git.removed
 
-    def test_keeps_worktree_on_failure(
+    def test_removes_worktree_on_rebase_failure(
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
@@ -326,7 +370,43 @@ class TestExecutorComplete:
         wt.mkdir()
         graph.mark_running(1, worktree_path=str(wt))
         ex.complete(1, "main")
-        assert len(fake_git.removed) == 0
+        assert wt in fake_git.removed
+
+    def test_removes_worktree_on_commit_failure(
+        self, graph: MikadoGraph, tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        fake_git.commit_all = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
+            RuntimeError("nothing to commit"),
+        )
+        ex = Executor(
+            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        result = ex.complete(1, "main")
+        assert wt in fake_git.removed
+        assert result.rebased is False
+
+    def test_clears_metadata_on_rebase_failure(
+        self, graph: MikadoGraph, tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        fake_git.rebase_result = False
+        ex = Executor(
+            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        ex.complete(1, "main")
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.worktree_path is None
+        assert node.branch_name is None
 
     def test_returns_newly_ready_nodes(
         self, graph: MikadoGraph,
@@ -357,6 +437,31 @@ class TestExecutorFail:
         node = graph.get_node(1)
         assert node is not None
         assert node.status == NodeStatus.FAILED
+
+    def test_clears_metadata_on_fail(
+        self, executor: Executor, graph: MikadoGraph,
+    ) -> None:
+        graph.add_node("task")
+        graph.mark_running(1, worktree_path="/tmp/wt", branch_name="milknado/1-task")
+        executor.fail(1)
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.worktree_path is None
+        assert node.branch_name is None
+
+    def test_removes_worktree_on_fail(
+        self, graph: MikadoGraph, tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        ex.fail(1)
+        assert wt in fake_git.removed
 
 
 class TestSlugify:

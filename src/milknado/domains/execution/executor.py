@@ -76,31 +76,37 @@ class Executor:
         branch = f"milknado/{node_id}-{slug}"
 
         self._git.create_worktree(wt_path, branch)
-        self._graph.mark_running(
-            node_id, worktree_path=str(wt_path), branch_name=branch,
-        )
+        try:
+            self._graph.mark_running(
+                node_id, worktree_path=str(wt_path), branch_name=branch,
+            )
 
-        context = _build_node_context(
-            node.description,
-            self._graph.get_file_ownership(node_id),
-            self._crg,
-        )
-        ralph_path = self._ralph.generate_ralph_md(
-            node, context, list(config.quality_gates),
-            wt_path / "RALPH.md",
-        )
+            context = _build_node_context(
+                node.description,
+                self._graph.get_file_ownership(node_id),
+                self._crg,
+            )
+            ralph_path = self._ralph.generate_ralph_md(
+                node, context, list(config.quality_gates),
+                wt_path / "RALPH.md",
+            )
 
-        run = self._ralph.create_run(
-            agent=config.agent_command,
-            ralph_dir=wt_path,
-            ralph_file=ralph_path,
-            commands=[],
-            quality_gates=list(config.quality_gates),
-        )
-        self._ralph.start_run(run.id)
+            run = self._ralph.create_run(
+                agent=config.agent_command,
+                ralph_dir=wt_path,
+                ralph_file=ralph_path,
+                commands=[],
+                quality_gates=list(config.quality_gates),
+            )
+            run_id = run.state.run_id
+            self._ralph.start_run(run_id)
+        except Exception:
+            self._graph.mark_pending(node_id)
+            self._git.remove_worktree(wt_path)
+            raise
 
         return DispatchResult(
-            node_id=node_id, worktree=wt_path, run_id=run.id,
+            node_id=node_id, worktree=wt_path, run_id=run_id,
         )
 
     def complete(
@@ -111,7 +117,10 @@ class Executor:
             raise ValueError(f"Node {node_id} not found")
 
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        rebased = self._rebase_and_merge(worktree, feature_branch)
+        try:
+            rebased = self._rebase_and_merge(worktree, feature_branch)
+        except Exception:
+            rebased = False
 
         if rebased:
             self._graph.mark_done(node_id)
@@ -130,13 +139,18 @@ class Executor:
     ) -> bool:
         if not worktree or not worktree.exists():
             return True
-        self._git.commit_all(worktree, "feat(milknado): complete node")
-        rebased = self._git.rebase(worktree, feature_branch)
-        if rebased:
+        try:
+            self._git.commit_all(worktree, "feat(milknado): complete node")
+            return self._git.rebase(worktree, feature_branch)
+        finally:
             self._git.remove_worktree(worktree)
-        return rebased
 
     def fail(self, node_id: int) -> None:
+        node = self._graph.get_node(node_id)
+        if node and node.worktree_path:
+            wt = Path(node.worktree_path)
+            if wt.exists():
+                self._git.remove_worktree(wt)
         self._graph.mark_failed(node_id)
 
 
