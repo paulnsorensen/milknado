@@ -1,12 +1,16 @@
-from __future__ import annotations
-
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.types import (
+    CompletionEvent,
+    MikadoNode,
+    NodeStatus,
+    RebaseResult,
+)
 from milknado.domains.execution import (
     CompletionResult,
     DispatchResult,
@@ -80,11 +84,8 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
-    def wait_for_next_completion(
-        self, active_run_ids: set[str],
-    ) -> tuple[str, bool]:
-        run_id = next(iter(active_run_ids))
-        return run_id, True
+    def completion_events(self) -> Iterator[CompletionEvent]:
+        yield CompletionEvent(run_id="run-1", success=True)
 
     def generate_ralph_md(
         self,

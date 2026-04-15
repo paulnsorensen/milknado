@@ -1,12 +1,16 @@
-from __future__ import annotations
-
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.types import (
+    CompletionEvent,
+    MikadoNode,
+    NodeStatus,
+    RebaseResult,
+)
 from milknado.domains.execution import (
     ExecutionConfig,
     Executor,
@@ -64,7 +68,7 @@ class FakeRalph:
     def __init__(self) -> None:
         self._run_counter = 0
         self._success: dict[str, bool] = {}
-        self._pending_completions: list[tuple[str, bool]] = []
+        self._pending: list[CompletionEvent] = []
 
     def create_run(
         self,
@@ -77,7 +81,9 @@ class FakeRalph:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
         success = self._success.get(run_id, True)
-        self._pending_completions.append((run_id, success))
+        self._pending.append(
+            CompletionEvent(run_id=run_id, success=success),
+        )
         return FakeRun(state=FakeRunState(run_id=run_id))
 
     def start_run(self, run_id: str) -> None:
@@ -92,14 +98,9 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
-    def wait_for_next_completion(
-        self, active_run_ids: set[str],
-    ) -> tuple[str, bool]:
-        for i, (run_id, success) in enumerate(self._pending_completions):
-            if run_id in active_run_ids:
-                self._pending_completions.pop(i)
-                return run_id, success
-        raise RuntimeError("No pending completions for active runs")
+    def completion_events(self) -> Iterator[CompletionEvent]:
+        while self._pending:
+            yield self._pending.pop(0)
 
     def generate_ralph_md(
         self,

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Protocol
 
-from milknado.domains.common.types import CompletionEvent, MikadoNode, RebaseResult
+from milknado.domains.common.types import MikadoNode, RebaseResult
 
 
 class GitPort(Protocol):
@@ -34,7 +33,9 @@ class RalphPort(Protocol):
     def stop_run(self, run_id: str) -> None: ...
     def list_runs(self) -> list[Any]: ...
     def get_run(self, run_id: str) -> Any | None: ...
-    def completion_events(self) -> Iterator[CompletionEvent]: ...
+    def wait_for_next_completion(
+        self, active_run_ids: set[str],
+    ) -> tuple[str, bool]: ...
     def generate_ralph_md(
         self,
         node: MikadoNode,

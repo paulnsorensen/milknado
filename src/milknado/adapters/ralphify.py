@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import queue
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from ralphify import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
-from milknado.domains.common.types import CompletionEvent, MikadoNode
+from milknado.domains.common.types import MikadoNode
 
 
 class RalphifyAdapter:
@@ -46,16 +45,20 @@ class RalphifyAdapter:
     def get_run(self, run_id: str) -> Any | None:
         return self._manager.get_run(run_id)
 
-    def completion_events(self) -> Iterator[CompletionEvent]:
+    def wait_for_next_completion(
+        self, active_run_ids: set[str],
+    ) -> tuple[str, bool]:
         while True:
             event = self._queue.get()
             if event.type != EventType.RUN_STOPPED:
+                continue
+            if event.run_id not in active_run_ids:
                 continue
             run = self._manager.get_run(event.run_id)
             success = (
                 run is not None and run.state.status == RunStatus.COMPLETED
             )
-            yield CompletionEvent(run_id=event.run_id, success=success)
+            return event.run_id, success
 
     def generate_ralph_md(
         self,
