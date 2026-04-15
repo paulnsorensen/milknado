@@ -199,7 +199,8 @@ class MikadoGraph:
         self._transition_status(node_id, NodeStatus.RUNNING)
         if worktree_path or branch_name or run_id:
             self._conn.execute(
-                "UPDATE nodes SET worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
+                "UPDATE nodes SET worktree_path = ?, branch_name = ?,"
+                " run_id = ? WHERE id = ?",
                 (worktree_path, branch_name, run_id, node_id),
             )
             self._conn.commit()

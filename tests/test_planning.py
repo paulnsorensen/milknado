@@ -194,7 +194,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", agent_preset="custom")
         planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
@@ -202,6 +202,30 @@ class TestPlanner:
         assert "--print" not in cmd
         assert len(cmd) == 2
         assert "my goal" in cmd[1]
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_claude_preset_uses_stdin(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        planner = Planner(
+            tmp_graph,
+            mock_crg,
+            "claude -p --dangerously-skip-permissions",
+            agent_preset="claude",
+        )
+        planner.launch("my goal", tmp_path)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:3] == ["claude", "-p", "--dangerously-skip-permissions"]
+        assert cmd[-1] == "-"
+        kwargs = mock_run.call_args[1]
+        assert kwargs.get("text") is True
+        assert "my goal" in str(kwargs.get("input", ""))
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_launch_failure(
@@ -226,7 +250,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "aider --model opus")
+        planner = Planner(tmp_graph, mock_crg, "aider --model opus", agent_preset="custom")
         planner.launch("goal", tmp_path)
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "aider"

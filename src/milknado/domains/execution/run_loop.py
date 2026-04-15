@@ -53,19 +53,18 @@ class RunLoop:
             dispatched_total += self._dispatch_batch(config, concurrency_limit, live)
             live.update(self._build_table())
 
-            for event in self._ralph.completion_events():
-                if event.run_id not in self._active:
-                    continue
+            while self._active:
+                run_id, success = self._ralph.wait_for_next_completion(
+                    set(self._active.keys()),
+                )
                 c, f, batch_conflicts = self._handle_completion(
-                    event.run_id, event.success, feature_branch, live,
+                    run_id, success, feature_branch, live,
                 )
                 completed_total += c
                 failed_total += f
                 conflicts.extend(batch_conflicts)
                 dispatched_total += self._dispatch_batch(config, concurrency_limit, live)
                 live.update(self._build_table())
-                if not self._active:
-                    break
 
         root = self._graph.get_root()
         root_done = root is not None and root.status == NodeStatus.DONE

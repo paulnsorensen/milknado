@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.common.agent_argv import build_planning_subprocess
 from milknado.domains.planning.context import build_planning_context
 
 if TYPE_CHECKING:
@@ -25,10 +26,13 @@ class Planner:
         graph: MikadoGraph,
         crg: CrgPort,
         agent_command: str = "claude",
+        *,
+        agent_preset: str = "custom",
     ) -> None:
         self._graph = graph
         self._crg = crg
         self._agent_command = agent_command
+        self._agent_preset = agent_preset
 
     def build_context(self, goal: str) -> str:
         return build_planning_context(goal, self._crg, self._graph)
@@ -51,20 +55,14 @@ class Planner:
         milknado_dir = project_root / ".milknado"
         milknado_dir.mkdir(parents=True, exist_ok=True)
         path = milknado_dir / "planning-context.md"
-        path.write_text(context)
+        path.write_text(context, encoding="utf-8")
         return path
 
     def _run_agent(
         self, context_path: Path, project_root: Path
     ) -> int:
-        context = context_path.read_text()
-        cmd = self._build_command(context)
-        result = subprocess.run(
-            cmd, cwd=project_root, check=False
+        argv, extra = build_planning_subprocess(
+            context_path, self._agent_preset, self._agent_command,
         )
+        result = subprocess.run(argv, cwd=project_root, check=False, **extra)
         return result.returncode
-
-    def _build_command(self, prompt: str) -> list[str]:
-        parts = self._agent_command.split()
-        parts.append(prompt)
-        return parts

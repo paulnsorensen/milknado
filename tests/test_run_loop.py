@@ -1,12 +1,14 @@
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.types import (
+    MikadoNode,
+    NodeStatus,
+    RebaseResult,
+)
 from milknado.domains.execution import (
     ExecutionConfig,
     Executor,

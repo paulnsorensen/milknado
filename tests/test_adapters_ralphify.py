@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import queue
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -7,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.adapters.ralphify import RalphifyAdapter, _build_ralph_content
-from milknado.domains.common.types import CompletionEvent, MikadoNode
+from milknado.domains.common.types import MikadoNode
 
 
 @pytest.fixture()
@@ -91,8 +89,8 @@ class TestListAndGetRuns:
         assert adapter.get_run("missing") is None
 
 
-class TestCompletionEvents:
-    def test_yields_on_run_stopped_event(
+class TestWaitForNextCompletion:
+    def test_returns_on_run_stopped_event(
         self, adapter: RalphifyAdapter, mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
@@ -105,11 +103,11 @@ class TestCompletionEvents:
         mock_manager.get_run.return_value = run
         adapter._queue.put(event)
 
-        events = adapter.completion_events()
-        result = next(events)
-        assert result == CompletionEvent(run_id="run-1", success=True)
+        run_id, success = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert success is True
 
-    def test_yields_failure_on_failed_run(
+    def test_returns_false_on_failed_run(
         self, adapter: RalphifyAdapter, mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
@@ -122,9 +120,9 @@ class TestCompletionEvents:
         mock_manager.get_run.return_value = run
         adapter._queue.put(event)
 
-        events = adapter.completion_events()
-        result = next(events)
-        assert result == CompletionEvent(run_id="run-1", success=False)
+        run_id, success = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert success is False
 
     def test_skips_non_stop_events(
         self, adapter: RalphifyAdapter, mock_manager: MagicMock,
@@ -145,11 +143,11 @@ class TestCompletionEvents:
         adapter._queue.put(noise)
         adapter._queue.put(stop)
 
-        events = adapter.completion_events()
-        result = next(events)
-        assert result == CompletionEvent(run_id="run-1", success=True)
+        run_id, success = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert success is True
 
-    def test_yields_events_for_any_run(
+    def test_skips_events_for_inactive_runs(
         self, adapter: RalphifyAdapter, mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
@@ -169,13 +167,11 @@ class TestCompletionEvents:
         adapter._queue.put(event1)
         adapter._queue.put(event2)
 
-        events = adapter.completion_events()
-        first = next(events)
-        assert first == CompletionEvent(run_id="run-99", success=True)
-        second = next(events)
-        assert second == CompletionEvent(run_id="run-1", success=True)
+        run_id, success = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert success is True
 
-    def test_yields_failure_when_run_missing(
+    def test_returns_false_when_run_missing(
         self, adapter: RalphifyAdapter, mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType
@@ -186,9 +182,9 @@ class TestCompletionEvents:
         mock_manager.get_run.return_value = None
         adapter._queue.put(event)
 
-        events = adapter.completion_events()
-        result = next(events)
-        assert result == CompletionEvent(run_id="run-1", success=False)
+        run_id, success = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert success is False
 
 
 class TestGenerateRalphMd:

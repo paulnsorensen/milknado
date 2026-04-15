@@ -1,0 +1,54 @@
+commands:
+  - id: milknado-plan
+    title: milknado plan
+    cursor_description: Run milknado plan with a goal (Mikado decomposition)
+    cursor_command: uv run milknado plan "<goal>" --project-root .
+    cursor_body_intro: Run from the project root where `milknado.toml` lives.
+    cursor_note: Replace `<goal>` with the user’s decomposition target. Ensure `milknado init` and `milknado index` have been run if this is a new tree.
+    gemini_file: milknado_plan.toml
+    gemini_description: Run milknado plan with a goal (Mikado decomposition).
+    gemini_heading: Milknado plan
+    gemini_prompt_body: |
+      Run `milknado plan` in the workspace:
+
+      !{uv run milknado plan "<goal>"}
+
+  - id: milknado-run
+    title: milknado run
+    cursor_description: Run milknado parallel leaf execution (ralph loops)
+    cursor_command: uv run milknado run --project-root .
+    cursor_body_intro: From the project root.
+    cursor_note: Confirm `agent_preset` / `agent_command` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).
+    gemini_file: milknado_run.toml
+    gemini_description: Run milknado parallel leaf execution (ralph loops).
+    gemini_heading: Milknado run
+    gemini_prompt_body: |
+      Shell output from `milknado run` in the workspace:
+
+      !{uv run milknado run}
+
+  - id: milknado-status
+    title: milknado status
+    cursor_description: Show Mikado graph status
+    cursor_command: uv run milknado status --project-root .
+    cursor_body_intro: ""
+    cursor_note: ""
+    gemini_file: milknado_status.toml
+    gemini_description: Show milknado Mikado graph status via CLI.
+    gemini_heading: Milknado status
+    gemini_prompt_body: |
+      Shell output from `milknado status` in the workspace:
+
+      !{uv run milknado status}
+
+  - id: milknado-agents-check
+    title: milknado agents check
+    cursor_description: Print resolved agent preset and planning argv sample
+    cursor_command: uv run milknado agents check --project-root .
+    cursor_body_intro: ""
+    cursor_note: Use this after changing `agent_preset` or `agent_command` in `milknado.toml`.
+    gemini_file: milknado_agents_check.toml
+    gemini_description: Print milknado agent preset and planning argv sample.
+    gemini_heading: Milknado agents check
+    gemini_prompt_body: |
+      !{uv run milknado agents check}
