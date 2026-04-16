@@ -47,8 +47,7 @@ class GraphSummary:
 def summarize(graph: MikadoGraph) -> GraphSummary:
     nodes = graph.get_all_nodes()
     ready = graph.get_ready_nodes()
-    ready_pending = [n for n in ready if n.status == NodeStatus.PENDING]
-    ready_ids = [n.id for n in ready_pending]
+    ready_ids = [n.id for n in ready]
     conflicts = graph.check_parallel_safety(ready_ids)
     active = [n for n in nodes if n.status == NodeStatus.RUNNING and n.worktree_path]
 
@@ -58,7 +57,7 @@ def summarize(graph: MikadoGraph) -> GraphSummary:
         running=sum(1 for n in nodes if n.status == NodeStatus.RUNNING),
         failed=sum(1 for n in nodes if n.status == NodeStatus.FAILED),
         blocked=sum(1 for n in nodes if n.status == NodeStatus.BLOCKED),
-        ready=ready_pending,
+        ready=ready,
         conflicts=conflicts,
         active_worktrees=active,
     )
@@ -120,11 +119,11 @@ def _print_summary(
     if summary.active_worktrees:
         console.print(f"[bold]Active Worktrees ({len(summary.active_worktrees)}):[/bold]")
         for node in summary.active_worktrees:
-            ralph_status = _ralph_status_label(node.run_id, run_states)
+            run_status = _run_status_label(node.run_id, run_states)
             console.print(
                 f"  [cyan]◉[/cyan] [{node.id}] {node.description}"
                 f" [dim]({node.worktree_path})[/dim]"
-                f"{ralph_status}"
+                f"{run_status}"
             )
 
     if summary.ready:
@@ -139,20 +138,17 @@ def _print_summary(
             console.print(f"  Nodes {a} ↔ {b}: {', '.join(files)}")
 
 
-_RALPH_STATUS_COLORS: dict[str, str] = {
-    "running": "cyan",
-    "completed": "green",
-    "failed": "red",
-}
-
-
-def _ralph_status_label(
+def _run_status_label(
     run_id: str | None, run_states: dict[str, str] | None,
 ) -> str:
-    if not run_id or not run_states:
+    if not run_id:
         return ""
+    if not run_states:
+        return " [dim]run: unknown[/dim]"
     status = run_states.get(run_id)
     if not status:
-        return ""
-    color = _RALPH_STATUS_COLORS.get(status, "dim")
-    return f" [{color}]ralph: {status}[/{color}]"
+        return " [dim]run: unknown[/dim]"
+    color = {"running": "cyan", "completed": "green", "failed": "red"}.get(
+        status, "dim",
+    )
+    return f" [{color}]run: {status}[/{color}]"

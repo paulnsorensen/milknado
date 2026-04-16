@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.domains.graph.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.planner import Planner, PlanResult
 

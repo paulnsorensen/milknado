@@ -126,10 +126,10 @@ Commands that must pass for every user story:
 **Description:** As milknado's core, I need a SQLite-backed Mikado DAG that tracks nodes, edges, status, file ownership, and metadata.
 
 **Acceptance Criteria:**
-- [ ] Nodes table: id, description, status (pending/running/done/blocked/failed), parent_id, worktree_path, branch_name, created_at, completed_at
+- [ ] Nodes table: id, description, status (pending/running/done/blocked/failed), parent_id, worktree_path, branch_name, run_id, created_at, completed_at
 - [ ] Edges table: parent_id, child_id (child must complete before parent)
 - [ ] File ownership table: node_id, file_path (which files this node is expected to touch)
-- [ ] A node is "ready" when all its children are status=done
+- [ ] A node is "ready" when it is pending and all its children are status=done
 - [ ] Root node is the overall goal
 - [ ] Leaf nodes are nodes with no children
 - [ ] Status transitions are enforced (e.g., can't go from done to pending)

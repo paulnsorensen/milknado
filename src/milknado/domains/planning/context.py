@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort
     from milknado.domains.common.types import MikadoNode
-    from milknado.domains.graph.graph import MikadoGraph
+    from milknado.domains.graph import MikadoGraph
 
 
 def build_planning_context(
@@ -63,12 +63,9 @@ def _graph_section(graph: MikadoGraph) -> str:
             lines.append(f"- [{node.id}] {node.description}")
 
     ready = graph.get_ready_nodes()
-    pending_ready = [
-        n for n in ready if n.status.value == "pending"
-    ]
-    if pending_ready:
+    if ready:
         lines.append("\n## Ready to Execute\n")
-        for node in pending_ready:
+        for node in ready:
             lines.append(f"- [{node.id}] {node.description}")
 
     return "\n".join(lines)

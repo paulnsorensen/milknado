@@ -9,7 +9,7 @@ from milknado.domains.common.types import NodeStatus, RebaseResult
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
-    from milknado.domains.graph.graph import MikadoGraph
+    from milknado.domains.graph import MikadoGraph
 
 
 @dataclass(frozen=True)
@@ -50,8 +50,7 @@ def _slugify(text: str) -> str:
 
 def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
     ready = graph.get_ready_nodes()
-    pending = [n for n in ready if n.status == NodeStatus.PENDING]
-    ids = [n.id for n in pending]
+    ids = [n.id for n in ready]
     conflicts = graph.check_parallel_safety(ids)
     blocked = {c[1] for c in conflicts}
     return [nid for nid in ids if nid not in blocked]

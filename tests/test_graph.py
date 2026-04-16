@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -133,6 +134,13 @@ class TestGetReadyNodes:
         ready = graph.get_ready_nodes()
         assert any(n.id == child.id for n in ready)
 
+    def test_done_node_not_ready(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("ready")
+        graph.mark_running(node.id)
+        graph.mark_done(node.id)
+        ready = graph.get_ready_nodes()
+        assert all(n.id != node.id for n in ready)
+
 
 class TestStatusTransitions:
     def test_pending_to_running(self, graph: MikadoGraph) -> None:
@@ -221,6 +229,10 @@ class TestStatusTransitions:
         assert updated is not None
         assert updated.run_id == "run-99"
 
+    def test_set_run_id_nonexistent_raises(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            graph.set_run_id(999, "run-99")
+
     def test_failed_clears_run_id(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
         graph.mark_running(node.id, run_id="run-1")
@@ -287,3 +299,43 @@ class TestClose:
         g.close()
         with pytest.raises(Exception):
             g.add_node("after close")
+
+
+class TestSchemaMigration:
+    def test_adds_run_id_column_for_existing_db(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "legacy.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript("""
+            CREATE TABLE nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                parent_id INTEGER,
+                worktree_path TEXT,
+                branch_name TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT
+            );
+            CREATE TABLE edges (
+                parent_id INTEGER NOT NULL,
+                child_id INTEGER NOT NULL,
+                PRIMARY KEY (parent_id, child_id)
+            );
+            CREATE TABLE file_ownership (
+                node_id INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                PRIMARY KEY (node_id, file_path)
+            );
+        """)
+        conn.execute(
+            "INSERT INTO nodes (description, status, created_at) VALUES (?, ?, ?)",
+            ("legacy node", "pending", "2026-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        graph = MikadoGraph(db_path)
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.run_id is None
+        graph.close()
