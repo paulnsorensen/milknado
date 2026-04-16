@@ -18,7 +18,7 @@ commands:
     cursor_description: Run milknado parallel leaf execution (ralph loops)
     cursor_command: uv run milknado run --project-root .
     cursor_body_intro: From the project root.
-    cursor_note: Confirm `agent_preset` / `agent_command` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).
+    cursor_note: Confirm `agent_family` / `execution_agent` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).
     gemini_file: milknado_run.toml
     gemini_description: Run milknado parallel leaf execution (ralph loops).
     gemini_heading: Milknado run
@@ -43,12 +43,12 @@ commands:
 
   - id: milknado-agents-check
     title: milknado agents check
-    cursor_description: Print resolved agent preset and planning argv sample
+    cursor_description: Print resolved planning/execution commands and planning argv sample
     cursor_command: uv run milknado agents check --project-root .
     cursor_body_intro: ""
-    cursor_note: Use this after changing `agent_preset` or `agent_command` in `milknado.toml`.
+    cursor_note: Use this after changing `agent_family`, `planning_agent`, or `execution_agent` in `milknado.toml`.
     gemini_file: milknado_agents_check.toml
-    gemini_description: Print milknado agent preset and planning argv sample.
+    gemini_description: Print milknado planning/execution commands and planning argv sample.
     gemini_heading: Milknado agents check
     gemini_prompt_body: |
       !{uv run milknado agents check}

@@ -119,7 +119,7 @@ class FakeRalph:
 @pytest.fixture()
 def config(tmp_path: Path) -> ExecutionConfig:
     return ExecutionConfig(
-        agent_command="claude",
+        execution_agent="claude",
         quality_gates=("uv run pytest",),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,

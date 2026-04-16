@@ -159,14 +159,6 @@ class TestBuildPlanningContext:
 
 
 class TestPlanner:
-    def test_build_context_delegates(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        planner = Planner(tmp_graph, mock_crg, "claude")
-        ctx = planner.build_context("my goal")
-        assert "my goal" in ctx
-        assert "Architecture" in ctx
-
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_launch_writes_context_file(
         self,
@@ -194,17 +186,15 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude", agent_preset="custom")
+        planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "claude"
-        assert "--print" not in cmd
-        assert len(cmd) == 2
-        assert "my goal" in cmd[1]
+        assert cmd[-1] == "-"
 
     @patch("milknado.domains.planning.planner.subprocess.run")
-    def test_launch_claude_preset_uses_stdin(
+    def test_launch_uses_stdin_input(
         self,
         mock_run: MagicMock,
         tmp_path: Path,
@@ -212,12 +202,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(
-            tmp_graph,
-            mock_crg,
-            "claude -p --dangerously-skip-permissions",
-            agent_preset="claude",
-        )
+        planner = Planner(tmp_graph, mock_crg, "claude -p --dangerously-skip-permissions")
         planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
@@ -250,7 +235,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "aider --model opus", agent_preset="custom")
+        planner = Planner(tmp_graph, mock_crg, "aider --model opus")
         planner.launch("goal", tmp_path)
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "aider"

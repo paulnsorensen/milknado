@@ -845,7 +845,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6" },
     { name = "ralphify", git = "https://github.com/paulnsorensen/ralphify?rev=main" },
     { name = "rich", specifier = ">=13" },
-    { name = "tiktoken", specifier = ">=0.7" },
+    { name = "tiktoken", specifier = ">=0.8" },
     { name = "typer", specifier = ">=0.12" },
 ]
 

@@ -8,8 +8,6 @@ from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
-    CompletionEvent,
-    FileOwnership,
     MikadoEdge,
     MikadoNode,
     NodeStatus,
@@ -17,9 +15,7 @@ from milknado.domains.common.types import (
 )
 
 __all__ = [
-    "CompletionEvent",
     "CrgPort",
-    "FileOwnership",
     "GitPort",
     "MikadoEdge",
     "MikadoNode",
