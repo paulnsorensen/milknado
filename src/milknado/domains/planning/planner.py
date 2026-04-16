@@ -31,15 +31,27 @@ class Planner:
         self._crg = crg
         self._planning_agent = planning_agent
 
-    def launch(self, goal: str, project_root: Path) -> PlanResult:
-        context = build_planning_context(goal, self._crg, self._graph)
+    def launch(
+        self,
+        spec_path: Path,
+        project_root: Path,
+        *,
+        execution_agent: str,
+        allow_external_mcp: bool = False,
+    ) -> PlanResult:
+        context = build_planning_context(
+            spec_path=spec_path,
+            crg=self._crg,
+            graph=self._graph,
+            execution_agent=execution_agent,
+        )
         milknado_dir = project_root / ".milknado"
         milknado_dir.mkdir(parents=True, exist_ok=True)
         context_path = milknado_dir / "planning-context.md"
         context_path.write_text(context, encoding="utf-8")
 
         argv, extra = build_planning_subprocess(
-            context_path, self._planning_agent,
+            context_path, self._planning_agent, allow_external_mcp=allow_external_mcp,
         )
         result = subprocess.run(argv, cwd=project_root, check=False, **extra)
         exit_code = result.returncode

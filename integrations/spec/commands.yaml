@@ -1,17 +1,17 @@
 commands:
   - id: milknado-plan
     title: milknado plan
-    cursor_description: Run milknado plan with a goal (Mikado decomposition)
-    cursor_command: uv run milknado plan "<goal>" --project-root .
+    cursor_description: Run milknado plan with a markdown spec (Mikado decomposition)
+    cursor_command: uv run milknado plan --spec specs/feature.md --project-root .
     cursor_body_intro: Run from the project root where `milknado.toml` lives.
-    cursor_note: Replace `<goal>` with the user’s decomposition target. Ensure `milknado init` and `milknado index` have been run if this is a new tree.
+    cursor_note: Replace `specs/feature.md` with your spec path. Ensure `milknado init` and `milknado index` have been run if this is a new tree.
     gemini_file: milknado_plan.toml
     gemini_description: Run milknado plan with a goal (Mikado decomposition).
     gemini_heading: Milknado plan
     gemini_prompt_body: |
       Run `milknado plan` in the workspace:
 
-      !{uv run milknado plan "<goal>"}
+      !{uv run milknado plan --spec specs/feature.md}
 
   - id: milknado-run
     title: milknado run

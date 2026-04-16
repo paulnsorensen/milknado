@@ -280,34 +280,44 @@ class TestAddNode:
 class TestPlanCommand:
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("tiktoken.get_encoding")
     def test_plan_success(
         self,
+        mock_encoding: MagicMock,
         mock_run: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
+        mock_encoding.return_value.encode.return_value = [1, 2, 3]
         mock_run.return_value = MagicMock(returncode=0)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        spec = project_dir / "spec.md"
+        spec.write_text("# Spec\n\nextract service", encoding="utf-8")
         result = runner.invoke(
             app,
-            ["plan", "extract service", "--project-root", str(project_dir)],
+            ["plan", "--spec", str(spec), "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
         assert "Planning" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("tiktoken.get_encoding")
     def test_plan_failure(
         self,
+        mock_encoding: MagicMock,
         mock_run: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
+        mock_encoding.return_value.encode.return_value = [1, 2, 3]
         mock_run.return_value = MagicMock(returncode=1)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        spec = project_dir / "spec.md"
+        spec.write_text("# Spec\n\nextract service", encoding="utf-8")
         result = runner.invoke(
             app,
-            ["plan", "extract service", "--project-root", str(project_dir)],
+            ["plan", "--spec", str(spec), "--project-root", str(project_dir)],
         )
         assert result.exit_code == 1
 
