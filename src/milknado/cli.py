@@ -19,6 +19,11 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.agent_argv import (
+    build_planning_subprocess,
+    resolve_execution_agent_command,
+    resolve_planning_agent_command,
+)
 from milknado.domains.graph import MikadoGraph, render_tree
 
 app = typer.Typer(name="milknado", help="Mikado execution engine")
@@ -217,29 +222,70 @@ def add_node(
 
 @app.command()
 def plan(
-    goal: Annotated[str, typer.Argument(help="Goal to decompose")],
+    spec: Annotated[
+        Path,
+        typer.Option(
+            "--spec",
+            help="Markdown spec file to decompose.",
+        ),
+    ],
+    planning_agent: Annotated[
+        str | None,
+        typer.Option("--planning-agent", help="Planning one-shot agent command override."),
+    ] = None,
+    execution_agent: Annotated[
+        str | None,
+        typer.Option("--execution-agent", help="Execution loop agent command override."),
+    ] = None,
+    allow_external_mcp: Annotated[
+        bool,
+        typer.Option(
+            "--allow-external-mcp",
+            help="Allow inheriting external MCP environment into planning subprocess.",
+        ),
+    ] = False,
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
 ) -> None:
-    """Launch interactive planning session to decompose a goal."""
+    """Run one-shot planning session from a markdown spec."""
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.planning import Planner
 
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
+    spec_path = (project_root / spec).resolve() if not spec.is_absolute() else spec.resolve()
+    if not spec_path.exists() or not spec_path.is_file():
+        console.print(f"[red]Spec file not found: {spec_path}[/red]")
+        raise typer.Exit(code=1)
+    if spec_path.suffix.lower() != ".md":
+        console.print("[red]Spec file must be markdown (.md).[/red]")
+        raise typer.Exit(code=1)
     graph = _ensure_db(config)
 
     try:
         crg = CrgAdapter(project_root)
+        crg.ensure_graph(project_root)
+        resolved_planning_agent = resolve_planning_agent_command(
+            config.agent_family,
+            planning_agent=planning_agent or config.planning_agent,
+        )
+        resolved_execution_agent = resolve_execution_agent_command(
+            config.agent_family,
+            execution_agent=execution_agent or config.execution_agent,
+        )
         planner = Planner(
             graph,
             crg,
-            config.agent_command,
-            agent_preset=config.agent_preset,
+            resolved_planning_agent,
         )
-        console.print(f"[bold]Planning:[/bold] {goal}")
-        result = planner.launch(goal, project_root)
+        console.print(f"[bold]Planning spec:[/bold] {spec_path}")
+        result = planner.launch(
+            spec_path,
+            project_root,
+            execution_agent=resolved_execution_agent,
+            allow_external_mcp=allow_external_mcp,
+        )
         if result.success:
             console.print("[green]Planning session complete.[/green]")
         else:
@@ -257,7 +303,7 @@ def _build_exec_config(
     from milknado.domains.execution import ExecutionConfig
 
     return ExecutionConfig(
-        agent_command=config.agent_command,
+        execution_agent=config.execution_agent,
         quality_gates=config.quality_gates,
         worktree_pattern=config.worktree_pattern,
         project_root=project_root,
@@ -332,20 +378,20 @@ def agents_check(
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
 ) -> None:
-    """Print resolved agent preset, execution command, and a sample planning argv."""
-    from milknado.domains.common.agent_argv import build_planning_subprocess
+    """Print resolved planning/execution commands and sample planning argv."""
 
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
-    console.print(f"[bold]agent_preset[/bold]: {config.agent_preset}")
-    console.print(f"[bold]execution (ralphify)[/bold]: {config.agent_command}")
+    console.print(f"[bold]agent_family[/bold]: {config.agent_family}")
+    console.print(f"[bold]planning[/bold]: {config.planning_agent}")
+    console.print(f"[bold]execution (ralphify)[/bold]: {config.execution_agent}")
 
     sample = project_root / ".milknado" / ".agent-check-sample.md"
     sample.parent.mkdir(parents=True, exist_ok=True)
     sample.write_text("# sample planning context\n", encoding="utf-8")
     try:
         argv, extra = build_planning_subprocess(
-            sample, config.agent_preset, config.agent_command,
+            sample, config.planning_agent,
         )
         redacted = {k: ("<stdin>" if k == "input" else v) for k, v in extra.items()}
         console.print(f"[bold]planning argv[/bold]: {argv}")

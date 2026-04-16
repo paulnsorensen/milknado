@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from milknado.domains.common.agent_argv import (
-    normalize_preset,
+    DEFAULT_EXECUTION_AGENT_BY_FAMILY,
+    DEFAULT_PLANNING_AGENT_BY_FAMILY,
+    resolve_planning_agent_command,
     resolve_execution_agent_command,
 )
 
@@ -14,12 +16,13 @@ from milknado.domains.common.agent_argv import (
 class MilknadoConfig:
     """Runtime config loaded from ``milknado.toml``.
 
-    ``agent_preset`` selects built-in print-mode CLIs for planning + ralphify
-    execution. Use ``custom`` and set ``agent_command`` for anything else.
+    ``agent_family`` selects default planning/execution model family commands.
+    ``planning_agent`` and ``execution_agent`` can be overridden per project.
     """
 
-    agent_preset: str = "custom"
-    agent_command: str = "claude"
+    agent_family: str = "claude"
+    planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
+    execution_agent: str = "claude --model sonnet -p --dangerously-skip-permissions"
     quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check", "uv run ty check")
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
@@ -29,11 +32,10 @@ class MilknadoConfig:
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
-    from milknado.domains.common.agent_argv import EXECUTION_AGENT_BY_PRESET
-
     return MilknadoConfig(
-        agent_preset="claude",
-        agent_command=EXECUTION_AGENT_BY_PRESET["claude"],
+        agent_family="claude",
+        planning_agent=resolve_planning_agent_command("claude"),
+        execution_agent=resolve_execution_agent_command("claude"),
         project_root=project_root,
         db_path=project_root / ".milknado" / "milknado.db",
     )
@@ -46,23 +48,35 @@ def load_config(path: Path) -> MilknadoConfig:
     milknado = data.get("milknado", data)
     project_root = path.parent
 
-    preset_raw = milknado.get("agent_preset", "custom")
-    preset = normalize_preset(
-        str(preset_raw) if preset_raw is not None else None,
+    family = str(milknado.get("agent_family", "claude")).strip().lower()
+    if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
+        allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
+        raise ValueError(
+            f"Invalid agent_family '{family}'. Expected one of: {allowed}",
+        )
+    planning_agent_raw = milknado.get("planning_agent")
+    execution_agent_raw = milknado.get("execution_agent")
+    planning_agent = resolve_planning_agent_command(
+        family,
+        planning_agent=(
+            str(planning_agent_raw)
+            if planning_agent_raw is not None
+            else None
+        ),
     )
-    has_cmd_key = "agent_command" in milknado
-    file_cmd = milknado.get("agent_command", "claude")
-    file_cmd_s = str(file_cmd) if file_cmd is not None else "claude"
-
-    agent_command = resolve_execution_agent_command(
-        preset,
-        agent_command=file_cmd_s,
-        agent_command_key_present=has_cmd_key,
+    execution_agent = resolve_execution_agent_command(
+        family,
+        execution_agent=(
+            str(execution_agent_raw)
+            if execution_agent_raw is not None
+            else None
+        ),
     )
 
     return MilknadoConfig(
-        agent_preset=preset,
-        agent_command=agent_command,
+        agent_family=family,
+        planning_agent=planning_agent,
+        execution_agent=execution_agent,
         quality_gates=tuple(milknado.get(
             "quality_gates",
             ["uv run pytest", "uv run ruff check", "uv run ty check"],
@@ -78,8 +92,9 @@ def load_config(path: Path) -> MilknadoConfig:
 def save_config(config: MilknadoConfig, path: Path) -> None:
     lines = [
         "[milknado]",
-        f'agent_preset = "{config.agent_preset}"',
-        f'agent_command = "{_escape_toml_string(config.agent_command)}"',
+        f'agent_family = "{config.agent_family}"',
+        f'planning_agent = "{_escape_toml_string(config.planning_agent)}"',
+        f'execution_agent = "{_escape_toml_string(config.execution_agent)}"',
         f"quality_gates = {list(config.quality_gates)}",
         f'worktree_pattern = "{config.worktree_pattern}"',
         f"concurrency_limit = {config.concurrency_limit}",

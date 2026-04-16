@@ -48,15 +48,3 @@ class RebaseResult:
     success: bool
     conflicting_files: tuple[str, ...] = ()
     detail: str = ""
-
-
-@dataclass(frozen=True)
-class CompletionEvent:
-    run_id: str
-    success: bool
-
-
-@dataclass(frozen=True)
-class FileOwnership:
-    node_id: int
-    file_path: str
