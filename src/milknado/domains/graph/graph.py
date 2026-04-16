@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from milknado.domains.common import (
 class MikadoGraph:
     def __init__(self, db_path: Path) -> None:
         self._conn = sqlite3.connect(str(db_path))
+        self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._create_tables()
@@ -46,8 +48,49 @@ class MikadoGraph:
                 FOREIGN KEY (node_id) REFERENCES nodes(id)
             );
         """)
+        self._ensure_nodes_schema()
+
+    def _ensure_nodes_schema(self) -> None:
+        columns = {
+            row[1]
+            for row in self._conn.execute(
+                "PRAGMA table_info(nodes)",
+            ).fetchall()
+        }
+        if "run_id" not in columns:
+            self._conn.execute("ALTER TABLE nodes ADD COLUMN run_id TEXT")
+            self._conn.commit()
 
     def _row_to_node(self, row: sqlite3.Row | tuple) -> MikadoNode:
+        if isinstance(row, sqlite3.Row):
+            created_at_raw = row["created_at"]
+            completed_at_raw = row["completed_at"]
+            run_id = row["run_id"] if "run_id" in row.keys() else None
+            return MikadoNode(
+                id=row["id"],
+                description=row["description"],
+                status=NodeStatus(row["status"]),
+                parent_id=row["parent_id"],
+                worktree_path=row["worktree_path"],
+                branch_name=row["branch_name"],
+                run_id=run_id,
+                created_at=datetime.fromisoformat(created_at_raw),
+                completed_at=(
+                    datetime.fromisoformat(completed_at_raw)
+                    if completed_at_raw
+                    else None
+                ),
+            )
+
+        run_id = None
+        if len(row) == 9:
+            # Legacy tables migrated with ALTER TABLE append run_id at the end.
+            run_id = row[8]
+            created_at_idx = 6
+            completed_at_idx = 7
+        else:
+            created_at_idx = 6
+            completed_at_idx = 7
         return MikadoNode(
             id=row[0],
             description=row[1],
@@ -55,9 +98,13 @@ class MikadoGraph:
             parent_id=row[3],
             worktree_path=row[4],
             branch_name=row[5],
-            run_id=row[6],
-            created_at=datetime.fromisoformat(row[7]),
-            completed_at=datetime.fromisoformat(row[8]) if row[8] else None,
+            run_id=run_id,
+            created_at=datetime.fromisoformat(row[created_at_idx]),
+            completed_at=(
+                datetime.fromisoformat(row[completed_at_idx])
+                if row[completed_at_idx]
+                else None
+            ),
         )
 
     def add_node(
@@ -140,6 +187,8 @@ class MikadoGraph:
         all_nodes = self.get_all_nodes()
         ready = []
         for node in all_nodes:
+            if node.status != NodeStatus.PENDING:
+                continue
             children = self.get_children(node.id)
             if not children or all(
                 c.status == NodeStatus.DONE for c in children
@@ -157,15 +206,7 @@ class MikadoGraph:
     def _transition_status(
         self, node_id: int, target: NodeStatus
     ) -> None:
-        node = self.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        allowed = VALID_TRANSITIONS.get(node.status, set())
-        if target not in allowed:
-            raise ValueError(
-                f"Cannot transition from {node.status.value} "
-                f"to {target.value}"
-            )
+        self._assert_transition(node_id, target)
         completed_at = (
             datetime.now(UTC).isoformat()
             if target == NodeStatus.DONE
@@ -177,15 +218,26 @@ class MikadoGraph:
         )
         self._conn.commit()
 
+    def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
+        node = self.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        allowed = VALID_TRANSITIONS.get(node.status, set())
+        if target not in allowed:
+            raise ValueError(
+                f"Cannot transition from {node.status.value} "
+                f"to {target.value}"
+            )
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
 
     def mark_failed(self, node_id: int) -> None:
-        self._transition_status(node_id, NodeStatus.FAILED)
+        self._assert_transition(node_id, NodeStatus.FAILED)
         self._conn.execute(
-            "UPDATE nodes SET worktree_path = NULL, branch_name = NULL,"
-            " run_id = NULL WHERE id = ?",
-            (node_id,),
+            "UPDATE nodes SET status = ?, completed_at = NULL, "
+            "worktree_path = NULL, branch_name = NULL, run_id = NULL "
+            "WHERE id = ?",
+            (NodeStatus.FAILED.value, node_id),
         )
         self._conn.commit()
 
@@ -196,27 +248,35 @@ class MikadoGraph:
         branch_name: str | None = None,
         run_id: str | None = None,
     ) -> None:
-        self._transition_status(node_id, NodeStatus.RUNNING)
-        if worktree_path or branch_name or run_id:
-            self._conn.execute(
-                "UPDATE nodes SET worktree_path = ?, branch_name = ?,"
-                " run_id = ? WHERE id = ?",
-                (worktree_path, branch_name, run_id, node_id),
-            )
-            self._conn.commit()
-
-    def set_run_id(self, node_id: int, run_id: str) -> None:
+        self._assert_transition(node_id, NodeStatus.RUNNING)
         self._conn.execute(
-            "UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id),
+            "UPDATE nodes SET status = ?, completed_at = NULL, "
+            "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
+            (
+                NodeStatus.RUNNING.value,
+                worktree_path,
+                branch_name,
+                run_id,
+                node_id,
+            ),
         )
         self._conn.commit()
 
+    def set_run_id(self, node_id: int, run_id: str) -> None:
+        cur = self._conn.execute(
+            "UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
+
     def mark_pending(self, node_id: int) -> None:
-        self._transition_status(node_id, NodeStatus.PENDING)
+        self._assert_transition(node_id, NodeStatus.PENDING)
         self._conn.execute(
-            "UPDATE nodes SET worktree_path = NULL, branch_name = NULL,"
-            " run_id = NULL WHERE id = ?",
-            (node_id,),
+            "UPDATE nodes SET status = ?, completed_at = NULL, "
+            "worktree_path = NULL, branch_name = NULL, run_id = NULL "
+            "WHERE id = ?",
+            (NodeStatus.PENDING.value, node_id),
         )
         self._conn.commit()
 
@@ -250,14 +310,12 @@ class MikadoGraph:
             ownership[nid] = set(self.get_file_ownership(nid))
 
         conflicts: list[tuple[int, int, list[str]]] = []
-        ids = list(node_ids)
-        for i in range(len(ids)):
-            for j in range(i + 1, len(ids)):
-                overlap = ownership[ids[i]] & ownership[ids[j]]
-                if overlap:
-                    conflicts.append(
-                        (ids[i], ids[j], sorted(overlap))
-                    )
+        for left_id, right_id in itertools.combinations(node_ids, 2):
+            overlap = ownership[left_id] & ownership[right_id]
+            if overlap:
+                conflicts.append(
+                    (left_id, right_id, sorted(overlap))
+                )
         return conflicts
 
     def close(self) -> None:

@@ -159,14 +159,14 @@ class TestRenderTree:
         c1 = graph.add_node("Worker", parent_id=root.id)
         graph.mark_running(c1.id, worktree_path="/tmp/wt-1", run_id="run-abc")
         output = render_tree(graph, run_states={"run-abc": "running"})
-        assert "ralph: running" in output
+        assert "run: running" in output
 
-    def test_ralph_state_omitted_when_no_run_states(self, graph):
+    def test_run_state_unknown_when_no_run_states(self, graph):
         root = graph.add_node("Root")
         c1 = graph.add_node("Worker", parent_id=root.id)
         graph.mark_running(c1.id, worktree_path="/tmp/wt-1", run_id="run-abc")
         output = render_tree(graph)
-        assert "ralph:" not in output
+        assert "run: unknown" in output
 
 
 class TestSummarizeActiveWorktrees:

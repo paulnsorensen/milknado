@@ -10,7 +10,7 @@ from milknado.domains.planning.context import build_planning_context
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort
-    from milknado.domains.graph.graph import MikadoGraph
+    from milknado.domains.graph import MikadoGraph
 
 
 @dataclass(frozen=True)

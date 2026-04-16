@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from milknado.domains.common.protocols import RalphPort
     from milknado.domains.execution.executor import ExecutionConfig, Executor
-    from milknado.domains.graph.graph import MikadoGraph
+    from milknado.domains.graph import MikadoGraph
 
 
 @dataclass(frozen=True)
