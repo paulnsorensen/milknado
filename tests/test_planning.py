@@ -8,6 +8,7 @@ import pytest
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
+    AtomTokenBudget,
     apply_manifest_to_graph,
     parse_manifest_from_output,
 )
@@ -476,3 +477,62 @@ class TestPlanManifest:
         tmp_graph.mark_done(leaf.id)
         ready_after = {n.id for n in tmp_graph.get_ready_nodes()}
         assert root.id in ready_after
+
+    def test_parses_token_budget_round_trip(self) -> None:
+        output = (
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"task","depends_on":[],"files":[],'
+            '"token_budget":{'
+            '"estimated_read_tokens":12000,'
+            '"estimated_write_tokens":6000,'
+            '"estimated_total_tokens":45000,'
+            '"split_required":false'
+            "}}"
+            "]}"
+        )
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        budget = manifest.atoms[0].token_budget
+        assert budget == AtomTokenBudget(
+            estimated_read_tokens=12000,
+            estimated_write_tokens=6000,
+            estimated_total_tokens=45000,
+            split_required=False,
+        )
+
+    def test_token_budget_omitted_yields_none(self) -> None:
+        output = (
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"task","depends_on":[],"files":[]}'
+            "]}"
+        )
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        assert manifest.atoms[0].token_budget is None
+
+    def test_rejects_manifest_missing_split_required_field(self) -> None:
+        output = (
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"task","depends_on":[],"files":[],'
+            '"token_budget":{'
+            '"estimated_read_tokens":12000,'
+            '"estimated_write_tokens":6000,'
+            '"estimated_total_tokens":45000'
+            "}}"
+            "]}"
+        )
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_manifest_with_non_integer_read_tokens(self) -> None:
+        output = (
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"task","depends_on":[],"files":[],'
+            '"token_budget":{'
+            '"estimated_read_tokens":"12000",'
+            '"estimated_write_tokens":6000,'
+            '"estimated_total_tokens":45000,'
+            '"split_required":false'
+            "}}"
+            "]}"
+        )
+        assert parse_manifest_from_output(output) is None

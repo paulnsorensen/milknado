@@ -8,11 +8,20 @@ from milknado.domains.graph import MikadoGraph
 
 
 @dataclass(frozen=True)
+class AtomTokenBudget:
+    estimated_read_tokens: int
+    estimated_write_tokens: int
+    estimated_total_tokens: int
+    split_required: bool
+
+
+@dataclass(frozen=True)
 class PlanAtom:
     id: str
     description: str
     depends_on: list[str]
     files: list[str]
+    token_budget: AtomTokenBudget | None = None
 
 
 @dataclass(frozen=True)
@@ -91,15 +100,44 @@ def _coerce_manifest(raw: object) -> PlanManifest | None:
             return None
         if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
             return None
+        token_budget: AtomTokenBudget | None = None
+        if "token_budget" in atom:
+            token_budget = _coerce_token_budget(atom["token_budget"])
+            if token_budget is None:
+                return None
         atoms.append(
             PlanAtom(
                 id=atom_id,
                 description=description.strip(),
                 depends_on=depends_on,
                 files=files,
+                token_budget=token_budget,
             )
         )
     return PlanManifest(manifest_version=version, atoms=atoms)
+
+
+def _coerce_token_budget(raw: object) -> AtomTokenBudget | None:
+    if not isinstance(raw, dict):
+        return None
+    read = raw.get("estimated_read_tokens")
+    write = raw.get("estimated_write_tokens")
+    total = raw.get("estimated_total_tokens")
+    split = raw.get("split_required")
+    if not isinstance(read, int) or isinstance(read, bool):
+        return None
+    if not isinstance(write, int) or isinstance(write, bool):
+        return None
+    if not isinstance(total, int) or isinstance(total, bool):
+        return None
+    if not isinstance(split, bool):
+        return None
+    return AtomTokenBudget(
+        estimated_read_tokens=read,
+        estimated_write_tokens=write,
+        estimated_total_tokens=total,
+        split_required=split,
+    )
 
 
 def _extract_json_objects(text: str) -> list[str]:
