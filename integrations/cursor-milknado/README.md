@@ -6,6 +6,17 @@ Cursor plugin layout per [Plugins reference](https://cursor.com/docs/reference/p
 
 1. Add `milknado` to your app’s `pyproject.toml` (path or PyPI) so `uv run milknado` and `uv run milknado-mcp` work from the workspace root.
 2. In Cursor: install the plugin from this directory (or publish via marketplace).
+3. Install required Rust helpers once per machine:
+
+```bash
+uv run milknado tools install
+```
+
+`milknado tools install` installs `tilth` and `mergiraf` using Cargo (or `cargo-binstall` when available). You can verify with:
+
+```bash
+uv run milknado tools check
+```
 
 ## MCP
 

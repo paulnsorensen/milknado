@@ -7,6 +7,10 @@ import pytest
 
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
+from milknado.domains.planning.manifest import (
+    apply_manifest_to_graph,
+    parse_manifest_from_output,
+)
 from milknado.domains.planning.planner import Planner, PlanResult
 
 
@@ -339,6 +343,39 @@ class TestPlanner:
         assert result.exit_code == 1
 
     @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_applies_manifest_to_graph(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "```json\n"
+                '{"manifest_version":"milknado.plan.v1","atoms":['
+                '{"id":"A1","description":"parent","depends_on":["A2"],"files":["a.py"]},'
+                '{"id":"A2","description":"child","depends_on":[],"files":["b.py"]}'
+                "]}\n```"
+            ),
+        )
+        planner = Planner(tmp_graph, mock_crg, "claude")
+        spec_path = tmp_path / "spec.md"
+        spec_path.write_text("my goal", encoding="utf-8")
+        result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
+        assert result.success is True
+        assert result.nodes_created == 2
+        nodes = tmp_graph.get_all_nodes()
+        assert len(nodes) == 2
+        parent = next(n for n in nodes if n.description == "parent")
+        child = next(n for n in nodes if n.description == "child")
+        child_ids = [n.id for n in tmp_graph.get_children(parent.id)]
+        assert child.id in child_ids
+        assert tmp_graph.get_file_ownership(parent.id) == ["a.py"]
+        assert tmp_graph.get_file_ownership(child.id) == ["b.py"]
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
     def test_custom_agent_command(
         self,
         mock_run: MagicMock,
@@ -386,3 +423,56 @@ class TestPlanResult:
         )
         assert result.exit_code == 42
         assert result.context_path == Path("/tmp/ctx.md")
+
+
+class TestPlanManifest:
+    def test_parse_manifest_from_fenced_json(self) -> None:
+        output = (
+            "```json\n"
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"task","depends_on":[],"files":[]}'
+            "]}\n```"
+        )
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        assert manifest.manifest_version == "milknado.plan.v1"
+        assert len(manifest.atoms) == 1
+        assert manifest.atoms[0].id == "A1"
+
+    def test_apply_manifest_to_graph(self, tmp_graph: MikadoGraph) -> None:
+        manifest = parse_manifest_from_output(
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"root","depends_on":["A2"],"files":["x.py"]},'
+            '{"id":"A2","description":"leaf","depends_on":[],"files":["y.py"]}'
+            "]}"
+        )
+        assert manifest is not None
+        created = apply_manifest_to_graph(tmp_graph, manifest)
+        assert len(created) == 2
+        nodes = tmp_graph.get_all_nodes()
+        root = next(n for n in nodes if n.description == "root")
+        leaf = next(n for n in nodes if n.description == "leaf")
+        assert leaf.id in [n.id for n in tmp_graph.get_children(root.id)]
+
+    def test_apply_manifest_depends_on_makes_prerequisite_ready_first(
+        self, tmp_graph: MikadoGraph,
+    ) -> None:
+        """If root depends_on leaf, only leaf is ready until leaf is done."""
+        manifest = parse_manifest_from_output(
+            '{"manifest_version":"milknado.plan.v1","atoms":['
+            '{"id":"A1","description":"root","depends_on":["A2"],"files":[]},'
+            '{"id":"A2","description":"leaf","depends_on":[],"files":[]}'
+            "]}"
+        )
+        assert manifest is not None
+        apply_manifest_to_graph(tmp_graph, manifest)
+        nodes = tmp_graph.get_all_nodes()
+        root = next(n for n in nodes if n.description == "root")
+        leaf = next(n for n in nodes if n.description == "leaf")
+        ready_ids = {n.id for n in tmp_graph.get_ready_nodes()}
+        assert leaf.id in ready_ids
+        assert root.id not in ready_ids
+        tmp_graph.mark_running(leaf.id)
+        tmp_graph.mark_done(leaf.id)
+        ready_after = {n.id for n in tmp_graph.get_ready_nodes()}
+        assert root.id in ready_after

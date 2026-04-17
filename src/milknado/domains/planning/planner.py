@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common.agent_argv import build_planning_subprocess
 from milknado.domains.planning.context import build_planning_context
+from milknado.domains.planning.manifest import (
+    apply_manifest_to_graph,
+    parse_manifest_from_output,
+)
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort
@@ -18,6 +22,7 @@ class PlanResult:
     success: bool
     exit_code: int
     context_path: Path | None = None
+    nodes_created: int = 0
 
 
 class Planner:
@@ -53,10 +58,24 @@ class Planner:
         argv, extra = build_planning_subprocess(
             context_path, self._planning_agent, allow_external_mcp=allow_external_mcp,
         )
-        result = subprocess.run(argv, cwd=project_root, check=False, **extra)
+        result = subprocess.run(
+            argv,
+            cwd=project_root,
+            check=False,
+            capture_output=True,
+            **extra,
+        )
         exit_code = result.returncode
+        output = result.stdout if isinstance(result.stdout, str) else ""
+        nodes_created = 0
+        if exit_code == 0:
+            manifest = parse_manifest_from_output(output)
+            if manifest is not None:
+                created_ids = apply_manifest_to_graph(self._graph, manifest)
+                nodes_created = len(created_ids)
         return PlanResult(
             success=exit_code == 0,
             exit_code=exit_code,
             context_path=context_path,
+            nodes_created=nodes_created,
         )

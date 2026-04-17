@@ -305,6 +305,14 @@ def plan(
         )
         if result.success:
             console.print("[green]Planning session complete.[/green]")
+            if result.nodes_created:
+                console.print(
+                    f"[green]Inserted {result.nodes_created} planned nodes into graph.[/green]"
+                )
+            else:
+                console.print(
+                    "[yellow]No planning manifest detected; no nodes were inserted.[/yellow]"
+                )
         else:
             console.print(
                 f"[red]Planning session exited with code {result.exit_code}.[/red]"
