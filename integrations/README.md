@@ -8,6 +8,13 @@
 
 Shared **MCP** entrypoint: `milknado-mcp` (stdio), implemented in `src/milknado/mcp_server.py`.
 
+Rust helper binaries used by Milknado workflows (`tilth`, `mergiraf`) can be
+bootstrapped with:
+
+```bash
+uv run milknado tools install
+```
+
 Runtime agent selection lives in `milknado.toml`: `agent_family`, plus optional `planning_agent` and `execution_agent` overrides. Use `uv run milknado agents check` to verify.
 
 Command docs for Cursor and Gemini are generated from one source of truth:

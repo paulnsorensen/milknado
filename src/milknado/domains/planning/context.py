@@ -134,11 +134,28 @@ def _progress_summary(nodes: list[MikadoNode]) -> str:
 
 
 def _instructions_section(resuming: bool, execution_agent: str) -> str:
-    add_node_usage = (
-        "Use `milknado add-node` to add nodes to the graph:\n"
-        "```\n"
-        'milknado add-node "description" --parent <id> '
-        "--files file1.py file2.py\n"
+    manifest_contract = (
+        "Return exactly one JSON object in a fenced `json` code block. "
+        "No prose before or after the JSON.\n\n"
+        "Schema:\n"
+        "```json\n"
+        "{\n"
+        '  "manifest_version": "milknado.plan.v1",\n'
+        '  "atoms": [\n'
+        "    {\n"
+        '      "id": "A1",\n'
+        '      "description": "short action-oriented task",\n'
+        '      "depends_on": ["A2"],\n'
+        '      "files": ["src/path.py"],\n'
+        '      "token_budget": {\n'
+        '        "estimated_read_tokens": 12000,\n'
+        '        "estimated_write_tokens": 6000,\n'
+        '        "estimated_total_tokens": 45000,\n'
+        '        "split_required": false\n'
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
         "```"
     )
 
@@ -146,30 +163,32 @@ def _instructions_section(resuming: bool, execution_agent: str) -> str:
         return (
             "# Instructions\n\n"
             "Decompose the spec into a Mikado dependency graph.\n"
-            "For each node, specify:\n"
-            "- A short description of the work\n"
-            "- Which files it will touch\n"
-            "- Dependencies (which nodes must complete first)\n\n"
+            "Treat each atom as a DB-ready node candidate.\n\n"
             "Budget each atom with token-awareness:\n"
-            "- Include read tokens and expected write tokens.\n"
-            "- Keep atom total near 50k-70k including overhead.\n"
+            "- Use tiktoken for read/write/total estimates.\n"
+            "- Keep atom total near 40k-60k when possible.\n"
             "- Split nodes that exceed budget; merge undersized siblings when safe.\n\n"
             f"Execution agent target for run phase: `{execution_agent}`\n\n"
-            f"{add_node_usage}\n\n"
-            "Start with the root goal node, then add children "
-            "for each prerequisite."
+            "Dependency semantics:\n"
+            "- `depends_on` lists prerequisite atoms.\n"
+            "- If A depends_on B, B must complete before A.\n\n"
+            "Fallback (only if manifest cannot be produced): use `milknado add-node`.\n\n"
+            f"{manifest_contract}\n\n"
+            "Start from leaf-prerequisites first, then parent atoms."
         )
 
     return (
         "# Instructions (resuming)\n\n"
         "The graph above shows prior progress. Do NOT recreate "
         "existing nodes.\n\n"
-        "Review the current state and:\n"
+        "Review the current state and produce only net-new atoms:\n"
         "- Add new child nodes for any remaining work\n"
         "- Re-plan around failed nodes if the approach needs to change\n"
         "- Ensure all pending nodes still make sense given completed work\n\n"
+        "Use tiktoken to keep atom budgets in range.\n\n"
         f"Execution agent target for run phase: `{execution_agent}`\n\n"
-        f"{add_node_usage}"
+        "Fallback (only if manifest cannot be produced): use `milknado add-node`.\n\n"
+        f"{manifest_contract}"
     )
 
 
