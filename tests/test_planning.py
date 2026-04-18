@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from milknado.domains.common.types import DegradationMarker, TilthMap
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
@@ -26,11 +27,30 @@ def mock_crg() -> MagicMock:
     crg.get_architecture_overview.return_value = {
         "communities": ["auth", "payments"],
         "entry_points": ["main.py"],
+        "warnings": [],
     }
     crg.get_impact_radius.return_value = {
         "files": ["auth.py", "models.py"],
     }
+    crg.list_communities.return_value = [
+        {"name": "auth", "size": 12, "cohesion": 0.8},
+        {"name": "payments", "size": 7, "cohesion": 0.6},
+    ]
+    crg.list_flows.return_value = [
+        {"name": "login", "criticality": "high"},
+    ]
     return crg
+
+
+@pytest.fixture()
+def mock_tilth() -> MagicMock:
+    tilth = MagicMock()
+    tilth.structural_map.return_value = DegradationMarker(
+        source="tilth",
+        reason="binary_missing",
+        detail="`tilth` not found on PATH",
+    )
+    return tilth
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +69,8 @@ def _build_ctx(
     tmp_path: Path,
     tmp_graph: MikadoGraph,
     mock_crg: MagicMock,
+    mock_tilth: MagicMock | None = None,
+    project_root: Path | None = None,
 ) -> str:
     spec_path = tmp_path / "spec.md"
     spec_path.write_text(goal, encoding="utf-8")
@@ -57,6 +79,8 @@ def _build_ctx(
         crg=mock_crg,
         graph=tmp_graph,
         execution_agent="claude -p",
+        tilth=mock_tilth,
+        project_root=project_root if project_root is not None else tmp_path,
     )
 
 
@@ -83,9 +107,86 @@ class TestBuildPlanningContext:
             mock_crg=mock_crg,
         )
         assert "Architecture Overview" in ctx
-        assert "communities" in ctx
+        assert "Top communities" in ctx
+        assert "auth (size=12, cohesion=0.8)" in ctx
+        assert "Top flows" in ctx
+        assert "login (criticality=high)" in ctx
+        mock_crg.list_communities.assert_called_once()
+        mock_crg.list_flows.assert_called_once()
         mock_crg.get_architecture_overview.assert_called_once()
         assert "Atom Budget Heuristics" in ctx
+
+    def test_architecture_section_omits_raw_json_dump(
+        self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        mock_crg.get_architecture_overview.return_value = {
+            "communities": ["auth", "payments"],
+            "entry_points": ["main.py"],
+            "warnings": ["cycle detected"],
+        }
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+        )
+        assert '"entry_points": [' not in ctx
+        assert "Warnings" in ctx
+        assert "cycle detected" in ctx
+
+    def test_structural_section_shows_not_configured_when_tilth_none(
+        self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+        )
+        assert "# Structural Map (tilth)" in ctx
+        assert "not_configured" in ctx
+
+    def test_structural_section_shows_degradation_marker(
+        self,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+        mock_tilth: MagicMock,
+    ) -> None:
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+            mock_tilth=mock_tilth,
+        )
+        assert "# Structural Map (tilth)" in ctx
+        assert "status: degraded" in ctx
+        assert "binary_missing" in ctx
+        mock_tilth.structural_map.assert_called_once()
+
+    def test_structural_section_renders_tilth_map(
+        self,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+        mock_tilth: MagicMock,
+    ) -> None:
+        mock_tilth.structural_map.return_value = TilthMap(
+            scope=tmp_path,
+            budget_tokens=2000,
+            data={"modules": ["a", "b"]},
+        )
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+            mock_tilth=mock_tilth,
+        )
+        assert "# Structural Map (tilth)" in ctx
+        assert "budget_tokens: 2000" in ctx
+        assert '"modules"' in ctx
 
     def test_includes_empty_graph(
         self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
@@ -205,6 +306,19 @@ class TestBuildPlanningContext:
         assert "resuming" not in ctx
         assert "Decompose the spec" in ctx
 
+    def test_fresh_instructions_include_melbourne_edge_storage_doc(
+        self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+        )
+        assert "edges.parent_id = A" in ctx
+        assert "(prerequisite)" in ctx
+        assert "Child finishes first; do not reverse." in ctx
+
     def test_resume_instructions_when_nodes_exist(
         self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -218,6 +332,33 @@ class TestBuildPlanningContext:
         assert "Instructions (resuming)" in ctx
         assert "Do NOT recreate" in ctx
         assert "milknado add-node" in ctx
+
+    def test_resume_instructions_include_melbourne_edge_storage_doc(
+        self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        tmp_graph.add_node("root goal")
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+        )
+        assert "dependent atom = `edges.parent_id`" in ctx
+        assert "prerequisite = `edges.child_id`" in ctx
+        assert "Child finishes first; do not reverse." in ctx
+
+    def test_fresh_instructions_reference_token_budget_schema(
+        self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = _build_ctx(
+            goal="goal",
+            tmp_path=tmp_path,
+            tmp_graph=tmp_graph,
+            mock_crg=mock_crg,
+        )
+        assert "token_budget" in ctx
+        assert "split_required" in ctx
+        assert "exceeds 65k" in ctx
 
     def test_progress_summary(
         self, tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock

@@ -4,8 +4,10 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.common.types import DegradationMarker, TilthMap
+
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort
+    from milknado.domains.common.protocols import CrgPort, TilthPort
     from milknado.domains.common.types import MikadoNode
     from milknado.domains.graph import MikadoGraph
 
@@ -16,15 +18,19 @@ def build_planning_context(
     graph: MikadoGraph,
     *,
     execution_agent: str,
+    tilth: TilthPort | None = None,
+    project_root: Path | None = None,
 ) -> str:
     spec_text = spec_path.read_text(encoding="utf-8")
     resuming = len(graph.get_all_nodes()) > 0
     token_estimate = _estimate_tokens(spec_text)
+    scope = project_root if project_root is not None else spec_path.parent
     sections = [
         _spec_section(spec_path, spec_text, token_estimate),
         _crg_usage_section(),
         _atom_budget_heuristics_section(token_estimate),
         _architecture_section(crg),
+        _structural_section(tilth, scope),
         _graph_section(graph),
         _instructions_section(resuming, execution_agent),
     ]
@@ -80,10 +86,63 @@ def _atom_budget_heuristics_section(spec_tokens: int) -> str:
 
 
 def _architecture_section(crg: CrgPort) -> str:
+    communities = crg.list_communities(sort_by="size")[:5]
+    flows = crg.list_flows(sort_by="criticality", limit=3)
     overview = crg.get_architecture_overview()
-    formatted = json.dumps(overview, indent=2, default=str)
+    warnings = overview.get("warnings", []) if isinstance(overview, dict) else []
+
+    lines = ["# Architecture Overview (compact, from code-review-graph)\n"]
+    lines.append("## Top communities\n")
+    if communities:
+        for c in communities:
+            name = c.get("name", "?")
+            size = c.get("size", "?")
+            cohesion = c.get("cohesion", "?")
+            lines.append(f"- {name} (size={size}, cohesion={cohesion})")
+    else:
+        lines.append("- none detected")
+
+    lines.append("\n## Top flows\n")
+    if flows:
+        for f in flows:
+            name = f.get("name", "?")
+            criticality = f.get("criticality", "?")
+            lines.append(f"- {name} (criticality={criticality})")
+    else:
+        lines.append("- none detected")
+
+    if warnings:
+        lines.append("\n## Warnings\n")
+        for w in warnings:
+            lines.append(f"- {w}")
+
+    return "\n".join(lines)
+
+
+def _structural_section(tilth: TilthPort | None, scope: Path) -> str:
+    if tilth is None:
+        return (
+            "# Structural Map (tilth)\n\n"
+            "- status: not_configured\n"
+            "- reason: tilth adapter not wired into planner"
+        )
+    result = tilth.structural_map(scope, budget_tokens=2_000)
+    if isinstance(result, DegradationMarker):
+        return (
+            "# Structural Map (tilth)\n\n"
+            "- status: degraded\n"
+            f"- reason: {result.reason}\n"
+            f"- detail: {result.detail}"
+        )
+    return _render_tilth_map(result)
+
+
+def _render_tilth_map(tmap: TilthMap) -> str:
+    formatted = json.dumps(tmap.data, indent=2, default=str)
     return (
-        "# Architecture Overview (from code-review-graph)\n\n"
+        "# Structural Map (tilth)\n\n"
+        f"- scope: {tmap.scope}\n"
+        f"- budget_tokens: {tmap.budget_tokens}\n\n"
         f"```json\n{formatted}\n```"
     )
 
@@ -166,12 +225,16 @@ def _instructions_section(resuming: bool, execution_agent: str) -> str:
             "Treat each atom as a DB-ready node candidate.\n\n"
             "Budget each atom with token-awareness:\n"
             "- Use tiktoken for read/write/total estimates.\n"
-            "- Keep atom total near 40k-60k when possible.\n"
+            "- Fill `token_budget` per the Atom Budget Heuristics thresholds.\n"
+            "- Set `split_required: true` when atom_total_tokens exceeds 65k.\n"
             "- Split nodes that exceed budget; merge undersized siblings when safe.\n\n"
             f"Execution agent target for run phase: `{execution_agent}`\n\n"
             "Dependency semantics:\n"
             "- `depends_on` lists prerequisite atoms.\n"
-            "- If A depends_on B, B must complete before A.\n\n"
+            "- If A depends_on B, B must complete before A.\n"
+            "- In the edges table: `edges.parent_id = A` (dependent), "
+            "`edges.child_id = B` (prerequisite).\n"
+            "- Child finishes first; do not reverse.\n\n"
             "Fallback (only if manifest cannot be produced): use `milknado add-node`.\n\n"
             f"{manifest_contract}\n\n"
             "Start from leaf-prerequisites first, then parent atoms."
@@ -185,7 +248,11 @@ def _instructions_section(resuming: bool, execution_agent: str) -> str:
         "- Add new child nodes for any remaining work\n"
         "- Re-plan around failed nodes if the approach needs to change\n"
         "- Ensure all pending nodes still make sense given completed work\n\n"
-        "Use tiktoken to keep atom budgets in range.\n\n"
+        "Use tiktoken to keep atom budgets in range; fill `token_budget` "
+        "per the Atom Budget Heuristics thresholds.\n\n"
+        "Dependency semantics:\n"
+        "- dependent atom = `edges.parent_id`; prerequisite = `edges.child_id`.\n"
+        "- Child finishes first; do not reverse.\n\n"
         f"Execution agent target for run phase: `{execution_agent}`\n\n"
         "Fallback (only if manifest cannot be produced): use `milknado add-node`.\n\n"
         f"{manifest_contract}"
