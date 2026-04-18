@@ -843,7 +843,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.14" },
     { name = "ortools", specifier = ">=9.11" },
     { name = "pyyaml", specifier = ">=6" },
-    { name = "ralphify", specifier = ">=0.4.0b3" },
+    { name = "ralphify", git = "https://github.com/paulnsorensen/ralphify?rev=main" },
     { name = "rich", specifier = ">=13" },
     { name = "tiktoken", specifier = ">=0.7" },
     { name = "typer", specifier = ">=0.12" },
@@ -1543,15 +1543,11 @@ wheels = [
 [[package]]
 name = "ralphify"
 version = "0.4.0b3"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/paulnsorensen/ralphify?rev=main#652367720ac9f4d5e84f5b0bcbd1f0575a5caf41" }
 dependencies = [
     { name = "pyyaml" },
     { name = "rich" },
     { name = "typer" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/89/fa/1db2592f002a72e2d92eee6f26469313c0961a10a1c975f621c6eef5303f/ralphify-0.4.0b3.tar.gz", hash = "sha256:372c4b40cbb2e2477275c89732c389581e79092070a5fb3480c2e7b84beb9f08", size = 668652, upload-time = "2026-04-12T09:12:46.549Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/ff/300afcdab13c1354498d57d6d1e59444d270321472e094fb3b1eb3c551cd/ralphify-0.4.0b3-py3-none-any.whl", hash = "sha256:d09f3deddefff8a8ac2d0cdd8cc233a30f04a38143f0dad730d40f41899f3def", size = 53658, upload-time = "2026-04-12T09:12:45.283Z" },
 ]
 
 [[package]]

@@ -23,6 +23,9 @@ dependencies = [
 milknado = "milknado.cli:app"
 milknado-mcp = "milknado.mcp_server:main"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/milknado"]
 

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import queue
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from ralphify import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
 from milknado.domains.common.types import MikadoNode
+
+MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
 
 class RalphifyAdapter:
@@ -28,6 +30,8 @@ class RalphifyAdapter:
             ralph_dir=ralph_dir,
             ralph_file=ralph_file,
             project_root=ralph_dir,
+            completion_signal=MILKNADO_COMPLETION_SIGNAL,
+            stop_on_completion_signal=True,
         )
         run = self._manager.create_run(config)
         run.add_listener(self._emitter)
@@ -81,5 +85,9 @@ def _build_ralph_content(
     return (
         f"# {node.description}\n\n"
         f"## Context\n\n{context}\n\n"
-        f"## Quality Gates\n\n{gates}\n"
+        f"## Quality Gates\n\n{gates}\n\n"
+        "## Completion\n\n"
+        "When every quality gate passes and this node is fully implemented,\n"
+        f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
+        "so the run can stop before the iteration budget.\n"
     )
