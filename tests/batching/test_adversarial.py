@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from milknado.domains.batching import plan_batches
-from milknado.domains.batching.change import FileChange, SymbolRef
+from milknado.domains.batching.change import FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.graph_build import (
     _parse_impact_dict,
     build_change_graph,
@@ -177,27 +177,31 @@ class TestBuildChangeGraph:
         nodes, edges, _ = build_change_graph([a], crg=crg)
         assert edges == ()
 
-    def test_self_loop_extra_edge_filtered(self):
+    def test_self_loop_new_relationship_filtered(self):
         a = FileChange(id="a", path="a.py")
-        nodes, edges, _ = build_change_graph([a], extra_edges=[("a", "a")])
+        rel = NewRelationship(source_change_id="a", dependant_change_id="a", reason="new_call")
+        nodes, edges, _ = build_change_graph([a], new_relationships=[rel])
         assert ("a", "a") not in edges
         assert edges == ()
 
-    def test_duplicate_extra_edges_deduplicated(self):
+    def test_duplicate_new_relationships_deduplicated(self):
         a = FileChange(id="a", path="a.py")
         b = FileChange(id="b", path="b.py")
-        nodes, edges, _ = build_change_graph([a, b], extra_edges=[("a", "b"), ("a", "b")])
+        rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_import")
+        nodes, edges, _ = build_change_graph([a, b], new_relationships=[rel, rel])
         assert edges.count(("a", "b")) == 1
 
-    def test_unknown_extra_edge_raises(self):
+    def test_unknown_new_relationship_endpoint_raises(self):
         a = FileChange(id="a", path="a.py")
+        rel = NewRelationship(source_change_id="a", dependant_change_id="ghost", reason="new_file")
         with pytest.raises(ValueError, match="unknown edge endpoint"):
-            build_change_graph([a], extra_edges=[("a", "ghost")])
+            build_change_graph([a], new_relationships=[rel])
 
     def test_unicode_ids_and_paths(self):
         a = FileChange(id="zh_file", path="src/zh.py")
         b = FileChange(id="es_file", path="src/es.py")
-        nodes, edges, _ = build_change_graph([a, b], extra_edges=[("zh_file", "es_file")])
+        rel = NewRelationship(source_change_id="zh_file", dependant_change_id="es_file", reason="new_import")
+        nodes, edges, _ = build_change_graph([a, b], new_relationships=[rel])
         assert ("zh_file", "es_file") in edges
 
     def test_circular_depends_on_creates_both_edges(self):
@@ -273,7 +277,7 @@ class TestPlanBatchesBoundary:
         b = FileChange(id="b", path="same.py", edit_kind="delete")
         plan = plan_batches([a, b], budget=70_000, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
-        all_ids = {c for batch in plan.batches for c in batch}
+        all_ids = {cid for batch in plan.batches for cid in batch.change_ids}
         assert all_ids == {"a", "b"}
 
     def test_circular_depends_on_co_batched(self, tmp_path):
@@ -281,7 +285,7 @@ class TestPlanBatchesBoundary:
         b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
         plan = plan_batches([a, b], budget=70_000, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
-        idx = {c: i for i, batch in enumerate(plan.batches) for c in batch}
+        idx = {cid: batch.index for batch in plan.batches for cid in batch.change_ids}
         assert idx["a"] == idx["b"], "Circular deps must co-batch via SCC"
 
     def test_budget_exact_fit(self, tmp_path):
@@ -301,8 +305,11 @@ class TestPlanBatchesBoundary:
         # 80+80=160 > budget=100 -> must split
         plan = plan_batches([a, b], budget=100, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
-        assert "widget.py:Widget" in plan.spread_report
-        assert plan.spread_report["widget.py:Widget"] == 1
+        widget_entry = next(
+            ss for ss in plan.spread_report
+            if ss.symbol.file == "widget.py" and ss.symbol.name == "Widget"
+        )
+        assert widget_entry.spread == 1
 
     def test_200_changes_no_hang(self, tmp_path):
         changes = [

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-from milknado.domains.batching import BatchPlan, FileChange, SymbolRef
+from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 
 mcp = FastMCP(
     "Milknado",
@@ -85,33 +85,59 @@ def _dict_to_file_change(d: dict) -> FileChange:
     )
 
 
+def _dict_to_new_relationship(d: dict) -> NewRelationship:
+    return NewRelationship(
+        source_change_id=d["source_change_id"],
+        dependant_change_id=d["dependant_change_id"],
+        reason=d["reason"],
+    )
+
+
 def _plan_to_dict(plan: BatchPlan) -> dict:
     return {
-        "batches": [list(b) for b in plan.batches],
-        "spread_report": dict(plan.spread_report),
+        "batches": [
+            {
+                "index": b.index,
+                "change_ids": list(b.change_ids),
+                "depends_on": list(b.depends_on),
+                "oversized": b.oversized,
+            }
+            for b in plan.batches
+        ],
+        "spread_report": [
+            {"symbol": {"name": ss.symbol.name, "file": ss.symbol.file}, "spread": ss.spread}
+            for ss in plan.spread_report
+        ],
         "solver_status": plan.solver_status,
     }
 
 
 def _plan_batches_impl(
-    changes: list[dict], budget: int, project_root: Path
+    changes: list[dict],
+    budget: int,
+    project_root: Path,
+    new_relationships: list[dict] | None = None,
 ) -> dict:
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.batching import plan_batches
     file_changes = [_dict_to_file_change(c) for c in changes]
+    rels = tuple(_dict_to_new_relationship(r) for r in (new_relationships or []))
     plan = plan_batches(
-        file_changes, budget, crg=CrgAdapter(project_root), root=project_root
+        file_changes, budget, crg=CrgAdapter(project_root), new_relationships=rels, root=project_root
     )
     return _plan_to_dict(plan)
 
 
 @mcp.tool()
 def milknado_plan_batches(
-    changes: list[dict], budget: int = 70_000, project_root: str = "",
+    changes: list[dict],
+    budget: int = 70_000,
+    project_root: str = "",
+    new_relationships: list[dict] | None = None,
 ) -> dict:
     """Compute token-budgeted, precedence-respecting batches for changes."""
     root = _project_root(project_root or None)
-    return _plan_batches_impl(changes, budget, root)
+    return _plan_batches_impl(changes, budget, root, new_relationships)
 
 
 def main() -> None:

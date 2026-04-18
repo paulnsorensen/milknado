@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from milknado.domains.batching.change import FileChange, SymbolRef
+from milknado.domains.batching.change import FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.graph_build import (
     build_change_graph,
     contract_sccs,
@@ -18,10 +18,11 @@ def mock_crg() -> MagicMock:
     return MagicMock(spec=CrgPort)
 
 
-def test_extra_edges_basic(mock_crg: MagicMock) -> None:
+def test_new_relationships_basic(mock_crg: MagicMock) -> None:
     a = FileChange(id="a", path="a.py")
     b = FileChange(id="b", path="b.py")
-    nodes, edges, _ = build_change_graph([a, b], extra_edges=[("a", "b")])
+    rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_import")
+    nodes, edges, _ = build_change_graph([a, b], new_relationships=[rel])
     assert ("a", "b") in edges
 
 

@@ -5,14 +5,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from milknado.domains.batching.change import FileChange, SymbolRef
+from milknado.domains.batching.change import FileChange, NewRelationship, SymbolRef
 from milknado.domains.common.protocols import CrgPort
 
 
 def build_change_graph(
     changes: Sequence[FileChange],
     crg: CrgPort | None = None,
-    extra_edges: Sequence[tuple[str, str]] = (),
+    new_relationships: Sequence[NewRelationship] = (),
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], dict[str, tuple[SymbolRef, ...]]]:
     """Return (nodes, edges, symbols_by_node) for the given change set.
 
@@ -27,7 +27,8 @@ def build_change_graph(
     2. Explicit ``depends_on`` — each ``FileChange`` may declare ids it must come
        after. These are validated against the known id set; unknown ids raise.
 
-    3. ``extra_edges`` — caller-supplied (src_id, dst_id) pairs, also validated.
+    3. ``new_relationships`` — caller-supplied ``NewRelationship`` records for
+       relationships the CRG doesn't yet know about (new files, new imports, etc.).
 
     Returns:
         nodes: change ids in input order
@@ -56,12 +57,12 @@ def build_change_graph(
                 raise ValueError(f"unknown depends_on id: {dep_id}")
             _add_edge(dep_id, change.id)
 
-    for src, dst in extra_edges:
-        if src not in known_ids:
-            raise ValueError(f"unknown edge endpoint: {src}")
-        if dst not in known_ids:
-            raise ValueError(f"unknown edge endpoint: {dst}")
-        _add_edge(src, dst)
+    for rel in new_relationships:
+        if rel.source_change_id not in known_ids:
+            raise ValueError(f"unknown edge endpoint: {rel.source_change_id}")
+        if rel.dependant_change_id not in known_ids:
+            raise ValueError(f"unknown edge endpoint: {rel.dependant_change_id}")
+        _add_edge(rel.source_change_id, rel.dependant_change_id)
 
     nodes = tuple(c.id for c in changes)
     edges = tuple(sorted(seen_edges))

@@ -32,6 +32,15 @@ def test_plan_batches_impl_stub(tmp_path, monkeypatch) -> None:
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
     assert "batches" in result
     assert "spread_report" in result
+    # Verify new batch shape
+    if result["batches"]:
+        first = result["batches"][0]
+        assert "index" in first
+        assert "change_ids" in first
+        assert "depends_on" in first
+        assert "oversized" in first
+    # spread_report is a list (not dict) in new shape
+    assert isinstance(result["spread_report"], list)
 
 
 @pytest.mark.asyncio
@@ -74,3 +83,4 @@ async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
     data = json.loads(raw) if isinstance(raw, str) else {}
     assert data.get("solver_status") in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
     assert "batches" in data
+    assert isinstance(data.get("spread_report"), list)
