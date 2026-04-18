@@ -61,22 +61,48 @@ class MikadoGraph:
             self._conn.execute("ALTER TABLE nodes ADD COLUMN run_id TEXT")
             self._conn.commit()
 
-    def _row_to_node(self, row: sqlite3.Row) -> MikadoNode:
-        created_at_raw = row["created_at"]
-        completed_at_raw = row["completed_at"]
-        run_id = row["run_id"] if "run_id" in row.keys() else None
+    def _row_to_node(self, row: sqlite3.Row | tuple) -> MikadoNode:
+        if isinstance(row, sqlite3.Row):
+            created_at_raw = row["created_at"]
+            completed_at_raw = row["completed_at"]
+            run_id = row["run_id"] if "run_id" in row.keys() else None
+            return MikadoNode(
+                id=row["id"],
+                description=row["description"],
+                status=NodeStatus(row["status"]),
+                parent_id=row["parent_id"],
+                worktree_path=row["worktree_path"],
+                branch_name=row["branch_name"],
+                run_id=run_id,
+                created_at=datetime.fromisoformat(created_at_raw),
+                completed_at=(
+                    datetime.fromisoformat(completed_at_raw)
+                    if completed_at_raw
+                    else None
+                ),
+            )
+
+        run_id = None
+        if len(row) == 9:
+            # Legacy tables migrated with ALTER TABLE append run_id at the end.
+            run_id = row[8]
+            created_at_idx = 6
+            completed_at_idx = 7
+        else:
+            created_at_idx = 6
+            completed_at_idx = 7
         return MikadoNode(
-            id=row["id"],
-            description=row["description"],
-            status=NodeStatus(row["status"]),
-            parent_id=row["parent_id"],
-            worktree_path=row["worktree_path"],
-            branch_name=row["branch_name"],
+            id=row[0],
+            description=row[1],
+            status=NodeStatus(row[2]),
+            parent_id=row[3],
+            worktree_path=row[4],
+            branch_name=row[5],
             run_id=run_id,
-            created_at=datetime.fromisoformat(created_at_raw),
+            created_at=datetime.fromisoformat(row[created_at_idx]),
             completed_at=(
-                datetime.fromisoformat(completed_at_raw)
-                if completed_at_raw
+                datetime.fromisoformat(row[completed_at_idx])
+                if row[completed_at_idx]
                 else None
             ),
         )

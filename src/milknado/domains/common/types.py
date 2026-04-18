@@ -53,6 +53,18 @@ class RebaseResult:
 
 
 @dataclass(frozen=True)
+class CompletionEvent:
+    run_id: str
+    success: bool
+
+
+@dataclass(frozen=True)
+class FileOwnership:
+    node_id: int
+    file_path: str
+
+
+@dataclass(frozen=True)
 class TilthMap:
     scope: Path
     budget_tokens: int

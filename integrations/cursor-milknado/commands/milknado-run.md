@@ -11,4 +11,4 @@ From the project root.
 uv run milknado run --project-root .
 ```
 
-Confirm `agent_family` / `execution_agent` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).
+Confirm `agent_preset` / `agent_command` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).

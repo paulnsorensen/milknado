@@ -16,7 +16,7 @@ dependencies = [
     "rich>=13",
     "pyyaml>=6",
     "ortools>=9.11",
-    "tiktoken>=0.12",
+    "tiktoken>=0.7",
 ]
 
 [project.scripts]

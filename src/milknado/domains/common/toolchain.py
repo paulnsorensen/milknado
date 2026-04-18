@@ -6,6 +6,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+
 REQUIRED_RUST_TOOLS: tuple[str, ...] = ("tilth", "mergiraf")
 
 

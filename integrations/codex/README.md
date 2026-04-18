@@ -20,8 +20,7 @@ For a **trusted** project, add `.codex/config.toml` (see example file in this di
 
 ## `milknado.toml`
 
-Set `agent_family = "codex"` for built-in defaults, then optionally override
-`planning_agent` and `execution_agent`. Run:
+Set `agent_preset` to `codex` for built-in defaults, or `custom` with a full `agent_command` string. Run:
 
 ```bash
 uv run milknado agents check --project-root .
@@ -29,6 +28,4 @@ uv run milknado agents check --project-root .
 
 ## Leaf workers (ralphify)
 
-Ralphify receives `execution_agent` from `milknado.toml`. Ensure your Codex
-invocation matches ralphify’s non-interactive / stdin contract for the version
-you ship.
+Ralphify receives the `agent_command` string from `milknado.toml`. Ensure your Codex invocation matches ralphify’s non-interactive / stdin contract for the version you ship.

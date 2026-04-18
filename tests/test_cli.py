@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
+from milknado.domains.planning import Planner
 
 runner = CliRunner()
 
@@ -80,9 +81,8 @@ class TestInit:
     ) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         content = (project_dir / "milknado.toml").read_text()
-        assert "agent_family" in content
-        assert "planning_agent" in content
-        assert "execution_agent" in content
+        assert "agent_preset" in content
+        assert "agent_command" in content
         assert "quality_gates" in content
         assert "concurrency_limit" in content
 
@@ -279,14 +279,13 @@ class TestAddNode:
 
 class TestPlanCommand:
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch.object(Planner, "_run_agent", return_value=0)
     def test_plan_success(
         self,
-        mock_run: MagicMock,
+        _mock_run_agent: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
         result = runner.invoke(
             app,
@@ -296,14 +295,13 @@ class TestPlanCommand:
         assert "Planning" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch.object(Planner, "_run_agent", return_value=1)
     def test_plan_failure(
         self,
-        mock_run: MagicMock,
+        _mock_run_agent: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
         result = runner.invoke(
             app,
@@ -404,7 +402,7 @@ class TestInitWithInstallRustTools:
 
 class TestAgentsCheck:
     @patch("milknado.adapters.crg.CrgAdapter")
-    def test_agents_check_prints_agent_fields(
+    def test_agents_check_prints_preset(
         self, _mock_crg: MagicMock, project_dir: Path,
     ) -> None:
         runner.invoke(app, ["init", str(project_dir)])
@@ -413,8 +411,7 @@ class TestAgentsCheck:
             ["agents", "check", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "agent_family" in result.output
-        assert "planning" in result.output
+        assert "agent_preset" in result.output
         assert "execution" in result.output
         assert "planning argv" in result.output
 

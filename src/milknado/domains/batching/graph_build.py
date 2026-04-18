@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import Any
+
+from typing import NamedTuple
 
 from milknado.domains.batching.change import ChangeGraph, FileChange, NewRelationship, SymbolRef
 from milknado.domains.common.protocols import CrgPort

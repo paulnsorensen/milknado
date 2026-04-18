@@ -24,13 +24,14 @@ from milknado.domains.batching.graph_build import (
     validate_no_symbol_overlap,
 )
 from milknado.domains.batching.solver import (
+    _worse_status,
     STATUS_FEASIBLE,
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
     STATUS_UNKNOWN,
-    _worse_status,
 )
 from milknado.mcp_server import _dict_to_new_relationship
+
 
 # ---------------------------------------------------------------------------
 # 1. Lexicographic solver — status downgrade and two-pass behaviour

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -5,6 +6,7 @@ from typing import Any
 import pytest
 
 from milknado.domains.common.types import (
+    CompletionEvent,
     MikadoNode,
     NodeStatus,
     RebaseResult,
@@ -82,6 +84,9 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
+    def completion_events(self) -> Iterator[CompletionEvent]:
+        yield CompletionEvent(run_id="run-1", success=True)
+
     def generate_ralph_md(
         self,
         node: MikadoNode,
@@ -107,7 +112,7 @@ class FakeCrg:
 @pytest.fixture()
 def config(tmp_path: Path) -> ExecutionConfig:
     return ExecutionConfig(
-        execution_agent="claude",
+        agent_command="claude",
         quality_gates=("uv run pytest",),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,

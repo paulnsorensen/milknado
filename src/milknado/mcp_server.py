@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import cast
 
 from fastmcp import FastMCP
+
+from typing import cast
 
 from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import RelationshipReason

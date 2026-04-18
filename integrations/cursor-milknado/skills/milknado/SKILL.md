@@ -16,8 +16,8 @@ description: >
 
 ## Configuration
 
-- `milknado.toml`: `agent_family` (`claude` | `cursor` | `gemini` | `codex`), plus optional `planning_agent` / `execution_agent` overrides.
-- Built-in family defaults use stdin for planning prompts and ralphify-compatible print-mode binaries for execution.
+- `milknado.toml`: `agent_preset` (`claude` | `cursor` | `gemini` | `codex` | `custom`) and optional `agent_command` override.
+- Built-in presets use stdin for planning prompts and ralphify-compatible print-mode binaries for execution.
 
 ## MCP
 
