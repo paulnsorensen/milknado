@@ -8,3 +8,7 @@ cwd = "." # set to your workspace root, or omit and use MILKNADO_PROJECT_ROOT
 
 [mcp_servers.milknado.env]
 MILKNADO_PROJECT_ROOT = "."
+
+[mcp_servers.tilth]
+command = "tilth"
+args = ["--mcp"]
