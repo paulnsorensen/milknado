@@ -272,17 +272,21 @@ def plan(
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
     spec_path = (project_root / spec).resolve() if not spec.is_absolute() else spec.resolve()
-    if not spec_path.exists() or not spec_path.is_file():
-        console.print(f"[red]Spec file not found: {spec_path}[/red]")
+    if not spec_path.exists():
+        console.print(f"[red]Spec file does not exist: {spec_path}[/red]")
+        raise typer.Exit(code=1)
+    if not spec_path.is_file():
+        console.print(f"[red]Spec path is not a file: {spec_path}[/red]")
         raise typer.Exit(code=1)
     if spec_path.suffix.lower() != ".md":
-        console.print("[red]Spec file must be markdown (.md).[/red]")
+        console.print(
+            f"[red]Spec file must have a .md extension (got {spec_path.suffix!r}).[/red]"
+        )
         raise typer.Exit(code=1)
     graph = _ensure_db(config)
 
     try:
         crg = CrgAdapter(project_root)
-        crg.ensure_graph(project_root)
         resolved_planning_agent = resolve_planning_agent_command(
             config.agent_family,
             planning_agent=planning_agent or config.planning_agent,
@@ -306,8 +310,12 @@ def plan(
         if result.success:
             console.print("[green]Planning session complete.[/green]")
             if result.nodes_created:
+                violations_color = "yellow" if result.budget_violations else "green"
                 console.print(
-                    f"[green]Inserted {result.nodes_created} planned nodes into graph.[/green]"
+                    f"[green]Inserted {result.nodes_created} planned nodes into graph; "
+                    f"[/green][{violations_color}]"
+                    f"{result.budget_violations} budget violations flagged."
+                    f"[/{violations_color}]"
                 )
             else:
                 console.print(

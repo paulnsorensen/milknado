@@ -335,6 +335,161 @@ class TestPlanCommand:
         )
         assert result.exit_code == 1
 
+    def test_plan_requires_spec_argument(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["plan", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code != 0
+        combined = (result.output or "") + (result.stderr or "")
+        assert "--spec" in combined or "Missing" in combined
+
+    def test_plan_rejects_nonexistent_spec(self, project_dir: Path) -> None:
+        missing = project_dir / "does-not-exist.md"
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(missing), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
+
+    def test_plan_rejects_non_md_extension(self, project_dir: Path) -> None:
+        wrong = project_dir / "spec.txt"
+        wrong.write_text("hi", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(wrong), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert ".md extension" in result.output
+
+    def test_plan_rejects_directory_spec(self, project_dir: Path) -> None:
+        dir_path = project_dir / "spec.md"
+        dir_path.mkdir()
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(dir_path), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "not a file" in result.output
+
+    @patch("milknado.domains.planning.planner.TilthAdapter")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("tiktoken.get_encoding")
+    def test_plan_success_reports_zero_budget_violations(
+        self,
+        mock_encoding: MagicMock,
+        mock_run: MagicMock,
+        mock_crg_cls: MagicMock,
+        mock_tilth_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common.types import DegradationMarker
+
+        mock_encoding.return_value.encode.return_value = [1, 2, 3]
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "```json\n"
+                '{"manifest_version":"milknado.plan.v1","atoms":['
+                '{"id":"A1","description":"t","depends_on":[],"files":[],'
+                '"token_budget":{'
+                '"estimated_read_tokens":5000,'
+                '"estimated_write_tokens":3000,'
+                '"estimated_total_tokens":15000,'
+                '"split_required":false'
+                "}}"
+                "]}\n```"
+            ),
+        )
+        mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
+            source="tilth", reason="test_stub", detail="patched",
+        )
+        spec = project_dir / "spec.md"
+        spec.write_text("# Spec", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(spec), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "Inserted 1 planned nodes" in result.output
+        assert "0 budget violations flagged" in result.output
+
+    @patch("milknado.domains.planning.planner.TilthAdapter")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("tiktoken.get_encoding")
+    def test_plan_success_surfaces_budget_violations(
+        self,
+        mock_encoding: MagicMock,
+        mock_run: MagicMock,
+        mock_crg_cls: MagicMock,
+        mock_tilth_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common.types import DegradationMarker
+
+        mock_encoding.return_value.encode.return_value = [1, 2, 3]
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "```json\n"
+                '{"manifest_version":"milknado.plan.v1","atoms":['
+                '{"id":"A1","description":"huge","depends_on":[],"files":[],'
+                '"token_budget":{'
+                '"estimated_read_tokens":40000,'
+                '"estimated_write_tokens":30000,'
+                '"estimated_total_tokens":70000,'
+                '"split_required":false'
+                "}}"
+                "]}\n```"
+            ),
+        )
+        mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
+            source="tilth", reason="test_stub", detail="patched",
+        )
+        spec = project_dir / "spec.md"
+        spec.write_text("# Spec", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(spec), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "budget violations flagged" in result.output
+        assert "0 budget violations flagged" not in result.output
+
+    @patch("milknado.domains.planning.planner.TilthAdapter")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("tiktoken.get_encoding")
+    def test_plan_surfaces_crg_ensure_graph_failure_exit_code(
+        self,
+        mock_encoding: MagicMock,
+        mock_run: MagicMock,
+        mock_crg_cls: MagicMock,
+        mock_tilth_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common.types import DegradationMarker
+
+        mock_encoding.return_value.encode.return_value = [1, 2, 3]
+        mock_run.return_value = MagicMock(returncode=3)
+        mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_crg_cls.return_value.ensure_graph.side_effect = RuntimeError("boom")
+        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
+            source="tilth", reason="test_stub", detail="patched",
+        )
+        spec = project_dir / "spec.md"
+        spec.write_text("# Spec", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(spec), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 3
+
 
 class TestToolsCheck:
     @patch("milknado.cli.get_required_tool_status")
