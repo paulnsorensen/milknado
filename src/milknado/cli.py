@@ -19,6 +19,10 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.toolchain import (
+    get_required_tool_status,
+    install_missing_rust_tools,
+)
 from milknado.domains.graph import MikadoGraph, render_tree
 
 app = typer.Typer(name="milknado", help="Mikado execution engine")
@@ -68,6 +72,13 @@ def init(
     project_root: Annotated[
         Path, typer.Argument(help="Project root directory")
     ] = Path("."),
+    install_rust_tools: Annotated[
+        bool,
+        typer.Option(
+            "--install-rust-tools",
+            help="Install missing tilth/mergiraf via cargo.",
+        ),
+    ] = False,
 ) -> None:
     """Initialize milknado in a project directory."""
     from milknado.adapters.crg import CrgAdapter
@@ -97,6 +108,9 @@ def init(
         if e.stderr:
             console.print(e.stderr)
         raise typer.Exit(code=1) from None
+
+    if install_rust_tools:
+        _install_rust_tools_or_exit()
 
 
 @app.command()
@@ -357,6 +371,45 @@ def agents_check(
 
 plugin_app = typer.Typer(name="plugin", help="Plugin management commands")
 app.add_typer(plugin_app)
+
+tools_app = typer.Typer(name="tools", help="Toolchain commands")
+app.add_typer(tools_app)
+
+
+def _print_tool_status() -> list[tuple[str, bool]]:
+    statuses = get_required_tool_status()
+    rows: list[tuple[str, bool]] = []
+    for status in statuses:
+        state = "ok" if status.installed else "missing"
+        details = f" ({status.path})" if status.path else ""
+        console.print(f"{status.name}: {state}{details}")
+        rows.append((status.name, status.installed))
+    return rows
+
+
+def _install_rust_tools_or_exit() -> None:
+    installed, failed = install_missing_rust_tools()
+    for name in installed:
+        console.print(f"[green]Installed {name}[/green]")
+    if failed:
+        console.print("[red]Failed to install:[/red] " + ", ".join(failed))
+        console.print("Install Rust/cargo, then run: [bold]milknado tools install[/bold]")
+        raise typer.Exit(code=1)
+
+
+@tools_app.command("check")
+def tools_check() -> None:
+    """Check whether required Rust tools are available."""
+    rows = _print_tool_status()
+    if not all(installed for _, installed in rows):
+        raise typer.Exit(code=1)
+
+
+@tools_app.command("install")
+def tools_install() -> None:
+    """Install missing Rust tools used by milknado workflows."""
+    _install_rust_tools_or_exit()
+    _print_tool_status()
 
 
 @plugin_app.command("init")
