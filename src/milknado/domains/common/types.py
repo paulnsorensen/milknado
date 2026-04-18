@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import Path
+from typing import Any
 
 
 class NodeStatus(Enum):
@@ -60,3 +62,17 @@ class CompletionEvent:
 class FileOwnership:
     node_id: int
     file_path: str
+
+
+@dataclass(frozen=True)
+class TilthMap:
+    scope: Path
+    budget_tokens: int
+    data: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class DegradationMarker:
+    source: str
+    reason: str
+    detail: str = ""
