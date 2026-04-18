@@ -9,7 +9,7 @@ description = "Mikado execution engine — decomposes goals into dependency grap
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
-    "ralphify>=0.4.0b3",
+    "ralphify @ git+https://github.com/paulnsorensen/ralphify@main",
     "code-review-graph>=2.3.1",
     "fastmcp>=2.14",
     "typer>=0.12",
