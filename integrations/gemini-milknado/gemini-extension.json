@@ -8,6 +8,10 @@
       "env": {
         "MILKNADO_PROJECT_ROOT": "${workspacePath}"
       }
+    },
+    "tilth": {
+      "command": "tilth",
+      "args": ["--mcp"]
     }
   }
 }

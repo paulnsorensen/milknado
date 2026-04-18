@@ -310,6 +310,96 @@ class TestPlanCommand:
         assert result.exit_code == 1
 
 
+class TestToolsCheck:
+    @patch("milknado.cli.get_required_tool_status")
+    def test_all_installed_exits_zero(self, mock_status: MagicMock) -> None:
+        from milknado.domains.common.toolchain import ToolStatus
+
+        mock_status.return_value = [
+            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
+            ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
+        ]
+        result = runner.invoke(app, ["tools", "check"])
+        assert result.exit_code == 0
+        assert "tilth" in result.output
+        assert "mergiraf" in result.output
+
+    @patch("milknado.cli.get_required_tool_status")
+    def test_missing_tool_exits_nonzero(self, mock_status: MagicMock) -> None:
+        from milknado.domains.common.toolchain import ToolStatus
+
+        mock_status.return_value = [
+            ToolStatus(name="tilth", installed=False, path=None),
+            ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
+        ]
+        result = runner.invoke(app, ["tools", "check"])
+        assert result.exit_code != 0
+        assert "tilth" in result.output
+
+
+class TestToolsInstall:
+    @patch("milknado.cli.install_missing_rust_tools")
+    @patch("milknado.cli.get_required_tool_status")
+    def test_success_exits_zero(
+        self, mock_status: MagicMock, mock_install: MagicMock
+    ) -> None:
+        from milknado.domains.common.toolchain import ToolStatus
+
+        mock_install.return_value = (["tilth"], [])
+        mock_status.return_value = [
+            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
+        ]
+        result = runner.invoke(app, ["tools", "install"])
+        assert result.exit_code == 0
+        assert "tilth" in result.output
+
+    @patch("milknado.cli.install_missing_rust_tools")
+    def test_failure_exits_nonzero(self, mock_install: MagicMock) -> None:
+        mock_install.return_value = ([], ["mergiraf"])
+        result = runner.invoke(app, ["tools", "install"])
+        assert result.exit_code != 0
+        assert "mergiraf" in result.output
+
+
+class TestInitWithInstallRustTools:
+    @patch("milknado.cli.install_missing_rust_tools")
+    @patch("milknado.cli.get_required_tool_status")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_flag_triggers_install_on_success(
+        self,
+        _mock_crg: MagicMock,
+        mock_status: MagicMock,
+        mock_install: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common.toolchain import ToolStatus
+
+        mock_install.return_value = (["tilth"], [])
+        mock_status.return_value = [
+            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
+        ]
+        result = runner.invoke(
+            app, ["init", str(project_dir), "--install-rust-tools"]
+        )
+        assert result.exit_code == 0
+        mock_install.assert_called_once()
+
+    @patch("milknado.cli.install_missing_rust_tools")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_flag_exits_nonzero_on_install_failure(
+        self,
+        _mock_crg: MagicMock,
+        mock_install: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_install.return_value = ([], ["mergiraf"])
+        result = runner.invoke(
+            app, ["init", str(project_dir), "--install-rust-tools"]
+        )
+        assert result.exit_code != 0
+        assert "mergiraf" in result.output
+
+
 class TestAgentsCheck:
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_agents_check_prints_preset(
