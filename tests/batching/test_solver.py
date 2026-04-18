@@ -84,9 +84,13 @@ def test_spread_report_measures_distance_not_max_batch(tmp_path) -> None:
 
 
 def test_oversized_single_change_infeasible(tmp_path) -> None:
+    # Legacy test name kept; behaviour changed: oversized SCCs pass through, not INFEASIBLE.
     c = FileChange(id="1", path="big.py", edit_kind="add")  # 1875 tokens
     plan = plan_batches([c], budget=100, root=tmp_path)
-    assert plan.solver_status == "INFEASIBLE"
+    assert plan.solver_status == "OPTIMAL"
+    assert len(plan.batches) == 1
+    assert plan.batches[0].oversized is True
+    assert plan.batches[0].change_ids == ("1",)
 
 
 def test_timeout_returns_feasible_or_unknown(tmp_path) -> None:
@@ -117,3 +121,73 @@ def test_new_relationship_adds_edge(tmp_path) -> None:
     rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_call")
     plan = plan_batches([a, b], budget=70_000, new_relationships=[rel], root=tmp_path)
     assert _batch_index(plan, "a") <= _batch_index(plan, "b")
+
+
+# ---------------------------------------------------------------------------
+# Commit 2 — new tests
+# ---------------------------------------------------------------------------
+
+
+def test_oversized_scc_passthrough(tmp_path) -> None:
+    """A single change exceeding budget gets its own oversized batch."""
+    c = FileChange(id="big", path="big.py", edit_kind="add")
+    plan = plan_batches([c], budget=100, root=tmp_path)
+    assert plan.solver_status == "OPTIMAL"
+    assert len(plan.batches) == 1
+    assert plan.batches[0].oversized is True
+    assert plan.batches[0].change_ids == ("big",)
+
+
+def test_oversized_plus_normal(tmp_path) -> None:
+    """Oversized SCC and normal SCC with an edge: two batches, correct ordering."""
+    # big -> small (oversized must come before normal)
+    big = FileChange(id="big", path="big.py", edit_kind="add")
+    small = FileChange(id="small", path="small.py", edit_kind="delete", depends_on=("big",))
+    plan = plan_batches([big, small], budget=100, root=tmp_path)
+    assert plan.solver_status == "OPTIMAL"
+    assert len(plan.batches) == 2
+    big_batch = next(b for b in plan.batches if "big" in b.change_ids)
+    small_batch = next(b for b in plan.batches if "small" in b.change_ids)
+    assert big_batch.oversized is True
+    assert small_batch.oversized is False
+    assert big_batch.index < small_batch.index
+    assert big_batch.index in small_batch.depends_on
+
+
+def test_independent_changes_co_batch(tmp_path) -> None:
+    """Two independent changes that fit in budget land in one batch."""
+    a = FileChange(id="a", path="a.py", edit_kind="delete")
+    b = FileChange(id="b", path="b.py", edit_kind="delete")
+    plan = plan_batches([a, b], budget=70_000, root=tmp_path)
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
+    assert len(plan.batches) == 1
+    assert _all_change_ids(plan) == {"a", "b"}
+
+
+def test_lexicographic_prefers_fewer_batches(tmp_path) -> None:
+    """Chain a->b plus independent c: two batches (not three) when budget fits."""
+    a = FileChange(id="a", path="a.py", edit_kind="delete")
+    b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
+    c = FileChange(id="c", path="c.py", edit_kind="delete")
+    plan = plan_batches([a, b, c], budget=70_000, root=tmp_path)
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
+    # a and c can co-batch (no ordering constraint between them)
+    # b must come after a; c and b can co-batch if they have no ordering conflict
+    # Expect at most 2 batches: {a, c} and {b}  OR  {a} and {b, c}
+    assert len(plan.batches) <= 2
+    assert _all_change_ids(plan) == {"a", "b", "c"}
+
+
+def test_batch_depends_on_from_original_edges(tmp_path) -> None:
+    """Chain a->b->c forces 3 separate batches; depends_on reflects the chain."""
+    # delete costs 80 tokens flat; budget=80 forces one change per batch
+    a = FileChange(id="a", path="a.py", edit_kind="delete")
+    b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
+    c = FileChange(id="c", path="c.py", edit_kind="delete", depends_on=("b",))
+    plan = plan_batches([a, b, c], budget=80, root=tmp_path)
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
+    assert len(plan.batches) == 3
+    sorted_batches = sorted(plan.batches, key=lambda bat: bat.index)
+    assert sorted_batches[0].depends_on == ()
+    assert sorted_batches[1].depends_on == (sorted_batches[0].index,)
+    assert sorted_batches[2].depends_on == (sorted_batches[1].index,)

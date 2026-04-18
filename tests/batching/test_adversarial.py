@@ -252,15 +252,21 @@ class TestContractSCCs:
 # ---------------------------------------------------------------------------
 
 class TestPlanBatchesBoundary:
-    def test_budget_zero_infeasible(self, tmp_path):
+    def test_budget_zero_oversized(self, tmp_path):
+        # budget=0: every change exceeds budget, so all become oversized batches
         c = FileChange(id="1", path="a.py", edit_kind="delete")  # 80 tokens
         plan = plan_batches([c], budget=0, root=tmp_path)
-        assert plan.solver_status == "INFEASIBLE"
+        assert plan.solver_status == "OPTIMAL"
+        assert len(plan.batches) == 1
+        assert plan.batches[0].oversized is True
 
-    def test_budget_negative_infeasible(self, tmp_path):
+    def test_budget_negative_oversized(self, tmp_path):
+        # negative budget: every change exceeds budget, so all become oversized batches
         c = FileChange(id="1", path="a.py", edit_kind="delete")  # 80 tokens
         plan = plan_batches([c], budget=-1, root=tmp_path)
-        assert plan.solver_status == "INFEASIBLE"
+        assert plan.solver_status == "OPTIMAL"
+        assert len(plan.batches) == 1
+        assert plan.batches[0].oversized is True
 
     def test_time_limit_zero_valid_status(self, tmp_path):
         c = FileChange(id="1", path="a.py", edit_kind="delete")
@@ -293,10 +299,13 @@ class TestPlanBatchesBoundary:
         plan = plan_batches([c], budget=80, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
 
-    def test_budget_one_under_infeasible(self, tmp_path):
+    def test_budget_one_under_oversized(self, tmp_path):
+        # 80-token change with budget=79: oversized passthrough, not INFEASIBLE
         c = FileChange(id="1", path="a.py", edit_kind="delete")  # exactly 80 tokens
         plan = plan_batches([c], budget=79, root=tmp_path)
-        assert plan.solver_status == "INFEASIBLE"
+        assert plan.solver_status == "OPTIMAL"
+        assert len(plan.batches) == 1
+        assert plan.batches[0].oversized is True
 
     def test_split_symbol_spread_reported(self, tmp_path):
         sym = SymbolRef(name="Widget", file="widget.py")

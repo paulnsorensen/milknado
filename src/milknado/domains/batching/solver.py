@@ -1,9 +1,4 @@
-"""CP-SAT batch planner.
-
-Time limit: 10s. BIG=10_000. ALPHA=1.
-Timeout status maps to FEASIBLE if a solution was found, else UNKNOWN.
-No solution found -> UNKNOWN.
-"""
+"""CP-SAT batch planner — lexicographic two-pass solver with oversized passthrough."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -24,18 +19,12 @@ from milknado.domains.batching.graph_build import build_change_graph, contract_s
 from milknado.domains.batching.weights import estimate_tokens
 from milknado.domains.common.protocols import CrgPort
 
-# BIG makes batch-count minimisation the primary objective: any gain of one fewer
-# batch (saving BIG in objective) outweighs any improvement in symbol spread.
-BIG = 10_000
-# ALPHA weights the secondary objective (symbol spread). Raise it to push the
-# solver harder to keep related symbols in the same batch; lower it to let the
-# solver trade spread for fewer batches more freely.
-ALPHA = 1
-
 STATUS_OPTIMAL: SolverStatus = "OPTIMAL"
 STATUS_FEASIBLE: SolverStatus = "FEASIBLE"
 STATUS_INFEASIBLE: SolverStatus = "INFEASIBLE"
 STATUS_UNKNOWN: SolverStatus = "UNKNOWN"
+
+_STATUS_RANK = {STATUS_OPTIMAL: 3, STATUS_FEASIBLE: 2, STATUS_UNKNOWN: 1, STATUS_INFEASIBLE: 0}
 
 
 def _status_name(status: object) -> SolverStatus:
@@ -52,83 +41,69 @@ def _status_name(status: object) -> SolverStatus:
     return STATUS_UNKNOWN
 
 
+def _worse_status(a: SolverStatus, b: SolverStatus) -> SolverStatus:
+    return a if _STATUS_RANK[a] <= _STATUS_RANK[b] else b
+
+
+def _add_ordering_constraints(
+    model: cp_model.CpModel,
+    dag_edges: tuple[tuple[str, str], ...],
+    batch_of: dict[str, cp_model.IntVar],
+    fixed_batch_of: dict[str, int],
+) -> None:
+    for src, dst in dag_edges:
+        sf, df = fixed_batch_of.get(src), fixed_batch_of.get(dst)
+        if sf is None and df is None:
+            model.add(batch_of[src] <= batch_of[dst])
+        elif sf is not None and df is None:
+            model.add(sf <= batch_of[dst])
+        elif sf is None and df is not None:
+            model.add(batch_of[src] <= df)
+        # both fixed: ordering guaranteed by index assignment
+
+
 def _build_model(
     sccs: list[str],
     dag_edges: tuple[tuple[str, str], ...],
     tokens_by_scc: dict[str, int],
     sym_by_scc: dict[str, tuple[SymbolRef, ...]],
     budget: int,
-) -> tuple[cp_model.CpModel, dict[str, cp_model.IntVar], dict[str, cp_model.IntVar]]:
-    """Build the CP-SAT optimisation model that assigns SCCs to numbered batches.
-
-    Decision variables
-    ------------------
-    ``batch_of[s]``  — integer in [0, K-1], the batch index assigned to SCC s.
-    ``in_batch[(s,b)]`` — boolean indicator: 1 iff batch_of[s] == b. Needed
-       because CP-SAT cannot express linear sums over conditional integer vars
-       directly; the boolean linearisation lets us write the budget constraint.
-
-    Constraints
-    -----------
-    1. **Budget** (one per batch index b):
-         sum(tokens[s] * in_batch[(s,b)]  for all s) <= budget
-       Ensures no single batch exceeds the token budget. Batches are allowed to
-       be empty (all indicators 0), which is how the solver creates fewer than K
-       batches in practice.
-
-    2. **Ordering** (one per DAG edge (src, dst)):
-         batch_of[src] <= batch_of[dst]
-       Encodes the precedence requirement: every dependency must land in a batch
-       that is executed *before or at the same time as* its dependant. Because
-       batches are executed sequentially (batch 0 first), batch index order is
-       execution order.
-
-    3. **Spread per symbol** (see ``_build_spread_vars``):
-       For each symbol that appears in more than one SCC, a spread variable
-       tracks (max_batch - min_batch) across the SCCs that reference it. This
-       penalises splitting a cross-file symbol across many batches, which would
-       require a reviewer to context-switch across reviews.
-
-    Objective
-    ---------
-    Minimise:  max_batch_idx * BIG  +  ALPHA * sum(spread_vars)
-
-    The first term is the primary objective: use the fewest batches possible.
-    BIG is large enough (10 000) that any reduction of 1 in the batch count
-    outweighs any possible improvement in the spread term, no matter how large
-    the graph. The second term is a tie-breaker that prefers assignments where
-    symbols that appear in multiple SCCs are grouped into adjacent batches.
-
-    Returns
-    -------
-    model      — the fully-constrained CpModel, ready to solve
-    batch_of   — SCC id → integer decision variable
-    spread_vars — symbol key → spread integer variable (for reporting)
-    """
+    oversized_indices: set[int],
+    fixed_batch_of: dict[str, int],
+) -> tuple[cp_model.CpModel, dict[str, cp_model.IntVar], dict[str, cp_model.IntVar], cp_model.IntVar]:
+    """Build CP-SAT model for normal SCCs; oversized SCCs use fixed indices."""
     model = cp_model.CpModel()
     K = len(sccs)
-    batch_of = {s: model.new_int_var(0, K - 1, f"b_{s}") for s in sccs}
+    normal_sccs = [s for s in sccs if s not in fixed_batch_of]
+    batch_of: dict[str, cp_model.IntVar] = {
+        s: model.new_int_var(0, K - 1, f"b_{s}") for s in normal_sccs
+    }
+    for s in normal_sccs:
+        for ov_idx in oversized_indices:
+            model.add(batch_of[s] != ov_idx)
+
+    normal_batch_indices = [b for b in range(K) if b not in oversized_indices]
     in_batch: dict[tuple[str, int], cp_model.IntVar] = {}
-    for s in sccs:
-        for b in range(K):
+    for s in normal_sccs:
+        for b in normal_batch_indices:
             in_batch[(s, b)] = model.new_bool_var(f"ib_{s}_{b}")
             model.add(batch_of[s] == b).only_enforce_if(in_batch[(s, b)])
             model.add(batch_of[s] != b).only_enforce_if(in_batch[(s, b)].negated())
 
-    for b in range(K):
-        model.add(
-            sum(tokens_by_scc[s] * in_batch[(s, b)] for s in sccs) <= budget
-        )
+    for b in normal_batch_indices:
+        model.add(sum(tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs) <= budget)
 
-    for src, dst in dag_edges:
-        model.add(batch_of[src] <= batch_of[dst])
-
-    spread_vars = _build_spread_vars(model, batch_of, sym_by_scc, sccs, K)
+    _add_ordering_constraints(model, dag_edges, batch_of, fixed_batch_of)
+    spread_vars = _build_spread_vars(model, batch_of, sym_by_scc, normal_sccs, K)
 
     max_batch_idx = model.new_int_var(0, K - 1, "max_batch_idx")
-    model.add_max_equality(max_batch_idx, list(batch_of.values()))
-    model.minimize(max_batch_idx * BIG + ALPHA * sum(spread_vars.values()))
-    return model, batch_of, spread_vars
+    if normal_sccs:
+        model.add_max_equality(max_batch_idx, list(batch_of.values()))
+    else:
+        max_fixed = max(fixed_batch_of.values()) if fixed_batch_of else 0
+        model.add(max_batch_idx == max_fixed)
+
+    return model, batch_of, spread_vars, max_batch_idx
 
 
 def _build_spread_vars(
@@ -144,7 +119,6 @@ def _build_spread_vars(
         for sym in sym_by_scc.get(s, ()):
             key = f"{sym.file}:{sym.name}"
             sym_to_sccs.setdefault(key, []).append(s)
-
     spread_vars: dict[str, cp_model.IntVar] = {}
     for key, scc_list in sym_to_sccs.items():
         if len(scc_list) < 2:
@@ -165,18 +139,16 @@ def _build_spread_report(
     spread_vars: dict[str, cp_model.IntVar],
     sym_by_node: dict[str, tuple[SymbolRef, ...]],
 ) -> tuple[SymbolSpread, ...]:
-    """Convert spread_vars dict to tuple[SymbolSpread, ...] using SymbolRef keys."""
-    # Build reverse mapping: "file:name" key -> SymbolRef
-    key_to_sym: dict[str, SymbolRef] = {}
-    for syms in sym_by_node.values():
-        for sym in syms:
-            key_to_sym[f"{sym.file}:{sym.name}"] = sym
-    result = []
-    for key, var in spread_vars.items():
-        sym = key_to_sym.get(key)
-        if sym is not None:
-            result.append(SymbolSpread(symbol=sym, spread=int(solver.value(var))))
-    return tuple(result)
+    key_to_sym: dict[str, SymbolRef] = {
+        f"{sym.file}:{sym.name}": sym
+        for syms in sym_by_node.values()
+        for sym in syms
+    }
+    return tuple(
+        SymbolSpread(symbol=sym, spread=int(solver.value(var)))
+        for key, var in spread_vars.items()
+        if (sym := key_to_sym.get(key)) is not None
+    )
 
 
 def _extract_solution(
@@ -186,19 +158,20 @@ def _extract_solution(
     scc_members: dict[str, list[str]],
     input_order: dict[str, int],
     dag_edges: tuple[tuple[str, str], ...],
+    oversized_indices: set[int],
+    fixed_batch_of: dict[str, int],
 ) -> tuple[Batch, ...]:
     raw: dict[int, list[str]] = {}
     scc_to_batch: dict[str, int] = {}
     for s in sccs:
-        b = solver.value(batch_of[s])
+        b = fixed_batch_of[s] if s in fixed_batch_of else solver.value(batch_of[s])
         raw.setdefault(b, []).extend(scc_members[s])
         scc_to_batch[s] = b
 
-    # Remap solver batch indices to compact 0..N-1 ordering
     sorted_batch_indices = sorted(raw)
     remap = {old: new for new, old in enumerate(sorted_batch_indices)}
+    remapped_oversized = {remap[b] for b in sorted_batch_indices if b in oversized_indices}
 
-    # Derive batch-level depends_on from DAG edges between distinct batches
     batch_deps: dict[int, set[int]] = {remap[b]: set() for b in sorted_batch_indices}
     for src_scc, dst_scc in dag_edges:
         src_b = remap[scc_to_batch[src_scc]]
@@ -211,7 +184,13 @@ def _extract_solution(
         new_b = remap[old_b]
         members = sorted(raw[old_b], key=lambda x: input_order.get(x, 0))
         depends_on = tuple(sorted(batch_deps[new_b]))
-        batches.append(Batch(index=new_b, change_ids=tuple(members), depends_on=depends_on))
+        is_oversized = new_b in remapped_oversized
+        batches.append(Batch(
+            index=new_b,
+            change_ids=tuple(members),
+            depends_on=depends_on,
+            oversized=is_oversized,
+        ))
     return tuple(batches)
 
 
@@ -242,6 +221,35 @@ def _tokens_per_scc(
     return {s: sum(tokens_by_change[cid] for cid in scc_members[s]) for s in sccs}
 
 
+def _partition_oversized(
+    sccs: list[str], tokens_by_scc: dict[str, int], budget: int
+) -> tuple[list[str], list[str]]:
+    """Return (oversized_sccs, normal_sccs) partitioned by token budget."""
+    oversized = [s for s in sccs if tokens_by_scc[s] > budget]
+    return oversized, [s for s in sccs if tokens_by_scc[s] <= budget]
+
+
+def _two_pass_solve(
+    model: cp_model.CpModel,
+    max_batch_idx: cp_model.IntVar,
+    spread_vars: dict[str, cp_model.IntVar],
+    time_limit_s: float,
+) -> tuple[cp_model.CpSolver, SolverStatus]:
+    """Lexicographic solve: minimise batch count, then minimise spread."""
+    solver = cp_model.CpSolver()
+    model.minimize(max_batch_idx)
+    solver.parameters.max_time_in_seconds = time_limit_s / 2
+    status1 = _status_name(solver.solve(model))
+    if status1 in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
+        return solver, status1
+    k_star = int(solver.value(max_batch_idx))
+    model.add(max_batch_idx == k_star)
+    model.minimize(sum(spread_vars.values()) if spread_vars else max_batch_idx)
+    solver.parameters.max_time_in_seconds = time_limit_s / 2
+    status2 = _status_name(solver.solve(model))
+    return solver, _worse_status(status1, status2)
+
+
 def plan_batches(
     changes: Sequence[FileChange],
     budget: int = 70_000,
@@ -260,27 +268,33 @@ def plan_batches(
     _validate_unique_ids(changes)
     if root is None:
         root = Path.cwd()
-
     nodes, edges, sym_by_node = build_change_graph(changes, crg, new_relationships)
     scc_of, dag_edges = contract_sccs(nodes, edges)
     sccs, scc_members = _group_sccs(nodes, scc_of)
     tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root)
-
-    if any(t > budget for t in tokens_by_scc.values()):
-        return BatchPlan(batches=(), spread_report=(), solver_status=STATUS_INFEASIBLE)
-
+    oversized_sccs, normal_sccs = _partition_oversized(sccs, tokens_by_scc, budget)
+    fixed_batch_of: dict[str, int] = {s: i for i, s in enumerate(oversized_sccs)}
+    oversized_indices: set[int] = set(fixed_batch_of.values())
     sym_by_scc_map = symbols_by_scc(scc_of, sym_by_node)
-    model, batch_of, spread_vars = _build_model(
-        sccs, dag_edges, tokens_by_scc, sym_by_scc_map, budget
+    model, batch_of, spread_vars, max_batch_idx = _build_model(
+        sccs, dag_edges, tokens_by_scc, sym_by_scc_map, budget,
+        oversized_indices, fixed_batch_of,
     )
+    if not normal_sccs:
+        input_order = {c.id: i for i, c in enumerate(changes)}
+        batches = _extract_solution(
+            cp_model.CpSolver(), sccs, batch_of, scc_members, input_order, dag_edges,
+            oversized_indices, fixed_batch_of,
+        )
+        return BatchPlan(batches=batches, spread_report=(), solver_status=STATUS_OPTIMAL)
 
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = time_limit_s
-    status_name = _status_name(solver.solve(model))
+    solver, status_name = _two_pass_solve(model, max_batch_idx, spread_vars, time_limit_s)
     if status_name in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
         return BatchPlan(batches=(), spread_report=(), solver_status=status_name)
-
     input_order = {c.id: i for i, c in enumerate(changes)}
-    batches = _extract_solution(solver, sccs, batch_of, scc_members, input_order, dag_edges)
+    batches = _extract_solution(
+        solver, sccs, batch_of, scc_members, input_order, dag_edges,
+        oversized_indices, fixed_batch_of,
+    )
     spread_report = _build_spread_report(solver, spread_vars, sym_by_node)
     return BatchPlan(batches=batches, spread_report=spread_report, solver_status=status_name)
