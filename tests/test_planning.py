@@ -416,9 +416,10 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("my goal", encoding="utf-8")
         result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -436,9 +437,10 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("my goal", encoding="utf-8")
         planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -454,9 +456,14 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude -p --dangerously-skip-permissions")
+        planner = Planner(
+            tmp_graph, mock_crg,
+            "claude -p --dangerously-skip-permissions",
+            tilth=mock_tilth,
+        )
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("my goal", encoding="utf-8")
         planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -475,9 +482,10 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=1)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("my goal", encoding="utf-8")
         result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -491,6 +499,7 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -502,7 +511,7 @@ class TestPlanner:
                 "]}\n```"
             ),
         )
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("my goal", encoding="utf-8")
         result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -524,9 +533,10 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "aider --model opus")
+        planner = Planner(tmp_graph, mock_crg, "aider --model opus", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("goal", encoding="utf-8")
         planner.launch(spec_path, tmp_path, execution_agent="claude -p")
@@ -542,13 +552,69 @@ class TestPlanner:
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
+        mock_tilth: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
         spec_path = tmp_path / "spec.md"
         spec_path.write_text("goal", encoding="utf-8")
         planner.launch(spec_path, tmp_path, execution_agent="claude -p")
         assert mock_run.call_args[1]["cwd"] == tmp_path
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_records_budget_violations_and_telemetry(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+        mock_tilth: MagicMock,
+    ) -> None:
+        # atom_total_tokens = 70_000 => split_required band, ensures violations >= 1
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "```json\n"
+                '{"manifest_version":"milknado.plan.v1","atoms":['
+                '{"id":"A1","description":"huge","depends_on":[],"files":[],'
+                '"token_budget":{'
+                '"estimated_read_tokens":40000,'
+                '"estimated_write_tokens":30000,'
+                '"estimated_total_tokens":70000,'
+                '"split_required":false'
+                "}}"
+                "]}\n```"
+            ),
+        )
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
+        spec_path = tmp_path / "spec.md"
+        spec_path.write_text("goal", encoding="utf-8")
+        result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
+        assert result.success is True
+        assert result.budget_violations >= 1
+        calibration_file = tmp_path / ".milknado" / "calibration.jsonl"
+        assert calibration_file.exists()
+        assert calibration_file.read_text().strip() != ""
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_emits_crg_degradation_when_ensure_graph_fails(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+        mock_tilth: MagicMock,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_crg.ensure_graph.side_effect = RuntimeError("db locked")
+        planner = Planner(tmp_graph, mock_crg, "claude", tilth=mock_tilth)
+        spec_path = tmp_path / "spec.md"
+        spec_path.write_text("goal", encoding="utf-8")
+        result = planner.launch(spec_path, tmp_path, execution_agent="claude -p")
+        assert result.success is True
+        content = result.context_path.read_text()  # type: ignore[union-attr]
+        assert "ensure_graph_failed" in content
+        assert "db locked" in content
 
 
 class TestPlanResult:

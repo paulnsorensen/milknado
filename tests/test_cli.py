@@ -278,6 +278,7 @@ class TestAddNode:
 
 
 class TestPlanCommand:
+    @patch("milknado.domains.planning.planner.TilthAdapter")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
     @patch("tiktoken.get_encoding")
@@ -286,11 +287,17 @@ class TestPlanCommand:
         mock_encoding: MagicMock,
         mock_run: MagicMock,
         mock_crg_cls: MagicMock,
+        mock_tilth_cls: MagicMock,
         project_dir: Path,
     ) -> None:
+        from milknado.domains.common.types import DegradationMarker
+
         mock_encoding.return_value.encode.return_value = [1, 2, 3]
         mock_run.return_value = MagicMock(returncode=0)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
+            source="tilth", reason="test_stub", detail="patched",
+        )
         spec = project_dir / "spec.md"
         spec.write_text("# Spec\n\nextract service", encoding="utf-8")
         result = runner.invoke(
@@ -300,6 +307,7 @@ class TestPlanCommand:
         assert result.exit_code == 0
         assert "Planning" in result.output
 
+    @patch("milknado.domains.planning.planner.TilthAdapter")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
     @patch("tiktoken.get_encoding")
@@ -308,11 +316,17 @@ class TestPlanCommand:
         mock_encoding: MagicMock,
         mock_run: MagicMock,
         mock_crg_cls: MagicMock,
+        mock_tilth_cls: MagicMock,
         project_dir: Path,
     ) -> None:
+        from milknado.domains.common.types import DegradationMarker
+
         mock_encoding.return_value.encode.return_value = [1, 2, 3]
         mock_run.return_value = MagicMock(returncode=1)
         mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
+            source="tilth", reason="test_stub", detail="patched",
+        )
         spec = project_dir / "spec.md"
         spec.write_text("# Spec\n\nextract service", encoding="utf-8")
         result = runner.invoke(

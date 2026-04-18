@@ -12,6 +12,13 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 
+NULL_CRG_DEGRADATION = DegradationMarker(
+    source="crg",
+    reason="graph_unavailable",
+    detail="code-review-graph backend not initialized",
+)
+
+
 def build_planning_context(
     spec_path: Path,
     crg: CrgPort,
@@ -20,6 +27,7 @@ def build_planning_context(
     execution_agent: str,
     tilth: TilthPort | None = None,
     project_root: Path | None = None,
+    crg_degradation: DegradationMarker | None = None,
 ) -> str:
     spec_text = spec_path.read_text(encoding="utf-8")
     resuming = len(graph.get_all_nodes()) > 0
@@ -29,7 +37,7 @@ def build_planning_context(
         _spec_section(spec_path, spec_text, token_estimate),
         _crg_usage_section(),
         _atom_budget_heuristics_section(token_estimate),
-        _architecture_section(crg),
+        _architecture_section(crg, crg_degradation),
         _structural_section(tilth, scope),
         _graph_section(graph),
         _instructions_section(resuming, execution_agent),
@@ -85,7 +93,16 @@ def _atom_budget_heuristics_section(spec_tokens: int) -> str:
     )
 
 
-def _architecture_section(crg: CrgPort) -> str:
+def _architecture_section(
+    crg: CrgPort, degradation: DegradationMarker | None = None,
+) -> str:
+    if degradation is not None:
+        return (
+            "# Architecture Overview (compact, from code-review-graph)\n\n"
+            "- status: degraded\n"
+            f"- reason: {degradation.reason}\n"
+            f"- detail: {degradation.detail}"
+        )
     communities = crg.list_communities(sort_by="size")[:5]
     flows = crg.list_flows(sort_by="criticality", limit=3)
     overview = crg.get_architecture_overview()
