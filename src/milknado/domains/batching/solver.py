@@ -54,17 +54,9 @@ def _add_ordering_constraints(
     model: cp_model.CpModel,
     dag_edges: tuple[tuple[str, str], ...],
     batch_of: dict[str, cp_model.IntVar],
-    fixed_batch_of: dict[str, int],
 ) -> None:
     for src, dst in dag_edges:
-        sf, df = fixed_batch_of.get(src), fixed_batch_of.get(dst)
-        if sf is None and df is None:
-            model.add(batch_of[src] <= batch_of[dst])
-        elif sf is not None and df is None:
-            model.add(sf <= batch_of[dst])
-        elif sf is None and df is not None:
-            model.add(batch_of[src] <= df)
-        # both fixed: ordering guaranteed by index assignment
+        model.add(batch_of[src] <= batch_of[dst])
 
 
 def _build_model(
@@ -73,40 +65,40 @@ def _build_model(
     tokens_by_scc: dict[str, int],
     sym_by_scc: dict[str, tuple[SymbolRef, ...]],
     budget: int,
-    oversized_indices: set[int],
-    fixed_batch_of: dict[str, int],
+    oversized_sccs: set[str],
 ) -> tuple[cp_model.CpModel, dict[str, cp_model.IntVar], dict[str, cp_model.IntVar], cp_model.IntVar]:
-    """Build CP-SAT model for normal SCCs; oversized SCCs use fixed indices."""
+    """Build CP-SAT model. All SCCs get IntVars; oversized SCCs are isolated by mutual-exclusion."""
     model = cp_model.CpModel()
     K = len(sccs)
-    normal_sccs = [s for s in sccs if s not in fixed_batch_of]
     batch_of: dict[str, cp_model.IntVar] = {
-        s: model.new_int_var(0, K - 1, f"b_{s}") for s in normal_sccs
+        s: model.new_int_var(0, K - 1, f"b_{s}") for s in sccs
     }
-    for s in normal_sccs:
-        for ov_idx in oversized_indices:
-            model.add(batch_of[s] != ov_idx)
 
-    normal_batch_indices = [b for b in range(K) if b not in oversized_indices]
+    # Oversized SCCs must each occupy a unique batch alone
+    for ov in oversized_sccs:
+        for other in sccs:
+            if other != ov:
+                model.add(batch_of[ov] != batch_of[other])
+
+    # Budget constraint applies only to normal SCCs
+    normal_sccs = [s for s in sccs if s not in oversized_sccs]
     in_batch: dict[tuple[str, int], cp_model.IntVar] = {}
     for s in normal_sccs:
-        for b in normal_batch_indices:
+        for b in range(K):
             in_batch[(s, b)] = model.new_bool_var(f"ib_{s}_{b}")
             model.add(batch_of[s] == b).only_enforce_if(in_batch[(s, b)])
             model.add(batch_of[s] != b).only_enforce_if(in_batch[(s, b)].negated())
 
-    for b in normal_batch_indices:
-        model.add(sum(tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs) <= budget)
+    for b in range(K):
+        tokens_sum = sum(tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
+        if normal_sccs:
+            model.add(tokens_sum <= budget)
 
-    _add_ordering_constraints(model, dag_edges, batch_of, fixed_batch_of)
+    _add_ordering_constraints(model, dag_edges, batch_of)
     spread_vars = _build_spread_vars(model, batch_of, sym_by_scc, normal_sccs, K)
 
     max_batch_idx = model.new_int_var(0, K - 1, "max_batch_idx")
-    if normal_sccs:
-        model.add_max_equality(max_batch_idx, list(batch_of.values()))
-    else:
-        max_fixed = max(fixed_batch_of.values()) if fixed_batch_of else 0
-        model.add(max_batch_idx == max_fixed)
+    model.add_max_equality(max_batch_idx, list(batch_of.values()))
 
     return model, batch_of, spread_vars, max_batch_idx
 
@@ -163,19 +155,21 @@ def _extract_solution(
     scc_members: dict[str, list[str]],
     input_order: dict[str, int],
     dag_edges: tuple[tuple[str, str], ...],
-    oversized_indices: set[int],
-    fixed_batch_of: dict[str, int],
+    oversized_sccs: set[str],
 ) -> tuple[Batch, ...]:
     raw: dict[int, list[str]] = {}
     scc_to_batch: dict[str, int] = {}
+    oversized_batch_indices: set[int] = set()
     for s in sccs:
-        b = fixed_batch_of[s] if s in fixed_batch_of else solver.value(batch_of[s])
+        b = int(solver.value(batch_of[s]))
         raw.setdefault(b, []).extend(scc_members[s])
         scc_to_batch[s] = b
+        if s in oversized_sccs:
+            oversized_batch_indices.add(b)
 
     sorted_batch_indices = sorted(raw)
     remap = {old: new for new, old in enumerate(sorted_batch_indices)}
-    remapped_oversized = {remap[b] for b in sorted_batch_indices if b in oversized_indices}
+    remapped_oversized = {remap[b] for b in sorted_batch_indices if b in oversized_batch_indices}
 
     batch_deps: dict[int, set[int]] = {remap[b]: set() for b in sorted_batch_indices}
     for src_scc, dst_scc in dag_edges:
@@ -278,29 +272,18 @@ def plan_batches(
     scc_of, dag_edges = contract_sccs(nodes, edges)
     sccs, scc_members = _group_sccs(nodes, scc_of)
     tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root)
-    oversized_sccs, normal_sccs = _partition_oversized(sccs, tokens_by_scc, budget)
-    fixed_batch_of: dict[str, int] = {s: i for i, s in enumerate(oversized_sccs)}
-    oversized_indices: set[int] = set(fixed_batch_of.values())
+    oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, budget)
+    oversized_sccs: set[str] = set(oversized_list)
     sym_by_scc_map = symbols_by_scc(scc_of, sym_by_node)
     model, batch_of, spread_vars, max_batch_idx = _build_model(
-        sccs, dag_edges, tokens_by_scc, sym_by_scc_map, budget,
-        oversized_indices, fixed_batch_of,
+        sccs, dag_edges, tokens_by_scc, sym_by_scc_map, budget, oversized_sccs,
     )
-    if not normal_sccs:
-        input_order = {c.id: i for i, c in enumerate(changes)}
-        batches = _extract_solution(
-            cp_model.CpSolver(), sccs, batch_of, scc_members, input_order, dag_edges,
-            oversized_indices, fixed_batch_of,
-        )
-        return BatchPlan(batches=batches, spread_report=(), solver_status=STATUS_OPTIMAL)
-
     solver, status_name = _two_pass_solve(model, max_batch_idx, spread_vars, time_limit_s)
     if status_name in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
         return BatchPlan(batches=(), spread_report=(), solver_status=status_name)
     input_order = {c.id: i for i, c in enumerate(changes)}
     batches = _extract_solution(
-        solver, sccs, batch_of, scc_members, input_order, dag_edges,
-        oversized_indices, fixed_batch_of,
+        solver, sccs, batch_of, scc_members, input_order, dag_edges, oversized_sccs,
     )
     spread_report = _build_spread_report(solver, spread_vars, sym_by_node)
     return BatchPlan(batches=batches, spread_report=spread_report, solver_status=status_name)

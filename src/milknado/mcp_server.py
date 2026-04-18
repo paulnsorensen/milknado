@@ -85,11 +85,19 @@ def _dict_to_file_change(d: dict) -> FileChange:
     )
 
 
+_VALID_REASONS = frozenset({"new_file", "new_import", "new_call", "new_type_use"})
+
+
 def _dict_to_new_relationship(d: dict) -> NewRelationship:
+    reason = d["reason"]
+    if reason not in _VALID_REASONS:
+        raise ValueError(
+            f"invalid reason: {reason!r}; expected one of {sorted(_VALID_REASONS)}"
+        )
     return NewRelationship(
         source_change_id=d["source_change_id"],
         dependant_change_id=d["dependant_change_id"],
-        reason=d["reason"],
+        reason=reason,
     )
 
 
