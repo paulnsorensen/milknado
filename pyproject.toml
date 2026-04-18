@@ -15,6 +15,8 @@ dependencies = [
     "typer>=0.12",
     "rich>=13",
     "pyyaml>=6",
+    "ortools>=9.11",
+    "tiktoken>=0.7",
 ]
 
 [project.scripts]
@@ -37,6 +39,7 @@ select = ["E", "F", "I", "UP"]
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "ty>=0.0.1a1",
 ]

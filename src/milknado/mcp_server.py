@@ -7,6 +7,8 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from milknado.domains.batching import BatchPlan, FileChange, SymbolRef
+
 mcp = FastMCP(
     "Milknado",
     instructions=(
@@ -67,6 +69,49 @@ def milknado_add_node(
         return f"created node id={node.id} description={node.description!r}"
     finally:
         graph.close()
+
+
+def _dict_to_file_change(d: dict) -> FileChange:
+    symbols = tuple(
+        SymbolRef(name=s["name"], file=s["file"])
+        for s in d.get("symbols", [])
+    )
+    return FileChange(
+        id=d["id"],
+        path=d["path"],
+        edit_kind=d.get("edit_kind", "modify"),
+        symbols=symbols,
+        depends_on=tuple(d.get("depends_on", [])),
+    )
+
+
+def _plan_to_dict(plan: BatchPlan) -> dict:
+    return {
+        "batches": [list(b) for b in plan.batches],
+        "spread_report": dict(plan.spread_report),
+        "solver_status": plan.solver_status,
+    }
+
+
+def _plan_batches_impl(
+    changes: list[dict], budget: int, project_root: Path
+) -> dict:
+    from milknado.adapters.crg import CrgAdapter
+    from milknado.domains.batching import plan_batches
+    file_changes = [_dict_to_file_change(c) for c in changes]
+    plan = plan_batches(
+        file_changes, budget, crg=CrgAdapter(project_root), root=project_root
+    )
+    return _plan_to_dict(plan)
+
+
+@mcp.tool()
+def milknado_plan_batches(
+    changes: list[dict], budget: int = 70_000, project_root: str = "",
+) -> dict:
+    """Compute token-budgeted, precedence-respecting batches for changes."""
+    root = _project_root(project_root or None)
+    return _plan_batches_impl(changes, budget, root)
 
 
 def main() -> None:
