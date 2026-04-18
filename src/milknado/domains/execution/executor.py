@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common.types import NodeStatus, RebaseResult
+from milknado.domains.common.types import RebaseResult
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    agent_command: str
+    execution_agent: str
     quality_gates: tuple[str, ...]
     worktree_pattern: str
     project_root: Path
@@ -100,7 +100,7 @@ class Executor:
             )
 
             run = self._ralph.create_run(
-                agent=config.agent_command,
+                agent=config.execution_agent,
                 ralph_dir=wt_path,
                 ralph_file=ralph_path,
                 commands=[],

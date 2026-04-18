@@ -1,92 +1,81 @@
-"""Agent CLI argv helpers for planning (subprocess) and execution (ralphify string)."""
+"""Agent CLI argv helpers for planning (subprocess) and execution."""
 
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 from typing import Any, Final
 
-AGENT_PRESETS: Final[tuple[str, ...]] = (
-    "custom",
-    "claude",
-    "cursor",
-    "gemini",
-    "codex",
-)
-
-# Strings passed to ralphify RunConfig.agent (full shell command, one string).
-EXECUTION_AGENT_BY_PRESET: Final[dict[str, str]] = {
-    "claude": "claude -p --dangerously-skip-permissions",
-    "cursor": "cursor-agent -p",
-    "gemini": "gemini -p --yolo",
-    # Codex flags evolve; users can override via agent_command when preset=codex
-    # or set agent_preset=codex without agent_command for this default.
-    "codex": "codex exec --sandbox workspace-write",
+DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
+    "claude": "claude --model opus -p --dangerously-skip-permissions",
+    "cursor": "cursor-agent --model opus -p",
+    "gemini": "gemini --model gemini-3.1-pro-preview -p --yolo",
+    "codex": "codex exec --model gpt-5.4 --sandbox workspace-write",
 }
 
-# Planning: built-in presets send the planning markdown on stdin (text mode).
-_PLANNING_ARGV_BY_PRESET: Final[dict[str, list[str]]] = {
-    "claude": ["claude", "-p", "--dangerously-skip-permissions", "-"],
-    "cursor": ["cursor-agent", "-p", "-"],
-    "gemini": ["gemini", "-p", "--yolo", "-"],
-    "codex": ["codex", "exec", "--sandbox", "workspace-write", "-"],
+DEFAULT_EXECUTION_AGENT_BY_FAMILY: Final[dict[str, str]] = {
+    "claude": "claude --model sonnet -p --dangerously-skip-permissions",
+    "cursor": "cursor-agent --model sonnet -p",
+    "gemini": "gemini --model gemini-2.5-flash -p --yolo",
+    "codex": "codex exec --model gpt-5.4-mini --sandbox workspace-write",
 }
 
 
-def normalize_preset(value: str | None) -> str:
-    p = (value or "custom").strip().lower()
-    if p not in AGENT_PRESETS:
-        return "custom"
-    return p
+def resolve_planning_agent_command(
+    family: str,
+    *,
+    planning_agent: str | None = None,
+) -> str:
+    """Return planning agent command for one-shot planning subprocess."""
+    override = (planning_agent or "").strip()
+    if override:
+        return override
+    return DEFAULT_PLANNING_AGENT_BY_FAMILY[family]
 
 
 def resolve_execution_agent_command(
-    preset: str,
+    family: str,
     *,
-    agent_command: str,
-    agent_command_key_present: bool,
+    execution_agent: str | None = None,
 ) -> str:
-    """Return the shell command string used by ralphify for loop workers."""
-    p = normalize_preset(preset)
-    if p == "custom":
-        return agent_command.strip() if agent_command.strip() else "claude"
-    if agent_command_key_present and agent_command.strip():
-        return agent_command.strip()
-    return EXECUTION_AGENT_BY_PRESET[p]
+    """Return execution agent command for ralph loop workers."""
+    override = (execution_agent or "").strip()
+    if override:
+        return override
+    return DEFAULT_EXECUTION_AGENT_BY_FAMILY[family]
 
 
 def build_planning_subprocess(
     context_path: Path,
-    preset: str,
-    agent_command: str,
+    planning_agent_command: str,
+    *,
+    allow_external_mcp: bool = False,
 ) -> tuple[list[str], dict[str, Any]]:
-    """Build argv and extra kwargs for subprocess.run when launching planning.
-
-    - Built-in presets: prompt is read from ``context_path`` and sent on stdin
-      (``text=True``, ``input=...``).
-    - ``custom``: ``shlex.split(agent_command)`` plus the full file body as the
-      last argv element (legacy behavior).
-    """
-    p = normalize_preset(preset)
+    """Build argv + kwargs for one-shot planning subprocess."""
     body = context_path.read_text(encoding="utf-8")
-    if p == "custom":
-        parts = shlex.split(agent_command, posix=True)
-        if not parts:
-            parts = ["claude"]
-        argv = parts + [body]
-        return argv, {}
+    parts = shlex.split(planning_agent_command, posix=True)
+    if not parts:
+        parts = shlex.split(DEFAULT_PLANNING_AGENT_BY_FAMILY["claude"], posix=True)
+    if "-" not in parts:
+        parts.append("-")
+    extra: dict[str, Any] = {"input": body, "text": True}
+    if not allow_external_mcp:
+        extra["env"] = build_minimal_mcp_env()
+    return parts, extra
 
-    # If users override agent_command for a preset, honor it for planning too.
-    # We stream the prompt via stdin by appending "-" to preserve prompt-size safety.
-    command_override = agent_command.strip()
-    preset_default = EXECUTION_AGENT_BY_PRESET[p]
-    if command_override and command_override != preset_default:
-        parts = shlex.split(command_override, posix=True)
-        if not parts:
-            parts = list(_PLANNING_ARGV_BY_PRESET[p])
-        if "-" not in parts:
-            parts.append("-")
-        return parts, {"input": body, "text": True}
 
-    argv = list(_PLANNING_ARGV_BY_PRESET[p])
-    return argv, {"input": body, "text": True}
+def build_minimal_mcp_env() -> dict[str, str]:
+    """Return subprocess env with external MCP injection stripped by default."""
+    env = dict(os.environ)
+    for key in list(env.keys()):
+        upper = key.upper()
+        if "MCP" not in upper:
+            continue
+        if upper.startswith("MILKNADO_"):
+            continue
+        # Keep CRG env controls available to planning.
+        if upper.startswith("CRG_"):
+            continue
+        del env[key]
+    return env

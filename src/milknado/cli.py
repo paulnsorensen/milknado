@@ -19,6 +19,9 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.agent_argv import (
+    build_planning_subprocess,
+)
 from milknado.domains.common.toolchain import (
     get_required_tool_status,
     install_missing_rust_tools,
@@ -249,8 +252,7 @@ def plan(
         planner = Planner(
             graph,
             crg,
-            config.agent_command,
-            agent_preset=config.agent_preset,
+            config.planning_agent,
         )
         console.print(f"[bold]Planning:[/bold] {goal}")
         result = planner.launch(goal, project_root)
@@ -271,7 +273,7 @@ def _build_exec_config(
     from milknado.domains.execution import ExecutionConfig
 
     return ExecutionConfig(
-        agent_command=config.agent_command,
+        execution_agent=config.execution_agent,
         quality_gates=config.quality_gates,
         worktree_pattern=config.worktree_pattern,
         project_root=project_root,
@@ -346,20 +348,20 @@ def agents_check(
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
 ) -> None:
-    """Print resolved agent preset, execution command, and a sample planning argv."""
-    from milknado.domains.common.agent_argv import build_planning_subprocess
+    """Print resolved planning/execution commands and sample planning argv."""
 
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
-    console.print(f"[bold]agent_preset[/bold]: {config.agent_preset}")
-    console.print(f"[bold]execution (ralphify)[/bold]: {config.agent_command}")
+    console.print(f"[bold]agent_family[/bold]: {config.agent_family}")
+    console.print(f"[bold]planning[/bold]: {config.planning_agent}")
+    console.print(f"[bold]execution (ralphify)[/bold]: {config.execution_agent}")
 
     sample = project_root / ".milknado" / ".agent-check-sample.md"
     sample.parent.mkdir(parents=True, exist_ok=True)
     sample.write_text("# sample planning context\n", encoding="utf-8")
     try:
         argv, extra = build_planning_subprocess(
-            sample, config.agent_preset, config.agent_command,
+            sample, config.planning_agent,
         )
         redacted = {k: ("<stdin>" if k == "input" else v) for k, v in extra.items()}
         console.print(f"[bold]planning argv[/bold]: {argv}")
