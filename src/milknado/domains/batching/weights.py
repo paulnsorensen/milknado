@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import math
 from pathlib import Path
 
 import tiktoken
@@ -49,8 +50,11 @@ def estimate_tokens(change: FileChange, root: Path) -> int:
     ext = _extension(change.path)
     tpl = TOKENS_PER_LINE.get(ext, 8)
     if change.edit_kind == "modify":
-        real = _tiktoken_count(root / change.path)
-        if real is not None:
-            return int(real * HEADROOM)
+        resolved_root = root.resolve()
+        resolved_path = (root / change.path).resolve()
+        if resolved_path.is_relative_to(resolved_root):
+            real = _tiktoken_count(resolved_path)
+            if real is not None:
+                return math.ceil(real * HEADROOM)
     lines = NEW_FILE_LINES.get(ext, 150)
-    return int(lines * tpl * HEADROOM)
+    return math.ceil(lines * tpl * HEADROOM)

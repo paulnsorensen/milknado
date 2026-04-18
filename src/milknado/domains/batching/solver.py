@@ -17,6 +17,7 @@ from milknado.domains.batching.change import (
     SymbolSpread,
 )
 from milknado.domains.batching.graph_build import (
+    ContractedGraph,
     build_change_graph,
     contract_sccs,
     symbols_by_scc,
@@ -349,16 +350,16 @@ def _run_solver(
     time_limit_s: float,
     root: Path,
 ) -> BatchPlan:
-    nodes, edges, sym_by_node = build_change_graph(changes, crg, new_relationships)
-    scc_of, dag_edges = contract_sccs(nodes, edges)
-    sccs, scc_members = _group_sccs(nodes, scc_of)
+    graph = build_change_graph(changes, crg, new_relationships)
+    contracted: ContractedGraph = contract_sccs(graph.nodes, graph.edges)
+    sccs, scc_members = _group_sccs(graph.nodes, contracted.scc_of)
     tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root)
     oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, budget)
     inputs = _ModelInputs(
         sccs=sccs,
-        dag_edges=dag_edges,
+        dag_edges=contracted.dag_edges,
         tokens_by_scc=tokens_by_scc,
-        sym_by_scc=symbols_by_scc(scc_of, sym_by_node),
+        sym_by_scc=symbols_by_scc(contracted.scc_of, graph.symbols_by_node),
         budget=budget,
         oversized_sccs=set(oversized_list),
     )
@@ -368,10 +369,10 @@ def _run_solver(
         return BatchPlan(batches=(), spread_report=(), solver_status=status)
     input_order = {c.id: i for i, c in enumerate(changes)}
     batches = _extract_solution(
-        snapshot.batch_of, scc_members, input_order, dag_edges, inputs.oversized_sccs,
+        snapshot.batch_of, scc_members, input_order, contracted.dag_edges, inputs.oversized_sccs,
     )
     return BatchPlan(
         batches=batches,
-        spread_report=_build_spread_report(snapshot.spread_of, sym_by_node),
+        spread_report=_build_spread_report(snapshot.spread_of, graph.symbols_by_node),
         solver_status=status,
     )

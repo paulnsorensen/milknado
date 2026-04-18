@@ -375,7 +375,7 @@ class TestPlanBatchesImpl:
 
     def test_symbol_missing_name_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="must have string"):
             _plan_batches_impl(
                 [{"id": "1", "path": "a.py", "symbols": [{"file": "a.py"}]}],
                 70_000,
@@ -384,7 +384,7 @@ class TestPlanBatchesImpl:
 
     def test_symbol_missing_file_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="must have string"):
             _plan_batches_impl(
                 [{"id": "1", "path": "a.py", "symbols": [{"name": "Foo"}]}],
                 70_000,

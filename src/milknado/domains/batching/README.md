@@ -122,11 +122,14 @@ When a single SCC's estimated token count exceeds the budget, splitting it is
 impossible (the nodes form a cycle and must remain together). Rather than
 returning `INFEASIBLE`, the planner passes it through:
 
-- The SCC is assigned a dedicated batch index before CP-SAT runs.
+- The oversized SCC participates in CP-SAT as a batch-index decision variable
+  like any other SCC — it is not pre-assigned a fixed index.
+- Mutual-exclusion constraints (`batch_of[oversized] != batch_of[other]`) force
+  each oversized SCC into its own batch, alone.
 - The budget constraint is waived for that batch.
 - The batch is marked `oversized=True`.
-- Normal SCCs continue through CP-SAT; ordering constraints that cross into or
-  out of an oversized batch are enforced via fixed batch indices.
+- Ordering constraints into and out of oversized batches are enforced by the
+  same CP-SAT precedence relations used everywhere else.
 
 Ralph treats oversized batches as **linear ralph loops** — one symbol-level
 task at a time inside that batch — rather than a single LLM context window.

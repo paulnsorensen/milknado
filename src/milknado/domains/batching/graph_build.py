@@ -5,8 +5,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from milknado.domains.batching.change import FileChange, NewRelationship, SymbolRef
+from typing import NamedTuple
+
+from milknado.domains.batching.change import ChangeGraph, FileChange, NewRelationship, SymbolRef
 from milknado.domains.common.protocols import CrgPort
+
+
+class ContractedGraph(NamedTuple):
+    """Typed return for contract_sccs: SCC membership map and the resulting DAG edges."""
+    scc_of: dict[str, str]
+    dag_edges: tuple[tuple[str, str], ...]
 
 
 def _build_path_to_ids(changes: Sequence[FileChange]) -> dict[str, list[str]]:
@@ -21,12 +29,16 @@ def build_change_graph(
     changes: Sequence[FileChange],
     crg: CrgPort | None = None,
     new_relationships: Sequence[NewRelationship] = (),
-) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], dict[str, tuple[SymbolRef, ...]]]:
-    """Return (nodes, edges, symbols_by_node) for the given change set.
+) -> ChangeGraph:
+    """Return a ChangeGraph (nodes, edges, symbols_by_node) for the given change set.
 
     Edges come from three sources: CRG impact radius, explicit ``depends_on``
     declarations, and ``new_relationships``. Only edges between nodes present
     in ``changes`` are kept.
+
+    ``crg=None`` is the valid "no structural graph" path — used in tests and
+    when no CRG database has been built yet. The graph is still correct; it
+    just lacks CRG-derived precedence edges.
     """
     path_to_ids = _build_path_to_ids(changes)
     id_to_change = {c.id: c for c in changes}
@@ -34,10 +46,11 @@ def build_change_graph(
     _collect_crg_edges(changes, crg, path_to_ids, id_to_change, seen_edges)
     _collect_depends_on_edges(changes, id_to_change, seen_edges)
     _collect_new_relationship_edges(new_relationships, id_to_change, seen_edges)
-    nodes = tuple(c.id for c in changes)
-    edges = tuple(sorted(seen_edges))
-    symbols_by_node = {c.id: c.symbols for c in changes}
-    return nodes, edges, symbols_by_node
+    return ChangeGraph(
+        nodes=tuple(c.id for c in changes),
+        edges=tuple(sorted(seen_edges)),
+        symbols_by_node={c.id: c.symbols for c in changes},
+    )
 
 
 def _add_edge(edges: set[tuple[str, str]], src: str, dst: str) -> None:
@@ -215,7 +228,7 @@ def validate_no_symbol_overlap(changes: Sequence[FileChange]) -> None:
 def contract_sccs(
     nodes: Sequence[str],
     edges: Sequence[tuple[str, str]],
-) -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
+) -> ContractedGraph:
     """Collapse graph cycles into single SCC nodes using Tarjan's algorithm.
 
     A Strongly Connected Component (SCC) is a maximal set of nodes where every
@@ -225,10 +238,14 @@ def contract_sccs(
     member, making it stable across runs. The returned ``dag_edges`` are the
     edges between distinct SCCs (always a DAG). Iterative Tarjan is used to
     avoid Python's recursion limit on large change sets.
+
+    When the graph is acyclic (common case), every node is its own trivial
+    SCC — ``scc_of[n] == n`` for all nodes and ``dag_edges`` equals the input
+    edges unchanged.
     """
     adj = _build_adjacency(edges)
     scc_of = _compute_sccs(nodes, adj)
-    return scc_of, _extract_dag_edges(edges, scc_of)
+    return ContractedGraph(scc_of=scc_of, dag_edges=_extract_dag_edges(edges, scc_of))
 
 
 def _build_adjacency(edges: Sequence[tuple[str, str]]) -> dict[str, list[str]]:
