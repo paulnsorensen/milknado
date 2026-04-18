@@ -4,7 +4,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.adapters.ralphify import RalphifyAdapter, _build_ralph_content
+from milknado.adapters.ralphify import (
+    MILKNADO_COMPLETION_SIGNAL,
+    RalphifyAdapter,
+    _build_ralph_content,
+)
 from milknado.domains.common.types import MikadoNode
 
 
@@ -48,6 +52,8 @@ class TestCreateRun:
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),
             project_root=Path("/project"),
+            completion_signal=MILKNADO_COMPLETION_SIGNAL,
+            stop_on_completion_signal=True,
         )
         mock_manager.create_run.assert_called_once_with(mock_config)
         mock_run.add_listener.assert_called_once()
@@ -216,3 +222,9 @@ class TestBuildRalphContent:
         assert "some context" in content
         assert "- `gate1`" in content
         assert "- `gate2`" in content
+
+    def test_includes_completion_promise_instruction(self) -> None:
+        node = MikadoNode(id=1, description="Do thing")
+        content = _build_ralph_content(node, "ctx", ["gate1"])
+        assert "## Completion" in content
+        assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content

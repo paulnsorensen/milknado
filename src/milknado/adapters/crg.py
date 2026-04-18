@@ -4,8 +4,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from code_review_graph.communities import get_architecture_overview
+from code_review_graph.communities import get_architecture_overview, get_communities
+from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
+from code_review_graph.tools.context import get_minimal_context
 
 _SOURCE_EXTENSIONS = frozenset({
     ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go",
@@ -90,3 +92,26 @@ class CrgAdapter:
 
     def get_architecture_overview(self) -> dict[str, Any]:
         return get_architecture_overview(self._get_store())
+
+    def list_communities(
+        self, sort_by: str = "size", min_size: int = 0,
+    ) -> list[dict[str, Any]]:
+        return get_communities(
+            self._get_store(), sort_by=sort_by, min_size=min_size,
+        )
+
+    def list_flows(
+        self, sort_by: str = "criticality", limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
+
+    def get_minimal_context(
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return get_minimal_context(
+            task=task,
+            changed_files=changed_files,
+            repo_root=str(self._root),
+        )

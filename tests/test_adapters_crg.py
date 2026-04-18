@@ -191,3 +191,121 @@ class TestGetArchitectureOverview:
         result = adapter.get_architecture_overview()
         mock_get_arch.assert_called_once_with(mock_store)
         assert result == {"communities": []}
+
+
+class TestListCommunities:
+    @patch("milknado.adapters.crg.get_communities")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_delegates_with_defaults(
+        self,
+        mock_store_cls: MagicMock,
+        mock_get_communities: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_get_communities.return_value = [{"id": "c1"}]
+
+        result = adapter.list_communities()
+
+        mock_get_communities.assert_called_once_with(
+            mock_store, sort_by="size", min_size=0,
+        )
+        assert result == [{"id": "c1"}]
+
+    @patch("milknado.adapters.crg.get_communities")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_forwards_overrides(
+        self,
+        mock_store_cls: MagicMock,
+        mock_get_communities: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_get_communities.return_value = []
+
+        adapter.list_communities(sort_by="name", min_size=5)
+
+        mock_get_communities.assert_called_once_with(
+            mock_store, sort_by="name", min_size=5,
+        )
+
+
+class TestListFlows:
+    @patch("milknado.adapters.crg.get_flows")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_delegates_with_defaults(
+        self,
+        mock_store_cls: MagicMock,
+        mock_get_flows: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_get_flows.return_value = [{"id": "f1"}]
+
+        result = adapter.list_flows()
+
+        mock_get_flows.assert_called_once_with(
+            mock_store, sort_by="criticality", limit=50,
+        )
+        assert result == [{"id": "f1"}]
+
+    @patch("milknado.adapters.crg.get_flows")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_forwards_overrides(
+        self,
+        mock_store_cls: MagicMock,
+        mock_get_flows: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_get_flows.return_value = []
+
+        adapter.list_flows(sort_by="name", limit=10)
+
+        mock_get_flows.assert_called_once_with(
+            mock_store, sort_by="name", limit=10,
+        )
+
+
+class TestGetMinimalContext:
+    @patch("milknado.adapters.crg.get_minimal_context")
+    def test_passes_repo_root_and_args(
+        self,
+        mock_get_context: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_get_context.return_value = {"files": []}
+        adapter = CrgAdapter(tmp_path)
+
+        result = adapter.get_minimal_context(
+            task="refactor auth",
+            changed_files=["src/auth.py"],
+        )
+
+        mock_get_context.assert_called_once_with(
+            task="refactor auth",
+            changed_files=["src/auth.py"],
+            repo_root=str(tmp_path),
+        )
+        assert result == {"files": []}
+
+    @patch("milknado.adapters.crg.get_minimal_context")
+    def test_defaults(
+        self,
+        mock_get_context: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_get_context.return_value = {}
+        adapter = CrgAdapter(tmp_path)
+
+        adapter.get_minimal_context()
+
+        mock_get_context.assert_called_once_with(
+            task="",
+            changed_files=None,
+            repo_root=str(tmp_path),
+        )

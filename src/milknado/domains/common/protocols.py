@@ -3,7 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol
 
-from milknado.domains.common.types import MikadoNode, RebaseResult
+from milknado.domains.common.types import (
+    DegradationMarker,
+    MikadoNode,
+    RebaseResult,
+    TilthMap,
+)
 
 
 class GitPort(Protocol):
@@ -14,10 +19,27 @@ class GitPort(Protocol):
     def commit_all(self, worktree: Path, message: str) -> None: ...
 
 
+class TilthPort(Protocol):
+    def structural_map(
+        self, scope: Path, budget_tokens: int,
+    ) -> TilthMap | DegradationMarker: ...
+
+
 class CrgPort(Protocol):
     def ensure_graph(self, project_root: Path) -> None: ...
     def get_impact_radius(self, files: list[str]) -> dict[str, Any]: ...
     def get_architecture_overview(self) -> dict[str, Any]: ...
+    def list_communities(
+        self, sort_by: str = "size", min_size: int = 0,
+    ) -> list[dict[str, Any]]: ...
+    def list_flows(
+        self, sort_by: str = "criticality", limit: int = 50,
+    ) -> list[dict[str, Any]]: ...
+    def get_minimal_context(
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class RalphPort(Protocol):

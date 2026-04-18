@@ -210,3 +210,15 @@ __marimo__/
 ralphs/
 *.db
 *.db-journal
+
+# Local agent/editor state
+.claude/
+.context/
+
+# Local Milknado runtime state
+.milknado/
+
+# Local worktree scratch areas
+.worktrees/
+worktrees/
+milknado-[0-9]*-*/
