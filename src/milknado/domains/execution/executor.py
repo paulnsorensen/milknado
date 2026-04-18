@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common.types import NodeStatus, RebaseResult
+from milknado.domains.common.types import RebaseResult
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort

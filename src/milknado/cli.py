@@ -19,12 +19,12 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.agent_argv import (
+    build_planning_subprocess,
+)
 from milknado.domains.common.toolchain import (
     get_required_tool_status,
     install_missing_rust_tools,
-)
-from milknado.domains.common.agent_argv import (
-    build_planning_subprocess,
 )
 from milknado.domains.graph import MikadoGraph, render_tree
 
