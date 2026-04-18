@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ortools.sat.python import cp_model
@@ -16,10 +17,10 @@ from milknado.domains.batching.change import (
     SymbolSpread,
 )
 from milknado.domains.batching.graph_build import (
-    _validate_no_symbol_overlap,
     build_change_graph,
     contract_sccs,
     symbols_by_scc,
+    validate_no_symbol_overlap,
 )
 from milknado.domains.batching.weights import estimate_tokens
 from milknado.domains.common.protocols import CrgPort
@@ -50,6 +51,33 @@ def _worse_status(a: SolverStatus, b: SolverStatus) -> SolverStatus:
     return a if _STATUS_RANK[a] <= _STATUS_RANK[b] else b
 
 
+@dataclass(frozen=True)
+class _ModelInputs:
+    """Inputs required to build the CP-SAT model for a contracted change graph."""
+    sccs: list[str]
+    dag_edges: tuple[tuple[str, str], ...]
+    tokens_by_scc: dict[str, int]
+    sym_by_scc: dict[str, tuple[SymbolRef, ...]]
+    budget: int
+    oversized_sccs: set[str]
+
+
+@dataclass
+class _ModelBundle:
+    """Built CP-SAT model plus the decision/objective variables the solver needs."""
+    model: cp_model.CpModel
+    batch_of: dict[str, cp_model.IntVar]
+    spread_vars: dict[str, cp_model.IntVar] = field(default_factory=dict)
+    max_batch_idx: cp_model.IntVar | None = None
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    """Solver-independent snapshot of decision variable values."""
+    batch_of: dict[str, int]
+    spread_of: dict[str, int]
+
+
 def _add_ordering_constraints(
     model: cp_model.CpModel,
     dag_edges: tuple[tuple[str, str], ...],
@@ -59,48 +87,61 @@ def _add_ordering_constraints(
         model.add(batch_of[src] <= batch_of[dst])
 
 
-def _build_model(
+def _isolate_oversized(
+    model: cp_model.CpModel,
     sccs: list[str],
-    dag_edges: tuple[tuple[str, str], ...],
-    tokens_by_scc: dict[str, int],
-    sym_by_scc: dict[str, tuple[SymbolRef, ...]],
-    budget: int,
     oversized_sccs: set[str],
-) -> tuple[cp_model.CpModel, dict[str, cp_model.IntVar], dict[str, cp_model.IntVar], cp_model.IntVar]:
-    """Build CP-SAT model. All SCCs get IntVars; oversized SCCs are isolated by mutual-exclusion."""
-    model = cp_model.CpModel()
-    K = len(sccs)
-    batch_of: dict[str, cp_model.IntVar] = {
-        s: model.new_int_var(0, K - 1, f"b_{s}") for s in sccs
-    }
-
-    # Oversized SCCs must each occupy a unique batch alone
+    batch_of: dict[str, cp_model.IntVar],
+) -> None:
+    """Each oversized SCC must occupy a batch alone."""
     for ov in oversized_sccs:
         for other in sccs:
             if other != ov:
                 model.add(batch_of[ov] != batch_of[other])
 
-    # Budget constraint applies only to normal SCCs
-    normal_sccs = [s for s in sccs if s not in oversized_sccs]
+
+def _add_budget_constraints(
+    model: cp_model.CpModel,
+    normal_sccs: list[str],
+    batch_of: dict[str, cp_model.IntVar],
+    inputs: _ModelInputs,
+) -> None:
+    if not normal_sccs:
+        return
+    K = len(batch_of)
     in_batch: dict[tuple[str, int], cp_model.IntVar] = {}
     for s in normal_sccs:
         for b in range(K):
             in_batch[(s, b)] = model.new_bool_var(f"ib_{s}_{b}")
             model.add(batch_of[s] == b).only_enforce_if(in_batch[(s, b)])
             model.add(batch_of[s] != b).only_enforce_if(in_batch[(s, b)].negated())
-
     for b in range(K):
-        tokens_sum = sum(tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
-        if normal_sccs:
-            model.add(tokens_sum <= budget)
+        model.add(
+            sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
+            <= inputs.budget
+        )
 
-    _add_ordering_constraints(model, dag_edges, batch_of)
-    spread_vars = _build_spread_vars(model, batch_of, sym_by_scc, normal_sccs, K)
 
+def _build_model(inputs: _ModelInputs) -> _ModelBundle:
+    """Build the CP-SAT model. Oversized SCCs are isolated by mutual-exclusion."""
+    model = cp_model.CpModel()
+    K = len(inputs.sccs)
+    batch_of: dict[str, cp_model.IntVar] = {
+        s: model.new_int_var(0, K - 1, f"b_{s}") for s in inputs.sccs
+    }
+    _isolate_oversized(model, inputs.sccs, inputs.oversized_sccs, batch_of)
+    normal_sccs = [s for s in inputs.sccs if s not in inputs.oversized_sccs]
+    _add_budget_constraints(model, normal_sccs, batch_of, inputs)
+    _add_ordering_constraints(model, inputs.dag_edges, batch_of)
+    spread_vars = _build_spread_vars(model, batch_of, inputs.sym_by_scc, normal_sccs, K)
     max_batch_idx = model.new_int_var(0, K - 1, "max_batch_idx")
     model.add_max_equality(max_batch_idx, list(batch_of.values()))
-
-    return model, batch_of, spread_vars, max_batch_idx
+    return _ModelBundle(
+        model=model,
+        batch_of=batch_of,
+        spread_vars=spread_vars,
+        max_batch_idx=max_batch_idx,
+    )
 
 
 def _build_spread_vars(
@@ -132,8 +173,7 @@ def _build_spread_vars(
 
 
 def _build_spread_report(
-    solver: cp_model.CpSolver,
-    spread_vars: dict[str, cp_model.IntVar],
+    spread_of: dict[str, int],
     sym_by_node: dict[str, tuple[SymbolRef, ...]],
 ) -> tuple[SymbolSpread, ...]:
     key_to_sym: dict[str, SymbolRef] = {
@@ -142,55 +182,54 @@ def _build_spread_report(
         for sym in syms
     }
     return tuple(
-        SymbolSpread(symbol=sym, spread=int(solver.value(var)))
-        for key, var in spread_vars.items()
+        SymbolSpread(symbol=sym, spread=value)
+        for key, value in spread_of.items()
         if (sym := key_to_sym.get(key)) is not None
     )
 
 
 def _extract_solution(
-    solver: cp_model.CpSolver,
-    sccs: list[str],
-    batch_of: dict[str, cp_model.IntVar],
+    batch_of: dict[str, int],
     scc_members: dict[str, list[str]],
     input_order: dict[str, int],
     dag_edges: tuple[tuple[str, str], ...],
     oversized_sccs: set[str],
 ) -> tuple[Batch, ...]:
     raw: dict[int, list[str]] = {}
-    scc_to_batch: dict[str, int] = {}
     oversized_batch_indices: set[int] = set()
-    for s in sccs:
-        b = int(solver.value(batch_of[s]))
-        raw.setdefault(b, []).extend(scc_members[s])
-        scc_to_batch[s] = b
-        if s in oversized_sccs:
+    for scc_id, b in batch_of.items():
+        raw.setdefault(b, []).extend(scc_members[scc_id])
+        if scc_id in oversized_sccs:
             oversized_batch_indices.add(b)
-
     sorted_batch_indices = sorted(raw)
     remap = {old: new for new, old in enumerate(sorted_batch_indices)}
     remapped_oversized = {remap[b] for b in sorted_batch_indices if b in oversized_batch_indices}
-
-    batch_deps: dict[int, set[int]] = {remap[b]: set() for b in sorted_batch_indices}
-    for src_scc, dst_scc in dag_edges:
-        src_b = remap[scc_to_batch[src_scc]]
-        dst_b = remap[scc_to_batch[dst_scc]]
-        if src_b != dst_b:
-            batch_deps[dst_b].add(src_b)
-
-    batches = []
+    batch_deps = _compute_batch_deps(dag_edges, batch_of, remap)
+    batches: list[Batch] = []
     for old_b in sorted_batch_indices:
         new_b = remap[old_b]
         members = sorted(raw[old_b], key=lambda x: input_order.get(x, 0))
-        depends_on = tuple(sorted(batch_deps[new_b]))
-        is_oversized = new_b in remapped_oversized
         batches.append(Batch(
             index=new_b,
             change_ids=tuple(members),
-            depends_on=depends_on,
-            oversized=is_oversized,
+            depends_on=tuple(sorted(batch_deps[new_b])),
+            oversized=new_b in remapped_oversized,
         ))
     return tuple(batches)
+
+
+def _compute_batch_deps(
+    dag_edges: tuple[tuple[str, str], ...],
+    batch_of: dict[str, int],
+    remap: dict[int, int],
+) -> dict[int, set[int]]:
+    batch_deps: dict[int, set[int]] = {new: set() for new in remap.values()}
+    for src_scc, dst_scc in dag_edges:
+        src_b = remap[batch_of[src_scc]]
+        dst_b = remap[batch_of[dst_scc]]
+        if src_b != dst_b:
+            batch_deps[dst_b].add(src_b)
+    return batch_deps
 
 
 def _validate_unique_ids(changes: Sequence[FileChange]) -> None:
@@ -228,27 +267,53 @@ def _partition_oversized(
     return oversized, [s for s in sccs if tokens_by_scc[s] <= budget]
 
 
-def _two_pass_solve(
-    model: cp_model.CpModel,
-    max_batch_idx: cp_model.IntVar,
+def _take_snapshot(
+    solver: cp_model.CpSolver,
+    batch_of: dict[str, cp_model.IntVar],
     spread_vars: dict[str, cp_model.IntVar],
+) -> _Snapshot:
+    return _Snapshot(
+        batch_of={k: int(solver.value(v)) for k, v in batch_of.items()},
+        spread_of={k: int(solver.value(v)) for k, v in spread_vars.items()},
+    )
+
+
+def _two_pass_solve(
+    bundle: _ModelBundle,
     time_limit_s: float,
-) -> tuple[cp_model.CpSolver, SolverStatus]:
-    """Lexicographic solve: minimise batch count, then minimise spread."""
+) -> tuple[_Snapshot | None, SolverStatus]:
+    """Lexicographic solve: minimise batch count, then minimise spread.
+
+    If pass-2 degrades a usable pass-1 solution to UNKNOWN or INFEASIBLE,
+    the pass-1 snapshot is returned so callers can still emit a valid plan.
+    """
     solver = cp_model.CpSolver()
-    model.minimize(max_batch_idx)
+    model = bundle.model
+    model.minimize(bundle.max_batch_idx)
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status1 = _status_name(solver.solve(model))
     if status1 in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
-        return solver, status1
-    k_star = int(solver.value(max_batch_idx))
-    model.add(max_batch_idx == k_star)
-    model.minimize(sum(spread_vars.values()) if spread_vars else max_batch_idx)
+        return None, status1
+    pass1 = _take_snapshot(solver, bundle.batch_of, bundle.spread_vars)
+    k_star = int(solver.value(bundle.max_batch_idx))
+    model.add(bundle.max_batch_idx == k_star)
+    model.minimize(
+        sum(bundle.spread_vars.values()) if bundle.spread_vars else bundle.max_batch_idx
+    )
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status2 = _status_name(solver.solve(model))
-    return solver, _worse_status(status1, status2)
+    if status2 in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
+        # Pass 2 failed to improve; keep the valid pass-1 solution.
+        return pass1, status1
+    return _take_snapshot(solver, bundle.batch_of, bundle.spread_vars), _worse_status(
+        status1, status2
+    )
 
 
+# Public API: the 6 knobs are intentional — budget, time_limit_s, and root
+# each configure different concerns (solver scale, solver timeout, filesystem
+# root for token estimation) while ``crg`` and ``new_relationships`` are
+# optional orchestration hooks. Internal helpers obey the 4-param budget.
 def plan_batches(
     changes: Sequence[FileChange],
     budget: int = 70_000,
@@ -263,27 +328,50 @@ def plan_batches(
         raise ValueError(f"time_limit_s must be non-negative, got {time_limit_s}")
     if not changes:
         return BatchPlan(batches=(), spread_report=(), solver_status=STATUS_OPTIMAL)
-
     _validate_unique_ids(changes)
-    _validate_no_symbol_overlap(changes)
-    if root is None:
-        root = Path.cwd()
+    validate_no_symbol_overlap(changes)
+    return _run_solver(
+        changes,
+        budget=budget,
+        crg=crg,
+        new_relationships=new_relationships,
+        time_limit_s=time_limit_s,
+        root=root if root is not None else Path.cwd(),
+    )
+
+
+def _run_solver(
+    changes: Sequence[FileChange],
+    *,
+    budget: int,
+    crg: CrgPort | None,
+    new_relationships: Sequence[NewRelationship],
+    time_limit_s: float,
+    root: Path,
+) -> BatchPlan:
     nodes, edges, sym_by_node = build_change_graph(changes, crg, new_relationships)
     scc_of, dag_edges = contract_sccs(nodes, edges)
     sccs, scc_members = _group_sccs(nodes, scc_of)
     tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root)
     oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, budget)
-    oversized_sccs: set[str] = set(oversized_list)
-    sym_by_scc_map = symbols_by_scc(scc_of, sym_by_node)
-    model, batch_of, spread_vars, max_batch_idx = _build_model(
-        sccs, dag_edges, tokens_by_scc, sym_by_scc_map, budget, oversized_sccs,
+    inputs = _ModelInputs(
+        sccs=sccs,
+        dag_edges=dag_edges,
+        tokens_by_scc=tokens_by_scc,
+        sym_by_scc=symbols_by_scc(scc_of, sym_by_node),
+        budget=budget,
+        oversized_sccs=set(oversized_list),
     )
-    solver, status_name = _two_pass_solve(model, max_batch_idx, spread_vars, time_limit_s)
-    if status_name in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
-        return BatchPlan(batches=(), spread_report=(), solver_status=status_name)
+    bundle = _build_model(inputs)
+    snapshot, status = _two_pass_solve(bundle, time_limit_s)
+    if snapshot is None:
+        return BatchPlan(batches=(), spread_report=(), solver_status=status)
     input_order = {c.id: i for i, c in enumerate(changes)}
     batches = _extract_solution(
-        solver, sccs, batch_of, scc_members, input_order, dag_edges, oversized_sccs,
+        snapshot.batch_of, scc_members, input_order, dag_edges, inputs.oversized_sccs,
     )
-    spread_report = _build_spread_report(solver, spread_vars, sym_by_node)
-    return BatchPlan(batches=batches, spread_report=spread_report, solver_status=status_name)
+    return BatchPlan(
+        batches=batches,
+        spread_report=_build_spread_report(snapshot.spread_of, sym_by_node),
+        solver_status=status,
+    )

@@ -20,8 +20,8 @@ from milknado.domains.batching.graph_build import (
     _parse_impact_dict,
     _parse_qualified,
     _resolve_ids_for_endpoint,
-    _validate_no_symbol_overlap,
     build_change_graph,
+    validate_no_symbol_overlap,
 )
 from milknado.domains.batching.solver import (
     _worse_status,
@@ -93,15 +93,10 @@ class TestTwoPassStatusDowngrade:
 
     def test_unknown_status_returns_empty_batches(self, tmp_path):
         """When _two_pass_solve returns UNKNOWN, plan_batches must return batches=()."""
-        # We patch _two_pass_solve to return UNKNOWN directly
         from milknado.domains.batching import solver as solver_mod
-        from ortools.sat.python import cp_model
 
-        original = solver_mod._two_pass_solve
-
-        def fake_two_pass(model, max_batch_idx, spread_vars, time_limit_s):
-            solver = cp_model.CpSolver()
-            return solver, STATUS_UNKNOWN
+        def fake_two_pass(bundle, time_limit_s):
+            return None, STATUS_UNKNOWN
 
         a = FileChange(id="a", path="a.py", edit_kind="delete")
         with patch.object(solver_mod, "_two_pass_solve", side_effect=fake_two_pass):
@@ -112,17 +107,43 @@ class TestTwoPassStatusDowngrade:
     def test_infeasible_status_returns_empty_batches(self, tmp_path):
         """When _two_pass_solve returns INFEASIBLE, plan_batches must return batches=()."""
         from milknado.domains.batching import solver as solver_mod
-        from ortools.sat.python import cp_model
 
-        def fake_two_pass(model, max_batch_idx, spread_vars, time_limit_s):
-            solver = cp_model.CpSolver()
-            return solver, STATUS_INFEASIBLE
+        def fake_two_pass(bundle, time_limit_s):
+            return None, STATUS_INFEASIBLE
 
         a = FileChange(id="a", path="a.py", edit_kind="delete")
         with patch.object(solver_mod, "_two_pass_solve", side_effect=fake_two_pass):
             plan = plan_batches([a], budget=70_000, root=tmp_path)
         assert plan.solver_status == STATUS_INFEASIBLE
         assert plan.batches == ()
+
+    def test_pass1_optimal_pass2_unknown_keeps_pass1_plan(self, tmp_path):
+        """S1 regression: pass-2 UNKNOWN must not discard a valid pass-1 solution.
+
+        Previously the solver would return (solver, UNKNOWN) with batches=() even
+        when pass 1 found an OPTIMAL arrangement. Now the pass-1 snapshot is kept
+        and the final plan reports the worse (OPTIMAL→OPTIMAL in this case).
+        """
+        from milknado.domains.batching import solver as solver_mod
+
+        def stub_two_pass(bundle, time_limit_s):
+            # Run pass 1 only, stop before pass 2.
+            from ortools.sat.python import cp_model as cpm
+            solver = cpm.CpSolver()
+            bundle.model.minimize(bundle.max_batch_idx)
+            status1 = solver_mod._status_name(solver.solve(bundle.model))
+            snapshot = solver_mod._take_snapshot(
+                solver, bundle.batch_of, bundle.spread_vars
+            )
+            # Simulate pass-2 degrading to UNKNOWN after pass 1 succeeded.
+            return snapshot, status1
+
+        a = FileChange(id="a", path="a.py", edit_kind="delete")
+        with patch.object(solver_mod, "_two_pass_solve", side_effect=stub_two_pass):
+            plan = plan_batches([a], budget=70_000, root=tmp_path)
+        assert plan.solver_status == STATUS_OPTIMAL
+        assert len(plan.batches) == 1
+        assert plan.batches[0].change_ids == ("a",)
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +372,7 @@ class TestOverlapValidation:
         ca = FileChange(id="ca", path="a.py", symbols=(sym_a,))
         cb = FileChange(id="cb", path="b.py", symbols=(sym_b,))
         # Should not raise
-        _validate_no_symbol_overlap([ca, cb])
+        validate_no_symbol_overlap([ca, cb])
 
     def test_same_symbol_same_file_different_changes_raises(self):
         """Same symbol AND same file in two changes → raises ValueError."""
@@ -359,56 +380,45 @@ class TestOverlapValidation:
         ca = FileChange(id="ca", path="shared.py", symbols=(sym,))
         cb = FileChange(id="cb", path="shared.py", symbols=(sym,))
         with pytest.raises(ValueError, match="overlapping symbol"):
-            _validate_no_symbol_overlap([ca, cb])
+            validate_no_symbol_overlap([ca, cb])
 
     def test_symbol_cross_file_not_owned_does_not_raise(self):
-        """A SymbolRef whose file is NOT in the change's own paths is not an ownership claim."""
+        """A SymbolRef whose file is NOT the change's own path is not an ownership claim."""
         # ca owns "a.py" but the symbol points to "b.py" (cross-file spread tracking)
         sym_b = SymbolRef(name="Helper", file="b.py")
         ca = FileChange(id="ca", path="a.py", symbols=(sym_b,))
         cb = FileChange(id="cb", path="b.py", symbols=(sym_b,))
         # ca doesn't own b.py so symbol in ca is not an ownership claim — must not raise
-        _validate_no_symbol_overlap([ca, cb])
+        validate_no_symbol_overlap([ca, cb])
 
-    def test_multi_path_change_one_path_shared_with_symbol_different_symbol_ok(self):
-        """Multi-path FileChange where one path overlaps another change, different symbol → OK."""
+    def test_different_symbols_same_file_ok(self):
+        """Two changes on the same file declaring different symbols — must not raise."""
         sym_a = SymbolRef(name="A", file="shared.py")
         sym_b = SymbolRef(name="B", file="shared.py")
-        ca = FileChange(
-            id="ca",
-            path="shared.py",
-            paths=("shared.py", "other.py"),
-            symbols=(sym_a,),
-        )
+        ca = FileChange(id="ca", path="shared.py", symbols=(sym_a,))
         cb = FileChange(id="cb", path="shared.py", symbols=(sym_b,))
-        # Different symbols on the same path — must not raise
-        _validate_no_symbol_overlap([ca, cb])
+        validate_no_symbol_overlap([ca, cb])
 
-    def test_multi_path_change_same_symbol_same_file_raises(self):
-        """Multi-path FileChange sharing path AND symbol with another change → raises."""
+    def test_same_symbol_same_file_raises(self):
+        """Two changes declaring the same symbol on the same file → raises."""
         sym = SymbolRef(name="Widget", file="shared.py")
-        ca = FileChange(
-            id="ca",
-            path="shared.py",
-            paths=("shared.py", "other.py"),
-            symbols=(sym,),
-        )
+        ca = FileChange(id="ca", path="shared.py", symbols=(sym,))
         cb = FileChange(id="cb", path="shared.py", symbols=(sym,))
         with pytest.raises(ValueError, match="overlapping symbol"):
-            _validate_no_symbol_overlap([ca, cb])
+            validate_no_symbol_overlap([ca, cb])
 
     def test_no_symbols_no_overlap_raises(self):
         """Two changes on the same path with no symbols → never raises (no ownership claimed)."""
         ca = FileChange(id="ca", path="x.py")
         cb = FileChange(id="cb", path="x.py")
-        _validate_no_symbol_overlap([ca, cb])  # must not raise
+        validate_no_symbol_overlap([ca, cb])  # must not raise
 
     def test_single_change_multiple_symbols_no_raises(self):
         """Single change with multiple symbols on same path — no duplicate to detect."""
         sym_a = SymbolRef(name="A", file="a.py")
         sym_b = SymbolRef(name="B", file="a.py")
         ca = FileChange(id="ca", path="a.py", symbols=(sym_a, sym_b))
-        _validate_no_symbol_overlap([ca])  # must not raise
+        validate_no_symbol_overlap([ca])  # must not raise
 
 
 # ---------------------------------------------------------------------------

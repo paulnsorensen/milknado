@@ -6,10 +6,10 @@ import pytest
 
 from milknado.domains.batching.change import FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.graph_build import (
-    _validate_no_symbol_overlap,
     build_change_graph,
     contract_sccs,
     symbols_by_scc,
+    validate_no_symbol_overlap,
 )
 from milknado.domains.batching.solver import plan_batches
 from milknado.domains.common.protocols import CrgPort
@@ -178,17 +178,11 @@ def test_overlapping_symbols_rejected() -> None:
         plan_batches([change_a, change_b])
 
 
-def test_multi_path_change_no_overlap_ok() -> None:
-    """A multi-path FileChange sharing a path but different symbols does not error."""
-    sym_a = SymbolRef(name="a", file="src/foo.py")
-    sym_b = SymbolRef(name="b", file="src/foo.py")
-    # change_1 touches src/foo.py and src/bar.py, but only declares symbol "a" on foo.py
-    change_1 = FileChange(
-        id="change_1",
-        path="src/foo.py",
-        paths=("src/foo.py", "src/bar.py"),
-        symbols=(sym_a,),
-    )
-    change_2 = FileChange(id="change_2", path="src/foo.py", symbols=(sym_b,))
-    # Should not raise — different symbols
-    _validate_no_symbol_overlap([change_1, change_2])
+def test_cross_file_symbol_ref_no_overlap() -> None:
+    """Same symbol name on different files is not an overlap — each change owns its own path."""
+    sym_a = SymbolRef(name="shared", file="src/foo.py")
+    sym_b = SymbolRef(name="shared", file="src/bar.py")
+    change_1 = FileChange(id="change_1", path="src/foo.py", symbols=(sym_a,))
+    change_2 = FileChange(id="change_2", path="src/bar.py", symbols=(sym_b,))
+    # Different files — must not raise.
+    validate_no_symbol_overlap([change_1, change_2])
