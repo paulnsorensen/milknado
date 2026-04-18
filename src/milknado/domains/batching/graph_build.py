@@ -14,7 +14,26 @@ def build_change_graph(
     crg: CrgPort | None = None,
     extra_edges: Sequence[tuple[str, str]] = (),
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], dict[str, tuple[SymbolRef, ...]]]:
-    """Return (nodes, edges, symbols_by_node)."""
+    """Return (nodes, edges, symbols_by_node) for the given change set.
+
+    Edge sources come from three independent sources, all unioned together:
+
+    1. CRG impact radius — when ``crg`` is provided, each changed file is queried
+       for structural dependants. Only edges between two nodes that are already in
+       ``changes`` are kept; cross-boundary blast-radius results are ignored.
+       Pass ``crg=None`` (e.g. in tests or when no graph is built) to skip this
+       step entirely — the result is still valid, just structurally thinner.
+
+    2. Explicit ``depends_on`` — each ``FileChange`` may declare ids it must come
+       after. These are validated against the known id set; unknown ids raise.
+
+    3. ``extra_edges`` — caller-supplied (src_id, dst_id) pairs, also validated.
+
+    Returns:
+        nodes: change ids in input order
+        edges: deduplicated (src_id, dst_id) pairs, sorted for determinism
+        symbols_by_node: maps each change id to its declared symbol refs
+    """
     path_to_id = {c.path: c.id for c in changes}
     known_ids = {c.id for c in changes}
     seen_edges: set[tuple[str, str]] = set()
@@ -27,10 +46,9 @@ def build_change_graph(
         if crg is not None:
             result = crg.get_impact_radius([change.path])
             for src_path, dst_path in _parse_impact_dict(result, change.path, set(path_to_id)):
-                src_id = path_to_id.get(src_path)
-                dst_id = path_to_id.get(dst_path)
-                if src_id is not None and dst_id is not None:
-                    _add_edge(src_id, dst_id)
+                # _parse_impact_dict filters to known_paths = set(path_to_id),
+                # so both paths are always present in path_to_id.
+                _add_edge(path_to_id[src_path], path_to_id[dst_path])
 
     for change in changes:
         for dep_id in change.depends_on:
@@ -87,10 +105,31 @@ def contract_sccs(
     nodes: Sequence[str],
     edges: Sequence[tuple[str, str]],
 ) -> tuple[dict[str, str], tuple[tuple[str, str], ...]]:
-    """Tarjan's algorithm (iterative). Returns (scc_of: node->scc_id, dag_edges).
+    """Collapse graph cycles into single SCC nodes using Tarjan's algorithm.
 
-    SCC ids are stable: min member node id.
-    dag_edges are deduped and exclude self-loops.
+    A Strongly Connected Component (SCC) is a maximal set of nodes where every
+    node is reachable from every other node via directed edges. In a change graph
+    this means a cycle: two files that mutually import each other, or a ring of
+    ``depends_on`` declarations. Cyclic nodes *must* land in the same batch — the
+    solver cannot legally separate them — so we collapse each SCC into one
+    representative node before handing the graph to CP-SAT.
+
+    SCC id is the lexicographically smallest member id, making it stable across
+    runs regardless of discovery order.
+
+    The returned ``dag_edges`` are the edges *between* distinct SCCs after
+    collapsing. Self-loops (src_scc == dst_scc) are excluded, and duplicate edges
+    are deduplicated. The result is always a DAG (no cycles), which CP-SAT can
+    then enforce as ``batch_of[src] <= batch_of[dst]`` ordering constraints.
+
+    Implementation note: Tarjan's algorithm is iterative (explicit call stack)
+    rather than recursive to avoid Python's default recursion limit on large
+    change sets.
+
+    Returns:
+        scc_of: maps every node id to its SCC id (a node that forms its own
+                SCC maps to itself)
+        dag_edges: sorted, deduplicated (src_scc_id, dst_scc_id) pairs
     """
     adj: dict[str, list[str]] = defaultdict(list)
     for src, dst in edges:

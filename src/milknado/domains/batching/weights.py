@@ -38,7 +38,7 @@ def _extension(path: str) -> str:
 def _tiktoken_count(path: Path) -> int | None:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
+    except OSError:
         return None
     return len(_get_encoder().encode(text))
 

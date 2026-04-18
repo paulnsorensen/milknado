@@ -16,22 +16,32 @@ from milknado.domains.batching.graph_build import build_change_graph, contract_s
 from milknado.domains.batching.weights import estimate_tokens
 from milknado.domains.common.protocols import CrgPort
 
+# BIG makes batch-count minimisation the primary objective: any gain of one fewer
+# batch (saving BIG in objective) outweighs any improvement in symbol spread.
 BIG = 10_000
+# ALPHA weights the secondary objective (symbol spread). Raise it to push the
+# solver harder to keep related symbols in the same batch; lower it to let the
+# solver trade spread for fewer batches more freely.
 ALPHA = 1
+
+STATUS_OPTIMAL: SolverStatus = "OPTIMAL"
+STATUS_FEASIBLE: SolverStatus = "FEASIBLE"
+STATUS_INFEASIBLE: SolverStatus = "INFEASIBLE"
+STATUS_UNKNOWN: SolverStatus = "UNKNOWN"
 
 
 def _status_name(status: object) -> SolverStatus:
     if status == cp_model.OPTIMAL:
-        return "OPTIMAL"
+        return STATUS_OPTIMAL
     if status == cp_model.FEASIBLE:
-        return "FEASIBLE"
+        return STATUS_FEASIBLE
     if status == cp_model.INFEASIBLE:
-        return "INFEASIBLE"
+        return STATUS_INFEASIBLE
     if status == cp_model.MODEL_INVALID:
         raise RuntimeError(
             "CP-SAT reported MODEL_INVALID \u2014 solver model has a structural bug"
         )
-    return "UNKNOWN"
+    return STATUS_UNKNOWN
 
 
 def _build_model(
@@ -41,6 +51,52 @@ def _build_model(
     sym_by_scc: dict[str, tuple[SymbolRef, ...]],
     budget: int,
 ) -> tuple[cp_model.CpModel, dict[str, cp_model.IntVar], dict[str, cp_model.IntVar]]:
+    """Build the CP-SAT optimisation model that assigns SCCs to numbered batches.
+
+    Decision variables
+    ------------------
+    ``batch_of[s]``  — integer in [0, K-1], the batch index assigned to SCC s.
+    ``in_batch[(s,b)]`` — boolean indicator: 1 iff batch_of[s] == b. Needed
+       because CP-SAT cannot express linear sums over conditional integer vars
+       directly; the boolean linearisation lets us write the budget constraint.
+
+    Constraints
+    -----------
+    1. **Budget** (one per batch index b):
+         sum(tokens[s] * in_batch[(s,b)]  for all s) <= budget
+       Ensures no single batch exceeds the token budget. Batches are allowed to
+       be empty (all indicators 0), which is how the solver creates fewer than K
+       batches in practice.
+
+    2. **Ordering** (one per DAG edge (src, dst)):
+         batch_of[src] <= batch_of[dst]
+       Encodes the precedence requirement: every dependency must land in a batch
+       that is executed *before or at the same time as* its dependant. Because
+       batches are executed sequentially (batch 0 first), batch index order is
+       execution order.
+
+    3. **Spread per symbol** (see ``_build_spread_vars``):
+       For each symbol that appears in more than one SCC, a spread variable
+       tracks (max_batch - min_batch) across the SCCs that reference it. This
+       penalises splitting a cross-file symbol across many batches, which would
+       require a reviewer to context-switch across reviews.
+
+    Objective
+    ---------
+    Minimise:  max_batch_idx * BIG  +  ALPHA * sum(spread_vars)
+
+    The first term is the primary objective: use the fewest batches possible.
+    BIG is large enough (10 000) that any reduction of 1 in the batch count
+    outweighs any possible improvement in the spread term, no matter how large
+    the graph. The second term is a tie-breaker that prefers assignments where
+    symbols that appear in multiple SCCs are grouped into adjacent batches.
+
+    Returns
+    -------
+    model      — the fully-constrained CpModel, ready to solve
+    batch_of   — SCC id → integer decision variable
+    spread_vars — symbol key → spread integer variable (for reporting)
+    """
     model = cp_model.CpModel()
     K = len(sccs)
     batch_of = {s: model.new_int_var(0, K - 1, f"b_{s}") for s in sccs}
@@ -155,7 +211,7 @@ def plan_batches(
     if time_limit_s < 0:
         raise ValueError(f"time_limit_s must be non-negative, got {time_limit_s}")
     if not changes:
-        return BatchPlan(batches=(), spread_report={}, solver_status="OPTIMAL")
+        return BatchPlan(batches=(), spread_report={}, solver_status=STATUS_OPTIMAL)
 
     _validate_unique_ids(changes)
     if root is None:
@@ -167,7 +223,7 @@ def plan_batches(
     tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root)
 
     if any(t > budget for t in tokens_by_scc.values()):
-        return BatchPlan(batches=(), spread_report={}, solver_status="INFEASIBLE")
+        return BatchPlan(batches=(), spread_report={}, solver_status=STATUS_INFEASIBLE)
 
     sym_by_scc_map = symbols_by_scc(scc_of, sym_by_node)
     model, batch_of, spread_vars = _build_model(
@@ -177,7 +233,7 @@ def plan_batches(
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_limit_s
     status_name = _status_name(solver.solve(model))
-    if status_name in ("INFEASIBLE", "UNKNOWN"):
+    if status_name in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
         return BatchPlan(batches=(), spread_report={}, solver_status=status_name)
 
     input_order = {c.id: i for i, c in enumerate(changes)}
