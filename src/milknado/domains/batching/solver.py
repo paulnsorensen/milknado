@@ -15,7 +15,12 @@ from milknado.domains.batching.change import (
     SymbolRef,
     SymbolSpread,
 )
-from milknado.domains.batching.graph_build import build_change_graph, contract_sccs, symbols_by_scc
+from milknado.domains.batching.graph_build import (
+    _validate_no_symbol_overlap,
+    build_change_graph,
+    contract_sccs,
+    symbols_by_scc,
+)
 from milknado.domains.batching.weights import estimate_tokens
 from milknado.domains.common.protocols import CrgPort
 
@@ -266,6 +271,7 @@ def plan_batches(
         return BatchPlan(batches=(), spread_report=(), solver_status=STATUS_OPTIMAL)
 
     _validate_unique_ids(changes)
+    _validate_no_symbol_overlap(changes)
     if root is None:
         root = Path.cwd()
     nodes, edges, sym_by_node = build_change_graph(changes, crg, new_relationships)

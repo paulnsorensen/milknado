@@ -9,6 +9,15 @@ from milknado.domains.batching.change import FileChange, NewRelationship, Symbol
 from milknado.domains.common.protocols import CrgPort
 
 
+def _build_path_to_ids(changes: Sequence[FileChange]) -> dict[str, list[str]]:
+    """Map each path to all change ids that touch it."""
+    path_to_ids: dict[str, list[str]] = {}
+    for c in changes:
+        for p in c.all_paths():
+            path_to_ids.setdefault(p, []).append(c.id)
+    return path_to_ids
+
+
 def build_change_graph(
     changes: Sequence[FileChange],
     crg: CrgPort | None = None,
@@ -16,27 +25,13 @@ def build_change_graph(
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], dict[str, tuple[SymbolRef, ...]]]:
     """Return (nodes, edges, symbols_by_node) for the given change set.
 
-    Edge sources come from three independent sources, all unioned together:
-
-    1. CRG impact radius — when ``crg`` is provided, each changed file is queried
-       for structural dependants. Only edges between two nodes that are already in
-       ``changes`` are kept; cross-boundary blast-radius results are ignored.
-       Pass ``crg=None`` (e.g. in tests or when no graph is built) to skip this
-       step entirely — the result is still valid, just structurally thinner.
-
-    2. Explicit ``depends_on`` — each ``FileChange`` may declare ids it must come
-       after. These are validated against the known id set; unknown ids raise.
-
-    3. ``new_relationships`` — caller-supplied ``NewRelationship`` records for
-       relationships the CRG doesn't yet know about (new files, new imports, etc.).
-
-    Returns:
-        nodes: change ids in input order
-        edges: deduplicated (src_id, dst_id) pairs, sorted for determinism
-        symbols_by_node: maps each change id to its declared symbol refs
+    Edges come from three sources: CRG impact radius (symbol-aware routing),
+    explicit ``depends_on`` declarations, and ``new_relationships``.
+    Only edges between nodes present in ``changes`` are kept.
     """
-    path_to_id = {c.path: c.id for c in changes}
-    known_ids = {c.id for c in changes}
+    path_to_ids = _build_path_to_ids(changes)
+    id_to_change = {c.id: c for c in changes}
+    known_ids = set(id_to_change)
     seen_edges: set[tuple[str, str]] = set()
 
     def _add_edge(src: str, dst: str) -> None:
@@ -46,10 +41,8 @@ def build_change_graph(
     for change in changes:
         if crg is not None:
             result = crg.get_impact_radius([change.path])
-            for src_path, dst_path in _parse_impact_dict(result, change.path, set(path_to_id)):
-                # _parse_impact_dict filters to known_paths = set(path_to_id),
-                # so both paths are always present in path_to_id.
-                _add_edge(path_to_id[src_path], path_to_id[dst_path])
+            for src_id, dst_id in _parse_impact_dict(result, change.path, path_to_ids, id_to_change):
+                _add_edge(src_id, dst_id)
 
     for change in changes:
         for dep_id in change.depends_on:
@@ -70,36 +63,108 @@ def build_change_graph(
     return nodes, edges, symbols_by_node
 
 
+def _parse_qualified(endpoint: str) -> tuple[str, str | None]:
+    """Split a qualified CRG endpoint into (path, symbol_name | None)."""
+    if "::" in endpoint:
+        path, symbol = endpoint.split("::", 1)
+        return path, symbol
+    return endpoint, None
+
+
+def _resolve_ids_for_endpoint(
+    path: str,
+    symbol: str | None,
+    path_to_ids: dict[str, list[str]],
+    id_to_change: dict[str, FileChange],
+) -> list[str]:
+    """Return the change ids attributed to a single CRG edge endpoint."""
+    ids = path_to_ids.get(path, [])
+    if len(ids) == 0:
+        return []
+    if len(ids) == 1:
+        return list(ids)
+    if symbol is None:
+        return list(ids)
+    matches = [
+        cid for cid in ids
+        if any(sr.name == symbol and sr.file == path for sr in id_to_change[cid].symbols)
+    ]
+    if len(matches) == 1:
+        return matches
+    return list(ids)
+
+
 def _parse_impact_dict(
     result: dict[str, Any],
     source_path: str,
-    known_paths: set[str],
+    path_to_ids: dict[str, list[str]],
+    id_to_change: dict[str, FileChange],
 ) -> list[tuple[str, str]]:
-    """Parse CRG's opaque dict. Returns list of (src_path, dst_path) path pairs.
+    """Parse CRG's opaque dict. Returns deduplicated (src_id, dst_id) pairs.
+
+    Supports qualified endpoints ``"path::symbol"`` for symbol-level routing
+    when multiple changes share a path. Falls back to fan-out when symbol is
+    unknown or ambiguous.
 
     Narrow except clauses: only absorb shape-variation errors (KeyError,
-    TypeError, AttributeError) that arise from the untyped dict contract.
-    Programmer errors propagate.
+    TypeError) that arise from the untyped dict contract. Programmer errors
+    propagate.
     """
-    pairs: list[tuple[str, str]] = []
+    pairs: set[tuple[str, str]] = set()
+
     edges = result.get("edges")
     if isinstance(edges, list):
         for edge in edges:
             try:
-                src = edge["src"]
-                dst = edge["dst"]
+                raw_src = edge["src"]
+                raw_dst = edge["dst"]
             except (KeyError, TypeError):
                 continue
-            if src in known_paths and dst in known_paths:
-                pairs.append((src, dst))
+            src_path, src_sym = _parse_qualified(raw_src)
+            dst_path, dst_sym = _parse_qualified(raw_dst)
+            src_ids = _resolve_ids_for_endpoint(src_path, src_sym, path_to_ids, id_to_change)
+            dst_ids = _resolve_ids_for_endpoint(dst_path, dst_sym, path_to_ids, id_to_change)
+            for s in src_ids:
+                for d in dst_ids:
+                    pairs.add((s, d))
+
     for key in ("impacted_files", "files"):
         files = result.get(key)
         if isinstance(files, list):
+            src_ids = path_to_ids.get(source_path, [])
             for f in files:
-                if isinstance(f, str) and f in known_paths and f != source_path:
-                    pairs.append((source_path, f))
+                if not isinstance(f, str) or f == source_path:
+                    continue
+                dst_ids = path_to_ids.get(f, [])
+                for s in src_ids:
+                    for d in dst_ids:
+                        pairs.add((s, d))
             break
-    return pairs
+
+    return list(pairs)
+
+
+def _validate_no_symbol_overlap(changes: Sequence[FileChange]) -> None:
+    """Raise ValueError if two changes declare ownership of the same symbol in the same file.
+
+    Ownership means the symbol's file is one of the change's own paths. A symbol
+    referenced from a different file (cross-file spread tracking) is not an ownership
+    declaration and does not trigger the check.
+
+    Two distinct changes claiming to implement the same symbol in a file they both own is
+    a genuine data error — duplicate work declared.
+    """
+    owned_paths = {c.id: set(c.all_paths()) for c in changes}
+    path_symbol_to_ids: dict[tuple[str, str], list[str]] = {}
+    for c in changes:
+        for sr in c.symbols:
+            if sr.file not in owned_paths[c.id]:
+                continue
+            key = (sr.file, sr.name)
+            path_symbol_to_ids.setdefault(key, []).append(c.id)
+    for (path, symbol), ids in path_symbol_to_ids.items():
+        if len(ids) > 1:
+            raise ValueError(f"overlapping symbol: {path}::{symbol} declared by {ids}")
 
 
 def contract_sccs(

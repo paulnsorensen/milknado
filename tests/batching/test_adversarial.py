@@ -113,49 +113,52 @@ class TestEstimateTokens:
 # ---------------------------------------------------------------------------
 
 class TestParseImpactDict:
-    _known = {"a.py", "b.py"}
+    _ca = FileChange(id="id_a", path="a.py")
+    _cb = FileChange(id="id_b", path="b.py")
+    _path_to_ids = {"a.py": ["id_a"], "b.py": ["id_b"]}
+    _id_to_change = {"id_a": _ca, "id_b": _cb}
 
     def test_edges_none_no_pairs(self):
-        result = _parse_impact_dict({"edges": None}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": None}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_edges_string_no_pairs(self):
-        result = _parse_impact_dict({"edges": "string"}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": "string"}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_edges_list_of_empty_dicts_skipped(self):
-        result = _parse_impact_dict({"edges": [{}, {}]}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": [{}, {}]}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_edges_missing_src_skipped(self):
-        result = _parse_impact_dict({"edges": [{"dst": "b.py"}]}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": [{"dst": "b.py"}]}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_edges_missing_dst_skipped(self):
-        result = _parse_impact_dict({"edges": [{"src": "a.py"}]}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": [{"src": "a.py"}]}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_impacted_files_non_strings_skipped(self):
         result = _parse_impact_dict(
-            {"impacted_files": [None, 42, "", "b.py"]}, "a.py", self._known
+            {"impacted_files": [None, 42, "", "b.py"]}, "a.py", self._path_to_ids, self._id_to_change
         )
-        assert ("a.py", "b.py") in result
+        assert ("id_a", "id_b") in result
         assert len(result) == 1
 
     def test_empty_dict_no_pairs(self):
-        result = _parse_impact_dict({}, "a.py", self._known)
+        result = _parse_impact_dict({}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_edges_integers_in_list_skipped(self):
-        result = _parse_impact_dict({"edges": [42, "str"]}, "a.py", self._known)
+        result = _parse_impact_dict({"edges": [42, "str"]}, "a.py", self._path_to_ids, self._id_to_change)
         assert result == []
 
     def test_source_path_excluded_from_impacted(self):
         result = _parse_impact_dict(
-            {"impacted_files": ["a.py", "b.py"]}, "a.py", self._known
+            {"impacted_files": ["a.py", "b.py"]}, "a.py", self._path_to_ids, self._id_to_change
         )
-        assert ("a.py", "a.py") not in result
-        assert ("a.py", "b.py") in result
+        assert ("id_a", "id_a") not in result
+        assert ("id_a", "id_b") in result
 
 
 # ---------------------------------------------------------------------------

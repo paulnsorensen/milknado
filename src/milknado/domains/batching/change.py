@@ -21,6 +21,11 @@ class FileChange:
     edit_kind: EditKind = "modify"
     symbols: tuple[SymbolRef, ...] = ()
     depends_on: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+
+    def all_paths(self) -> tuple[str, ...]:
+        """Return all paths this change touches. Falls back to (path,) if paths is empty."""
+        return self.paths if self.paths else (self.path,)
 
 
 @dataclass(frozen=True)
