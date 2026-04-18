@@ -5,5 +5,5 @@ prompt = """
 ## Milknado plan
 Run `milknado plan` in the workspace:
 
-!{uv run milknado plan "<goal>"}
+!{uv run milknado plan --spec specs/feature.md}
 """
