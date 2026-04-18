@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 REQUIRED_RUST_TOOLS: tuple[str, ...] = ("tilth", "mergiraf")
@@ -44,17 +46,19 @@ def install_missing_rust_tools() -> tuple[list[str], list[str]]:
             if use_binstall
             else ["cargo", "install", "--locked", status.name]
         )
-        result = subprocess.run(
-            cmd,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and shutil.which(status.name):
+        result = subprocess.run(cmd, check=False)
+        if result.returncode == 0 and _cargo_bin_exists(status.name):
             installed.append(status.name)
         else:
             failed.append(status.name)
     return installed, failed
+
+
+def _cargo_bin_exists(name: str) -> bool:
+    if shutil.which(name) is not None:
+        return True
+    cargo_home = os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo"))
+    return (Path(cargo_home) / "bin" / name).exists()
 
 
 def _cargo_subcommand_exists(subcommand: str) -> bool:
