@@ -91,6 +91,23 @@ class TestStructuralMap:
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
+    def test_returns_marker_on_timeout(
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd="tilth", timeout=30)
+        adapter = TilthAdapter()
+
+        result = adapter.structural_map(tmp_path, budget_tokens=100)
+
+        assert isinstance(result, DegradationMarker)
+        assert result.reason == "exec_failed"
+        assert "timed out" in result.detail
+
+    @patch("milknado.adapters.tilth.subprocess.run")
+    @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_marker_when_top_level_not_object(
         self,
         _which: MagicMock,

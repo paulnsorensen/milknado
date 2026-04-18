@@ -18,16 +18,24 @@ class TilthAdapter:
                 reason="binary_missing",
                 detail="tilth not found on PATH",
             )
-        result = subprocess.run(
-            [
-                "tilth", "--map", "--json",
-                "--scope", str(scope),
-                "--budget", str(budget_tokens),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "tilth", "--map", "--json",
+                    "--scope", str(scope),
+                    "--budget", str(budget_tokens),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            return DegradationMarker(
+                source="tilth",
+                reason="exec_failed",
+                detail="tilth execution timed out after 30 seconds",
+            )
         if result.returncode != 0:
             return DegradationMarker(
                 source="tilth",
