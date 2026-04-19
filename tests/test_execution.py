@@ -532,6 +532,44 @@ class TestExecutorFail:
         assert wt in fake_git.removed
 
 
+class TestBuildCommitMessage:
+    def test_subject_format(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        msg = _build_commit_message(7, "Add login endpoint")
+        assert msg.startswith("feat(milknado-7): Add login endpoint")
+
+    def test_body_is_full_description(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "Implement OAuth2 flow with PKCE"
+        msg = _build_commit_message(3, desc)
+        lines = msg.split("\n")
+        assert desc in lines
+
+    def test_trailer_format(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        msg = _build_commit_message(42, "some task")
+        assert "Milknado-Node: 42" in msg
+
+    def test_long_description_truncated_in_subject(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "x" * 80
+        msg = _build_commit_message(1, desc)
+        subject_line = msg.split("\n")[0]
+        assert subject_line.endswith("...")
+        assert len(subject_line) <= len("feat(milknado-1): ") + 60
+
+    def test_long_description_preserved_in_body(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "x" * 80
+        msg = _build_commit_message(1, desc)
+        assert desc in msg
+
+
 class TestSlugify:
     def test_basic_slugify(self) -> None:
         from milknado.domains.execution.executor import _slugify
