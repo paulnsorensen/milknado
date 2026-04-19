@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution.executor import RebaseConflict, get_dispatchable_nodes
@@ -31,6 +32,12 @@ _STALL_THRESHOLD_DEFAULT = 300
 
 
 @dataclass(frozen=True)
+class VerifyOutcome:
+    done: bool
+    goal_delta: str | None = None
+
+
+@dataclass(frozen=True)
 class RunLoopResult:
     root_done: bool
     dispatched_total: int
@@ -38,6 +45,7 @@ class RunLoopResult:
     failed_total: int
     rebase_conflicts: tuple[RebaseConflict, ...] = ()
     strict_exit: bool = False
+    verify_outcome: VerifyOutcome | None = None
 
 
 @dataclass(frozen=True)
@@ -123,13 +131,32 @@ class RunLoop:
         dispatched = completed = failed = 0
         conflicts: list[RebaseConflict] = []
 
+        timeout = (
+            self._milknado_config.completion_timeout_seconds
+            if self._milknado_config
+            else 1800.0
+        )
         with Live(self._build_layout(), refresh_per_second=2) as live:
             dispatched += self._dispatch_batch(config, concurrency_limit, live)
             live.update(self._build_layout())
             while self._active:
-                run_id, success = self._ralph.wait_for_next_completion(
-                    set(self._active.keys()), timeout=1800.0,
-                )
+                try:
+                    run_id, success = self._ralph.wait_for_next_completion(
+                        set(self._active.keys()), timeout=timeout,
+                    )
+                except CompletionTimeout as ct:
+                    _logger.warning(
+                        "Completion timeout after %.1fs; active runs: %s",
+                        ct.waited_seconds, sorted(ct.active_run_ids),
+                    )
+                    for timed_out_id in list(self._active):
+                        nid = self._active.pop(timed_out_id)
+                        self._executor.fail(nid)
+                        self._append_log(f"[{_ts()}] ⏱ node {nid} timeout")
+                        failed += 1
+                    if self._strict:
+                        self._failure_triggered = True
+                    break
                 self._absorb_progress()
                 c, f, cs = self._handle_completion(run_id, success, feature_branch, live)
                 completed += c
@@ -139,7 +166,7 @@ class RunLoop:
                     dispatched += self._dispatch_batch(config, concurrency_limit, live)
                 live.update(self._build_layout())
 
-        self._try_verify_root(spec_text, spec_path, config)
+        verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
         root = self._graph.get_root()
         return RunLoopResult(
             root_done=root is not None and root.status == NodeStatus.DONE,
@@ -148,6 +175,7 @@ class RunLoop:
             failed_total=failed,
             rebase_conflicts=tuple(conflicts),
             strict_exit=strict and self._failure_triggered,
+            verify_outcome=verify_outcome,
         )
 
     def _absorb_progress(self) -> None:
@@ -245,19 +273,28 @@ class RunLoop:
         )
         return layout
 
-    def _try_verify_root(
+    def _maybe_verify_spec(
         self, spec_text: str | None, spec_path: Path | None, config: ExecutionConfig,
-    ) -> None:
-        if not spec_text or self._failure_triggered:
-            return
+    ) -> VerifyOutcome | None:
+        if not spec_text or self._failure_triggered or self._active:
+            return None
         root = self._graph.get_root()
-        if not root or root.status != NodeStatus.PENDING:
-            return
+        if root is None or root.status == NodeStatus.DONE:
+            return None
+        non_root_all_done = all(
+            n.status == NodeStatus.DONE
+            for n in self._graph.get_all_nodes()
+            if n.id != root.id
+        )
+        if not non_root_all_done:
+            return None
         result = self._ralph.verify_spec(spec_text, str(self._graph))
+        outcome = VerifyOutcome(done=result.outcome == "done", goal_delta=result.goal_delta)
         if result.outcome == "done":
             self._graph.mark_done(root.id)
         elif result.outcome == "gaps" and self._planner and result.goal_delta:
             self._planner.replan_with_delta(result.goal_delta, config.project_root, spec_path)
+        return outcome
 
     def _dispatch_batch(
         self,
