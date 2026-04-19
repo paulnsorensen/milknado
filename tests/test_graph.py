@@ -199,14 +199,14 @@ class TestStatusTransitions:
 
     def test_invalid_transition_raises(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
-        with pytest.raises(ValueError, match="Cannot transition"):
+        with pytest.raises(ValueError, match="cannot transition"):
             graph.mark_done(node.id)
 
     def test_done_is_terminal(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
         graph.mark_running(node.id)
         graph.mark_done(node.id)
-        with pytest.raises(ValueError, match="Cannot transition"):
+        with pytest.raises(ValueError, match="cannot transition"):
             graph.mark_running(node.id)
 
     def test_running_to_pending_rollback(self, graph: MikadoGraph) -> None:

@@ -64,6 +64,17 @@ class RalphifyAdapter:
     def get_run(self, run_id: str) -> Any | None:
         return self._manager.get_run(run_id)
 
+    def get_run_stdout(self, run_id: str) -> list[str]:
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return []
+        stdout = getattr(run, "stdout", None)
+        if isinstance(stdout, list):
+            return stdout
+        if isinstance(stdout, str):
+            return stdout.splitlines()
+        return []
+
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],

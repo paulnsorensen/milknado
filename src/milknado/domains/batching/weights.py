@@ -85,6 +85,18 @@ def _tiktoken_count(path: Path) -> int | None:
 # ---------------------------------------------------------------------------
 
 
+RALPH_STARTUP_TOKENS = 2000
+
+
+def batch_size_cost(k: int) -> int:
+    """Fixed ralph-loop startup overhead for a batch of k changes.
+
+    Models system-prompt + tool-setup tokens that don't scale with file content.
+    k=0 means no ralph invocation, so no overhead.
+    """
+    return RALPH_STARTUP_TOKENS if k > 0 else 0
+
+
 def estimate_tokens(change: FileChange, root: Path) -> int:
     if change.edit_kind in FLAT_COST:
         return FLAT_COST[change.edit_kind]

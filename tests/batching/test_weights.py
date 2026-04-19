@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from milknado.domains.batching import FileChange, estimate_tokens
 
@@ -19,7 +20,10 @@ def test_modify_uses_tiktoken_on_existing_file(tmp_path: Path) -> None:
     f = tmp_path / "a.py"
     f.write_text("def hello():\n    return 42\n")
     c = FileChange(id="1", path="a.py", edit_kind="modify")
-    n = estimate_tokens(c, tmp_path)
+    with patch(
+        "milknado.domains.batching.weights._tiktoken_count", return_value=10
+    ):
+        n = estimate_tokens(c, tmp_path)
     assert 5 < n < 100
 
 
