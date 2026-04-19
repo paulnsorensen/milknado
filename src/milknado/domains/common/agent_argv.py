@@ -51,6 +51,7 @@ def build_planning_subprocess(
     planning_agent_command: str,
     *,
     allow_external_mcp: bool = False,
+    project_root: Path | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """Build argv + kwargs for one-shot planning subprocess."""
     body = context_path.read_text(encoding="utf-8")
@@ -59,6 +60,9 @@ def build_planning_subprocess(
         parts = shlex.split(DEFAULT_PLANNING_AGENT_BY_FAMILY["claude"], posix=True)
     if "-" not in parts:
         parts.append("-")
+    mcp_config = project_root / ".mcp.json" if project_root else None
+    if mcp_config and mcp_config.exists():
+        parts.extend(["--mcp-config", str(mcp_config)])
     extra: dict[str, Any] = {"input": body, "text": True}
     if not allow_external_mcp:
         extra["env"] = build_minimal_mcp_env()

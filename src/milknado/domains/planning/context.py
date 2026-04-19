@@ -172,32 +172,49 @@ def _progress_summary(nodes: list[MikadoNode]) -> str:
 
 def _instructions_section(resuming: bool) -> str:
     schema = (
-        "```yaml\n"
-        'manifest_version: "milknado.plan.v2"\n'
-        'goal: "One-line goal statement"\n'
-        "goal_summary: \"2-4 sentence summary: what / why / success criteria."
-        " Used as the root Mikado node — every executor reads this.\"\n"
-        'spec_path: "path/to/spec.md or null"\n'
-        "changes:\n"
-        '  - id: "c1"\n'
-        '    path: "src/foo.py"\n'
-        '    edit_kind: "modify"\n'
-        '    description: "Why this change is needed + which spec section drives it.'
-        " Causal changes explain the full rationale.\"\n"
-        "    symbols:\n"
-        '      - name: "FooClass"\n'
-        '        file: "src/foo.py"\n'
-        "    depends_on: []\n"
-        '  - id: "c2"\n'
-        '    path: "src/bar.py"\n'
-        '    edit_kind: "add"\n'
-        '    description: "Respond to c1 signature change — update call site."\n'
-        '    depends_on: ["c1"]\n'
-        "new_relationships:\n"
-        '  - source_change_id: "c1"\n'
-        '    dependant_change_id: "c2"\n'
-        '    reason: "new_import"\n'
+        "```json\n"
+        "{\n"
+        '  "manifest_version": "milknado.plan.v2",\n'
+        '  "goal": "One-line goal statement",\n'
+        '  "goal_summary": "2-4 sentence summary: what / why / success criteria.'
+        ' Used as the root Mikado node — every executor reads this.",\n'
+        '  "spec_path": "path/to/spec.md or null",\n'
+        '  "changes": [\n'
+        "    {\n"
+        '      "id": "c1",\n'
+        '      "path": "src/foo.py",\n'
+        '      "edit_kind": "modify",\n'
+        '      "description": "Why this change is needed + which spec section drives it.'
+        ' Causal changes explain the full rationale.",\n'
+        '      "symbols": [\n'
+        '        {"name": "FooClass", "file": "src/foo.py"}\n'
+        "      ],\n"
+        '      "depends_on": []\n'
+        "    },\n"
+        "    {\n"
+        '      "id": "c2",\n'
+        '      "path": "src/bar.py",\n'
+        '      "edit_kind": "add",\n'
+        '      "description": "Respond to c1 signature change — update call site.",\n'
+        '      "depends_on": ["c1"]\n'
+        "    }\n"
+        "  ],\n"
+        '  "new_relationships": [\n'
+        "    {\n"
+        '      "source_change_id": "c1",\n'
+        '      "dependant_change_id": "c2",\n'
+        '      "reason": "new_import"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n"
         "```"
+    )
+
+    enum_note = (
+        "**Closed enums — do not invent values:**\n"
+        '- `edit_kind`: one of `"add"`, `"modify"`, `"delete"`, `"rename"`.\n'
+        '- `new_relationships[].reason`: one of `"new_file"`, `"new_import"`,'
+        ' `"new_call"`, `"new_type_use"`.'
     )
 
     edge_note = (
@@ -234,7 +251,8 @@ def _instructions_section(resuming: bool) -> str:
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
-            "Emit the manifest as a fenced JSON block:\n\n"
+            f"{enum_note}\n\n"
+            "Emit the manifest as a fenced ```json block (valid JSON, not YAML):\n\n"
             f"{schema}"
         )
 
@@ -246,6 +264,7 @@ def _instructions_section(resuming: bool) -> str:
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"
-        "Emit the manifest as a fenced JSON block:\n\n"
+        f"{enum_note}\n\n"
+        "Emit the manifest as a fenced ```json block (valid JSON, not YAML):\n\n"
         f"{schema}"
     )
