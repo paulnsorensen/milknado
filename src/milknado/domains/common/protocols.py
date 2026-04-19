@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -9,6 +10,14 @@ from milknado.domains.common.types import (
     RebaseResult,
     TilthMap,
 )
+
+
+@dataclass(frozen=True)
+class ProgressEvent:
+    run_id: str
+    work: int
+    total: int
+    message: str = ""
 
 
 class GitPort(Protocol):
@@ -60,6 +69,8 @@ class RalphPort(Protocol):
     def wait_for_next_completion(
         self, active_run_ids: set[str],
     ) -> tuple[str, bool]: ...
+    def poll_progress_events(self) -> list[ProgressEvent]: ...
+    def get_run_stdout(self, run_id: str) -> list[str]: ...
     def generate_ralph_md(
         self,
         node: MikadoNode,

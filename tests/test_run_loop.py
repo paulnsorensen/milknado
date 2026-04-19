@@ -103,6 +103,12 @@ class FakeRalph:
                 return run_id, success
         raise RuntimeError("No pending completions for active runs")
 
+    def poll_progress_events(self) -> list[Any]:
+        return []
+
+    def get_run_stdout(self, run_id: str) -> list[str]:
+        return []
+
     def generate_ralph_md(
         self,
         node: MikadoNode,

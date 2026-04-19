@@ -64,6 +64,16 @@ class RalphifyAdapter:
             )
             return event.run_id, success
 
+    def poll_progress_events(self) -> list[Any]:
+        # Stub: full implementation lands with v2 execution (PR #13).
+        # TUI reads from this to show per-worker progress bars.
+        return []
+
+    def get_run_stdout(self, run_id: str) -> list[str]:
+        # Stub: full implementation lands with v2 execution (PR #13).
+        # TUI overlay reads from this to show last-N lines on drill-in.
+        return []
+
     def generate_ralph_md(
         self,
         node: MikadoNode,
