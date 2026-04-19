@@ -407,11 +407,12 @@ class TestPlanner:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        from milknado.domains.common.errors import PlanningFailed
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="agent failed")
         planner = Planner(tmp_graph, mock_crg, "claude")
-        result = planner.launch("my goal", tmp_path)
-        assert result.success is False
-        assert result.exit_code == 1
+        with pytest.raises(PlanningFailed) as exc_info:
+            planner.launch("my goal", tmp_path)
+        assert "agent failed" in str(exc_info.value)
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_custom_agent_command(
@@ -750,7 +751,7 @@ class TestPlanChangeManifest:
             new_relationships=(),
         )
         with pytest.raises(Exception):  # noqa: B017, PT011 — frozen dataclass
-            manifest.changes = ()  # type: ignore[misc]
+            manifest.changes = ()  # type: ignore
 
     def test_v2_parse_with_descriptions(self) -> None:
         output = _wrap({

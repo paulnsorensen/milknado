@@ -222,7 +222,8 @@ class TestOversizedPassthrough:
     def test_normal_precedes_oversized(self, tmp_path):
         """Canonical Mikado: small prerequisite then large implementation."""
         small = FileChange(id="small", path="small.py", edit_kind="delete")  # ~80 tokens
-        big = FileChange(id="big", path="big.py", edit_kind="add", depends_on=("small",))  # ~1875 tokens
+        # ~1875 tokens
+        big = FileChange(id="big", path="big.py", edit_kind="add", depends_on=("small",))
         plan = plan_batches([small, big], budget=100, root=tmp_path)
         assert plan.solver_status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
         assert len(plan.batches) == 2
@@ -288,7 +289,7 @@ class TestSymbolAwareRouting:
         _, edges, _ = build_change_graph([change_a, change_b, change_x], crg=crg)
         # change_a declared "Class::method" so it should be attributed
         assert ("change_a", "change_x") in edges
-        # change_b declared "OtherClass" so it should NOT be attributed (symbol resolved unambiguously)
+        # change_b declared "OtherClass" — NOT attributed (symbol resolved unambiguously)
         assert ("change_b", "change_x") not in edges
 
     def test_empty_endpoint_path_not_in_path_to_ids_skipped(self):

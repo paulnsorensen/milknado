@@ -27,7 +27,7 @@ from milknado.domains.planning.manifest import (
 def _change(cid: str, path: str, description: str = "", **kw: object) -> FileChange:
     kwargs: dict[str, object] = {"id": cid, "path": path, "description": description or cid}
     kwargs.update(kw)
-    return FileChange(**kwargs)  # type: ignore[arg-type]
+    return FileChange(**kwargs)  # type: ignore
 
 
 def _manifest(

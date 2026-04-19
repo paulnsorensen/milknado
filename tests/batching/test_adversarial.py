@@ -102,7 +102,7 @@ class TestEstimateTokens:
 
     def test_invalid_edit_kind_does_not_crash(self, tmp_path):
         # edit_kind='garbage' not in FLAT_COST, not 'modify' -> falls to add path
-        c = FileChange(id="1", path="a.py", edit_kind="garbage")  # type: ignore[arg-type]
+        c = FileChange(id="1", path="a.py", edit_kind="garbage")  # type: ignore
         result = estimate_tokens(c, tmp_path)
         assert isinstance(result, int)
         assert result > 0
@@ -123,24 +123,35 @@ class TestParseImpactDict:
         assert result == []
 
     def test_edges_string_no_pairs(self):
-        result = _parse_impact_dict({"edges": "string"}, "a.py", self._path_to_ids, self._id_to_change)
+        result = _parse_impact_dict(
+            {"edges": "string"}, "a.py", self._path_to_ids, self._id_to_change
+        )
         assert result == []
 
     def test_edges_list_of_empty_dicts_skipped(self):
-        result = _parse_impact_dict({"edges": [{}, {}]}, "a.py", self._path_to_ids, self._id_to_change)
+        result = _parse_impact_dict(
+            {"edges": [{}, {}]}, "a.py", self._path_to_ids, self._id_to_change
+        )
         assert result == []
 
     def test_edges_missing_src_skipped(self):
-        result = _parse_impact_dict({"edges": [{"dst": "b.py"}]}, "a.py", self._path_to_ids, self._id_to_change)
+        result = _parse_impact_dict(
+            {"edges": [{"dst": "b.py"}]}, "a.py", self._path_to_ids, self._id_to_change
+        )
         assert result == []
 
     def test_edges_missing_dst_skipped(self):
-        result = _parse_impact_dict({"edges": [{"src": "a.py"}]}, "a.py", self._path_to_ids, self._id_to_change)
+        result = _parse_impact_dict(
+            {"edges": [{"src": "a.py"}]}, "a.py", self._path_to_ids, self._id_to_change
+        )
         assert result == []
 
     def test_impacted_files_non_strings_skipped(self):
         result = _parse_impact_dict(
-            {"impacted_files": [None, 42, "", "b.py"]}, "a.py", self._path_to_ids, self._id_to_change
+            {"impacted_files": [None, 42, "", "b.py"]},
+            "a.py",
+            self._path_to_ids,
+            self._id_to_change,
         )
         assert ("id_a", "id_b") in result
         assert len(result) == 1
@@ -150,7 +161,9 @@ class TestParseImpactDict:
         assert result == []
 
     def test_edges_integers_in_list_skipped(self):
-        result = _parse_impact_dict({"edges": [42, "str"]}, "a.py", self._path_to_ids, self._id_to_change)
+        result = _parse_impact_dict(
+            {"edges": [42, "str"]}, "a.py", self._path_to_ids, self._id_to_change
+        )
         assert result == []
 
     def test_source_path_excluded_from_impacted(self):
@@ -203,7 +216,9 @@ class TestBuildChangeGraph:
     def test_unicode_ids_and_paths(self):
         a = FileChange(id="zh_file", path="src/zh.py")
         b = FileChange(id="es_file", path="src/es.py")
-        rel = NewRelationship(source_change_id="zh_file", dependant_change_id="es_file", reason="new_import")
+        rel = NewRelationship(
+            source_change_id="zh_file", dependant_change_id="es_file", reason="new_import"
+        )
         nodes, edges, _ = build_change_graph([a, b], new_relationships=[rel])
         assert ("zh_file", "es_file") in edges
 

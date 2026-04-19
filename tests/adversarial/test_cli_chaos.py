@@ -27,7 +27,7 @@ def _make_plan_result(**kwargs: Any) -> PlanResult:
         "nodes_created": 3,
     }
     defaults.update(kwargs)
-    return PlanResult(**defaults)
+    return PlanResult(**defaults)  # type: ignore
 
 
 class TestSpecFlagValidation:

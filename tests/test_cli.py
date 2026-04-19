@@ -332,8 +332,8 @@ def _make_plan_result(**kwargs: object) -> MagicMock:
         "solver_status": "OPTIMAL",
         "change_count": 4,
     }
-    defaults.update(kwargs)
-    return PlanResult(**defaults)  # type: ignore[arg-type]
+    defaults.update(kwargs)  # type: ignore
+    return PlanResult(**defaults)  # type: ignore
 
 
 class TestPlanSpecOption:

@@ -323,7 +323,7 @@ class TestExecutorDispatch:
     ) -> None:
         fake_git = FakeGit()
         fake_ralph = FakeRalph()
-        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
@@ -340,7 +340,7 @@ class TestExecutorDispatch:
         config: ExecutionConfig,
     ) -> None:
         fake_ralph = FakeRalph()
-        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
@@ -426,7 +426,7 @@ class TestExecutorComplete:
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("nothing to commit"),
         )
         ex = Executor(

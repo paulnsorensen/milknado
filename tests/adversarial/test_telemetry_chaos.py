@@ -41,7 +41,7 @@ def _make_plan(
     return BatchPlan(
         batches=batches,
         spread_report=spread_report,
-        solver_status=solver_status,  # type: ignore[arg-type]
+        solver_status=solver_status,  # type: ignore
     )
 
 
@@ -109,7 +109,7 @@ class TestFloatEdgeCasesInSpread:
     def test_nan_spread_in_spread_report(self) -> None:
         """NaN in spread — _build_record must not crash."""
         sym = SymbolRef(name="foo", file="src/foo.py")
-        spread_report = (SymbolSpread(symbol=sym, spread=float("nan")),)  # type: ignore[arg-type]
+        spread_report = (SymbolSpread(symbol=sym, spread=float("nan")),)  # type: ignore
         # SymbolSpread.spread is typed as int; float("nan") is a float.
         # This probes whether the runtime allows it and whether max/mean crash.
         manifest = _make_manifest(changes=(_make_change("c1"),))
@@ -132,7 +132,7 @@ class TestFloatEdgeCasesInSpread:
     def test_infinity_spread_in_spread_report(self) -> None:
         """Infinity in spread — json.dumps(Infinity) raises ValueError in standard JSON."""
         sym = SymbolRef(name="foo", file="src/foo.py")
-        spread_report = (SymbolSpread(symbol=sym, spread=float("inf")),)  # type: ignore[arg-type]
+        spread_report = (SymbolSpread(symbol=sym, spread=float("inf")),)  # type: ignore
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(spread_report=spread_report)
         try:
@@ -186,7 +186,7 @@ class TestUnknownSolverStatus:
         plan = BatchPlan(
             batches=(),
             spread_report=(),
-            solver_status="TIMEOUT",  # type: ignore[arg-type]
+            solver_status="TIMEOUT",  # type: ignore
         )
         record_batch_snapshot(tmp_path, manifest, plan)
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()

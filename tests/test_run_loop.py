@@ -366,7 +366,7 @@ class TestRunLoopDispatchFailure:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph.generate_ralph_md = lambda *_a, **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        ralph.generate_ralph_md = lambda *_a, **_kw: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("ralph exploded"),
         )
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
@@ -399,7 +399,7 @@ class TestRunLoopDispatchFailure:
                 raise RuntimeError("ralph exploded")
             return original_generate(*args, **kwargs)
 
-        ralph.generate_ralph_md = fail_first_only  # type: ignore[assignment]
+        ralph.generate_ralph_md = fail_first_only  # type: ignore
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 

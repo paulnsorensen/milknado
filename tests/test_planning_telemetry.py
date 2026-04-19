@@ -44,7 +44,7 @@ def _make_plan(
     return BatchPlan(
         batches=batches,
         spread_report=spread_report,
-        solver_status=solver_status,  # type: ignore[arg-type]
+        solver_status=solver_status,  # type: ignore
     )
 
 
@@ -85,6 +85,103 @@ class TestHappyPath:
         assert "max_spread" in record
         assert "mean_spread" in record
         assert "new_relationship_count" in record
+        assert "spec_path" in record
+        assert "test_change_count" in record
+        assert "impl_change_count" in record
+        assert "test_to_impl_ratio" in record
+        assert "max_us_refs_per_change" in record
+        assert "multi_story_change_count" in record
+        assert "distinct_path_count" in record
+
+
+class TestManifestQualitySignals:
+    def test_test_to_impl_ratio_split(self, tmp_path: Path) -> None:
+        """Mixed src/ and tests/ paths produce correct test_to_impl_ratio."""
+        changes = (
+            FileChange(id="c1", path="src/foo.py", description="impl"),
+            FileChange(id="c2", path="src/bar.py", description="impl"),
+            FileChange(id="c3", path="tests/test_foo.py", description="test"),
+        )
+        manifest = _make_manifest(changes=changes)
+        plan = _make_plan(batches=(_make_batch(0),))
+        record_batch_snapshot(tmp_path, manifest, plan)
+        record = json.loads(
+            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
+        )
+        assert record["impl_change_count"] == 2
+        assert record["test_change_count"] == 1
+        assert record["test_to_impl_ratio"] == 0.5
+
+    def test_us_refs_in_description(self, tmp_path: Path) -> None:
+        """max_us_refs_per_change and multi_story_change_count count distinct US-NNN tokens."""
+        changes = (
+            FileChange(
+                id="c1", path="src/a.py",
+                description="Major TUI restructure covering US-001 US-004 US-005 US-006",
+            ),
+            FileChange(
+                id="c2", path="src/b.py",
+                description="Fix US-014 timeout issue",
+            ),
+            FileChange(
+                id="c3", path="src/c.py",
+                description="No US ref here",
+            ),
+        )
+        manifest = _make_manifest(changes=changes)
+        plan = _make_plan(batches=(_make_batch(0),))
+        record_batch_snapshot(tmp_path, manifest, plan)
+        record = json.loads(
+            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
+        )
+        assert record["max_us_refs_per_change"] == 4
+        assert record["multi_story_change_count"] == 1
+
+    def test_distinct_path_count(self, tmp_path: Path) -> None:
+        """Two changes sharing a path → distinct_path_count counts each path once."""
+        changes = (
+            FileChange(id="c1", path="src/foo.py", description="part 1"),
+            FileChange(id="c2", path="src/foo.py", description="part 2"),
+            FileChange(id="c3", path="src/bar.py", description="other"),
+        )
+        manifest = _make_manifest(changes=changes)
+        plan = _make_plan(batches=(_make_batch(0),))
+        record_batch_snapshot(tmp_path, manifest, plan)
+        record = json.loads(
+            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
+        )
+        assert record["distinct_path_count"] == 2
+        assert record["change_count"] == 3
+
+    def test_empty_manifest(self, tmp_path: Path) -> None:
+        """Zero changes → all quality signals zeroed without errors."""
+        manifest = _make_manifest(changes=())
+        plan = _make_plan(batches=())
+        record_batch_snapshot(tmp_path, manifest, plan)
+        record = json.loads(
+            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
+        )
+        assert record["impl_change_count"] == 0
+        assert record["test_change_count"] == 0
+        assert record["test_to_impl_ratio"] == 0.0
+        assert record["distinct_path_count"] == 0
+
+    def test_spec_path_recorded(self, tmp_path: Path) -> None:
+        """manifest.spec_path lands in the record verbatim."""
+        manifest = PlanChangeManifest(
+            manifest_version=MANIFEST_VERSION,
+            goal="g",
+            goal_summary="gs",
+            spec_path=".claude/specs/foo.md",
+            changes=(_make_change("c1"),),
+            new_relationships=(),
+        )
+        plan = _make_plan(batches=(_make_batch(0),))
+        record_batch_snapshot(tmp_path, manifest, plan)
+        record = json.loads(
+            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
+        )
+        assert record["spec_path"] == ".claude/specs/foo.md"
 
 
 class TestAppendBehavior:
@@ -171,7 +268,7 @@ class TestDiskError:
         def bad_open(self: Path, *args: object, **kwargs: object) -> object:
             if "calibration.jsonl" in str(self):
                 raise OSError("disk full")
-            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
+            return original_open(self, *args, **kwargs)  # type: ignore
 
         monkeypatch.setattr(Path, "open", bad_open)
 
