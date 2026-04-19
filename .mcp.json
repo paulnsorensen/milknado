@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "tilth": {
+      "command": "tilth",
+      "args": ["--mcp"]
+    },
+    "code-review-graph": {
+      "command": "code-review-graph"
+    }
+  }
+}
