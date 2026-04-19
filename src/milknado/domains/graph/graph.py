@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import itertools
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     VALID_TRANSITIONS,
@@ -11,6 +13,9 @@ from milknado.domains.common import (
     MikadoNode,
     NodeStatus,
 )
+
+if TYPE_CHECKING:
+    from milknado.domains.batching import BatchPlan
 
 
 class MikadoGraph:
@@ -32,7 +37,9 @@ class MikadoGraph:
                 branch_name TEXT,
                 run_id TEXT,
                 created_at TEXT NOT NULL,
-                completed_at TEXT
+                completed_at TEXT,
+                oversized INTEGER NOT NULL DEFAULT 0,
+                batch_index INTEGER
             );
             CREATE TABLE IF NOT EXISTS edges (
                 parent_id INTEGER NOT NULL,
@@ -46,6 +53,15 @@ class MikadoGraph:
                 file_path TEXT NOT NULL,
                 PRIMARY KEY (node_id, file_path),
                 FOREIGN KEY (node_id) REFERENCES nodes(id)
+            );
+            CREATE TABLE IF NOT EXISTS batch_plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                solver_status TEXT NOT NULL,
+                batch_count INTEGER NOT NULL,
+                oversized_count INTEGER NOT NULL,
+                max_spread INTEGER NOT NULL,
+                spread_json TEXT NOT NULL
             );
         """)
         self._ensure_nodes_schema()
@@ -64,7 +80,10 @@ class MikadoGraph:
     def _row_to_node(self, row: sqlite3.Row) -> MikadoNode:
         created_at_raw = row["created_at"]
         completed_at_raw = row["completed_at"]
-        run_id = row["run_id"] if "run_id" in row.keys() else None
+        keys = row.keys()
+        run_id = row["run_id"] if "run_id" in keys else None
+        oversized = bool(row["oversized"]) if "oversized" in keys else False
+        batch_index = row["batch_index"] if "batch_index" in keys else None
         return MikadoNode(
             id=row["id"],
             description=row["description"],
@@ -79,16 +98,31 @@ class MikadoGraph:
                 if completed_at_raw
                 else None
             ),
+            oversized=oversized,
+            batch_index=batch_index,
         )
 
     def add_node(
-        self, description: str, parent_id: int | None = None
+        self,
+        description: str,
+        parent_id: int | None = None,
+        *,
+        oversized: bool = False,
+        batch_index: int | None = None,
     ) -> MikadoNode:
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
-            "INSERT INTO nodes (description, status, parent_id, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (description, NodeStatus.PENDING.value, parent_id, now),
+            "INSERT INTO nodes "
+            "(description, status, parent_id, created_at, oversized, batch_index) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                description,
+                NodeStatus.PENDING.value,
+                parent_id,
+                now,
+                1 if oversized else 0,
+                batch_index,
+            ),
         )
         self._conn.commit()
         node_id = cur.lastrowid
@@ -102,6 +136,20 @@ class MikadoGraph:
                 "SELECT * FROM nodes WHERE id = ?", (node_id,)
             ).fetchone()
         )
+
+    def set_batch_metadata(
+        self,
+        node_id: int,
+        oversized: bool,
+        batch_index: int | None,
+    ) -> None:
+        cur = self._conn.execute(
+            "UPDATE nodes SET oversized = ?, batch_index = ? WHERE id = ?",
+            (1 if oversized else 0, batch_index, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
 
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
@@ -291,6 +339,53 @@ class MikadoGraph:
                     (left_id, right_id, sorted(overlap))
                 )
         return conflicts
+
+    def record_batch_plan(self, plan: BatchPlan) -> int:
+        spread_payload = [
+            {
+                "symbol_name": item.symbol.name,
+                "symbol_file": item.symbol.file,
+                "spread": item.spread,
+            }
+            for item in plan.spread_report
+        ]
+        max_spread = max((item.spread for item in plan.spread_report), default=0)
+        oversized_count = sum(1 for b in plan.batches if b.oversized)
+        now = datetime.now(UTC).isoformat()
+        cur = self._conn.execute(
+            "INSERT INTO batch_plans "
+            "(created_at, solver_status, batch_count, oversized_count, "
+            "max_spread, spread_json) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                now,
+                plan.solver_status,
+                len(plan.batches),
+                oversized_count,
+                max_spread,
+                json.dumps(spread_payload),
+            ),
+        )
+        self._conn.commit()
+        plan_id = cur.lastrowid
+        assert plan_id is not None
+        return plan_id
+
+    def get_latest_batch_plan(self) -> dict | None:
+        row = self._conn.execute(
+            "SELECT id, created_at, solver_status, batch_count, oversized_count, "
+            "max_spread, spread_json FROM batch_plans ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "solver_status": row["solver_status"],
+            "batch_count": row["batch_count"],
+            "oversized_count": row["oversized_count"],
+            "max_spread": row["max_spread"],
+            "spread_report": json.loads(row["spread_json"]),
+        }
 
     def close(self) -> None:
         self._conn.close()
