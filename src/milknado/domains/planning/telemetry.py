@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,14 +22,21 @@ def record_batch_snapshot(
 ) -> None:
     """Append one JSONL record to <project_root>/.milknado/calibration.jsonl.
 
+    Uses a single atomic os.write() to an O_APPEND fd so concurrent appends
+    from multiple processes/threads don't interleave within a record.
+
     Never raises — telemetry must not block the planner.
     """
     record = _build_record(manifest, plan)
     dest = project_root / _CALIBRATION_FILE
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open(mode="a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
+        payload = (json.dumps(record) + "\n").encode("utf-8")
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+        try:
+            os.write(fd, payload)
+        finally:
+            os.close(fd)
     except OSError as exc:
         _logger.warning("telemetry write failed, skipping: %s", exc)
 
