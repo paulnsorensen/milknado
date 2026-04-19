@@ -76,6 +76,11 @@ class MikadoGraph:
         if "run_id" not in columns:
             self._conn.execute("ALTER TABLE nodes ADD COLUMN run_id TEXT")
             self._conn.commit()
+        if "completion_duration_seconds" not in columns:
+            self._conn.execute(
+                "ALTER TABLE nodes ADD COLUMN completion_duration_seconds REAL"
+            )
+            self._conn.commit()
 
     def _row_to_node(self, row: sqlite3.Row) -> MikadoNode:
         created_at_raw = row["created_at"]
@@ -256,14 +261,17 @@ class MikadoGraph:
         self._conn.commit()
 
     def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
+        from milknado.domains.common.errors import InvalidTransition
         node = self.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
         allowed = VALID_TRANSITIONS.get(node.status, set())
         if target not in allowed:
-            raise ValueError(
-                f"Cannot transition from {node.status.value} "
-                f"to {target.value}"
+            raise InvalidTransition(
+                node_id=node_id,
+                current=node.status,
+                target=target,
+                valid_targets=tuple(allowed),
             )
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
@@ -401,6 +409,24 @@ class MikadoGraph:
             "max_spread": row["max_spread"],
             "spread_report": json.loads(row["spread_json"]),
         }
+
+    def _record_completion_duration(
+        self, node_id: int, duration_seconds: float,
+    ) -> None:
+        self._conn.execute(
+            "UPDATE nodes SET completion_duration_seconds = ? WHERE id = ?",
+            (duration_seconds, node_id),
+        )
+        self._conn.commit()
+
+    def recent_completion_durations(self, limit: int) -> list[float]:
+        rows = self._conn.execute(
+            "SELECT completion_duration_seconds FROM nodes "
+            "WHERE completion_duration_seconds IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def close(self) -> None:
         self._conn.close()
