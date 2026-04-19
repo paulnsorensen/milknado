@@ -35,12 +35,16 @@ def _configure_ralph_mocks(
         ralph_cls.return_value.create_run.return_value = fake_run
     ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
 
-    def _wait_for_next_completion(active_run_ids: set[str]) -> tuple[str, bool]:
+    def _wait_for_next_completion(
+        active_run_ids: set[str], timeout: float | None = None,
+    ) -> tuple[str, bool]:
         return next(iter(active_run_ids)), True
 
     ralph_cls.return_value.wait_for_next_completion.side_effect = (
         _wait_for_next_completion
     )
+    ralph_cls.return_value.poll_progress_events.return_value = []
+    ralph_cls.return_value.verify_spec.return_value = MagicMock()
 
 
 @pytest.fixture()

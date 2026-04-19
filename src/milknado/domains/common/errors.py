@@ -34,10 +34,11 @@ class CompletionTimeout(MilknadoError):
 
 
 class PlanningFailed(MilknadoError):
-    def __init__(self, stderr: str) -> None:
+    def __init__(self, exit_code: int, stderr: str) -> None:
+        self.exit_code = exit_code
         self.stderr = stderr
         super().__init__(
-            f"Planning agent exited non-zero. stderr: {stderr[:200]}"
+            f"Planning agent exited {exit_code}. stderr: {stderr[:200]}"
         )
 
 
@@ -47,7 +48,7 @@ class InvalidTransition(MilknadoError, ValueError):
         node_id: int,
         current: Any,
         target: Any,
-        valid_targets: set[Any],
+        valid_targets: tuple[Any, ...],
     ) -> None:
         self.node_id = node_id
         self.current = current

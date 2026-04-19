@@ -2,8 +2,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import subprocess
+
 import pytest
 
+from milknado.domains.common.errors import TransientDispatchError
 from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
@@ -52,6 +55,9 @@ class FakeGit:
     def commit_all(self, worktree: Path, message: str) -> None:
         self.commits.append((worktree, message))
 
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+        self.commits.append((worktree, msg))
+
 
 class FakeRalph:
     def __init__(self) -> None:
@@ -66,6 +72,7 @@ class FakeRalph:
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> FakeRun:
         self.runs_created.append({"agent": agent, "dir": ralph_dir})
         return FakeRun()
@@ -81,6 +88,20 @@ class FakeRalph:
 
     def get_run(self, run_id: str) -> Any | None:
         return None
+
+    def wait_for_next_completion(
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
+    ) -> tuple[str, bool]:
+        raise RuntimeError("Not expected in executor tests")
+
+    def poll_progress_events(self) -> list[Any]:
+        return []
+
+    def verify_spec(self, spec_text: str, graph_state: str) -> Any:
+        from milknado.domains.common.protocols import VerifySpecResult
+        return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
         self,
@@ -102,6 +123,26 @@ class FakeCrg:
 
     def get_architecture_overview(self) -> dict[str, Any]:
         return {"modules": []}
+
+    def list_communities(self, sort_by: str = "size", min_size: int = 0) -> list[dict[str, Any]]:
+        return []
+
+    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, Any]]:
+        return []
+
+    def get_minimal_context(
+        self, task: str = "", changed_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {}
+
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def semantic_search_nodes(self, query: str, top_n: int = 5) -> list[dict[str, Any]]:
+        return []
 
 
 @pytest.fixture()
@@ -386,7 +427,7 @@ class TestExecutorComplete:
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.commit_all = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
             RuntimeError("nothing to commit"),
         )
         ex = Executor(
@@ -445,7 +486,8 @@ class TestExecutorComplete:
 
         assert len(fake_git.commits) == 1
         _, msg = fake_git.commits[0]
-        assert msg == "feat(milknado-1): Add user authentication"
+        assert msg.startswith("feat(milknado-1): Add user authentication")
+        assert "Milknado-Node-Id: 1" in msg
 
     def test_complete_nonexistent_raises(
         self, executor: Executor,
@@ -507,6 +549,126 @@ class TestSlugify:
         from milknado.domains.execution.executor import _slugify
 
         assert _slugify("fix: auth (v2)") == "fix-auth-v2"
+
+
+class TestIsTransient:
+    def test_os_error_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(OSError("no such file"))
+
+    def test_timeout_expired_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(subprocess.TimeoutExpired(cmd="x", timeout=5))
+
+    def test_exit_code_124_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(subprocess.CalledProcessError(124, "cmd"))
+
+    def test_rate_limit_message_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(RuntimeError("429 rate limit exceeded"))
+
+    def test_transient_dispatch_error_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(TransientDispatchError("retry me"))
+
+    def test_value_error_not_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert not _is_transient(ValueError("bad input"))
+
+    def test_runtime_error_not_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert not _is_transient(RuntimeError("something broke"))
+
+
+class TestGetAttemptCount:
+    def test_returns_zero_before_dispatch(
+        self, executor: Executor, graph: MikadoGraph,
+    ) -> None:
+        graph.add_node("task")
+        assert executor.get_attempt_count(1) == 0
+
+    def test_returns_zero_after_first_success(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        ex.dispatch(1, config)
+        assert ex.get_attempt_count(1) == 0
+
+    def test_increments_on_transient_retry(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        call_count = 0
+
+        class BurstRalph(FakeRalph):
+            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise TransientDispatchError("transient")
+                return FakeRun()
+
+        config_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=("uv run pytest",),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=config.project_root,
+            dispatch_max_retries=2,
+            dispatch_backoff_seconds=0.0,
+        )
+        ex = Executor(graph=graph, git=FakeGit(), ralph=BurstRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        ex.dispatch(1, config_retry)
+        assert ex.get_attempt_count(1) == 1
+
+    def test_non_transient_raises_immediately(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        class FailRalph(FakeRalph):
+            def create_run(self, **_kw):  # type: ignore[override]
+                raise ValueError("bad config")
+
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        with pytest.raises(ValueError, match="bad config"):
+            ex.dispatch(1, config)
+        assert ex.get_attempt_count(1) == 0
+
+    def test_transient_exhausted_raises(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        class AlwaysTransient(FakeRalph):
+            def create_run(self, **_kw):  # type: ignore[override]
+                raise TransientDispatchError("always fails")
+
+        config_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=(),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=config.project_root,
+            dispatch_max_retries=1,
+            dispatch_backoff_seconds=0.0,
+        )
+        ex = Executor(graph=graph, git=FakeGit(), ralph=AlwaysTransient(), crg=FakeCrg())
+        graph.add_node("task")
+        with pytest.raises(TransientDispatchError):
+            ex.dispatch(1, config_retry)
 
 
 class TestBuildNodeContext:

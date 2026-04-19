@@ -50,6 +50,9 @@ class FakeGit:
     def commit_all(self, worktree: Path, message: str) -> None:
         pass
 
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+        pass
+
 
 class FakeCrg:
     def ensure_graph(self, project_root: Path) -> None:
@@ -60,6 +63,32 @@ class FakeCrg:
 
     def get_architecture_overview(self) -> dict[str, Any]:
         return {"modules": []}
+
+    def list_communities(
+        self, sort_by: str = "size", min_size: int = 0,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def list_flows(
+        self, sort_by: str = "criticality", limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def get_minimal_context(
+        self, task: str = "", changed_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {}
+
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def semantic_search_nodes(
+        self, query: str, top_n: int = 5,
+    ) -> list[dict[str, Any]]:
+        return []
 
 
 class FakeRalph:
@@ -75,6 +104,7 @@ class FakeRalph:
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
@@ -95,13 +125,22 @@ class FakeRalph:
         return None
 
     def wait_for_next_completion(
-        self, active_run_ids: set[str],
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
     ) -> tuple[str, bool]:
         for i, (run_id, success) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
                 self._pending_completions.pop(i)
                 return run_id, success
         raise RuntimeError("No pending completions for active runs")
+
+    def poll_progress_events(self) -> list[Any]:
+        return []
+
+    def verify_spec(self, spec_text: str, graph_state: str) -> Any:
+        from milknado.domains.common.protocols import VerifySpecResult
+        return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
         self,

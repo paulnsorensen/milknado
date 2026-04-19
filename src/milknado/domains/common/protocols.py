@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from milknado.domains.common.types import (
     DegradationMarker,
@@ -11,12 +12,27 @@ from milknado.domains.common.types import (
 )
 
 
+@dataclass(frozen=True)
+class ProgressEvent:
+    run_id: str
+    work: int
+    total: int
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class VerifySpecResult:
+    outcome: Literal["done", "gaps"]
+    goal_delta: str | None = None
+
+
 class GitPort(Protocol):
     def create_worktree(self, path: Path, branch: str) -> Path: ...
     def remove_worktree(self, path: Path) -> None: ...
     def rebase(self, worktree: Path, onto: str) -> RebaseResult: ...
     def current_branch(self) -> str: ...
     def commit_all(self, worktree: Path, message: str) -> None: ...
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None: ...
 
 
 class TilthPort(Protocol):
@@ -42,6 +58,9 @@ class CrgPort(Protocol):
     ) -> dict[str, Any]: ...
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
+    def semantic_search_nodes(
+        self, query: str, top_n: int = 5,
+    ) -> list[dict[str, Any]]: ...
 
 
 class RalphPort(Protocol):
@@ -52,14 +71,21 @@ class RalphPort(Protocol):
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> Any: ...
     def start_run(self, run_id: str) -> None: ...
     def stop_run(self, run_id: str) -> None: ...
     def list_runs(self) -> list[Any]: ...
     def get_run(self, run_id: str) -> Any | None: ...
     def wait_for_next_completion(
-        self, active_run_ids: set[str],
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
     ) -> tuple[str, bool]: ...
+    def poll_progress_events(self) -> list[ProgressEvent]: ...
+    def verify_spec(
+        self, spec_text: str, graph_state: str,
+    ) -> VerifySpecResult: ...
     def generate_ralph_md(
         self,
         node: MikadoNode,

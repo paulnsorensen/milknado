@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.adapters.tilth import TilthAdapter
 from milknado.domains.common.agent_argv import build_planning_subprocess
+from milknado.domains.common.errors import PlanningFailed
 from milknado.domains.planning.batching_bridge import (
     apply_batches_to_graph,
     run_batching,
 )
 from milknado.domains.planning.context import build_planning_context
-from milknado.domains.planning.manifest import parse_manifest_from_output
+from milknado.domains.planning.manifest import PlanChangeManifest, parse_manifest_from_output
 from milknado.domains.planning.telemetry import record_batch_snapshot
+
+_US_REF_RE = re.compile(r"\bUS-\d{3}\b")
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort
@@ -33,6 +37,11 @@ class PlanResult:
     oversized_count: int = 0
     solver_status: str = ""
     change_count: int = 0
+    impl_change_count: int = 0
+    test_change_count: int = 0
+    multi_story_change_count: int = 0
+    max_us_refs_per_change: int = 0
+    distinct_path_count: int = 0
 
 
 class Planner:
@@ -45,6 +54,14 @@ class Planner:
         self._graph = graph
         self._crg = crg
         self._planning_agent = planning_agent
+
+    def replan_with_delta(
+        self,
+        delta: str,
+        project_root: Path,
+        spec_path: Path | None,
+    ) -> PlanResult:
+        return self.launch(delta, project_root, spec_path=spec_path)
 
     def launch(
         self,
@@ -73,23 +90,14 @@ class Planner:
             context_path, self._planning_agent,
         )
         extra["stdout"] = subprocess.PIPE
+        extra["stderr"] = subprocess.PIPE
         result = subprocess.run(argv, cwd=project_root, check=False, **extra)
-        exit_code = result.returncode
-        stdout = result.stdout or ""
+        checked = _check_planner_exit(result, context_path)
+        if isinstance(checked, PlanResult):
+            return checked
+        manifest: PlanChangeManifest = checked
 
-        manifest = parse_manifest_from_output(stdout)
-        if manifest is None:
-            return PlanResult(
-                success=exit_code == 0,
-                exit_code=exit_code,
-                context_path=context_path,
-                nodes_created=0,
-                batch_count=0,
-                oversized_count=0,
-                solver_status="NO_MANIFEST",
-                change_count=0,
-            )
-
+        manifest = _append_reuse_candidates(manifest, self._crg if crg_ok else None)
         plan = run_batching(manifest, crg if crg_ok else None, project_root)
         existing_root = self._graph.get_root()
         parent_id = existing_root.id if existing_root is not None else None
@@ -98,16 +106,85 @@ class Planner:
         )
         record_batch_snapshot(project_root, manifest, plan)
 
+        quality = _summarise_manifest_quality(manifest)
         return PlanResult(
-            success=exit_code == 0,
-            exit_code=exit_code,
+            success=True,
+            exit_code=0,
             context_path=context_path,
             nodes_created=len(created_ids),
             batch_count=len(plan.batches),
             oversized_count=sum(1 for b in plan.batches if b.oversized),
             solver_status=plan.solver_status,
             change_count=len(manifest.changes),
+            **quality,
         )
+
+
+def _check_planner_exit(
+    result: subprocess.CompletedProcess[str],
+    context_path: Path,
+) -> PlanChangeManifest | PlanResult:
+    if result.returncode != 0:
+        raise PlanningFailed(exit_code=result.returncode, stderr=result.stderr or "")
+    manifest = parse_manifest_from_output(result.stdout or "")
+    if manifest is None:
+        return PlanResult(
+            success=True, exit_code=0, context_path=context_path, solver_status="NO_MANIFEST"
+        )
+    return manifest
+
+
+def _append_reuse_candidates(
+    manifest: PlanChangeManifest,
+    crg: CrgPort | None,
+) -> PlanChangeManifest:
+    if crg is None:
+        return manifest
+    from milknado.domains.batching import FileChange
+    updated: list[FileChange] = []
+    for change in manifest.changes:
+        query = Path(change.path).stem
+        try:
+            hits = crg.semantic_search_nodes(query, top_n=5)
+        except Exception as exc:
+            _logger.warning("CRG reuse search failed for %s: %s", change.path, exc)
+            hits = []
+        if not hits:
+            updated.append(change)
+            continue
+        lines = ["\n\n## Reuse candidates"]
+        for h in hits:
+            sym = h.get("symbol_name", "?")
+            fpath = h.get("file_path", "?")
+            summary = h.get("summary", "")
+            lines.append(f"- `{sym}` ({fpath}): {summary}")
+        updated.append(replace(change, description=change.description + "\n".join(lines)))
+    return replace(manifest, changes=tuple(updated))
+
+
+def _summarise_manifest_quality(manifest: PlanChangeManifest) -> dict[str, int]:
+    if not manifest.changes:
+        return {
+            "impl_change_count": 0,
+            "test_change_count": 0,
+            "multi_story_change_count": 0,
+            "max_us_refs_per_change": 0,
+            "distinct_path_count": 0,
+        }
+    impl = sum(1 for c in manifest.changes if c.path.startswith("src/"))
+    tests = sum(1 for c in manifest.changes if c.path.startswith("tests/"))
+    us_per = [
+        len(set(_US_REF_RE.findall(c.description or "")))
+        for c in manifest.changes
+    ]
+    multi = sum(1 for n in us_per if n >= 2)
+    return {
+        "impl_change_count": impl,
+        "test_change_count": tests,
+        "multi_story_change_count": multi,
+        "max_us_refs_per_change": max(us_per) if us_per else 0,
+        "distinct_path_count": len({c.path for c in manifest.changes}),
+    }
 
 
 def _read_spec(spec_path: Path | None) -> str | None:
