@@ -5,8 +5,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from milknado.domains.batching import FileChange, NewRelationship, SymbolRef
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
+from milknado.domains.planning.manifest import (
+    MANIFEST_VERSION,
+    PlanChangeManifest,
+    parse_manifest_from_output,
+)
 from milknado.domains.planning.planner import Planner, PlanResult
 
 
@@ -270,3 +276,149 @@ class TestPlanResult:
         )
         assert result.exit_code == 42
         assert result.context_path == Path("/tmp/ctx.md")
+
+
+def _wrap(payload: dict) -> str:
+    import json as _json
+
+    return "preamble\n```json\n" + _json.dumps(payload) + "\n```\ntrailer"
+
+
+class TestPlanChangeManifest:
+    def test_happy_path_parses_full_manifest(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "edit_kind": "modify",
+                    "symbols": [{"name": "Foo", "file": "src/foo.py"}],
+                    "depends_on": ["c2"],
+                },
+                {
+                    "id": "c2",
+                    "path": "src/bar.py",
+                    "edit_kind": "add",
+                },
+            ],
+            "new_relationships": [
+                {
+                    "source_change_id": "c2",
+                    "dependant_change_id": "c1",
+                    "reason": "new_import",
+                },
+            ],
+        })
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        assert manifest.manifest_version == MANIFEST_VERSION
+        assert len(manifest.changes) == 2
+        assert manifest.changes[0] == FileChange(
+            id="c1",
+            path="src/foo.py",
+            edit_kind="modify",
+            symbols=(SymbolRef(name="Foo", file="src/foo.py"),),
+            depends_on=("c2",),
+        )
+        assert manifest.changes[1].edit_kind == "add"
+        assert manifest.changes[1].symbols == ()
+        assert manifest.new_relationships == (
+            NewRelationship(
+                source_change_id="c2",
+                dependant_change_id="c1",
+                reason="new_import",
+            ),
+        )
+
+    def test_returns_none_when_no_fenced_block(self) -> None:
+        assert parse_manifest_from_output("just prose, no block") is None
+
+    def test_returns_none_on_malformed_json(self) -> None:
+        assert parse_manifest_from_output("```json\n{not json\n```") is None
+
+    def test_rejects_wrong_manifest_version(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v1",
+            "changes": [],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_duplicate_change_ids(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [
+                {"id": "c1", "path": "a.py"},
+                {"id": "c1", "path": "b.py"},
+            ],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_unknown_depends_on(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [
+                {"id": "c1", "path": "a.py", "depends_on": ["ghost"]},
+            ],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_unknown_relationship_endpoint(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [{"id": "c1", "path": "a.py"}],
+            "new_relationships": [
+                {
+                    "source_change_id": "ghost",
+                    "dependant_change_id": "c1",
+                    "reason": "new_import",
+                },
+            ],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_invalid_edit_kind(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [{"id": "c1", "path": "a.py", "edit_kind": "explode"}],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_invalid_relationship_reason(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [
+                {"id": "c1", "path": "a.py"},
+                {"id": "c2", "path": "b.py"},
+            ],
+            "new_relationships": [
+                {
+                    "source_change_id": "c1",
+                    "dependant_change_id": "c2",
+                    "reason": "cosmic_ray",
+                },
+            ],
+        })
+        assert parse_manifest_from_output(output) is None
+
+    def test_defaults_for_optional_fields(self) -> None:
+        output = _wrap({
+            "manifest_version": "milknado.plan.v2",
+            "changes": [{"id": "c1", "path": "a.py"}],
+        })
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        only = manifest.changes[0]
+        assert only.edit_kind == "modify"
+        assert only.symbols == ()
+        assert only.depends_on == ()
+        assert manifest.new_relationships == ()
+
+    def test_direct_construction_is_frozen(self) -> None:
+        manifest = PlanChangeManifest(
+            manifest_version=MANIFEST_VERSION,
+            changes=(),
+            new_relationships=(),
+        )
+        with pytest.raises(Exception):  # noqa: B017, PT011 — frozen dataclass
+            manifest.changes = ()  # type: ignore[misc]
