@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 from pathlib import Path
 
+from milknado.domains.common.errors import RebaseAbortError
 from milknado.domains.common.types import RebaseResult
 
 _CONFLICT_FILE_RE = re.compile(
     r"^CONFLICT \(.*?\): (?:Merge conflict in |.*? -> )(.+)$",
     re.MULTILINE,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class GitAdapter:
@@ -42,12 +46,19 @@ class GitAdapter:
         if result.returncode != 0:
             combined = result.stdout + result.stderr
             files = tuple(_CONFLICT_FILE_RE.findall(combined))
-            subprocess.run(
+            abort_result = subprocess.run(
                 ["git", "rebase", "--abort"],
                 cwd=worktree,
                 capture_output=True,
                 text=True,
             )
+            if abort_result.returncode != 0:
+                _logger.error(
+                    "git rebase --abort failed in %s: %s",
+                    worktree,
+                    abort_result.stderr,
+                )
+                raise RebaseAbortError(worktree, stderr=abort_result.stderr)
             return RebaseResult(
                 success=False,
                 conflicting_files=files,
@@ -62,3 +73,24 @@ class GitAdapter:
     def commit_all(self, worktree: Path, message: str) -> None:
         self._run(["add", "-A"], cwd=worktree)
         self._run(["commit", "-m", message], cwd=worktree)
+
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+        self._run(["add", "-A"], cwd=worktree)
+        try:
+            base_result = subprocess.run(
+                ["git", "merge-base", "HEAD", onto],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            base = base_result.stdout.strip()
+            self._run(["reset", "--soft", base], cwd=worktree)
+        except subprocess.CalledProcessError:
+            pass
+        has_staged = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=worktree,
+        ).returncode != 0
+        if has_staged:
+            self._run(["commit", "-m", msg], cwd=worktree)
