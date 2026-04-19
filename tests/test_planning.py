@@ -268,7 +268,7 @@ class TestBuildPlanningContext:
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert 'manifest_version: "milknado.plan.v2"' in ctx
+        assert '"manifest_version": "milknado.plan.v2"' in ctx
 
     def test_v2_instructions_contain_goal_summary(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
