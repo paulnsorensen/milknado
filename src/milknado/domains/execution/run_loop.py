@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -115,6 +117,13 @@ class RunLoop:
         self._tick: int = 0
         eta_n = config.eta_sample_size if config else _ETA_SAMPLE_SIZE_DEFAULT
         self._completion_durations: deque[float] = deque(maxlen=eta_n)
+        self._overlay_state: str | None = None
+        self._awaiting_node_digits: bool = False
+        self._key_buffer: str = ""
+        self._input_queue: queue.Queue[str] = queue.Queue()
+        self._input_stop: threading.Event = threading.Event()
+        self._input_thread: threading.Thread | None = None
+        self._exec_config: ExecutionConfig | None = None
 
     def run(
         self,
@@ -128,6 +137,7 @@ class RunLoop:
         from rich.live import Live
 
         self._strict = strict
+        self._exec_config = config
         dispatched = completed = failed = 0
         conflicts: list[RebaseConflict] = []
 
@@ -136,35 +146,50 @@ class RunLoop:
             if self._milknado_config
             else 1800.0
         )
-        with Live(self._build_layout(), refresh_per_second=2) as live:
-            dispatched += self._dispatch_batch(config, concurrency_limit, live)
-            live.update(self._build_layout())
-            while self._active:
-                try:
-                    run_id, success = self._ralph.wait_for_next_completion(
-                        set(self._active.keys()), timeout=timeout,
+        self._input_stop.clear()
+        self._start_input_thread()
+        try:
+            with Live(self._build_layout(), refresh_per_second=2) as live:
+                dispatched += self._dispatch_batch(config, concurrency_limit, live)
+                self._drain_input()
+                display = (
+                    self._render_overlay(self._overlay_state)
+                    if self._overlay_state else self._build_layout()
+                )
+                live.update(display)
+                while self._active:
+                    try:
+                        run_id, success = self._ralph.wait_for_next_completion(
+                            set(self._active.keys()), timeout=timeout,
+                        )
+                    except CompletionTimeout as ct:
+                        _logger.warning(
+                            "Completion timeout after %.1fs; active runs: %s",
+                            ct.waited_seconds, sorted(ct.active_run_ids),
+                        )
+                        for timed_out_id in list(self._active):
+                            nid = self._active.pop(timed_out_id)
+                            self._executor.fail(nid)
+                            self._append_log(f"[{_ts()}] ⏱ node {nid} timeout")
+                            failed += 1
+                        if self._strict:
+                            self._failure_triggered = True
+                        break
+                    self._absorb_progress()
+                    self._drain_input()
+                    c, f, cs = self._handle_completion(run_id, success, feature_branch, live)
+                    completed += c
+                    failed += f
+                    conflicts.extend(cs)
+                    if not (self._strict and self._failure_triggered):
+                        dispatched += self._dispatch_batch(config, concurrency_limit, live)
+                    display = (
+                        self._render_overlay(self._overlay_state)
+                        if self._overlay_state else self._build_layout()
                     )
-                except CompletionTimeout as ct:
-                    _logger.warning(
-                        "Completion timeout after %.1fs; active runs: %s",
-                        ct.waited_seconds, sorted(ct.active_run_ids),
-                    )
-                    for timed_out_id in list(self._active):
-                        nid = self._active.pop(timed_out_id)
-                        self._executor.fail(nid)
-                        self._append_log(f"[{_ts()}] ⏱ node {nid} timeout")
-                        failed += 1
-                    if self._strict:
-                        self._failure_triggered = True
-                    break
-                self._absorb_progress()
-                c, f, cs = self._handle_completion(run_id, success, feature_branch, live)
-                completed += c
-                failed += f
-                conflicts.extend(cs)
-                if not (self._strict and self._failure_triggered):
-                    dispatched += self._dispatch_batch(config, concurrency_limit, live)
-                live.update(self._build_layout())
+                    live.update(display)
+        finally:
+            self._stop_input_thread()
 
         verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
         root = self._graph.get_root()
@@ -273,6 +298,102 @@ class RunLoop:
         )
         return layout
 
+    # ── US-004: drill-in overlay ──────────────────────────────────────────
+
+    def _start_input_thread(self) -> None:
+        import sys
+        if not sys.stdin.isatty():
+            return
+        try:
+            import select
+            import termios
+            import tty
+        except ImportError:
+            return
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+        stop = self._input_stop
+
+        def _read_keys() -> None:
+            try:
+                while not stop.is_set():
+                    readable, _, _ = select.select([sys.stdin], [], [], 0.1)
+                    if readable:
+                        ch = sys.stdin.read(1)
+                        if ch:
+                            self._input_queue.put(ch)
+            finally:
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._input_thread = threading.Thread(
+            target=_read_keys, daemon=True, name="milknado-input",
+        )
+        self._input_thread.start()
+
+    def _stop_input_thread(self) -> None:
+        self._input_stop.set()
+        if self._input_thread is not None:
+            self._input_thread.join(timeout=0.5)
+            self._input_thread = None
+
+    def _handle_key(self, key: str) -> None:
+        if key == "\x1b":
+            self._overlay_state = None
+            self._awaiting_node_digits = False
+            self._key_buffer = ""
+            return
+        if key in ("l", "L") and not self._awaiting_node_digits:
+            self._awaiting_node_digits = True
+            self._key_buffer = ""
+            return
+        if self._awaiting_node_digits:
+            if key.isdigit():
+                self._key_buffer += key
+            elif key in ("\r", "\n"):
+                self._awaiting_node_digits = False
+                if self._key_buffer:
+                    target = int(self._key_buffer)
+                    for run_id, node_id in self._active.items():
+                        if node_id == target:
+                            self._overlay_state = run_id
+                            break
+                self._key_buffer = ""
+
+    def _drain_input(self) -> None:
+        try:
+            while True:
+                self._handle_key(self._input_queue.get_nowait())
+        except queue.Empty:
+            pass
+
+    def _render_overlay(self, run_id: str) -> Panel:
+        from rich.panel import Panel
+
+        node_id = self._active.get(run_id)
+        if node_id is None:
+            return Panel("[dim]worker not found[/dim]", title="Overlay", border_style="cyan")
+        node = self._graph.get_node(node_id)
+        branch = node.branch_name if node else None
+        desc = (node.description if node else str(node_id))[:40]
+        agent = self._exec_config.execution_agent if self._exec_config else "(unknown)"
+        lines = self._ralph.get_run_stdout(run_id)[-100:]
+        stdout = "\n".join(lines) if lines else "[dim]no output yet[/dim]"
+        content = (
+            f"[bold]Branch:[/bold] {branch or '(pending)'}\n"
+            f"[bold]Agent:[/bold]  {agent}\n\n"
+            f"{stdout}"
+        )
+        return Panel(
+            content,
+            title=f"Worker {node_id} — {desc}",
+            border_style="cyan",
+            expand=True,
+        )
+
     def _maybe_verify_spec(
         self, spec_text: str | None, spec_path: Path | None, config: ExecutionConfig,
     ) -> VerifyOutcome | None:
@@ -340,6 +461,8 @@ class RunLoop:
         conflicts: list[RebaseConflict] = []
 
         node_id = self._active.pop(run_id)
+        if self._overlay_state == run_id:
+            self._overlay_state = None
         node = self._graph.get_node(node_id)
         desc = node.description if node else str(node_id)
         start = self._dispatched_at.pop(run_id, time.monotonic())
