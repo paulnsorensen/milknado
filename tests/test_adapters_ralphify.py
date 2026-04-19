@@ -3,12 +3,16 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from ralphify import EventType
 
 from milknado.adapters.ralphify import (
     MILKNADO_COMPLETION_SIGNAL,
     RalphifyAdapter,
     _build_ralph_content,
+    _build_verify_prompt,
+    _parse_verify_output,
 )
+from milknado.domains.common.protocols import VerifySpecResult
 from milknado.domains.common.types import MikadoNode
 
 
@@ -254,3 +258,127 @@ class TestBuildRalphContent:
             f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
             "so the run can stop before the iteration budget."
         )
+
+
+class TestBuildVerifyPrompt:
+    def test_contains_spec_and_graph_state(self) -> None:
+        prompt = _build_verify_prompt("do the thing", "node A: done")
+        assert "do the thing" in prompt
+        assert "node A: done" in prompt
+
+    def test_contains_result_tags(self) -> None:
+        prompt = _build_verify_prompt("spec", "state")
+        assert "<result>done</result>" in prompt
+        assert "<result>gaps</result>" in prompt
+        assert "<goal_delta>" in prompt
+
+    def test_contains_completion_signal(self) -> None:
+        prompt = _build_verify_prompt("spec", "state")
+        assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in prompt
+
+    def test_none_graph_state_rendered(self) -> None:
+        prompt = _build_verify_prompt("spec", None)  # type: ignore[arg-type]
+        assert "(no graph state)" in prompt
+
+
+class TestParseVerifyOutput:
+    def test_done_result(self) -> None:
+        result = _parse_verify_output("<result>done</result>")
+        assert result == VerifySpecResult(outcome="done")
+
+    def test_gaps_with_delta(self) -> None:
+        output = "<result>gaps</result>\n<goal_delta>missing X</goal_delta>"
+        result = _parse_verify_output(output)
+        assert result == VerifySpecResult(outcome="gaps", goal_delta="missing X")
+
+    def test_gaps_without_delta(self) -> None:
+        result = _parse_verify_output("<result>gaps</result>")
+        assert result == VerifySpecResult(outcome="gaps", goal_delta=None)
+
+    def test_unparseable_defaults_to_done(self) -> None:
+        result = _parse_verify_output("no recognizable tags here")
+        assert result == VerifySpecResult(outcome="done")
+
+
+class TestVerifySpec:
+    def test_no_agent_returns_done(self, adapter: RalphifyAdapter) -> None:
+        adapter._agent = ""  # type: ignore[attr-defined]
+        result = adapter.verify_spec("spec text", "state")
+        assert result == VerifySpecResult(outcome="done")
+
+    @patch("milknado.adapters.ralphify.RunManager")
+    def test_done_signal(
+        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+    ) -> None:
+        adapter._agent = "claude"  # type: ignore[attr-defined]
+        local_q: queue.Queue[MagicMock] = queue.Queue()
+        _setup_verify_mocks(mock_manager_cls, local_q)
+
+        _put_iteration(local_q, EventType.ITERATION_COMPLETED, "<result>done</result>")
+        _put_stopped(local_q)
+
+        result = adapter.verify_spec("spec", "graph")
+        assert result == VerifySpecResult(outcome="done")
+
+    @patch("milknado.adapters.ralphify.RunManager")
+    def test_gaps_signal_with_delta(
+        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+    ) -> None:
+        adapter._agent = "claude"  # type: ignore[attr-defined]
+        local_q: queue.Queue[MagicMock] = queue.Queue()
+        _setup_verify_mocks(mock_manager_cls, local_q)
+
+        output = "<result>gaps</result>\n<goal_delta>missing auth</goal_delta>"
+        _put_iteration(local_q, EventType.ITERATION_COMPLETED, output)
+        _put_stopped(local_q)
+
+        result = adapter.verify_spec("spec", "graph")
+        assert result == VerifySpecResult(outcome="gaps", goal_delta="missing auth")
+
+    @patch("milknado.adapters.ralphify.RunManager")
+    def test_timeout_returns_gaps(
+        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+    ) -> None:
+        import time
+
+        adapter._agent = "claude"  # type: ignore[attr-defined]
+        local_q: queue.Queue[MagicMock] = queue.Queue()
+        mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
+
+        with patch("milknado.adapters.ralphify.time") as mock_time:
+            mock_time.monotonic.side_effect = [0.0, 0.0, 200.0]
+            mock_time.sleep = time.sleep
+            result = adapter.verify_spec("spec", "graph")
+
+        mock_manager.stop_run.assert_called_once()
+        assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
+
+
+def _setup_verify_mocks(
+    mock_manager_cls: MagicMock,
+    local_q: queue.Queue[MagicMock],
+) -> MagicMock:
+    mock_manager = MagicMock()
+    mock_manager_cls.return_value = mock_manager
+    mock_emitter = MagicMock()
+    mock_emitter.queue = local_q
+    mock_run = MagicMock()
+    mock_run.state.run_id = "verify-1"
+    mock_run.emitter = mock_emitter
+    mock_manager.create_run.return_value = mock_run
+    return mock_manager
+
+
+def _put_iteration(
+    q: queue.Queue[MagicMock], event_type: EventType, result_text: str,
+) -> None:
+    event = MagicMock()
+    event.type = event_type
+    event.data = {"result_text": result_text}
+    q.put(event)
+
+
+def _put_stopped(q: queue.Queue[MagicMock]) -> None:
+    event = MagicMock()
+    event.type = EventType.RUN_STOPPED
+    q.put(event)

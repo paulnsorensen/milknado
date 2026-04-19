@@ -119,27 +119,27 @@ class RalphifyAdapter:
         if not self._agent:
             _logger.warning("verify_spec: no agent configured, returning done")
             return VerifySpecResult(outcome="done")
-        import subprocess
         import tempfile
-        prompt = _build_verify_prompt(spec_text, graph_state)
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".md", delete=False, encoding="utf-8",
-            ) as f:
-                f.write(prompt)
-                prompt_path = Path(f.name)
-            result = subprocess.run(
-                [*self._agent.split(), str(prompt_path)],
-                capture_output=True,
-                text=True,
-                timeout=120,
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ralph_file = tmp_path / "ralph.md"
+            ralph_file.write_text(
+                _build_verify_prompt(spec_text, graph_state), encoding="utf-8",
             )
-            output = result.stdout + result.stderr
-            prompt_path.unlink(missing_ok=True)
-            return _parse_verify_output(output)
-        except Exception as exc:
-            _logger.warning("verify_spec failed, treating as done: %s", exc)
-            return VerifySpecResult(outcome="done")
+            local_manager = RunManager()
+            config = RunConfig(
+                agent=self._agent,
+                ralph_dir=tmp_path,
+                ralph_file=ralph_file,
+                project_root=tmp_path,
+                completion_signal=MILKNADO_COMPLETION_SIGNAL,
+                stop_on_completion_signal=True,
+            )
+            local_run = local_manager.create_run(config)
+            run_id = local_run.state.run_id
+            ev_queue = local_run.emitter.queue
+            local_manager.start_run(run_id)
+            return _drain_verify_run(local_manager, run_id, ev_queue)
 
     def generate_ralph_md(
         self,
@@ -166,22 +166,64 @@ def _build_verify_prompt(spec_text: str, graph_state: Any) -> str:
         f"## Spec\n\n{spec_text}\n\n"
         f"## Graph State\n\n{graph_summary}\n\n"
         "## Instructions\n\n"
-        "If the spec is fully satisfied, respond with exactly:\n"
-        "<verify-done/>\n\n"
-        "If there are unmet requirements, respond with:\n"
-        "<verify-gaps>\n"
+        "If the spec is fully satisfied, emit:\n"
+        "<result>done</result>\n\n"
+        "If there are unmet requirements, emit:\n"
+        "<result>gaps</result>\n"
+        "<goal_delta>\n"
         "Description of what is still missing\n"
-        "</verify-gaps>\n"
+        "</goal_delta>\n\n"
+        "Then emit the completion signal to stop this run:\n"
+        f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>\n"
     )
+
+
+def _drain_verify_run(
+    local_manager: RunManager,
+    run_id: str,
+    ev_queue: queue.Queue[Any],
+) -> VerifySpecResult:
+    _ITERATION_EVENTS = frozenset({
+        EventType.ITERATION_COMPLETED,
+        EventType.ITERATION_FAILED,
+    })
+    output_parts: list[str] = []
+    deadline = time.monotonic() + 120.0
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                local_manager.stop_run(run_id)
+                return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
+            try:
+                event = ev_queue.get(timeout=remaining)
+            except queue.Empty:
+                local_manager.stop_run(run_id)
+                return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
+            if event.type in _ITERATION_EVENTS:
+                text = event.data.get("result_text") or ""
+                if text:
+                    output_parts.append(text)
+            elif event.type == EventType.RUN_STOPPED:
+                break
+    except Exception as exc:
+        _logger.warning("verify_spec error: %s", exc)
+        try:
+            local_manager.stop_run(run_id)
+        except Exception:
+            pass
+        return VerifySpecResult(outcome="done")
+    return _parse_verify_output("\n".join(output_parts))
 
 
 def _parse_verify_output(output: str) -> VerifySpecResult:
     import re
-    if "<verify-done/>" in output or "<verify-done />" in output:
+    if "<result>done</result>" in output:
         return VerifySpecResult(outcome="done")
-    m = re.search(r"<verify-gaps>(.*?)</verify-gaps>", output, re.DOTALL)
-    if m:
-        return VerifySpecResult(outcome="gaps", goal_delta=m.group(1).strip())
+    if "<result>gaps</result>" in output:
+        m = re.search(r"<goal_delta>(.*?)</goal_delta>", output, re.DOTALL)
+        delta = m.group(1).strip() if m else None
+        return VerifySpecResult(outcome="gaps", goal_delta=delta)
     _logger.warning("verify_spec: unparseable output, treating as done")
     return VerifySpecResult(outcome="done")
 
