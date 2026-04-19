@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -319,6 +321,57 @@ def plan(
         graph.close()
 
 
+def _configure_transcript_logger(project_root: Path) -> Path:
+    from rich.logging import RichHandler
+
+    log_dir = project_root / ".milknado"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    iso = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    log_path = log_dir / f"run-{iso}.log"
+
+    log_file = open(log_path, "w", encoding="utf-8")  # noqa: SIM115
+    file_console = Console(file=log_file, highlight=False, no_color=True)
+    handler = RichHandler(
+        console=file_console,
+        level=logging.DEBUG,
+        markup=False,
+        show_path=False,
+        rich_tracebacks=False,
+    )
+    logging.getLogger("milknado").addHandler(handler)
+    return log_path
+
+
+def _check_protected_branch(
+    config: MilknadoConfig, branch: str, allow_protected: bool
+) -> None:
+    if not allow_protected and branch in config.protected_branches:
+        console.print(
+            f"[red]Branch [bold]{branch}[/bold] is protected. "
+            "Switch to a feature branch or pass --allow-protected.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+
+def _trigger_replan_on_gaps(
+    config: MilknadoConfig,
+    project_root: Path,
+    goal_delta: str,
+    spec_path: Path | None,
+) -> None:
+    from milknado.adapters.crg import CrgAdapter
+    from milknado.domains.planning import Planner
+
+    graph = _ensure_db(config)
+    try:
+        crg = CrgAdapter(project_root)
+        planner = Planner(graph, crg, config.planning_agent)
+        console.print(f"[yellow]Gaps detected — replanning: {goal_delta[:80]}[/yellow]")
+        planner.launch(goal=goal_delta, project_root=project_root, spec_path=spec_path)
+    finally:
+        graph.close()
+
+
 def _build_exec_config(
     config: MilknadoConfig, project_root: Path,
 ) -> ExecutionConfig:
@@ -329,6 +382,8 @@ def _build_exec_config(
         quality_gates=config.quality_gates,
         worktree_pattern=config.worktree_pattern,
         project_root=project_root,
+        dispatch_max_retries=config.dispatch_max_retries,
+        dispatch_backoff_seconds=config.dispatch_backoff_seconds,
     )
 
 
@@ -358,6 +413,25 @@ def run(
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
+    strict: Annotated[
+        bool,
+        typer.Option("--strict", help="Drain active workers then exit 1 on first failure"),
+    ] = False,
+    allow_protected: Annotated[
+        bool, typer.Option("--allow-protected", help="Bypass protected-branch guard")
+    ] = False,
+    spec: Annotated[
+        Path | None,
+        typer.Option(
+            "--spec",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Spec .md file; enables verify-spec and replan-on-gaps after run",
+        ),
+    ] = None,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
@@ -373,19 +447,40 @@ def run(
             return
 
         git = GitAdapter(project_root)
+        feature_branch = git.current_branch()
+        _check_protected_branch(config, feature_branch, allow_protected)
+
+        log_path = _configure_transcript_logger(project_root)
+        console.print(f"[dim]Transcript: {log_path}[/dim]")
+
+        spec_text = spec.read_text(encoding="utf-8") if spec else None
+
         ralph = RalphifyAdapter()
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-
-        feature_branch = git.current_branch()
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
         result = loop.run(
             config=_build_exec_config(config, project_root),
             feature_branch=feature_branch,
             concurrency_limit=config.concurrency_limit,
+            strict=strict,
+            spec_text=spec_text,
+            spec_path=spec,
         )
         _print_run_result(result)
+
+        if (
+            result.verify_outcome is not None
+            and not result.verify_outcome.done
+            and result.verify_outcome.goal_delta
+        ):
+            _trigger_replan_on_gaps(
+                config, project_root, result.verify_outcome.goal_delta, spec
+            )
+
+        if result.failed_total > 0 or result.strict_exit:
+            raise typer.Exit(code=1)
     finally:
         graph.close()
 
