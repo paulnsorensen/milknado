@@ -390,6 +390,25 @@ def run(
         graph.close()
 
 
+@app.command()
+def doctor(
+    project_root: Annotated[
+        Path, typer.Argument(help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Run health checks on the milknado installation."""
+    from milknado.domains.common.doctor import render_report, run_doctor
+
+    project_root = project_root.resolve()
+    config_path = _find_config(project_root)
+    config = _load_or_default(project_root)
+    report = run_doctor(config_path, config)
+    text, issue_count = render_report(report)
+    typer.echo(text)
+    if issue_count > 0:
+        raise typer.Exit(code=1)
+
+
 agents_app = typer.Typer(name="agents", help="Agent CLI compatibility")
 app.add_typer(agents_app)
 
