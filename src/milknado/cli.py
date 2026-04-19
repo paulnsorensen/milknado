@@ -238,6 +238,32 @@ def add_node(
 _ISSUE_SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+def _flatten_csv(items: list[str] | None) -> list[str]:
+    if not items:
+        return []
+    out: list[str] = []
+    for raw in items:
+        for piece in raw.split(","):
+            stripped = piece.strip()
+            if stripped:
+                out.append(stripped)
+    return out
+
+
+def _validate_spec_paths(raw_paths: list[str]) -> list[Path]:
+    validated: list[Path] = []
+    for p in raw_paths:
+        path = Path(p).expanduser().resolve()
+        if not path.exists() or not path.is_file():
+            console.print(f"[red]--spec file not found: {p}[/red]")
+            raise typer.Exit(code=1)
+        if path.suffix.lower() != ".md":
+            console.print(f"[red]--spec must point to a .md file, got: {path}[/red]")
+            raise typer.Exit(code=1)
+        validated.append(path)
+    return validated
+
+
 def _fetch_issue(issue_ref: str) -> dict[str, object]:
     """Fetch a single GitHub issue via `gh`; exits on error."""
     try:
@@ -330,6 +356,62 @@ def _issue_title(issue: dict[str, object]) -> str:
     return f"Issue {number}" if number is not None else "Issue"
 
 
+def _materialize_combined_spec(
+    spec_paths: list[Path],
+    issue_refs: list[str],
+    project_root: Path,
+) -> Path:
+    """Merge multiple specs and/or issues into one materialized spec .md."""
+    issues = [_fetch_issue(ref) for ref in issue_refs]
+    sections = [f"# {_combined_title(spec_paths, issues)}\n"]
+    for sp in spec_paths:
+        sections.append(_render_spec_section(sp))
+    for issue in issues:
+        sections.append(_render_issue_section(issue))
+
+    issues_dir = project_root / ".milknado" / "issues"
+    issues_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = issues_dir / f"plan-{_combined_slug(spec_paths, issues)}.md"
+    spec_path.write_text("\n".join(sections) + "\n", encoding="utf-8")
+    return spec_path
+
+
+def _combined_title(spec_paths: list[Path], issues: list[dict[str, object]]) -> str:
+    parts: list[str] = []
+    if spec_paths:
+        parts.append("specs " + ", ".join(sp.stem for sp in spec_paths))
+    if issues:
+        refs = [f"#{i.get('number')}" for i in issues if i.get("number") is not None]
+        if refs:
+            parts.append("issues " + ", ".join(refs))
+    return "Plan for " + " + ".join(parts) if parts else "Plan"
+
+
+def _combined_slug(spec_paths: list[Path], issues: list[dict[str, object]]) -> str:
+    tokens: list[str] = [sp.stem for sp in spec_paths]
+    tokens += [str(i.get("number")) for i in issues if i.get("number") is not None]
+    source = "-".join(tokens) or "plan"
+    return _ISSUE_SLUG_RE.sub("-", source).strip("-") or "plan"
+
+
+def _render_spec_section(spec_path: Path) -> str:
+    body = spec_path.read_text(encoding="utf-8").rstrip()
+    return f"## Spec: {spec_path.stem}\n\n> Source: {spec_path}\n\n{body}\n"
+
+
+def _resolve_plan_spec(
+    spec_paths: list[Path],
+    issue_refs: list[str],
+    project_root: Path,
+) -> Path:
+    """Pick the right spec to feed the planner, materializing as needed."""
+    if len(spec_paths) == 1 and not issue_refs:
+        return spec_paths[0]
+    if not spec_paths and issue_refs:
+        return _materialize_issue_spec(issue_refs, project_root)
+    return _materialize_combined_spec(spec_paths, issue_refs, project_root)
+
+
 def _derive_goal(spec_path: Path) -> str:
     try:
         text = spec_path.read_text(encoding="utf-8")
@@ -371,15 +453,13 @@ def _plan_exit_code(result: PlanResult) -> int:
 @app.command()
 def plan(
     spec: Annotated[
-        Path | None,
+        list[str] | None,
         typer.Option(
             "--spec",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-            resolve_path=True,
-            help="Path to spec .md file describing the goal",
+            help=(
+                "Spec .md file(s). Repeat the flag or pass comma-separated paths "
+                "to combine multiple specs."
+            ),
         ),
     ] = None,
     issue: Annotated[
@@ -388,7 +468,7 @@ def plan(
             "--issue",
             help=(
                 "GitHub issue ref (number, owner/repo#123, or URL) fetched via gh. "
-                "Repeat to combine multiple issues into one plan."
+                "Repeat the flag or pass comma-separated refs to combine issues."
             ),
         ),
     ] = None,
@@ -396,28 +476,20 @@ def plan(
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
 ) -> None:
-    """Launch interactive planning session to decompose a spec."""
+    """Launch interactive planning session to decompose one or more specs/issues."""
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.planning import Planner
 
-    issues = issue or []
-    if spec is None and not issues:
+    spec_paths = _validate_spec_paths(_flatten_csv(spec))
+    issue_refs = _flatten_csv(issue)
+    if not spec_paths and not issue_refs:
         console.print("[red]Provide --spec or --issue.[/red]")
-        raise typer.Exit(code=1)
-    if spec is not None and issues:
-        console.print("[red]--spec and --issue are mutually exclusive.[/red]")
         raise typer.Exit(code=1)
 
     project_root = project_root.resolve()
-    if issues:
-        spec = _materialize_issue_spec(issues, project_root)
+    effective_spec = _resolve_plan_spec(spec_paths, issue_refs, project_root)
 
-    assert spec is not None  # narrowed by the checks above
-    if spec.suffix.lower() != ".md":
-        console.print(f"[red]--spec must point to a .md file, got: {spec}[/red]")
-        raise typer.Exit(code=1)
-
-    goal = _derive_goal(spec)
+    goal = _derive_goal(effective_spec)
     config = _load_or_default(project_root)
     graph = _ensure_db(config)
 
@@ -425,7 +497,7 @@ def plan(
         crg = CrgAdapter(project_root)
         planner = Planner(graph, crg, config.planning_agent)
         console.print(f"[bold]Planning:[/bold] {goal}")
-        result = planner.launch(goal, project_root, spec_path=spec)
+        result = planner.launch(goal, project_root, spec_path=effective_spec)
         console.print(_plan_summary(result))
         exit_code = _plan_exit_code(result)
         if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
