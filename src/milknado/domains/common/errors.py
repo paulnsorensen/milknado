@@ -19,9 +19,10 @@ class RebaseAbortError(MilknadoError):
 
 
 class RalphMarkdownWriteError(MilknadoError):
-    def __init__(self, target: Path) -> None:
-        self.target = target
-        super().__init__(f"Failed to write RALPH.md to {target}")
+    def __init__(self, path: Path, cause: OSError | None = None) -> None:
+        self.path = path
+        self.cause = cause
+        super().__init__(f"Failed to write RALPH.md to {path}")
 
 
 class CompletionTimeout(MilknadoError):

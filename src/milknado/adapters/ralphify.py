@@ -133,7 +133,7 @@ class RalphifyAdapter:
             output_path.write_text(content, encoding="utf-8")
         except OSError as exc:
             from milknado.domains.common.errors import RalphMarkdownWriteError
-            raise RalphMarkdownWriteError(output_path) from exc
+            raise RalphMarkdownWriteError(path=output_path, cause=exc) from exc
         return output_path
 
 
