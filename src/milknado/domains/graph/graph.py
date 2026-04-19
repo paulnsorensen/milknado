@@ -151,6 +151,21 @@ class MikadoGraph:
             raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
 
+    def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
+        """Update a node's parent_id column without creating an edge.
+
+        Used by the batching bridge where edges encode the Mikado tree shape
+        (goal→prereq) but parent_id tracks the walk_ancestors chain
+        (leaf→goal via dep chain).
+        """
+        cur = self._conn.execute(
+            "UPDATE nodes SET parent_id = ? WHERE id = ?",
+            (parent_id, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
+
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
             raise ValueError(

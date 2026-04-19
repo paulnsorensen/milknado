@@ -1,26 +1,36 @@
 from __future__ import annotations
 
-import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort
+    from milknado.domains.common.protocols import CrgPort, TilthPort
     from milknado.domains.common.types import MikadoNode
     from milknado.domains.graph import MikadoGraph
 
 
 def build_planning_context(
     goal: str,
-    crg: CrgPort,
+    crg: CrgPort | None,
     graph: MikadoGraph,
+    *,
+    spec_text: str | None = None,
+    tilth: TilthPort | None = None,
+    scope: Path | None = None,
 ) -> str:
+    if spec_text == "":
+        raise ValueError("spec_text must not be empty string — pass None to omit the spec section")
     resuming = len(graph.get_all_nodes()) > 0
     sections = [
         _goal_section(goal),
-        _architecture_section(crg),
+        _crg_compact_section(crg),
+        _structural_section(tilth, scope),
         _graph_section(graph),
+        _batching_section(),
         _instructions_section(resuming),
     ]
+    if spec_text is not None:
+        sections.append(_spec_section(spec_text))
     return "\n\n".join(sections)
 
 
@@ -28,12 +38,76 @@ def _goal_section(goal: str) -> str:
     return f"# Goal\n\n{goal}"
 
 
-def _architecture_section(crg: CrgPort) -> str:
-    overview = crg.get_architecture_overview()
-    formatted = json.dumps(overview, indent=2, default=str)
+def _crg_compact_section(crg: CrgPort | None) -> str:
+    header = "# Architecture (compact)"
+    if crg is None:
+        return f"{header}\n\n_(CRG unavailable — architecture overview skipped)_"
+    try:
+        communities = crg.list_communities()[:5]
+        flows = crg.list_flows()[:3]
+        bridges = crg.get_bridge_nodes(top_n=5)[:5]
+        hubs = crg.get_hub_nodes(top_n=5)[:5]
+    except Exception as exc:
+        return (
+            f"{header}\n\n"
+            f"_(CRG query failed: {exc!s} — architecture overview skipped)_"
+        )
+
+    lines = [header]
+    lines.append("\n**Top communities:**")
+    for c in communities:
+        name = c.get("name", c.get("id", str(c)))
+        lines.append(f"- {name}")
+
+    lines.append("\n**Top flows:**")
+    for f in flows:
+        name = f.get("name", f.get("id", str(f)))
+        lines.append(f"- {name}")
+
+    lines.append("\n**Bridge nodes:**")
+    for b in bridges:
+        name = b.get("name", b.get("id", str(b)))
+        lines.append(f"- {name}")
+
+    lines.append("\n**Hub nodes:**")
+    for h in hubs:
+        name = h.get("name", h.get("id", str(h)))
+        lines.append(f"- {name}")
+
+    return "\n".join(lines)
+
+
+def _structural_section(tilth: TilthPort | None, scope: Path | None) -> str:
+    from milknado.domains.common.types import DegradationMarker, TilthMap
+    header = "# Structural Map (tilth)"
+    if tilth is None:
+        return f"{header}\n\n_(tilth not available — structural map skipped)_"
+    result = tilth.structural_map(scope or Path("."), 2000)
+    if isinstance(result, DegradationMarker):
+        return (
+            f"{header}\n\n"
+            f"_(tilth unavailable: {result.source} — {result.reason}. "
+            "Structural analysis skipped.)_"
+        )
+    assert isinstance(result, TilthMap)
+    data_lines = []
+    for key, value in result.data.items():
+        data_lines.append(f"- **{key}**: {value}")
+    body = "\n".join(data_lines) if data_lines else "_(no structural data returned)_"
+    return f"{header}\n\n{body}"
+
+
+def _spec_section(spec_text: str) -> str:
+    return f"# Spec\n\n{spec_text}"
+
+
+def _batching_section() -> str:
     return (
-        "# Architecture Overview (from code-review-graph)\n\n"
-        f"```json\n{formatted}\n```"
+        "# Batching\n\n"
+        "The host runs a token-budgeted OR-tools solver over your manifest to group "
+        "file-level changes into executor batches. Emit file-level changes and let the "
+        "solver batch them — more granular changes produce better batch boundaries. "
+        "Do not pre-group changes yourself."
     )
 
 
@@ -46,9 +120,10 @@ def _graph_section(graph: MikadoGraph) -> str:
     lines.append(_progress_summary(nodes))
 
     for node in nodes:
+        desc = _truncate_description(node.description)
         children = graph.get_children(node.id)
         files = graph.get_file_ownership(node.id)
-        parts = [f"- [{node.id}] {node.description} ({node.status.value})"]
+        parts = [f"- [{node.id}] {desc} ({node.status.value})"]
         if children:
             child_ids = ", ".join(str(c.id) for c in children)
             parts.append(f"  deps: [{child_ids}]")
@@ -60,15 +135,28 @@ def _graph_section(graph: MikadoGraph) -> str:
     if failed:
         lines.append("\n## Failed (need re-planning)\n")
         for node in failed:
-            lines.append(f"- [{node.id}] {node.description}")
+            lines.append(f"- [{node.id}] {_truncate_description(node.description)}")
 
     ready = graph.get_ready_nodes()
     if ready:
         lines.append("\n## Ready to Execute\n")
         for node in ready:
-            lines.append(f"- [{node.id}] {node.description}")
+            lines.append(f"- [{node.id}] {_truncate_description(node.description)}")
 
     return "\n".join(lines)
+
+
+def _truncate_description(description: str) -> str:
+    if not description:
+        return description
+    lines = description.splitlines()
+    first_line = lines[0]
+    has_more_content = any(line.strip() for line in lines[1:])
+    if first_line and len(lines) > 1:
+        return first_line + " \u2026"
+    if not first_line and has_more_content:
+        return " \u2026"
+    return first_line
 
 
 def _progress_summary(nodes: list[MikadoNode]) -> str:
@@ -83,34 +171,81 @@ def _progress_summary(nodes: list[MikadoNode]) -> str:
 
 
 def _instructions_section(resuming: bool) -> str:
-    add_node_usage = (
-        "Use `milknado add-node` to add nodes to the graph:\n"
-        "```\n"
-        'milknado add-node "description" --parent <id> '
-        "--files file1.py file2.py\n"
+    schema = (
+        "```yaml\n"
+        'manifest_version: "milknado.plan.v2"\n'
+        'goal: "One-line goal statement"\n'
+        "goal_summary: \"2-4 sentence summary: what / why / success criteria."
+        " Used as the root Mikado node — every executor reads this.\"\n"
+        'spec_path: "path/to/spec.md or null"\n'
+        "changes:\n"
+        '  - id: "c1"\n'
+        '    path: "src/foo.py"\n'
+        '    edit_kind: "modify"\n'
+        '    description: "Why this change is needed + which spec section drives it.'
+        " Causal changes explain the full rationale.\"\n"
+        "    symbols:\n"
+        '      - name: "FooClass"\n'
+        '        file: "src/foo.py"\n'
+        "    depends_on: []\n"
+        '  - id: "c2"\n'
+        '    path: "src/bar.py"\n'
+        '    edit_kind: "add"\n'
+        '    description: "Respond to c1 signature change — update call site."\n'
+        '    depends_on: ["c1"]\n'
+        "new_relationships:\n"
+        '  - source_change_id: "c1"\n'
+        '    dependant_change_id: "c2"\n'
+        '    reason: "new_import"\n'
         "```"
+    )
+
+    edge_note = (
+        "> **Graph edges** are stored as 3-line rows: `(parent_id, child_id, relationship_type)`. "
+        "The solver uses `depends_on` and `new_relationships` to build these rows automatically."
+    )
+
+    description_rules = (
+        "**description field rules:**\n"
+        "- Causal changes: explain *why* the change is needed,"
+        " reference the spec section name if applicable.\n"
+        "- Effect changes: be terse, reference the cause by id"
+        " (e.g. `respond to c1 signature change`).\n"
+        "- All descriptions must be non-empty — the executor has no other context."
+    )
+
+    granularity_note = (
+        "Emit file-level changes. More granular is better — multiple changes can share"
+        " a path when symbols differ (e.g. two classes in the same file)."
+        " The solver batches them optimally."
+    )
+
+    goal_summary_note = (
+        "`goal_summary` is 2-4 sentences structured as **what / why / success criteria**."
+        " It becomes the root Mikado node description that every executor reads."
+        " Make it load-bearing."
     )
 
     if not resuming:
         return (
             "# Instructions\n\n"
-            "Decompose the goal into a Mikado dependency graph.\n"
-            "For each node, specify:\n"
-            "- A short description of the work\n"
-            "- Which files it will touch\n"
-            "- Dependencies (which nodes must complete first)\n\n"
-            f"{add_node_usage}\n\n"
-            "Start with the root goal node, then add children "
-            "for each prerequisite."
+            "Decompose the goal into a v2 change manifest.\n\n"
+            f"{granularity_note}\n\n"
+            f"{description_rules}\n\n"
+            f"{goal_summary_note}\n\n"
+            f"{edge_note}\n\n"
+            "Emit the manifest as a fenced JSON block:\n\n"
+            f"{schema}"
         )
 
     return (
         "# Instructions (resuming)\n\n"
-        "The graph above shows prior progress. Do NOT recreate "
-        "existing nodes.\n\n"
-        "Review the current state and:\n"
-        "- Add new child nodes for any remaining work\n"
-        "- Re-plan around failed nodes if the approach needs to change\n"
-        "- Ensure all pending nodes still make sense given completed work\n\n"
-        f"{add_node_usage}"
+        "The graph above shows prior progress. Do NOT recreate existing nodes.\n\n"
+        "Review the current state and add change manifest entries for any remaining work.\n\n"
+        f"{granularity_note}\n\n"
+        f"{description_rules}\n\n"
+        f"{goal_summary_note}\n\n"
+        f"{edge_note}\n\n"
+        "Emit the manifest as a fenced JSON block:\n\n"
+        f"{schema}"
     )

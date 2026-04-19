@@ -72,7 +72,7 @@ class RalphifyAdapter:
         output_path: Path,
     ) -> Path:
         content = _build_ralph_content(node, context, quality_gates)
-        output_path.write_text(content)
+        output_path.write_text(content, encoding="utf-8")
         return output_path
 
 

@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from typing import cast
 
 from milknado.domains.batching import (
+    EditKind,
     FileChange,
     NewRelationship,
     RelationshipReason,
     SymbolRef,
 )
-from milknado.domains.batching.change import EditKind
 
 MANIFEST_VERSION = "milknado.plan.v2"
 
@@ -28,6 +28,9 @@ _logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class PlanChangeManifest:
     manifest_version: str
+    goal: str
+    goal_summary: str
+    spec_path: str | None
     changes: tuple[FileChange, ...]
     new_relationships: tuple[NewRelationship, ...]
 
@@ -52,6 +55,19 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
             raw.get("manifest_version"),
         )
         return None
+    goal = raw.get("goal")
+    if not isinstance(goal, str) or not goal.strip():
+        _logger.warning("manifest.goal must be a non-empty string")
+        return None
+    goal_summary = raw.get("goal_summary")
+    if not isinstance(goal_summary, str) or not goal_summary.strip():
+        _logger.warning("manifest.goal_summary must be a non-empty string")
+        return None
+    raw_spec_path = raw.get("spec_path")
+    if raw_spec_path is not None and not isinstance(raw_spec_path, str):
+        _logger.warning("manifest.spec_path must be a string or null")
+        return None
+    spec_path: str | None = raw_spec_path if isinstance(raw_spec_path, str) else None
     changes = _parse_changes(raw.get("changes"))
     if changes is None:
         return None
@@ -63,6 +79,9 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
         return None
     return PlanChangeManifest(
         manifest_version=MANIFEST_VERSION,
+        goal=goal,
+        goal_summary=goal_summary,
+        spec_path=spec_path,
         changes=changes,
         new_relationships=relationships,
     )
@@ -125,12 +144,17 @@ def _parse_single_change(entry: object) -> FileChange | None:
         _logger.warning("change %r: depends_on must be a list of strings", cid)
         return None
     depends_on: tuple[str, ...] = tuple(cast(list[str], raw_deps))
+    description = raw.get("description")
+    if not isinstance(description, str) or not description.strip():
+        _logger.warning("change %r: description must be a non-empty string", cid)
+        return None
     return FileChange(
         id=cid,
         path=path,
         edit_kind=cast(EditKind, edit_kind),
         symbols=symbols,
         depends_on=depends_on,
+        description=description,
     )
 
 

@@ -298,7 +298,7 @@ wheels = [
 
 [[package]]
 name = "code-review-graph"
-version = "2.3.1"
+version = "2.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastmcp" },
@@ -308,9 +308,9 @@ dependencies = [
     { name = "tree-sitter-language-pack" },
     { name = "watchdog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/23/c6/7cf052af738137d25656b7c37eb4af82535ccbf08f3880b04daaf6317bcd/code_review_graph-2.3.1.tar.gz", hash = "sha256:b1fdd69ea0adbcf9abac19a959e0722757ad75b1d33283027bd8371a4ee47d01", size = 183619, upload-time = "2026-04-11T21:10:10.887Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/54/1da9ec9d7c5ab6d670f9ad5b11c2e249264f24ce99cd55a17e319ff49306/code_review_graph-2.3.2.tar.gz", hash = "sha256:7351d651a579b56243a6f8f35277fdb80bef25c963d8a14d667338c966dee928", size = 210963, upload-time = "2026-04-14T13:28:38.574Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/69/5f8452171e398407bc79a12a16535efbe2975d2733b1ded0f8f293a1039a/code_review_graph-2.3.1-py3-none-any.whl", hash = "sha256:b43ab6b91dbb60a241e09f8d4643d5ad0dcdcf8d06ac45c9602513cf3b227497", size = 189285, upload-time = "2026-04-11T21:10:09.534Z" },
+    { url = "https://files.pythonhosted.org/packages/25/14/c47e2bbb607956bc057c53d405ec90007496566efc6e431ea65d81ee1826/code_review_graph-2.3.2-py3-none-any.whl", hash = "sha256:08d715607aefde3414d28b3a7844243823b150dc63ba4dd4529d6919f540d048", size = 218783, upload-time = "2026-04-14T13:28:37.338Z" },
 ]
 
 [[package]]
@@ -839,7 +839,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "code-review-graph", specifier = ">=2.3.1" },
+    { name = "code-review-graph", specifier = ">=2.3.2" },
     { name = "fastmcp", specifier = ">=2.14" },
     { name = "ortools", specifier = ">=9.11" },
     { name = "pyyaml", specifier = ">=6" },

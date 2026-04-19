@@ -309,3 +309,107 @@ class TestGetMinimalContext:
             changed_files=None,
             repo_root=str(tmp_path),
         )
+
+
+class TestGetBridgeNodes:
+    @patch("milknado.adapters.crg.find_bridge_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_delegates_with_default_top_n(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_bridges: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_find_bridges.return_value = [{"name": "auth_middleware"}]
+
+        result = adapter.get_bridge_nodes()
+
+        mock_find_bridges.assert_called_once_with(mock_store, top_n=10)
+        assert result == [{"name": "auth_middleware"}]
+
+    @patch("milknado.adapters.crg.find_bridge_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_forwards_top_n_override(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_bridges: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_find_bridges.return_value = []
+
+        adapter.get_bridge_nodes(top_n=5)
+
+        mock_find_bridges.assert_called_once_with(mock_store, top_n=5)
+
+    @patch("milknado.adapters.crg.find_bridge_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_returns_list(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_bridges: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        bridges = [{"name": "x"}, {"name": "y"}]
+        mock_find_bridges.return_value = bridges
+
+        result = adapter.get_bridge_nodes(top_n=2)
+
+        assert result == bridges
+
+
+class TestGetHubNodes:
+    @patch("milknado.adapters.crg.find_hub_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_delegates_with_default_top_n(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_hubs: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_find_hubs.return_value = [{"name": "user_service"}]
+
+        result = adapter.get_hub_nodes()
+
+        mock_find_hubs.assert_called_once_with(mock_store, top_n=10)
+        assert result == [{"name": "user_service"}]
+
+    @patch("milknado.adapters.crg.find_hub_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_forwards_top_n_override(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_hubs: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_find_hubs.return_value = []
+
+        adapter.get_hub_nodes(top_n=3)
+
+        mock_find_hubs.assert_called_once_with(mock_store, top_n=3)
+
+    @patch("milknado.adapters.crg.find_hub_nodes")
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_returns_list(
+        self,
+        mock_store_cls: MagicMock,
+        mock_find_hubs: MagicMock,
+        adapter: CrgAdapter,
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        hubs = [{"name": "a"}, {"name": "b"}, {"name": "c"}]
+        mock_find_hubs.return_value = hubs
+
+        result = adapter.get_hub_nodes(top_n=3)
+
+        assert result == hubs

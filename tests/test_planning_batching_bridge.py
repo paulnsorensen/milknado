@@ -24,8 +24,8 @@ from milknado.domains.planning.manifest import (
 )
 
 
-def _change(cid: str, path: str, **kw: object) -> FileChange:
-    kwargs: dict[str, object] = {"id": cid, "path": path}
+def _change(cid: str, path: str, description: str = "", **kw: object) -> FileChange:
+    kwargs: dict[str, object] = {"id": cid, "path": path, "description": description or cid}
     kwargs.update(kw)
     return FileChange(**kwargs)  # type: ignore[arg-type]
 
@@ -33,11 +33,17 @@ def _change(cid: str, path: str, **kw: object) -> FileChange:
 def _manifest(
     *changes: FileChange,
     new_rels: tuple[NewRelationship, ...] = (),
+    goal: str = "bridge test goal",
+    goal_summary: str = "bridge test goal summary",
+    spec_path: str | None = None,
 ) -> PlanChangeManifest:
     return PlanChangeManifest(
         manifest_version=MANIFEST_VERSION,
         changes=changes,
         new_relationships=new_rels,
+        goal=goal,
+        goal_summary=goal_summary,
+        spec_path=spec_path,
     )
 
 
@@ -47,13 +53,13 @@ def graph(tmp_path: Path) -> MikadoGraph:
 
 
 class TestApplyBatchesToGraph:
-    def test_linear_chain_creates_nodes_in_order(
+    def test_linear_chain_creates_goal_root_and_batches(
         self, graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
-            _change("a", "src/a.py"),
-            _change("b", "src/b.py"),
-            _change("c", "src/c.py"),
+            _change("a", "src/a.py", "Add module A"),
+            _change("b", "src/b.py", "Add module B"),
+            _change("c", "src/c.py", "Add module C"),
         )
         plan = BatchPlan(
             batches=(
@@ -67,27 +73,61 @@ class TestApplyBatchesToGraph:
 
         created = apply_batches_to_graph(graph, plan, manifest)
 
-        assert len(created) == 3
-        nodes = [graph.get_node(nid) for nid in created]
-        assert [n.description for n in nodes if n] == [
-            "Batch 0: src/a.py",
-            "Batch 1: src/b.py",
-            "Batch 2: src/c.py",
-        ]
-        assert [n.batch_index for n in nodes if n] == [0, 1, 2]
-        assert all(n is not None and not n.oversized for n in nodes)
-        # dependency edges: middle node depends on first, last depends on middle
-        middle_prereqs = graph.get_children(created[1])
-        assert [n.id for n in middle_prereqs] == [created[0]]
-        last_prereqs = graph.get_children(created[2])
-        assert [n.id for n in last_prereqs] == [created[1]]
+        # 4 nodes: goal root + 3 batches
+        assert len(created) == 4
+        all_nodes = graph.get_all_nodes()
+        assert len(all_nodes) == 4
 
-    def test_diamond_wires_both_parents(self, graph: MikadoGraph) -> None:
+        # First node is goal root
+        goal_root = graph.get_node(created[0])
+        assert goal_root is not None
+        assert goal_root.description == "bridge test goal summary"
+
+        # Batch nodes in order
+        batch_nodes = [graph.get_node(nid) for nid in created[1:]]
+        assert all(n is not None for n in batch_nodes)
+        assert [n.batch_index for n in batch_nodes if n] == [0, 1, 2]
+
+        # Batch 0 attaches to goal root
+        goal_children = graph.get_children(created[0])
+        assert [n.id for n in goal_children] == [created[1]]
+
+        # Linear chain edges
+        middle_prereqs = graph.get_children(created[2])
+        assert [n.id for n in middle_prereqs] == [created[1]]
+        last_prereqs = graph.get_children(created[3])
+        assert [n.id for n in last_prereqs] == [created[2]]
+
+    def test_linear_chain_batch_descriptions_contain_stacked_intents(
+        self, graph: MikadoGraph,
+    ) -> None:
         manifest = _manifest(
-            _change("root", "r.py"),
-            _change("left", "l.py"),
-            _change("right", "r2.py"),
-            _change("join", "j.py"),
+            _change("a", "src/a.py", "Add module A"),
+            _change("b", "src/b.py", "Add module B"),
+        )
+        plan = BatchPlan(
+            batches=(
+                Batch(index=0, change_ids=("a", "b"), depends_on=()),
+            ),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+
+        created = apply_batches_to_graph(graph, plan, manifest)
+
+        batch_node = graph.get_node(created[1])
+        assert batch_node is not None
+        assert "1. Add module A" in batch_node.description
+        assert "2. Add module B" in batch_node.description
+
+    def test_diamond_root_batches_attach_to_goal_root(
+        self, graph: MikadoGraph,
+    ) -> None:
+        manifest = _manifest(
+            _change("root", "r.py", "Root change"),
+            _change("left", "l.py", "Left change"),
+            _change("right", "r2.py", "Right change"),
+            _change("join", "j.py", "Join change"),
         )
         plan = BatchPlan(
             batches=(
@@ -102,14 +142,24 @@ class TestApplyBatchesToGraph:
 
         created = apply_batches_to_graph(graph, plan, manifest)
 
-        assert len(created) == 4
-        join_prereqs = graph.get_children(created[3])
+        # 5 nodes: goal root + 4 batches
+        assert len(created) == 5
+
+        goal_root_id = created[0]
+        batch_ids = created[1:]
+
+        # Only root batch (index=0) attaches to goal root
+        goal_children = graph.get_children(goal_root_id)
+        assert [n.id for n in goal_children] == [batch_ids[0]]
+
+        # Join node depends on left and right
+        join_prereqs = graph.get_children(batch_ids[3])
         assert sorted(n.id for n in join_prereqs) == sorted(
-            [created[1], created[2]],
+            [batch_ids[1], batch_ids[2]],
         )
 
     def test_oversized_batch_marks_node_flag(self, graph: MikadoGraph) -> None:
-        manifest = _manifest(_change("big", "huge.py"))
+        manifest = _manifest(_change("big", "huge.py", "Big oversized change"))
         plan = BatchPlan(
             batches=(
                 Batch(index=0, change_ids=("big",), depends_on=(), oversized=True),
@@ -120,36 +170,19 @@ class TestApplyBatchesToGraph:
 
         created = apply_batches_to_graph(graph, plan, manifest)
 
-        node = graph.get_node(created[0])
-        assert node is not None
-        assert node.oversized is True
-        assert node.batch_index == 0
+        # created[0] = goal root, created[1] = batch node
+        batch_node = graph.get_node(created[1])
+        assert batch_node is not None
+        assert batch_node.oversized is True
+        assert batch_node.batch_index == 0
 
-    def test_empty_plan_records_snapshot_and_returns_empty(
-        self, graph: MikadoGraph,
-    ) -> None:
-        manifest = _manifest()
-        plan = BatchPlan(
-            batches=(),
-            spread_report=(),
-            solver_status="OPTIMAL",
-        )
-
-        created = apply_batches_to_graph(graph, plan, manifest)
-
-        assert created == []
-        latest = graph.get_latest_batch_plan()
-        assert latest is not None
-        assert latest["batch_count"] == 0
-        assert latest["solver_status"] == "OPTIMAL"
-
-    def test_resume_parent_attaches_only_roots(
+    def test_resume_with_parent_id_no_goal_root(
         self, graph: MikadoGraph,
     ) -> None:
         existing = graph.add_node("top goal")
         manifest = _manifest(
-            _change("a", "a.py"),
-            _change("b", "b.py"),
+            _change("a", "a.py", "Change A"),
+            _change("b", "b.py", "Change B"),
         )
         plan = BatchPlan(
             batches=(
@@ -164,19 +197,107 @@ class TestApplyBatchesToGraph:
             graph, plan, manifest, parent_id=existing.id,
         )
 
-        # Root batch becomes a prerequisite of the resume parent.
+        # No goal root created — only 2 batch nodes returned
+        assert len(created) == 2
+
+        # Root batch attaches to existing node
         existing_prereqs = graph.get_children(existing.id)
         assert [n.id for n in existing_prereqs] == [created[0]]
-        # Non-root batch is not attached to the resume parent.
+
+        # Non-root batch depends on root batch
         non_root_prereqs = graph.get_children(created[1])
         assert [n.id for n in non_root_prereqs] == [created[0]]
+
+    def test_empty_manifest_creates_only_goal_root(
+        self, graph: MikadoGraph,
+    ) -> None:
+        """Empty manifest with no changes creates only the goal root node."""
+        manifest = _manifest()
+        plan = BatchPlan(
+            batches=(),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+
+        created = apply_batches_to_graph(graph, plan, manifest)
+
+        # Only the goal root node is created
+        assert len(created) == 1
+        goal_root = graph.get_node(created[0])
+        assert goal_root is not None
+        assert goal_root.description == "bridge test goal summary"
+
+        latest = graph.get_latest_batch_plan()
+        assert latest is not None
+        assert latest["batch_count"] == 0
+        assert latest["solver_status"] == "OPTIMAL"
+
+    def test_description_stacking_two_changes_full_text(
+        self, graph: MikadoGraph,
+    ) -> None:
+        long_desc_1 = "Implement the OAuth2 token refresh logic in auth module"
+        long_desc_2 = "Update API client to use refreshed tokens for all requests"
+        manifest = _manifest(
+            _change("c1", "auth.py", long_desc_1),
+            _change("c2", "client.py", long_desc_2),
+        )
+        plan = BatchPlan(
+            batches=(
+                Batch(index=0, change_ids=("c1", "c2"), depends_on=()),
+            ),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+
+        created = apply_batches_to_graph(graph, plan, manifest)
+
+        batch_node = graph.get_node(created[1])
+        assert batch_node is not None
+        # Both descriptions appear in full, numbered
+        assert f"1. {long_desc_1}" in batch_node.description
+        assert f"2. {long_desc_2}" in batch_node.description
+
+    def test_description_fallback_to_id_when_empty(
+        self, graph: MikadoGraph,
+    ) -> None:
+        # Construct a change with empty description directly (bypass _change helper)
+        change = FileChange(id="x1", path="x.py")
+        manifest = _manifest(change)
+        plan = BatchPlan(
+            batches=(
+                Batch(index=0, change_ids=("x1",), depends_on=()),
+            ),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+
+        created = apply_batches_to_graph(graph, plan, manifest)
+
+        batch_node = graph.get_node(created[1])
+        assert batch_node is not None
+        # Fallback: id appears when description is empty
+        assert "x1" in batch_node.description
+
+    def test_missing_goal_raises_when_no_parent(self, graph: MikadoGraph) -> None:
+        manifest = PlanChangeManifest(
+            manifest_version=MANIFEST_VERSION,
+            goal="",
+            goal_summary="",
+            spec_path=None,
+            changes=(),
+            new_relationships=(),
+        )
+        plan = BatchPlan(batches=(), spread_report=(), solver_status="OPTIMAL")
+
+        with pytest.raises(ValueError, match="goal"):
+            apply_batches_to_graph(graph, plan, manifest)
 
     def test_file_ownership_is_union_of_changes(
         self, graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
-            _change("a", "src/one.py"),
-            _change("b", "src/two.py"),
+            _change("a", "src/one.py", "Change one"),
+            _change("b", "src/two.py", "Change two"),
         )
         plan = BatchPlan(
             batches=(
@@ -188,36 +309,8 @@ class TestApplyBatchesToGraph:
 
         created = apply_batches_to_graph(graph, plan, manifest)
 
-        files = graph.get_file_ownership(created[0])
+        files = graph.get_file_ownership(created[1])
         assert set(files) == {"src/one.py", "src/two.py"}
-
-    def test_description_truncates_many_files(
-        self, graph: MikadoGraph,
-    ) -> None:
-        manifest = _manifest(
-            _change("a", "a.py"),
-            _change("b", "b.py"),
-            _change("c", "c.py"),
-            _change("d", "d.py"),
-            _change("e", "e.py"),
-        )
-        plan = BatchPlan(
-            batches=(
-                Batch(
-                    index=0,
-                    change_ids=("a", "b", "c", "d", "e"),
-                    depends_on=(),
-                ),
-            ),
-            spread_report=(),
-            solver_status="OPTIMAL",
-        )
-
-        created = apply_batches_to_graph(graph, plan, manifest)
-
-        node = graph.get_node(created[0])
-        assert node is not None
-        assert node.description == "Batch 0: a.py, b.py, c.py (+2 more)"
 
     def test_end_to_end_persistence_reopens_db(
         self, tmp_path: Path,
@@ -225,8 +318,8 @@ class TestApplyBatchesToGraph:
         db_path = tmp_path / "persist.db"
         graph = MikadoGraph(db_path)
         manifest = _manifest(
-            _change("a", "a.py"),
-            _change("b", "b.py"),
+            _change("a", "a.py", "Change A"),
+            _change("b", "b.py", "Change B oversized"),
         )
         plan = BatchPlan(
             batches=(
@@ -249,9 +342,14 @@ class TestApplyBatchesToGraph:
         rows = conn.execute(
             "SELECT id, oversized, batch_index FROM nodes ORDER BY id",
         ).fetchall()
+        # created[0] = goal root (no batch_index), created[1:] = batches
         assert [r["id"] for r in rows] == created
-        assert [r["oversized"] for r in rows] == [0, 1]
-        assert [r["batch_index"] for r in rows] == [0, 1]
+        # goal root: oversized=0, batch_index=None
+        assert rows[0]["oversized"] == 0
+        assert rows[0]["batch_index"] is None
+        # batch nodes
+        assert [r["oversized"] for r in rows[1:]] == [0, 1]
+        assert [r["batch_index"] for r in rows[1:]] == [0, 1]
 
         plan_rows = conn.execute(
             "SELECT solver_status, batch_count, oversized_count, max_spread "
@@ -269,8 +367,8 @@ class TestApplyBatchesToGraph:
 class TestRunBatching:
     def test_forwards_manifest_to_plan_batches(self, tmp_path: Path) -> None:
         manifest = _manifest(
-            _change("a", "a.py"),
-            _change("b", "b.py"),
+            _change("a", "a.py", "Change A"),
+            _change("b", "b.py", "Change B"),
         )
         plan = run_batching(manifest, crg=None, root=tmp_path, budget=70_000)
         assert plan.solver_status in {"OPTIMAL", "FEASIBLE"}

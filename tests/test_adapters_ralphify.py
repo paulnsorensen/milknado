@@ -228,3 +228,29 @@ class TestBuildRalphContent:
         content = _build_ralph_content(node, "ctx", ["gate1"])
         assert "## Completion" in content
         assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
+
+    def test_longer_context_injected_and_completion_preserved(self) -> None:
+        """Longer context with Goal/Why chain/Your task — template passes it
+        through verbatim and Completion block still ends the file."""
+        node = MikadoNode(id=2, description="Batch node")
+        longer_ctx = (
+            "## Goal\n\nRefactor auth slice into its own domain.\n\n"
+            "## Why chain (parent → grandparent → ...)\n\n"
+            "### Extract interfaces from auth module\n\n"
+            "## Your task\n\nUpdate callers to use new AuthService interface.\n\n"
+            "## Files\n\n- `src/main.py`\n\n"
+            "## Impact Radius\n\n_(CRG unavailable — impact radius skipped)_"
+        )
+        content = _build_ralph_content(node, longer_ctx, ["uv run pytest"])
+        assert "## Goal" in content
+        assert "## Why chain" in content
+        assert "## Your task" in content
+        assert "## Completion" in content
+        assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
+        # Completion block is the last heading in the file
+        completion_pos = content.rfind("## Completion")
+        assert completion_pos != -1
+        assert content[completion_pos:].strip().endswith(
+            f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
+            "so the run can stop before the iteration budget."
+        )

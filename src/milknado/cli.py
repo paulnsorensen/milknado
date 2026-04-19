@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated
 if TYPE_CHECKING:
     from milknado.domains.execution import ExecutionConfig
     from milknado.domains.execution.run_loop import RunLoopResult
+    from milknado.domains.planning.planner import PlanResult
 
 import typer
 from rich.console import Console
@@ -176,7 +177,7 @@ def _fetch_run_states(nodes: list[MikadoNode]) -> dict[str, str] | None:
             if run:
                 states[run_id] = getattr(run, "status", "unknown")
         return states or None
-    except Exception:
+    except Exception:  # noqa: BLE001 — status enrichment is best-effort; never block render
         return None
 
 
@@ -232,37 +233,88 @@ def add_node(
         graph.close()
 
 
+def _derive_goal(spec_path: Path) -> str:
+    try:
+        text = spec_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise typer.BadParameter(
+            f"--spec file is not valid UTF-8 text: {spec_path} ({exc})"
+        ) from None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            heading = stripped[2:].strip()
+            if heading:
+                return heading
+    return spec_path.stem
+
+
+def _plan_summary(result: PlanResult) -> str:
+    return (
+        f"Planned {result.change_count} changes → {result.batch_count} batches"
+        f" ({result.oversized_count} oversized), solver={result.solver_status};"
+        f" {result.nodes_created} Mikado nodes created"
+    )
+
+
+def _plan_exit_code(result: PlanResult) -> int:
+    if result.solver_status == "INFEASIBLE":
+        return 1
+    if result.solver_status == "NO_MANIFEST":
+        return 1
+    if result.solver_status in ("OPTIMAL", "FEASIBLE"):
+        return 0
+    if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+        return 0
+    if not result.success:
+        return result.exit_code
+    return 0
+
+
 @app.command()
 def plan(
-    goal: Annotated[str, typer.Argument(help="Goal to decompose")],
+    spec: Annotated[
+        Path,
+        typer.Option(
+            "--spec",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to spec .md file describing the goal",
+        ),
+    ],
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
 ) -> None:
-    """Launch interactive planning session to decompose a goal."""
+    """Launch interactive planning session to decompose a spec."""
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.planning import Planner
 
+    if spec.suffix.lower() != ".md":
+        console.print(f"[red]--spec must point to a .md file, got: {spec}[/red]")
+        raise typer.Exit(code=1)
+
+    goal = _derive_goal(spec)
     project_root = project_root.resolve()
     config = _load_or_default(project_root)
     graph = _ensure_db(config)
 
     try:
         crg = CrgAdapter(project_root)
-        planner = Planner(
-            graph,
-            crg,
-            config.planning_agent,
-        )
+        planner = Planner(graph, crg, config.planning_agent)
         console.print(f"[bold]Planning:[/bold] {goal}")
-        result = planner.launch(goal, project_root)
-        if result.success:
-            console.print("[green]Planning session complete.[/green]")
-        else:
-            console.print(
-                f"[red]Planning session exited with code {result.exit_code}.[/red]"
+        result = planner.launch(goal, project_root, spec_path=spec)
+        console.print(_plan_summary(result))
+        exit_code = _plan_exit_code(result)
+        if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+            Console(stderr=True).print(
+                "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
             )
-            raise typer.Exit(code=result.exit_code)
+        if exit_code != 0:
+            raise typer.Exit(code=exit_code)
     finally:
         graph.close()
 

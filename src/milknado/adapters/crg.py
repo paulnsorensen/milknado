@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
 from code_review_graph.communities import get_architecture_overview, get_communities
 from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
@@ -115,3 +116,9 @@ class CrgAdapter:
             changed_files=changed_files,
             repo_root=str(self._root),
         )
+
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return find_bridge_nodes(self._get_store(), top_n=top_n)
+
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return find_hub_nodes(self._get_store(), top_n=top_n)

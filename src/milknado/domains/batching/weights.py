@@ -44,6 +44,47 @@ def _tiktoken_count(path: Path) -> int | None:
     return len(_get_encoder().encode(text))
 
 
+# ---------------------------------------------------------------------------
+# Token estimation — design notes and calibration guidance
+# ---------------------------------------------------------------------------
+#
+# CURRENT APPROACH: path dedup in `_tokens_per_scc`
+#
+# `_tokens_per_scc` (solver.py) calls `estimate_tokens` once per change, then
+# sums the results over all changes in an SCC.  Before summing, it deduplicates
+# by `FileChange.path`: if two changes share the same path, only the first is
+# charged.  This prevents double-counting the same file's token mass when a
+# manifest has multiple change IDs touching one path.
+#
+# HEURISTIC CAVEAT: same file ≠ same work
+#
+# The dedup gives each path exactly one vote regardless of how many symbols
+# in that file are being changed.  Two symbol edits inside `utils.py` is more
+# work than one, just not 2×.  The current approach under-counts in that
+# scenario — which is the *safer* miscalibration: under-counting makes batches
+# slightly larger than intended, but over-counting would fragment them
+# unnecessarily, increasing round-trips and sequencing overhead.
+#
+# BETTER LONG-TERM: per-symbol costing
+#
+# The right model resolves each `SymbolRef` to a byte range via LSP or a
+# tree-sitter parser, tiktoken-encodes only that slice, then sums across
+# distinct symbols.  Delta-weighting would further refine estimates:
+# `edit_kind=modify` on a small symbol is cheaper than `edit_kind=add` in a
+# large file.  This requires structural dependency resolution (the tilth MCP
+# or an LSP plugin) and is gated on A2 (tilth integration) being available.
+# Until then, path-level dedup is the right tradeoff.
+#
+# CALIBRATION TRIGGER
+#
+# If `calibration.jsonl` shows batches consistently coming in well under their
+# token budget (< 60% utilisation), bump `HEADROOM` upward (e.g. 1.35 → 1.5)
+# or migrate to per-symbol costing.  Over-fragmented batches (many batches with
+# one change each) suggest the opposite: HEADROOM is too aggressive or the
+# path-dedup under-counts too severely for the workload.
+# ---------------------------------------------------------------------------
+
+
 def estimate_tokens(change: FileChange, root: Path) -> int:
     if change.edit_kind in FLAT_COST:
         return FLAT_COST[change.edit_kind]
