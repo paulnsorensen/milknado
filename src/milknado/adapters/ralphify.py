@@ -25,6 +25,7 @@ class RalphifyAdapter:
         self._emitter = QueueEmitter(self._queue)
         self._agent = agent
         self._progress_buffer: list[ProgressEvent] = []
+        self._progress_lock = threading.Lock()
 
     def create_run(
         self,
@@ -86,7 +87,18 @@ class RalphifyAdapter:
                     active_run_ids=active_run_ids,
                     waited_seconds=time.monotonic() - start,
                 ) from None
-            # EventType.PROGRESS not in current ralphify — graceful degradation to spinner
+            _PROGRESS = getattr(EventType, "PROGRESS", None)
+            if _PROGRESS is not None and event.type == _PROGRESS:
+                with self._progress_lock:
+                    self._progress_buffer.append(
+                        ProgressEvent(
+                            run_id=event.run_id,
+                            work=getattr(event, "work", 0),
+                            total=getattr(event, "total", 0),
+                            message=getattr(event, "message", ""),
+                        )
+                    )
+                continue
             if event.type != EventType.RUN_STOPPED:
                 continue
             if event.run_id not in active_run_ids:
@@ -98,8 +110,9 @@ class RalphifyAdapter:
             return event.run_id, success
 
     def poll_progress_events(self) -> list[ProgressEvent]:
-        result = list(self._progress_buffer)
-        self._progress_buffer.clear()
+        with self._progress_lock:
+            result = list(self._progress_buffer)
+            self._progress_buffer.clear()
         return result
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
