@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "ralphify @ git+https://github.com/paulnsorensen/ralphify@main",
-    "code-review-graph>=2.3.1",
+    "code-review-graph>=2.3.2",
     "fastmcp>=2.14",
     "typer>=0.12",
     "rich>=13",

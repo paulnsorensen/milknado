@@ -6,9 +6,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common.types import RebaseResult
+from milknado.domains.graph.traversals import walk_ancestors
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
+    from milknado.domains.common.types import MikadoNode
     from milknado.domains.graph import MikadoGraph
 
 
@@ -89,11 +91,7 @@ class Executor:
                 node_id, worktree_path=str(wt_path), branch_name=branch,
             )
 
-            context = _build_node_context(
-                node.description,
-                self._graph.get_file_ownership(node_id),
-                self._crg,
-            )
+            context = _build_node_context(node, self._graph, self._crg)
             ralph_path = self._ralph.generate_ralph_md(
                 node, context, list(config.quality_gates),
                 wt_path / "RALPH.md",
@@ -180,14 +178,51 @@ class Executor:
 
 
 def _build_node_context(
-    description: str,
-    files: list[str],
-    crg: CrgPort,
+    node: MikadoNode,
+    graph: MikadoGraph,
+    crg: CrgPort | None,
 ) -> str:
-    sections = [f"# Task\n\n{description}"]
+    """Build executor context by walking the ancestor chain.
+
+    Single-node graph (node == root, no ancestors): omits the "Why chain"
+    section; Goal and Your task both show the same node description.
+
+    crg=None: Impact Radius section shows a degradation fallback line.
+    """
+    ancestors = walk_ancestors(graph, node.id)
+    # ancestors[0] == node, ancestors[-1] == root
+    root = ancestors[-1]
+    sections = [f"## Goal\n\n{root.description}"]
+
+    # Emit Why chain only when there are intermediate ancestors between node and root.
+    # Single node (node is root) or direct child of root → no Why chain.
+    why_nodes = ancestors[1:-1]  # between node and root, exclusive
+    if why_nodes:
+        why_parts = "\n".join(f"### {n.description}" for n in why_nodes)
+        sections.append(f"## Why chain (parent → grandparent → ...)\n\n{why_parts}")
+
+    sections.append(f"## Your task\n\n{node.description}")
+
+    files = graph.get_file_ownership(node.id)
     if files:
-        impact = crg.get_impact_radius(files)
-        sections.append(f"# Impact Radius\n\n{impact}")
         file_list = "\n".join(f"- `{f}`" for f in files)
-        sections.append(f"# Owned Files\n\n{file_list}")
+        sections.append(f"## Files\n\n{file_list}")
+    else:
+        sections.append("## Files\n\n_(no files assigned)_")
+
+    impact_section = _impact_radius_section(crg, files)
+    sections.append(impact_section)
+
     return "\n\n".join(sections)
+
+
+def _impact_radius_section(crg: CrgPort | None, files: list[str]) -> str:
+    if crg is None:
+        return "## Impact Radius\n\n_(CRG unavailable — impact radius skipped)_"
+    if not files:
+        return "## Impact Radius\n\n_(no files — impact radius skipped)_"
+    try:
+        impact = crg.get_impact_radius(files)
+    except Exception as exc:
+        return f"## Impact Radius\n\n_(CRG unavailable — impact radius skipped: {exc})_"
+    return f"## Impact Radius\n\n{impact}"

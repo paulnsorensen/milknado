@@ -191,3 +191,26 @@ def test_batch_depends_on_from_original_edges(tmp_path) -> None:
     assert sorted_batches[0].depends_on == ()
     assert sorted_batches[1].depends_on == (sorted_batches[0].index,)
     assert sorted_batches[2].depends_on == (sorted_batches[1].index,)
+
+
+def test_shared_path_tokens_counted_once_per_scc(tmp_path) -> None:
+    """Two changes in the same SCC sharing a path charge the file mass once, not twice.
+
+    A cycle forces a and b into the same SCC.  With path dedup, the SCC mass is
+    80 (one delete cost) — fits a budget of 100.  Without dedup, mass is 160 and
+    the SCC is oversized (> 100).
+    """
+    # delete costs 80 tokens flat.  Two changes on the same path with a cycle →
+    # same SCC.  Dedup should yield SCC mass = 80; naive sum yields 160.
+    a = FileChange(id="a", path="shared.py", edit_kind="delete")
+    b = FileChange(id="b", path="shared.py", edit_kind="delete")
+    rels = [
+        NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_call"),
+        NewRelationship(source_change_id="b", dependant_change_id="a", reason="new_call"),
+    ]
+    plan = plan_batches([a, b], budget=100, new_relationships=rels, root=tmp_path)
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
+    # With dedupe: SCC mass = 80 ≤ 100 → fits budget, not oversized.
+    # Without dedupe: SCC mass = 160 > 100 → oversized passthrough.
+    assert len(plan.batches) == 1
+    assert not plan.batches[0].oversized

@@ -256,8 +256,24 @@ def _tokens_per_scc(
     sccs: list[str],
     root: Path,
 ) -> dict[str, int]:
+    # Dedup SCC mass by path: when multiple changes in an SCC share the same
+    # path, only the first-seen change contributes its token estimate — the
+    # file's token mass doesn't multiply with change count. See weights.py
+    # for the "path dedup, first-seen" calibration notes.
     tokens_by_change = {c.id: estimate_tokens(c, root) for c in changes}
-    return {s: sum(tokens_by_change[cid] for cid in scc_members[s]) for s in sccs}
+    change_by_id = {c.id: c for c in changes}
+
+    def _scc_tokens(member_ids: list[str]) -> int:
+        seen_paths: set[str] = set()
+        total = 0
+        for cid in member_ids:
+            path = change_by_id[cid].path
+            if path not in seen_paths:
+                seen_paths.add(path)
+                total += tokens_by_change[cid]
+        return total
+
+    return {s: _scc_tokens(scc_members[s]) for s in sccs}
 
 
 def _partition_oversized(

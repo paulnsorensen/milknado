@@ -21,6 +21,7 @@ class FileChange:
     edit_kind: EditKind = "modify"
     symbols: tuple[SymbolRef, ...] = ()
     depends_on: tuple[str, ...] = ()
+    description: str = ""
 
 
 @dataclass(frozen=True)

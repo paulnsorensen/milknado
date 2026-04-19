@@ -7,6 +7,8 @@ from typer.testing import CliRunner
 
 from milknado.cli import app
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
 runner = CliRunner()
 
 
@@ -279,37 +281,214 @@ class TestAddNode:
 
 class TestPlanCommand:
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.domains.planning.Planner")
     def test_plan_success(
         self,
-        mock_run: MagicMock,
+        mock_planner_cls: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0)
-        mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
         result = runner.invoke(
             app,
-            ["plan", "extract service", "--project-root", str(project_dir)],
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
         assert "Planning" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.domains.planning.Planner")
     def test_plan_failure(
         self,
-        mock_run: MagicMock,
+        mock_planner_cls: MagicMock,
         mock_crg_cls: MagicMock,
         project_dir: Path,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=1)
-        mock_crg_cls.return_value.get_architecture_overview.return_value = {}
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            success=False, exit_code=1, solver_status="NO_MANIFEST",
+        )
         result = runner.invoke(
             app,
-            ["plan", "extract service", "--project-root", str(project_dir)],
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
         )
         assert result.exit_code == 1
+
+
+def _make_plan_result(**kwargs: object) -> MagicMock:
+    """Build a PlanResult-like mock with sensible defaults."""
+    from milknado.domains.planning.planner import PlanResult
+
+    defaults = {
+        "success": True,
+        "exit_code": 0,
+        "context_path": None,
+        "nodes_created": 3,
+        "batch_count": 2,
+        "oversized_count": 0,
+        "solver_status": "OPTIMAL",
+        "change_count": 4,
+    }
+    defaults.update(kwargs)
+    return PlanResult(**defaults)  # type: ignore[arg-type]
+
+
+class TestPlanSpecOption:
+    def test_missing_spec_exits_nonzero(self) -> None:
+        result = runner.invoke(app, ["plan"])
+        assert result.exit_code != 0
+
+    def test_nonexistent_file_exits_nonzero(self) -> None:
+        result = runner.invoke(app, ["plan", "--spec", "/nonexistent/file.md"])
+        assert result.exit_code != 0
+
+    def test_non_md_extension_exits_1(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "not_md.txt"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert ".md" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_happy_path_exit_0_summary_printed(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "solver=" in result.output
+        assert "created" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_heading_derived_as_goal(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "My Feature Goal" in result.output
+        mock_planner_cls.return_value.launch.assert_called_once()
+        call_args = mock_planner_cls.return_value.launch.call_args
+        goal_arg = call_args.kwargs.get("goal") or (call_args.args[0] if call_args.args else None)
+        assert goal_arg == "My Feature Goal"
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_no_heading_uses_filename_stem(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "no_heading.md"),
+             "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "no_heading" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_optimal_solver_exits_0_summary_has_solver(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="OPTIMAL"
+        )
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "solver=OPTIMAL" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_one_oversized_summary(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(oversized_count=1)
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "(1 oversized)" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_infeasible_exits_1(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="INFEASIBLE", success=False, exit_code=0,
+        )
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "solver=INFEASIBLE" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_unknown_with_batches_exits_0_stderr_warning(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="UNKNOWN", batch_count=2,
+        )
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+            catch_exceptions=False,
+        )
+        assert result.exit_code == 0
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_crg_failure_degradation_still_runs(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_crg_cls.return_value.ensure_graph.side_effect = RuntimeError("crg failed")
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert "solver=" in result.output
 
 
 class TestToolsCheck:
