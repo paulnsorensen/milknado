@@ -75,6 +75,7 @@ def apply_batches_to_graph(
     paths_by_change = {c.id: c.path for c in manifest.changes}
     input_order = {c.id: i for i, c in enumerate(manifest.changes)}
     node_id_by_batch: dict[int, int] = {}
+    depended_on: set[int] = {dep for b in plan.batches for dep in b.depends_on}
 
     for batch in plan.batches:
         files = _batch_files(batch, paths_by_change, input_order)
@@ -91,12 +92,15 @@ def apply_batches_to_graph(
                 graph.add_edge(node.id, node_id_by_batch[dep_index])
         else:
             primary_parent = attach_to
-            graph.add_edge(attach_to, node.id)
         graph.set_parent_id(node.id, primary_parent)
         if files:
             graph.set_file_ownership(node.id, files)
         node_id_by_batch[batch.index] = node.id
         created.append(node.id)
+
+    for batch in plan.batches:
+        if batch.index not in depended_on:
+            graph.add_edge(attach_to, node_id_by_batch[batch.index])
 
     return created
 

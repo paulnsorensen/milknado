@@ -59,10 +59,12 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
     if not isinstance(goal, str) or not goal.strip():
         _logger.warning("manifest.goal must be a non-empty string")
         return None
+    goal = goal.strip()
     goal_summary = raw.get("goal_summary")
     if not isinstance(goal_summary, str) or not goal_summary.strip():
         _logger.warning("manifest.goal_summary must be a non-empty string")
         return None
+    goal_summary = goal_summary.strip()
     raw_spec_path = raw.get("spec_path")
     if raw_spec_path is not None and not isinstance(raw_spec_path, str):
         _logger.warning("manifest.spec_path must be a string or null")
@@ -154,7 +156,7 @@ def _parse_single_change(entry: object) -> FileChange | None:
         edit_kind=cast(EditKind, edit_kind),
         symbols=symbols,
         depends_on=depends_on,
-        description=description,
+        description=description.strip(),
     )
 
 

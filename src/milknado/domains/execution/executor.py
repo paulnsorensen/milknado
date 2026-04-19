@@ -221,5 +221,8 @@ def _impact_radius_section(crg: CrgPort | None, files: list[str]) -> str:
         return "## Impact Radius\n\n_(CRG unavailable — impact radius skipped)_"
     if not files:
         return "## Impact Radius\n\n_(no files — impact radius skipped)_"
-    impact = crg.get_impact_radius(files)
+    try:
+        impact = crg.get_impact_radius(files)
+    except Exception as exc:
+        return f"## Impact Radius\n\n_(CRG unavailable — impact radius skipped: {exc})_"
     return f"## Impact Radius\n\n{impact}"

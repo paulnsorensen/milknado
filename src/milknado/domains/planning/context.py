@@ -152,7 +152,7 @@ def _truncate_description(description: str) -> str:
     lines = description.splitlines()
     first_line = lines[0]
     has_more_content = any(line.strip() for line in lines[1:])
-    if first_line and len(lines) > 1:
+    if first_line and has_more_content:
         return first_line + " \u2026"
     if not first_line and has_more_content:
         return " \u2026"

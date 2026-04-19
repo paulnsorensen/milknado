@@ -88,9 +88,9 @@ class TestApplyBatchesToGraph:
         assert all(n is not None for n in batch_nodes)
         assert [n.batch_index for n in batch_nodes if n] == [0, 1, 2]
 
-        # Batch 0 attaches to goal root
+        # Terminal batch (index=2, no other batch depends on it) attaches to goal root
         goal_children = graph.get_children(created[0])
-        assert [n.id for n in goal_children] == [created[1]]
+        assert [n.id for n in goal_children] == [created[3]]
 
         # Linear chain edges
         middle_prereqs = graph.get_children(created[2])
@@ -148,9 +148,9 @@ class TestApplyBatchesToGraph:
         goal_root_id = created[0]
         batch_ids = created[1:]
 
-        # Only root batch (index=0) attaches to goal root
+        # Terminal batch (index=3, join — nothing depends on it) attaches to goal root
         goal_children = graph.get_children(goal_root_id)
-        assert [n.id for n in goal_children] == [batch_ids[0]]
+        assert [n.id for n in goal_children] == [batch_ids[3]]
 
         # Join node depends on left and right
         join_prereqs = graph.get_children(batch_ids[3])
@@ -200,9 +200,9 @@ class TestApplyBatchesToGraph:
         # No goal root created — only 2 batch nodes returned
         assert len(created) == 2
 
-        # Root batch attaches to existing node
+        # Terminal batch (index=1) attaches to existing node
         existing_prereqs = graph.get_children(existing.id)
-        assert [n.id for n in existing_prereqs] == [created[0]]
+        assert [n.id for n in existing_prereqs] == [created[1]]
 
         # Non-root batch depends on root batch
         non_root_prereqs = graph.get_children(created[1])

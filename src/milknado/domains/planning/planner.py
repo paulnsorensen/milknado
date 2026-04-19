@@ -91,8 +91,10 @@ class Planner:
             )
 
         plan = run_batching(manifest, crg if crg_ok else None, project_root)
+        existing_root = self._graph.get_root()
+        parent_id = existing_root.id if existing_root is not None else None
         created_ids = apply_batches_to_graph(
-            self._graph, plan, manifest, parent_id=None,
+            self._graph, plan, manifest, parent_id=parent_id,
         )
         record_batch_snapshot(project_root, manifest, plan)
 
