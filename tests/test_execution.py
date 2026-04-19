@@ -1,8 +1,7 @@
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-import subprocess
 
 import pytest
 
@@ -487,7 +486,7 @@ class TestExecutorComplete:
         assert len(fake_git.commits) == 1
         _, msg = fake_git.commits[0]
         assert msg.startswith("feat(milknado-1): Add user authentication")
-        assert "Milknado-Node-Id: 1" in msg
+        assert "Milknado-Node: 1" in msg
 
     def test_complete_nonexistent_raises(
         self, executor: Executor,
@@ -639,7 +638,7 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class FailRalph(FakeRalph):
-            def create_run(self, **_kw):  # type: ignore[override]
+            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
                 raise ValueError("bad config")
 
         ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
@@ -654,7 +653,7 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class AlwaysTransient(FakeRalph):
-            def create_run(self, **_kw):  # type: ignore[override]
+            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
                 raise TransientDispatchError("always fails")
 
         config_retry = ExecutionConfig(
