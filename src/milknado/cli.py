@@ -80,7 +80,7 @@ def init(
         bool,
         typer.Option(
             "--install-rust-tools",
-            help="Install missing tilth/mergiraf via cargo.",
+            help="Install missing tilth/mergiraf/mcp-rtk via cargo.",
         ),
     ] = False,
 ) -> None:
