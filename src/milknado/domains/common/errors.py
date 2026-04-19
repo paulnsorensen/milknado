@@ -26,11 +26,12 @@ class RalphMarkdownWriteError(MilknadoError):
 
 
 class CompletionTimeout(MilknadoError):
-    def __init__(self, active_run_ids: set[str]) -> None:
+    def __init__(self, active_run_ids: set[str], waited_seconds: float = 0.0) -> None:
         self.active_run_ids = active_run_ids
+        self.waited_seconds = waited_seconds
         ids_str = ", ".join(sorted(active_run_ids))
         super().__init__(
-            f"Timed out waiting for completion. Active runs: {ids_str}"
+            f"Timed out after {waited_seconds:.1f}s waiting for completion. Active runs: {ids_str}"
         )
 
 

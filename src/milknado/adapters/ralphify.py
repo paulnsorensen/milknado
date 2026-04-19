@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import threading
 import time
 from pathlib import Path
 from typing import Any, Final
@@ -67,17 +68,24 @@ class RalphifyAdapter:
         active_run_ids: set[str],
         timeout: float | None = None,
     ) -> tuple[str, bool]:
-        deadline = time.monotonic() + timeout if timeout is not None else None
+        start = time.monotonic()
+        deadline = start + timeout if timeout is not None else None
         while True:
             remaining: float | None = None
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise CompletionTimeout(active_run_ids)
+                    raise CompletionTimeout(
+                        active_run_ids=active_run_ids,
+                        waited_seconds=time.monotonic() - start,
+                    )
             try:
                 event = self._queue.get(timeout=remaining)
             except queue.Empty:
-                raise CompletionTimeout(active_run_ids) from None
+                raise CompletionTimeout(
+                    active_run_ids=active_run_ids,
+                    waited_seconds=time.monotonic() - start,
+                ) from None
             # EventType.PROGRESS not in current ralphify — graceful degradation to spinner
             if event.type != EventType.RUN_STOPPED:
                 continue
