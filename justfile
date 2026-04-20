@@ -1,8 +1,5 @@
 set dotenv-load := true
 
-# Project name and Python version
-PROJECT := "milknado"
-PYTHON := "3.11"
 COVERAGE_THRESHOLD := "90"
 
 # Show all available recipes
@@ -13,8 +10,13 @@ default:
 install:
     uv sync
 
-# Run linters with autofix (ruff)
+# Run linters without modifying files (for CI/build validation)
 lint:
+    uv run ruff check src/ tests/ --preview
+    uv run ruff format --check src/ tests/
+
+# Run linters with autofix
+lint-fix:
     uv run ruff check src/ tests/ --fix --preview
     uv run ruff format src/ tests/
 
@@ -38,28 +40,24 @@ test-coverage:
 coverage-check:
     #!/usr/bin/env python3
     import subprocess
+    import sys
+
     result = subprocess.run(
-        ["uv", "run", "pytest", "tests/", "--cov=src/milknado", "--cov-report=term"],
+        [
+            "uv", "run", "pytest", "tests/",
+            "--cov=src/milknado",
+            "--cov-report=term",
+            "--cov-report=xml:coverage.xml",
+            "--cov-fail-under={{COVERAGE_THRESHOLD}}",
+        ],
         capture_output=True,
-        text=True
+        text=True,
     )
     output = result.stdout + result.stderr
-    print(output)
+    print(output, end="")
 
-    # Extract coverage percentage from output
-    import re
-    match = re.search(r'TOTAL.*?(\d+)%', output)
-    if match:
-        coverage = int(match.group(1))
-        threshold = int("{{COVERAGE_THRESHOLD}}")
-        if coverage < threshold:
-            print(f"❌ Coverage {coverage}% is below threshold {threshold}%")
-            exit(1)
-        else:
-            print(f"✅ Coverage {coverage}% meets threshold {threshold}%")
-    else:
-        print("⚠️  Could not parse coverage from pytest output")
-        exit(1)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
 
 # Full build: lint → test → coverage check (must pass before PR)
 build: lint test coverage-check
@@ -79,14 +77,10 @@ clean:
     find . -type d -name __pycache__ -exec rm -rf {} +
     find . -type f -name "*.pyc" -delete
 
-# Format code without linting (subset of lint)
+# Format code without linting (subset of lint-fix)
 fmt:
     uv run ruff format src/ tests/
 
 # Open HTML coverage report
 coverage-html: test-coverage
     @if command -v open &> /dev/null; then open htmlcov/index.html; else echo "htmlcov/index.html ready"; fi
-
-# Watch mode: run tests on file changes (requires watchfiles)
-watch *args:
-    uv run pytest-watch tests/ {{args}}
