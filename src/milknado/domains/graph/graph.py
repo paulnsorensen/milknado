@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import itertools
-import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +10,22 @@ from milknado.domains.common import (
     MikadoEdge,
     MikadoNode,
     NodeStatus,
+)
+from milknado.domains.graph._persistence import (
+    check_parallel_safety,
+    create_tables,
+    drop_all,
+    ensure_schema,
+    get_file_ownership,
+    get_latest_batch_plan,
+    get_spec_hash,
+    recent_completion_durations,
+    record_batch_plan,
+    record_completion_duration,
+    row_to_node,
+    set_dispatched_at,
+    set_file_ownership,
+    set_spec_hash,
 )
 
 if TYPE_CHECKING:
@@ -24,83 +38,8 @@ class MikadoGraph:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        self._create_tables()
-
-    def _create_tables(self) -> None:
-        self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS nodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                parent_id INTEGER,
-                worktree_path TEXT,
-                branch_name TEXT,
-                run_id TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT,
-                oversized INTEGER NOT NULL DEFAULT 0,
-                batch_index INTEGER
-            );
-            CREATE TABLE IF NOT EXISTS edges (
-                parent_id INTEGER NOT NULL,
-                child_id INTEGER NOT NULL,
-                PRIMARY KEY (parent_id, child_id),
-                FOREIGN KEY (parent_id) REFERENCES nodes(id),
-                FOREIGN KEY (child_id) REFERENCES nodes(id)
-            );
-            CREATE TABLE IF NOT EXISTS file_ownership (
-                node_id INTEGER NOT NULL,
-                file_path TEXT NOT NULL,
-                PRIMARY KEY (node_id, file_path),
-                FOREIGN KEY (node_id) REFERENCES nodes(id)
-            );
-            CREATE TABLE IF NOT EXISTS batch_plans (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at TEXT NOT NULL,
-                solver_status TEXT NOT NULL,
-                batch_count INTEGER NOT NULL,
-                oversized_count INTEGER NOT NULL,
-                max_spread INTEGER NOT NULL,
-                spread_json TEXT NOT NULL
-            );
-        """)
-        self._ensure_nodes_schema()
-
-    def _ensure_nodes_schema(self) -> None:
-        columns = {
-            row[1]
-            for row in self._conn.execute(
-                "PRAGMA table_info(nodes)",
-            ).fetchall()
-        }
-        if "run_id" not in columns:
-            self._conn.execute("ALTER TABLE nodes ADD COLUMN run_id TEXT")
-            self._conn.commit()
-
-    def _row_to_node(self, row: sqlite3.Row) -> MikadoNode:
-        created_at_raw = row["created_at"]
-        completed_at_raw = row["completed_at"]
-        keys = row.keys()
-        run_id = row["run_id"] if "run_id" in keys else None
-        oversized = bool(row["oversized"]) if "oversized" in keys else False
-        batch_index = row["batch_index"] if "batch_index" in keys else None
-        return MikadoNode(
-            id=row["id"],
-            description=row["description"],
-            status=NodeStatus(row["status"]),
-            parent_id=row["parent_id"],
-            worktree_path=row["worktree_path"],
-            branch_name=row["branch_name"],
-            run_id=run_id,
-            created_at=datetime.fromisoformat(created_at_raw),
-            completed_at=(
-                datetime.fromisoformat(completed_at_raw)
-                if completed_at_raw
-                else None
-            ),
-            oversized=oversized,
-            batch_index=batch_index,
-        )
+        create_tables(self._conn)
+        ensure_schema(self._conn)
 
     def add_node(
         self,
@@ -115,34 +54,19 @@ class MikadoGraph:
             "INSERT INTO nodes "
             "(description, status, parent_id, created_at, oversized, batch_index) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                description,
-                NodeStatus.PENDING.value,
-                parent_id,
-                now,
-                1 if oversized else 0,
-                batch_index,
-            ),
+            (description, NodeStatus.PENDING.value, parent_id, now,
+             1 if oversized else 0, batch_index),
         )
         self._conn.commit()
         node_id = cur.lastrowid
         assert node_id is not None
-
         if parent_id is not None:
             self.add_edge(parent_id, node_id)
-
-        return self._row_to_node(
-            self._conn.execute(
-                "SELECT * FROM nodes WHERE id = ?", (node_id,)
-            ).fetchone()
+        return row_to_node(
+            self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         )
 
-    def set_batch_metadata(
-        self,
-        node_id: int,
-        oversized: bool,
-        batch_index: int | None,
-    ) -> None:
+    def set_batch_metadata(self, node_id: int, oversized: bool, batch_index: int | None) -> None:
         cur = self._conn.execute(
             "UPDATE nodes SET oversized = ?, batch_index = ? WHERE id = ?",
             (1 if oversized else 0, batch_index, node_id),
@@ -152,15 +76,9 @@ class MikadoGraph:
         self._conn.commit()
 
     def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
-        """Update a node's parent_id column without creating an edge.
-
-        Used by the batching bridge where edges encode the Mikado tree shape
-        (goal→prereq) but parent_id tracks the walk_ancestors chain
-        (leaf→goal via dep chain).
-        """
+        """Update parent_id without creating an edge (used by batching bridge)."""
         cur = self._conn.execute(
-            "UPDATE nodes SET parent_id = ? WHERE id = ?",
-            (parent_id, node_id),
+            "UPDATE nodes SET parent_id = ? WHERE id = ?", (parent_id, node_id),
         )
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
@@ -168,12 +86,9 @@ class MikadoGraph:
 
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
-            raise ValueError(
-                f"Edge {parent_id}->{child_id} would create a cycle"
-            )
+            raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
         self._conn.execute(
-            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
-            (parent_id, child_id),
+            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)", (parent_id, child_id),
         )
         self._conn.commit()
         return MikadoEdge(parent_id=parent_id, child_id=child_id)
@@ -195,76 +110,67 @@ class MikadoGraph:
         return False
 
     def get_node(self, node_id: int) -> MikadoNode | None:
-        row = self._conn.execute(
-            "SELECT * FROM nodes WHERE id = ?", (node_id,)
-        ).fetchone()
-        return self._row_to_node(row) if row else None
+        row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return row_to_node(row) if row else None
 
     def get_all_nodes(self) -> list[MikadoNode]:
-        rows = self._conn.execute("SELECT * FROM nodes").fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in self._conn.execute("SELECT * FROM nodes").fetchall()]
 
     def get_children(self, node_id: int) -> list[MikadoNode]:
         rows = self._conn.execute(
-            "SELECT n.* FROM nodes n "
-            "JOIN edges e ON n.id = e.child_id "
-            "WHERE e.parent_id = ?",
+            "SELECT n.* FROM nodes n JOIN edges e ON n.id = e.child_id WHERE e.parent_id = ?",
             (node_id,),
         ).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in rows]
 
     def get_leaves(self) -> list[MikadoNode]:
         rows = self._conn.execute(
-            "SELECT * FROM nodes WHERE id NOT IN "
-            "(SELECT DISTINCT parent_id FROM edges)"
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
         ).fetchall()
-        return [self._row_to_node(r) for r in rows]
+        return [row_to_node(r) for r in rows]
 
     def get_ready_nodes(self) -> list[MikadoNode]:
-        all_nodes = self.get_all_nodes()
+        root = self.get_root()
         ready = []
-        for node in all_nodes:
+        for node in self.get_all_nodes():
             if node.status != NodeStatus.PENDING:
                 continue
+            if root is not None and node.id == root.id:
+                continue
             children = self.get_children(node.id)
-            if not children or all(
-                c.status == NodeStatus.DONE for c in children
-            ):
+            if not children or all(c.status == NodeStatus.DONE for c in children):
                 ready.append(node)
         return ready
 
     def get_root(self) -> MikadoNode | None:
         row = self._conn.execute(
-            "SELECT * FROM nodes WHERE id NOT IN "
-            "(SELECT DISTINCT child_id FROM edges)"
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
         ).fetchone()
-        return self._row_to_node(row) if row else None
+        return row_to_node(row) if row else None
 
-    def _transition_status(
-        self, node_id: int, target: NodeStatus
-    ) -> None:
+    def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
+        from milknado.domains.common.errors import InvalidTransition
+        node = self.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        allowed = VALID_TRANSITIONS.get(node.status, set())
+        if target not in allowed:
+            raise InvalidTransition(
+                node_id=node_id,
+                current=node.status,
+                target=target,
+                valid_targets=tuple(allowed),
+            )
+
+    def _transition_status(self, node_id: int, target: NodeStatus) -> None:
         self._assert_transition(node_id, target)
-        completed_at = (
-            datetime.now(UTC).isoformat()
-            if target == NodeStatus.DONE
-            else None
-        )
+        completed_at = datetime.now(UTC).isoformat() if target == NodeStatus.DONE else None
         self._conn.execute(
             "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ?",
             (target.value, completed_at, node_id),
         )
         self._conn.commit()
 
-    def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
-        node = self.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        allowed = VALID_TRANSITIONS.get(node.status, set())
-        if target not in allowed:
-            raise ValueError(
-                f"Cannot transition from {node.status.value} "
-                f"to {target.value}"
-            )
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
 
@@ -272,8 +178,7 @@ class MikadoGraph:
         self._assert_transition(node_id, NodeStatus.FAILED)
         self._conn.execute(
             "UPDATE nodes SET status = ?, completed_at = NULL, "
-            "worktree_path = NULL, branch_name = NULL, run_id = NULL "
-            "WHERE id = ?",
+            "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
             (NodeStatus.FAILED.value, node_id),
         )
         self._conn.commit()
@@ -289,13 +194,7 @@ class MikadoGraph:
         self._conn.execute(
             "UPDATE nodes SET status = ?, completed_at = NULL, "
             "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
-            (
-                NodeStatus.RUNNING.value,
-                worktree_path,
-                branch_name,
-                run_id,
-                node_id,
-            ),
+            (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id),
         )
         self._conn.commit()
 
@@ -311,8 +210,7 @@ class MikadoGraph:
         self._assert_transition(node_id, NodeStatus.PENDING)
         self._conn.execute(
             "UPDATE nodes SET status = ?, completed_at = NULL, "
-            "worktree_path = NULL, branch_name = NULL, run_id = NULL "
-            "WHERE id = ?",
+            "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
             (NodeStatus.PENDING.value, node_id),
         )
         self._conn.commit()
@@ -320,87 +218,38 @@ class MikadoGraph:
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)
 
-    def set_file_ownership(
-        self, node_id: int, files: list[str]
-    ) -> None:
-        self._conn.execute(
-            "DELETE FROM file_ownership WHERE node_id = ?", (node_id,)
-        )
-        self._conn.executemany(
-            "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
-            [(node_id, f) for f in files],
-        )
-        self._conn.commit()
+    def set_file_ownership(self, node_id: int, files: list[str]) -> None:
+        set_file_ownership(self._conn, node_id, files)
 
     def get_file_ownership(self, node_id: int) -> list[str]:
-        rows = self._conn.execute(
-            "SELECT file_path FROM file_ownership WHERE node_id = ?",
-            (node_id,),
-        ).fetchall()
-        return [r[0] for r in rows]
+        return get_file_ownership(self._conn, node_id)
 
-    def check_parallel_safety(
-        self, node_ids: list[int]
-    ) -> list[tuple[int, int, list[str]]]:
-        ownership: dict[int, set[str]] = {}
-        for nid in node_ids:
-            ownership[nid] = set(self.get_file_ownership(nid))
-
-        conflicts: list[tuple[int, int, list[str]]] = []
-        for left_id, right_id in itertools.combinations(node_ids, 2):
-            overlap = ownership[left_id] & ownership[right_id]
-            if overlap:
-                conflicts.append(
-                    (left_id, right_id, sorted(overlap))
-                )
-        return conflicts
+    def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
+        return check_parallel_safety(self._conn, node_ids)
 
     def record_batch_plan(self, plan: BatchPlan) -> int:
-        spread_payload = [
-            {
-                "symbol_name": item.symbol.name,
-                "symbol_file": item.symbol.file,
-                "spread": item.spread,
-            }
-            for item in plan.spread_report
-        ]
-        max_spread = max((item.spread for item in plan.spread_report), default=0)
-        oversized_count = sum(1 for b in plan.batches if b.oversized)
-        now = datetime.now(UTC).isoformat()
-        cur = self._conn.execute(
-            "INSERT INTO batch_plans "
-            "(created_at, solver_status, batch_count, oversized_count, "
-            "max_spread, spread_json) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                now,
-                plan.solver_status,
-                len(plan.batches),
-                oversized_count,
-                max_spread,
-                json.dumps(spread_payload),
-            ),
-        )
-        self._conn.commit()
-        plan_id = cur.lastrowid
-        assert plan_id is not None
-        return plan_id
+        return record_batch_plan(self._conn, plan)
 
     def get_latest_batch_plan(self) -> dict | None:
-        row = self._conn.execute(
-            "SELECT id, created_at, solver_status, batch_count, oversized_count, "
-            "max_spread, spread_json FROM batch_plans ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row["id"],
-            "created_at": row["created_at"],
-            "solver_status": row["solver_status"],
-            "batch_count": row["batch_count"],
-            "oversized_count": row["oversized_count"],
-            "max_spread": row["max_spread"],
-            "spread_report": json.loads(row["spread_json"]),
-        }
+        return get_latest_batch_plan(self._conn)
+
+    def _record_completion_duration(self, node_id: int, duration_seconds: float) -> None:
+        record_completion_duration(self._conn, node_id, duration_seconds)
+
+    def recent_completion_durations(self, limit: int) -> list[float]:
+        return recent_completion_durations(self._conn, limit)
+
+    def set_dispatched_at(self, node_id: int) -> None:
+        set_dispatched_at(self._conn, node_id)
+
+    def set_spec_hash(self, spec_hash: str) -> None:
+        set_spec_hash(self._conn, spec_hash)
+
+    def get_spec_hash(self) -> str | None:
+        return get_spec_hash(self._conn)
+
+    def drop_all(self) -> int:
+        return drop_all(self._conn)
 
     def close(self) -> None:
         self._conn.close()
