@@ -13,11 +13,7 @@ from milknado.domains.common.agent_argv import (
 
 @dataclass(frozen=True)
 class MilknadoConfig:
-    """Runtime config loaded from ``milknado.toml``.
-
-    ``agent_family`` selects default planning/execution model family commands.
-    ``planning_agent`` and ``execution_agent`` can be overridden per project.
-    """
+    """Runtime config loaded from ``milknado.toml``."""
 
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
@@ -28,6 +24,12 @@ class MilknadoConfig:
     project_root: Path = Path(".")
     db_path: Path = Path(".milknado/milknado.db")
     plugins: tuple[str, ...] = ()
+    stall_threshold_seconds: int = 300
+    dispatch_max_retries: int = 2
+    dispatch_backoff_seconds: float = 5.0
+    protected_branches: tuple[str, ...] = ("main", "master")
+    completion_timeout_seconds: float = 1800.0
+    eta_sample_size: int = 10
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -85,6 +87,12 @@ def load_config(path: Path) -> MilknadoConfig:
         project_root=project_root,
         db_path=project_root / Path(milknado.get("db_path", ".milknado/milknado.db")),
         plugins=tuple(milknado.get("plugins", [])),
+        stall_threshold_seconds=int(milknado.get("stall_threshold_seconds", 300)),
+        dispatch_max_retries=int(milknado.get("dispatch_max_retries", 2)),
+        dispatch_backoff_seconds=float(milknado.get("dispatch_backoff_seconds", 5.0)),
+        protected_branches=tuple(milknado.get("protected_branches", ["main", "master"])),
+        completion_timeout_seconds=float(milknado.get("completion_timeout_seconds", 1800.0)),
+        eta_sample_size=int(milknado.get("eta_sample_size", 10)),
     )
 
 
@@ -99,6 +107,12 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         f"concurrency_limit = {config.concurrency_limit}",
         f'db_path = "{config.db_path.relative_to(config.project_root)}"',
         f"plugins = {list(config.plugins)}",
+        f"stall_threshold_seconds = {config.stall_threshold_seconds}",
+        f"dispatch_max_retries = {config.dispatch_max_retries}",
+        f"dispatch_backoff_seconds = {config.dispatch_backoff_seconds}",
+        f"protected_branches = {list(config.protected_branches)}",
+        f"completion_timeout_seconds = {config.completion_timeout_seconds}",
+        f"eta_sample_size = {config.eta_sample_size}",
     ]
     path.write_text("\n".join(lines) + "\n")
 

@@ -4,6 +4,7 @@ from milknado.domains.common.config import (
     load_config,
     save_config,
 )
+from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
 from milknado.domains.common.types import (
@@ -14,9 +15,11 @@ from milknado.domains.common.types import (
     RebaseResult,
 )
 
+
 __all__ = [
     "CrgPort",
     "GitPort",
+    "InvalidTransition",
     "MikadoEdge",
     "MikadoNode",
     "MilknadoConfig",
