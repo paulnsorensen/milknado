@@ -25,9 +25,12 @@ def _make_plan_result(**kwargs: Any) -> PlanResult:
         "oversized_count": 0,
         "solver_status": "OPTIMAL",
         "nodes_created": 3,
+        "verify_rounds_used": 1,
+        "verify_round_cap_hit": False,
+        "coverage_gaps_remaining": 0,
     }
     defaults.update(kwargs)
-    return PlanResult(**defaults)
+    return PlanResult(**defaults)  # type: ignore
 
 
 class TestSpecFlagValidation:
@@ -57,8 +60,8 @@ class TestSpecFlagValidation:
         spec.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd")
         with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
              patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.cli._load_or_default"), \
-             patch("milknado.cli._ensure_db"):
+             patch("milknado.app.run_command._load_or_default"), \
+             patch("milknado.app.run_command._ensure_db"):
             mock_planner = MagicMock()
             mock_planner_cls.return_value = mock_planner
             mock_planner.launch.return_value = _make_plan_result()
@@ -76,8 +79,8 @@ class TestSpecFlagValidation:
         spec.write_bytes(b"")  # 0 bytes
         with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
              patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.cli._load_or_default"), \
-             patch("milknado.cli._ensure_db") as mock_ensure_db:
+             patch("milknado.app.run_command._load_or_default"), \
+             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -100,8 +103,8 @@ class TestSolverStatusExitCodes:
         spec.write_text("# My Goal\nsome spec", encoding="utf-8")
         with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
              patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.cli._load_or_default"), \
-             patch("milknado.cli._ensure_db") as mock_ensure_db:
+             patch("milknado.app.run_command._load_or_default"), \
+             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -190,37 +193,120 @@ class TestSolverStatusExitCodes:
                 oversized_count=1,
                 solver_status="OPTIMAL",
                 nodes_created=4,
+                verify_rounds_used=2,
             ),
         )
         output = result.output
-        assert "5" in output or "Planned" in output
+        assert "Planned 5 changes" in output
+        assert "3 batches" in output
+        assert "solver=OPTIMAL" in output
+
+    def test_plan_summary_shows_verify_rounds_fraction(self, tmp_path: Path) -> None:
+        """Summary one-liner must include verify_rounds=used/max in A/B format."""
+        result = self._invoke_plan_with_result(
+            tmp_path,
+            _make_plan_result(verify_rounds_used=2),
+        )
+        assert "verify_rounds=2/3" in result.output
+
+    def test_plan_summary_cap_hit_marker_present(self, tmp_path: Path) -> None:
+        """When cap is hit the summary must append CAP-HIT."""
+        result = self._invoke_plan_with_result(
+            tmp_path,
+            _make_plan_result(verify_rounds_used=3, verify_round_cap_hit=True),
+        )
+        assert "CAP-HIT" in result.output
+
+    def test_plan_summary_custom_max_verify_rounds_reflected(self, tmp_path: Path) -> None:
+        """--max-verify-rounds changes the denominator in the summary."""
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Goal\nsome spec", encoding="utf-8")
+        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
+             patch("milknado.adapters.crg.CrgAdapter"), \
+             patch("milknado.app.run_command._load_or_default"), \
+             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+            mock_graph = MagicMock()
+            mock_ensure_db.return_value = mock_graph
+            mock_planner = MagicMock()
+            mock_planner_cls.return_value = mock_planner
+            mock_planner.launch.return_value = _make_plan_result(verify_rounds_used=1)
+            result = runner.invoke(
+                app,
+                [
+                    "plan",
+                    "--spec", str(spec),
+                    "--max-verify-rounds", "5",
+                    "--project-root", str(tmp_path),
+                ],
+            )
+        assert "verify_rounds=1/5" in result.output
+
+
+class TestResumeResetFlags:
+    def test_resume_and_reset_together_exits_nonzero(self, tmp_path: Path) -> None:
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Goal\nsome spec", encoding="utf-8")
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(spec),
+                "--resume",
+                "--reset",
+                "--project-root", str(tmp_path),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "mutually exclusive" in result.output.lower()
+
+    def test_existing_plan_without_flag_exits_nonzero(self, tmp_path: Path) -> None:
+        """ExistingPlanDetected raised by planner → CLI exits 1."""
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Goal\nsome spec", encoding="utf-8")
+        from milknado.domains.common.errors import ExistingPlanDetected
+        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
+             patch("milknado.adapters.crg.CrgAdapter"), \
+             patch("milknado.app.run_command._load_or_default"), \
+             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+            mock_graph = MagicMock()
+            mock_ensure_db.return_value = mock_graph
+            mock_planner = MagicMock()
+            mock_planner_cls.return_value = mock_planner
+            mock_planner.launch.side_effect = ExistingPlanDetected(5, 2, 2, 1)
+            result = runner.invoke(
+                app,
+                ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
+            )
+        assert result.exit_code == 1
+        assert "--resume" in result.output
+        assert "--reset" in result.output
 
 
 class TestDeriveGoal:
     def test_first_heading_extracted(self, tmp_path: Path) -> None:
-        from milknado.cli import _derive_goal
+        from milknado.app.spec_ingest import derive_goal
         spec = tmp_path / "spec.md"
         spec.write_text("# My Feature Goal\nsome content", encoding="utf-8")
-        assert _derive_goal(spec) == "My Feature Goal"
+        assert derive_goal(spec) == "My Feature Goal"
 
     def test_no_heading_returns_stem(self, tmp_path: Path) -> None:
-        from milknado.cli import _derive_goal
+        from milknado.app.spec_ingest import derive_goal
         spec = tmp_path / "my-spec.md"
         spec.write_text("No heading here, just prose.", encoding="utf-8")
-        assert _derive_goal(spec) == "my-spec"
+        assert derive_goal(spec) == "my-spec"
 
     def test_heading_with_extra_whitespace_stripped(self, tmp_path: Path) -> None:
-        from milknado.cli import _derive_goal
+        from milknado.app.spec_ingest import derive_goal
         spec = tmp_path / "spec.md"
         spec.write_text("#   Lots of spaces   \nsome content", encoding="utf-8")
-        assert _derive_goal(spec) == "Lots of spaces"
+        assert derive_goal(spec) == "Lots of spaces"
 
     def test_heading_level_two_not_extracted(self, tmp_path: Path) -> None:
-        from milknado.cli import _derive_goal
+        from milknado.app.spec_ingest import derive_goal
         spec = tmp_path / "spec.md"
         spec.write_text("## Not a top heading\n# Real heading\n", encoding="utf-8")
         # ## is not matched by `line.startswith("# ")` check... but "## " starts with "#"
         # Let's verify the actual behavior: "## Not..." starts with "# " is False,
         # because "## " != "# " prefix. Actually "## ".startswith("# ") is False.
-        result = _derive_goal(spec)
+        result = derive_goal(spec)
         assert result == "Real heading"

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.planning.touch_sites import _touch_sites_section
+
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, TilthPort
     from milknado.domains.common.types import MikadoNode
@@ -23,8 +25,7 @@ def build_planning_context(
     resuming = len(graph.get_all_nodes()) > 0
     sections = [
         _goal_section(goal),
-        _crg_compact_section(crg),
-        _structural_section(tilth, scope),
+        _touch_sites_section(spec_text, crg, tilth, scope),
         _graph_section(graph),
         _batching_section(),
         _instructions_section(resuming),
@@ -36,65 +37,6 @@ def build_planning_context(
 
 def _goal_section(goal: str) -> str:
     return f"# Goal\n\n{goal}"
-
-
-def _crg_compact_section(crg: CrgPort | None) -> str:
-    header = "# Architecture (compact)"
-    if crg is None:
-        return f"{header}\n\n_(CRG unavailable — architecture overview skipped)_"
-    try:
-        communities = crg.list_communities()[:5]
-        flows = crg.list_flows()[:3]
-        bridges = crg.get_bridge_nodes(top_n=5)[:5]
-        hubs = crg.get_hub_nodes(top_n=5)[:5]
-    except Exception as exc:
-        return (
-            f"{header}\n\n"
-            f"_(CRG query failed: {exc!s} — architecture overview skipped)_"
-        )
-
-    lines = [header]
-    lines.append("\n**Top communities:**")
-    for c in communities:
-        name = c.get("name", c.get("id", str(c)))
-        lines.append(f"- {name}")
-
-    lines.append("\n**Top flows:**")
-    for f in flows:
-        name = f.get("name", f.get("id", str(f)))
-        lines.append(f"- {name}")
-
-    lines.append("\n**Bridge nodes:**")
-    for b in bridges:
-        name = b.get("name", b.get("id", str(b)))
-        lines.append(f"- {name}")
-
-    lines.append("\n**Hub nodes:**")
-    for h in hubs:
-        name = h.get("name", h.get("id", str(h)))
-        lines.append(f"- {name}")
-
-    return "\n".join(lines)
-
-
-def _structural_section(tilth: TilthPort | None, scope: Path | None) -> str:
-    from milknado.domains.common.types import DegradationMarker, TilthMap
-    header = "# Structural Map (tilth)"
-    if tilth is None:
-        return f"{header}\n\n_(tilth not available — structural map skipped)_"
-    result = tilth.structural_map(scope or Path("."), 2000)
-    if isinstance(result, DegradationMarker):
-        return (
-            f"{header}\n\n"
-            f"_(tilth unavailable: {result.source} — {result.reason}. "
-            "Structural analysis skipped.)_"
-        )
-    assert isinstance(result, TilthMap)
-    data_lines = []
-    for key, value in result.data.items():
-        data_lines.append(f"- **{key}**: {value}")
-    body = "\n".join(data_lines) if data_lines else "_(no structural data returned)_"
-    return f"{header}\n\n{body}"
 
 
 def _spec_section(spec_text: str) -> str:
@@ -231,10 +173,69 @@ def _instructions_section(resuming: bool) -> str:
         "- All descriptions must be non-empty — the executor has no other context."
     )
 
+    # US-004: if 3 consecutive post-US-001+US-002 runs show multi_story_change_count>0
+    # AND US-008 has shipped, open a follow-up to revert FileChange to one-per-SymbolRef.
     granularity_note = (
-        "Emit file-level changes. More granular is better — multiple changes can share"
-        " a path when symbols differ (e.g. two classes in the same file)."
-        " The solver batches them optimally."
+        "Emit file-level changes. More granular is better — one change per story,"
+        " one story per change. The solver batches them optimally."
+    )
+
+    tests_note = (
+        "**Every user story requires a tests/ change.** Emit a separate change entry"
+        " for each test file and set `depends_on` to point at the implementation change:\n"
+        "```json\n"
+        '{"id": "c2", "path": "tests/test_foo.py", "edit_kind": "add",\n'
+        ' "description": "Tests for FooClass — verifies §Feature A (depends on c1)",\n'
+        ' "depends_on": ["c1"]}\n'
+        "```"
+    )
+
+    bundling_anti_pattern = (
+        "**Anti-pattern — bundling multiple stories into one change:**\n"
+        "One change must cover exactly one user story. Even when two stories touch the"
+        " same file, emit two separate changes — the solver merges safely:\n"
+        "```json\n"
+        "// BAD — c1 and c2 both claim src/foo.py and cover different stories\n"
+        '{"id": "c1", "path": "src/foo.py", "description": "Implement US-001 and US-002"}\n'
+        "\n"
+        "// GOOD — one change per story; path collision is fine when stories are distinct\n"
+        '{"id": "c1", "path": "src/foo.py", "description": "US-001: add FooClass (§ A)"}\n'
+        '{"id": "c2", "path": "src/foo.py", "description": "US-002: add BarMethod (§ B)"}\n'
+        "```"
+    )
+
+    bundled_description_anti_pattern = (
+        "**Anti-pattern — bundled description:**\n"
+        'A description such as `"Implement US-001, US-002, and US-003"` is a bundling'
+        " signal. Split into one change per story with an individual description each."
+    )
+
+    reject_and_retry_rule = (
+        "**Reject-and-retry rule:** Before returning, scan every change description"
+        r" for the pattern `\bUS-\d{3}\b.*\bUS-\d{3}\b` (two or more story references"
+        " in one description). If any description matches, you MUST split that change"
+        " into one change per story and re-check every description before returning."
+    )
+
+    worked_example = (
+        "**Worked example — 3 stories → 3 impl changes + 3 test changes:**\n"
+        "```json\n"
+        '{"id": "c1", "path": "src/auth.py", "edit_kind": "modify",\n'
+        ' "description": "US-101: add token refresh endpoint (§ Auth)",\n'
+        ' "depends_on": []},\n'
+        '{"id": "c2", "path": "src/session.py", "edit_kind": "modify",\n'
+        ' "description": "US-102: expire stale sessions (§ Session)",\n'
+        ' "depends_on": []},\n'
+        '{"id": "c3", "path": "src/audit.py", "edit_kind": "add",\n'
+        ' "description": "US-103: write audit log on logout (§ Audit)",\n'
+        ' "depends_on": ["c1"]},\n'
+        '{"id": "c4", "path": "tests/test_auth.py", "edit_kind": "add",\n'
+        ' "description": "US-101 tests — verifies refresh flow", "depends_on": ["c1"]},\n'
+        '{"id": "c5", "path": "tests/test_session.py", "edit_kind": "add",\n'
+        ' "description": "US-102 tests — verifies expiry logic", "depends_on": ["c2"]},\n'
+        '{"id": "c6", "path": "tests/test_audit.py", "edit_kind": "add",\n'
+        ' "description": "US-103 tests — verifies audit event written", "depends_on": ["c3"]}\n'
+        "```"
     )
 
     goal_summary_note = (
@@ -247,7 +248,12 @@ def _instructions_section(resuming: bool) -> str:
         return (
             "# Instructions\n\n"
             "Decompose the goal into a v2 change manifest.\n\n"
+            f"{tests_note}\n\n"
             f"{granularity_note}\n\n"
+            f"{bundling_anti_pattern}\n\n"
+            f"{bundled_description_anti_pattern}\n\n"
+            f"{reject_and_retry_rule}\n\n"
+            f"{worked_example}\n\n"
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
@@ -260,7 +266,12 @@ def _instructions_section(resuming: bool) -> str:
         "# Instructions (resuming)\n\n"
         "The graph above shows prior progress. Do NOT recreate existing nodes.\n\n"
         "Review the current state and add change manifest entries for any remaining work.\n\n"
+        f"{tests_note}\n\n"
         f"{granularity_note}\n\n"
+        f"{bundling_anti_pattern}\n\n"
+        f"{bundled_description_anti_pattern}\n\n"
+        f"{reject_and_retry_rule}\n\n"
+        f"{worked_example}\n\n"
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"

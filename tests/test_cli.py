@@ -44,6 +44,7 @@ def _configure_ralph_mocks(
         _wait_for_next_completion
     )
     ralph_cls.return_value.poll_progress_events.return_value = []
+    ralph_cls.return_value.verify_spec.return_value = MagicMock()
 
 
 @pytest.fixture()
@@ -200,6 +201,85 @@ class TestStatus:
         assert "/tmp/milknado-wt" in result.output
 
 
+class TestStatusWithDurations:
+    def test_flag_exits_zero_on_empty_graph(self, project_dir: Path) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        result = runner.invoke(app, ["status", "--with-durations", str(project_dir)])
+        assert result.exit_code == 0
+        assert "No nodes" in result.output
+
+    def test_flag_shows_duration_table_no_data(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        graph.add_node("pending task")
+        graph.close()
+
+        result = runner.invoke(app, ["status", "--with-durations", str(project_dir)])
+        assert result.exit_code == 0
+        assert "No completed nodes" in result.output
+
+    def test_flag_shows_duration_for_completed_node(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        graph.add_node("root")
+        child = graph.add_node("done task", parent_id=1)
+        graph.set_dispatched_at(child.id)
+        graph.mark_running(child.id)
+        graph._record_completion_duration(child.id, 42.5)
+        graph.mark_done(child.id)
+        graph.close()
+
+        result = runner.invoke(app, ["status", "--with-durations", str(project_dir)])
+        assert result.exit_code == 0
+        assert "42.5" in result.output
+        assert "Duration summary" in result.output
+
+    def test_summary_line_contains_stats(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        for i, dur in enumerate([10.0, 20.0, 30.0, 40.0, 50.0], start=1):
+            child = graph.add_node(f"task-{i}", parent_id=root.id)
+            graph.set_dispatched_at(child.id)
+            graph.mark_running(child.id)
+            graph._record_completion_duration(child.id, dur)
+            graph.mark_done(child.id)
+        graph.close()
+
+        result = runner.invoke(app, ["status", "--with-durations", str(project_dir)])
+        assert result.exit_code == 0
+        assert "min=" in result.output
+        assert "median=" in result.output
+        assert "p95=" in result.output
+        assert "max=" in result.output
+
+    def test_without_flag_no_duration_table(self, project_dir: Path) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        graph.add_node("root")
+        graph.close()
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        assert result.exit_code == 0
+        assert "Duration" not in result.output
+
+
 class TestAddNode:
     def test_add_root(self, project_dir: Path) -> None:
         runner.invoke(app, ["init", str(project_dir)])
@@ -330,9 +410,12 @@ def _make_plan_result(**kwargs: object) -> MagicMock:
         "oversized_count": 0,
         "solver_status": "OPTIMAL",
         "change_count": 4,
+        "verify_rounds_used": 0,
+        "verify_round_cap_hit": False,
+        "coverage_gaps_remaining": 0,
     }
-    defaults.update(kwargs)
-    return PlanResult(**defaults)  # type: ignore[arg-type]
+    defaults.update(kwargs)  # type: ignore
+    return PlanResult(**defaults)  # type: ignore
 
 
 class TestPlanSpecOption:
@@ -510,7 +593,7 @@ class TestPlanIssueOption:
         completed.stderr = ""
         return completed
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_fetches_and_runs_planner(
@@ -538,7 +621,7 @@ class TestPlanIssueOption:
         assert spec_file.exists()
         assert spec_file.read_text().startswith("# Add --issue support")
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_and_spec_combine_into_one_plan(
@@ -578,7 +661,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "--spec or --issue" in result.output
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     def test_issue_gh_failure_exits_one(
         self, mock_run: MagicMock, project_dir: Path,
     ) -> None:
@@ -595,7 +678,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "no such issue" in result.output
 
-    @patch("milknado.cli.subprocess.run", side_effect=FileNotFoundError())
+    @patch("milknado.app.spec_ingest.subprocess.run", side_effect=FileNotFoundError())
     def test_issue_gh_not_installed_exits_one(
         self, _mock_run: MagicMock, project_dir: Path,
     ) -> None:
@@ -606,7 +689,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "gh" in result.output.lower()
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_multiple_issues_merged_into_one_spec(
@@ -659,7 +742,7 @@ class TestPlanIssueOption:
         # Goal derived from combined heading
         assert "Plan for issues #42, #43" in result.output
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_comma_separated_issues_accepted(
@@ -727,7 +810,7 @@ class TestPlanIssueOption:
         assert "## Spec: valid" in content
         assert "## Spec: no_heading" in content
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.app.spec_ingest.subprocess.run")
     def test_multi_issue_second_fetch_fails_exits_one(
         self, mock_run: MagicMock, project_dir: Path,
     ) -> None:
@@ -749,6 +832,95 @@ class TestPlanIssueOption:
         )
         assert result.exit_code == 1
         assert "bad issue" in result.output
+
+
+class TestPlanResumeReset:
+    def test_resume_and_reset_together_exits_one(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(FIXTURES / "valid.md"),
+                "--resume",
+                "--reset",
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_resume_flag_passes_resuming_true(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(FIXTURES / "valid.md"),
+                "--resume",
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        call_kwargs = mock_planner_cls.return_value.launch.call_args.kwargs
+        assert call_kwargs.get("resuming") is True
+        assert call_kwargs.get("reset") is False
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_reset_flag_passes_reset_true(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(FIXTURES / "valid.md"),
+                "--reset",
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0
+        call_kwargs = mock_planner_cls.return_value.launch.call_args.kwargs
+        assert call_kwargs.get("reset") is True
+        assert call_kwargs.get("resuming") is False
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_existing_plan_detected_exits_one(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        from milknado.domains.common.errors import ExistingPlanDetected
+
+        mock_planner_cls.return_value.launch.side_effect = ExistingPlanDetected(
+            total=5, done=2, pending=2, running=1,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(FIXTURES / "valid.md"),
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "existing plan" in result.output
+        assert "5 nodes" in result.output
+        assert "--resume" in result.output
+        assert "--reset" in result.output
 
 
 class TestToolsCheck:
@@ -897,6 +1069,7 @@ class TestRunCommand:
 
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
+        # Add root + leaf so the leaf is dispatchable.
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         root = graph.add_node("root goal")
@@ -911,6 +1084,7 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "Starting execution loop" in result.output
+        # Root stays PENDING without --spec; run reports completed leaves.
         assert "1 completed" in result.output
 
     def test_dispatches_multiple_parallel_leaves(
@@ -937,6 +1111,7 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
+        # 2 leaves dispatched; root stays PENDING without --spec.
         assert "2 completed" in result.output
 
     def test_skips_conflicting_nodes(
@@ -965,4 +1140,6 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
+        # Conflicting leaves are serialized (2 runs, not parallel).
+        # Root stays PENDING without --spec.
         assert "2 completed" in result.output

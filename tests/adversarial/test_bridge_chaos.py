@@ -100,7 +100,7 @@ class TestBatchDescriptionStacking:
         big_desc = "A" * 10_000
         batch = Batch(index=0, change_ids=("c1", "c2"), depends_on=())
         desc_by_change = {"c1": big_desc, "c2": big_desc}
-        result = _batch_description(batch, desc_by_change)
+        result = _batch_description(batch, desc_by_change)  # type: ignore
         # Should contain both descriptions numbered
         assert result.startswith("1. ")
         assert "2. " in result

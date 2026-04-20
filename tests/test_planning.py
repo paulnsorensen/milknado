@@ -55,7 +55,6 @@ class TestBuildPlanningContext:
         assert "# Goal" in ctx
         assert "extract auth" in ctx
 
-    @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
     def test_includes_touch_sites_section(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -218,7 +217,6 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=mock_tilth)
         assert ctx  # no error
 
-    @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
     def test_touch_sites_section_with_tilth_map(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -231,7 +229,6 @@ class TestBuildPlanningContext:
         assert "modules" in ctx
         assert "42" in ctx
 
-    @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
     def test_touch_sites_section_degradation_message(
         self, tmp_graph: MagicMock, mock_crg: MagicMock
     ) -> None:
@@ -244,7 +241,6 @@ class TestBuildPlanningContext:
         assert "tilth" in ctx
         assert "binary not found" in ctx
 
-    @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
     def test_touch_sites_section_when_tilth_none(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:

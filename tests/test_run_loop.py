@@ -802,7 +802,6 @@ class TestStrictDrain:
 
 
 class TestProtectedBranchGuard:
-    @pytest.mark.skip(reason="protected-branch guard lives in app/run_command (β slice)")
     def test_protected_branch_raises_exit_2_before_log_created(
         self, tmp_path: Path
     ) -> None:

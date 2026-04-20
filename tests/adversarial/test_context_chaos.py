@@ -81,7 +81,6 @@ class TestSpecTextInjection:
         assert "🧀" in ctx
 
 
-@pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
 class TestTouchSitesCrg:
     def test_touch_sites_section_present(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock

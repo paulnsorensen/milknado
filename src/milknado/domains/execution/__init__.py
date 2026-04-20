@@ -6,7 +6,7 @@ from milknado.domains.execution.executor import (
     RebaseConflict,
     get_dispatchable_nodes,
 )
-from milknado.domains.execution.run_loop import RunLoop, RunLoopResult
+from milknado.domains.execution.run_loop import RunLoop, RunLoopResult, VerifyOutcome
 
 __all__ = [
     "CompletionResult",
@@ -16,5 +16,6 @@ __all__ = [
     "RebaseConflict",
     "RunLoop",
     "RunLoopResult",
+    "VerifyOutcome",
     "get_dispatchable_nodes",
 ]
