@@ -36,6 +36,7 @@ console = Console()
 
 CONFIG_FILE = "milknado.toml"
 
+
 def _ensure_plugins_loaded(config: MilknadoConfig) -> None:
     from milknado.plugins import discover_entry_point_plugins, load_plugins
 
