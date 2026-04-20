@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
 from code_review_graph.communities import get_architecture_overview, get_communities
@@ -122,3 +122,44 @@ class CrgAdapter:
 
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return find_hub_nodes(self._get_store(), top_n=top_n)
+
+    def semantic_search_nodes(
+        self, query: str, top_n: int = 5,
+    ) -> list[dict[str, Any]]:
+        nodes = self._get_store().search_nodes(query, limit=top_n)
+        return [
+            {
+                "name": n.name,
+                "file_path": n.file_path,
+                "kind": n.kind,
+                "qualified_name": n.qualified_name,
+            }
+            for n in nodes
+        ]
+
+    def semantic_search(
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: Literal["minimal", "full"] = "minimal",
+    ) -> list[dict[str, Any]]:
+        words = query.split()
+        if len(words) < 2:
+            raise ValueError(f"semantic_search query must be 2-4 words, got: {query!r}")
+        if len(words) > 4:
+            query = " ".join(words[:4])
+        nodes = self._get_store().search_nodes(query, limit=top_n)
+        if detail_level == "minimal":
+            seen: dict[str, None] = {}
+            for n in nodes:
+                seen[n.file_path] = None
+            return [{"file_path": fp} for fp in seen]
+        return [
+            {
+                "name": n.name,
+                "file_path": n.file_path,
+                "kind": n.kind,
+                "qualified_name": n.qualified_name,
+            }
+            for n in nodes
+        ]

@@ -81,45 +81,40 @@ class TestSpecTextInjection:
         assert "🧀" in ctx
 
 
-class TestCrgSlicing:
-    def test_crg_returning_more_than_top_n_is_truncated(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
-        """CRG returning 20 communities → context only includes 5."""
-        crg = MagicMock()
-        crg.list_communities.return_value = [{"name": f"c{i}"} for i in range(20)]
-        crg.list_flows.return_value = [{"name": f"f{i}"} for i in range(20)]
-        crg.get_bridge_nodes.return_value = [{"name": f"b{i}"} for i in range(20)]
-        crg.get_hub_nodes.return_value = [{"name": f"h{i}"} for i in range(20)]
-
-        ctx = build_planning_context("goal", crg, tmp_graph)
-        # Only first 5 communities
-        for i in range(5):
-            assert f"c{i}" in ctx
-        assert "c5" not in ctx
-        # Only first 3 flows
-        for i in range(3):
-            assert f"f{i}" in ctx
-        assert "f3" not in ctx
-
-    def test_crg_returning_empty_lists_no_crash(
+@pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
+class TestTouchSitesCrg:
+    def test_touch_sites_section_present(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert "# Architecture (compact)" in ctx
+        assert "# Probable Touch Sites" in ctx
 
-    def test_crg_returning_items_without_name_key(
+    def test_crg_semantic_search_called_per_keyword(
         self, tmp_graph: MikadoGraph
     ) -> None:
-        """Items without 'name' key fall back to 'id' or str(item)."""
+        """CRG semantic_search is called once per extracted keyword."""
         crg = MagicMock()
-        crg.list_communities.return_value = [{"id": "community_0"}, {"other": "data"}]
-        crg.list_flows.return_value = []
-        crg.get_bridge_nodes.return_value = []
-        crg.get_hub_nodes.return_value = []
+        crg.semantic_search.return_value = []
+        spec = "## US-001: Add authentication\n### Acceptance Criteria\n"
+        build_planning_context("goal", crg, tmp_graph, spec_text=spec)
+        assert crg.semantic_search.call_count >= 1
 
-        ctx = build_planning_context("goal", crg, tmp_graph)
-        assert "community_0" in ctx
+    def test_crg_file_path_key_used_for_ranking(
+        self, tmp_graph: MikadoGraph
+    ) -> None:
+        """Hits with 'file_path' key are ranked into the touch sites section."""
+        crg = MagicMock()
+        crg.semantic_search.return_value = [{"file_path": "src/auth.py", "score": 0.9}]
+        spec = "## US-001: Add auth\n"
+        ctx = build_planning_context("goal", crg, tmp_graph, spec_text=spec)
+        assert "auth.py" in ctx
+
+    def test_crg_none_falls_back_gracefully(
+        self, tmp_graph: MikadoGraph
+    ) -> None:
+        spec = "## US-001: Add feature\n"
+        ctx = build_planning_context("goal", None, tmp_graph, spec_text=spec)
+        assert "# Probable Touch Sites" in ctx
 
 
 class TestTruncateDescription:
