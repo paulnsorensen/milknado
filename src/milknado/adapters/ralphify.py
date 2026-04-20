@@ -24,9 +24,14 @@ class RalphifyAdapter:
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> Any:
+        mcp_config = project_root / ".mcp.json" if project_root else None
+        agent_cmd = agent
+        if mcp_config and mcp_config.exists():
+            agent_cmd = f"{agent} --mcp-config {mcp_config}"
         config = RunConfig(
-            agent=agent,
+            agent=agent_cmd,
             ralph_dir=ralph_dir,
             ralph_file=ralph_file,
             project_root=ralph_dir,

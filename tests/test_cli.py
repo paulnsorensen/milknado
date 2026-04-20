@@ -491,6 +491,263 @@ class TestPlanSpecOption:
         assert "solver=" in result.output
 
 
+class TestPlanIssueOption:
+    @staticmethod
+    def _gh_ok(title: str = "Add --issue support", body: str = "Body text") -> MagicMock:
+        import json as _json
+
+        completed = MagicMock()
+        completed.returncode = 0
+        completed.stdout = _json.dumps({
+            "title": title,
+            "body": body,
+            "number": 42,
+            "url": "https://example.com/issues/42",
+        })
+        completed.stderr = ""
+        return completed
+
+    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_issue_fetches_and_runs_planner(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        mock_run: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_run.return_value = self._gh_ok()
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            ["plan", "--issue", "42", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "Add --issue support" in result.output  # title becomes goal
+        mock_run.assert_called_once()
+        argv = mock_run.call_args.args[0]
+        assert argv[:3] == ["gh", "issue", "view"]
+        assert "42" in argv
+        spec_file = project_dir / ".milknado" / "issues" / "issue-42.md"
+        assert spec_file.exists()
+        assert spec_file.read_text().startswith("# Add --issue support")
+
+    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_issue_and_spec_combine_into_one_plan(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        mock_run: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_run.return_value = self._gh_ok(title="Issue title")
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec", str(FIXTURES / "valid.md"),
+                "--issue", "42",
+                "--project-root", str(project_dir),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        spec_file = project_dir / ".milknado" / "issues" / "plan-valid-42.md"
+        assert spec_file.exists()
+        content = spec_file.read_text()
+        assert content.startswith("# Plan for specs valid + issues #42")
+        assert "## Spec: valid" in content
+        assert "My Feature Goal" in content  # from fixture body
+        assert "## #42: Issue title" in content
+
+    def test_plan_with_neither_exits_one(self, project_dir: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["plan", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "--spec or --issue" in result.output
+
+    @patch("milknado.cli.subprocess.run")
+    def test_issue_gh_failure_exits_one(
+        self, mock_run: MagicMock, project_dir: Path,
+    ) -> None:
+        failed = MagicMock()
+        failed.returncode = 1
+        failed.stdout = ""
+        failed.stderr = "no such issue"
+        mock_run.return_value = failed
+
+        result = runner.invoke(
+            app,
+            ["plan", "--issue", "99999", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "no such issue" in result.output
+
+    @patch("milknado.cli.subprocess.run", side_effect=FileNotFoundError())
+    def test_issue_gh_not_installed_exits_one(
+        self, _mock_run: MagicMock, project_dir: Path,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            ["plan", "--issue", "42", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "gh" in result.output.lower()
+
+    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_multiple_issues_merged_into_one_spec(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        mock_run: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        import json as _json
+
+        def _gh(title: str, number: int, body: str) -> MagicMock:
+            completed = MagicMock()
+            completed.returncode = 0
+            completed.stdout = _json.dumps({
+                "title": title,
+                "body": body,
+                "number": number,
+                "url": f"https://example.com/issues/{number}",
+            })
+            completed.stderr = ""
+            return completed
+
+        mock_run.side_effect = [
+            _gh("First issue", 42, "Body A"),
+            _gh("Second issue", 43, "Body B"),
+        ]
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--issue", "42",
+                "--issue", "43",
+                "--project-root", str(project_dir),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_count == 2
+        spec_file = project_dir / ".milknado" / "issues" / "issue-42-43.md"
+        assert spec_file.exists()
+        content = spec_file.read_text()
+        assert content.startswith("# Plan for issues #42, #43")
+        assert "## #42: First issue" in content
+        assert "Body A" in content
+        assert "## #43: Second issue" in content
+        assert "Body B" in content
+        # Goal derived from combined heading
+        assert "Plan for issues #42, #43" in result.output
+
+    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_comma_separated_issues_accepted(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        mock_run: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        import json as _json
+
+        def _gh(title: str, number: int) -> MagicMock:
+            c = MagicMock()
+            c.returncode = 0
+            c.stdout = _json.dumps({
+                "title": title,
+                "body": f"body {number}",
+                "number": number,
+                "url": f"https://example.com/issues/{number}",
+            })
+            c.stderr = ""
+            return c
+
+        mock_run.side_effect = [_gh("A", 42), _gh("B", 43), _gh("C", 44)]
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--issue", "42,43",
+                "--issue", "44",
+                "--project-root", str(project_dir),
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert mock_run.call_count == 3
+        spec_file = project_dir / ".milknado" / "issues" / "issue-42-43-44.md"
+        assert spec_file.exists()
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_multiple_specs_comma_separated_merged(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--spec",
+                f"{FIXTURES / 'valid.md'},{FIXTURES / 'no_heading.md'}",
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        spec_file = project_dir / ".milknado" / "issues" / "plan-valid-no_heading.md"
+        assert spec_file.exists()
+        content = spec_file.read_text()
+        assert content.startswith("# Plan for specs valid, no_heading")
+        assert "## Spec: valid" in content
+        assert "## Spec: no_heading" in content
+
+    @patch("milknado.cli.subprocess.run")
+    def test_multi_issue_second_fetch_fails_exits_one(
+        self, mock_run: MagicMock, project_dir: Path,
+    ) -> None:
+        ok = self._gh_ok()
+        failed = MagicMock()
+        failed.returncode = 1
+        failed.stdout = ""
+        failed.stderr = "bad issue"
+        mock_run.side_effect = [ok, failed]
+
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--issue", "42",
+                "--issue", "9999",
+                "--project-root", str(project_dir),
+            ],
+        )
+        assert result.exit_code == 1
+        assert "bad issue" in result.output
+
+
 class TestToolsCheck:
     @patch("milknado.cli.get_required_tool_status")
     def test_all_installed_exits_zero(self, mock_status: MagicMock) -> None:

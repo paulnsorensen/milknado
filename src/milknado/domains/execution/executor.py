@@ -103,6 +103,7 @@ class Executor:
                 ralph_file=ralph_path,
                 commands=[],
                 quality_gates=list(config.quality_gates),
+                project_root=wt_path,
             )
             run_id = run.state.run_id
             self._graph.set_run_id(node_id, run_id)

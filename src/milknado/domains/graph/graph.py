@@ -265,6 +265,7 @@ class MikadoGraph:
                 f"Cannot transition from {node.status.value} "
                 f"to {target.value}"
             )
+
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
 
