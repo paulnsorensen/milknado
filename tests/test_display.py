@@ -16,12 +16,21 @@ class TestSummarize:
         assert s.conflicts == []
 
     def test_single_node(self, graph):
+        # A solo root is excluded from ready nodes (it completes via verify_spec).
         graph.add_node("Root goal")
         s = summarize(graph)
         assert s.total == 1
         assert s.done == 0
         assert s.pct_complete == 0.0
         assert len(s.ready) == 0
+
+    def test_single_node_with_leaf_shows_leaf_ready(self, graph):
+        root = graph.add_node("Root goal")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+        s = summarize(graph)
+        assert s.total == 2
+        assert len(s.ready) == 1
+        assert s.ready[0].id == leaf.id
 
     def test_completion_percentage(self, graph):
         root = graph.add_node("Root")

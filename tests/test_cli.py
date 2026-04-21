@@ -38,10 +38,14 @@ def _configure_ralph_mocks(
         ralph_cls.return_value.create_run.return_value = fake_run
     ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
 
-    def _wait_for_next_completion(active_run_ids: set[str]) -> tuple[str, bool]:
+    def _wait_for_next_completion(
+        active_run_ids: set[str],
+        timeout: float | None = None,
+    ) -> tuple[str, bool]:
         return next(iter(active_run_ids)), True
 
     ralph_cls.return_value.wait_for_next_completion.side_effect = _wait_for_next_completion
+    ralph_cls.return_value.poll_progress_events.return_value = []
 
 
 @pytest.fixture()
@@ -923,13 +927,17 @@ class TestRunCommand:
         mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
         project_dir: Path,
     ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
-        runner.invoke(app, ["add-node", "root goal", "--project-root", str(project_dir)])
-        runner.invoke(
-            app,
-            ["add-node", "leaf task", "--parent", "1", "--project-root", str(project_dir)],
-        )
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root goal")
+        graph.add_node("leaf task", parent_id=root.id)
+        graph.close()
+
         _configure_ralph_mocks(mock_ralph_cls, project_dir)
 
         result = runner.invoke(
@@ -938,7 +946,7 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "Starting execution loop" in result.output
-        assert "Root goal achieved" in result.output
+        assert "1 completed" in result.output
 
     def test_dispatches_multiple_parallel_leaves(
         self,
@@ -964,7 +972,7 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "Root goal achieved" in result.output
+        assert "2 completed" in result.output
 
     def test_skips_conflicting_nodes(
         self,
@@ -992,4 +1000,4 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "Root goal achieved" in result.output
+        assert "2 completed" in result.output

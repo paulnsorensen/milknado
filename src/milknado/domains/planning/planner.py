@@ -113,6 +113,14 @@ class Planner:
             change_count=len(manifest.changes),
         )
 
+    def replan_with_delta(
+        self,
+        goal_delta: str,
+        project_root: Path,
+        spec_path: Path | None = None,
+    ) -> PlanResult:
+        return self.launch(goal_delta, project_root, spec_path=spec_path)
+
 
 def _read_spec(spec_path: Path | None) -> str | None:
     if spec_path is None:
