@@ -1,4 +1,4 @@
-"""CP-SAT model builder and two-pass solver for batch planning."""
+"""CP-SAT model builder for batch planning."""
 
 from __future__ import annotations
 
