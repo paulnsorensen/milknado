@@ -1,4 +1,5 @@
 """Tests for graph/_persistence.py — schema, row serialization, plan_state, drop_all."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -39,9 +40,7 @@ class TestCreateTables:
     def test_tables_created(self, conn: sqlite3.Connection) -> None:
         names = {
             r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert {"nodes", "edges", "file_ownership", "plan_state", "batch_plans"} <= names
 
@@ -90,7 +89,8 @@ class TestDropAll:
 
 class TestSetDispatchedAt:
     def test_set_dispatched_at_raises_for_missing_node(
-        self, conn: sqlite3.Connection,
+        self,
+        conn: sqlite3.Connection,
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             set_dispatched_at(conn, 9999)

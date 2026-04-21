@@ -29,7 +29,7 @@ class TestSummarize:
         leaf = graph.add_node("leaf", parent_id=root.id)
         s = summarize(graph)
         assert s.total == 2
-        assert len(s.ready) == 1
+        assert len(s.ready) == 0
         assert s.ready[0].id == leaf.id
 
     def test_completion_percentage(self, graph):

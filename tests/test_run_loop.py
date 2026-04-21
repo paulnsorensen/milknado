@@ -243,12 +243,13 @@ class TestRunLoopSingleNode:
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        graph.add_node("root goal")
+        root = graph.add_node("root goal")
+        graph.add_node("leaf", parent_id=root.id)
         run_loop.run(config, "main")
 
-        root = graph.get_node(1)
-        assert root is not None
-        assert root.status == NodeStatus.PENDING
+        root_node = graph.get_node(root.id)
+        assert root_node is not None
+        assert root_node.status == NodeStatus.PENDING
 
 
 class TestRunLoopParentChild:

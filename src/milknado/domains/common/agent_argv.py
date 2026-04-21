@@ -14,10 +14,44 @@ DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
     "codex": "codex exec --model gpt-5.4 --sandbox workspace-write",
 }
 
+# Per-family tool allowlists for deny-by-default execution workers.
+# Families absent from this dict have no CLI-level tool restriction:
+#   cursor-agent: --allowedTools not implemented for headless (config-file only, broken Apr 2026)
+#   codex: --sandbox workspace-write scopes files, not tools; no allowlist flag available
+WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
+    "claude": (
+        "mcp__tilth__*",
+        "Bash(rtk:*)",
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "MultiEdit",
+    ),
+    # Gemini uses raw MCP tool names (no mcp__server__ prefix) + ShellTool(pattern) for shell.
+    "gemini": (
+        "tilth_search",
+        "tilth_read",
+        "tilth_files",
+        "tilth_deps",
+        "tilth_diff",
+        "tilth_edit",
+        "ShellTool(rtk *)",
+        "read_file",
+        "write_file",
+        "edit_file",
+    ),
+}
+
+_CLAUDE_TOOLS_CSV = ",".join(WORKER_ALLOWED_TOOLS["claude"])
+_GEMINI_TOOLS_CSV = ",".join(WORKER_ALLOWED_TOOLS["gemini"])
+
 DEFAULT_EXECUTION_AGENT_BY_FAMILY: Final[dict[str, str]] = {
-    "claude": "claude --model sonnet -p --dangerously-skip-permissions",
+    "claude": f"claude --model sonnet -p --allowedTools '{_CLAUDE_TOOLS_CSV}'",
     "cursor": "cursor-agent --model sonnet -p",
-    "gemini": "gemini --model gemini-2.5-flash -p --yolo",
+    # --allowed-tools replaces --yolo for execution; workers get deny-by-default, not trust-all.
+    "gemini": f"gemini --model gemini-2.5-flash -p --allowed-tools '{_GEMINI_TOOLS_CSV}'",
     "codex": "codex exec --model gpt-5.4-mini --sandbox workspace-write",
 }
 
