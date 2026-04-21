@@ -93,9 +93,7 @@ def _build_title(active: dict[str, int], graph: MikadoGraph) -> str:
     )
 
 
-def _worker_stats(
-    run_id: str, state: TuiState, graph: MikadoGraph, now: float
-) -> _WorkerStats:
+def _worker_stats(run_id: str, state: TuiState, graph: MikadoGraph, now: float) -> _WorkerStats:
     node_id = state.active[run_id]
     elapsed = now - state.dispatched_at.get(run_id, now)
     ev = state.progress_by_run.get(run_id)
@@ -113,9 +111,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
     durations = list(state.completion_durations)
     avg_dur = sum(durations) / len(durations) if len(durations) >= 3 else None
 
-    table = Table(
-        title=_build_title(state.active, graph), show_header=True, header_style="bold"
-    )
+    table = Table(title=_build_title(state.active, graph), show_header=True, header_style="bold")
     table.add_column("", width=12, no_wrap=True)
     table.add_column("ID", style="cyan", width=4, no_wrap=True)
     table.add_column("Description")
@@ -160,9 +156,7 @@ def _build_layout(state: TuiState, graph: MikadoGraph) -> Layout:
     return layout
 
 
-def _render_overlay(
-    run_id: str, state: TuiState, graph: MikadoGraph, ralph: RalphPort
-) -> Panel:
+def _render_overlay(run_id: str, state: TuiState, graph: MikadoGraph, ralph: RalphPort) -> Panel:
     from rich.panel import Panel
 
     node_id = state.active.get(run_id)

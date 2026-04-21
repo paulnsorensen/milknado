@@ -1,4 +1,5 @@
 """Tests for run_loop/input.py: InputState, handle_key, drain_input, thread lifecycle."""
+
 from __future__ import annotations
 
 import threading

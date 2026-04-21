@@ -1,4 +1,5 @@
 """Tests for run_loop/_completion.py: handle_completion paths."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -167,7 +168,9 @@ class TestHandleCompletionRebaseConflict:
 
     def test_conflict_strict_sets_failure_triggered(self) -> None:
         exec_ = _FakeExecutor()
-        conflict = RebaseConflict(node_id=1, description="task", conflicting_files=("src/x.py",), detail="")
+        conflict = RebaseConflict(
+            node_id=1, description="task", conflicting_files=("src/x.py",), detail=""
+        )
         exec_._complete_result = _FakeCompleteResult(rebase_conflict=conflict)
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = True

@@ -316,7 +316,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_done_signal(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -330,7 +332,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_gaps_signal_with_delta(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -345,7 +349,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_timeout_returns_gaps(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         import time
 
@@ -378,7 +384,9 @@ def _setup_verify_mocks(
 
 
 def _put_iteration(
-    q: queue.Queue[MagicMock], event_type: EventType, result_text: str,
+    q: queue.Queue[MagicMock],
+    event_type: EventType,
+    result_text: str,
 ) -> None:
     event = MagicMock()
     event.type = event_type
@@ -442,9 +450,7 @@ class TestDrainVerifyRunExceptionHandler:
 
 
 class TestPollProgressEvents:
-    def test_returns_buffered_events_and_clears(
-        self, adapter: RalphifyAdapter
-    ) -> None:
+    def test_returns_buffered_events_and_clears(self, adapter: RalphifyAdapter) -> None:
         ev = ProgressEvent(run_id="run-1", work=5, total=10, message="doing stuff")
         adapter._progress_buffer.append(ev)  # type: ignore[attr-defined]
         result = adapter.poll_progress_events()
@@ -610,9 +616,7 @@ class TestCreateRunWithProjectRoot:
 
 
 class TestGenerateRalphMdWriteError:
-    def test_raises_on_write_failure(
-        self, adapter: RalphifyAdapter, tmp_path: Path
-    ) -> None:
+    def test_raises_on_write_failure(self, adapter: RalphifyAdapter, tmp_path: Path) -> None:
         from milknado.domains.common.errors import RalphMarkdownWriteError
 
         node = MikadoNode(id=1, description="Task")
@@ -622,6 +626,9 @@ class TestGenerateRalphMdWriteError:
             mock_write.side_effect = OSError("disk full")
             with pytest.raises(RalphMarkdownWriteError) as exc_info:
                 adapter.generate_ralph_md(
-                    node=node, context="ctx", quality_gates=[], output_path=bad_path,
+                    node=node,
+                    context="ctx",
+                    quality_gates=[],
+                    output_path=bad_path,
                 )
             assert exc_info.value.path == bad_path

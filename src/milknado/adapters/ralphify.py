@@ -130,11 +130,13 @@ class RalphifyAdapter:
             _logger.warning("verify_spec: no agent configured, returning done")
             return VerifySpecResult(outcome="done")
         import tempfile
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             ralph_file = tmp_path / "ralph.md"
             ralph_file.write_text(
-                _build_verify_prompt(spec_text, graph_state), encoding="utf-8",
+                _build_verify_prompt(spec_text, graph_state),
+                encoding="utf-8",
             )
             local_manager = RunManager()
             config = RunConfig(
@@ -164,6 +166,7 @@ class RalphifyAdapter:
             output_path.write_text(content, encoding="utf-8")
         except OSError as exc:
             from milknado.domains.common.errors import RalphMarkdownWriteError
+
             raise RalphMarkdownWriteError(path=output_path, cause=exc) from exc
         return output_path
 
@@ -193,10 +196,12 @@ def _drain_verify_run(
     run_id: str,
     ev_queue: queue.Queue[Any],
 ) -> VerifySpecResult:
-    _ITERATION_EVENTS = frozenset({
-        EventType.ITERATION_COMPLETED,
-        EventType.ITERATION_FAILED,
-    })
+    _ITERATION_EVENTS = frozenset(
+        {
+            EventType.ITERATION_COMPLETED,
+            EventType.ITERATION_FAILED,
+        }
+    )
     output_parts: list[str] = []
     deadline = time.monotonic() + 120.0
     try:
@@ -228,6 +233,7 @@ def _drain_verify_run(
 
 def _parse_verify_output(output: str) -> VerifySpecResult:
     import re
+
     if "<result>done</result>" in output:
         return VerifySpecResult(outcome="done")
     if "<result>gaps</result>" in output:

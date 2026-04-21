@@ -1,4 +1,5 @@
 """Tests for configure_run_logging level-restore and file-creation behaviour."""
+
 from __future__ import annotations
 
 import logging

@@ -78,17 +78,23 @@ class FakeCrg:
         return {"modules": []}
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return []
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -99,12 +105,17 @@ class FakeCrg:
         return []
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -161,6 +172,7 @@ class FakeRalph:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
+
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -523,9 +535,7 @@ class TestRunLoopFileConflicts:
         assert result.root_done is False
 
 
-_RICH_DESC = (
-    "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
-)
+_RICH_DESC = "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
 
 
 def _make_tui_state(node_id: int) -> TuiState:
@@ -577,9 +587,7 @@ class TestWorkerTableDescriptionSanitization:
 class TestRenderOverlayPreservesRawDescription:
     """Overlay panel title uses _summarize_description (consistent with worker table)."""
 
-    def test_overlay_title_collapses_newlines(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_overlay_title_collapses_newlines(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
@@ -588,9 +596,7 @@ class TestRenderOverlayPreservesRawDescription:
         assert "\n" not in (panel.title or "")
         assert "split bundling" in (panel.title or "")
 
-    def test_overlay_sanitization_is_nondestructive(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_overlay_sanitization_is_nondestructive(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         _build_worker_table(state, graph)
@@ -827,9 +833,7 @@ class TestStrictDrain:
 
 class TestProtectedBranchGuard:
     @pytest.mark.skip(reason="protected-branch guard lives in app/run_command (β slice)")
-    def test_protected_branch_raises_exit_2_before_log_created(
-        self, tmp_path: Path
-    ) -> None:
+    def test_protected_branch_raises_exit_2_before_log_created(self, tmp_path: Path) -> None:
         import typer
         from milknado.app.run_command import _check_protected_branch
 
@@ -850,9 +854,7 @@ class TestProtectedBranchGuard:
 
 
 class TestStalledWorkerGlyph:
-    def test_stalled_worker_shows_warning_glyph_in_table(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_stalled_worker_shows_warning_glyph_in_table(self, graph: MikadoGraph) -> None:
         node = graph.add_node("long-running task")
         past = time.monotonic() - 400.0
         state = TuiState(
@@ -1049,7 +1051,8 @@ class TestRootCompletionViaVerifySpec:
 
 class TestRalphifyAdapterLogDir:
     def test_create_run_passes_log_dir_under_worktree(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         from unittest.mock import MagicMock
 
@@ -1067,6 +1070,7 @@ class TestRalphifyAdapterLogDir:
             return fake_run
 
         from milknado.adapters.ralphify import RalphifyAdapter
+
         adapter = RalphifyAdapter(agent="claude")
 
         with patch.object(adapter._manager, "create_run", side_effect=fake_create_run):
@@ -1092,16 +1096,19 @@ class TestRalphifyAdapterLogDir:
 class TestEtaStr:
     def test_shows_unknown_when_no_history(self) -> None:
         from milknado.domains.execution.run_loop.display import _eta_str
+
         assert _eta_str(None, 0.0) == "~?"
 
     def test_shows_estimate_when_avg_provided(self) -> None:
         from milknado.domains.execution.run_loop.display import _eta_str
+
         result = _eta_str(120.0, 30.0)
         assert result.startswith("~")
         assert "01:30" in result or "00:" in result  # remaining ≈ 90s
 
     def test_clamps_to_zero_when_elapsed_exceeds_avg(self) -> None:
         from milknado.domains.execution.run_loop.display import _eta_str
+
         result = _eta_str(60.0, 200.0)
         assert "00:00" in result
 
@@ -1109,6 +1116,7 @@ class TestEtaStr:
 class TestSummarizeDescriptionTruncation:
     def test_long_description_is_truncated(self) -> None:
         from milknado.domains.execution.run_loop.display import _summarize_description
+
         long_text = "A" * 100
         result = _summarize_description(long_text, max_chars=80)
         assert len(result) <= 80
@@ -1116,6 +1124,7 @@ class TestSummarizeDescriptionTruncation:
 
     def test_short_description_unchanged(self) -> None:
         from milknado.domains.execution.run_loop.display import _summarize_description
+
         result = _summarize_description("short task")
         assert result == "short task"
 
@@ -1288,9 +1297,12 @@ class TestVerifySpecGapsPath:
     ) -> None:
         ralph = FakeRalph()
         verify_calls: list = []
-        ralph.verify_spec = lambda *a: verify_calls.append(a) or __import__(  # type: ignore
-            "milknado.domains.common.protocols", fromlist=["VerifySpecResult"]
-        ).VerifySpecResult(outcome="done")
+        ralph.verify_spec = lambda *a: (
+            verify_calls.append(a)
+            or __import__(  # type: ignore
+                "milknado.domains.common.protocols", fromlist=["VerifySpecResult"]
+            ).VerifySpecResult(outcome="done")
+        )
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
@@ -1361,6 +1373,7 @@ class TestDispatchBatchDirectGuards:
         fake_ralph: FakeRalph,
     ) -> None:
         from unittest.mock import MagicMock
+
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         loop._strict = True
         loop._failure_triggered = True
@@ -1378,6 +1391,7 @@ class TestDispatchBatchDirectGuards:
         fake_ralph: FakeRalph,
     ) -> None:
         from unittest.mock import MagicMock
+
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         # Fill active to the limit
         loop._active = {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4}

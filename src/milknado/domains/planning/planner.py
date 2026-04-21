@@ -113,7 +113,6 @@ class Planner:
             change_count=len(manifest.changes),
         )
 
-
     def replan_with_delta(
         self,
         goal_delta: str,
