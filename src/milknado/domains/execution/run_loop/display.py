@@ -170,7 +170,7 @@ def _render_overlay(
         return Panel("[dim]worker not found[/dim]", title="Overlay", border_style="cyan")
     node = graph.get_node(node_id)
     branch = node.branch_name if node else None
-    desc = (node.description if node else str(node_id))[:40]
+    desc = _summarize_description(node.description, max_chars=40) if node else str(node_id)
     lines = ralph.get_run_stdout(run_id)[-100:]
     stdout = "\n".join(lines) if lines else "[dim]no output yet[/dim]"
     content = (

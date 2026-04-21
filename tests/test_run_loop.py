@@ -575,18 +575,18 @@ class TestWorkerTableDescriptionSanitization:
 
 
 class TestRenderOverlayPreservesRawDescription:
-    """Counterpoint: _render_overlay must NOT sanitize the description."""
+    """Overlay panel title uses _summarize_description (consistent with worker table)."""
 
-    def test_overlay_rendered_contains_markdown_header(
+    def test_overlay_title_collapses_newlines(
         self, graph: MikadoGraph
     ) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
         panel = _render_overlay("run-1", state, graph, ralph)
-        rendered = _render_to_text(panel)
 
-        assert "##" in rendered
+        assert "\n" not in (panel.title or "")
+        assert "split bundling" in (panel.title or "")
 
     def test_overlay_sanitization_is_nondestructive(
         self, graph: MikadoGraph
@@ -782,14 +782,14 @@ class TestRenderOverlayLogLines:
         assert "log-line-149" in text
         assert "log-line-0" not in text
 
-    def test_full_description_in_title_not_sanitized(self, graph: MikadoGraph) -> None:
+    def test_overlay_title_is_summarized(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
         panel = _render_overlay("run-1", state, graph, ralph)
-        text = _snapshot(panel)
 
-        assert "##" in text
+        assert "US-204" not in (panel.title or "")
+        assert "\n" not in (panel.title or "")
 
 
 # ---------------------------------------------------------------------------
