@@ -1366,7 +1366,7 @@ class TestDispatchBatchDirectGuards:
         live = MagicMock()
         result = loop._dispatch_batch(config, 4, live)
 
-        assert result == 0
+        assert result == (0, 0)
 
     def test_no_capacity_returns_zero(
         self,
@@ -1383,7 +1383,49 @@ class TestDispatchBatchDirectGuards:
         live = MagicMock()
         result = loop._dispatch_batch(config, 4, live)
 
-        assert result == 0
+        assert result == (0, 0)
+
+    def test_dispatch_exception_increments_failed(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_ralph: FakeRalph,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        executor = MagicMock()
+        executor.dispatch.side_effect = RuntimeError("boom")
+        root = graph.add_node("root")
+        graph.add_node("failing-leaf", parent_id=root.id)
+
+        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        live = MagicMock()
+        dispatched, failed = loop._dispatch_batch(config, 4, live)
+
+        assert dispatched == 0
+        assert failed == 1
+
+    def test_strict_mode_breaks_on_dispatch_exception(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_ralph: FakeRalph,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        executor = MagicMock()
+        executor.dispatch.side_effect = RuntimeError("boom")
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.add_node("leaf-b", parent_id=root.id)
+
+        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop._strict = True
+        live = MagicMock()
+        loop._dispatch_batch(config, 4, live)
+
+        assert executor.dispatch.call_count == 1
+        assert loop._failure_triggered is True
 
 
 class TestRenderLiveFrameOverlayBranch:

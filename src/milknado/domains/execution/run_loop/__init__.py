@@ -125,7 +125,9 @@ class RunLoop:
         interrupted = False
         try:
             with Live(self._build_layout(), refresh_per_second=2) as live:
-                dispatched += self._dispatch_batch(config, concurrency_limit, live)
+                d, f = self._dispatch_batch(config, concurrency_limit, live)
+                dispatched += d
+                failed += f
                 drain_input(self._input, self._active)
                 self._render_live_frame(live)
                 while self._active:
@@ -143,7 +145,9 @@ class RunLoop:
                     failed += f
                     conflicts.extend(cs)
                     if not (self._strict and self._failure_triggered):
-                        dispatched += self._dispatch_batch(config, concurrency_limit, live)
+                        d, f = self._dispatch_batch(config, concurrency_limit, live)
+                        dispatched += d
+                        failed += f
                     self._render_live_frame(live)
         except KeyboardInterrupt:
             interrupted = True
@@ -257,14 +261,15 @@ class RunLoop:
         config: ExecutionConfig,
         concurrency_limit: int,
         live: Live,
-    ) -> int:
+    ) -> tuple[int, int]:
         if self._strict and self._failure_triggered:
-            return 0
+            return 0, 0
         available = concurrency_limit - len(self._active)
         if available <= 0:
-            return 0
+            return 0, 0
         dispatchable = get_dispatchable_nodes(self._graph)
         dispatched = 0
+        failed = 0
         for node_id in dispatchable[:available]:
             node = self._graph.get_node(node_id)
             desc = _summarize_description(node.description) if node else str(node_id)
@@ -277,6 +282,10 @@ class RunLoop:
                 )
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
+                failed += 1
+                if self._strict:
+                    self._failure_triggered = True
+                    break
                 continue
             self._active[result.run_id] = node_id
             self._dispatched_at[result.run_id] = time.monotonic()
@@ -284,4 +293,4 @@ class RunLoop:
             live.console.print(f"[cyan]→[/cyan] [{node_id}] {desc}")
             _logger.info("node_dispatched node_id=%d run_id=%s", node_id, result.run_id)
             dispatched += 1
-        return dispatched
+        return dispatched, failed
