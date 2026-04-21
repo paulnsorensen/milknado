@@ -25,9 +25,7 @@ def _fail(rc: int = 1, stdout: str = "", stderr: str = "") -> subprocess.Complet
 
 class TestCreateWorktree:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_add(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_calls_git_worktree_add(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
         wt = Path("/tmp/wt")
         result = adapter.create_worktree(wt, "feat-branch")
@@ -49,9 +47,7 @@ class TestCreateWorktree:
 
 class TestRemoveWorktree:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_remove(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_calls_git_worktree_remove(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
         adapter.remove_worktree(Path("/tmp/wt"))
         mock_run.assert_called_once_with(
@@ -65,9 +61,7 @@ class TestRemoveWorktree:
 
 class TestRebase:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_successful_rebase(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_successful_rebase(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
         result = adapter.rebase(Path("/tmp/wt"), "main")
         assert result.success is True
@@ -112,8 +106,8 @@ class TestRebase:
         # rebase fails, then git add -A, then rebase --continue both succeed
         mock_run.side_effect = [
             _fail(1, conflict_out, ""),  # initial rebase
-            _ok(),                       # git add -A
-            _ok(),                       # git rebase --continue
+            _ok(),  # git add -A
+            _ok(),  # git rebase --continue
         ]
 
         result = adapter.rebase(Path("/tmp/wt"), "main")
@@ -127,9 +121,9 @@ class TestRebase:
         conflict_out = "CONFLICT (content): Merge conflict in src/foo.py\n"
         mock_run.side_effect = [
             _fail(1, conflict_out, ""),  # initial rebase
-            _ok(),                       # git add -A
-            _fail(1, "", "conflict"),    # rebase --continue fails
-            _ok(),                       # rebase --abort succeeds
+            _ok(),  # git add -A
+            _fail(1, "", "conflict"),  # rebase --continue fails
+            _ok(),  # rebase --abort succeeds
         ]
 
         result = adapter.rebase(Path("/tmp/wt"), "main")
@@ -189,18 +183,14 @@ class TestTryMegirafResolve:
 
 class TestCurrentBranch:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_returns_branch_name(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_returns_branch_name(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok("feat/cool\n")
         assert adapter.current_branch() == "feat/cool"
 
 
 class TestCommitAll:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_stages_and_commits(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_stages_and_commits(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
         wt = Path("/tmp/wt")
         adapter.commit_all(wt, "fix: something")
@@ -218,11 +208,11 @@ class TestSquashAndCommit:
     ) -> None:
         # Calls: git add -A, merge-base, reset --soft, diff --cached (1=staged), commit
         mock_run.side_effect = [
-            _ok(),            # git add -A
+            _ok(),  # git add -A
             _ok("abc123\n"),  # merge-base
-            _ok(),            # reset --soft
-            _fail(1),         # diff --cached --quiet returns 1 means staged changes exist
-            _ok(),            # commit
+            _ok(),  # reset --soft
+            _fail(1),  # diff --cached --quiet returns 1 means staged changes exist
+            _ok(),  # commit
         ]
         adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
         commit_call = mock_run.call_args_list[-1]
@@ -234,10 +224,10 @@ class TestSquashAndCommit:
         self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
     ) -> None:
         mock_run.side_effect = [
-            _ok(),            # git add -A
+            _ok(),  # git add -A
             _ok("abc123\n"),  # merge-base
-            _ok(),            # reset --soft
-            _ok(),            # diff --cached --quiet returns 0 = nothing staged
+            _ok(),  # reset --soft
+            _ok(),  # diff --cached --quiet returns 0 = nothing staged
         ]
         adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
         calls = [c.args[0] for c in mock_run.call_args_list]
@@ -248,16 +238,16 @@ class TestSquashAndCommit:
         self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
     ) -> None:
         mock_run.side_effect = [
-            _ok(),    # git add -A
+            _ok(),  # git add -A
             subprocess.CompletedProcess([], 1, "", "not a git repo"),  # merge-base raises
-            _ok(),    # diff --cached --quiet returns 0 = nothing staged
+            _ok(),  # diff --cached --quiet returns 0 = nothing staged
         ]
         # merge-base failure swallows CalledProcessError, falls through to diff check
         # Since we need check=True to raise, let's use side_effect properly
         mock_run.side_effect = [
-            _ok(),    # git add -A (called via _run with check=True)
+            _ok(),  # git add -A (called via _run with check=True)
             subprocess.CalledProcessError(1, "git"),  # merge-base raises CalledProcessError
-            _ok(),    # diff --cached --quiet returns 0
+            _ok(),  # diff --cached --quiet returns 0
         ]
         adapter.squash_and_commit(tmp_path, "main", "msg")
         # Should not raise; commit skipped because nothing staged

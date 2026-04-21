@@ -103,6 +103,7 @@ class FakeRalph:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
+
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -133,7 +134,9 @@ class FakeCrg:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -147,7 +150,10 @@ class FakeCrg:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -413,11 +419,6 @@ class TestExecutorDispatch:
         graph.add_node("doomed")
 
         # Monkey-patch mark_pending to raise after mark_running succeeds
-        original_mark_running = graph.mark_running
-
-        def mark_running_then_refuse_pending(node_id, **kwargs):  # type: ignore
-            original_mark_running(node_id, **kwargs)
-
         original_mark_pending = graph.mark_pending
 
         def mark_pending_raises(node_id):
@@ -616,7 +617,9 @@ class TestExecutorComplete:
             executor.complete(999, "main")
 
     def test_rebase_abort_error_propagates(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         """RebaseAbortError must propagate from complete() — do not swallow."""
         fake_git = FakeGit()
@@ -633,7 +636,9 @@ class TestExecutorComplete:
             ex.complete(1, "main")
 
     def test_complete_logs_detail_on_generic_exception(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         """Generic exceptions from rebase yield failed result with detail."""
         fake_git = FakeGit()
@@ -651,7 +656,9 @@ class TestExecutorComplete:
 
 class TestEnsureCleanWorktree:
     def test_orphan_removal_failure_is_logged_not_raised(
-        self, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         """_ensure_clean_worktree swallows remove_worktree errors."""
         call_count = 0
@@ -821,7 +828,9 @@ class TestIsTransient:
 
 class TestGetAttemptCount:
     def test_returns_zero_before_dispatch(
-        self, executor: Executor, graph: MikadoGraph,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("task")
         assert executor.get_attempt_count(1) == 0
@@ -844,7 +853,15 @@ class TestGetAttemptCount:
         call_count = 0
 
         class BurstRalph(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
@@ -870,7 +887,15 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class FailRalph(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 raise ValueError("bad config")
 
         ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
@@ -885,7 +910,15 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class AlwaysTransient(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 raise TransientDispatchError("always fails")
 
         config_retry = ExecutionConfig(

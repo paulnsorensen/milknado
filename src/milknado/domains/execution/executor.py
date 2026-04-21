@@ -26,7 +26,8 @@ _logger = logging.getLogger(__name__)
 
 _TRANSIENT_EXIT_CODES = frozenset({124, 137, 143})
 _TRANSIENT_MSG_RE = re.compile(
-    r"(429|rate.?limit|too many requests)", re.IGNORECASE,
+    r"(429|rate.?limit|too many requests)",
+    re.IGNORECASE,
 )
 
 
@@ -65,11 +66,7 @@ class RebaseConflict:
 
 def _build_commit_message(node_id: int, description: str) -> str:
     subject = description[:57] + "..." if len(description) > 60 else description
-    return (
-        f"feat(milknado-{node_id}): {subject}\n\n"
-        f"{description}\n\n"
-        f"Milknado-Node: {node_id}"
-    )
+    return f"feat(milknado-{node_id}): {subject}\n\n{description}\n\nMilknado-Node: {node_id}"
 
 
 def _slugify(text: str) -> str:
@@ -97,7 +94,9 @@ def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
         for left_id, right_id, paths in conflicts:
             milknado_logger.info(
                 "Node %d blocked by Node %d on shared files: %s",
-                right_id, left_id, paths,
+                right_id,
+                left_id,
+                paths,
             )
     blocked = {c[1] for c in conflicts}
     return [nid for nid in ids if nid not in blocked]
@@ -127,14 +126,18 @@ class Executor:
                 except Exception as exc:
                     _logger.warning(
                         "Failed to remove orphan worktree %s for node %d: %s",
-                        wt, node_id, exc,
+                        wt,
+                        node_id,
+                        exc,
                     )
 
     def get_attempt_count(self, node_id: int) -> int:
         return self._attempts_by_node.get(node_id, 0)
 
     def dispatch(
-        self, node_id: int, config: ExecutionConfig,
+        self,
+        node_id: int,
+        config: ExecutionConfig,
     ) -> DispatchResult:
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
@@ -151,10 +154,14 @@ class Executor:
                 self._attempts_by_node[node_id] = attempt
                 if not _is_transient(exc) or attempt >= max_retries:
                     raise
-                wait = backoff * (2 ** attempt)
+                wait = backoff * (2**attempt)
                 _logger.warning(
                     "Dispatch attempt %d/%d failed for node %d: %s. Retrying in %.1fs",
-                    attempt + 1, max_retries + 1, node_id, exc, wait,
+                    attempt + 1,
+                    max_retries + 1,
+                    node_id,
+                    exc,
+                    wait,
                 )
                 time.sleep(wait)
         raise last_exc or RuntimeError("dispatch exhausted retries")
@@ -261,7 +268,7 @@ class Executor:
             if node.dispatched_at is not None:
                 completed_now = datetime.now(UTC)
                 duration = (completed_now - node.dispatched_at).total_seconds()
-                self._graph._record_completion_duration(node_id, duration)
+                self._graph.record_completion_duration(node_id, duration)
         else:
             self._graph.mark_failed(node_id)
             if rebase_result.conflicting_files or rebase_result.detail:
@@ -294,7 +301,15 @@ class Executor:
             self._git.squash_and_commit(worktree, feature_branch, msg)
             return self._git.rebase(worktree, feature_branch)
         finally:
-            self._git.remove_worktree(worktree)
+            try:
+                self._git.remove_worktree(worktree)
+            except Exception as exc:
+                _logger.warning(
+                    "Failed to remove worktree %s for node %d: %s",
+                    worktree,
+                    node_id,
+                    exc,
+                )
 
     def fail(self, node_id: int) -> None:
         self._ensure_clean_worktree(node_id)
