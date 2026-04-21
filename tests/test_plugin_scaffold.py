@@ -136,16 +136,12 @@ class TestLoadPlugins:
             from milknado.domains.common import MikadoNode, NodeStatus
 
             node = MikadoNode(id=1, description="test")
-            plugins[0].on_node_status_change(
-                node, NodeStatus.PENDING, NodeStatus.RUNNING
-            )
+            plugins[0].on_node_status_change(node, NodeStatus.PENDING, NodeStatus.RUNNING)
         finally:
             sys.path.remove(str(tmp_path))
             self._cleanup_modules("hook_test")
 
-    def test_logs_loaded_plugin(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_logs_loaded_plugin(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         self._make_plugin_module(tmp_path, "log_plug")
         try:
             with caplog.at_level(logging.INFO, logger="milknado.plugins"):
@@ -175,9 +171,7 @@ class TestPluginInitCli:
 
         (tmp_path / "exists_plug").mkdir()
         runner = CliRunner()
-        result = runner.invoke(
-            app, ["plugin", "init", "exists_plug", "-d", str(tmp_path)]
-        )
+        result = runner.invoke(app, ["plugin", "init", "exists_plug", "-d", str(tmp_path)])
         assert result.exit_code == 1
         assert "already exists" in result.stdout
 

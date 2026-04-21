@@ -1,4 +1,5 @@
 """Adversarial tests for apply_batches_to_graph and related bridge logic."""
+
 from __future__ import annotations
 
 from collections.abc import Generator

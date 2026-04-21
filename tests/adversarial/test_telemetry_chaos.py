@@ -2,6 +2,7 @@
 
 Focus: permission errors, symlink traps, NaN/Infinity floats, concurrent writes.
 """
+
 from __future__ import annotations
 
 import json
@@ -174,8 +175,7 @@ class TestConcurrentWrites:
                         json.loads(line)
                     except json.JSONDecodeError as exc:
                         pytest.fail(
-                            f"Corrupted JSONL line from concurrent write: "
-                            f"{exc}\nLine: {line!r}"
+                            f"Corrupted JSONL line from concurrent write: {exc}\nLine: {line!r}"
                         )
 
 

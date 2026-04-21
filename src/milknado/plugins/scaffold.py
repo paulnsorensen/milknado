@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-INIT_TEMPLATE = '''\
+INIT_TEMPLATE = """\
 from {name}.plugin import {class_name}
 
 __all__ = ["{class_name}"]
-'''
+"""
 
 PLUGIN_TEMPLATE = '''\
 from milknado.domains.common import MikadoNode, NodeStatus, PluginHook, PluginMeta

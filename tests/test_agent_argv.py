@@ -73,7 +73,9 @@ def test_build_planning_subprocess_allows_external_mcp(tmp_path: Path) -> None:
     p = tmp_path / "ctx.md"
     p.write_text("hello world", encoding="utf-8")
     _argv, extra = build_planning_subprocess(
-        p, "echo", allow_external_mcp=True,
+        p,
+        "echo",
+        allow_external_mcp=True,
     )
     assert "env" not in extra
 
@@ -118,7 +120,7 @@ def test_default_config_uses_claude_preset(tmp_path: Path) -> None:
 def test_load_config_rejects_unknown_family(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg_path.write_text(
-        "[milknado]\nagent_family = \"unknown\"\n",
+        '[milknado]\nagent_family = "unknown"\n',
         encoding="utf-8",
     )
     try:

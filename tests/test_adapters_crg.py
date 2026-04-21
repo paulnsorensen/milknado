@@ -58,6 +58,7 @@ class TestIsStale:
         py_file = src / "main.py"
         py_file.write_text("x = 1")
         import os
+
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is True
@@ -70,6 +71,7 @@ class TestIsStale:
         py_file = tests_dir / "test_foo.py"
         py_file.write_text("assert True")
         import os
+
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is True
@@ -80,6 +82,7 @@ class TestIsStale:
         py_file = tmp_path / "setup.py"
         py_file.write_text("setup()")
         import os
+
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is True
@@ -92,6 +95,7 @@ class TestIsStale:
         txt = src / "notes.txt"
         txt.write_text("not source")
         import os
+
         os.utime(txt, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is False
@@ -104,6 +108,7 @@ class TestIsStale:
         py_file = venv / "site.py"
         py_file.write_text("x = 1")
         import os
+
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
         assert adapter._is_stale() is False
@@ -132,6 +137,7 @@ class TestEnsureGraph:
         py = src / "app.py"
         py.write_text("x = 1")
         import os
+
         os.utime(py, (db_mtime + 10, db_mtime + 10))
 
         adapter = CrgAdapter(tmp_path)
@@ -163,9 +169,7 @@ class TestEnsureGraph:
 
 class TestGetImpactRadius:
     @patch("milknado.adapters.crg.GraphStore")
-    def test_delegates_to_store(
-        self, mock_store_cls: MagicMock, adapter: CrgAdapter
-    ) -> None:
+    def test_delegates_to_store(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
         mock_store = MagicMock()
         mock_store.get_impact_radius.return_value = {"nodes": []}
         mock_store_cls.return_value = mock_store
@@ -209,7 +213,9 @@ class TestListCommunities:
         result = adapter.list_communities()
 
         mock_get_communities.assert_called_once_with(
-            mock_store, sort_by="size", min_size=0,
+            mock_store,
+            sort_by="size",
+            min_size=0,
         )
         assert result == [{"id": "c1"}]
 
@@ -228,7 +234,9 @@ class TestListCommunities:
         adapter.list_communities(sort_by="name", min_size=5)
 
         mock_get_communities.assert_called_once_with(
-            mock_store, sort_by="name", min_size=5,
+            mock_store,
+            sort_by="name",
+            min_size=5,
         )
 
 
@@ -248,7 +256,9 @@ class TestListFlows:
         result = adapter.list_flows()
 
         mock_get_flows.assert_called_once_with(
-            mock_store, sort_by="criticality", limit=50,
+            mock_store,
+            sort_by="criticality",
+            limit=50,
         )
         assert result == [{"id": "f1"}]
 
@@ -267,7 +277,9 @@ class TestListFlows:
         adapter.list_flows(sort_by="name", limit=10)
 
         mock_get_flows.assert_called_once_with(
-            mock_store, sort_by="name", limit=10,
+            mock_store,
+            sort_by="name",
+            limit=10,
         )
 
 

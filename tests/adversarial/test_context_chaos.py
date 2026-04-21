@@ -3,6 +3,7 @@
 Focus: prompt injection in spec_text, CRG slicing, empty-string spec_text error,
 _truncate_description edge cases.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -73,9 +74,7 @@ class TestSpecTextInjection:
         assert "real goal" in ctx
         assert "# Spec" in ctx
 
-    def test_unicode_in_spec_text(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_unicode_in_spec_text(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         spec = "# Goal with Unicode 🧀\n\nRTL: \u202emalicious\n\nNormal content."
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text=spec)
         assert "🧀" in ctx
@@ -83,6 +82,8 @@ class TestSpecTextInjection:
 
 @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
 class TestTouchSitesCrg:
+    
+
     def test_touch_sites_section_present(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:

@@ -57,6 +57,7 @@ class BatchPlan:
 
 class ChangeGraph(NamedTuple):
     """Typed return for build_change_graph: the raw precedence graph of a change set."""
+
     nodes: tuple[str, ...]
     edges: tuple[tuple[str, str], ...]
     symbols_by_node: dict[str, tuple[SymbolRef, ...]]

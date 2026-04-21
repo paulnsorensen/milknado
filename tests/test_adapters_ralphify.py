@@ -66,43 +66,35 @@ class TestCreateRun:
 
 
 class TestStartStopRun:
-    def test_start_delegates(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
-    ) -> None:
+    def test_start_delegates(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
         adapter.start_run("run-1")
         mock_manager.start_run.assert_called_once_with("run-1")
 
-    def test_stop_delegates(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
-    ) -> None:
+    def test_stop_delegates(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
         adapter.stop_run("run-1")
         mock_manager.stop_run.assert_called_once_with("run-1")
 
 
 class TestListAndGetRuns:
-    def test_list_runs(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
-    ) -> None:
+    def test_list_runs(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
         mock_manager.list_runs.return_value = []
         assert adapter.list_runs() == []
 
-    def test_get_run_found(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
-    ) -> None:
+    def test_get_run_found(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
         run = MagicMock(id="run-1")
         mock_manager.get_run.return_value = run
         assert adapter.get_run("run-1") == run
 
-    def test_get_run_not_found(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
-    ) -> None:
+    def test_get_run_not_found(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
         mock_manager.get_run.return_value = None
         assert adapter.get_run("missing") is None
 
 
 class TestWaitForNextCompletion:
     def test_returns_on_run_stopped_event(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock,
+        self,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
 
@@ -119,7 +111,9 @@ class TestWaitForNextCompletion:
         assert success is True
 
     def test_returns_false_on_failed_run(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock,
+        self,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
 
@@ -136,7 +130,9 @@ class TestWaitForNextCompletion:
         assert success is False
 
     def test_skips_non_stop_events(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock,
+        self,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
 
@@ -159,7 +155,9 @@ class TestWaitForNextCompletion:
         assert success is True
 
     def test_skips_events_for_inactive_runs(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock,
+        self,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType, RunStatus
 
@@ -183,7 +181,9 @@ class TestWaitForNextCompletion:
         assert success is True
 
     def test_returns_false_when_run_missing(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock,
+        self,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
     ) -> None:
         from ralphify import EventType
 
@@ -219,9 +219,7 @@ class TestGenerateRalphMd:
 class TestBuildRalphContent:
     def test_includes_all_sections(self) -> None:
         node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(
-            node, "some context", ["gate1", "gate2"]
-        )
+        content = _build_ralph_content(node, "some context", ["gate1", "gate2"])
         assert content.startswith("# Do thing")
         assert "## Context" in content
         assert "some context" in content
@@ -255,9 +253,13 @@ class TestBuildRalphContent:
         # Completion block is the last heading in the file
         completion_pos = content.rfind("## Completion")
         assert completion_pos != -1
-        assert content[completion_pos:].strip().endswith(
-            f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
-            "so the run can stop before the iteration budget."
+        assert (
+            content[completion_pos:]
+            .strip()
+            .endswith(
+                f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
+                "so the run can stop before the iteration budget."
+            )
         )
 
 

@@ -25,7 +25,10 @@ def _unique_run_factory() -> MagicMock:
 
 
 def _configure_ralph_mocks(
-    ralph_cls: MagicMock, project_dir: Path, *, unique: bool = False,
+    ralph_cls: MagicMock,
+    project_dir: Path,
+    *,
+    unique: bool = False,
 ) -> None:
     if unique:
         ralph_cls.return_value.create_run = _unique_run_factory()
@@ -40,9 +43,7 @@ def _configure_ralph_mocks(
     ) -> tuple[str, bool]:
         return next(iter(active_run_ids)), True
 
-    ralph_cls.return_value.wait_for_next_completion.side_effect = (
-        _wait_for_next_completion
-    )
+    ralph_cls.return_value.wait_for_next_completion.side_effect = _wait_for_next_completion
     ralph_cls.return_value.poll_progress_events.return_value = []
 
 
@@ -64,9 +65,7 @@ def mock_adapters():
 
 class TestInit:
     @patch("milknado.adapters.crg.CrgAdapter")
-    def test_creates_config_and_db(
-        self, _mock_crg: MagicMock, project_dir: Path
-    ) -> None:
+    def test_creates_config_and_db(self, _mock_crg: MagicMock, project_dir: Path) -> None:
         result = runner.invoke(app, ["init", str(project_dir)])
         assert result.exit_code == 0
         assert (project_dir / "milknado.toml").exists()
@@ -80,9 +79,7 @@ class TestInit:
         assert "already exists" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
-    def test_config_has_defaults(
-        self, _mock_crg: MagicMock, project_dir: Path
-    ) -> None:
+    def test_config_has_defaults(self, _mock_crg: MagicMock, project_dir: Path) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         content = (project_dir / "milknado.toml").read_text()
         assert "agent_family" in content
@@ -92,14 +89,10 @@ class TestInit:
         assert "concurrency_limit" in content
 
     @patch("milknado.adapters.crg.CrgAdapter")
-    def test_calls_ensure_graph(
-        self, mock_crg_cls: MagicMock, project_dir: Path
-    ) -> None:
+    def test_calls_ensure_graph(self, mock_crg_cls: MagicMock, project_dir: Path) -> None:
         result = runner.invoke(app, ["init", str(project_dir)])
         assert result.exit_code == 0
-        mock_crg_cls.return_value.ensure_graph.assert_called_once_with(
-            project_dir
-        )
+        mock_crg_cls.return_value.ensure_graph.assert_called_once_with(project_dir)
         assert "Code-review-graph ready" in result.output
 
 
@@ -219,9 +212,12 @@ class TestAddNode:
         result = runner.invoke(
             app,
             [
-                "add-node", "child",
-                "--parent", "1",
-                "--project-root", str(project_dir),
+                "add-node",
+                "child",
+                "--parent",
+                "1",
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -235,10 +231,14 @@ class TestAddNode:
         result = runner.invoke(
             app,
             [
-                "add-node", "refactor auth",
-                "--files", "src/auth.py",
-                "--files", "src/login.py",
-                "--project-root", str(project_dir),
+                "add-node",
+                "refactor auth",
+                "--files",
+                "src/auth.py",
+                "--files",
+                "src/login.py",
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -267,9 +267,12 @@ class TestAddNode:
         result = runner.invoke(
             app,
             [
-                "add-node", "prereq",
-                "--parent", "1",
-                "--project-root", str(project_dir),
+                "add-node",
+                "prereq",
+                "--parent",
+                "1",
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -308,7 +311,9 @@ class TestPlanCommand:
         project_dir: Path,
     ) -> None:
         mock_planner_cls.return_value.launch.return_value = _make_plan_result(
-            success=False, exit_code=1, solver_status="NO_MANIFEST",
+            success=False,
+            exit_code=1,
+            solver_status="NO_MANIFEST",
         )
         result = runner.invoke(
             app,
@@ -400,8 +405,13 @@ class TestPlanSpecOption:
         mock_planner_cls.return_value.launch.return_value = _make_plan_result()
         result = runner.invoke(
             app,
-            ["plan", "--spec", str(FIXTURES / "no_heading.md"),
-             "--project-root", str(project_dir)],
+            [
+                "plan",
+                "--spec",
+                str(FIXTURES / "no_heading.md"),
+                "--project-root",
+                str(project_dir),
+            ],
         )
         assert result.exit_code == 0
         assert "no_heading" in result.output
@@ -449,7 +459,9 @@ class TestPlanSpecOption:
         project_dir: Path,
     ) -> None:
         mock_planner_cls.return_value.launch.return_value = _make_plan_result(
-            solver_status="INFEASIBLE", success=False, exit_code=0,
+            solver_status="INFEASIBLE",
+            success=False,
+            exit_code=0,
         )
         result = runner.invoke(
             app,
@@ -467,7 +479,8 @@ class TestPlanSpecOption:
         project_dir: Path,
     ) -> None:
         mock_planner_cls.return_value.launch.return_value = _make_plan_result(
-            solver_status="UNKNOWN", batch_count=2,
+            solver_status="UNKNOWN",
+            batch_count=2,
         )
         result = runner.invoke(
             app,
@@ -501,12 +514,14 @@ class TestPlanIssueOption:
 
         completed = MagicMock()
         completed.returncode = 0
-        completed.stdout = _json.dumps({
-            "title": title,
-            "body": body,
-            "number": 42,
-            "url": "https://example.com/issues/42",
-        })
+        completed.stdout = _json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "number": 42,
+                "url": "https://example.com/issues/42",
+            }
+        )
         completed.stderr = ""
         return completed
 
@@ -555,9 +570,12 @@ class TestPlanIssueOption:
             app,
             [
                 "plan",
-                "--spec", str(FIXTURES / "valid.md"),
-                "--issue", "42",
-                "--project-root", str(project_dir),
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--issue",
+                "42",
+                "--project-root",
+                str(project_dir),
             ],
         )
 
@@ -580,7 +598,9 @@ class TestPlanIssueOption:
 
     @patch("milknado.cli.subprocess.run")
     def test_issue_gh_failure_exits_one(
-        self, mock_run: MagicMock, project_dir: Path,
+        self,
+        mock_run: MagicMock,
+        project_dir: Path,
     ) -> None:
         failed = MagicMock()
         failed.returncode = 1
@@ -597,7 +617,9 @@ class TestPlanIssueOption:
 
     @patch("milknado.cli.subprocess.run", side_effect=FileNotFoundError())
     def test_issue_gh_not_installed_exits_one(
-        self, _mock_run: MagicMock, project_dir: Path,
+        self,
+        _mock_run: MagicMock,
+        project_dir: Path,
     ) -> None:
         result = runner.invoke(
             app,
@@ -621,12 +643,14 @@ class TestPlanIssueOption:
         def _gh(title: str, number: int, body: str) -> MagicMock:
             completed = MagicMock()
             completed.returncode = 0
-            completed.stdout = _json.dumps({
-                "title": title,
-                "body": body,
-                "number": number,
-                "url": f"https://example.com/issues/{number}",
-            })
+            completed.stdout = _json.dumps(
+                {
+                    "title": title,
+                    "body": body,
+                    "number": number,
+                    "url": f"https://example.com/issues/{number}",
+                }
+            )
             completed.stderr = ""
             return completed
 
@@ -640,9 +664,12 @@ class TestPlanIssueOption:
             app,
             [
                 "plan",
-                "--issue", "42",
-                "--issue", "43",
-                "--project-root", str(project_dir),
+                "--issue",
+                "42",
+                "--issue",
+                "43",
+                "--project-root",
+                str(project_dir),
             ],
         )
 
@@ -674,12 +701,14 @@ class TestPlanIssueOption:
         def _gh(title: str, number: int) -> MagicMock:
             c = MagicMock()
             c.returncode = 0
-            c.stdout = _json.dumps({
-                "title": title,
-                "body": f"body {number}",
-                "number": number,
-                "url": f"https://example.com/issues/{number}",
-            })
+            c.stdout = _json.dumps(
+                {
+                    "title": title,
+                    "body": f"body {number}",
+                    "number": number,
+                    "url": f"https://example.com/issues/{number}",
+                }
+            )
             c.stderr = ""
             return c
 
@@ -690,9 +719,12 @@ class TestPlanIssueOption:
             app,
             [
                 "plan",
-                "--issue", "42,43",
-                "--issue", "44",
-                "--project-root", str(project_dir),
+                "--issue",
+                "42,43",
+                "--issue",
+                "44",
+                "--project-root",
+                str(project_dir),
             ],
         )
 
@@ -716,7 +748,8 @@ class TestPlanIssueOption:
                 "plan",
                 "--spec",
                 f"{FIXTURES / 'valid.md'},{FIXTURES / 'no_heading.md'}",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0, result.output
@@ -729,7 +762,9 @@ class TestPlanIssueOption:
 
     @patch("milknado.cli.subprocess.run")
     def test_multi_issue_second_fetch_fails_exits_one(
-        self, mock_run: MagicMock, project_dir: Path,
+        self,
+        mock_run: MagicMock,
+        project_dir: Path,
     ) -> None:
         ok = self._gh_ok()
         failed = MagicMock()
@@ -742,9 +777,12 @@ class TestPlanIssueOption:
             app,
             [
                 "plan",
-                "--issue", "42",
-                "--issue", "9999",
-                "--project-root", str(project_dir),
+                "--issue",
+                "42",
+                "--issue",
+                "9999",
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 1
@@ -781,9 +819,7 @@ class TestToolsCheck:
 class TestToolsInstall:
     @patch("milknado.cli.install_missing_rust_tools")
     @patch("milknado.cli.get_required_tool_status")
-    def test_success_exits_zero(
-        self, mock_status: MagicMock, mock_install: MagicMock
-    ) -> None:
+    def test_success_exits_zero(self, mock_status: MagicMock, mock_install: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
         mock_install.return_value = (["tilth"], [])
@@ -819,9 +855,7 @@ class TestInitWithInstallRustTools:
         mock_status.return_value = [
             ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
         ]
-        result = runner.invoke(
-            app, ["init", str(project_dir), "--install-rust-tools"]
-        )
+        result = runner.invoke(app, ["init", str(project_dir), "--install-rust-tools"])
         assert result.exit_code == 0
         mock_install.assert_called_once()
 
@@ -834,9 +868,7 @@ class TestInitWithInstallRustTools:
         project_dir: Path,
     ) -> None:
         mock_install.return_value = ([], ["mergiraf"])
-        result = runner.invoke(
-            app, ["init", str(project_dir), "--install-rust-tools"]
-        )
+        result = runner.invoke(app, ["init", str(project_dir), "--install-rust-tools"])
         assert result.exit_code != 0
         assert "mergiraf" in result.output
 
@@ -844,7 +876,9 @@ class TestInitWithInstallRustTools:
 class TestAgentsCheck:
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_agents_check_prints_agent_fields(
-        self, _mock_crg: MagicMock, project_dir: Path,
+        self,
+        _mock_crg: MagicMock,
+        project_dir: Path,
     ) -> None:
         runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(

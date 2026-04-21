@@ -1,4 +1,5 @@
 """Append-only JSONL telemetry sink for batch planning snapshots (A5)."""
+
 from __future__ import annotations
 
 import json

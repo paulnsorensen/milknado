@@ -3,6 +3,7 @@
 Guilt-until-proven-innocent: every function is fragile until these pass.
 Attack order: invalid inputs -> edge cases -> integration paths -> happy path.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -66,6 +67,7 @@ class TestExtension:
 # weights.py — estimate_tokens edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestEstimateTokens:
     def test_zero_length_file_returns_zero(self, tmp_path):
         f = tmp_path / "empty.py"
@@ -116,6 +118,7 @@ class TestEstimateTokens:
 # ---------------------------------------------------------------------------
 # graph_build.py — _parse_impact_dict chaos
 # ---------------------------------------------------------------------------
+
 
 class TestParseImpactDict:
     _ca = FileChange(id="id_a", path="a.py")
@@ -183,6 +186,7 @@ class TestParseImpactDict:
 # graph_build.py — build_change_graph edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestBuildChangeGraph:
     def test_crg_raises_propagates(self):
         crg = MagicMock()
@@ -239,6 +243,7 @@ class TestBuildChangeGraph:
 # contract_sccs — stress and boundary
 # ---------------------------------------------------------------------------
 
+
 class TestContractSCCs:
     def test_large_linear_chain(self):
         N = 1000
@@ -256,9 +261,12 @@ class TestContractSCCs:
     def test_complete_bidir_graph_one_scc(self):
         nodes = ("a", "b", "c", "d")
         edges = (
-            ("a", "b"), ("b", "a"),
-            ("b", "c"), ("c", "b"),
-            ("c", "d"), ("d", "c"),
+            ("a", "b"),
+            ("b", "a"),
+            ("b", "c"),
+            ("c", "b"),
+            ("c", "d"),
+            ("d", "c"),
         )
         scc_of, dag_edges = contract_sccs(nodes, edges)
         assert len(set(scc_of.values())) == 1
@@ -273,6 +281,7 @@ class TestContractSCCs:
 # ---------------------------------------------------------------------------
 # solver.py — plan_batches boundary conditions
 # ---------------------------------------------------------------------------
+
 
 class TestPlanBatchesBoundary:
     def test_budget_zero_oversized(self, tmp_path):
@@ -338,16 +347,14 @@ class TestPlanBatchesBoundary:
         plan = plan_batches([a, b], budget=100, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
         widget_entry = next(
-            ss for ss in plan.spread_report
+            ss
+            for ss in plan.spread_report
             if ss.symbol.file == "widget.py" and ss.symbol.name == "Widget"
         )
         assert widget_entry.spread == 1
 
     def test_200_changes_no_hang(self, tmp_path):
-        changes = [
-            FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete")
-            for i in range(200)
-        ]
+        changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete") for i in range(200)]
         # 200 * 80 = 16000 -> all fit in one batch
         plan = plan_batches(changes, budget=16_000, time_limit_s=5.0, root=tmp_path)
         assert plan.solver_status in ("OPTIMAL", "FEASIBLE", "UNKNOWN")
@@ -356,6 +363,7 @@ class TestPlanBatchesBoundary:
 # ---------------------------------------------------------------------------
 # mcp_server.py — _plan_batches_impl input validation
 # ---------------------------------------------------------------------------
+
 
 class TestPlanBatchesImpl:
     @pytest.fixture(autouse=True)
@@ -379,16 +387,19 @@ class TestPlanBatchesImpl:
 
     def test_missing_id_raises_key_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         with pytest.raises(KeyError):
             _plan_batches_impl([{"path": "a.py"}], 70_000, tmp_path)
 
     def test_missing_path_raises_key_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         with pytest.raises(KeyError):
             _plan_batches_impl([{"id": "1"}], 70_000, tmp_path)
 
     def test_extra_keys_ignored(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         result = _plan_batches_impl(
             [{"id": "1", "path": "a.py", "edit_kind": "delete", "bogus": "trash"}],
             70_000,
@@ -398,6 +409,7 @@ class TestPlanBatchesImpl:
 
     def test_symbol_missing_name_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         with pytest.raises(ValueError, match="must have string"):
             _plan_batches_impl(
                 [{"id": "1", "path": "a.py", "symbols": [{"file": "a.py"}]}],
@@ -407,6 +419,7 @@ class TestPlanBatchesImpl:
 
     def test_symbol_missing_file_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         with pytest.raises(ValueError, match="must have string"):
             _plan_batches_impl(
                 [{"id": "1", "path": "a.py", "symbols": [{"name": "Foo"}]}],
@@ -416,6 +429,7 @@ class TestPlanBatchesImpl:
 
     def test_nonexistent_project_root_no_crash(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         nonexistent = tmp_path / "ghost_dir"
         result = _plan_batches_impl(
             [{"id": "1", "path": "a.py", "edit_kind": "delete"}],
@@ -426,6 +440,7 @@ class TestPlanBatchesImpl:
 
     def test_empty_changes_returns_optimal(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
+
         result = _plan_batches_impl([], 70_000, tmp_path)
         assert result["solver_status"] == "OPTIMAL"
         assert result["batches"] == []

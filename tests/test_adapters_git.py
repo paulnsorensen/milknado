@@ -16,9 +16,7 @@ def adapter(tmp_path: Path) -> GitAdapter:
 
 class TestCreateWorktree:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_add(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_calls_git_worktree_add(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         wt = Path("/tmp/wt")
         result = adapter.create_worktree(wt, "feat-branch")
@@ -32,9 +30,7 @@ class TestCreateWorktree:
         assert result == wt
 
     @patch("milknado.adapters.git.subprocess.run")
-    def test_propagates_error(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.side_effect = subprocess.CalledProcessError(1, "git")
         with pytest.raises(subprocess.CalledProcessError):
             adapter.create_worktree(Path("/tmp/wt"), "branch")
@@ -42,9 +38,7 @@ class TestCreateWorktree:
 
 class TestRemoveWorktree:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_remove(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_calls_git_worktree_remove(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         adapter.remove_worktree(Path("/tmp/wt"))
         mock_run.assert_called_once_with(
@@ -58,9 +52,7 @@ class TestRemoveWorktree:
 
 class TestRebase:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_successful_rebase(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_successful_rebase(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         wt = Path("/tmp/wt")
         result = adapter.rebase(wt, "main")
@@ -84,20 +76,14 @@ class TestRebase:
 
 class TestCurrentBranch:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_returns_branch_name(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
-        mock_run.return_value = subprocess.CompletedProcess(
-            [], 0, "feat/cool\n", ""
-        )
+    def test_returns_branch_name(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, "feat/cool\n", "")
         assert adapter.current_branch() == "feat/cool"
 
 
 class TestCommitAll:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_stages_and_commits(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_stages_and_commits(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, "", "")
         wt = Path("/tmp/wt")
         adapter.commit_all(wt, "fix: something")
