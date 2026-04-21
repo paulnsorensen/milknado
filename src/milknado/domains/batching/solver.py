@@ -1,5 +1,4 @@
 """CP-SAT batch planner — lexicographic two-pass solver with oversized passthrough."""
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -164,7 +163,9 @@ def _build_spread_report(
     sym_by_node: dict[str, tuple[SymbolRef, ...]],
 ) -> tuple[SymbolSpread, ...]:
     key_to_sym: dict[str, SymbolRef] = {
-        f"{sym.file}:{sym.name}": sym for syms in sym_by_node.values() for sym in syms
+        f"{sym.file}:{sym.name}": sym
+        for syms in sym_by_node.values()
+        for sym in syms
     }
     return tuple(
         SymbolSpread(symbol=sym, spread=value)
@@ -194,14 +195,12 @@ def _extract_solution(
     for old_b in sorted_batch_indices:
         new_b = remap[old_b]
         members = sorted(raw[old_b], key=lambda x: input_order.get(x, 0))
-        batches.append(
-            Batch(
-                index=new_b,
-                change_ids=tuple(members),
-                depends_on=tuple(sorted(batch_deps[new_b])),
-                oversized=new_b in remapped_oversized,
-            )
-        )
+        batches.append(Batch(
+            index=new_b,
+            change_ids=tuple(members),
+            depends_on=tuple(sorted(batch_deps[new_b])),
+            oversized=new_b in remapped_oversized,
+        ))
     return tuple(batches)
 
 
@@ -282,11 +281,7 @@ def _run_solver(
         return BatchPlan(batches=(), spread_report=(), solver_status=status)
     input_order = {c.id: i for i, c in enumerate(changes)}
     batches = _extract_solution(
-        snapshot.batch_of,
-        scc_members,
-        input_order,
-        contracted.dag_edges,
-        inputs.oversized_sccs,
+        snapshot.batch_of, scc_members, input_order, contracted.dag_edges, inputs.oversized_sccs,
     )
     return BatchPlan(
         batches=batches,

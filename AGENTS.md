@@ -5,19 +5,22 @@
 **Run `just build` before opening any PR.** It must pass cleanly.
 
 ```
-just build   # lint → test → coverage check (90% threshold)
+just build   # lint-fix → test → coverage check (90% threshold, autofixes lint)
 ```
 
-If `just build` is red, do not open a PR. Fix lint errors, failing tests, or coverage gaps first.
+If `just build` is red, do not open a PR. Fix failing tests or coverage gaps first.
+Lint errors are auto-fixed by `just build` — re-run after if files changed.
 
 ## Key Recipes
 
 ```bash
 just install        # Install all dependencies (uv sync)
-just lint           # Ruff check + format with autofix
+just lint           # Ruff check + format check (no changes — used by CI)
+just lint-fix       # Ruff check + format with autofix
 just test           # Run pytest (supports args: just test -k pattern)
 just test-file <f>  # Run a single test file
-just build          # Full pipeline — required before PR
+just build          # Full pipeline with autofix — use this before every PR
+just build-ci       # Full pipeline no autofix — CI uses this
 just clean          # Remove build artifacts and caches
 ```
 

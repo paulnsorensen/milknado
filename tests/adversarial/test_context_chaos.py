@@ -81,6 +81,8 @@ class TestSpecTextInjection:
 
 
 class TestTouchSitesCrg:
+    
+
     def test_touch_sites_section_present(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:

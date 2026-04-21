@@ -122,6 +122,7 @@ class TestEstimateTokens:
 # ---------------------------------------------------------------------------
 
 
+
 class TestParseImpactDict:
     _ca = FileChange(id="id_a", path="a.py")
     _cb = FileChange(id="id_b", path="b.py")

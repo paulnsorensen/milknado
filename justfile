@@ -59,9 +59,13 @@ coverage-check:
     if result.returncode != 0:
         sys.exit(result.returncode)
 
-# Full build: lint → test → coverage check (must pass before PR)
-build: lint test coverage-check
+# Full build with autofix: lint-fix → test → coverage check (for agents/developers)
+build: lint-fix test coverage-check
     @echo "✅ Build passed — ready for PR"
+
+# Full build no autofix: lint → test → coverage check (for CI validation)
+build-ci: lint test coverage-check
+    @echo "✅ CI build passed"
 
 # Run the CLI for manual testing
 run *args:

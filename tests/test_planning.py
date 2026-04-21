@@ -45,9 +45,7 @@ class TestBuildPlanningContext:
         assert "# Goal" in ctx
         assert "extract auth" in ctx
 
-    def test_includes_touch_sites_section(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_touch_sites_section(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Probable Touch Sites" in ctx
         # old broken CRG compact section must not appear
