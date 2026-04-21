@@ -925,9 +925,10 @@ class TestRunCommand:
     ) -> None:
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
+        runner.invoke(app, ["add-node", "root goal", "--project-root", str(project_dir)])
         runner.invoke(
             app,
-            ["add-node", "leaf task", "--project-root", str(project_dir)],
+            ["add-node", "leaf task", "--parent", "1", "--project-root", str(project_dir)],
         )
         _configure_ralph_mocks(mock_ralph_cls, project_dir)
 

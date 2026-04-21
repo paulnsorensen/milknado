@@ -635,7 +635,7 @@ class TestExecutorComplete:
     def test_complete_logs_detail_on_generic_exception(
         self, graph: MikadoGraph, tmp_path: Path,
     ) -> None:
-        """Non-RebaseAbortError exceptions from _rebase_and_merge yield failed result with detail."""
+        """Generic exceptions from rebase yield failed result with detail."""
         fake_git = FakeGit()
         fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("commit failed: nothing to commit"),

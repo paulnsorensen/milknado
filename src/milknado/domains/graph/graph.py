@@ -174,6 +174,23 @@ class MikadoGraph:
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
 
+    def complete_root(self) -> bool:
+        """Auto-complete root when all non-root nodes are done. Returns True if root was completed."""
+        root = self.get_root()
+        if root is None or root.status != NodeStatus.PENDING:
+            return False
+        all_nodes = self.get_all_nodes()
+        non_root = [n for n in all_nodes if n.id != root.id]
+        if not all(n.status == NodeStatus.DONE for n in non_root):
+            return False
+        completed_at = datetime.now(UTC).isoformat()
+        self._conn.execute(
+            "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ?",
+            (NodeStatus.DONE.value, completed_at, root.id),
+        )
+        self._conn.commit()
+        return True
+
     def mark_failed(self, node_id: int) -> None:
         self._assert_transition(node_id, NodeStatus.FAILED)
         self._conn.execute(

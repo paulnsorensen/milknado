@@ -21,8 +21,7 @@ class TestSummarize:
         assert s.total == 1
         assert s.done == 0
         assert s.pct_complete == 0.0
-        assert len(s.ready) == 1
-        assert s.ready[0].description == "Root goal"
+        assert len(s.ready) == 0
 
     def test_completion_percentage(self, graph):
         root = graph.add_node("Root")
