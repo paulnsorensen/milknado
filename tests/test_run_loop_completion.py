@@ -1,14 +1,11 @@
 """Tests for run_loop/_completion.py: handle_completion paths."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
-
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.types import MikadoNode, NodeStatus
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.execution.run_loop.input import InputState

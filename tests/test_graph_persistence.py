@@ -10,7 +10,6 @@ import pytest
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._persistence import (
     create_tables,
-    drop_all,
     ensure_schema,
     get_spec_hash,
     row_to_node,

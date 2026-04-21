@@ -827,8 +827,8 @@ class TestProtectedBranchGuard:
         self, tmp_path: Path
     ) -> None:
         import typer
-
         from milknado.app.run_command import _check_protected_branch
+
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1047,7 +1047,7 @@ class TestRalphifyAdapterLogDir:
     def test_create_run_passes_log_dir_under_worktree(
         self, tmp_path: Path,
     ) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         ralph_dir = tmp_path / "wt-node-1"
         ralph_dir.mkdir()
@@ -1119,6 +1119,7 @@ class TestSummarizeDescriptionTruncation:
 class TestBuildWorkerTableMissingNode:
     def test_row_skipped_when_node_missing_from_graph(self, graph: MikadoGraph) -> None:
         import time as _time
+
         from milknado.domains.execution.run_loop.display import TuiState, _build_worker_table
 
         # active has node_id 999 which doesn't exist in graph
@@ -1389,6 +1390,7 @@ class TestRenderLiveFrameOverlayBranch:
         fake_ralph: FakeRalph,
     ) -> None:
         from unittest.mock import MagicMock
+
         from milknado.domains.execution.run_loop import RunLoop
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
