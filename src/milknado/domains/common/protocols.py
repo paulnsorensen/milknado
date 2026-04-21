@@ -50,7 +50,9 @@ class TilthPort(Protocol):
     ) -> TilthMap | DegradationMarker: ...
 
     def search_symbol(
-        self, keyword: str, glob: str | None = None,
+        self,
+        keyword: str,
+        glob: str | None = None,
     ) -> list[SymbolLocation]: ...
 
     def read_section(self, path: Path, line_start: int, line_end: int) -> str: ...
@@ -78,7 +80,9 @@ class CrgPort(Protocol):
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]: ...
     def semantic_search(
         self,
@@ -110,7 +114,9 @@ class RalphPort(Protocol):
     ) -> tuple[str, bool]: ...
     def poll_progress_events(self) -> list[ProgressEvent]: ...
     def verify_spec(
-        self, spec_text: str, graph_state: str,
+        self,
+        spec_text: str,
+        graph_state: str,
     ) -> VerifySpecResult: ...
     def generate_ralph_md(
         self,

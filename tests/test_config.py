@@ -48,7 +48,7 @@ class TestLoadConfig:
 
     def test_loads_custom_quality_gates(self, tmp_path: Path) -> None:
         toml = (
-            '[milknado]\n'
+            "[milknado]\n"
             'agent_family = "claude"\n'
             'quality_gates = ["uv run pytest", "uv run ruff check"]\n'
         )
@@ -63,21 +63,13 @@ class TestLoadConfig:
         assert cfg.concurrency_limit == 8
 
     def test_loads_custom_planning_agent(self, tmp_path: Path) -> None:
-        toml = (
-            '[milknado]\n'
-            'agent_family = "claude"\n'
-            'planning_agent = "claude --model opus"\n'
-        )
+        toml = '[milknado]\nagent_family = "claude"\nplanning_agent = "claude --model opus"\n'
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
         assert "opus" in cfg.planning_agent
 
     def test_loads_custom_execution_agent(self, tmp_path: Path) -> None:
-        toml = (
-            '[milknado]\n'
-            'agent_family = "claude"\n'
-            'execution_agent = "claude --model haiku"\n'
-        )
+        toml = '[milknado]\nagent_family = "claude"\nexecution_agent = "claude --model haiku"\n'
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
         assert "haiku" in cfg.execution_agent
@@ -96,13 +88,13 @@ class TestLoadConfig:
 
     def test_loads_all_numeric_fields(self, tmp_path: Path) -> None:
         toml = (
-            '[milknado]\n'
+            "[milknado]\n"
             'agent_family = "claude"\n'
-            'stall_threshold_seconds = 600\n'
-            'dispatch_max_retries = 5\n'
-            'dispatch_backoff_seconds = 10.0\n'
-            'completion_timeout_seconds = 3600.0\n'
-            'eta_sample_size = 20\n'
+            "stall_threshold_seconds = 600\n"
+            "dispatch_max_retries = 5\n"
+            "dispatch_backoff_seconds = 10.0\n"
+            "completion_timeout_seconds = 3600.0\n"
+            "eta_sample_size = 20\n"
         )
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)

@@ -39,9 +39,7 @@ class PlanningFailed(MilknadoError):
     def __init__(self, exit_code: int, stderr: str) -> None:
         self.exit_code = exit_code
         self.stderr = stderr
-        super().__init__(
-            f"Planning agent exited {exit_code}. stderr: {stderr[:200]}"
-        )
+        super().__init__(f"Planning agent exited {exit_code}. stderr: {stderr[:200]}")
 
 
 class InvalidTransition(MilknadoError, ValueError):
