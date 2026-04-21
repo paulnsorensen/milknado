@@ -70,9 +70,10 @@ def _render_progress_bar(
     frame: str, elapsed: float, pct: float | None, stall_threshold: float
 ) -> str:
     if pct is not None:
-        filled = int(pct) // 10
+        clamped_pct = max(0.0, min(100.0, pct))
+        filled = max(0, min(10, int(clamped_pct) // 10))
         bar = "█" * filled + "░" * (10 - filled)
-        return f"[cyan]{bar}[/cyan] {int(pct)}%"
+        return f"[cyan]{bar}[/cyan] {int(clamped_pct)}%"
     if elapsed >= stall_threshold:
         return f"[yellow]{frame} ⚠[/yellow]"
     return f"[cyan]{frame}[/cyan]"
@@ -92,9 +93,7 @@ def _build_title(active: dict[str, int], graph: MikadoGraph) -> str:
     )
 
 
-def _worker_stats(
-    run_id: str, state: TuiState, graph: MikadoGraph, now: float
-) -> _WorkerStats:
+def _worker_stats(run_id: str, state: TuiState, graph: MikadoGraph, now: float) -> _WorkerStats:
     node_id = state.active[run_id]
     elapsed = now - state.dispatched_at.get(run_id, now)
     ev = state.progress_by_run.get(run_id)
@@ -112,9 +111,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
     durations = list(state.completion_durations)
     avg_dur = sum(durations) / len(durations) if len(durations) >= 3 else None
 
-    table = Table(
-        title=_build_title(state.active, graph), show_header=True, header_style="bold"
-    )
+    table = Table(title=_build_title(state.active, graph), show_header=True, header_style="bold")
     table.add_column("", width=12, no_wrap=True)
     table.add_column("ID", style="cyan", width=4, no_wrap=True)
     table.add_column("Description")
@@ -159,9 +156,7 @@ def _build_layout(state: TuiState, graph: MikadoGraph) -> Layout:
     return layout
 
 
-def _render_overlay(
-    run_id: str, state: TuiState, graph: MikadoGraph, ralph: RalphPort
-) -> Panel:
+def _render_overlay(run_id: str, state: TuiState, graph: MikadoGraph, ralph: RalphPort) -> Panel:
     from rich.panel import Panel
 
     node_id = state.active.get(run_id)
@@ -169,7 +164,7 @@ def _render_overlay(
         return Panel("[dim]worker not found[/dim]", title="Overlay", border_style="cyan")
     node = graph.get_node(node_id)
     branch = node.branch_name if node else None
-    desc = (node.description if node else str(node_id))[:40]
+    desc = _summarize_description(node.description, max_chars=40) if node else str(node_id)
     lines = ralph.get_run_stdout(run_id)[-100:]
     stdout = "\n".join(lines) if lines else "[dim]no output yet[/dim]"
     content = (

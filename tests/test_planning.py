@@ -46,7 +46,9 @@ class TestBuildPlanningContext:
         assert "extract auth" in ctx
 
     @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
-    def test_includes_touch_sites_section(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
+    def test_includes_touch_sites_section(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Probable Touch Sites" in ctx
         # old broken CRG compact section must not appear
@@ -362,6 +364,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.errors import PlanningFailed
+
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="agent failed")
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(PlanningFailed) as exc_info:
@@ -921,15 +924,19 @@ class TestBuildCoverageDelta:
 
 class TestPlannerCoverageLoop:
     def _covered_stdout(self, us_ref: str) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": f"{us_ref} tests"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": f"{us_ref} tests"},
+            ]
+        )
 
     def _uncovered_stdout(self, us_ref: str) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
+            ]
+        )
 
     @patch("milknado.domains.planning.planner.TilthAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
@@ -942,14 +949,13 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._covered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._covered_stdout("US-001"))
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path, spec_path=spec, max_verify_rounds=2)
         assert mock_run.call_count == 1
@@ -965,6 +971,7 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -990,14 +997,13 @@ class TestPlannerCoverageLoop:
     ) -> None:
         from milknado.domains.common.errors import InsufficientTestCoverageError
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._uncovered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._uncovered_stdout("US-001"))
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(InsufficientTestCoverageError):
             planner.launch("goal", tmp_path, spec_path=spec, max_verify_rounds=0)
@@ -1017,15 +1023,15 @@ class TestPlannerCoverageLoop:
         import logging
 
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._uncovered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._uncovered_stdout("US-001"))
         from milknado.domains.common.errors import InsufficientTestCoverageError
+
         planner = Planner(tmp_graph, mock_crg, "claude")
         with caplog.at_level(logging.WARNING, logger="milknado"):
             with pytest.raises(InsufficientTestCoverageError):
@@ -1044,6 +1050,7 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -1177,10 +1184,12 @@ class TestUS010ExistingPlanGuard:
 
         spec = tmp_path / "spec.md"
         spec.write_text("# US-001 feature\nDo the thing.", encoding="utf-8")
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-001 impl"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-001 impl"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path, spec_path=spec)
@@ -1413,9 +1422,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implements US-202 feature"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-202 feature",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError):
@@ -1431,9 +1446,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implements US-202 feature"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-202 feature",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError) as exc_info:
@@ -1450,9 +1471,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/bar.py", "description": "US-201 US-202 US-203 all in one"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/bar.py",
+                    "description": "US-201 US-202 US-203 all in one",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError):
@@ -1468,10 +1495,12 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-203 and US-204"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-203 and US-204"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError) as exc_info:
@@ -1489,12 +1518,14 @@ class TestUS204BundlingEnforcement:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implement foo"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests foo"},
-            {"id": "c3", "path": "src/bar.py", "description": "US-202 implement bar"},
-            {"id": "c4", "path": "tests/test_bar.py", "description": "US-202 tests bar"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 implement foo"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests foo"},
+                {"id": "c3", "path": "src/bar.py", "description": "US-202 implement bar"},
+                {"id": "c4", "path": "tests/test_bar.py", "description": "US-202 tests bar"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("goal", tmp_path)
@@ -1509,14 +1540,16 @@ class TestUS204BundlingEnforcement:
         mock_crg: MagicMock,
     ) -> None:
         # same US-NNN ref repeated = 1 distinct ref, not bundled
-        stdout = _make_v2_manifest_stdout([
-            {
-                "id": "c1",
-                "path": "src/foo.py",
-                "description": "US-201 implements US-201 requirement",
-            },
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-201 requirement",
+                },
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("goal", tmp_path)
@@ -1532,9 +1565,11 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MilknadoError, MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202 bundled"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202 bundled"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MilknadoError) as exc_info:
@@ -1546,43 +1581,57 @@ class TestUS205CoverageEnforcement:
     """US-205: raise InsufficientTestCoverageError when ratio < 0.5 and orphans remain."""
 
     def _two_impl_no_tests(self) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+            ]
+        )
 
     def _two_impl_one_shared_us_test(self) -> str:
         # single test shares US-205 ref → covers both impls via shared US-NNN
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-            {"id": "c3", "path": "tests/test_foo_bar.py", "description": "US-205 tests"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+                {"id": "c3", "path": "tests/test_foo_bar.py", "description": "US-205 tests"},
+            ]
+        )
 
     def _two_impl_two_tests(self) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-            {
-                "id": "c3", "path": "tests/test_foo.py",
-                "description": "US-205 tests foo", "depends_on": ["c1"],
-            },
-            {
-                "id": "c4", "path": "tests/test_bar.py",
-                "description": "US-205 tests bar", "depends_on": ["c2"],
-            },
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+                {
+                    "id": "c3",
+                    "path": "tests/test_foo.py",
+                    "description": "US-205 tests foo",
+                    "depends_on": ["c1"],
+                },
+                {
+                    "id": "c4",
+                    "path": "tests/test_bar.py",
+                    "description": "US-205 tests bar",
+                    "depends_on": ["c2"],
+                },
+            ]
+        )
 
     def _two_impl_one_partial_test(self) -> str:
         # c1 covered via depends_on; c2 (US-206) is orphan — ratio=0.5, no raise
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-206 implement bar"},
-            {
-                "id": "c3", "path": "tests/test_foo.py",
-                "description": "US-205 tests foo", "depends_on": ["c1"],
-            },
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-206 implement bar"},
+                {
+                    "id": "c3",
+                    "path": "tests/test_foo.py",
+                    "description": "US-205 tests foo",
+                    "depends_on": ["c1"],
+                },
+            ]
+        )
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_two_impl_no_tests_raises(

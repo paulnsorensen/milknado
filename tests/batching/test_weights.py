@@ -28,9 +28,7 @@ def test_modify_uses_tiktoken_on_existing_file(tmp_path: Path) -> None:
     f = tmp_path / "a.py"
     f.write_text("def hello():\n    return 42\n")
     c = FileChange(id="1", path="a.py", edit_kind="modify")
-    with patch(
-        "milknado.domains.batching.weights._tiktoken_count", return_value=10
-    ):
+    with patch("milknado.domains.batching.weights._tiktoken_count", return_value=10):
         n = estimate_tokens(c, tmp_path)
     assert 5 < n < 100
 
@@ -93,7 +91,9 @@ def test_per_symbols_resolves_symbols_via_tilth(tmp_path: Path) -> None:
     slice_text = "def foo():\n    return 42\n"
     port = _make_tilth_port(slice_text)
     c = FileChange(
-        id="1", path="src/foo.py", edit_kind="modify",
+        id="1",
+        path="src/foo.py",
+        edit_kind="modify",
         symbols=(SymbolRef(name="foo", file="src/foo.py"),),
     )
     result = estimate_tokens_per_symbols(c, tmp_path, port)
@@ -110,7 +110,9 @@ def test_per_symbols_multiple_symbols_concatenated(tmp_path: Path) -> None:
     port.search_symbol.return_value = [fixed_loc]
     port.read_section.return_value = "def placeholder(): pass"
     c = FileChange(
-        id="1", path="src/foo.py", edit_kind="modify",
+        id="1",
+        path="src/foo.py",
+        edit_kind="modify",
         symbols=(
             SymbolRef(name="foo", file="src/foo.py"),
             SymbolRef(name="bar", file="src/foo.py"),
@@ -128,7 +130,9 @@ def test_per_symbols_symbol_not_found_degrades_to_path_level(tmp_path: Path) -> 
     port = MagicMock()
     port.search_symbol.return_value = []  # not found
     c = FileChange(
-        id="1", path="src/foo.py", edit_kind="modify",
+        id="1",
+        path="src/foo.py",
+        edit_kind="modify",
         symbols=(SymbolRef(name="missing", file="src/foo.py"),),
     )
     with patch("milknado.domains.batching.weights._tiktoken_count", return_value=15):
@@ -146,7 +150,9 @@ def test_per_symbols_read_section_error_degrades(tmp_path: Path) -> None:
     ]
     port.read_section.side_effect = RuntimeError("tilth unavailable")
     c = FileChange(
-        id="1", path="src/foo.py", edit_kind="modify",
+        id="1",
+        path="src/foo.py",
+        edit_kind="modify",
         symbols=(SymbolRef(name="foo", file="src/foo.py"),),
     )
     with patch("milknado.domains.batching.weights._tiktoken_count", return_value=10):
@@ -159,7 +165,9 @@ def test_per_symbols_read_section_error_degrades(tmp_path: Path) -> None:
 def test_per_symbols_add_uses_heuristic_ignores_tilth(tmp_path: Path) -> None:
     port = _make_tilth_port("should not be called")
     c = FileChange(
-        id="1", path="new.py", edit_kind="add",
+        id="1",
+        path="new.py",
+        edit_kind="add",
         symbols=(SymbolRef(name="foo", file="new.py"),),
     )
     result = estimate_tokens_per_symbols(c, tmp_path, port)

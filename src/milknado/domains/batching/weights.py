@@ -127,7 +127,8 @@ def batch_size_cost(k: int) -> int:
 
 
 def _estimate_via_symbols(
-    change: FileChange, tilth_port: TilthPort,
+    change: FileChange,
+    tilth_port: TilthPort,
 ) -> int:
     seen: dict[tuple[str, str], str] = {}
     for sym in change.symbols:
@@ -167,7 +168,9 @@ def _log_degradation(root: Path, change: FileChange, reason: str) -> None:
 
 
 def estimate_tokens_per_symbols(
-    change: FileChange, root: Path, tilth_port: TilthPort | None,
+    change: FileChange,
+    root: Path,
+    tilth_port: TilthPort | None,
 ) -> int:
     if change.edit_kind in FLAT_COST:
         return FLAT_COST[change.edit_kind]

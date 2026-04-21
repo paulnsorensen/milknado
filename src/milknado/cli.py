@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -23,6 +24,7 @@ from milknado.domains.common import (
     save_config,
 )
 from milknado.domains.common.agent_argv import (
+    WORKER_ALLOWED_TOOLS,
     build_planning_subprocess,
 )
 from milknado.domains.common.toolchain import (
@@ -81,7 +83,7 @@ def init(
         bool,
         typer.Option(
             "--install-rust-tools",
-            help="Install missing tilth/mergiraf via cargo.",
+            help="Install missing tilth/mergiraf/rtk via cargo.",
         ),
     ] = False,
 ) -> None:
@@ -116,6 +118,8 @@ def init(
 
     if install_rust_tools:
         _install_rust_tools_or_exit()
+
+    _write_worker_hooks(project_root, config.agent_family)
 
 
 @app.command()
@@ -648,6 +652,117 @@ def _install_rust_tools_or_exit() -> None:
         console.print("[red]Failed to install:[/red] " + ", ".join(failed))
         console.print("Install Rust/cargo, then run: [bold]milknado tools install[/bold]")
         raise typer.Exit(code=1)
+
+
+# ── Worker hook wiring ────────────────────────────────────────────────────────
+# `rtk hook <family>` is a self-contained stdin→stdout hook processor shipped
+# by rtk-ai/rtk. We wire it directly into each harness's project-scoped hook
+# config — no `rtk init -g` (global install) required.
+
+
+def _write_worker_hooks(project_root: Path, family: str) -> None:
+    if shutil.which("rtk") is None:
+        console.print("[dim]rtk not on PATH; skipping hook wiring.[/dim]")
+        return
+    writers = {
+        "claude": _write_claude_worker_settings,
+        "gemini": _write_gemini_worker_settings,
+        "cursor": _write_cursor_worker_hooks,
+    }
+    writer = writers.get(family)
+    if writer is None:
+        console.print(f"[dim]No hook template for family '{family}'; skipping.[/dim]")
+        return
+    writer(project_root)
+
+
+def _merge_json(path: Path, patch: dict) -> None:
+    existing: dict = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+    _deep_merge_dicts(existing, patch)
+    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+
+
+def _deep_merge_dicts(base: dict, override: dict) -> None:
+    for key, val in override.items():
+        if key in base and isinstance(base[key], dict) and isinstance(val, dict):
+            _deep_merge_dicts(base[key], val)
+        elif key in base and isinstance(base[key], list) and isinstance(val, list):
+            seen = {json.dumps(item, sort_keys=True) for item in base[key]}
+            base[key].extend(item for item in val if json.dumps(item, sort_keys=True) not in seen)
+        else:
+            base[key] = val
+
+
+def _write_claude_worker_settings(project_root: Path) -> None:
+    path = project_root / ".claude" / "settings.json"
+    path.parent.mkdir(exist_ok=True)
+    _merge_json(
+        path,
+        {
+            "permissions": {
+                "allow": list(WORKER_ALLOWED_TOOLS["claude"]),
+            },
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{"type": "command", "command": "rtk hook claude"}],
+                    },
+                ],
+            },
+        },
+    )
+    console.print(f"Worker hooks written: {path}")
+
+
+def _write_gemini_worker_settings(project_root: Path) -> None:
+    path = project_root / ".gemini" / "settings.json"
+    path.parent.mkdir(exist_ok=True)
+    _merge_json(
+        path,
+        {
+            "includeTools": list(WORKER_ALLOWED_TOOLS["gemini"]),
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "matcher": "run_shell_command",
+                        "hooks": [
+                            {
+                                "name": "rtk-rewrite",
+                                "type": "command",
+                                "command": "rtk hook gemini",
+                                "timeout": 5000,
+                            },
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+    console.print(f"Worker hooks written: {path}")
+
+
+def _write_cursor_worker_hooks(project_root: Path) -> None:
+    path = project_root / "hooks" / "hooks.json"
+    path.parent.mkdir(exist_ok=True)
+    _merge_json(
+        path,
+        {
+            "hooks": [
+                {
+                    "type": "PreToolUse",
+                    "matcher": "Bash",
+                    "command": "rtk hook cursor",
+                },
+            ],
+        },
+    )
+    console.print(f"Worker hooks written: {path}")
 
 
 @tools_app.command("check")

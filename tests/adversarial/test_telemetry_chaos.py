@@ -193,7 +193,8 @@ class TestPlanModeFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan()
         record = _build_record(
-            manifest, plan,
+            manifest,
+            plan,
             plan_mode_used="resume",
             existing_node_count_at_plan_start=7,
             spec_hash_changed=True,
@@ -208,7 +209,8 @@ class TestPlanModeFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan()
         record = _build_record(
-            manifest, plan,
+            manifest,
+            plan,
             plan_mode_used="reset",
             existing_node_count_at_plan_start=3,
             spec_hash_changed=False,
@@ -222,7 +224,9 @@ class TestPlanModeFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(batches=(Batch(index=0, change_ids=("c1",), depends_on=()),))
         record_batch_snapshot(
-            tmp_path, manifest, plan,
+            tmp_path,
+            manifest,
+            plan,
             plan_mode_used="resume",
             existing_node_count_at_plan_start=5,
             spec_hash_changed=True,
@@ -255,7 +259,9 @@ class TestMegaBatchFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(batches=(Batch(index=0, change_ids=("c1",), depends_on=()),))
         record_batch_snapshot(
-            tmp_path, manifest, plan,
+            tmp_path,
+            manifest,
+            plan,
             mega_batch_aborted=True,
             mega_batch_threshold=7,
         )
@@ -279,7 +285,8 @@ class TestCoverageFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan()
         record = _build_record(
-            manifest, plan,
+            manifest,
+            plan,
             verify_rounds_used=2,
             verify_round_cap_hit=True,
             coverage_gaps_remaining=3,
@@ -300,7 +307,9 @@ class TestCoverageFields:
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(batches=(Batch(index=0, change_ids=("c1",), depends_on=()),))
         record_batch_snapshot(
-            tmp_path, manifest, plan,
+            tmp_path,
+            manifest,
+            plan,
             verify_rounds_used=1,
             verify_round_cap_hit=False,
             coverage_gaps_remaining=2,

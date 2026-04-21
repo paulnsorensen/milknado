@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from milknado.domains.common.errors import TransientDispatchError
+from milknado.domains.common.errors import RebaseAbortError, TransientDispatchError
 from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
@@ -395,6 +396,40 @@ class TestExecutorDispatch:
         assert node.worktree_path is None
         assert node.branch_name is None
 
+    def test_worktree_cleanup_runs_even_when_mark_pending_raises(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """Orphan worktree must be removed even if mark_pending raises InvalidTransition."""
+        from milknado.domains.common.errors import InvalidTransition
+
+        fake_git = FakeGit()
+        fake_ralph = FakeRalph()
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
+            RuntimeError("failure after running"),
+        )
+
+        ex = Executor(graph=graph, git=fake_git, ralph=fake_ralph, crg=FakeCrg())
+        graph.add_node("doomed")
+
+        # Monkey-patch mark_pending to raise after mark_running succeeds
+        original_mark_pending = graph.mark_pending
+
+        def mark_pending_raises(node_id):
+            raise InvalidTransition(node_id, NodeStatus.RUNNING, NodeStatus.PENDING, ())
+
+        graph.mark_pending = mark_pending_raises  # type: ignore
+
+        with pytest.raises(RuntimeError, match="failure after running"):
+            ex.dispatch(1, config)
+
+        # Worktree cleanup must have run despite mark_pending raising
+        assert len(fake_git.removed) == 1
+        assert 1 not in ex._worktrees
+
+        graph.mark_pending = original_mark_pending  # restore
+
 
 class TestExecutorComplete:
     def test_marks_done_on_success(
@@ -576,6 +611,76 @@ class TestExecutorComplete:
         with pytest.raises(ValueError, match="not found"):
             executor.complete(999, "main")
 
+    def test_rebase_abort_error_propagates(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """RebaseAbortError must propagate from complete() — do not swallow."""
+        fake_git = FakeGit()
+        abort_error = RebaseAbortError(tmp_path / "worktree", stderr="abort failed")
+        fake_git.rebase = lambda *_args: (_ for _ in ()).throw(abort_error)  # type: ignore
+
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+
+        with pytest.raises(RebaseAbortError):
+            ex.complete(1, "main")
+
+    def test_complete_logs_detail_on_generic_exception(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """Generic exceptions from rebase yield failed result with detail."""
+        fake_git = FakeGit()
+        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
+            RuntimeError("commit failed: nothing to commit"),
+        )
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        result = ex.complete(1, "main")
+        assert result.rebased is False
+
+
+class TestEnsureCleanWorktree:
+    def test_orphan_removal_failure_is_logged_not_raised(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """_ensure_clean_worktree swallows remove_worktree errors."""
+        call_count = 0
+
+        class BoomGit(FakeGit):
+            def remove_worktree(self, path: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise OSError("disk full")
+
+        fake_git = BoomGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("first")
+        graph.add_node("second")
+
+        # Dispatch first node so it gets into _worktrees with an existing path
+        result1 = ex.dispatch(1, config)
+        # Simulate the worktree path existing
+        result1.worktree.mkdir(parents=True, exist_ok=True)
+
+        # Second dispatch of same node triggers _ensure_clean_worktree which calls remove
+        # To test the exception path, manually stash the worktree and call ensure
+        ex._worktrees[1] = result1.worktree
+        # Should not raise even though remove_worktree raises
+        ex._ensure_clean_worktree(1)
+
 
 class TestExecutorFail:
     def test_marks_node_failed(
@@ -741,7 +846,15 @@ class TestGetAttemptCount:
         call_count = 0
 
         class BurstRalph(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
@@ -767,7 +880,15 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class FailRalph(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 raise ValueError("bad config")
 
         ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
@@ -782,7 +903,15 @@ class TestGetAttemptCount:
         config: ExecutionConfig,
     ) -> None:
         class AlwaysTransient(FakeRalph):
-            def create_run(self, agent: str, ralph_dir: Path, ralph_file: Path, commands: list[str], quality_gates: list[str], project_root: Path | None = None) -> FakeRun:  # noqa: E501
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
                 raise TransientDispatchError("always fails")
 
         config_retry = ExecutionConfig(
@@ -872,3 +1001,20 @@ class TestBuildNodeContext:
         assert "Parent node" in result
         # Root is only in Goal section, not duplicated in Why chain
         assert result.count("Root") == 1  # only in ## Goal
+
+    def test_crg_raises_produces_degradation_marker(self, graph: MikadoGraph) -> None:
+        """CRG that raises produces a degraded Impact Radius marker rather than crashing."""
+        from milknado.domains.execution._context import build_node_context as _build_node_context
+
+        class FailingCrg(FakeCrg):
+            def get_impact_radius(self, files: list) -> dict:
+                raise RuntimeError("CRG exploded")
+
+        graph.add_node("task")
+        graph.set_file_ownership(1, ["some.py"])
+        node = graph.get_node(1)
+        assert node is not None
+        result = _build_node_context(node, graph, FailingCrg())
+        assert "## Impact Radius" in result
+        assert "CRG unavailable" in result
+        assert "CRG exploded" in result

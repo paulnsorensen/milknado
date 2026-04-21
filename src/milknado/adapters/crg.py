@@ -157,7 +157,9 @@ class CrgAdapter:
         return find_hub_nodes(self._get_store(), top_n=top_n)
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
         nodes = self._get_store().search_nodes(query, limit=top_n)
         return [

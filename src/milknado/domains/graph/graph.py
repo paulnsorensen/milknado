@@ -54,8 +54,14 @@ class MikadoGraph:
             "INSERT INTO nodes "
             "(description, status, parent_id, created_at, oversized, batch_index) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (description, NodeStatus.PENDING.value, parent_id, now,
-             1 if oversized else 0, batch_index),
+            (
+                description,
+                NodeStatus.PENDING.value,
+                parent_id,
+                now,
+                1 if oversized else 0,
+                batch_index,
+            ),
         )
         self._conn.commit()
         node_id = cur.lastrowid
@@ -78,7 +84,8 @@ class MikadoGraph:
     def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
         """Update parent_id without creating an edge (used by batching bridge)."""
         cur = self._conn.execute(
-            "UPDATE nodes SET parent_id = ? WHERE id = ?", (parent_id, node_id),
+            "UPDATE nodes SET parent_id = ? WHERE id = ?",
+            (parent_id, node_id),
         )
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
@@ -88,7 +95,8 @@ class MikadoGraph:
         if self._creates_cycle(parent_id, child_id):
             raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
         self._conn.execute(
-            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)", (parent_id, child_id),
+            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+            (parent_id, child_id),
         )
         self._conn.commit()
         return MikadoEdge(parent_id=parent_id, child_id=child_id)
@@ -150,6 +158,7 @@ class MikadoGraph:
 
     def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
         from milknado.domains.common.errors import InvalidTransition
+
         node = self.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -173,6 +182,22 @@ class MikadoGraph:
 
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
+
+    def complete_root(self) -> bool:
+        """Auto-complete root when all non-root nodes are done.
+
+        Returns True if root was completed.
+        """
+        root = self.get_root()
+        if root is None or root.status != NodeStatus.PENDING:
+            return False
+        all_nodes = self.get_all_nodes()
+        non_root = [n for n in all_nodes if n.id != root.id]
+        if not all(n.status == NodeStatus.DONE for n in non_root):
+            return False
+        self.mark_running(root.id)
+        self.mark_done(root.id)
+        return True
 
     def mark_failed(self, node_id: int) -> None:
         self._assert_transition(node_id, NodeStatus.FAILED)
@@ -234,7 +259,7 @@ class MikadoGraph:
     def get_latest_batch_plan(self) -> dict | None:
         return get_latest_batch_plan(self._conn)
 
-    def _record_completion_duration(self, node_id: int, duration_seconds: float) -> None:
+    def record_completion_duration(self, node_id: int, duration_seconds: float) -> None:
         record_completion_duration(self._conn, node_id, duration_seconds)
 
     def recent_completion_durations(self, limit: int) -> list[float]:

@@ -79,13 +79,14 @@ class Planner:
 
     def replan_with_delta(
         self,
-        delta: str,
+        goal_delta: str,
         project_root: Path,
-        spec_path: Path | None,
+        spec_path: Path | None = None,
         max_verify_rounds: int = 3,
     ) -> PlanResult:
         return self.launch(
-            delta, project_root,
+            goal_delta,
+            project_root,
             spec_path=spec_path,
             resuming=True,
             max_verify_rounds=max_verify_rounds,

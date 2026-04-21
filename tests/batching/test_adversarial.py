@@ -74,6 +74,7 @@ class TestEstimateTokens:
         f.write_text("")
         c = FileChange(id="1", path="empty.py", edit_kind="modify")
         from unittest.mock import patch as _patch
+
         with _patch("milknado.domains.batching.weights._tiktoken_count", return_value=0):
             result = estimate_tokens(c, tmp_path)
         assert result == 0
@@ -83,6 +84,7 @@ class TestEstimateTokens:
         f.write_bytes(bytes(range(256)))
         c = FileChange(id="1", path="binary.py", edit_kind="modify")
         from unittest.mock import patch as _patch
+
         with _patch("milknado.domains.batching.weights._tiktoken_count", return_value=42):
             result = estimate_tokens(c, tmp_path)
         assert isinstance(result, int)

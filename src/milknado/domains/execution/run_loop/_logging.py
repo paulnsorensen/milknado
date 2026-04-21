@@ -16,15 +16,15 @@ def configure_run_logging(project_root: Path) -> Generator[Path, None, None]:
     iso = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"run-{iso}.log"
     handler = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
-    handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    previous_level = _logger.level
     _logger.setLevel(logging.INFO)
     _logger.addHandler(handler)
     try:
         yield log_path
     finally:
         _logger.removeHandler(handler)
+        _logger.setLevel(previous_level)
         handler.flush()
         handler.close()
 

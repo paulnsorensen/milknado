@@ -1,4 +1,5 @@
 """CP-SAT batch planner — lexicographic two-pass solver with oversized passthrough."""
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -130,13 +131,14 @@ def _tokens_per_scc(
             change = change_by_id[cid]
             if tilth_port is not None and change.symbols:
                 new_syms = tuple(
-                    sym for sym in change.symbols
-                    if (sym.file, sym.name) not in seen_sym_keys
+                    sym for sym in change.symbols if (sym.file, sym.name) not in seen_sym_keys
                 )
                 if new_syms:
                     filtered = FileChange(
-                        id=change.id, path=change.path,
-                        edit_kind=change.edit_kind, symbols=new_syms,
+                        id=change.id,
+                        path=change.path,
+                        edit_kind=change.edit_kind,
+                        symbols=new_syms,
                     )
                     total += estimate_tokens_per_symbols(filtered, root, tilth_port)
                     for sym in new_syms:
@@ -162,9 +164,7 @@ def _build_spread_report(
     sym_by_node: dict[str, tuple[SymbolRef, ...]],
 ) -> tuple[SymbolSpread, ...]:
     key_to_sym: dict[str, SymbolRef] = {
-        f"{sym.file}:{sym.name}": sym
-        for syms in sym_by_node.values()
-        for sym in syms
+        f"{sym.file}:{sym.name}": sym for syms in sym_by_node.values() for sym in syms
     }
     return tuple(
         SymbolSpread(symbol=sym, spread=value)
@@ -194,12 +194,14 @@ def _extract_solution(
     for old_b in sorted_batch_indices:
         new_b = remap[old_b]
         members = sorted(raw[old_b], key=lambda x: input_order.get(x, 0))
-        batches.append(Batch(
-            index=new_b,
-            change_ids=tuple(members),
-            depends_on=tuple(sorted(batch_deps[new_b])),
-            oversized=new_b in remapped_oversized,
-        ))
+        batches.append(
+            Batch(
+                index=new_b,
+                change_ids=tuple(members),
+                depends_on=tuple(sorted(batch_deps[new_b])),
+                oversized=new_b in remapped_oversized,
+            )
+        )
     return tuple(batches)
 
 
@@ -238,6 +240,7 @@ def plan_batches(
         return BatchPlan(batches=(), spread_report=(), solver_status=STATUS_OPTIMAL)
     _validate_unique_ids(changes)
     from milknado.domains.batching.graph_build import validate_no_symbol_overlap
+
     validate_no_symbol_overlap(changes)
     return _run_solver(
         changes,
@@ -279,7 +282,11 @@ def _run_solver(
         return BatchPlan(batches=(), spread_report=(), solver_status=status)
     input_order = {c.id: i for i, c in enumerate(changes)}
     batches = _extract_solution(
-        snapshot.batch_of, scc_members, input_order, contracted.dag_edges, inputs.oversized_sccs,
+        snapshot.batch_of,
+        scc_members,
+        input_order,
+        contracted.dag_edges,
+        inputs.oversized_sccs,
     )
     return BatchPlan(
         batches=batches,

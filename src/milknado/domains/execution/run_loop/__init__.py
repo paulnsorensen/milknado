@@ -80,89 +80,23 @@ class RunLoop:
         spec_path: Path | None = None,
     ) -> RunLoopResult:
         from rich.console import Console
-        from rich.live import Live
 
         self._strict = strict
         self._exec_config = config
-        dispatched = completed = failed = 0
-        conflicts: list[RebaseConflict] = []
+        timeout = (
+            self._milknado_config.completion_timeout_seconds if self._milknado_config else 1800.0
+        )
 
         with configure_run_logging(config.project_root) as log_path:
             Console().print(f"[dim]Log → {log_path}[/dim]")
             _logger.info("Run started feature_branch=%s", feature_branch)
-
-            timeout = (
-                self._milknado_config.completion_timeout_seconds
-                if self._milknado_config
-                else 1800.0
-            )
             self._input.input_stop.clear()
             start_input_thread(self._input)
-            _interrupted = False
-            try:
-                with Live(self._build_layout(), refresh_per_second=2) as live:
-                    dispatched += self._dispatch_batch(config, concurrency_limit, live)
-                    drain_input(self._input, self._active)
-                    display = (
-                        self._render_overlay(self._input.overlay_state)
-                        if self._input.overlay_state
-                        else self._build_layout()
-                    )
-                    live.update(display)
-                    while self._active:
-                        try:
-                            run_id, success = self._ralph.wait_for_next_completion(
-                                set(self._active.keys()),
-                                timeout=timeout,
-                            )
-                        except CompletionTimeout as ct:
-                            _logger.warning(
-                                "Completion timeout after %.1fs; active runs: %s",
-                                ct.waited_seconds,
-                                sorted(ct.active_run_ids),
-                            )
-                            for timed_out_id in list(self._active):
-                                nid = self._active.pop(timed_out_id)
-                                self._executor.fail(nid)
-                                self._logs.append(f"[{ts()}] ⏱ node {nid} timeout")
-                                failed += 1
-                            if self._strict:
-                                self._failure_triggered = True
-                            break
-                        self._absorb_progress()
-                        drain_input(self._input, self._active)
-                        c, f, cs = handle_completion(self, run_id, success, feature_branch, live)
-                        completed += c
-                        failed += f
-                        conflicts.extend(cs)
-                        if not (self._strict and self._failure_triggered):
-                            dispatched += self._dispatch_batch(config, concurrency_limit, live)
-                        display = (
-                            self._render_overlay(self._input.overlay_state)
-                            if self._input.overlay_state
-                            else self._build_layout()
-                        )
-                        live.update(display)
-            except KeyboardInterrupt:
-                _interrupted = True
-                _logger.warning("Run interrupted by user (KeyboardInterrupt)")
-                raise
-            finally:
-                stop_input_thread(self._input)
-                root_node = self._graph.get_root()
-                _logger.info(
-                    "FINAL_TELEMETRY %s",
-                    json.dumps({
-                        "dispatched": dispatched,
-                        "completed": completed,
-                        "failed": failed,
-                        "conflicts": len(conflicts),
-                        "root_done": root_node is not None and root_node.status == NodeStatus.DONE,
-                        "strict_exit": self._strict and self._failure_triggered,
-                        "interrupted": _interrupted,
-                    }),
-                )
+            dispatched, completed, failed, conflicts, interrupted = self._execute_run(
+                config, feature_branch, concurrency_limit, timeout
+            )
 
+        self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
         verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
         root = self._graph.get_root()
         return RunLoopResult(
@@ -173,6 +107,100 @@ class RunLoop:
             rebase_conflicts=tuple(conflicts),
             strict_exit=strict and self._failure_triggered,
             verify_outcome=verify_outcome,
+        )
+
+    def _execute_run(
+        self,
+        config: ExecutionConfig,
+        feature_branch: str,
+        concurrency_limit: int,
+        timeout: float,
+    ) -> tuple[int, int, int, list[RebaseConflict], bool]:
+        from rich.live import Live
+
+        dispatched = completed = failed = 0
+        conflicts: list[RebaseConflict] = []
+        interrupted = False
+        try:
+            with Live(self._build_layout(), refresh_per_second=2) as live:
+                d, f = self._dispatch_batch(config, concurrency_limit, live)
+                dispatched += d
+                failed += f
+                drain_input(self._input, self._active)
+                self._render_live_frame(live)
+                while self._active:
+                    try:
+                        run_id, success = self._ralph.wait_for_next_completion(
+                            set(self._active.keys()), timeout=timeout
+                        )
+                    except CompletionTimeout as ct:
+                        failed += self._handle_completion_timeout(ct)
+                        break
+                    self._absorb_progress()
+                    drain_input(self._input, self._active)
+                    c, f, cs = handle_completion(self, run_id, success, feature_branch, live)
+                    completed += c
+                    failed += f
+                    conflicts.extend(cs)
+                    if not (self._strict and self._failure_triggered):
+                        d, f = self._dispatch_batch(config, concurrency_limit, live)
+                        dispatched += d
+                        failed += f
+                    self._render_live_frame(live)
+        except KeyboardInterrupt:
+            interrupted = True
+            _logger.warning("Run interrupted by user (KeyboardInterrupt)")
+            raise
+        finally:
+            stop_input_thread(self._input)
+        return dispatched, completed, failed, conflicts, interrupted
+
+    def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
+        _logger.warning(
+            "Completion timeout after %.1fs; active runs: %s",
+            ct.waited_seconds,
+            sorted(ct.active_run_ids),
+        )
+        newly_failed = 0
+        for timed_out_id in list(self._active):
+            nid = self._active.pop(timed_out_id)
+            self._executor.fail(nid)
+            self._logs.append(f"[{ts()}] ⏱ node {nid} timeout")
+            newly_failed += 1
+        if self._strict:
+            self._failure_triggered = True
+        return newly_failed
+
+    def _render_live_frame(self, live: Live) -> None:
+        display = (
+            self._render_overlay(self._input.overlay_state)
+            if self._input.overlay_state
+            else self._build_layout()
+        )
+        live.update(display)
+
+    def _emit_final_telemetry(
+        self,
+        dispatched: int,
+        completed: int,
+        failed: int,
+        conflicts: list[RebaseConflict],
+        interrupted: bool,
+    ) -> None:
+        root_node = self._graph.get_root()
+        _logger.info(
+            "FINAL_TELEMETRY %s",
+            json.dumps(
+                {
+                    "dispatched": dispatched,
+                    "completed": completed,
+                    "failed": failed,
+                    "conflicts": len(conflicts),
+                    "root_done": root_node is not None and root_node.status == NodeStatus.DONE,
+                    "strict_exit": self._strict and self._failure_triggered,
+                    "interrupted": interrupted,
+                }
+            ),
         )
 
     def _absorb_progress(self) -> None:
@@ -213,9 +241,7 @@ class RunLoop:
         if root is None or root.status == NodeStatus.DONE:
             return None
         non_root_all_done = all(
-            n.status == NodeStatus.DONE
-            for n in self._graph.get_all_nodes()
-            if n.id != root.id
+            n.status == NodeStatus.DONE for n in self._graph.get_all_nodes() if n.id != root.id
         )
         if not non_root_all_done:
             return None
@@ -233,14 +259,15 @@ class RunLoop:
         config: ExecutionConfig,
         concurrency_limit: int,
         live: Live,
-    ) -> int:
+    ) -> tuple[int, int]:
         if self._strict and self._failure_triggered:
-            return 0
+            return 0, 0
         available = concurrency_limit - len(self._active)
         if available <= 0:
-            return 0
+            return 0, 0
         dispatchable = get_dispatchable_nodes(self._graph)
         dispatched = 0
+        failed = 0
         for node_id in dispatchable[:available]:
             node = self._graph.get_node(node_id)
             desc = _summarize_description(node.description) if node else str(node_id)
@@ -249,10 +276,17 @@ class RunLoop:
             except Exception as exc:
                 _logger.exception(
                     "Dispatch failed for node %d (%s): %s: %s",
-                    node_id, desc, type(exc).__name__, exc,
+                    node_id,
+                    desc,
+                    type(exc).__name__,
+                    exc,
                 )
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
+                failed += 1
+                if self._strict:
+                    self._failure_triggered = True
+                    break
                 continue
             self._active[result.run_id] = node_id
             self._dispatched_at[result.run_id] = time.monotonic()
@@ -260,4 +294,4 @@ class RunLoop:
             live.console.print(f"[cyan]→[/cyan] [{node_id}] {desc}")
             _logger.info("node_dispatched node_id=%d run_id=%s", node_id, result.run_id)
             dispatched += 1
-        return dispatched
+        return dispatched, failed

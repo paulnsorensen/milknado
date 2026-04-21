@@ -82,17 +82,13 @@ class TestSpecTextInjection:
 
 @pytest.mark.skip(reason="touch-sites rendering lives in β slice (US-001)")
 class TestTouchSitesCrg:
-    
-
     def test_touch_sites_section_present(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Probable Touch Sites" in ctx
 
-    def test_crg_semantic_search_called_per_keyword(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
+    def test_crg_semantic_search_called_per_keyword(self, tmp_graph: MikadoGraph) -> None:
         """CRG semantic_search is called once per extracted keyword."""
         crg = MagicMock()
         crg.semantic_search.return_value = []
@@ -100,9 +96,7 @@ class TestTouchSitesCrg:
         build_planning_context("goal", crg, tmp_graph, spec_text=spec)
         assert crg.semantic_search.call_count >= 1
 
-    def test_crg_file_path_key_used_for_ranking(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
+    def test_crg_file_path_key_used_for_ranking(self, tmp_graph: MikadoGraph) -> None:
         """Hits with 'file_path' key are ranked into the touch sites section."""
         crg = MagicMock()
         crg.semantic_search.return_value = [{"file_path": "src/auth.py", "score": 0.9}]
@@ -110,9 +104,7 @@ class TestTouchSitesCrg:
         ctx = build_planning_context("goal", crg, tmp_graph, spec_text=spec)
         assert "auth.py" in ctx
 
-    def test_crg_none_falls_back_gracefully(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
+    def test_crg_none_falls_back_gracefully(self, tmp_graph: MikadoGraph) -> None:
         spec = "## US-001: Add feature\n"
         ctx = build_planning_context("goal", None, tmp_graph, spec_text=spec)
         assert "# Probable Touch Sites" in ctx

@@ -73,7 +73,8 @@ def detect_spec_hash_change(
 
 
 def safe_ensure_crg(
-    crg: CrgPort, project_root: Path,
+    crg: CrgPort,
+    project_root: Path,
 ) -> tuple[CrgPort, bool]:
     try:
         crg.ensure_graph(project_root)

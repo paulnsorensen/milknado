@@ -1,4 +1,5 @@
 import queue
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -12,7 +13,8 @@ from milknado.adapters.ralphify import (
     _build_verify_prompt,
     _parse_verify_output,
 )
-from milknado.domains.common.protocols import VerifySpecResult
+from milknado.domains.common.errors import CompletionTimeout
+from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
 
 
@@ -27,6 +29,9 @@ def adapter(mock_manager: MagicMock) -> RalphifyAdapter:
     a._manager = mock_manager
     a._queue = queue.Queue()
     a._emitter = MagicMock()
+    a._progress_buffer = []
+    a._progress_lock = threading.Lock()
+    a._agent = ""
     return a
 
 
@@ -311,7 +316,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_done_signal(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -325,7 +332,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_gaps_signal_with_delta(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -340,7 +349,9 @@ class TestVerifySpec:
 
     @patch("milknado.adapters.ralphify.RunManager")
     def test_timeout_returns_gaps(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter,
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: RalphifyAdapter,
     ) -> None:
         import time
 
@@ -373,7 +384,9 @@ def _setup_verify_mocks(
 
 
 def _put_iteration(
-    q: queue.Queue[MagicMock], event_type: EventType, result_text: str,
+    q: queue.Queue[MagicMock],
+    event_type: EventType,
+    result_text: str,
 ) -> None:
     event = MagicMock()
     event.type = event_type
@@ -385,3 +398,237 @@ def _put_stopped(q: queue.Queue[MagicMock]) -> None:
     event = MagicMock()
     event.type = EventType.RUN_STOPPED
     q.put(event)
+
+
+class TestRalphifyAdapterInit:
+    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.ralphify.QueueEmitter")
+    def test_init_creates_manager_emitter(
+        self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
+    ) -> None:
+        mock_manager_cls.return_value = MagicMock()
+        mock_emitter_cls.return_value = MagicMock()
+        adapter = RalphifyAdapter(agent="claude")
+        assert adapter._agent == "claude"
+        assert adapter._progress_buffer == []
+        assert adapter._progress_lock is not None
+
+    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.ralphify.QueueEmitter")
+    def test_init_default_agent_empty(
+        self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
+    ) -> None:
+        mock_manager_cls.return_value = MagicMock()
+        mock_emitter_cls.return_value = MagicMock()
+        adapter = RalphifyAdapter()
+        assert adapter._agent == ""
+
+
+class TestDrainVerifyRunExceptionHandler:
+    @patch("milknado.adapters.ralphify.RunManager")
+    def test_exception_in_drain_returns_done(
+        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter
+    ) -> None:
+        adapter._agent = "claude"  # type: ignore[attr-defined]
+        local_q: queue.Queue[MagicMock] = queue.Queue()
+        mock_manager = MagicMock()
+        mock_manager_cls.return_value = mock_manager
+        mock_emitter = MagicMock()
+        mock_emitter.queue = local_q
+        mock_run = MagicMock()
+        mock_run.state.run_id = "verify-1"
+        mock_run.emitter = mock_emitter
+        mock_manager.create_run.return_value = mock_run
+
+        # Put an event whose .type attribute raises an exception
+        bad_event = MagicMock()
+        type(bad_event).type = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+        local_q.put(bad_event)
+
+        result = adapter.verify_spec("spec", "graph")
+        assert result == VerifySpecResult(outcome="done")
+
+
+class TestPollProgressEvents:
+    def test_returns_buffered_events_and_clears(self, adapter: RalphifyAdapter) -> None:
+        ev = ProgressEvent(run_id="run-1", work=5, total=10, message="doing stuff")
+        adapter._progress_buffer.append(ev)  # type: ignore[attr-defined]
+        result = adapter.poll_progress_events()
+        assert result == [ev]
+        # Buffer cleared after drain
+        assert adapter.poll_progress_events() == []
+
+    def test_returns_empty_when_no_events(self, adapter: RalphifyAdapter) -> None:
+        assert adapter.poll_progress_events() == []
+
+    def test_progress_events_collected_from_queue(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        from ralphify import EventType, RunStatus
+
+        _PROGRESS = getattr(EventType, "PROGRESS", None)
+        if _PROGRESS is None:
+            pytest.skip("EventType.PROGRESS not available in this ralphify version")
+
+        progress_ev = MagicMock()
+        progress_ev.type = _PROGRESS
+        progress_ev.run_id = "run-1"
+        progress_ev.work = 3
+        progress_ev.total = 10
+        progress_ev.message = "in progress"
+
+        stop_ev = MagicMock()
+        stop_ev.type = EventType.RUN_STOPPED
+        stop_ev.run_id = "run-1"
+
+        run = MagicMock()
+        run.state.status = RunStatus.COMPLETED
+        mock_manager.get_run.return_value = run
+
+        adapter._queue.put(progress_ev)
+        adapter._queue.put(stop_ev)
+
+        adapter.wait_for_next_completion({"run-1"})
+        events = adapter.poll_progress_events()
+        assert len(events) == 1
+        assert events[0].run_id == "run-1"
+        assert events[0].work == 3
+
+
+class TestGetRunStdout:
+    def test_returns_empty_when_run_not_found(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = None
+        assert adapter.get_run_stdout("missing-run") == []
+
+    def test_returns_list_stdout_directly(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        run.stdout = ["line 1", "line 2"]
+        mock_manager.get_run.return_value = run
+        assert adapter.get_run_stdout("run-1") == ["line 1", "line 2"]
+
+    def test_splits_string_stdout_into_lines(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        run.stdout = "line 1\nline 2\nline 3"
+        mock_manager.get_run.return_value = run
+        assert adapter.get_run_stdout("run-1") == ["line 1", "line 2", "line 3"]
+
+    def test_returns_empty_when_stdout_is_none(
+        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        run.stdout = None
+        mock_manager.get_run.return_value = run
+        assert adapter.get_run_stdout("run-1") == []
+
+
+class TestWaitForNextCompletionTimeout:
+    def test_raises_on_timeout(self, adapter: RalphifyAdapter) -> None:
+        with pytest.raises(CompletionTimeout) as exc_info:
+            adapter.wait_for_next_completion({"run-1"}, timeout=0.01)
+        assert "run-1" in exc_info.value.active_run_ids
+
+    def test_raises_when_deadline_already_passed(self, adapter: RalphifyAdapter) -> None:
+        """Covers line 91: remaining <= 0 branch in wait_for_next_completion."""
+
+        with patch("milknado.adapters.ralphify.time") as mock_time:
+            # start, deadline=start+timeout, remaining<=0 check
+            mock_time.monotonic.side_effect = [0.0, 100.0, 100.0, 100.0]
+            with pytest.raises(CompletionTimeout):
+                adapter.wait_for_next_completion({"run-1"}, timeout=1.0)
+
+
+class TestCreateRunWithProjectRoot:
+    @patch("milknado.adapters.ralphify.RunConfig")
+    def test_mcp_config_injected_when_exists(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mcp_file = tmp_path / ".mcp.json"
+        mcp_file.write_text("{}", encoding="utf-8")
+        mock_config_cls.return_value = MagicMock()
+        mock_manager.create_run.return_value = MagicMock(id="run-1")
+
+        adapter.create_run(
+            agent="claude",
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / "ralph.md",
+            commands=[],
+            quality_gates=[],
+            project_root=tmp_path,
+        )
+
+        call_kwargs = mock_config_cls.call_args[1]
+        assert "--mcp-config" in call_kwargs["agent"]
+
+    @patch("milknado.adapters.ralphify.RunConfig")
+    def test_no_mcp_config_when_file_missing(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_config_cls.return_value = MagicMock()
+        mock_manager.create_run.return_value = MagicMock(id="run-1")
+
+        adapter.create_run(
+            agent="claude",
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / "ralph.md",
+            commands=[],
+            quality_gates=[],
+            project_root=tmp_path,  # .mcp.json does not exist
+        )
+
+        call_kwargs = mock_config_cls.call_args[1]
+        assert "--mcp-config" not in call_kwargs["agent"]
+
+    @patch("milknado.adapters.ralphify.RunConfig")
+    def test_log_dir_routed_to_ralph_logs(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: RalphifyAdapter,
+        mock_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_config_cls.return_value = MagicMock()
+        mock_manager.create_run.return_value = MagicMock(id="run-1")
+
+        adapter.create_run(
+            agent="claude",
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / "ralph.md",
+            commands=[],
+            quality_gates=[],
+        )
+
+        call_kwargs = mock_config_cls.call_args[1]
+        assert call_kwargs["log_dir"] == tmp_path / ".ralph-logs"
+
+
+class TestGenerateRalphMdWriteError:
+    def test_raises_on_write_failure(self, adapter: RalphifyAdapter, tmp_path: Path) -> None:
+        from milknado.domains.common.errors import RalphMarkdownWriteError
+
+        node = MikadoNode(id=1, description="Task")
+        bad_path = tmp_path / "nonexistent_dir" / "RALPH.md"
+        # Make the parent non-writable to force OSError
+        with patch("milknado.adapters.ralphify.Path.write_text") as mock_write:
+            mock_write.side_effect = OSError("disk full")
+            with pytest.raises(RalphMarkdownWriteError) as exc_info:
+                adapter.generate_ralph_md(
+                    node=node,
+                    context="ctx",
+                    quality_gates=[],
+                    output_path=bad_path,
+                )
+            assert exc_info.value.path == bad_path

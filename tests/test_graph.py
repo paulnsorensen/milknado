@@ -232,7 +232,9 @@ class TestStatusTransitions:
         assert exc.current == NodeStatus.PENDING
         assert exc.target == NodeStatus.DONE
         assert set(exc.valid_targets) == {
-            NodeStatus.RUNNING, NodeStatus.BLOCKED, NodeStatus.FAILED
+            NodeStatus.RUNNING,
+            NodeStatus.BLOCKED,
+            NodeStatus.FAILED,
         }
 
     def test_done_is_terminal(self, graph: MikadoGraph) -> None:

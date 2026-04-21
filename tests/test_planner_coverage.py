@@ -37,15 +37,19 @@ class TestUS009CoverageLoop:
     """US-009: coverage-check loop integration — PlanResult telemetry accuracy."""
 
     def _covered(self, us: str) -> str:
-        return _make_manifest([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us} implement"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": f"{us} tests"},
-        ])
+        return _make_manifest(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us} implement"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": f"{us} tests"},
+            ]
+        )
 
     def _uncovered(self, us: str) -> str:
-        return _make_manifest([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us} implement"},
-        ])
+        return _make_manifest(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us} implement"},
+            ]
+        )
 
     def _degrade(self) -> MagicMock:
         from milknado.domains.common.types import DegradationMarker

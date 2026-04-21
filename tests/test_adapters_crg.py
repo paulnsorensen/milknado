@@ -497,9 +497,7 @@ class TestSemanticSearch:
         ]
 
     @patch("milknado.adapters.crg.GraphStore")
-    def test_empty_results(
-        self, mock_store_cls: MagicMock, adapter: CrgAdapter
-    ) -> None:
+    def test_empty_results(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
         mock_store.search_nodes.return_value = []
@@ -523,9 +521,7 @@ class TestSemanticSearch:
         assert list(result[0].keys()) == ["file_path"]
 
     @patch("milknado.adapters.crg.GraphStore")
-    def test_default_top_n_is_five(
-        self, mock_store_cls: MagicMock, adapter: CrgAdapter
-    ) -> None:
+    def test_default_top_n_is_five(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
         mock_store.search_nodes.return_value = []
