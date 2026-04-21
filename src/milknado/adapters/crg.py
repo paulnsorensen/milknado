@@ -1,8 +1,16 @@
+"""CRG adapter — wraps code-review-graph for graph-based code intelligence.
+
+Phrase cap (2-4 words) on semantic_search prevents oversized MCP payloads.
+detail_level controls response verbosity:
+  "minimal" — file paths only (cheapest)
+  "full"    — name, file_path, kind, qualified_name per node
+"""
+
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
 from code_review_graph.communities import get_architecture_overview, get_communities
@@ -10,43 +18,16 @@ from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
 from code_review_graph.tools.context import get_minimal_context
 
-_SOURCE_EXTENSIONS = frozenset(
-    {
-        ".py",
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        ".rs",
-        ".go",
-        ".java",
-        ".rb",
-        ".c",
-        ".cpp",
-        ".h",
-        ".hpp",
-        ".cs",
-    }
-)
+_SOURCE_EXTENSIONS = frozenset({
+    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go",
+    ".java", ".rb", ".c", ".cpp", ".h", ".hpp", ".cs",
+})
 
-_SKIP_DIRS = frozenset(
-    {
-        ".git",
-        ".code-review-graph",
-        ".venv",
-        ".tox",
-        ".mypy_cache",
-        ".ruff_cache",
-        "__pycache__",
-        "node_modules",
-        ".next",
-        "target",
-        "dist",
-        "build",
-        ".eggs",
-        "ralphs",
-    }
-)
+_SKIP_DIRS = frozenset({
+    ".git", ".code-review-graph", ".venv", ".tox", ".mypy_cache",
+    ".ruff_cache", "__pycache__", "node_modules", ".next", "target",
+    "dist", "build", ".eggs", "ralphs",
+})
 
 
 class CrgAdapter:
@@ -122,20 +103,14 @@ class CrgAdapter:
         return get_architecture_overview(self._get_store())
 
     def list_communities(
-        self,
-        sort_by: str = "size",
-        min_size: int = 0,
+        self, sort_by: str = "size", min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return get_communities(
-            self._get_store(),
-            sort_by=sort_by,
-            min_size=min_size,
+            self._get_store(), sort_by=sort_by, min_size=min_size,
         )
 
     def list_flows(
-        self,
-        sort_by: str = "criticality",
-        limit: int = 50,
+        self, sort_by: str = "criticality", limit: int = 50,
     ) -> list[dict[str, Any]]:
         return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
 
@@ -155,3 +130,46 @@ class CrgAdapter:
 
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return find_hub_nodes(self._get_store(), top_n=top_n)
+
+    def semantic_search_nodes(
+        self, query: str, top_n: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Spec-driven retrieval returning raw graph nodes."""
+        nodes = self._get_store().search_nodes(query, limit=top_n)
+        return [
+            {
+                "name": n.name,
+                "file_path": n.file_path,
+                "kind": n.kind,
+                "qualified_name": n.qualified_name,
+            }
+            for n in nodes
+        ]
+
+    def semantic_search(
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: Literal["minimal", "full"] = "minimal",
+    ) -> list[dict[str, Any]]:
+        """Free-form retrieval; returns file paths (minimal) or full node records (full)."""
+        words = query.split()
+        if len(words) < 2:
+            raise ValueError(f"semantic_search query must be 2-4 words, got: {query!r}")
+        if len(words) > 4:
+            query = " ".join(words[:4])
+        nodes = self._get_store().search_nodes(query, limit=top_n)
+        if detail_level == "minimal":
+            seen: dict[str, None] = {}
+            for n in nodes:
+                seen[n.file_path] = None
+            return [{"file_path": fp} for fp in seen]
+        return [
+            {
+                "name": n.name,
+                "file_path": n.file_path,
+                "kind": n.kind,
+                "qualified_name": n.qualified_name,
+            }
+            for n in nodes
+        ]
