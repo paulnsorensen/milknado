@@ -1,9 +1,11 @@
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from milknado.domains.common.errors import RebaseAbortError, TransientDispatchError
 from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
@@ -52,6 +54,9 @@ class FakeGit:
     def commit_all(self, worktree: Path, message: str) -> None:
         self.commits.append((worktree, message))
 
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+        self.commits.append((worktree, msg))
+
 
 class FakeRalph:
     def __init__(self) -> None:
@@ -83,6 +88,24 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return None
 
+    def get_run_stdout(self, run_id: str) -> list[str]:
+        return []
+
+    def wait_for_next_completion(
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
+    ) -> tuple[str, bool]:
+        raise RuntimeError("Not expected in executor tests")
+
+    def poll_progress_events(self) -> list[Any]:
+        return []
+
+    def verify_spec(self, spec_text: str, graph_state: str) -> Any:
+        from milknado.domains.common.protocols import VerifySpecResult
+
+        return VerifySpecResult(outcome="done")
+
     def generate_ralph_md(
         self,
         node: MikadoNode,
@@ -103,6 +126,36 @@ class FakeCrg:
 
     def get_architecture_overview(self) -> dict[str, Any]:
         return {"modules": []}
+
+    def list_communities(self, sort_by: str = "size", min_size: int = 0) -> list[dict[str, Any]]:
+        return []
+
+    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, Any]]:
+        return []
+
+    def get_minimal_context(
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return {}
+
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+        return []
+
+    def semantic_search_nodes(self, query: str, top_n: int = 5) -> list[dict[str, Any]]:
+        return []
+
+    def semantic_search(
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
+    ) -> list[dict[str, Any]]:
+        return []
 
 
 @pytest.fixture()
@@ -130,8 +183,11 @@ class TestGetDispatchableNodes:
         assert get_dispatchable_nodes(graph) == []
 
     def test_single_pending_leaf(self, graph: MikadoGraph) -> None:
-        graph.add_node("root")
-        assert get_dispatchable_nodes(graph) == [1]
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+        result = get_dispatchable_nodes(graph)
+        assert result == [leaf.id]
+        assert root.id not in result
 
     def test_excludes_running_nodes(self, graph: MikadoGraph) -> None:
         graph.add_node("root")
@@ -307,7 +363,7 @@ class TestExecutorDispatch:
     ) -> None:
         fake_git = FakeGit()
         fake_ralph = FakeRalph()
-        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
@@ -327,7 +383,7 @@ class TestExecutorDispatch:
         config: ExecutionConfig,
     ) -> None:
         fake_ralph = FakeRalph()
-        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
@@ -344,6 +400,40 @@ class TestExecutorDispatch:
         assert node.status == NodeStatus.PENDING
         assert node.worktree_path is None
         assert node.branch_name is None
+
+    def test_worktree_cleanup_runs_even_when_mark_pending_raises(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """Orphan worktree must be removed even if mark_pending raises InvalidTransition."""
+        from milknado.domains.common.errors import InvalidTransition
+
+        fake_git = FakeGit()
+        fake_ralph = FakeRalph()
+        fake_ralph.create_run = lambda **_kw: (_ for _ in ()).throw(  # type: ignore
+            RuntimeError("failure after running"),
+        )
+
+        ex = Executor(graph=graph, git=fake_git, ralph=fake_ralph, crg=FakeCrg())
+        graph.add_node("doomed")
+
+        # Monkey-patch mark_pending to raise after mark_running succeeds
+        original_mark_pending = graph.mark_pending
+
+        def mark_pending_raises(node_id):
+            raise InvalidTransition(node_id, NodeStatus.RUNNING, NodeStatus.PENDING, ())
+
+        graph.mark_pending = mark_pending_raises  # type: ignore
+
+        with pytest.raises(RuntimeError, match="failure after running"):
+            ex.dispatch(1, config)
+
+        # Worktree cleanup must have run despite mark_pending raising
+        assert len(fake_git.removed) == 1
+        assert 1 not in ex._worktrees
+
+        graph.mark_pending = original_mark_pending  # restore
 
 
 class TestExecutorComplete:
@@ -437,7 +527,7 @@ class TestExecutorComplete:
         tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
-        fake_git.commit_all = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
+        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("nothing to commit"),
         )
         ex = Executor(
@@ -489,9 +579,12 @@ class TestExecutorComplete:
         )
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
-        graph.mark_running(child.id)
-        result = ex.complete(child.id, "main")
-        assert root.id in result.newly_ready
+        grandchild = graph.add_node("grandchild", parent_id=child.id)
+        graph.mark_running(grandchild.id)
+        result = ex.complete(grandchild.id, "main")
+        # child becomes ready once grandchild is done; root stays excluded.
+        assert child.id in result.newly_ready
+        assert root.id not in result.newly_ready
 
     def test_commit_message_includes_node_id_and_description(
         self,
@@ -513,7 +606,8 @@ class TestExecutorComplete:
 
         assert len(fake_git.commits) == 1
         _, msg = fake_git.commits[0]
-        assert msg == "feat(milknado-1): Add user authentication"
+        assert msg.startswith("feat(milknado-1): Add user authentication")
+        assert "Milknado-Node: 1" in msg
 
     def test_complete_nonexistent_raises(
         self,
@@ -521,6 +615,76 @@ class TestExecutorComplete:
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             executor.complete(999, "main")
+
+    def test_rebase_abort_error_propagates(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """RebaseAbortError must propagate from complete() — do not swallow."""
+        fake_git = FakeGit()
+        abort_error = RebaseAbortError(tmp_path / "worktree", stderr="abort failed")
+        fake_git.rebase = lambda *_args: (_ for _ in ()).throw(abort_error)  # type: ignore
+
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+
+        with pytest.raises(RebaseAbortError):
+            ex.complete(1, "main")
+
+    def test_complete_logs_detail_on_generic_exception(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """Generic exceptions from rebase yield failed result with detail."""
+        fake_git = FakeGit()
+        fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
+            RuntimeError("commit failed: nothing to commit"),
+        )
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        result = ex.complete(1, "main")
+        assert result.rebased is False
+
+
+class TestEnsureCleanWorktree:
+    def test_orphan_removal_failure_is_logged_not_raised(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """_ensure_clean_worktree swallows remove_worktree errors."""
+        call_count = 0
+
+        class BoomGit(FakeGit):
+            def remove_worktree(self, path: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise OSError("disk full")
+
+        fake_git = BoomGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("first")
+        graph.add_node("second")
+
+        # Dispatch first node so it gets into _worktrees with an existing path
+        result1 = ex.dispatch(1, config)
+        # Simulate the worktree path existing
+        result1.worktree.mkdir(parents=True, exist_ok=True)
+
+        # Second dispatch of same node triggers _ensure_clean_worktree which calls remove
+        # To test the exception path, manually stash the worktree and call ensure
+        ex._worktrees[1] = result1.worktree
+        # Should not raise even though remove_worktree raises
+        ex._ensure_clean_worktree(1)
 
 
 class TestExecutorFail:
@@ -569,6 +733,44 @@ class TestExecutorFail:
         assert wt in fake_git.removed
 
 
+class TestBuildCommitMessage:
+    def test_subject_format(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        msg = _build_commit_message(7, "Add login endpoint")
+        assert msg.startswith("feat(milknado-7): Add login endpoint")
+
+    def test_body_is_full_description(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "Implement OAuth2 flow with PKCE"
+        msg = _build_commit_message(3, desc)
+        lines = msg.split("\n")
+        assert desc in lines
+
+    def test_trailer_format(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        msg = _build_commit_message(42, "some task")
+        assert "Milknado-Node: 42" in msg
+
+    def test_long_description_truncated_in_subject(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "x" * 80
+        msg = _build_commit_message(1, desc)
+        subject_line = msg.split("\n")[0]
+        assert subject_line.endswith("...")
+        assert len(subject_line) <= len("feat(milknado-1): ") + 60
+
+    def test_long_description_preserved_in_body(self) -> None:
+        from milknado.domains.execution.executor import _build_commit_message
+
+        desc = "x" * 80
+        msg = _build_commit_message(1, desc)
+        assert desc in msg
+
+
 class TestSlugify:
     def test_basic_slugify(self) -> None:
         from milknado.domains.execution.executor import _slugify
@@ -587,10 +789,156 @@ class TestSlugify:
         assert _slugify("fix: auth (v2)") == "fix-auth-v2"
 
 
+class TestIsTransient:
+    def test_os_error_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(OSError("no such file"))
+
+    def test_timeout_expired_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(subprocess.TimeoutExpired(cmd="x", timeout=5))
+
+    def test_exit_code_124_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(subprocess.CalledProcessError(124, "cmd"))
+
+    def test_rate_limit_message_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(RuntimeError("429 rate limit exceeded"))
+
+    def test_transient_dispatch_error_is_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert _is_transient(TransientDispatchError("retry me"))
+
+    def test_value_error_not_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert not _is_transient(ValueError("bad input"))
+
+    def test_runtime_error_not_transient(self) -> None:
+        from milknado.domains.execution.executor import _is_transient
+
+        assert not _is_transient(RuntimeError("something broke"))
+
+
+class TestGetAttemptCount:
+    def test_returns_zero_before_dispatch(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+    ) -> None:
+        graph.add_node("task")
+        assert executor.get_attempt_count(1) == 0
+
+    def test_returns_zero_after_first_success(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        ex.dispatch(1, config)
+        assert ex.get_attempt_count(1) == 0
+
+    def test_increments_on_transient_retry(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        call_count = 0
+
+        class BurstRalph(FakeRalph):
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise TransientDispatchError("transient")
+                return FakeRun()
+
+        config_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=("uv run pytest",),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=config.project_root,
+            dispatch_max_retries=2,
+            dispatch_backoff_seconds=0.0,
+        )
+        ex = Executor(graph=graph, git=FakeGit(), ralph=BurstRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        ex.dispatch(1, config_retry)
+        assert ex.get_attempt_count(1) == 1
+
+    def test_non_transient_raises_immediately(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        class FailRalph(FakeRalph):
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
+                raise ValueError("bad config")
+
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        with pytest.raises(ValueError, match="bad config"):
+            ex.dispatch(1, config)
+        assert ex.get_attempt_count(1) == 0
+
+    def test_transient_exhausted_raises(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        class AlwaysTransient(FakeRalph):
+            def create_run(
+                self,
+                agent: str,
+                ralph_dir: Path,
+                ralph_file: Path,
+                commands: list[str],
+                quality_gates: list[str],
+                project_root: Path | None = None,
+            ) -> FakeRun:  # noqa: E501
+                raise TransientDispatchError("always fails")
+
+        config_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=(),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=config.project_root,
+            dispatch_max_retries=1,
+            dispatch_backoff_seconds=0.0,
+        )
+        ex = Executor(graph=graph, git=FakeGit(), ralph=AlwaysTransient(), crg=FakeCrg())
+        graph.add_node("task")
+        with pytest.raises(TransientDispatchError):
+            ex.dispatch(1, config_retry)
+
+
 class TestBuildNodeContext:
     def test_root_only_no_why_chain(self, graph: MikadoGraph) -> None:
         """Single root node: no Why chain; Goal and Your task both present."""
-        from milknado.domains.execution.executor import _build_node_context
+        from milknado.domains.execution._context import build_node_context as _build_node_context
 
         graph.add_node("Root goal description")
         node = graph.get_node(1)
@@ -603,7 +951,7 @@ class TestBuildNodeContext:
 
     def test_leaf_depth_3_has_why_chain(self, graph: MikadoGraph) -> None:
         """Leaf at depth 3: Goal=root, Why chain=batch1+batch2, Your task=leaf."""
-        from milknado.domains.execution.executor import _build_node_context
+        from milknado.domains.execution._context import build_node_context as _build_node_context
 
         root = graph.add_node("Root goal: refactor auth")
         batch1 = graph.add_node("Batch1: extract interfaces", parent_id=root.id)
@@ -623,7 +971,7 @@ class TestBuildNodeContext:
 
     def test_crg_none_shows_degradation_marker(self, graph: MikadoGraph) -> None:
         """crg=None produces fallback Impact Radius line."""
-        from milknado.domains.execution.executor import _build_node_context
+        from milknado.domains.execution._context import build_node_context as _build_node_context
 
         graph.add_node("some task")
         node = graph.get_node(1)
@@ -634,7 +982,7 @@ class TestBuildNodeContext:
 
     def test_with_files_includes_file_list(self, graph: MikadoGraph) -> None:
         """Files assigned to node appear in ## Files section."""
-        from milknado.domains.execution.executor import _build_node_context
+        from milknado.domains.execution._context import build_node_context as _build_node_context
 
         graph.add_node("refactor")
         graph.set_file_ownership(1, ["auth.py", "models.py"])
@@ -648,7 +996,7 @@ class TestBuildNodeContext:
 
     def test_why_chain_order_parent_first(self, graph: MikadoGraph) -> None:
         """Why chain lists parent before grandparent."""
-        from milknado.domains.execution.executor import _build_node_context
+        from milknado.domains.execution._context import build_node_context as _build_node_context
 
         root = graph.add_node("Root")
         parent = graph.add_node("Parent node", parent_id=root.id)
@@ -660,3 +1008,20 @@ class TestBuildNodeContext:
         assert "Parent node" in result
         # Root is only in Goal section, not duplicated in Why chain
         assert result.count("Root") == 1  # only in ## Goal
+
+    def test_crg_raises_produces_degradation_marker(self, graph: MikadoGraph) -> None:
+        """CRG that raises produces a degraded Impact Radius marker rather than crashing."""
+        from milknado.domains.execution._context import build_node_context as _build_node_context
+
+        class FailingCrg(FakeCrg):
+            def get_impact_radius(self, files: list) -> dict:
+                raise RuntimeError("CRG exploded")
+
+        graph.add_node("task")
+        graph.set_file_ownership(1, ["some.py"])
+        node = graph.get_node(1)
+        assert node is not None
+        result = _build_node_context(node, graph, FailingCrg())
+        assert "## Impact Radius" in result
+        assert "CRG unavailable" in result
+        assert "CRG exploded" in result

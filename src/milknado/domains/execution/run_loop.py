@@ -69,6 +69,7 @@ class RunLoop:
                 dispatched_total += self._dispatch_batch(config, concurrency_limit, live)
                 live.update(self._build_table())
 
+        self._graph.complete_root()
         root = self._graph.get_root()
         root_done = root is not None and root.status == NodeStatus.DONE
         return RunLoopResult(

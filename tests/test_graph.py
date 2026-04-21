@@ -11,7 +11,7 @@ from milknado.domains.batching import (
     SymbolRef,
     SymbolSpread,
 )
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import InvalidTransition, NodeStatus
 from milknado.domains.graph import MikadoGraph
 
 
@@ -129,10 +129,11 @@ class TestGetRoot:
 
 class TestGetReadyNodes:
     def test_pending_leaf_is_ready(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("ready")
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
         ready = graph.get_ready_nodes()
         assert len(ready) == 1
-        assert ready[0].id == node.id
+        assert ready[0].id == leaf.id
 
     def test_leaf_with_pending_status(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
@@ -141,11 +142,36 @@ class TestGetReadyNodes:
         assert any(n.id == child.id for n in ready)
 
     def test_done_node_not_ready(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("ready")
-        graph.mark_running(node.id)
-        graph.mark_done(node.id)
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+        graph.mark_running(leaf.id)
+        graph.mark_done(leaf.id)
         ready = graph.get_ready_nodes()
-        assert all(n.id != node.id for n in ready)
+        assert all(n.id != leaf.id for n in ready)
+
+    def test_root_excluded_when_all_children_done(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.mark_running(child.id)
+        graph.mark_done(child.id)
+        ready = graph.get_ready_nodes()
+        assert all(n.id != root.id for n in ready)
+        assert len(ready) == 0
+
+    def test_leaf_ready_but_root_excluded(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+        ready = graph.get_ready_nodes()
+        ready_ids = {n.id for n in ready}
+        assert leaf.id in ready_ids
+        assert root.id not in ready_ids
+
+    def test_solo_root_not_ready(self, graph: MikadoGraph) -> None:
+        # A single root node with no children is the root — it must not be ready.
+        root = graph.add_node("solo root")
+        ready = graph.get_ready_nodes()
+        assert all(n.id != root.id for n in ready)
+        assert len(ready) == 0
 
 
 class TestStatusTransitions:
@@ -199,14 +225,23 @@ class TestStatusTransitions:
 
     def test_invalid_transition_raises(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
-        with pytest.raises(ValueError, match="Cannot transition"):
+        with pytest.raises(InvalidTransition, match="cannot transition") as exc_info:
             graph.mark_done(node.id)
+        exc = exc_info.value
+        assert exc.node_id == node.id
+        assert exc.current == NodeStatus.PENDING
+        assert exc.target == NodeStatus.DONE
+        assert set(exc.valid_targets) == {
+            NodeStatus.RUNNING,
+            NodeStatus.BLOCKED,
+            NodeStatus.FAILED,
+        }
 
     def test_done_is_terminal(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
         graph.mark_running(node.id)
         graph.mark_done(node.id)
-        with pytest.raises(ValueError, match="Cannot transition"):
+        with pytest.raises(ValueError, match="cannot transition"):
             graph.mark_running(node.id)
 
     def test_running_to_pending_rollback(self, graph: MikadoGraph) -> None:

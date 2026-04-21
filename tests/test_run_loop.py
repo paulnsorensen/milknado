@@ -50,6 +50,9 @@ class FakeGit:
     def commit_all(self, worktree: Path, message: str) -> None:
         pass
 
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+        pass
+
 
 class FakeCrg:
     def ensure_graph(self, project_root: Path) -> None:
@@ -163,7 +166,7 @@ def run_loop(
 
 
 class TestRunLoopSingleNode:
-    def test_dispatches_and_completes_single_node(
+    def test_auto_completes_root_with_no_children(
         self,
         run_loop: RunLoop,
         graph: MikadoGraph,
@@ -172,8 +175,8 @@ class TestRunLoopSingleNode:
         graph.add_node("root goal")
         result = run_loop.run(config, "main")
 
-        assert result.dispatched_total == 1
-        assert result.completed_total == 1
+        assert result.dispatched_total == 0
+        assert result.completed_total == 0
         assert result.failed_total == 0
         assert result.root_done is True
 
@@ -183,12 +186,13 @@ class TestRunLoopSingleNode:
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        graph.add_node("root goal")
+        root = graph.add_node("root goal")
+        graph.add_node("leaf", parent_id=root.id)
         run_loop.run(config, "main")
 
-        root = graph.get_node(1)
-        assert root is not None
-        assert root.status == NodeStatus.DONE
+        root_node = graph.get_node(root.id)
+        assert root_node is not None
+        assert root_node.status == NodeStatus.DONE
 
 
 class TestRunLoopParentChild:
@@ -203,8 +207,8 @@ class TestRunLoopParentChild:
 
         result = run_loop.run(config, "main")
 
-        assert result.dispatched_total == 2
-        assert result.completed_total == 2
+        assert result.dispatched_total == 1
+        assert result.completed_total == 1
         assert result.root_done is True
 
     def test_all_nodes_done(
@@ -235,8 +239,8 @@ class TestRunLoopParallelLeaves:
 
         result = run_loop.run(config, "main")
 
-        assert result.dispatched_total == 3
-        assert result.completed_total == 3
+        assert result.dispatched_total == 2
+        assert result.completed_total == 2
         assert result.root_done is True
 
 
@@ -254,8 +258,8 @@ class TestRunLoopConcurrencyLimit:
 
         result = run_loop.run(config, "main", concurrency_limit=2)
 
-        assert result.dispatched_total == 4
-        assert result.completed_total == 4
+        assert result.dispatched_total == 3
+        assert result.completed_total == 3
         assert result.root_done is True
 
 
@@ -273,14 +277,15 @@ class TestRunLoopFailure:
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
-        graph.add_node("will fail")
+        root = graph.add_node("root")
+        leaf = graph.add_node("will fail", parent_id=root.id)
         result = loop.run(config, "main")
 
         assert result.failed_total == 1
         assert result.root_done is False
-        node = graph.get_node(1)
-        assert node is not None
-        assert node.status == NodeStatus.FAILED
+        leaf_node = graph.get_node(leaf.id)
+        assert leaf_node is not None
+        assert leaf_node.status == NodeStatus.FAILED
 
     def test_failed_leaf_blocks_parent(
         self,
@@ -335,14 +340,15 @@ class TestRunLoopDispatchFailure:
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
-        graph.add_node("doomed")
+        root = graph.add_node("root")
+        leaf = graph.add_node("doomed", parent_id=root.id)
         result = loop.run(config, "main")
 
         assert result.dispatched_total == 0
         assert result.root_done is False
-        node = graph.get_node(1)
-        assert node is not None
-        assert node.status == NodeStatus.FAILED
+        leaf_node = graph.get_node(leaf.id)
+        assert leaf_node is not None
+        assert leaf_node.status == NodeStatus.FAILED
 
     def test_dispatch_failure_does_not_crash_loop(
         self,
@@ -395,13 +401,14 @@ class TestRunLoopRebaseConflicts:
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
-        graph.add_node("conflicting node")
+        root = graph.add_node("root")
+        leaf = graph.add_node("conflicting node", parent_id=root.id)
         result = loop.run(config, "main")
 
         assert result.failed_total == 1
         assert len(result.rebase_conflicts) == 1
         conflict = result.rebase_conflicts[0]
-        assert conflict.node_id == 1
+        assert conflict.node_id == leaf.id
         assert conflict.conflicting_files == ("src/models.py", "src/views.py")
         assert "Merge conflict" in conflict.detail
 
@@ -442,6 +449,6 @@ class TestRunLoopFileConflicts:
 
         result = loop.run(config, "main")
 
-        assert result.dispatched_total == 3
-        assert result.completed_total == 3
+        assert result.dispatched_total == 2
+        assert result.completed_total == 2
         assert result.root_done is True
