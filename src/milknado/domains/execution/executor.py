@@ -71,16 +71,15 @@ class Executor:
         self._ralph = ralph
         self._crg = crg
 
-    def dispatch(
-        self, node_id: int, config: ExecutionConfig
-    ) -> DispatchResult:
+    def dispatch(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
 
         slug = _slugify(node.description)
         worktree_name = config.worktree_pattern.format(
-            node_id=node_id, slug=slug,
+            node_id=node_id,
+            slug=slug,
         )
         wt_path = config.project_root / worktree_name
         branch = f"milknado/{node_id}-{slug}"
@@ -88,12 +87,16 @@ class Executor:
         self._git.create_worktree(wt_path, branch)
         try:
             self._graph.mark_running(
-                node_id, worktree_path=str(wt_path), branch_name=branch,
+                node_id,
+                worktree_path=str(wt_path),
+                branch_name=branch,
             )
 
             context = _build_node_context(node, self._graph, self._crg)
             ralph_path = self._ralph.generate_ralph_md(
-                node, context, list(config.quality_gates),
+                node,
+                context,
+                list(config.quality_gates),
                 wt_path / "RALPH.md",
             )
 
@@ -114,12 +117,12 @@ class Executor:
             raise
 
         return DispatchResult(
-            node_id=node_id, worktree=wt_path, run_id=run_id,
+            node_id=node_id,
+            worktree=wt_path,
+            run_id=run_id,
         )
 
-    def complete(
-        self, node_id: int, feature_branch: str
-    ) -> CompletionResult:
+    def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -127,7 +130,10 @@ class Executor:
         worktree = Path(node.worktree_path) if node.worktree_path else None
         try:
             rebase_result = self._rebase_and_merge(
-                worktree, feature_branch, node.id, node.description,
+                worktree,
+                feature_branch,
+                node.id,
+                node.description,
             )
         except Exception:
             rebase_result = RebaseResult(success=False)

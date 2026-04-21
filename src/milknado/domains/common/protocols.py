@@ -21,7 +21,9 @@ class GitPort(Protocol):
 
 class TilthPort(Protocol):
     def structural_map(
-        self, scope: Path, budget_tokens: int,
+        self,
+        scope: Path,
+        budget_tokens: int,
     ) -> TilthMap | DegradationMarker: ...
 
 
@@ -30,10 +32,14 @@ class CrgPort(Protocol):
     def get_impact_radius(self, files: list[str]) -> dict[str, Any]: ...
     def get_architecture_overview(self) -> dict[str, Any]: ...
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]: ...
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]: ...
     def get_minimal_context(
         self,
@@ -52,13 +58,15 @@ class RalphPort(Protocol):
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> Any: ...
     def start_run(self, run_id: str) -> None: ...
     def stop_run(self, run_id: str) -> None: ...
     def list_runs(self) -> list[Any]: ...
     def get_run(self, run_id: str) -> Any | None: ...
     def wait_for_next_completion(
-        self, active_run_ids: set[str],
+        self,
+        active_run_ids: set[str],
     ) -> tuple[str, bool]: ...
     def generate_ralph_md(
         self,

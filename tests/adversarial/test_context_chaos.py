@@ -3,6 +3,7 @@
 Focus: prompt injection in spec_text, CRG slicing, empty-string spec_text error,
 _truncate_description edge cases.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -73,18 +74,14 @@ class TestSpecTextInjection:
         assert "real goal" in ctx
         assert "# Spec" in ctx
 
-    def test_unicode_in_spec_text(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_unicode_in_spec_text(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         spec = "# Goal with Unicode 🧀\n\nRTL: \u202emalicious\n\nNormal content."
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text=spec)
         assert "🧀" in ctx
 
 
 class TestCrgSlicing:
-    def test_crg_returning_more_than_top_n_is_truncated(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
+    def test_crg_returning_more_than_top_n_is_truncated(self, tmp_graph: MikadoGraph) -> None:
         """CRG returning 20 communities → context only includes 5."""
         crg = MagicMock()
         crg.list_communities.return_value = [{"name": f"c{i}"} for i in range(20)]
@@ -108,9 +105,7 @@ class TestCrgSlicing:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Architecture (compact)" in ctx
 
-    def test_crg_returning_items_without_name_key(
-        self, tmp_graph: MikadoGraph
-    ) -> None:
+    def test_crg_returning_items_without_name_key(self, tmp_graph: MikadoGraph) -> None:
         """Items without 'name' key fall back to 'id' or str(item)."""
         crg = MagicMock()
         crg.list_communities.return_value = [{"id": "community_0"}, {"other": "data"}]

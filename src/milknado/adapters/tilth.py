@@ -10,7 +10,9 @@ from milknado.domains.common.types import DegradationMarker, TilthMap
 
 class TilthAdapter:
     def structural_map(
-        self, scope: Path, budget_tokens: int,
+        self,
+        scope: Path,
+        budget_tokens: int,
     ) -> TilthMap | DegradationMarker:
         if shutil.which("tilth") is None:
             return DegradationMarker(
@@ -21,9 +23,13 @@ class TilthAdapter:
         try:
             result = subprocess.run(
                 [
-                    "tilth", "--map", "--json",
-                    "--scope", str(scope),
-                    "--budget", str(budget_tokens),
+                    "tilth",
+                    "--map",
+                    "--json",
+                    "--scope",
+                    str(scope),
+                    "--budget",
+                    str(budget_tokens),
                 ],
                 capture_output=True,
                 text=True,
