@@ -66,6 +66,7 @@ class FakeRalph:
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> FakeRun:
         self.runs_created.append({"agent": agent, "dir": ralph_dir})
         return FakeRun()
@@ -117,7 +118,10 @@ def config(tmp_path: Path) -> ExecutionConfig:
 @pytest.fixture()
 def executor(graph: MikadoGraph) -> Executor:
     return Executor(
-        graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg(),
+        graph=graph,
+        git=FakeGit(),
+        ralph=FakeRalph(),
+        crg=FakeCrg(),
     )
 
 
@@ -140,9 +144,7 @@ class TestGetDispatchableNodes:
         graph.mark_done(1)
         assert get_dispatchable_nodes(graph) == []
 
-    def test_parallel_leaves_no_conflict(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_parallel_leaves_no_conflict(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         graph.add_node("leaf-a", parent_id=root.id)
         graph.add_node("leaf-b", parent_id=root.id)
@@ -150,9 +152,7 @@ class TestGetDispatchableNodes:
         assert 2 in dispatchable
         assert 3 in dispatchable
 
-    def test_filters_conflicting_leaves(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_filters_conflicting_leaves(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         a = graph.add_node("leaf-a", parent_id=root.id)
         b = graph.add_node("leaf-b", parent_id=root.id)
@@ -162,9 +162,7 @@ class TestGetDispatchableNodes:
         assert len(dispatchable) == 1
         assert dispatchable[0] == a.id
 
-    def test_child_must_complete_before_parent(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_child_must_complete_before_parent(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
         dispatchable = get_dispatchable_nodes(graph)
@@ -174,7 +172,10 @@ class TestGetDispatchableNodes:
 
 class TestExecutorDispatch:
     def test_creates_worktree_and_starts_run(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("extract interface")
         result = executor.dispatch(1, config)
@@ -185,7 +186,10 @@ class TestExecutorDispatch:
         assert "extract-interface" in str(result.worktree)
 
     def test_marks_node_running(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("do work")
         executor.dispatch(1, config)
@@ -194,7 +198,10 @@ class TestExecutorDispatch:
         assert node.status == NodeStatus.RUNNING
 
     def test_stores_worktree_path(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("task")
         executor.dispatch(1, config)
@@ -204,7 +211,10 @@ class TestExecutorDispatch:
         assert "milknado-1-" in node.worktree_path
 
     def test_stores_branch_name(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("task")
         executor.dispatch(1, config)
@@ -220,7 +230,10 @@ class TestExecutorDispatch:
     ) -> None:
         fake_ralph = FakeRalph()
         ex = Executor(
-            graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg(),
+            graph=graph,
+            git=FakeGit(),
+            ralph=fake_ralph,
+            crg=FakeCrg(),
         )
         graph.add_node("build feature")
         ex.dispatch(1, config)
@@ -228,7 +241,9 @@ class TestExecutorDispatch:
         assert fake_ralph.generated[0].name == "RALPH.md"
 
     def test_dispatch_nonexistent_node_raises(
-        self, executor: Executor, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        config: ExecutionConfig,
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             executor.dispatch(999, config)
@@ -240,7 +255,10 @@ class TestExecutorDispatch:
     ) -> None:
         fake_git = FakeGit()
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("refactor auth")
         ex.dispatch(1, config)
@@ -256,7 +274,10 @@ class TestExecutorDispatch:
     ) -> None:
         fake_ralph = FakeRalph()
         ex = Executor(
-            graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg(),
+            graph=graph,
+            git=FakeGit(),
+            ralph=fake_ralph,
+            crg=FakeCrg(),
         )
         graph.add_node("do it")
         ex.dispatch(1, config)
@@ -268,7 +289,10 @@ class TestExecutorDispatch:
         config: ExecutionConfig,
     ) -> None:
         ex = Executor(
-            graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=FakeGit(),
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("track run")
         ex.dispatch(1, config)
@@ -287,7 +311,10 @@ class TestExecutorDispatch:
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
-            graph=graph, git=fake_git, ralph=fake_ralph, crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=fake_ralph,
+            crg=FakeCrg(),
         )
         graph.add_node("doomed task")
         with pytest.raises(RuntimeError, match="ralph exploded"):
@@ -304,7 +331,10 @@ class TestExecutorDispatch:
             RuntimeError("ralph exploded"),
         )
         ex = Executor(
-            graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg(),
+            graph=graph,
+            git=FakeGit(),
+            ralph=fake_ralph,
+            crg=FakeCrg(),
         )
         graph.add_node("doomed task")
         with pytest.raises(RuntimeError, match="ralph exploded"):
@@ -318,11 +348,15 @@ class TestExecutorDispatch:
 
 class TestExecutorComplete:
     def test_marks_done_on_success(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         fake_git = FakeGit()
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         graph.mark_running(1)
@@ -335,12 +369,17 @@ class TestExecutorComplete:
         assert node.status == NodeStatus.DONE
 
     def test_marks_failed_on_rebase_conflict(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"
@@ -354,11 +393,16 @@ class TestExecutorComplete:
         assert node.status == NodeStatus.FAILED
 
     def test_removes_worktree_on_success(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"
@@ -368,12 +412,17 @@ class TestExecutorComplete:
         assert wt in fake_git.removed
 
     def test_removes_worktree_on_rebase_failure(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"
@@ -383,14 +432,19 @@ class TestExecutorComplete:
         assert wt in fake_git.removed
 
     def test_removes_worktree_on_commit_failure(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         fake_git.commit_all = lambda *_args: (_ for _ in ()).throw(  # type: ignore[assignment]
             RuntimeError("nothing to commit"),
         )
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"
@@ -401,12 +455,17 @@ class TestExecutorComplete:
         assert result.rebased is False
 
     def test_clears_metadata_on_rebase_failure(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"
@@ -419,10 +478,14 @@ class TestExecutorComplete:
         assert node.branch_name is None
 
     def test_returns_newly_ready_nodes(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         ex = Executor(
-            graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=FakeGit(),
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
@@ -431,11 +494,16 @@ class TestExecutorComplete:
         assert root.id in result.newly_ready
 
     def test_commit_message_includes_node_id_and_description(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("Add user authentication")
         wt = tmp_path / "worktree"
@@ -448,7 +516,8 @@ class TestExecutorComplete:
         assert msg == "feat(milknado-1): Add user authentication"
 
     def test_complete_nonexistent_raises(
-        self, executor: Executor,
+        self,
+        executor: Executor,
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             executor.complete(999, "main")
@@ -456,7 +525,9 @@ class TestExecutorComplete:
 
 class TestExecutorFail:
     def test_marks_node_failed(
-        self, executor: Executor, graph: MikadoGraph,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("task")
         graph.mark_running(1)
@@ -466,7 +537,9 @@ class TestExecutorFail:
         assert node.status == NodeStatus.FAILED
 
     def test_clears_metadata_on_fail(
-        self, executor: Executor, graph: MikadoGraph,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("task")
         graph.mark_running(1, worktree_path="/tmp/wt", branch_name="milknado/1-task")
@@ -477,11 +550,16 @@ class TestExecutorFail:
         assert node.branch_name is None
 
     def test_removes_worktree_on_fail(
-        self, graph: MikadoGraph, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
         fake_git = FakeGit()
         ex = Executor(
-            graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg(),
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
         )
         graph.add_node("task")
         wt = tmp_path / "worktree"

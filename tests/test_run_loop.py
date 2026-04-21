@@ -75,6 +75,7 @@ class FakeRalph:
         ralph_file: Path,
         commands: list[str],
         quality_gates: list[str],
+        project_root: Path | None = None,
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
@@ -95,7 +96,8 @@ class FakeRalph:
         return None
 
     def wait_for_next_completion(
-        self, active_run_ids: set[str],
+        self,
+        active_run_ids: set[str],
     ) -> tuple[str, bool]:
         for i, (run_id, success) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
@@ -425,7 +427,10 @@ class TestRunLoopFileConflicts:
         fake_crg: FakeCrg,
     ) -> None:
         executor = Executor(
-            graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg,
+            graph=graph,
+            git=fake_git,
+            ralph=fake_ralph,
+            crg=fake_crg,
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
 

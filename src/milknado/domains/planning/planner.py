@@ -70,7 +70,8 @@ class Planner:
         context_path.write_text(context, encoding="utf-8")
 
         argv, extra = build_planning_subprocess(
-            context_path, self._planning_agent,
+            context_path,
+            self._planning_agent,
         )
         extra["stdout"] = subprocess.PIPE
         result = subprocess.run(argv, cwd=project_root, check=False, **extra)
@@ -94,7 +95,10 @@ class Planner:
         existing_root = self._graph.get_root()
         parent_id = existing_root.id if existing_root is not None else None
         created_ids = apply_batches_to_graph(
-            self._graph, plan, manifest, parent_id=parent_id,
+            self._graph,
+            plan,
+            manifest,
+            parent_id=parent_id,
         )
         record_batch_snapshot(project_root, manifest, plan)
 
@@ -121,7 +125,8 @@ def _read_spec(spec_path: Path | None) -> str | None:
 
 
 def _safe_ensure_crg(
-    crg: CrgPort, project_root: Path,
+    crg: CrgPort,
+    project_root: Path,
 ) -> tuple[CrgPort, bool]:
     try:
         crg.ensure_graph(project_root)

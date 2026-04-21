@@ -55,7 +55,8 @@ class RalphifyAdapter:
         return self._manager.get_run(run_id)
 
     def wait_for_next_completion(
-        self, active_run_ids: set[str],
+        self,
+        active_run_ids: set[str],
     ) -> tuple[str, bool]:
         while True:
             event = self._queue.get()
@@ -64,9 +65,7 @@ class RalphifyAdapter:
             if event.run_id not in active_run_ids:
                 continue
             run = self._manager.get_run(event.run_id)
-            success = (
-                run is not None and run.state.status == RunStatus.COMPLETED
-            )
+            success = run is not None and run.state.status == RunStatus.COMPLETED
             return event.run_id, success
 
     def generate_ralph_md(

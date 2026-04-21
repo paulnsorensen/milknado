@@ -18,7 +18,10 @@ class NodeStatus(Enum):
 VALID_TRANSITIONS: dict[NodeStatus, set[NodeStatus]] = {
     NodeStatus.PENDING: {NodeStatus.RUNNING, NodeStatus.BLOCKED, NodeStatus.FAILED},
     NodeStatus.RUNNING: {
-        NodeStatus.DONE, NodeStatus.FAILED, NodeStatus.BLOCKED, NodeStatus.PENDING,
+        NodeStatus.DONE,
+        NodeStatus.FAILED,
+        NodeStatus.BLOCKED,
+        NodeStatus.PENDING,
     },
     NodeStatus.BLOCKED: {NodeStatus.PENDING},
     NodeStatus.FAILED: {NodeStatus.PENDING},

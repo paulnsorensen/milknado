@@ -11,20 +11,28 @@ from milknado.domains.common.types import DegradationMarker, TilthMap
 
 def _ok(stdout: str) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=stdout, stderr="",
+        args=[],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
     )
 
 
 def _fail(stderr: str, code: int = 1) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=code, stdout="", stderr=stderr,
+        args=[],
+        returncode=code,
+        stdout="",
+        stderr=stderr,
     )
 
 
 class TestStructuralMap:
     @patch("milknado.adapters.tilth.shutil.which", return_value=None)
     def test_returns_marker_when_binary_missing(
-        self, _which: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        tmp_path: Path,
     ) -> None:
         adapter = TilthAdapter()
         result = adapter.structural_map(tmp_path, budget_tokens=2000)
