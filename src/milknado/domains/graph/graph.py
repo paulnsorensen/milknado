@@ -175,7 +175,10 @@ class MikadoGraph:
         self._transition_status(node_id, NodeStatus.DONE)
 
     def complete_root(self) -> bool:
-        """Auto-complete root when all non-root nodes are done. Returns True if root was completed."""
+        """Auto-complete root when all non-root nodes are done.
+
+        Returns True if root was completed.
+        """
         root = self.get_root()
         if root is None or root.status != NodeStatus.PENDING:
             return False
