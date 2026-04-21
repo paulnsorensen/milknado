@@ -15,11 +15,27 @@ class SymbolRef:
 
 
 @dataclass(frozen=True)
+class HashAnchors:
+    before: str
+    after: str
+
+
+@dataclass(frozen=True)
+class ChangeDependency:
+    path: str
+    symbols: tuple[SymbolRef, ...] = ()
+    hash_anchors: HashAnchors | None = None
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class FileChange:
     id: str
     path: str
     edit_kind: EditKind = "modify"
     symbols: tuple[SymbolRef, ...] = ()
+    hash_anchors: HashAnchors | None = None
+    dependencies: tuple[ChangeDependency, ...] = ()
     depends_on: tuple[str, ...] = ()
     description: str = ""
 

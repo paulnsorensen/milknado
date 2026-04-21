@@ -1,8 +1,10 @@
 from milknado.domains.batching.change import (
     Batch,
     BatchPlan,
+    ChangeDependency,
     EditKind,
     FileChange,
+    HashAnchors,
     NewRelationship,
     RelationshipReason,
     SymbolRef,
@@ -14,8 +16,10 @@ from milknado.domains.batching.weights import estimate_tokens
 __all__ = [
     "Batch",
     "BatchPlan",
+    "ChangeDependency",
     "EditKind",
     "FileChange",
+    "HashAnchors",
     "NewRelationship",
     "RelationshipReason",
     "SymbolRef",
