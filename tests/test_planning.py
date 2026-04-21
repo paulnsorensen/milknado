@@ -240,6 +240,15 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "goal_summary" in ctx
 
+    def test_v2_instructions_require_mcp_hash_anchor_targeting(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "tilth" in ctx
+        assert "code-review-graph" in ctx
+        assert "hash_anchors" in ctx
+        assert "dependencies" in ctx
+
     def test_v2_instructions_contain_spec_path(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -405,6 +414,22 @@ class TestPlanner:
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_passes_repo_mcp_config_to_agent(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner.launch("goal", tmp_path)
+        cmd = mock_run.call_args[0][0]
+        assert "--mcp-config" in cmd
+        assert str(tmp_path / ".mcp.json") in cmd
 
 
 class TestPlanResult:

@@ -72,6 +72,7 @@ class Planner:
         argv, extra = build_planning_subprocess(
             context_path,
             self._planning_agent,
+            project_root=project_root,
         )
         extra["stdout"] = subprocess.PIPE
         result = subprocess.run(argv, cwd=project_root, check=False, **extra)
