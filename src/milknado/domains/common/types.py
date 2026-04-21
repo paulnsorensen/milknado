@@ -40,8 +40,10 @@ class MikadoNode:
     run_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
+    dispatched_at: datetime | None = None
     oversized: bool = False
     batch_index: int | None = None
+    completion_duration_seconds: float | None = None
 
 
 @dataclass(frozen=True)
