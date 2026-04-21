@@ -807,8 +807,8 @@ class TestProtectedBranchGuard:
         self, tmp_path: Path
     ) -> None:
         import typer
-
         from milknado.app.run_command import _check_protected_branch
+
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
