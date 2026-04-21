@@ -33,10 +33,7 @@ def summarise_manifest_quality(manifest: PlanChangeManifest) -> dict[str, int]:
         }
     impl = sum(1 for c in manifest.changes if c.path.startswith("src/"))
     tests = sum(1 for c in manifest.changes if c.path.startswith("tests/"))
-    us_per = [
-        len(set(_US_REF_RE.findall(c.description or "")))
-        for c in manifest.changes
-    ]
+    us_per = [len(set(_US_REF_RE.findall(c.description or ""))) for c in manifest.changes]
     multi = sum(1 for n in us_per if n >= 2)
     return {
         "impl_change_count": impl,
@@ -54,6 +51,7 @@ def append_reuse_candidates(
     if crg is None:
         return manifest
     from milknado.domains.batching import FileChange
+
     updated: list[FileChange] = []
     for change in manifest.changes:
         query = __import__("pathlib").Path(change.path).stem

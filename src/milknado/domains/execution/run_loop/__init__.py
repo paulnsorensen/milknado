@@ -152,15 +152,18 @@ class RunLoop:
                 root_node = self._graph.get_root()
                 _logger.info(
                     "FINAL_TELEMETRY %s",
-                    json.dumps({
-                        "dispatched": dispatched,
-                        "completed": completed,
-                        "failed": failed,
-                        "conflicts": len(conflicts),
-                        "root_done": root_node is not None and root_node.status == NodeStatus.DONE,
-                        "strict_exit": self._strict and self._failure_triggered,
-                        "interrupted": _interrupted,
-                    }),
+                    json.dumps(
+                        {
+                            "dispatched": dispatched,
+                            "completed": completed,
+                            "failed": failed,
+                            "conflicts": len(conflicts),
+                            "root_done": root_node is not None
+                            and root_node.status == NodeStatus.DONE,
+                            "strict_exit": self._strict and self._failure_triggered,
+                            "interrupted": _interrupted,
+                        }
+                    ),
                 )
 
         verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
@@ -213,9 +216,7 @@ class RunLoop:
         if root is None or root.status == NodeStatus.DONE:
             return None
         non_root_all_done = all(
-            n.status == NodeStatus.DONE
-            for n in self._graph.get_all_nodes()
-            if n.id != root.id
+            n.status == NodeStatus.DONE for n in self._graph.get_all_nodes() if n.id != root.id
         )
         if not non_root_all_done:
             return None
@@ -249,7 +250,10 @@ class RunLoop:
             except Exception as exc:
                 _logger.exception(
                     "Dispatch failed for node %d (%s): %s: %s",
-                    node_id, desc, type(exc).__name__, exc,
+                    node_id,
+                    desc,
+                    type(exc).__name__,
+                    exc,
                 )
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")

@@ -8,6 +8,7 @@ Targets:
 4. Overlap validation (same symbol name / different file, multi-path with claimed path)
 5. MCP boundary (_dict_to_new_relationship missing keys, invalid reason, empty list)
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -70,9 +71,7 @@ class TestTwoPassStatusDowngrade:
         """When pass 1 returns FEASIBLE the solver must still produce a valid solution."""
         # Force a tiny time budget so pass1 may return FEASIBLE (not OPTIMAL)
         # We can't guarantee FEASIBLE here, but if it IS FEASIBLE, solution must be complete.
-        changes = [
-            FileChange(id=str(i), path=f"f{i}.py", edit_kind="add") for i in range(10)
-        ]
+        changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="add") for i in range(10)]
         plan = plan_batches(changes, budget=2000, time_limit_s=0.1, root=tmp_path)
         if plan.solver_status in (STATUS_OPTIMAL, STATUS_FEASIBLE):
             all_ids = {cid for b in plan.batches for cid in b.change_ids}
@@ -128,12 +127,11 @@ class TestTwoPassStatusDowngrade:
         def stub_two_pass(bundle, time_limit_s):
             # Run pass 1 only, stop before pass 2.
             from ortools.sat.python import cp_model as cpm
+
             solver = cpm.CpSolver()
             bundle.model.minimize(bundle.max_batch_idx)
             status1 = solver_mod._status_name(solver.solve(bundle.model))
-            snapshot = solver_mod._take_snapshot(
-                solver, bundle.batch_of, bundle.spread_vars
-            )
+            snapshot = solver_mod._take_snapshot(solver, bundle.batch_of, bundle.spread_vars)
             # Simulate pass-2 degrading to UNKNOWN after pass 1 succeeded.
             return snapshot, status1
 
@@ -182,9 +180,7 @@ class TestOversizedPassthrough:
         """Oversized SCC with DAG edge to normal SCC — depends_on populated in normal batch."""
         big = FileChange(id="big", path="big.py", edit_kind="add")  # oversized
         # small is a delete (80 tokens) which fits within budget=100
-        small = FileChange(
-            id="small", path="small.py", edit_kind="delete", depends_on=("big",)
-        )
+        small = FileChange(id="small", path="small.py", edit_kind="delete", depends_on=("big",))
         plan = plan_batches([big, small], budget=100, root=tmp_path)
         assert plan.solver_status in (STATUS_OPTIMAL, STATUS_FEASIBLE)
         big_batch = next(b for b in plan.batches if "big" in b.change_ids)
@@ -440,21 +436,15 @@ class TestDictToNewRelationship:
 
     def test_missing_source_change_id_raises_key_error(self):
         with pytest.raises(KeyError):
-            _dict_to_new_relationship(
-                {"dependant_change_id": "b", "reason": "new_import"}
-            )
+            _dict_to_new_relationship({"dependant_change_id": "b", "reason": "new_import"})
 
     def test_missing_dependant_change_id_raises_key_error(self):
         with pytest.raises(KeyError):
-            _dict_to_new_relationship(
-                {"source_change_id": "a", "reason": "new_import"}
-            )
+            _dict_to_new_relationship({"source_change_id": "a", "reason": "new_import"})
 
     def test_missing_reason_raises_key_error(self):
         with pytest.raises(KeyError):
-            _dict_to_new_relationship(
-                {"source_change_id": "a", "dependant_change_id": "b"}
-            )
+            _dict_to_new_relationship({"source_change_id": "a", "dependant_change_id": "b"})
 
     def test_invalid_reason_string_raises_value_error(self):
         """_dict_to_new_relationship must reject reasons not in RelationshipReason."""
@@ -535,11 +525,13 @@ class TestDictToNewRelationship:
     def test_invalid_reason_rejected_at_mcp_boundary(self):
         """MCP boundary must reject invalid reason values with a descriptive ValueError."""
         with pytest.raises(ValueError, match="invalid reason"):
-            _dict_to_new_relationship({
-                "source_change_id": "a",
-                "dependant_change_id": "b",
-                "reason": "new_function",
-            })
+            _dict_to_new_relationship(
+                {
+                    "source_change_id": "a",
+                    "dependant_change_id": "b",
+                    "reason": "new_function",
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -586,9 +578,7 @@ class TestIntegrationOrderingCorrectness:
 
     def test_change_ids_not_duplicated_across_batches(self, tmp_path):
         """No change ID should appear in more than one batch."""
-        changes = [
-            FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete") for i in range(5)
-        ]
+        changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete") for i in range(5)]
         plan = plan_batches(changes, budget=80, root=tmp_path)
         all_ids: list[str] = []
         for batch in plan.batches:

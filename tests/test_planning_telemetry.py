@@ -1,4 +1,5 @@
 """Tests for the calibration telemetry sink (A5)."""
+
 from __future__ import annotations
 
 import json
@@ -105,9 +106,7 @@ class TestManifestQualitySignals:
         manifest = _make_manifest(changes=changes)
         plan = _make_plan(batches=(_make_batch(0),))
         record_batch_snapshot(tmp_path, manifest, plan)
-        record = json.loads(
-            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        )
+        record = json.loads((tmp_path / ".milknado" / "calibration.jsonl").read_text().strip())
         assert record["impl_change_count"] == 2
         assert record["test_change_count"] == 1
         assert record["test_to_impl_ratio"] == 0.5
@@ -116,24 +115,25 @@ class TestManifestQualitySignals:
         """max_us_refs_per_change and multi_story_change_count count distinct US-NNN tokens."""
         changes = (
             FileChange(
-                id="c1", path="src/a.py",
+                id="c1",
+                path="src/a.py",
                 description="Major TUI restructure covering US-001 US-004 US-005 US-006",
             ),
             FileChange(
-                id="c2", path="src/b.py",
+                id="c2",
+                path="src/b.py",
                 description="Fix US-014 timeout issue",
             ),
             FileChange(
-                id="c3", path="src/c.py",
+                id="c3",
+                path="src/c.py",
                 description="No US ref here",
             ),
         )
         manifest = _make_manifest(changes=changes)
         plan = _make_plan(batches=(_make_batch(0),))
         record_batch_snapshot(tmp_path, manifest, plan)
-        record = json.loads(
-            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        )
+        record = json.loads((tmp_path / ".milknado" / "calibration.jsonl").read_text().strip())
         assert record["max_us_refs_per_change"] == 4
         assert record["multi_story_change_count"] == 1
 
@@ -147,9 +147,7 @@ class TestManifestQualitySignals:
         manifest = _make_manifest(changes=changes)
         plan = _make_plan(batches=(_make_batch(0),))
         record_batch_snapshot(tmp_path, manifest, plan)
-        record = json.loads(
-            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        )
+        record = json.loads((tmp_path / ".milknado" / "calibration.jsonl").read_text().strip())
         assert record["distinct_path_count"] == 2
         assert record["change_count"] == 3
 
@@ -158,9 +156,7 @@ class TestManifestQualitySignals:
         manifest = _make_manifest(changes=())
         plan = _make_plan(batches=())
         record_batch_snapshot(tmp_path, manifest, plan)
-        record = json.loads(
-            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        )
+        record = json.loads((tmp_path / ".milknado" / "calibration.jsonl").read_text().strip())
         assert record["impl_change_count"] == 0
         assert record["test_change_count"] == 0
         assert record["test_to_impl_ratio"] == 0.0
@@ -178,9 +174,7 @@ class TestManifestQualitySignals:
         )
         plan = _make_plan(batches=(_make_batch(0),))
         record_batch_snapshot(tmp_path, manifest, plan)
-        record = json.loads(
-            (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        )
+        record = json.loads((tmp_path / ".milknado" / "calibration.jsonl").read_text().strip())
         assert record["spec_path"] == ".claude/specs/foo.md"
 
 
@@ -194,9 +188,7 @@ class TestAppendBehavior:
 
         lines = [
             ln
-            for ln in (tmp_path / ".milknado" / "calibration.jsonl")
-            .read_text()
-            .splitlines()
+            for ln in (tmp_path / ".milknado" / "calibration.jsonl").read_text().splitlines()
             if ln.strip()
         ]
         assert len(lines) == 2

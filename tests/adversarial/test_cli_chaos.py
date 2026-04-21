@@ -2,6 +2,7 @@
 
 Focus: --spec validation, solver-status exit codes, binary files, empty files, unicode filenames.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -58,10 +59,12 @@ class TestSpecFlagValidation:
         """Binary file with .md extension — _derive_goal reads it as UTF-8."""
         spec = tmp_path / "binary.md"
         spec.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd")
-        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
-             patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.app.run_command._load_or_default"), \
-             patch("milknado.app.run_command._ensure_db"):
+        with (
+            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch("milknado.adapters.crg.CrgAdapter"),
+            patch("milknado.app.run_command._load_or_default"),
+            patch("milknado.app.run_command._ensure_db"),
+        ):
             mock_planner = MagicMock()
             mock_planner_cls.return_value = mock_planner
             mock_planner.launch.return_value = _make_plan_result()
@@ -77,10 +80,12 @@ class TestSpecFlagValidation:
         """0-byte spec.md — _derive_goal returns stem, planner is launched."""
         spec = tmp_path / "spec.md"
         spec.write_bytes(b"")  # 0 bytes
-        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
-             patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.app.run_command._load_or_default"), \
-             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+        with (
+            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch("milknado.adapters.crg.CrgAdapter"),
+            patch("milknado.app.run_command._load_or_default"),
+            patch("milknado.app.run_command._ensure_db") as mock_ensure_db,
+        ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -101,10 +106,12 @@ class TestSolverStatusExitCodes:
     def _invoke_plan_with_result(self, tmp_path: Path, plan_result: PlanResult) -> Any:
         spec = tmp_path / "spec.md"
         spec.write_text("# My Goal\nsome spec", encoding="utf-8")
-        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
-             patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.app.run_command._load_or_default"), \
-             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+        with (
+            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch("milknado.adapters.crg.CrgAdapter"),
+            patch("milknado.app.run_command._load_or_default"),
+            patch("milknado.app.run_command._ensure_db") as mock_ensure_db,
+        ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -221,10 +228,12 @@ class TestSolverStatusExitCodes:
         """--max-verify-rounds changes the denominator in the summary."""
         spec = tmp_path / "spec.md"
         spec.write_text("# Goal\nsome spec", encoding="utf-8")
-        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
-             patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.app.run_command._load_or_default"), \
-             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+        with (
+            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch("milknado.adapters.crg.CrgAdapter"),
+            patch("milknado.app.run_command._load_or_default"),
+            patch("milknado.app.run_command._ensure_db") as mock_ensure_db,
+        ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -234,9 +243,12 @@ class TestSolverStatusExitCodes:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
-                    "--max-verify-rounds", "5",
-                    "--project-root", str(tmp_path),
+                    "--spec",
+                    str(spec),
+                    "--max-verify-rounds",
+                    "5",
+                    "--project-root",
+                    str(tmp_path),
                 ],
             )
         assert "verify_rounds=1/5" in result.output
@@ -250,10 +262,12 @@ class TestResumeResetFlags:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--resume",
                 "--reset",
-                "--project-root", str(tmp_path),
+                "--project-root",
+                str(tmp_path),
             ],
         )
         assert result.exit_code != 0
@@ -264,10 +278,13 @@ class TestResumeResetFlags:
         spec = tmp_path / "spec.md"
         spec.write_text("# Goal\nsome spec", encoding="utf-8")
         from milknado.domains.common.errors import ExistingPlanDetected
-        with patch("milknado.domains.planning.Planner") as mock_planner_cls, \
-             patch("milknado.adapters.crg.CrgAdapter"), \
-             patch("milknado.app.run_command._load_or_default"), \
-             patch("milknado.app.run_command._ensure_db") as mock_ensure_db:
+
+        with (
+            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch("milknado.adapters.crg.CrgAdapter"),
+            patch("milknado.app.run_command._load_or_default"),
+            patch("milknado.app.run_command._ensure_db") as mock_ensure_db,
+        ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
             mock_planner = MagicMock()
@@ -285,24 +302,28 @@ class TestResumeResetFlags:
 class TestDeriveGoal:
     def test_first_heading_extracted(self, tmp_path: Path) -> None:
         from milknado.app.spec_ingest import derive_goal
+
         spec = tmp_path / "spec.md"
         spec.write_text("# My Feature Goal\nsome content", encoding="utf-8")
         assert derive_goal(spec) == "My Feature Goal"
 
     def test_no_heading_returns_stem(self, tmp_path: Path) -> None:
         from milknado.app.spec_ingest import derive_goal
+
         spec = tmp_path / "my-spec.md"
         spec.write_text("No heading here, just prose.", encoding="utf-8")
         assert derive_goal(spec) == "my-spec"
 
     def test_heading_with_extra_whitespace_stripped(self, tmp_path: Path) -> None:
         from milknado.app.spec_ingest import derive_goal
+
         spec = tmp_path / "spec.md"
         spec.write_text("#   Lots of spaces   \nsome content", encoding="utf-8")
         assert derive_goal(spec) == "Lots of spaces"
 
     def test_heading_level_two_not_extracted(self, tmp_path: Path) -> None:
         from milknado.app.spec_ingest import derive_goal
+
         spec = tmp_path / "spec.md"
         spec.write_text("## Not a top heading\n# Real heading\n", encoding="utf-8")
         # ## is not matched by `line.startswith("# ")` check... but "## " starts with "#"

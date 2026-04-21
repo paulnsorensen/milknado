@@ -54,17 +54,23 @@ class _FakeCrg:
         return {}
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return []
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -75,12 +81,17 @@ class _FakeCrg:
         return []
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -135,6 +146,7 @@ class _FakeRalph:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
+
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -168,7 +180,10 @@ class TestTranscriptContract:
     ) -> None:
         ralph = _FakeRalph()
         executor = Executor(
-            graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg(),
+            graph=graph,
+            git=_FakeGit(),
+            ralph=ralph,
+            crg=_FakeCrg(),
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         graph.add_node("single node")
@@ -186,7 +201,10 @@ class TestTranscriptContract:
     ) -> None:
         ralph = _FakeRalph()
         executor = Executor(
-            graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg(),
+            graph=graph,
+            git=_FakeGit(),
+            ralph=ralph,
+            crg=_FakeCrg(),
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         graph.add_node("single node")
@@ -204,7 +222,10 @@ class TestTranscriptContract:
     ) -> None:
         ralph = _FakeRalph()
         executor = Executor(
-            graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg(),
+            graph=graph,
+            git=_FakeGit(),
+            ralph=ralph,
+            crg=_FakeCrg(),
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         root = graph.add_node("root")
@@ -224,7 +245,10 @@ class TestTranscriptContract:
     ) -> None:
         ralph = _FakeRalph()
         executor = Executor(
-            graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg(),
+            graph=graph,
+            git=_FakeGit(),
+            ralph=ralph,
+            crg=_FakeCrg(),
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         root = graph.add_node("root")
@@ -244,7 +268,10 @@ class TestTranscriptContract:
     ) -> None:
         ralph = _FakeRalph()
         executor = Executor(
-            graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg(),
+            graph=graph,
+            git=_FakeGit(),
+            ralph=ralph,
+            crg=_FakeCrg(),
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         graph.add_node("single node")
@@ -298,6 +325,4 @@ class TestTranscriptFormat:
         lines = [ln for ln in content.splitlines() if ln.strip()]
         assert len(lines) >= 5, f"expected >= 5 log lines, got {len(lines)}"
         for ln in lines[:5]:
-            assert self._LINE_RE.match(ln), (
-                f"log line does not match format contract: {ln!r}"
-            )
+            assert self._LINE_RE.match(ln), f"log line does not match format contract: {ln!r}"

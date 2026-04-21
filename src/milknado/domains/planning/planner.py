@@ -85,7 +85,8 @@ class Planner:
         max_verify_rounds: int = 3,
     ) -> PlanResult:
         return self.launch(
-            delta, project_root,
+            delta,
+            project_root,
             spec_path=spec_path,
             resuming=True,
             max_verify_rounds=max_verify_rounds,
@@ -114,14 +115,20 @@ class Planner:
         )
         plan_mode_used = resolve_plan_mode(existing_node_count_at_plan_start, reset=reset)
         spec_hash_changed = detect_spec_hash_change(
-            self._graph, spec_text, resuming=resuming,
+            self._graph,
+            spec_text,
+            resuming=resuming,
         )
         orphaned_worktree_count = count_active_worktrees(project_root)
         crg, crg_ok = safe_ensure_crg(self._crg, project_root)
         tilth = TilthAdapter()
         context = build_planning_context(
-            goal, crg if crg_ok else None, self._graph,
-            spec_text=spec_text, tilth=tilth, scope=project_root,
+            goal,
+            crg if crg_ok else None,
+            self._graph,
+            spec_text=spec_text,
+            tilth=tilth,
+            scope=project_root,
         )
         milknado_dir = project_root / ".milknado"
         milknado_dir.mkdir(parents=True, exist_ok=True)
@@ -161,7 +168,8 @@ class Planner:
                 )
             _logger.warning(
                 "WARNING: %d impl changes lack test coverage: %s",
-                len(gaps), ", ".join(gaps),
+                len(gaps),
+                ", ".join(gaps),
             )
         coverage_gaps_remaining = len(gaps)
 
@@ -177,13 +185,17 @@ class Planner:
         manifest = append_reuse_candidates(manifest, self._crg if crg_ok else None)
         plan = run_batching(manifest, crg if crg_ok else None, project_root)
         _check_mega_batch(
-            plan, force_single_batch=force_single_batch, threshold=mega_batch_threshold,
+            plan,
+            force_single_batch=force_single_batch,
+            threshold=mega_batch_threshold,
         )
         existing_root = self._graph.get_root()
         parent_id = existing_root.id if existing_root is not None else None
         created_ids = apply_batches_to_graph(self._graph, plan, manifest, parent_id=parent_id)
         record_batch_snapshot(
-            project_root, manifest, plan,
+            project_root,
+            manifest,
+            plan,
             plan_mode_used=plan_mode_used,
             existing_node_count_at_plan_start=existing_node_count_at_plan_start,
             spec_hash_changed=spec_hash_changed,

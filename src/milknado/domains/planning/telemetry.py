@@ -1,4 +1,5 @@
 """Append-only JSONL telemetry sink for batch planning snapshots (A5)."""
+
 from __future__ import annotations
 
 import json
@@ -44,7 +45,8 @@ def record_batch_snapshot(
     Never raises — telemetry must not block the planner.
     """
     record = _build_record(
-        manifest, plan,
+        manifest,
+        plan,
         plan_mode_used=plan_mode_used,
         existing_node_count_at_plan_start=existing_node_count_at_plan_start,
         spec_hash_changed=spec_hash_changed,
@@ -93,9 +95,12 @@ def _build_record(
     mean_spread = sum(spreads) / len(spreads) if spreads else 0.0
     us_counts = [len(_US_PATTERN.findall(c.description)) for c in manifest.changes]
     test_count = sum(
-        1 for c in manifest.changes
-        if c.path.startswith("tests/") or c.path.startswith("test_")
-        or "/test_" in c.path or "/tests/" in c.path
+        1
+        for c in manifest.changes
+        if c.path.startswith("tests/")
+        or c.path.startswith("test_")
+        or "/test_" in c.path
+        or "/tests/" in c.path
     )
     impl_count = len(manifest.changes) - test_count
     test_to_impl = (test_count / impl_count) if impl_count > 0 else 0.0

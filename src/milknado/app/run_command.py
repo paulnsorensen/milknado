@@ -56,9 +56,7 @@ def _run_crg(crg: object, project_root: Path, *, rebuild: bool = False) -> None:
         raise typer.Exit(code=1) from None
 
 
-def _check_protected_branch(
-    config: MilknadoConfig, branch: str, allow_protected: bool
-) -> None:
+def _check_protected_branch(config: MilknadoConfig, branch: str, allow_protected: bool) -> None:
     if not allow_protected and branch in config.protected_branches:
         console.print(
             f"[red]Branch [bold]{branch}[/bold] is protected. "
@@ -95,7 +93,8 @@ def _trigger_replan_on_gaps(
 
 
 def _build_exec_config(
-    config: MilknadoConfig, project_root: Path,
+    config: MilknadoConfig,
+    project_root: Path,
 ) -> ExecutionConfig:
     from milknado.domains.execution import ExecutionConfig
 
@@ -153,7 +152,6 @@ def plan_exit_code(result: PlanResult) -> int:
     if not result.success:
         return result.exit_code
     return 0
-
 
 
 def execute_plan(
@@ -267,7 +265,10 @@ def execute_run(
         and result.verify_outcome.goal_delta
     ):
         _trigger_replan_on_gaps(
-            config, project_root, result.verify_outcome.goal_delta, spec,
+            config,
+            project_root,
+            result.verify_outcome.goal_delta,
+            spec,
             max_verify_rounds=max_verify_rounds,
         )
 

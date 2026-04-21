@@ -1,4 +1,5 @@
 """US-002: _instructions_section prompt quality tests."""
+
 from __future__ import annotations
 
 import pytest

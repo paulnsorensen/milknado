@@ -12,20 +12,28 @@ from milknado.domains.common.types import DegradationMarker, TilthMap
 
 def _ok(stdout: str) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=stdout, stderr="",
+        args=[],
+        returncode=0,
+        stdout=stdout,
+        stderr="",
     )
 
 
 def _fail(stderr: str, code: int = 1) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=code, stdout="", stderr=stderr,
+        args=[],
+        returncode=code,
+        stdout="",
+        stderr=stderr,
     )
 
 
 class TestStructuralMap:
     @patch("milknado.adapters.tilth.shutil.which", return_value=None)
     def test_returns_marker_when_binary_missing(
-        self, _which: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        tmp_path: Path,
     ) -> None:
         adapter = TilthAdapter()
         result = adapter.structural_map(tmp_path, budget_tokens=2000)
@@ -133,7 +141,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_locations_on_success(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         output_text = (
             "## src/foo.py:10-20 [definition]\n"
@@ -158,7 +168,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_passes_glob_filter(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         output_text = "## src/foo.py:1-5 [definition]\n"
         mock_run.return_value = _ok(json.dumps({"output": output_text, "query": "Foo"}))
@@ -172,7 +184,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_single_line_match_sets_end_equal_start(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         output_text = "## src/mod.py:42 [usage]\n→ [42]   import MyClass\n"
         mock_run.return_value = _ok(json.dumps({"output": output_text, "query": "MyClass"}))
@@ -184,10 +198,12 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_skips_non_header_lines(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         output_text = (
-            "# Search: \"fn\" — 2 matches\n"
+            '# Search: "fn" — 2 matches\n'
             "## src/ok.py:1-5 [definition]\n"
             "  some detail line without header format\n"
         )
@@ -201,7 +217,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_on_nonzero_exit(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         mock_run.return_value = _fail("error")
         assert TilthAdapter().search_symbol("x") == []
@@ -209,7 +227,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_on_invalid_json(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         mock_run.return_value = _ok("not-json")
         assert TilthAdapter().search_symbol("x") == []
@@ -217,7 +237,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_on_timeout(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="tilth", timeout=30)
         assert TilthAdapter().search_symbol("x") == []
@@ -225,7 +247,9 @@ class TestSearchSymbol:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_when_output_not_a_dict(
-        self, _which: MagicMock, mock_run: MagicMock,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
     ) -> None:
         mock_run.return_value = _ok(json.dumps([1, 2, 3]))
         assert TilthAdapter().search_symbol("x") == []
@@ -234,14 +258,19 @@ class TestSearchSymbol:
 class TestReadSection:
     @patch("milknado.adapters.tilth.shutil.which", return_value=None)
     def test_returns_empty_when_binary_missing(
-        self, _which: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        tmp_path: Path,
     ) -> None:
         assert TilthAdapter().read_section(tmp_path / "f.py", 1, 10) == ""
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_content_on_success(
-        self, _which: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         mock_run.return_value = _ok("def foo():\n    pass\n")
         target = tmp_path / "src.py"
@@ -258,7 +287,10 @@ class TestReadSection:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_on_nonzero_exit(
-        self, _which: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         mock_run.return_value = _fail("oops")
         assert TilthAdapter().read_section(tmp_path / "f.py", 1, 5) == ""
@@ -266,7 +298,10 @@ class TestReadSection:
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_returns_empty_on_timeout(
-        self, _which: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="tilth", timeout=30)
         assert TilthAdapter().read_section(tmp_path / "f.py", 1, 5) == ""

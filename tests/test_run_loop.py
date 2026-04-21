@@ -77,17 +77,23 @@ class FakeCrg:
         return {"modules": []}
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return []
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -98,12 +104,17 @@ class FakeCrg:
         return []
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -160,6 +171,7 @@ class FakeRalph:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
+
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -500,7 +512,10 @@ class TestRunLoopFileConflicts:
         fake_crg: FakeCrg,
     ) -> None:
         executor = Executor(
-            graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg,
+            graph=graph,
+            git=fake_git,
+            ralph=fake_ralph,
+            crg=fake_crg,
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
 
@@ -518,9 +533,7 @@ class TestRunLoopFileConflicts:
         assert result.root_done is False
 
 
-_RICH_DESC = (
-    "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
-)
+_RICH_DESC = "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
 
 
 def _make_tui_state(node_id: int) -> TuiState:
@@ -572,9 +585,7 @@ class TestWorkerTableDescriptionSanitization:
 class TestRenderOverlayPreservesRawDescription:
     """Counterpoint: _render_overlay must NOT sanitize the description."""
 
-    def test_overlay_rendered_contains_markdown_header(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_overlay_rendered_contains_markdown_header(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
@@ -583,9 +594,7 @@ class TestRenderOverlayPreservesRawDescription:
 
         assert "##" in rendered
 
-    def test_overlay_sanitization_is_nondestructive(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_overlay_sanitization_is_nondestructive(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         _build_worker_table(state, graph)
@@ -802,9 +811,7 @@ class TestStrictDrain:
 
 
 class TestProtectedBranchGuard:
-    def test_protected_branch_raises_exit_2_before_log_created(
-        self, tmp_path: Path
-    ) -> None:
+    def test_protected_branch_raises_exit_2_before_log_created(self, tmp_path: Path) -> None:
         import typer
 
         from milknado.app.run_command import _check_protected_branch
@@ -825,9 +832,7 @@ class TestProtectedBranchGuard:
 
 
 class TestStalledWorkerGlyph:
-    def test_stalled_worker_shows_warning_glyph_in_table(
-        self, graph: MikadoGraph
-    ) -> None:
+    def test_stalled_worker_shows_warning_glyph_in_table(self, graph: MikadoGraph) -> None:
         node = graph.add_node("long-running task")
         past = time.monotonic() - 400.0
         state = TuiState(
@@ -1024,7 +1029,8 @@ class TestRootCompletionViaVerifySpec:
 
 class TestRalphifyAdapterLogDir:
     def test_create_run_passes_log_dir_under_worktree(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         from unittest.mock import MagicMock, patch
 
@@ -1042,6 +1048,7 @@ class TestRalphifyAdapterLogDir:
             return fake_run
 
         from milknado.adapters.ralphify import RalphifyAdapter
+
         adapter = RalphifyAdapter(agent="claude")
 
         with patch.object(adapter._manager, "create_run", side_effect=fake_create_run):

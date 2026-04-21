@@ -13,16 +13,46 @@ if TYPE_CHECKING:
     from milknado.domains.common.protocols import TilthPort
 
 TOKENS_PER_LINE: dict[str, int] = {
-    "py": 10, "ts": 8, "tsx": 8, "js": 7, "jsx": 7,
-    "rs": 11, "go": 9, "java": 11, "kt": 10,
-    "rb": 9, "php": 9, "c": 9, "cpp": 10, "h": 9,
-    "md": 5, "toml": 6, "yaml": 6, "yml": 6, "json": 6,
+    "py": 10,
+    "ts": 8,
+    "tsx": 8,
+    "js": 7,
+    "jsx": 7,
+    "rs": 11,
+    "go": 9,
+    "java": 11,
+    "kt": 10,
+    "rb": 9,
+    "php": 9,
+    "c": 9,
+    "cpp": 10,
+    "h": 9,
+    "md": 5,
+    "toml": 6,
+    "yaml": 6,
+    "yml": 6,
+    "json": 6,
 }
 NEW_FILE_LINES: dict[str, int] = {
-    "py": 150, "ts": 120, "tsx": 120, "js": 120, "jsx": 120,
-    "rs": 200, "go": 180, "java": 200, "kt": 180,
-    "rb": 120, "php": 150, "c": 180, "cpp": 200, "h": 100,
-    "md": 80, "toml": 40, "yaml": 50, "yml": 50, "json": 40,
+    "py": 150,
+    "ts": 120,
+    "tsx": 120,
+    "js": 120,
+    "jsx": 120,
+    "rs": 200,
+    "go": 180,
+    "java": 200,
+    "kt": 180,
+    "rb": 120,
+    "php": 150,
+    "c": 180,
+    "cpp": 200,
+    "h": 100,
+    "md": 80,
+    "toml": 40,
+    "yaml": 50,
+    "yml": 50,
+    "json": 40,
 }
 FLAT_COST: dict[str, int] = {"delete": 80, "rename": 120}
 HEADROOM: float = 1.25
@@ -97,7 +127,8 @@ def batch_size_cost(k: int) -> int:
 
 
 def _estimate_via_symbols(
-    change: FileChange, tilth_port: TilthPort,
+    change: FileChange,
+    tilth_port: TilthPort,
 ) -> int:
     seen: dict[tuple[str, str], str] = {}
     for sym in change.symbols:
@@ -137,7 +168,9 @@ def _log_degradation(root: Path, change: FileChange, reason: str) -> None:
 
 
 def estimate_tokens_per_symbols(
-    change: FileChange, root: Path, tilth_port: TilthPort | None,
+    change: FileChange,
+    root: Path,
+    tilth_port: TilthPort | None,
 ) -> int:
     if change.edit_kind in FLAT_COST:
         return FLAT_COST[change.edit_kind]

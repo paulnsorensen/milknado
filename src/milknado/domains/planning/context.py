@@ -103,6 +103,7 @@ def _truncate_description(description: str) -> str:
 
 def _progress_summary(nodes: list[MikadoNode]) -> str:
     from collections import Counter
+
     counts = Counter(n.status.value for n in nodes)
     total = len(nodes)
     parts = [f"{total} total"]

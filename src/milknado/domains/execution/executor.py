@@ -21,7 +21,8 @@ _logger = logging.getLogger(__name__)
 
 _TRANSIENT_EXIT_CODES = frozenset({124, 137, 143})
 _TRANSIENT_MSG_RE = re.compile(
-    r"(429|rate.?limit|too many requests)", re.IGNORECASE,
+    r"(429|rate.?limit|too many requests)",
+    re.IGNORECASE,
 )
 
 
@@ -60,11 +61,7 @@ class RebaseConflict:
 
 def _build_commit_message(node_id: int, description: str) -> str:
     subject = description[:57] + "..." if len(description) > 60 else description
-    return (
-        f"feat(milknado-{node_id}): {subject}\n\n"
-        f"{description}\n\n"
-        f"Milknado-Node: {node_id}"
-    )
+    return f"feat(milknado-{node_id}): {subject}\n\n{description}\n\nMilknado-Node: {node_id}"
 
 
 def _slugify(text: str) -> str:
@@ -92,7 +89,9 @@ def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
         for left_id, right_id, paths in conflicts:
             milknado_logger.info(
                 "Node %d blocked by Node %d on shared files: %s",
-                right_id, left_id, paths,
+                right_id,
+                left_id,
+                paths,
             )
     blocked = {c[1] for c in conflicts}
     return [nid for nid in ids if nid not in blocked]
@@ -122,14 +121,18 @@ class Executor:
                 except Exception as exc:
                     _logger.warning(
                         "Failed to remove orphan worktree %s for node %d: %s",
-                        wt, node_id, exc,
+                        wt,
+                        node_id,
+                        exc,
                     )
 
     def get_attempt_count(self, node_id: int) -> int:
         return self._attempts_by_node.get(node_id, 0)
 
     def dispatch(
-        self, node_id: int, config: ExecutionConfig,
+        self,
+        node_id: int,
+        config: ExecutionConfig,
     ) -> DispatchResult:
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
@@ -146,17 +149,19 @@ class Executor:
                 self._attempts_by_node[node_id] = attempt
                 if not _is_transient(exc) or attempt >= max_retries:
                     raise
-                wait = backoff * (2 ** attempt)
+                wait = backoff * (2**attempt)
                 _logger.warning(
                     "Dispatch attempt %d/%d failed for node %d: %s. Retrying in %.1fs",
-                    attempt + 1, max_retries + 1, node_id, exc, wait,
+                    attempt + 1,
+                    max_retries + 1,
+                    node_id,
+                    exc,
+                    wait,
                 )
                 time.sleep(wait)
         raise last_exc or RuntimeError("dispatch exhausted retries")
 
-    def _dispatch_once(
-        self, node_id: int, config: ExecutionConfig
-    ) -> DispatchResult:
+    def _dispatch_once(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -165,7 +170,8 @@ class Executor:
 
         slug = _slugify(node.description)
         worktree_name = config.worktree_pattern.format(
-            node_id=node_id, slug=slug,
+            node_id=node_id,
+            slug=slug,
         )
         wt_path = config.project_root / worktree_name
         branch = f"milknado/{node_id}-{slug}"
@@ -174,12 +180,16 @@ class Executor:
         self._worktrees[node_id] = wt_path
         try:
             self._graph.mark_running(
-                node_id, worktree_path=str(wt_path), branch_name=branch,
+                node_id,
+                worktree_path=str(wt_path),
+                branch_name=branch,
             )
 
             context = build_node_context(node, self._graph, self._crg)
             ralph_path = self._ralph.generate_ralph_md(
-                node, context, list(config.quality_gates),
+                node,
+                context,
+                list(config.quality_gates),
                 wt_path / "RALPH.md",
             )
 
@@ -210,12 +220,12 @@ class Executor:
             raise
 
         return DispatchResult(
-            node_id=node_id, worktree=wt_path, run_id=run_id,
+            node_id=node_id,
+            worktree=wt_path,
+            run_id=run_id,
         )
 
-    def complete(
-        self, node_id: int, feature_branch: str
-    ) -> CompletionResult:
+    def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -223,7 +233,10 @@ class Executor:
         worktree = Path(node.worktree_path) if node.worktree_path else None
         try:
             rebase_result = self._rebase_and_merge(
-                worktree, feature_branch, node.id, node.description,
+                worktree,
+                feature_branch,
+                node.id,
+                node.description,
             )
         except Exception:
             rebase_result = RebaseResult(success=False)

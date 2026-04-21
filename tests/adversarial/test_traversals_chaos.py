@@ -2,6 +2,7 @@
 
 Focus: cycles (via raw SQL if possible), deep chains, self-parent.
 """
+
 from __future__ import annotations
 
 import sqlite3

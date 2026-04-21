@@ -91,9 +91,7 @@ def crg(
 @app.command("add-node")
 def add_node(
     description: Annotated[str, typer.Argument(help="Node description")],
-    parent: Annotated[
-        int | None, typer.Option("--parent", "-p", help="Parent node ID")
-    ] = None,
+    parent: Annotated[int | None, typer.Option("--parent", "-p", help="Parent node ID")] = None,
     files: Annotated[
         list[str] | None, typer.Option("--files", "-f", help="Files this node will touch")
     ] = None,
@@ -147,8 +145,14 @@ def plan(
         console.print("[red]Provide --spec or --issue.[/red]")
         raise typer.Exit(code=1)
     execute_plan(
-        project_root.resolve(), spec_paths, issue_refs,
-        max_verify_rounds, resume, reset, mega_batch_threshold, force_single_batch,
+        project_root.resolve(),
+        spec_paths,
+        issue_refs,
+        max_verify_rounds,
+        resume,
+        reset,
+        mega_batch_threshold,
+        force_single_batch,
     )
 
 
@@ -166,7 +170,11 @@ def run(
     spec: Annotated[
         Path | None,
         typer.Option(
-            exists=True, file_okay=True, dir_okay=False, readable=True, resolve_path=True,
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
             help="Spec .md file; enables verify-spec and replan-on-gaps after run.",
         ),
     ] = None,
@@ -176,7 +184,11 @@ def run(
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     execute_run(
-        project_root.resolve(), strict, allow_protected, spec, max_verify_rounds,
+        project_root.resolve(),
+        strict,
+        allow_protected,
+        spec,
+        max_verify_rounds,
     )
 
 

@@ -1,4 +1,5 @@
 """DB schema creation, row serialization, and admin helpers for MikadoGraph."""
+
 from __future__ import annotations
 
 import itertools
@@ -61,10 +62,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(nodes)").fetchall()
-    }
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
     for col, ddl in [
         ("run_id", "ALTER TABLE nodes ADD COLUMN run_id TEXT"),
         (
@@ -96,12 +94,8 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         branch_name=row["branch_name"],
         run_id=run_id,
         created_at=datetime.fromisoformat(row["created_at"]),
-        completed_at=(
-            datetime.fromisoformat(completed_at_raw) if completed_at_raw else None
-        ),
-        dispatched_at=(
-            datetime.fromisoformat(dispatched_at_raw) if dispatched_at_raw else None
-        ),
+        completed_at=(datetime.fromisoformat(completed_at_raw) if completed_at_raw else None),
+        dispatched_at=(datetime.fromisoformat(dispatched_at_raw) if dispatched_at_raw else None),
         oversized=oversized,
         batch_index=batch_index,
         completion_duration_seconds=duration,
@@ -127,9 +121,7 @@ def get_file_ownership(conn: sqlite3.Connection, node_id: int) -> list[str]:
 def check_parallel_safety(
     conn: sqlite3.Connection, node_ids: list[int]
 ) -> list[tuple[int, int, list[str]]]:
-    ownership: dict[int, set[str]] = {
-        nid: set(get_file_ownership(conn, nid)) for nid in node_ids
-    }
+    ownership: dict[int, set[str]] = {nid: set(get_file_ownership(conn, nid)) for nid in node_ids}
     conflicts: list[tuple[int, int, list[str]]] = []
     for left_id, right_id in itertools.combinations(node_ids, 2):
         overlap = ownership[left_id] & ownership[right_id]
@@ -150,8 +142,14 @@ def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
         "INSERT INTO batch_plans "
         "(created_at, solver_status, batch_count, oversized_count, max_spread, spread_json) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (now, plan.solver_status, len(plan.batches), oversized_count, max_spread,
-         json.dumps(spread_payload)),
+        (
+            now,
+            plan.solver_status,
+            len(plan.batches),
+            oversized_count,
+            max_spread,
+            json.dumps(spread_payload),
+        ),
     )
     conn.commit()
     plan_id = cur.lastrowid

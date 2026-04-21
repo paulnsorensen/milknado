@@ -32,25 +32,15 @@ def mock_crg() -> MagicMock:
     crg.get_impact_radius.return_value = {
         "files": ["auth.py", "models.py"],
     }
-    crg.list_communities.return_value = [
-        {"name": f"community_{i}"} for i in range(10)
-    ]
-    crg.list_flows.return_value = [
-        {"name": f"flow_{i}"} for i in range(10)
-    ]
-    crg.get_bridge_nodes.return_value = [
-        {"name": f"bridge_{i}"} for i in range(10)
-    ]
-    crg.get_hub_nodes.return_value = [
-        {"name": f"hub_{i}"} for i in range(10)
-    ]
+    crg.list_communities.return_value = [{"name": f"community_{i}"} for i in range(10)]
+    crg.list_flows.return_value = [{"name": f"flow_{i}"} for i in range(10)]
+    crg.get_bridge_nodes.return_value = [{"name": f"bridge_{i}"} for i in range(10)]
+    crg.get_hub_nodes.return_value = [{"name": f"hub_{i}"} for i in range(10)]
     return crg
 
 
 class TestBuildPlanningContext:
-    def test_includes_goal(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_goal(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("extract auth", mock_crg, tmp_graph)
         assert "# Goal" in ctx
         assert "extract auth" in ctx
@@ -70,42 +60,32 @@ class TestBuildPlanningContext:
         assert "Architecture Overview" not in ctx
         mock_crg.get_architecture_overview.assert_not_called()
 
-    def test_includes_empty_graph(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_empty_graph(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "No existing nodes" in ctx
 
-    def test_includes_existing_nodes(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_existing_nodes(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root goal")
         tmp_graph.add_node("child task", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "[1] root goal (pending)" in ctx
         assert "[2] child task (pending)" in ctx
 
-    def test_includes_dependency_edges(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_dependency_edges(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root goal")
         tmp_graph.add_node("child a", parent_id=1)
         tmp_graph.add_node("child b", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "deps: [2, 3]" in ctx
 
-    def test_includes_file_ownership(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_file_ownership(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root goal")
         tmp_graph.set_file_ownership(1, ["src/auth.py", "src/models.py"])
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "src/auth.py" in ctx
         assert "src/models.py" in ctx
 
-    def test_includes_ready_nodes(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_ready_nodes(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root goal")
         tmp_graph.add_node("leaf task", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
@@ -121,16 +101,12 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Ready to Execute" not in ctx
 
-    def test_includes_instructions(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_includes_instructions(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Instructions" in ctx
         assert "manifest_version" in ctx
 
-    def test_fresh_start_instructions(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_fresh_start_instructions(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Instructions\n" in ctx
         assert "Decompose the goal" in ctx
@@ -143,9 +119,7 @@ class TestBuildPlanningContext:
         assert "Instructions (resuming)" in ctx
         assert "Do NOT recreate" in ctx
 
-    def test_progress_summary(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_progress_summary(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root")
         tmp_graph.add_node("done child", parent_id=1)
         tmp_graph.add_node("pending child", parent_id=1)
@@ -157,9 +131,7 @@ class TestBuildPlanningContext:
         assert "1 done" in ctx
         assert "2 pending" in ctx
 
-    def test_failed_nodes_section(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_failed_nodes_section(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root")
         tmp_graph.add_node("broken task", parent_id=1)
         tmp_graph.mark_running(2)
@@ -177,9 +149,7 @@ class TestBuildPlanningContext:
 
     # --- v2 spec_text tests ---
 
-    def test_spec_text_kwarg_accepted(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_spec_text_kwarg_accepted(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text="my spec body")
         assert ctx  # no error
 
@@ -199,17 +169,13 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text=None)
         assert "# Spec" not in ctx
 
-    def test_empty_spec_text_raises(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_empty_spec_text_raises(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         with pytest.raises(ValueError, match="spec_text"):
             build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
 
     # --- structural section tests ---
 
-    def test_tilth_kwarg_accepted(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_tilth_kwarg_accepted(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         mock_tilth = MagicMock()
         mock_tilth.structural_map.return_value = TilthMap(
             scope=Path("."), budget_tokens=2000, data={"modules": 5}
@@ -312,9 +278,7 @@ class TestBuildPlanningContext:
 
     # --- sections count ---
 
-    def test_sections_separated(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
+    def test_sections_separated(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert ctx.count("# ") >= 5  # goal, arch, structural, graph, batching, instructions
 
@@ -349,6 +313,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -371,6 +336,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -394,6 +360,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.errors import PlanningFailed
+
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="agent failed")
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(PlanningFailed) as exc_info:
@@ -545,10 +512,12 @@ class TestPlannerSpecPath:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-001 Add Foo class"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-001 Add Foo class"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("Test goal", tmp_path)
@@ -564,10 +533,12 @@ class TestPlannerSpecPath:
         mock_crg: MagicMock,
     ) -> None:
         mock_crg.ensure_graph.side_effect = RuntimeError("CRG unavailable")
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-001 Add Foo"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-001 Add Foo"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("goal", tmp_path)
@@ -582,34 +553,36 @@ def _wrap(payload: dict) -> str:
 
 class TestPlanChangeManifest:
     def test_happy_path_parses_full_manifest(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor foo",
-            "goal_summary": "Move foo into its own module",
-            "changes": [
-                {
-                    "id": "c1",
-                    "path": "src/foo.py",
-                    "edit_kind": "modify",
-                    "description": "Update Foo class",
-                    "symbols": [{"name": "Foo", "file": "src/foo.py"}],
-                    "depends_on": ["c2"],
-                },
-                {
-                    "id": "c2",
-                    "path": "src/bar.py",
-                    "edit_kind": "add",
-                    "description": "Add Bar module",
-                },
-            ],
-            "new_relationships": [
-                {
-                    "source_change_id": "c2",
-                    "dependant_change_id": "c1",
-                    "reason": "new_import",
-                },
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor foo",
+                "goal_summary": "Move foo into its own module",
+                "changes": [
+                    {
+                        "id": "c1",
+                        "path": "src/foo.py",
+                        "edit_kind": "modify",
+                        "description": "Update Foo class",
+                        "symbols": [{"name": "Foo", "file": "src/foo.py"}],
+                        "depends_on": ["c2"],
+                    },
+                    {
+                        "id": "c2",
+                        "path": "src/bar.py",
+                        "edit_kind": "add",
+                        "description": "Add Bar module",
+                    },
+                ],
+                "new_relationships": [
+                    {
+                        "source_change_id": "c2",
+                        "dependant_change_id": "c1",
+                        "reason": "new_import",
+                    },
+                ],
+            }
+        )
         manifest = parse_manifest_from_output(output)
         assert manifest is not None
         assert manifest.manifest_version == MANIFEST_VERSION
@@ -639,88 +612,102 @@ class TestPlanChangeManifest:
         assert parse_manifest_from_output("```json\n{not json\n```") is None
 
     def test_rejects_wrong_manifest_version(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v1",
-            "changes": [],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v1",
+                "changes": [],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_duplicate_change_ids(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [
-                {"id": "c1", "path": "a.py", "description": "Fix a"},
-                {"id": "c1", "path": "b.py", "description": "Fix b"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [
+                    {"id": "c1", "path": "a.py", "description": "Fix a"},
+                    {"id": "c1", "path": "b.py", "description": "Fix b"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_unknown_depends_on(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [
-                {"id": "c1", "path": "a.py", "description": "Fix a", "depends_on": ["ghost"]},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [
+                    {"id": "c1", "path": "a.py", "description": "Fix a", "depends_on": ["ghost"]},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_unknown_relationship_endpoint(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [{"id": "c1", "path": "a.py", "description": "Fix a"}],
-            "new_relationships": [
-                {
-                    "source_change_id": "ghost",
-                    "dependant_change_id": "c1",
-                    "reason": "new_import",
-                },
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [{"id": "c1", "path": "a.py", "description": "Fix a"}],
+                "new_relationships": [
+                    {
+                        "source_change_id": "ghost",
+                        "dependant_change_id": "c1",
+                        "reason": "new_import",
+                    },
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_invalid_edit_kind(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [
-                {"id": "c1", "path": "a.py", "edit_kind": "explode", "description": "Fix a"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [
+                    {"id": "c1", "path": "a.py", "edit_kind": "explode", "description": "Fix a"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_invalid_relationship_reason(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [
-                {"id": "c1", "path": "a.py", "description": "Fix a"},
-                {"id": "c2", "path": "b.py", "description": "Fix b"},
-            ],
-            "new_relationships": [
-                {
-                    "source_change_id": "c1",
-                    "dependant_change_id": "c2",
-                    "reason": "cosmic_ray",
-                },
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [
+                    {"id": "c1", "path": "a.py", "description": "Fix a"},
+                    {"id": "c2", "path": "b.py", "description": "Fix b"},
+                ],
+                "new_relationships": [
+                    {
+                        "source_change_id": "c1",
+                        "dependant_change_id": "c2",
+                        "reason": "cosmic_ray",
+                    },
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_defaults_for_optional_fields(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer",
-            "changes": [{"id": "c1", "path": "a.py", "description": "Fix a"}],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer",
+                "changes": [{"id": "c1", "path": "a.py", "description": "Fix a"}],
+            }
+        )
         manifest = parse_manifest_from_output(output)
         assert manifest is not None
         only = manifest.changes[0]
@@ -742,25 +729,27 @@ class TestPlanChangeManifest:
             manifest.changes = ()  # type: ignore
 
     def test_v2_parse_with_descriptions(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor auth module",
-            "goal_summary": "Extract auth into its own domain slice",
-            "spec_path": "specs/auth-refactor.md",
-            "changes": [
-                {
-                    "id": "c1",
-                    "path": "src/auth.py",
-                    "description": "Add AuthService class",
-                },
-                {
-                    "id": "c2",
-                    "path": "src/main.py",
-                    "description": "Wire AuthService into DI container",
-                    "depends_on": ["c1"],
-                },
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth module",
+                "goal_summary": "Extract auth into its own domain slice",
+                "spec_path": "specs/auth-refactor.md",
+                "changes": [
+                    {
+                        "id": "c1",
+                        "path": "src/auth.py",
+                        "description": "Add AuthService class",
+                    },
+                    {
+                        "id": "c2",
+                        "path": "src/main.py",
+                        "description": "Wire AuthService into DI container",
+                        "depends_on": ["c1"],
+                    },
+                ],
+            }
+        )
         manifest = parse_manifest_from_output(output)
         assert manifest is not None
         assert manifest.goal == "Refactor auth module"
@@ -770,102 +759,120 @@ class TestPlanChangeManifest:
         assert manifest.changes[1].description == "Wire AuthService into DI container"
 
     def test_spec_path_can_be_none(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Fix bug",
-            "goal_summary": "Fix null pointer in handler",
-            "changes": [
-                {"id": "c1", "path": "src/handler.py", "description": "Guard against None"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Fix bug",
+                "goal_summary": "Fix null pointer in handler",
+                "changes": [
+                    {"id": "c1", "path": "src/handler.py", "description": "Guard against None"},
+                ],
+            }
+        )
         manifest = parse_manifest_from_output(output)
         assert manifest is not None
         assert manifest.spec_path is None
 
     def test_spec_path_can_be_a_string(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "New feature",
-            "goal_summary": "Add export functionality",
-            "spec_path": "specs/export.md",
-            "changes": [
-                {"id": "c1", "path": "src/export.py", "description": "Implement exporter"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "New feature",
+                "goal_summary": "Add export functionality",
+                "spec_path": "specs/export.md",
+                "changes": [
+                    {"id": "c1", "path": "src/export.py", "description": "Implement exporter"},
+                ],
+            }
+        )
         manifest = parse_manifest_from_output(output)
         assert manifest is not None
         assert manifest.spec_path == "specs/export.md"
 
     def test_rejects_empty_goal(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "",
-            "goal_summary": "some summary",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py", "description": "Do something"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "",
+                "goal_summary": "some summary",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py", "description": "Do something"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_missing_goal(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal_summary": "some summary",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py", "description": "Do something"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal_summary": "some summary",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py", "description": "Do something"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_empty_goal_summary(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor auth",
-            "goal_summary": "",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py", "description": "Do something"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py", "description": "Do something"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_missing_goal_summary(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor auth",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py", "description": "Do something"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py", "description": "Do something"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_empty_description_on_any_change(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor auth",
-            "goal_summary": "Extract auth slice",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py", "description": "Add class"},
-                {"id": "c2", "path": "src/bar.py", "description": ""},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "Extract auth slice",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py", "description": "Add class"},
+                    {"id": "c2", "path": "src/bar.py", "description": ""},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_rejects_missing_description_on_any_change(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v2",
-            "goal": "Refactor auth",
-            "goal_summary": "Extract auth slice",
-            "changes": [
-                {"id": "c1", "path": "src/foo.py"},
-            ],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "Extract auth slice",
+                "changes": [
+                    {"id": "c1", "path": "src/foo.py"},
+                ],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_v1_rejection_still_works(self) -> None:
-        output = _wrap({
-            "manifest_version": "milknado.plan.v1",
-            "changes": [],
-        })
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v1",
+                "changes": [],
+            }
+        )
         assert parse_manifest_from_output(output) is None
 
     def test_internal_construction_allows_empty_description(self) -> None:
@@ -913,15 +920,19 @@ class TestBuildCoverageDelta:
 
 class TestPlannerCoverageLoop:
     def _covered_stdout(self, us_ref: str) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": f"{us_ref} tests"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": f"{us_ref} tests"},
+            ]
+        )
 
     def _uncovered_stdout(self, us_ref: str) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": f"{us_ref} implement"},
+            ]
+        )
 
     @patch("milknado.domains.planning.planner.TilthAdapter")
     @patch("milknado.domains.planning.planner.subprocess.run")
@@ -934,14 +945,13 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._covered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._covered_stdout("US-001"))
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path, spec_path=spec, max_verify_rounds=2)
         assert mock_run.call_count == 1
@@ -957,6 +967,7 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -982,14 +993,13 @@ class TestPlannerCoverageLoop:
     ) -> None:
         from milknado.domains.common.errors import InsufficientTestCoverageError
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._uncovered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._uncovered_stdout("US-001"))
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(InsufficientTestCoverageError):
             planner.launch("goal", tmp_path, spec_path=spec, max_verify_rounds=0)
@@ -1009,15 +1019,15 @@ class TestPlannerCoverageLoop:
         import logging
 
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
         spec = tmp_path / "spec.md"
         spec.write_text("US-001 the feature", encoding="utf-8")
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=self._uncovered_stdout("US-001")
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=self._uncovered_stdout("US-001"))
         from milknado.domains.common.errors import InsufficientTestCoverageError
+
         planner = Planner(tmp_graph, mock_crg, "claude")
         with caplog.at_level(logging.WARNING, logger="milknado"):
             with pytest.raises(InsufficientTestCoverageError):
@@ -1036,6 +1046,7 @@ class TestPlannerCoverageLoop:
         mock_crg: MagicMock,
     ) -> None:
         from milknado.domains.common.types import DegradationMarker
+
         mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
             source="tilth", reason="mocked"
         )
@@ -1169,10 +1180,12 @@ class TestUS010ExistingPlanGuard:
 
         spec = tmp_path / "spec.md"
         spec.write_text("# US-001 feature\nDo the thing.", encoding="utf-8")
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-001 impl"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-001 impl"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-001 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path, spec_path=spec)
@@ -1405,9 +1418,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implements US-202 feature"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-202 feature",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError):
@@ -1423,9 +1442,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implements US-202 feature"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-202 feature",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError) as exc_info:
@@ -1442,9 +1467,15 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/bar.py", "description": "US-201 US-202 US-203 all in one"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/bar.py",
+                    "description": "US-201 US-202 US-203 all in one",
+                },
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError):
@@ -1460,10 +1491,12 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-203 and US-204"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-203 and US-204"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MultiStoryBundlingError) as exc_info:
@@ -1481,12 +1514,14 @@ class TestUS204BundlingEnforcement:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 implement foo"},
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests foo"},
-            {"id": "c3", "path": "src/bar.py", "description": "US-202 implement bar"},
-            {"id": "c4", "path": "tests/test_bar.py", "description": "US-202 tests bar"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 implement foo"},
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests foo"},
+                {"id": "c3", "path": "src/bar.py", "description": "US-202 implement bar"},
+                {"id": "c4", "path": "tests/test_bar.py", "description": "US-202 tests bar"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("goal", tmp_path)
@@ -1501,14 +1536,16 @@ class TestUS204BundlingEnforcement:
         mock_crg: MagicMock,
     ) -> None:
         # same US-NNN ref repeated = 1 distinct ref, not bundled
-        stdout = _make_v2_manifest_stdout([
-            {
-                "id": "c1",
-                "path": "src/foo.py",
-                "description": "US-201 implements US-201 requirement",
-            },
-            {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {
+                    "id": "c1",
+                    "path": "src/foo.py",
+                    "description": "US-201 implements US-201 requirement",
+                },
+                {"id": "c2", "path": "tests/test_foo.py", "description": "US-201 tests"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         result = planner.launch("goal", tmp_path)
@@ -1524,9 +1561,11 @@ class TestUS204BundlingEnforcement:
     ) -> None:
         from milknado.domains.common.errors import MilknadoError, MultiStoryBundlingError
 
-        stdout = _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202 bundled"},
-        ])
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-201 and US-202 bundled"},
+            ]
+        )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
         planner = Planner(tmp_graph, mock_crg, "claude")
         with pytest.raises(MilknadoError) as exc_info:
@@ -1538,43 +1577,57 @@ class TestUS205CoverageEnforcement:
     """US-205: raise InsufficientTestCoverageError when ratio < 0.5 and orphans remain."""
 
     def _two_impl_no_tests(self) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+            ]
+        )
 
     def _two_impl_one_shared_us_test(self) -> str:
         # single test shares US-205 ref → covers both impls via shared US-NNN
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-            {"id": "c3", "path": "tests/test_foo_bar.py", "description": "US-205 tests"},
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+                {"id": "c3", "path": "tests/test_foo_bar.py", "description": "US-205 tests"},
+            ]
+        )
 
     def _two_impl_two_tests(self) -> str:
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
-            {
-                "id": "c3", "path": "tests/test_foo.py",
-                "description": "US-205 tests foo", "depends_on": ["c1"],
-            },
-            {
-                "id": "c4", "path": "tests/test_bar.py",
-                "description": "US-205 tests bar", "depends_on": ["c2"],
-            },
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-205 implement bar"},
+                {
+                    "id": "c3",
+                    "path": "tests/test_foo.py",
+                    "description": "US-205 tests foo",
+                    "depends_on": ["c1"],
+                },
+                {
+                    "id": "c4",
+                    "path": "tests/test_bar.py",
+                    "description": "US-205 tests bar",
+                    "depends_on": ["c2"],
+                },
+            ]
+        )
 
     def _two_impl_one_partial_test(self) -> str:
         # c1 covered via depends_on; c2 (US-206) is orphan — ratio=0.5, no raise
-        return _make_v2_manifest_stdout([
-            {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
-            {"id": "c2", "path": "src/bar.py", "description": "US-206 implement bar"},
-            {
-                "id": "c3", "path": "tests/test_foo.py",
-                "description": "US-205 tests foo", "depends_on": ["c1"],
-            },
-        ])
+        return _make_v2_manifest_stdout(
+            [
+                {"id": "c1", "path": "src/foo.py", "description": "US-205 implement foo"},
+                {"id": "c2", "path": "src/bar.py", "description": "US-206 implement bar"},
+                {
+                    "id": "c3",
+                    "path": "tests/test_foo.py",
+                    "description": "US-205 tests foo",
+                    "depends_on": ["c1"],
+                },
+            ]
+        )
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_two_impl_no_tests_raises(

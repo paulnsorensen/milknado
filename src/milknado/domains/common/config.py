@@ -59,29 +59,23 @@ def load_config(path: Path) -> MilknadoConfig:
     execution_agent_raw = milknado.get("execution_agent")
     planning_agent = resolve_planning_agent_command(
         family,
-        planning_agent=(
-            str(planning_agent_raw)
-            if planning_agent_raw is not None
-            else None
-        ),
+        planning_agent=(str(planning_agent_raw) if planning_agent_raw is not None else None),
     )
     execution_agent = resolve_execution_agent_command(
         family,
-        execution_agent=(
-            str(execution_agent_raw)
-            if execution_agent_raw is not None
-            else None
-        ),
+        execution_agent=(str(execution_agent_raw) if execution_agent_raw is not None else None),
     )
 
     return MilknadoConfig(
         agent_family=family,
         planning_agent=planning_agent,
         execution_agent=execution_agent,
-        quality_gates=tuple(milknado.get(
-            "quality_gates",
-            ["uv run pytest", "uv run ruff check", "uv run ty check"],
-        )),
+        quality_gates=tuple(
+            milknado.get(
+                "quality_gates",
+                ["uv run pytest", "uv run ruff check", "uv run ty check"],
+            )
+        ),
         worktree_pattern=milknado.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         concurrency_limit=milknado.get("concurrency_limit", 4),
         project_root=project_root,

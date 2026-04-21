@@ -1,4 +1,5 @@
 """Pure spec/issue ingestion helpers — no typer, no global state."""
+
 from __future__ import annotations
 
 import json
@@ -34,9 +35,7 @@ def fetch_issue(issue_ref: str) -> dict[str, object]:
             check=False,
         )
     except FileNotFoundError:
-        raise SpecIngestError(
-            "`gh` CLI not found. Install GitHub CLI to use --issue."
-        ) from None
+        raise SpecIngestError("`gh` CLI not found. Install GitHub CLI to use --issue.") from None
 
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
@@ -45,9 +44,7 @@ def fetch_issue(issue_ref: str) -> dict[str, object]:
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise SpecIngestError(
-            f"gh returned invalid JSON for {issue_ref}: {exc}"
-        ) from None
+        raise SpecIngestError(f"gh returned invalid JSON for {issue_ref}: {exc}") from None
 
 
 def slug_for(refs: list[str], issues: list[dict[str, object]]) -> str:

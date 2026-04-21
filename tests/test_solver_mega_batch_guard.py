@@ -6,6 +6,7 @@ Four scenarios:
   3. 2×N batches pass (guard is batch-count-aware, not total-change-count-aware).
   4. --force-single-batch override passes regardless of size.
 """
+
 from __future__ import annotations
 
 import pytest

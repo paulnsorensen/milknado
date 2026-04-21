@@ -14,7 +14,9 @@ _MATCH_HEADER = re.compile(r"^## (.+):(\d+)(?:-(\d+))? \[")
 
 class TilthAdapter:
     def structural_map(
-        self, scope: Path, budget_tokens: int,
+        self,
+        scope: Path,
+        budget_tokens: int,
     ) -> TilthMap | DegradationMarker:
         if shutil.which("tilth") is None:
             return DegradationMarker(
@@ -25,9 +27,13 @@ class TilthAdapter:
         try:
             result = subprocess.run(
                 [
-                    "tilth", "--map", "--json",
-                    "--scope", str(scope),
-                    "--budget", str(budget_tokens),
+                    "tilth",
+                    "--map",
+                    "--json",
+                    "--scope",
+                    str(scope),
+                    "--budget",
+                    str(budget_tokens),
                 ],
                 capture_output=True,
                 text=True,
@@ -63,7 +69,9 @@ class TilthAdapter:
         return TilthMap(scope=scope, budget_tokens=budget_tokens, data=data)
 
     def search_symbol(
-        self, keyword: str, glob: str | None = None,
+        self,
+        keyword: str,
+        glob: str | None = None,
     ) -> list[SymbolLocation]:
         if shutil.which("tilth") is None:
             return []
@@ -72,7 +80,11 @@ class TilthAdapter:
             cmd += ["--glob", glob]
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, check=False, timeout=30,
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
             )
         except subprocess.TimeoutExpired:
             return []
@@ -95,11 +107,13 @@ class TilthAdapter:
             path_str, start_str, end_str = m.group(1), m.group(2), m.group(3)
             try:
                 start = int(start_str)
-                locations.append(SymbolLocation(
-                    path=Path(path_str),
-                    line_start=start,
-                    line_end=int(end_str) if end_str else start,
-                ))
+                locations.append(
+                    SymbolLocation(
+                        path=Path(path_str),
+                        line_start=start,
+                        line_end=int(end_str) if end_str else start,
+                    )
+                )
             except ValueError:
                 continue
         return locations
@@ -110,7 +124,10 @@ class TilthAdapter:
         try:
             result = subprocess.run(
                 ["tilth", str(path), "--section", f"{line_start}-{line_end}"],
-                capture_output=True, text=True, check=False, timeout=30,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
             )
         except subprocess.TimeoutExpired:
             return ""

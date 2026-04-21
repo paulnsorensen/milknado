@@ -45,9 +45,7 @@ def start_input_thread(state: InputState) -> None:
             except Exception:  # noqa: BLE001
                 pass
 
-    state.input_thread = threading.Thread(
-        target=_read_keys, daemon=True, name="milknado-input"
-    )
+    state.input_thread = threading.Thread(target=_read_keys, daemon=True, name="milknado-input")
     state.input_thread.start()
 
 

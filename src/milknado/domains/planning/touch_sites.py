@@ -148,10 +148,7 @@ def _degrade_no_spec(
     result = tilth.structural_map(src_scope, 400)
 
     if isinstance(result, DegradationMarker):
-        return (
-            f"{header}\n\n"
-            f"_(spec not provided; tilth structural map degraded: {result.reason})_"
-        )
+        return f"{header}\n\n_(spec not provided; tilth structural map degraded: {result.reason})_"
 
     assert isinstance(result, TilthMap)
     lines = [header, "_(no spec provided — src/ structure)_"]

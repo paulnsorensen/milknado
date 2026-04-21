@@ -1,4 +1,5 @@
 """CP-SAT model builder and two-pass solver for batch planning."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -89,8 +90,7 @@ def _add_budget_constraints(
     K = max((b for _, b in in_batch), default=-1) + 1
     for b in range(K):
         model.add(
-            sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
-            <= inputs.budget
+            sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs) <= inputs.budget
         )
 
 
@@ -120,10 +120,7 @@ def _build_total_cost(
         return model.new_constant(0)
 
     size_cost_x100 = [_batch_size_cost(k) * 100 for k in range(K + 1)]
-    file_mult_x100 = [
-        100 + (k * 12 - 1) * 10 if k > 0 else 100
-        for k in range(K + 1)
-    ]
+    file_mult_x100 = [100 + (k * 12 - 1) * 10 if k > 0 else 100 for k in range(K + 1)]
 
     sum_tokens = sum(inputs.tokens_by_scc.values())
     max_size_cost = max(size_cost_x100)
@@ -135,9 +132,7 @@ def _build_total_cost(
         size_b = model.new_int_var(0, len(normal_sccs), f"size_b{b}")
         model.add(size_b == sum(in_batch[(s, b)] for s in normal_sccs))
         file_b = model.new_int_var(0, sum_tokens, f"file_b{b}")
-        model.add(
-            file_b == sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
-        )
+        model.add(file_b == sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs))
         at_size: dict[int, cp_model.IntVar] = {}
         for k in range(K + 1):
             at_size[k] = model.new_bool_var(f"atsize_b{b}_k{k}")
@@ -145,9 +140,7 @@ def _build_total_cost(
             model.add(size_b != k).only_enforce_if(at_size[k].negated())
         model.add_exactly_one(list(at_size.values()))
         size_cost_b = model.new_int_var(0, max_size_cost, f"sizecost_b{b}")
-        model.add(
-            size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(K + 1))
-        )
+        model.add(size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(K + 1)))
         file_cost_b = model.new_int_var(0, sum_tokens * max_mult, f"filecost_b{b}")
         for k in range(K + 1):
             model.add(file_cost_b == file_b * file_mult_x100[k]).only_enforce_if(at_size[k])
@@ -189,4 +182,5 @@ def _build_spread_vars(
 
 def _batch_size_cost(k: int) -> int:
     from milknado.domains.batching.weights import batch_size_cost
+
     return batch_size_cost(k)

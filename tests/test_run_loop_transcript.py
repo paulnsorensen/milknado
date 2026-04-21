@@ -59,17 +59,23 @@ class _FakeCrg:
         return {}
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return []
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -83,7 +89,10 @@ class _FakeCrg:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -126,7 +135,9 @@ class _FakeRalph:
         return []
 
     def wait_for_next_completion(
-        self, active_run_ids: set[str], timeout: float | None = None,
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
     ) -> tuple[str, bool]:
         if self.raise_interrupt:
             raise KeyboardInterrupt
@@ -166,7 +177,8 @@ def _find_log_file(project_root: Path) -> Path | None:
 
 
 def _make_run_loop(
-    graph: MikadoGraph, ralph: _FakeRalph,
+    graph: MikadoGraph,
+    ralph: _FakeRalph,
 ) -> RunLoop:
     executor = Executor(graph=graph, git=_FakeGit(), ralph=ralph, crg=_FakeCrg())
     return RunLoop(executor=executor, graph=graph, ralph=ralph)

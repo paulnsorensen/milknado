@@ -1,4 +1,5 @@
 """Execute functions for simple CLI commands (init, index, status, crg, add-node, doctor)."""
+
 from __future__ import annotations
 
 from pathlib import Path

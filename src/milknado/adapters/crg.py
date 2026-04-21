@@ -10,16 +10,43 @@ from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
 from code_review_graph.tools.context import get_minimal_context
 
-_SOURCE_EXTENSIONS = frozenset({
-    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go",
-    ".java", ".rb", ".c", ".cpp", ".h", ".hpp", ".cs",
-})
+_SOURCE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".rs",
+        ".go",
+        ".java",
+        ".rb",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+    }
+)
 
-_SKIP_DIRS = frozenset({
-    ".git", ".code-review-graph", ".venv", ".tox", ".mypy_cache",
-    ".ruff_cache", "__pycache__", "node_modules", ".next", "target",
-    "dist", "build", ".eggs", "ralphs",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".code-review-graph",
+        ".venv",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        ".next",
+        "target",
+        "dist",
+        "build",
+        ".eggs",
+        "ralphs",
+    }
+)
 
 
 class CrgAdapter:
@@ -95,14 +122,20 @@ class CrgAdapter:
         return get_architecture_overview(self._get_store())
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return get_communities(
-            self._get_store(), sort_by=sort_by, min_size=min_size,
+            self._get_store(),
+            sort_by=sort_by,
+            min_size=min_size,
         )
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
 
@@ -124,7 +157,9 @@ class CrgAdapter:
         return find_hub_nodes(self._get_store(), top_n=top_n)
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
         nodes = self._get_store().search_nodes(query, limit=top_n)
         return [

@@ -36,6 +36,7 @@ def project_dir(tmp_path: Path) -> Path:
 
 def _minimal_manifest_stdout() -> str:
     import json
+
     payload = {
         "manifest_version": "milknado.plan.v2",
         "goal": "Test goal",
@@ -51,6 +52,7 @@ def _minimal_manifest_stdout() -> str:
 def _gapped_manifest_stdout() -> str:
     """Manifest with US-001 impl only — no tests/ change → coverage gap."""
     import json
+
     payload = {
         "manifest_version": "milknado.plan.v2",
         "goal": "Test goal",
@@ -72,9 +74,7 @@ def _patched_subprocess(side_effects: list[str] | None = None, stdout: str | Non
     )
     mock_run = MagicMock()
     if side_effects is not None:
-        mock_run.side_effect = [
-            MagicMock(returncode=0, stdout=s, stderr="") for s in side_effects
-        ]
+        mock_run.side_effect = [MagicMock(returncode=0, stdout=s, stderr="") for s in side_effects]
     else:
         mock_run.return_value = MagicMock(
             returncode=0, stdout=stdout or _minimal_manifest_stdout(), stderr=""
@@ -127,10 +127,12 @@ class TestPlanMutualExclusion:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--resume",
                 "--reset",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 1
@@ -145,10 +147,12 @@ class TestPlanMutualExclusion:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
+                    "--spec",
+                    str(spec),
                     "--resume",
                     "--reset",
-                    "--project-root", str(project_dir),
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
             mock_run.assert_not_called()
@@ -234,9 +238,11 @@ class TestPlanResume:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--resume",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -253,9 +259,11 @@ class TestPlanResume:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--resume",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         mock_planner_subprocess.assert_called_once()
@@ -278,9 +286,11 @@ class TestPlanReset:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
+                    "--spec",
+                    str(spec),
                     "--reset",
-                    "--project-root", str(project_dir),
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
         assert any("Dropped 1 nodes" in r.message for r in caplog.records)
@@ -304,9 +314,11 @@ class TestPlanReset:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--reset",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -327,9 +339,11 @@ class TestPlanResetWithOrphanedWorktrees:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--reset",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert "milknado-feature-abc" in result.stderr or "milknado-feature-abc" in result.output
@@ -347,9 +361,11 @@ class TestPlanResetWithOrphanedWorktrees:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--reset",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         combined = result.stderr + result.output
@@ -368,9 +384,11 @@ class TestPlanResetWithOrphanedWorktrees:
             app,
             [
                 "plan",
-                "--spec", str(spec),
+                "--spec",
+                str(spec),
                 "--reset",
-                "--project-root", str(project_dir),
+                "--project-root",
+                str(project_dir),
             ],
         )
         assert result.exit_code == 0
@@ -399,9 +417,11 @@ class TestPlanSpecHashMismatchWarning:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
+                    "--spec",
+                    str(spec),
                     "--resume",
-                    "--project-root", str(project_dir),
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
         assert any("mismatch" in r.message for r in caplog.records)
@@ -429,9 +449,11 @@ class TestPlanSpecHashMismatchWarning:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
+                    "--spec",
+                    str(spec),
                     "--resume",
-                    "--project-root", str(project_dir),
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
         assert not any("mismatch" in r.message for r in caplog.records)
@@ -447,17 +469,18 @@ class TestVerifyRoundCap:
     ) -> None:
         """cap=0 → coverage loop never runs; subprocess called exactly once."""
         spec = _write_spec(project_dir)
-        tilth_patch, run_patch, mock_run = _patched_subprocess(
-            stdout=_minimal_manifest_stdout()
-        )
+        tilth_patch, run_patch, mock_run = _patched_subprocess(stdout=_minimal_manifest_stdout())
         with tilth_patch, run_patch:
             result = runner.invoke(
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
-                    "--max-verify-rounds", "0",
-                    "--project-root", str(project_dir),
+                    "--spec",
+                    str(spec),
+                    "--max-verify-rounds",
+                    "0",
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
         assert result.exit_code == 0
@@ -482,9 +505,12 @@ class TestVerifyRoundCap:
                     app,
                     [
                         "plan",
-                        "--spec", str(spec),
-                        "--max-verify-rounds", "3",
-                        "--project-root", str(project_dir),
+                        "--spec",
+                        str(spec),
+                        "--max-verify-rounds",
+                        "3",
+                        "--project-root",
+                        str(project_dir),
                     ],
                 )
         assert result.exit_code == 0
@@ -504,18 +530,19 @@ class TestVerifyRoundCap:
         from milknado.domains.common.errors import InsufficientTestCoverageError
 
         spec = _write_spec(project_dir)
-        tilth_patch, run_patch, mock_run = _patched_subprocess(
-            stdout=_gapped_manifest_stdout()
-        )
+        tilth_patch, run_patch, mock_run = _patched_subprocess(stdout=_gapped_manifest_stdout())
         with tilth_patch, run_patch:
             with caplog.at_level(logging.WARNING, logger="milknado"):
                 result = runner.invoke(
                     app,
                     [
                         "plan",
-                        "--spec", str(spec),
-                        "--max-verify-rounds", "3",
-                        "--project-root", str(project_dir),
+                        "--spec",
+                        str(spec),
+                        "--max-verify-rounds",
+                        "3",
+                        "--project-root",
+                        str(project_dir),
                     ],
                 )
         assert result.exit_code != 0
@@ -549,9 +576,12 @@ class TestVerifyRoundCap:
                 app,
                 [
                     "plan",
-                    "--spec", str(spec),
-                    "--max-verify-rounds", "5",
-                    "--project-root", str(project_dir),
+                    "--spec",
+                    str(spec),
+                    "--max-verify-rounds",
+                    "5",
+                    "--project-root",
+                    str(project_dir),
                 ],
             )
         call_kwargs = mock_planner_cls.return_value.launch.call_args.kwargs

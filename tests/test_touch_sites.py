@@ -84,19 +84,23 @@ class TestHappyPath:
         assert result.startswith(HEADER)
 
     def test_crg_hits_appear_in_output(self) -> None:
-        crg = _make_crg({
-            "Add auth middleware": [{"file_path": "src/auth.py"}],
-            "TokenValidation": [{"file_path": "src/tokens.py"}],
-        })
+        crg = _make_crg(
+            {
+                "Add auth middleware": [{"file_path": "src/auth.py"}],
+                "TokenValidation": [{"file_path": "src/tokens.py"}],
+            }
+        )
         tilth = _make_tilth()
         result = _touch_sites_section(SIMPLE_SPEC, crg, tilth, None)
         assert "src/auth.py" in result
         assert "src/tokens.py" in result
 
     def test_output_under_token_budget(self) -> None:
-        crg = _make_crg({
-            "Add auth middleware": [{"file_path": "src/auth.py"}],
-        })
+        crg = _make_crg(
+            {
+                "Add auth middleware": [{"file_path": "src/auth.py"}],
+            }
+        )
         tilth = _make_tilth(section_content="x" * 100)
         result = _touch_sites_section(SIMPLE_SPEC, crg, tilth, None)
         assert len(result) <= _TOKEN_BUDGET * _CHARS_PER_TOKEN + 500  # header overhead allowed
@@ -113,7 +117,9 @@ class TestNoSpecFallback:
     def test_header_present(self) -> None:
         tilth = MagicMock()
         tilth.structural_map.return_value = TilthMap(
-            scope=Path("src"), budget_tokens=400, data={"src/foo.py": "~120 tokens"},
+            scope=Path("src"),
+            budget_tokens=400,
+            data={"src/foo.py": "~120 tokens"},
         )
         result = _touch_sites_section(None, None, tilth, Path("."))
         assert result.startswith(HEADER)
@@ -121,7 +127,9 @@ class TestNoSpecFallback:
     def test_uses_structural_map(self) -> None:
         tilth = MagicMock()
         tilth.structural_map.return_value = TilthMap(
-            scope=Path("src"), budget_tokens=400, data={"src/foo.py": "~120 tokens"},
+            scope=Path("src"),
+            budget_tokens=400,
+            data={"src/foo.py": "~120 tokens"},
         )
         result = _touch_sites_section(None, None, tilth, Path("."))
         assert "src/foo.py" in result
@@ -130,7 +138,9 @@ class TestNoSpecFallback:
     def test_uses_src_subfolder(self) -> None:
         tilth = MagicMock()
         tilth.structural_map.return_value = TilthMap(
-            scope=Path("src"), budget_tokens=400, data={},
+            scope=Path("src"),
+            budget_tokens=400,
+            data={},
         )
         _touch_sites_section(None, None, tilth, Path("/project"))
         call_scope = tilth.structural_map.call_args[0][0]
@@ -144,7 +154,8 @@ class TestNoSpecFallback:
     def test_degrades_on_structural_map_marker(self) -> None:
         tilth = MagicMock()
         tilth.structural_map.return_value = DegradationMarker(
-            source="tilth", reason="timeout",
+            source="tilth",
+            reason="timeout",
         )
         result = _touch_sites_section(None, None, tilth, None)
         assert HEADER in result
@@ -188,10 +199,12 @@ class TestBudgetExhaustion:
 
     def test_early_truncation_when_budget_exhausted(self) -> None:
         big_content = "x" * (_TOKEN_BUDGET * _CHARS_PER_TOKEN * 2)
-        crg = _make_crg({
-            "Add auth middleware": [{"file_path": "src/auth.py"}],
-            "TokenValidation": [{"file_path": "src/tok.py"}],
-        })
+        crg = _make_crg(
+            {
+                "Add auth middleware": [{"file_path": "src/auth.py"}],
+                "TokenValidation": [{"file_path": "src/tok.py"}],
+            }
+        )
         tilth = _make_tilth(
             symbol_results={},
             section_content=big_content,

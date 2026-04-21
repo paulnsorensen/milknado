@@ -1,4 +1,5 @@
 """US-006: dispatched_at capture and completion_duration_seconds persistence."""
+
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -79,7 +80,9 @@ class _FakeRalph:
         return []
 
     def wait_for_next_completion(
-        self, active_run_ids: set[str], timeout: float | None = None,
+        self,
+        active_run_ids: set[str],
+        timeout: float | None = None,
     ) -> tuple[str, bool]:
         raise RuntimeError("not used")
 
@@ -88,6 +91,7 @@ class _FakeRalph:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
+
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -117,7 +121,9 @@ class _FakeCrg:
         return []
 
     def get_minimal_context(
-        self, task: str = "", changed_files: list[str] | None = None,
+        self,
+        task: str = "",
+        changed_files: list[str] | None = None,
     ) -> dict[str, Any]:
         return {}
 
@@ -131,7 +137,10 @@ class _FakeCrg:
         return []
 
     def semantic_search(
-        self, query: str, top_n: int = 5, detail_level: str = "minimal",
+        self,
+        query: str,
+        top_n: int = 5,
+        detail_level: str = "minimal",
     ) -> list[dict[str, Any]]:
         return []
 
@@ -170,7 +179,10 @@ def executor(graph: MikadoGraph) -> Executor:
 
 class TestDispatchedAtCapture:
     def test_dispatched_at_set_after_dispatch(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         before = datetime.now(UTC)
         graph.add_node("compute thing")
@@ -181,7 +193,10 @@ class TestDispatchedAtCapture:
         assert node.dispatched_at >= before
 
     def test_dispatched_at_is_utc(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("write tests")
         executor.dispatch(1, config)
@@ -191,7 +206,8 @@ class TestDispatchedAtCapture:
         assert node.dispatched_at.tzinfo is not None
 
     def test_dispatched_at_not_set_before_dispatch(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("not yet dispatched")
         node = graph.get_node(1)
@@ -206,7 +222,10 @@ class TestDispatchedAtCapture:
 
 class TestCompletionDuration:
     def test_duration_written_after_complete(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("feature")
         executor.dispatch(1, config)
@@ -220,7 +239,10 @@ class TestCompletionDuration:
         assert durations[0] >= 0.0
 
     def test_duration_is_non_negative(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("fast task")
         executor.dispatch(1, config)
@@ -229,7 +251,10 @@ class TestCompletionDuration:
         assert all(d >= 0.0 for d in durations)
 
     def test_duration_not_written_on_rebase_failure(
-        self, graph: MikadoGraph, config: ExecutionConfig, tmp_path: Path,
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        tmp_path: Path,
     ) -> None:
         fake_git = _FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
@@ -255,7 +280,8 @@ class TestCompletionDuration:
 
 class TestMissingDispatchedAt:
     def test_no_duration_written_when_dispatched_at_missing(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("manually inserted node")
         graph.mark_running(1)
@@ -265,7 +291,9 @@ class TestMissingDispatchedAt:
         assert durations == []
 
     def test_direct_complete_without_dispatch_skips_duration(
-        self, executor: Executor, graph: MikadoGraph,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
     ) -> None:
         graph.add_node("bypassed dispatch")
         graph.mark_running(1)
@@ -286,7 +314,10 @@ class TestRecentCompletionDurations:
         assert graph.recent_completion_durations(limit=10) == []
 
     def test_single_completed_node(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("one")
         executor.dispatch(1, config)
@@ -295,7 +326,10 @@ class TestRecentCompletionDurations:
         assert len(durations) == 1
 
     def test_many_completed_nodes(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         for desc in ("alpha", "beta", "gamma"):
             graph.add_node(desc)
@@ -309,7 +343,10 @@ class TestRecentCompletionDurations:
         assert all(isinstance(d, float) for d in durations)
 
     def test_limit_is_respected(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         for desc in ("a", "b", "c", "d", "e"):
             graph.add_node(desc)
@@ -322,7 +359,10 @@ class TestRecentCompletionDurations:
         assert len(durations) == 3
 
     def test_excludes_nodes_without_duration(
-        self, executor: Executor, graph: MikadoGraph, config: ExecutionConfig,
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
     ) -> None:
         graph.add_node("completed")
         graph.add_node("pending")
