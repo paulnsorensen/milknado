@@ -701,58 +701,67 @@ def _deep_merge_dicts(base: dict, override: dict) -> None:
 def _write_claude_worker_settings(project_root: Path) -> None:
     path = project_root / ".claude" / "settings.json"
     path.parent.mkdir(exist_ok=True)
-    _merge_json(path, {
-        "permissions": {
-            "allow": list(WORKER_ALLOWED_TOOLS["claude"]),
+    _merge_json(
+        path,
+        {
+            "permissions": {
+                "allow": list(WORKER_ALLOWED_TOOLS["claude"]),
+            },
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [{"type": "command", "command": "rtk hook claude"}],
+                    },
+                ],
+            },
         },
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": "rtk hook claude"}],
-                },
-            ],
-        },
-    })
+    )
     console.print(f"Worker hooks written: {path}")
 
 
 def _write_gemini_worker_settings(project_root: Path) -> None:
     path = project_root / ".gemini" / "settings.json"
     path.parent.mkdir(exist_ok=True)
-    _merge_json(path, {
-        "includeTools": list(WORKER_ALLOWED_TOOLS["gemini"]),
-        "hooks": {
-            "BeforeTool": [
-                {
-                    "matcher": "run_shell_command",
-                    "hooks": [
-                        {
-                            "name": "rtk-rewrite",
-                            "type": "command",
-                            "command": "rtk hook gemini",
-                            "timeout": 5000,
-                        },
-                    ],
-                },
-            ],
+    _merge_json(
+        path,
+        {
+            "includeTools": list(WORKER_ALLOWED_TOOLS["gemini"]),
+            "hooks": {
+                "BeforeTool": [
+                    {
+                        "matcher": "run_shell_command",
+                        "hooks": [
+                            {
+                                "name": "rtk-rewrite",
+                                "type": "command",
+                                "command": "rtk hook gemini",
+                                "timeout": 5000,
+                            },
+                        ],
+                    },
+                ],
+            },
         },
-    })
+    )
     console.print(f"Worker hooks written: {path}")
 
 
 def _write_cursor_worker_hooks(project_root: Path) -> None:
     path = project_root / "hooks" / "hooks.json"
     path.parent.mkdir(exist_ok=True)
-    _merge_json(path, {
-        "hooks": [
-            {
-                "type": "PreToolUse",
-                "matcher": "Bash",
-                "command": "rtk hook cursor",
-            },
-        ],
-    })
+    _merge_json(
+        path,
+        {
+            "hooks": [
+                {
+                    "type": "PreToolUse",
+                    "matcher": "Bash",
+                    "command": "rtk hook cursor",
+                },
+            ],
+        },
+    )
     console.print(f"Worker hooks written: {path}")
 
 
