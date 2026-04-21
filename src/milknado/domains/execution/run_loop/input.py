@@ -26,9 +26,12 @@ def start_input_thread(state: InputState) -> None:
         import tty
     except ImportError:
         return
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-    tty.setcbreak(fd)
+    try:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+    except (termios.error, OSError, ValueError):
+        return
     stop = state.input_stop
 
     def _read_keys() -> None:

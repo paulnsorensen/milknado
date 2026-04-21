@@ -139,6 +139,34 @@ class TestStartInputThreadNonTTY:
         assert state.input_thread is None
 
 
+class TestStartInputThreadTermiosError:
+    def test_termios_error_returns_cleanly(self, state: InputState) -> None:
+        import sys
+        import termios
+        from unittest.mock import MagicMock, patch
+
+        fake_stdin = MagicMock()
+        fake_stdin.isatty.return_value = True
+        fake_stdin.fileno.return_value = 0
+
+        fake_termios = MagicMock()
+        fake_termios.error = termios.error
+        fake_termios.tcgetattr.side_effect = termios.error(25, "Inappropriate ioctl")
+        fake_tty = MagicMock()
+        fake_select = MagicMock()
+
+        with (
+            patch.object(sys, "stdin", fake_stdin),
+            patch.dict(
+                "sys.modules",
+                {"termios": fake_termios, "tty": fake_tty, "select": fake_select},
+            ),
+        ):
+            start_input_thread(state)
+
+        assert state.input_thread is None
+
+
 class TestStartInputThreadTTY:
     def test_thread_started_when_tty(self, state: InputState) -> None:
         import sys
