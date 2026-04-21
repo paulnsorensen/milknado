@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, paulnsorensen/**]
+    branches: [main]
   pull_request:
     branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -30,7 +34,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Run full build (lint → test → coverage)
-        run: just build
+        run: just build-ci
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

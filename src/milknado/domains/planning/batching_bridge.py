@@ -59,8 +59,7 @@ def apply_batches_to_graph(
     if parent_id is None:
         if not manifest.goal or not manifest.goal_summary:
             raise ValueError(
-                "manifest.goal and manifest.goal_summary must be non-empty "
-                "when parent_id is None"
+                "manifest.goal and manifest.goal_summary must be non-empty when parent_id is None"
             )
         goal_root = graph.add_node(manifest.goal_summary)
         created.append(goal_root.id)

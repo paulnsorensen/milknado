@@ -94,9 +94,7 @@ def render_tree(
     return console.export_text()
 
 
-def _build_subtree(
-    graph: MikadoGraph, node_id: int, tree: Any
-) -> None:
+def _build_subtree(graph: MikadoGraph, node_id: int, tree: Any) -> None:
     for child in graph.get_children(node_id):
         branch = tree.add(format_node(child))
         _build_subtree(graph, child.id, branch)
@@ -127,9 +125,7 @@ def _print_summary(
             )
 
     if summary.ready:
-        names = ", ".join(
-            f"[{n.id}] {n.description}" for n in summary.ready
-        )
+        names = ", ".join(f"[{n.id}] {n.description}" for n in summary.ready)
         console.print(f"[bold]Ready:[/bold] {names}")
 
     if summary.conflicts:
@@ -139,7 +135,8 @@ def _print_summary(
 
 
 def _run_status_label(
-    run_id: str | None, run_states: dict[str, str] | None,
+    run_id: str | None,
+    run_states: dict[str, str] | None,
 ) -> str:
     if not run_id:
         return ""
@@ -149,6 +146,7 @@ def _run_status_label(
     if not status:
         return " [dim]run: unknown[/dim]"
     color = {"running": "cyan", "completed": "green", "failed": "red"}.get(
-        status, "dim",
+        status,
+        "dim",
     )
     return f" [{color}]run: {status}[/{color}]"
