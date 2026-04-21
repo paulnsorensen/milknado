@@ -1,7 +1,7 @@
 [milknado]
 agent_family = "claude"
 planning_agent = "claude --model opus -p --dangerously-skip-permissions"
-execution_agent = "claude --model sonnet -p --dangerously-skip-permissions"
+execution_agent = "claude --model sonnet -p --allowedTools 'mcp__tilth__*,Bash(rtk:*),Read,Edit,Write,Glob,Grep,MultiEdit'"
 quality_gates = ['uv run pytest', 'uv run ruff check', 'uv run ty check']
 worktree_pattern = "milknado-{node_id}-{slug}"
 concurrency_limit = 4

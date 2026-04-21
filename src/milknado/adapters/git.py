@@ -126,9 +126,12 @@ class GitAdapter:
             self._run(["reset", "--soft", base], cwd=worktree)
         except subprocess.CalledProcessError:
             pass
-        has_staged = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            cwd=worktree,
-        ).returncode != 0
+        has_staged = (
+            subprocess.run(
+                ["git", "diff", "--cached", "--quiet"],
+                cwd=worktree,
+            ).returncode
+            != 0
+        )
         if has_staged:
             self._run(["commit", "-m", msg], cwd=worktree)

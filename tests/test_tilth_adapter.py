@@ -171,10 +171,7 @@ class TestParseSymbolHeaders:
         assert result[0].line_end == 20
 
     def test_parses_multiple_headers(self) -> None:
-        output = (
-            "## src/a.py:1-5 [definition]\n"
-            "## src/b.py:10-15 [usage]\n"
-        )
+        output = "## src/a.py:1-5 [definition]\n## src/b.py:10-15 [usage]\n"
         result = _parse_symbol_headers(output)
         assert len(result) == 2
         assert result[0].path == Path("src/a.py")
