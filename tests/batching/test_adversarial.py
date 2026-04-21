@@ -22,6 +22,7 @@ from milknado.domains.batching.weights import _extension, estimate_tokens
 # weights.py — _extension edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestExtension:
     def test_dotfile_no_extension(self):
         assert _extension(".gitignore") == ""
@@ -345,10 +346,13 @@ class TestPlanBatchesImpl:
         class StubAdapter:
             def __init__(self, project_root) -> None:
                 pass
+
             def get_impact_radius(self, files):
                 return {"impacted_files": []}
+
             def ensure_graph(self, project_root) -> None:
                 pass
+
             def get_architecture_overview(self):
                 return {}
 
