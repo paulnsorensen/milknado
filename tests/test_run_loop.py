@@ -1266,7 +1266,9 @@ class TestVerifySpecGapsPath:
             outcome="gaps", goal_delta="add feature X"
         )
 
-        planner = MagicMock()
+        from milknado.domains.planning.planner import Planner
+
+        planner = MagicMock(spec=Planner)
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph, planner=planner)
 
