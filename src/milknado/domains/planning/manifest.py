@@ -113,7 +113,9 @@ def _parse_changes(raw: object) -> tuple[FileChange, ...] | None:
         for dep in change.depends_on:
             if dep not in seen_ids:
                 _logger.warning(
-                    "change %r depends_on unknown id %r", change.id, dep,
+                    "change %r depends_on unknown id %r",
+                    change.id,
+                    dep,
                 )
                 return None
     return tuple(parsed)
@@ -140,9 +142,7 @@ def _parse_single_change(entry: object) -> FileChange | None:
     if symbols is None:
         return None
     raw_deps = raw.get("depends_on", [])
-    if not isinstance(raw_deps, list) or not all(
-        isinstance(d, str) for d in raw_deps
-    ):
+    if not isinstance(raw_deps, list) or not all(isinstance(d, str) for d in raw_deps):
         _logger.warning("change %r: depends_on must be a list of strings", cid)
         return None
     depends_on: tuple[str, ...] = tuple(cast(list[str], raw_deps))
@@ -174,7 +174,8 @@ def _parse_symbols(raw: object, cid: str) -> tuple[SymbolRef, ...] | None:
         file = sym_raw.get("file")
         if not isinstance(name, str) or not isinstance(file, str):
             _logger.warning(
-                "change %r: symbol requires string name and file", cid,
+                "change %r: symbol requires string name and file",
+                cid,
             )
             return None
         out.append(SymbolRef(name=name, file=file))
@@ -182,7 +183,9 @@ def _parse_symbols(raw: object, cid: str) -> tuple[SymbolRef, ...] | None:
 
 
 def _parse_relationships(
-    raw: object, *, known_ids: set[str],
+    raw: object,
+    *,
+    known_ids: set[str],
 ) -> tuple[NewRelationship, ...] | None:
     if not isinstance(raw, list):
         _logger.warning("new_relationships must be a list")
@@ -201,7 +204,8 @@ def _parse_relationships(
             return None
         if not isinstance(dependant, str) or dependant not in known_ids:
             _logger.warning(
-                "new_relationship dependant %r not in changes", dependant,
+                "new_relationship dependant %r not in changes",
+                dependant,
             )
             return None
         if reason not in _VALID_RELATIONSHIP_REASONS:

@@ -2,6 +2,7 @@
 
 Priority order: invalid inputs → edge cases → integration paths → happy path.
 """
+
 from __future__ import annotations
 
 import json
@@ -130,14 +131,16 @@ class TestMassiveManifest:
         changes = []
         for i in range(1000):
             dep = [f"c{i - 1}"] if i > 0 else []
-            changes.append({
-                "id": f"c{i}",
-                "path": f"src/file_{i}.py",
-                "edit_kind": "modify",
-                "symbols": [],
-                "depends_on": dep,
-                "description": f"Change {i}",
-            })
+            changes.append(
+                {
+                    "id": f"c{i}",
+                    "path": f"src/file_{i}.py",
+                    "edit_kind": "modify",
+                    "symbols": [],
+                    "depends_on": dep,
+                    "description": f"Change {i}",
+                }
+            )
         payload = _minimal_manifest(changes=changes)
         result = parse_manifest_from_output(_wrap(payload))
         assert result is not None

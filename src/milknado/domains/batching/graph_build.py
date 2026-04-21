@@ -11,6 +11,7 @@ from milknado.domains.common.protocols import CrgPort
 
 class ContractedGraph(NamedTuple):
     """Typed return for contract_sccs: SCC membership map and the resulting DAG edges."""
+
     scc_of: dict[str, str]
     dag_edges: tuple[tuple[str, str], ...]
 
@@ -117,7 +118,8 @@ def _resolve_ids_for_endpoint(
     if len(ids) == 1 or symbol is None:
         return list(ids)
     matches = [
-        cid for cid in ids
+        cid
+        for cid in ids
         if any(sr.name == symbol and sr.file == path for sr in id_to_change[cid].symbols)
     ]
     if len(matches) == 1:

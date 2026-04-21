@@ -2,6 +2,7 @@
 
 Focus: cycles (via raw SQL if possible), deep chains, self-parent.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -92,7 +93,7 @@ class TestDeepChain:
         assert result[-1].id == nodes[0].id
 
     def test_chain_1000_nodes_no_stack_overflow(self, graph: MikadoGraph) -> None:
-        """1000-node chain — iterative implementation should handle this without recursion limit."""
+        """1000-node chain — iterative impl must not hit recursion limit."""
         root = graph.add_node("root")
         current_id = root.id
         for i in range(999):

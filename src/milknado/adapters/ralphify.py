@@ -116,9 +116,7 @@ class RalphifyAdapter:
             if event.run_id not in active_run_ids:
                 continue
             run = self._manager.get_run(event.run_id)
-            success = (
-                run is not None and run.state.status == RunStatus.COMPLETED
-            )
+            success = run is not None and run.state.status == RunStatus.COMPLETED
             return event.run_id, success
 
     def poll_progress_events(self) -> list[ProgressEvent]:

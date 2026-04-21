@@ -501,7 +501,10 @@ class TestRunLoopFileConflicts:
         fake_crg: FakeCrg,
     ) -> None:
         executor = Executor(
-            graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg,
+            graph=graph,
+            git=fake_git,
+            ralph=fake_ralph,
+            crg=fake_crg,
         )
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
 

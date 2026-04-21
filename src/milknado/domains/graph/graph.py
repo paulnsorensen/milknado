@@ -200,7 +200,8 @@ class MikadoGraph:
 
     def set_run_id(self, node_id: int, run_id: str) -> None:
         cur = self._conn.execute(
-            "UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id),
+            "UPDATE nodes SET run_id = ? WHERE id = ?",
+            (run_id, node_id),
         )
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
