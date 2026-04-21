@@ -15,7 +15,6 @@ from milknado.domains.common.types import (
     RebaseResult,
 )
 
-
 __all__ = [
     "CrgPort",
     "GitPort",
