@@ -120,7 +120,9 @@ def test_multi_change_per_path_distinct_symbols(mock_crg: MagicMock) -> None:
     sym_a = SymbolRef(name="a", file="src/foo.py")
     sym_x = SymbolRef(name="x", file="src/bar.py")
     change_a = FileChange(id="change_a", path="src/foo.py", symbols=(sym_a,))
-    change_b = FileChange(id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),))
+    change_b = FileChange(
+        id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),)
+    )
     change_x = FileChange(id="change_x", path="src/bar.py", symbols=(sym_x,))
     mock_crg.get_impact_radius.return_value = {
         "edges": [{"src": "src/foo.py::a", "dst": "src/bar.py::x"}]
@@ -133,9 +135,15 @@ def test_multi_change_per_path_distinct_symbols(mock_crg: MagicMock) -> None:
 
 def test_multi_change_per_path_unknown_symbol_fans_out(mock_crg: MagicMock) -> None:
     """Path-only source with multiple candidates fans out to all candidate ids."""
-    change_a = FileChange(id="change_a", path="src/foo.py", symbols=(SymbolRef(name="a", file="src/foo.py"),))
-    change_b = FileChange(id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),))
-    change_x = FileChange(id="change_x", path="src/bar.py", symbols=(SymbolRef(name="x", file="src/bar.py"),))
+    change_a = FileChange(
+        id="change_a", path="src/foo.py", symbols=(SymbolRef(name="a", file="src/foo.py"),)
+    )
+    change_b = FileChange(
+        id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),)
+    )
+    change_x = FileChange(
+        id="change_x", path="src/bar.py", symbols=(SymbolRef(name="x", file="src/bar.py"),)
+    )
     mock_crg.get_impact_radius.return_value = {
         "edges": [{"src": "src/foo.py", "dst": "src/bar.py::x"}]
     }
@@ -146,8 +154,12 @@ def test_multi_change_per_path_unknown_symbol_fans_out(mock_crg: MagicMock) -> N
 
 def test_multi_change_per_path_ambiguous_symbol_fans_out(mock_crg: MagicMock) -> None:
     """Qualified source naming a symbol not in any FileChange fans out to all candidates."""
-    change_a = FileChange(id="change_a", path="src/foo.py", symbols=(SymbolRef(name="a", file="src/foo.py"),))
-    change_b = FileChange(id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),))
+    change_a = FileChange(
+        id="change_a", path="src/foo.py", symbols=(SymbolRef(name="a", file="src/foo.py"),)
+    )
+    change_b = FileChange(
+        id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),)
+    )
     change_x = FileChange(id="change_x", path="src/bar.py")
     mock_crg.get_impact_radius.return_value = {
         "edges": [{"src": "src/foo.py::unknown_sym", "dst": "src/bar.py"}]

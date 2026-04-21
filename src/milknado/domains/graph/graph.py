@@ -93,11 +93,7 @@ class MikadoGraph:
             branch_name=row["branch_name"],
             run_id=run_id,
             created_at=datetime.fromisoformat(created_at_raw),
-            completed_at=(
-                datetime.fromisoformat(completed_at_raw)
-                if completed_at_raw
-                else None
-            ),
+            completed_at=(datetime.fromisoformat(completed_at_raw) if completed_at_raw else None),
             oversized=oversized,
             batch_index=batch_index,
         )
@@ -132,9 +128,7 @@ class MikadoGraph:
             self.add_edge(parent_id, node_id)
 
         return self._row_to_node(
-            self._conn.execute(
-                "SELECT * FROM nodes WHERE id = ?", (node_id,)
-            ).fetchone()
+            self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         )
 
     def set_batch_metadata(
@@ -168,9 +162,7 @@ class MikadoGraph:
 
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
-            raise ValueError(
-                f"Edge {parent_id}->{child_id} would create a cycle"
-            )
+            raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
         self._conn.execute(
             "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
             (parent_id, child_id),
@@ -195,9 +187,7 @@ class MikadoGraph:
         return False
 
     def get_node(self, node_id: int) -> MikadoNode | None:
-        row = self._conn.execute(
-            "SELECT * FROM nodes WHERE id = ?", (node_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return self._row_to_node(row) if row else None
 
     def get_all_nodes(self) -> list[MikadoNode]:
@@ -206,17 +196,14 @@ class MikadoGraph:
 
     def get_children(self, node_id: int) -> list[MikadoNode]:
         rows = self._conn.execute(
-            "SELECT n.* FROM nodes n "
-            "JOIN edges e ON n.id = e.child_id "
-            "WHERE e.parent_id = ?",
+            "SELECT n.* FROM nodes n JOIN edges e ON n.id = e.child_id WHERE e.parent_id = ?",
             (node_id,),
         ).fetchall()
         return [self._row_to_node(r) for r in rows]
 
     def get_leaves(self) -> list[MikadoNode]:
         rows = self._conn.execute(
-            "SELECT * FROM nodes WHERE id NOT IN "
-            "(SELECT DISTINCT parent_id FROM edges)"
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
         ).fetchall()
         return [self._row_to_node(r) for r in rows]
 
@@ -227,28 +214,19 @@ class MikadoGraph:
             if node.status != NodeStatus.PENDING:
                 continue
             children = self.get_children(node.id)
-            if not children or all(
-                c.status == NodeStatus.DONE for c in children
-            ):
+            if not children or all(c.status == NodeStatus.DONE for c in children):
                 ready.append(node)
         return ready
 
     def get_root(self) -> MikadoNode | None:
         row = self._conn.execute(
-            "SELECT * FROM nodes WHERE id NOT IN "
-            "(SELECT DISTINCT child_id FROM edges)"
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
         ).fetchone()
         return self._row_to_node(row) if row else None
 
-    def _transition_status(
-        self, node_id: int, target: NodeStatus
-    ) -> None:
+    def _transition_status(self, node_id: int, target: NodeStatus) -> None:
         self._assert_transition(node_id, target)
-        completed_at = (
-            datetime.now(UTC).isoformat()
-            if target == NodeStatus.DONE
-            else None
-        )
+        completed_at = datetime.now(UTC).isoformat() if target == NodeStatus.DONE else None
         self._conn.execute(
             "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ?",
             (target.value, completed_at, node_id),
@@ -261,10 +239,7 @@ class MikadoGraph:
             raise ValueError(f"Node {node_id} not found")
         allowed = VALID_TRANSITIONS.get(node.status, set())
         if target not in allowed:
-            raise ValueError(
-                f"Cannot transition from {node.status.value} "
-                f"to {target.value}"
-            )
+            raise ValueError(f"Cannot transition from {node.status.value} to {target.value}")
 
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
@@ -302,7 +277,8 @@ class MikadoGraph:
 
     def set_run_id(self, node_id: int, run_id: str) -> None:
         cur = self._conn.execute(
-            "UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id),
+            "UPDATE nodes SET run_id = ? WHERE id = ?",
+            (run_id, node_id),
         )
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
@@ -321,12 +297,8 @@ class MikadoGraph:
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)
 
-    def set_file_ownership(
-        self, node_id: int, files: list[str]
-    ) -> None:
-        self._conn.execute(
-            "DELETE FROM file_ownership WHERE node_id = ?", (node_id,)
-        )
+    def set_file_ownership(self, node_id: int, files: list[str]) -> None:
+        self._conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
         self._conn.executemany(
             "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
             [(node_id, f) for f in files],
@@ -340,9 +312,7 @@ class MikadoGraph:
         ).fetchall()
         return [r[0] for r in rows]
 
-    def check_parallel_safety(
-        self, node_ids: list[int]
-    ) -> list[tuple[int, int, list[str]]]:
+    def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
         ownership: dict[int, set[str]] = {}
         for nid in node_ids:
             ownership[nid] = set(self.get_file_ownership(nid))
@@ -351,9 +321,7 @@ class MikadoGraph:
         for left_id, right_id in itertools.combinations(node_ids, 2):
             overlap = ownership[left_id] & ownership[right_id]
             if overlap:
-                conflicts.append(
-                    (left_id, right_id, sorted(overlap))
-                )
+                conflicts.append((left_id, right_id, sorted(overlap)))
         return conflicts
 
     def record_batch_plan(self, plan: BatchPlan) -> int:

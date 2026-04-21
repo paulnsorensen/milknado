@@ -48,10 +48,7 @@ def milknado_graph_summary(project_root: str = "") -> str:
         nodes = graph.get_all_nodes()
         if not nodes:
             return "(empty graph)"
-        lines = [
-            f"id={n.id} status={n.status.value} desc={n.description[:120]!r}"
-            for n in nodes
-        ]
+        lines = [f"id={n.id} status={n.status.value} desc={n.description[:120]!r}" for n in nodes]
         return "\n".join(lines)
     finally:
         graph.close()
@@ -106,9 +103,7 @@ def _dict_to_new_relationship(d: dict) -> NewRelationship:
     if not isinstance(reason, str):
         raise ValueError(f"reason must be a string, got {type(reason).__name__!r}")
     if reason not in _VALID_REASONS:
-        raise ValueError(
-            f"invalid reason: {reason!r}; expected one of {sorted(_VALID_REASONS)}"
-        )
+        raise ValueError(f"invalid reason: {reason!r}; expected one of {sorted(_VALID_REASONS)}")
     return NewRelationship(
         source_change_id=d["source_change_id"],
         dependant_change_id=d["dependant_change_id"],
@@ -143,6 +138,7 @@ def _plan_batches_impl(
 ) -> dict:
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.batching import plan_batches
+
     file_changes = [_dict_to_file_change(c) for c in changes]
     rels = tuple(_dict_to_new_relationship(r) for r in (new_relationships or []))
     crg = None
@@ -151,9 +147,7 @@ def _plan_batches_impl(
         crg.ensure_graph(project_root)
     except Exception:
         crg = None
-    plan = plan_batches(
-        file_changes, budget, crg=crg, new_relationships=rels, root=project_root
-    )
+    plan = plan_batches(file_changes, budget, crg=crg, new_relationships=rels, root=project_root)
     return _plan_to_dict(plan)
 
 

@@ -58,7 +58,10 @@ class RunLoop:
                     set(self._active.keys()),
                 )
                 c, f, batch_conflicts = self._handle_completion(
-                    run_id, success, feature_branch, live,
+                    run_id,
+                    success,
+                    feature_branch,
+                    live,
                 )
                 completed_total += c
                 failed_total += f

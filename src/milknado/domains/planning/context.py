@@ -48,10 +48,7 @@ def _crg_compact_section(crg: CrgPort | None) -> str:
         bridges = crg.get_bridge_nodes(top_n=5)[:5]
         hubs = crg.get_hub_nodes(top_n=5)[:5]
     except Exception as exc:
-        return (
-            f"{header}\n\n"
-            f"_(CRG query failed: {exc!s} — architecture overview skipped)_"
-        )
+        return f"{header}\n\n_(CRG query failed: {exc!s} — architecture overview skipped)_"
 
     lines = [header]
     lines.append("\n**Top communities:**")
@@ -79,6 +76,7 @@ def _crg_compact_section(crg: CrgPort | None) -> str:
 
 def _structural_section(tilth: TilthPort | None, scope: Path | None) -> str:
     from milknado.domains.common.types import DegradationMarker, TilthMap
+
     header = "# Structural Map (tilth)"
     if tilth is None:
         return f"{header}\n\n_(tilth not available — structural map skipped)_"
@@ -161,6 +159,7 @@ def _truncate_description(description: str) -> str:
 
 def _progress_summary(nodes: list[MikadoNode]) -> str:
     from collections import Counter
+
     counts = Counter(n.status.value for n in nodes)
     total = len(nodes)
     parts = [f"{total} total"]
