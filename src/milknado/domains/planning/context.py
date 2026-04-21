@@ -112,9 +112,8 @@ def _batching_section() -> str:
 def _mcp_targeting_note() -> str:
     return (
         "**Required MCP inspection before you emit changes:**\n"
-        "- Use the available `tilth` MCP to inspect the target area and capture exact edit "
-        "boundaries.\n"
-        "- Use `tilth` and/or `code-review-graph` to discover impacted dependencies around that "
+        "- Use `tilth` to inspect the target area and capture exact edit boundaries.\n"
+        "- Use `tilth` or `code-review-graph` to discover impacted dependencies around that "
         "area.\n"
         "- For every change, include the target file, symbols, and `hash_anchors` with "
         '`"before"` / `"after"` values that bound the intended edit span.\n'
@@ -204,16 +203,16 @@ def _instructions_section(resuming: bool) -> str:
         '        {"name": "FooClass", "file": "src/foo.py"}\n'
         "      ],\n"
         '      "hash_anchors": {\n'
-        '        "before": "hash-anchor-before-edit",\n'
-        '        "after": "hash-anchor-after-edit"\n'
+        '        "before": "sha256:4c9f0e2b-target-before",\n'
+        '        "after": "sha256:7b1a92d4-target-after"\n'
         "      },\n"
         '      "dependencies": [\n'
         "        {\n"
         '          "path": "src/bar.py",\n'
         '          "symbols": [{"name": "bar_call_site", "file": "src/bar.py"}],\n'
         '          "hash_anchors": {\n'
-        '            "before": "dependency-anchor-before",\n'
-        '            "after": "dependency-anchor-after"\n'
+        '            "before": "sha256:8f2b3c44-dependency-before",\n'
+        '            "after": "sha256:9a7d118e-dependency-after"\n'
         "          },\n"
         '          "reason": "Call site or import that constrains this change"\n'
         "        }\n"
@@ -226,8 +225,8 @@ def _instructions_section(resuming: bool) -> str:
         '      "edit_kind": "add",\n'
         '      "description": "Respond to c1 signature change — update call site.",\n'
         '      "hash_anchors": {\n'
-        '        "before": "hash-anchor-before-edit",\n'
-        '        "after": "hash-anchor-after-edit"\n'
+        '        "before": "sha256:12ac44e0-target-before",\n'
+        '        "after": "sha256:21fd9b77-target-after"\n'
         "      },\n"
         '      "depends_on": ["c1"]\n'
         "    }\n"
