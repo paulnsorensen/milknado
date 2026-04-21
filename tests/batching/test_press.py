@@ -474,10 +474,13 @@ class TestDictToNewRelationship:
         class StubAdapter:
             def __init__(self, project_root) -> None:
                 pass
+
             def get_impact_radius(self, files):
                 return {}
+
             def ensure_graph(self, project_root) -> None:
                 pass
+
             def get_architecture_overview(self):
                 return {}
 
@@ -498,10 +501,13 @@ class TestDictToNewRelationship:
         class StubAdapter:
             def __init__(self, project_root) -> None:
                 pass
+
             def get_impact_radius(self, files):
                 return {}
+
             def ensure_graph(self, project_root) -> None:
                 pass
+
             def get_architecture_overview(self):
                 return {}
 
