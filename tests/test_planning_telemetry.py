@@ -1,4 +1,5 @@
 """Tests for the calibration telemetry sink (A5)."""
+
 from __future__ import annotations
 
 import json
@@ -97,9 +98,7 @@ class TestAppendBehavior:
 
         lines = [
             ln
-            for ln in (tmp_path / ".milknado" / "calibration.jsonl")
-            .read_text()
-            .splitlines()
+            for ln in (tmp_path / ".milknado" / "calibration.jsonl").read_text().splitlines()
             if ln.strip()
         ]
         assert len(lines) == 2

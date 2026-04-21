@@ -76,9 +76,7 @@ def _ensure_db(config: MilknadoConfig) -> MikadoGraph:
 
 @app.command()
 def init(
-    project_root: Annotated[
-        Path, typer.Argument(help="Project root directory")
-    ] = Path("."),
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
     install_rust_tools: Annotated[
         bool,
         typer.Option(
@@ -122,9 +120,7 @@ def init(
 
 @app.command()
 def index(
-    project_root: Annotated[
-        Path, typer.Argument(help="Project root directory")
-    ] = Path("."),
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
 ) -> None:
     """Rebuild the code-review-graph index."""
     from milknado.adapters.crg import CrgAdapter
@@ -144,9 +140,7 @@ def index(
 
 @app.command()
 def status(
-    project_root: Annotated[
-        Path, typer.Argument(help="Project root directory")
-    ] = Path("."),
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
 ) -> None:
     """Show the current state of the Mikado graph."""
     project_root = project_root.resolve()
@@ -186,9 +180,7 @@ def _fetch_run_states(nodes: list[MikadoNode]) -> dict[str, str] | None:
 
 @app.command()
 def crg(
-    project_root: Annotated[
-        Path, typer.Argument(help="Project root directory")
-    ] = Path("."),
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
 ) -> None:
     """Show the code-review-graph architecture overview."""
     import json
@@ -209,9 +201,7 @@ def crg(
 @app.command("add-node")
 def add_node(
     description: Annotated[str, typer.Argument(help="Node description")],
-    parent: Annotated[
-        int | None, typer.Option("--parent", "-p", help="Parent node ID")
-    ] = None,
+    parent: Annotated[int | None, typer.Option("--parent", "-p", help="Parent node ID")] = None,
     files: Annotated[
         list[str] | None,
         typer.Option("--files", "-f", help="Files this node will touch"),
@@ -275,9 +265,7 @@ def _fetch_issue(issue_ref: str) -> dict[str, object]:
             check=False,
         )
     except FileNotFoundError:
-        console.print(
-            "[red]`gh` CLI not found. Install GitHub CLI to use --issue.[/red]"
-        )
+        console.print("[red]`gh` CLI not found. Install GitHub CLI to use --issue.[/red]")
         raise typer.Exit(code=1) from None
 
     if result.returncode != 0:
@@ -512,7 +500,8 @@ def plan(
 
 
 def _build_exec_config(
-    config: MilknadoConfig, project_root: Path,
+    config: MilknadoConfig,
+    project_root: Path,
 ) -> ExecutionConfig:
     from milknado.domains.execution import ExecutionConfig
 
@@ -584,9 +573,7 @@ def run(
 
 @app.command()
 def doctor(
-    project_root: Annotated[
-        Path, typer.Argument(help="Project root directory")
-    ] = Path("."),
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
 ) -> None:
     """Run health checks on the milknado installation."""
     from milknado.domains.common.doctor import render_report, run_doctor
@@ -624,7 +611,8 @@ def agents_check(
     sample.write_text("# sample planning context\n", encoding="utf-8")
     try:
         argv, extra = build_planning_subprocess(
-            sample, config.planning_agent,
+            sample,
+            config.planning_agent,
         )
         redacted = {k: ("<stdin>" if k == "input" else v) for k, v in extra.items()}
         console.print(f"[bold]planning argv[/bold]: {argv}")

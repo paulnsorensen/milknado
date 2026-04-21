@@ -54,7 +54,8 @@ def graph(tmp_path: Path) -> MikadoGraph:
 
 class TestApplyBatchesToGraph:
     def test_linear_chain_creates_goal_root_and_batches(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
             _change("a", "src/a.py", "Add module A"),
@@ -99,16 +100,15 @@ class TestApplyBatchesToGraph:
         assert [n.id for n in last_prereqs] == [created[2]]
 
     def test_linear_chain_batch_descriptions_contain_stacked_intents(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
             _change("a", "src/a.py", "Add module A"),
             _change("b", "src/b.py", "Add module B"),
         )
         plan = BatchPlan(
-            batches=(
-                Batch(index=0, change_ids=("a", "b"), depends_on=()),
-            ),
+            batches=(Batch(index=0, change_ids=("a", "b"), depends_on=()),),
             spread_report=(),
             solver_status="OPTIMAL",
         )
@@ -121,7 +121,8 @@ class TestApplyBatchesToGraph:
         assert "2. Add module B" in batch_node.description
 
     def test_diamond_root_batches_attach_to_goal_root(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
             _change("root", "r.py", "Root change"),
@@ -161,9 +162,7 @@ class TestApplyBatchesToGraph:
     def test_oversized_batch_marks_node_flag(self, graph: MikadoGraph) -> None:
         manifest = _manifest(_change("big", "huge.py", "Big oversized change"))
         plan = BatchPlan(
-            batches=(
-                Batch(index=0, change_ids=("big",), depends_on=(), oversized=True),
-            ),
+            batches=(Batch(index=0, change_ids=("big",), depends_on=(), oversized=True),),
             spread_report=(),
             solver_status="OPTIMAL",
         )
@@ -177,7 +176,8 @@ class TestApplyBatchesToGraph:
         assert batch_node.batch_index == 0
 
     def test_resume_with_parent_id_no_goal_root(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         existing = graph.add_node("top goal")
         manifest = _manifest(
@@ -194,7 +194,10 @@ class TestApplyBatchesToGraph:
         )
 
         created = apply_batches_to_graph(
-            graph, plan, manifest, parent_id=existing.id,
+            graph,
+            plan,
+            manifest,
+            parent_id=existing.id,
         )
 
         # No goal root created — only 2 batch nodes returned
@@ -209,7 +212,8 @@ class TestApplyBatchesToGraph:
         assert [n.id for n in non_root_prereqs] == [created[0]]
 
     def test_empty_manifest_creates_only_goal_root(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         """Empty manifest with no changes creates only the goal root node."""
         manifest = _manifest()
@@ -233,7 +237,8 @@ class TestApplyBatchesToGraph:
         assert latest["solver_status"] == "OPTIMAL"
 
     def test_description_stacking_two_changes_full_text(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         long_desc_1 = "Implement the OAuth2 token refresh logic in auth module"
         long_desc_2 = "Update API client to use refreshed tokens for all requests"
@@ -242,9 +247,7 @@ class TestApplyBatchesToGraph:
             _change("c2", "client.py", long_desc_2),
         )
         plan = BatchPlan(
-            batches=(
-                Batch(index=0, change_ids=("c1", "c2"), depends_on=()),
-            ),
+            batches=(Batch(index=0, change_ids=("c1", "c2"), depends_on=()),),
             spread_report=(),
             solver_status="OPTIMAL",
         )
@@ -258,15 +261,14 @@ class TestApplyBatchesToGraph:
         assert f"2. {long_desc_2}" in batch_node.description
 
     def test_description_fallback_to_id_when_empty(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         # Construct a change with empty description directly (bypass _change helper)
         change = FileChange(id="x1", path="x.py")
         manifest = _manifest(change)
         plan = BatchPlan(
-            batches=(
-                Batch(index=0, change_ids=("x1",), depends_on=()),
-            ),
+            batches=(Batch(index=0, change_ids=("x1",), depends_on=()),),
             spread_report=(),
             solver_status="OPTIMAL",
         )
@@ -293,16 +295,15 @@ class TestApplyBatchesToGraph:
             apply_batches_to_graph(graph, plan, manifest)
 
     def test_file_ownership_is_union_of_changes(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         manifest = _manifest(
             _change("a", "src/one.py", "Change one"),
             _change("b", "src/two.py", "Change two"),
         )
         plan = BatchPlan(
-            batches=(
-                Batch(index=0, change_ids=("a", "b"), depends_on=()),
-            ),
+            batches=(Batch(index=0, change_ids=("a", "b"), depends_on=()),),
             spread_report=(),
             solver_status="OPTIMAL",
         )
@@ -313,7 +314,8 @@ class TestApplyBatchesToGraph:
         assert set(files) == {"src/one.py", "src/two.py"}
 
     def test_end_to_end_persistence_reopens_db(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         db_path = tmp_path / "persist.db"
         graph = MikadoGraph(db_path)
@@ -328,7 +330,8 @@ class TestApplyBatchesToGraph:
             ),
             spread_report=(
                 SymbolSpread(
-                    symbol=SymbolRef(name="Foo", file="a.py"), spread=2,
+                    symbol=SymbolRef(name="Foo", file="a.py"),
+                    spread=2,
                 ),
             ),
             solver_status="FEASIBLE",
@@ -352,8 +355,7 @@ class TestApplyBatchesToGraph:
         assert [r["batch_index"] for r in rows[1:]] == [0, 1]
 
         plan_rows = conn.execute(
-            "SELECT solver_status, batch_count, oversized_count, max_spread "
-            "FROM batch_plans",
+            "SELECT solver_status, batch_count, oversized_count, max_spread FROM batch_plans",
         ).fetchall()
         assert len(plan_rows) == 1
         only = plan_rows[0]

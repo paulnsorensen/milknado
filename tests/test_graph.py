@@ -351,7 +351,8 @@ class TestBatchMetadata:
         assert fetched.batch_index is None
 
     def test_add_node_persists_oversized_and_batch_index(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         node = graph.add_node("big batch", oversized=True, batch_index=2)
         assert node.oversized is True
@@ -362,7 +363,8 @@ class TestBatchMetadata:
         assert fetched.batch_index == 2
 
     def test_set_batch_metadata_updates_existing_node(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         node = graph.add_node("plain")
         graph.set_batch_metadata(node.id, oversized=True, batch_index=5)
@@ -380,7 +382,8 @@ class TestBatchMetadata:
         assert updated.batch_index is None
 
     def test_set_batch_metadata_unknown_node_raises(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             graph.set_batch_metadata(999, oversized=True, batch_index=0)
@@ -405,11 +408,11 @@ class TestBatchPlans:
             Batch(index=0, change_ids=("a",), depends_on=(), oversized=False),
             Batch(index=1, change_ids=("b",), depends_on=(0,), oversized=False),
         )
-        spread = (
-            SymbolSpread(symbol=SymbolRef(name="Foo", file="src/foo.py"), spread=1),
-        )
+        spread = (SymbolSpread(symbol=SymbolRef(name="Foo", file="src/foo.py"), spread=1),)
         plan = BatchPlan(
-            batches=batches, spread_report=spread, solver_status="OPTIMAL",
+            batches=batches,
+            spread_report=spread,
+            solver_status="OPTIMAL",
         )
         graph.record_batch_plan(plan)
         latest = graph.get_latest_batch_plan()
@@ -431,7 +434,9 @@ class TestBatchPlans:
             ),
         )
         plan = BatchPlan(
-            batches=batches, spread_report=(), solver_status="FEASIBLE",
+            batches=batches,
+            spread_report=(),
+            solver_status="FEASIBLE",
         )
         graph.record_batch_plan(plan)
         latest = graph.get_latest_batch_plan()
@@ -442,7 +447,8 @@ class TestBatchPlans:
         assert latest["max_spread"] == 0
 
     def test_get_latest_returns_none_when_empty(
-        self, graph: MikadoGraph,
+        self,
+        graph: MikadoGraph,
     ) -> None:
         assert graph.get_latest_batch_plan() is None
 

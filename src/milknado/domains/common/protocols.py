@@ -44,7 +44,9 @@ class GitPort(Protocol):
 
 class TilthPort(Protocol):
     def structural_map(
-        self, scope: Path, budget_tokens: int,
+        self,
+        scope: Path,
+        budget_tokens: int,
     ) -> TilthMap | DegradationMarker: ...
 
     def search_symbol(
@@ -59,10 +61,14 @@ class CrgPort(Protocol):
     def get_impact_radius(self, files: list[str]) -> dict[str, Any]: ...
     def get_architecture_overview(self) -> dict[str, Any]: ...
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]: ...
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]: ...
     def get_minimal_context(
         self,

@@ -41,9 +41,7 @@ class TestCreateWorktree:
         assert result == wt
 
     @patch("milknado.adapters.git.subprocess.run")
-    def test_propagates_error(
-        self, mock_run: MagicMock, adapter: GitAdapter
-    ) -> None:
+    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.side_effect = subprocess.CalledProcessError(1, "git")
         with pytest.raises(subprocess.CalledProcessError):
             adapter.create_worktree(Path("/tmp/wt"), "branch")
