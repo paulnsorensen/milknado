@@ -406,6 +406,64 @@ class TestPlanner:
         planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
 
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_validation_hook_accepts_manifest(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        stdout = _make_v2_manifest_stdout(
+            [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
+        )
+        def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
+            if argv and argv[0] == "python":
+                return MagicMock(returncode=0, stdout="", stderr="")
+            return MagicMock(returncode=0, stdout=stdout)
+
+        mock_run.side_effect = _side_effect
+        planner = Planner(
+            tmp_graph,
+            mock_crg,
+            "claude",
+            planning_validation_hook="python scripts/validate_plan.py",
+        )
+        result = planner.launch("goal", tmp_path)
+        assert result.solver_status in {"OPTIMAL", "FEASIBLE", "UNKNOWN"}
+        assert result.change_count == 1
+        hook_call = next(
+            call for call in mock_run.call_args_list if call.args and call.args[0][0] == "python"
+        )
+        assert hook_call.args[0][:2] == ["python", "scripts/validate_plan.py"]
+        hook_payload = hook_call.kwargs["input"]
+        assert '"manifest_version": "milknado.plan.v2"' in hook_payload
+        assert '"id": "c1"' in hook_payload
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_validation_hook_rejects_manifest(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        stdout = _make_v2_manifest_stdout(
+            [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
+        )
+        def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
+            if argv and argv[0] == "node":
+                return MagicMock(returncode=1, stdout="", stderr="missing goal summary")
+            return MagicMock(returncode=0, stdout=stdout)
+
+        mock_run.side_effect = _side_effect
+        planner = Planner(tmp_graph, mock_crg, "claude", planning_validation_hook="node hook.mjs")
+        result = planner.launch("goal", tmp_path)
+        assert result.success is False
+        assert result.exit_code == 1
+        assert result.solver_status == "VALIDATION_FAILED"
+        assert result.change_count == 1
+
 
 class TestPlanResult:
     def test_success_result(self) -> None:

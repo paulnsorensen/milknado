@@ -323,6 +323,94 @@ class TestPlanCommand:
         assert result.exit_code == 1
 
 
+class TestPlanInteractive:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_accept_first_iteration(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="OPTIMAL",
+            change_count=3,
+            batch_count=2,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Plan iteration 1" in result.output
+        assert "Choose next step" in result.output
+        mock_planner_cls.return_value.launch.assert_called_once()
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_revise_then_accept(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        first = _make_plan_result(solver_status="NO_MANIFEST", success=False, exit_code=1)
+        second = _make_plan_result(solver_status="OPTIMAL", success=True, exit_code=0)
+        mock_planner_cls.return_value.launch.side_effect = [first, second]
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="2\nAdd explicit API changes and ordering constraints.\n1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Planner output was invalid for execution" in result.output
+        assert "Plan iteration 2" in result.output
+        assert mock_planner_cls.return_value.launch.call_count == 2
+        second_goal = mock_planner_cls.return_value.launch.call_args_list[1].args[0]
+        assert "User revision request" in second_goal
+        assert "Add explicit API changes and ordering constraints." in second_goal
+        assert "Prior planner result" in second_goal
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_cancel_exits_one(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="3\n",
+        )
+        assert result.exit_code == 1
+        assert "Choose next step" in result.output
+
+
 def _make_plan_result(**kwargs: object) -> MagicMock:
     """Build a PlanResult-like mock with sensible defaults."""
     from milknado.domains.planning.planner import PlanResult

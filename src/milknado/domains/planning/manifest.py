@@ -35,6 +35,34 @@ class PlanChangeManifest:
     new_relationships: tuple[NewRelationship, ...]
 
 
+def manifest_to_dict(manifest: PlanChangeManifest) -> dict[str, object]:
+    return {
+        "manifest_version": manifest.manifest_version,
+        "goal": manifest.goal,
+        "goal_summary": manifest.goal_summary,
+        "spec_path": manifest.spec_path,
+        "changes": [
+            {
+                "id": c.id,
+                "path": c.path,
+                "edit_kind": c.edit_kind,
+                "description": c.description,
+                "symbols": [{"name": s.name, "file": s.file} for s in c.symbols],
+                "depends_on": list(c.depends_on),
+            }
+            for c in manifest.changes
+        ],
+        "new_relationships": [
+            {
+                "source_change_id": r.source_change_id,
+                "dependant_change_id": r.dependant_change_id,
+                "reason": r.reason,
+            }
+            for r in manifest.new_relationships
+        ],
+    }
+
+
 def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
     block = _extract_fenced_json(text)
     if block is None:

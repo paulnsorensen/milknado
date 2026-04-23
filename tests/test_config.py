@@ -74,6 +74,15 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert "haiku" in cfg.execution_agent
 
+    def test_loads_planning_validation_hook(self, tmp_path: Path) -> None:
+        toml = (
+            '[milknado]\nagent_family = "claude"\n'
+            'planning_validation_hook = "python scripts/validate_plan.py"\n'
+        )
+        path = self._write_toml(tmp_path, toml)
+        cfg = load_config(path)
+        assert cfg.planning_validation_hook == "python scripts/validate_plan.py"
+
     def test_invalid_family_raises(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "openai"\n'
         path = self._write_toml(tmp_path, toml)
@@ -140,6 +149,7 @@ class TestSaveConfig:
         loaded = load_config(path)
         assert loaded.agent_family == cfg.agent_family
         assert loaded.concurrency_limit == cfg.concurrency_limit
+        assert loaded.planning_validation_hook is None
 
     def test_escapes_backslashes(self, tmp_path: Path) -> None:
         cfg = MilknadoConfig(

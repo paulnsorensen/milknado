@@ -251,7 +251,8 @@ def _instructions_section(resuming: bool) -> str:
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
             f"{enum_note}\n\n"
-            "Emit the manifest as a fenced ```json block (valid JSON, not YAML):\n\n"
+            "Emit only a fenced ```json block (valid JSON, not YAML). "
+            "Do not include prose before or after the block.\n\n"
             f"{schema}"
         )
 
@@ -264,6 +265,7 @@ def _instructions_section(resuming: bool) -> str:
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"
         f"{enum_note}\n\n"
-        "Emit the manifest as a fenced ```json block (valid JSON, not YAML):\n\n"
+        "Emit only a fenced ```json block (valid JSON, not YAML). "
+        "Do not include prose before or after the block.\n\n"
         f"{schema}"
     )
