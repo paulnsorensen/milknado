@@ -18,16 +18,43 @@ from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
 from code_review_graph.tools.context import get_minimal_context
 
-_SOURCE_EXTENSIONS = frozenset({
-    ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go",
-    ".java", ".rb", ".c", ".cpp", ".h", ".hpp", ".cs",
-})
+_SOURCE_EXTENSIONS = frozenset(
+    {
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".rs",
+        ".go",
+        ".java",
+        ".rb",
+        ".c",
+        ".cpp",
+        ".h",
+        ".hpp",
+        ".cs",
+    }
+)
 
-_SKIP_DIRS = frozenset({
-    ".git", ".code-review-graph", ".venv", ".tox", ".mypy_cache",
-    ".ruff_cache", "__pycache__", "node_modules", ".next", "target",
-    "dist", "build", ".eggs", "ralphs",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".code-review-graph",
+        ".venv",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        ".next",
+        "target",
+        "dist",
+        "build",
+        ".eggs",
+        "ralphs",
+    }
+)
 
 
 class CrgAdapter:
@@ -103,14 +130,20 @@ class CrgAdapter:
         return get_architecture_overview(self._get_store())
 
     def list_communities(
-        self, sort_by: str = "size", min_size: int = 0,
+        self,
+        sort_by: str = "size",
+        min_size: int = 0,
     ) -> list[dict[str, Any]]:
         return get_communities(
-            self._get_store(), sort_by=sort_by, min_size=min_size,
+            self._get_store(),
+            sort_by=sort_by,
+            min_size=min_size,
         )
 
     def list_flows(
-        self, sort_by: str = "criticality", limit: int = 50,
+        self,
+        sort_by: str = "criticality",
+        limit: int = 50,
     ) -> list[dict[str, Any]]:
         return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
 
@@ -132,9 +165,14 @@ class CrgAdapter:
         return find_hub_nodes(self._get_store(), top_n=top_n)
 
     def semantic_search_nodes(
-        self, query: str, top_n: int = 5,
+        self,
+        query: str,
+        top_n: int = 5,
     ) -> list[dict[str, Any]]:
-        """Spec-driven retrieval returning raw graph nodes."""
+        """Spec-driven retrieval (no phrase cap).
+
+        Returns name/file_path/kind/qualified_name per node.
+        """
         nodes = self._get_store().search_nodes(query, limit=top_n)
         return [
             {
@@ -152,7 +190,14 @@ class CrgAdapter:
         top_n: int = 5,
         detail_level: Literal["minimal", "full"] = "minimal",
     ) -> list[dict[str, Any]]:
-        """Free-form retrieval; returns file paths (minimal) or full node records (full)."""
+        """Free-form retrieval; returns file paths (minimal) or full node records (full).
+
+        `top_n` caps the underlying node search; in `minimal` mode, dedup by
+        file_path runs after the cap, so the result may contain fewer than
+        `top_n` entries when multiple nodes share a file.
+        """
+        if detail_level not in ("minimal", "full"):
+            raise ValueError(f"detail_level must be 'minimal' or 'full', got: {detail_level!r}")
         words = query.split()
         if len(words) < 2:
             raise ValueError(f"semantic_search query must be 2-4 words, got: {query!r}")
@@ -160,10 +205,7 @@ class CrgAdapter:
             query = " ".join(words[:4])
         nodes = self._get_store().search_nodes(query, limit=top_n)
         if detail_level == "minimal":
-            seen: dict[str, None] = {}
-            for n in nodes:
-                seen[n.file_path] = None
-            return [{"file_path": fp} for fp in seen]
+            return [{"file_path": fp} for fp in dict.fromkeys(n.file_path for n in nodes)]
         return [
             {
                 "name": n.name,

@@ -545,3 +545,77 @@ class TestSemanticSearch:
         adapter.semantic_search("one two three four five six")
 
         mock_store.search_nodes.assert_called_once_with("one two three four", limit=5)
+
+    def test_rejects_unknown_detail_level(self, adapter: CrgAdapter) -> None:
+        with pytest.raises(ValueError, match="detail_level"):
+            adapter.semantic_search("plan context", detail_level="verbose")  # type: ignore[arg-type]
+
+
+class TestSemanticSearchNodes:
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_returns_projected_node_dicts(
+        self, mock_store_cls: MagicMock, adapter: CrgAdapter
+    ) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.search_nodes.return_value = [
+            _make_node("plan", "src/planning/planner.py", kind="function"),
+            _make_node("Planner", "src/planning/planner.py", kind="class"),
+        ]
+
+        result = adapter.semantic_search_nodes("plan helpers", top_n=10)
+
+        assert result == [
+            {
+                "name": "plan",
+                "file_path": "src/planning/planner.py",
+                "kind": "function",
+                "qualified_name": "src/planning/planner.py::plan",
+            },
+            {
+                "name": "Planner",
+                "file_path": "src/planning/planner.py",
+                "kind": "class",
+                "qualified_name": "src/planning/planner.py::Planner",
+            },
+        ]
+        mock_store.search_nodes.assert_called_once_with("plan helpers", limit=10)
+
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_default_top_n_is_five(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.search_nodes.return_value = []
+
+        adapter.semantic_search_nodes("plan helpers")
+
+        mock_store.search_nodes.assert_called_once_with("plan helpers", limit=5)
+
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_does_not_dedupe_or_phrase_cap(
+        self, mock_store_cls: MagicMock, adapter: CrgAdapter
+    ) -> None:
+        """Spec-driven path passes the query through unmodified and preserves duplicates."""
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.search_nodes.return_value = [
+            _make_node("a", "src/foo.py"),
+            _make_node("b", "src/foo.py"),
+        ]
+
+        long_query = "one two three four five six"
+        result = adapter.semantic_search_nodes(long_query)
+
+        mock_store.search_nodes.assert_called_once_with(long_query, limit=5)
+        assert len(result) == 2
+        assert {r["file_path"] for r in result} == {"src/foo.py"}
+
+    @patch("milknado.adapters.crg.GraphStore")
+    def test_empty_results(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
+        mock_store = MagicMock()
+        mock_store_cls.return_value = mock_store
+        mock_store.search_nodes.return_value = []
+
+        result = adapter.semantic_search_nodes("no matches at all")
+
+        assert result == []
