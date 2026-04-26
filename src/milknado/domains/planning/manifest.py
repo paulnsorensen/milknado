@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from typing import cast
 
 from milknado.domains.batching import (
+    ChangeDependency,
     EditKind,
     FileChange,
+    HashAnchors,
     NewRelationship,
     RelationshipReason,
     SymbolRef,
@@ -141,6 +143,12 @@ def _parse_single_change(entry: object) -> FileChange | None:
     symbols = _parse_symbols(raw.get("symbols", []), cid)
     if symbols is None:
         return None
+    hash_anchors = _parse_hash_anchors(raw.get("hash_anchors"), cid, field_name="hash_anchors")
+    if raw.get("hash_anchors") is not None and hash_anchors is None:
+        return None
+    dependencies = _parse_dependencies(raw.get("dependencies", []), cid)
+    if dependencies is None:
+        return None
     raw_deps = raw.get("depends_on", [])
     if not isinstance(raw_deps, list) or not all(isinstance(d, str) for d in raw_deps):
         _logger.warning("change %r: depends_on must be a list of strings", cid)
@@ -155,6 +163,8 @@ def _parse_single_change(entry: object) -> FileChange | None:
         path=path,
         edit_kind=cast(EditKind, edit_kind),
         symbols=symbols,
+        hash_anchors=hash_anchors,
+        dependencies=dependencies,
         depends_on=depends_on,
         description=description.strip(),
     )
@@ -180,6 +190,67 @@ def _parse_symbols(raw: object, cid: str) -> tuple[SymbolRef, ...] | None:
             return None
         out.append(SymbolRef(name=name, file=file))
     return tuple(out)
+
+
+def _parse_hash_anchors(
+    raw: object,
+    cid: str,
+    *,
+    field_name: str,
+) -> HashAnchors | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        _logger.warning("change %r: %s must be an object", cid, field_name)
+        return None
+    before = raw.get("before")
+    after = raw.get("after")
+    if not isinstance(before, str) or not before.strip():
+        _logger.warning("change %r: %s.before must be a non-empty string", cid, field_name)
+        return None
+    if not isinstance(after, str) or not after.strip():
+        _logger.warning("change %r: %s.after must be a non-empty string", cid, field_name)
+        return None
+    return HashAnchors(before=before.strip(), after=after.strip())
+
+
+def _parse_dependencies(raw: object, cid: str) -> tuple[ChangeDependency, ...] | None:
+    if not isinstance(raw, list):
+        _logger.warning("change %r: dependencies must be a list", cid)
+        return None
+    dependencies: list[ChangeDependency] = []
+    for dep in raw:
+        if not isinstance(dep, dict):
+            _logger.warning("change %r: dependency entry must be an object", cid)
+            return None
+        dep_raw = cast(dict[str, object], dep)
+        path = dep_raw.get("path")
+        if not isinstance(path, str) or not path.strip():
+            _logger.warning("change %r: dependency.path must be a non-empty string", cid)
+            return None
+        symbols = _parse_symbols(dep_raw.get("symbols", []), cid)
+        if symbols is None:
+            return None
+        hash_anchors = _parse_hash_anchors(
+            dep_raw.get("hash_anchors"),
+            cid,
+            field_name="dependency.hash_anchors",
+        )
+        if dep_raw.get("hash_anchors") is not None and hash_anchors is None:
+            return None
+        reason = dep_raw.get("reason", "")
+        if not isinstance(reason, str):
+            _logger.warning("change %r: dependency.reason must be a string", cid)
+            return None
+        dependencies.append(
+            ChangeDependency(
+                path=path.strip(),
+                symbols=symbols,
+                hash_anchors=hash_anchors,
+                reason=reason.strip(),
+            )
+        )
+    return tuple(dependencies)
 
 
 def _parse_relationships(

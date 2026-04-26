@@ -109,6 +109,20 @@ def _batching_section() -> str:
     )
 
 
+def _mcp_targeting_note() -> str:
+    return (
+        "**Required MCP inspection before you emit changes:**\n"
+        "- Use `tilth` to inspect the target area and capture exact edit boundaries.\n"
+        "- Use `tilth` or `code-review-graph` to discover impacted dependencies around that "
+        "area.\n"
+        "- For every change, include the target file, symbols, and `hash_anchors` with "
+        '`"before"` / `"after"` values that bound the intended edit span.\n'
+        "- Add dependency entries in the same `file + symbols + hash_anchors` format for any "
+        "adjacent code that constrains the change.\n"
+        "- Do not invent anchors or dependencies: only emit data you observed via MCP queries."
+    )
+
+
 def _graph_section(graph: MikadoGraph) -> str:
     nodes = graph.get_all_nodes()
     if not nodes:
@@ -188,6 +202,21 @@ def _instructions_section(resuming: bool) -> str:
         '      "symbols": [\n'
         '        {"name": "FooClass", "file": "src/foo.py"}\n'
         "      ],\n"
+        '      "hash_anchors": {\n'
+        '        "before": "sha256:4c9f0e2b-target-before",\n'
+        '        "after": "sha256:7b1a92d4-target-after"\n'
+        "      },\n"
+        '      "dependencies": [\n'
+        "        {\n"
+        '          "path": "src/bar.py",\n'
+        '          "symbols": [{"name": "bar_call_site", "file": "src/bar.py"}],\n'
+        '          "hash_anchors": {\n'
+        '            "before": "sha256:8f2b3c44-dependency-before",\n'
+        '            "after": "sha256:9a7d118e-dependency-after"\n'
+        "          },\n"
+        '          "reason": "Call site or import that constrains this change"\n'
+        "        }\n"
+        "      ],\n"
         '      "depends_on": []\n'
         "    },\n"
         "    {\n"
@@ -195,6 +224,10 @@ def _instructions_section(resuming: bool) -> str:
         '      "path": "src/bar.py",\n'
         '      "edit_kind": "add",\n'
         '      "description": "Respond to c1 signature change — update call site.",\n'
+        '      "hash_anchors": {\n'
+        '        "before": "sha256:12ac44e0-target-before",\n'
+        '        "after": "sha256:21fd9b77-target-after"\n'
+        "      },\n"
         '      "depends_on": ["c1"]\n'
         "    }\n"
         "  ],\n"
@@ -236,6 +269,8 @@ def _instructions_section(resuming: bool) -> str:
         " The solver batches them optimally."
     )
 
+    mcp_targeting_note = _mcp_targeting_note()
+
     goal_summary_note = (
         "`goal_summary` is 2-4 sentences structured as **what / why / success criteria**."
         " It becomes the root Mikado node description that every executor reads."
@@ -247,6 +282,7 @@ def _instructions_section(resuming: bool) -> str:
             "# Instructions\n\n"
             "Decompose the goal into a v2 change manifest.\n\n"
             f"{granularity_note}\n\n"
+            f"{mcp_targeting_note}\n\n"
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
@@ -260,6 +296,7 @@ def _instructions_section(resuming: bool) -> str:
         "The graph above shows prior progress. Do NOT recreate existing nodes.\n\n"
         "Review the current state and add change manifest entries for any remaining work.\n\n"
         f"{granularity_note}\n\n"
+        f"{mcp_targeting_note}\n\n"
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"

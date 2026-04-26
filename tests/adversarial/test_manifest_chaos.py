@@ -276,6 +276,21 @@ class TestMalformedJson:
         result = parse_manifest_from_output(_wrap(payload))
         assert result is None
 
+    def test_hash_anchors_wrong_type_rejected(self) -> None:
+        change = dict(_minimal_change(), hash_anchors="bad")
+        payload = _minimal_manifest(changes=[change])
+        result = parse_manifest_from_output(_wrap(payload))
+        assert result is None
+
+    def test_dependency_reason_wrong_type_rejected(self) -> None:
+        change = dict(
+            _minimal_change(),
+            dependencies=[{"path": "src/bar.py", "reason": 42}],
+        )
+        payload = _minimal_manifest(changes=[change])
+        result = parse_manifest_from_output(_wrap(payload))
+        assert result is None
+
     def test_multiple_fenced_blocks_uses_first(self) -> None:
         # If two fenced blocks exist, regex uses the first one.
         valid = _wrap(_minimal_manifest())
