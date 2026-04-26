@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.domains.batching import FileChange, NewRelationship, SymbolRef
+from milknado.domains.batching.change import ChangeDependency, HashAnchors
 from milknado.domains.common.types import DegradationMarker, TilthMap
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
@@ -240,6 +241,15 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "goal_summary" in ctx
 
+    def test_v2_instructions_require_mcp_hash_anchor_targeting(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "tilth" in ctx
+        assert "code-review-graph" in ctx
+        assert "hash_anchors" in ctx
+        assert "dependencies" in ctx
+
     def test_v2_instructions_contain_spec_path(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -405,6 +415,22 @@ class TestPlanner:
         planner = Planner(tmp_graph, mock_crg, "claude")
         planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
+
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_passes_repo_mcp_config_to_agent(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        mock_run.return_value = MagicMock(returncode=0, stdout="")
+        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner.launch("goal", tmp_path)
+        cmd = mock_run.call_args[0][0]
+        assert "--mcp-config" in cmd
+        assert str(tmp_path / ".mcp.json") in cmd
 
 
 class TestPlanResult:
@@ -573,6 +599,21 @@ class TestPlanChangeManifest:
                         "edit_kind": "modify",
                         "description": "Update Foo class",
                         "symbols": [{"name": "Foo", "file": "src/foo.py"}],
+                        "hash_anchors": {
+                            "before": "sha256:foo-before",
+                            "after": "sha256:foo-after",
+                        },
+                        "dependencies": [
+                            {
+                                "path": "src/baz.py",
+                                "symbols": [{"name": "Baz", "file": "src/baz.py"}],
+                                "hash_anchors": {
+                                    "before": "sha256:baz-before",
+                                    "after": "sha256:baz-after",
+                                },
+                                "reason": "import edge",
+                            }
+                        ],
                         "depends_on": ["c2"],
                     },
                     {
@@ -601,6 +642,15 @@ class TestPlanChangeManifest:
             edit_kind="modify",
             description="Update Foo class",
             symbols=(SymbolRef(name="Foo", file="src/foo.py"),),
+            hash_anchors=HashAnchors(before="sha256:foo-before", after="sha256:foo-after"),
+            dependencies=(
+                ChangeDependency(
+                    path="src/baz.py",
+                    symbols=(SymbolRef(name="Baz", file="src/baz.py"),),
+                    hash_anchors=HashAnchors(before="sha256:baz-before", after="sha256:baz-after"),
+                    reason="import edge",
+                ),
+            ),
             depends_on=("c2",),
         )
         assert manifest.changes[1].edit_kind == "add"
@@ -721,8 +771,55 @@ class TestPlanChangeManifest:
         only = manifest.changes[0]
         assert only.edit_kind == "modify"
         assert only.symbols == ()
+        assert only.hash_anchors is None
+        assert only.dependencies == ()
         assert only.depends_on == ()
         assert manifest.new_relationships == ()
+
+    def test_parses_hash_anchors_and_dependencies(self) -> None:
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "Extract auth slice",
+                "changes": [
+                    {
+                        "id": "c1",
+                        "path": "src/foo.py",
+                        "description": "Change foo",
+                        "hash_anchors": {
+                            "before": "sha256:foo-before",
+                            "after": "sha256:foo-after",
+                        },
+                        "dependencies": [
+                            {
+                                "path": "src/bar.py",
+                                "symbols": [{"name": "bar", "file": "src/bar.py"}],
+                                "hash_anchors": {
+                                    "before": "sha256:bar-before",
+                                    "after": "sha256:bar-after",
+                                },
+                                "reason": "call site",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        manifest = parse_manifest_from_output(output)
+        assert manifest is not None
+        change = manifest.changes[0]
+        assert change.hash_anchors == HashAnchors(
+            before="sha256:foo-before", after="sha256:foo-after"
+        )
+        assert change.dependencies == (
+            ChangeDependency(
+                path="src/bar.py",
+                symbols=(SymbolRef(name="bar", file="src/bar.py"),),
+                hash_anchors=HashAnchors(before="sha256:bar-before", after="sha256:bar-after"),
+                reason="call site",
+            ),
+        )
 
     def test_direct_construction_is_frozen(self) -> None:
         manifest = PlanChangeManifest(
@@ -869,6 +966,42 @@ class TestPlanChangeManifest:
                 "goal_summary": "Extract auth slice",
                 "changes": [
                     {"id": "c1", "path": "src/foo.py"},
+                ],
+            }
+        )
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_invalid_hash_anchors_shape(self) -> None:
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "Extract auth slice",
+                "changes": [
+                    {
+                        "id": "c1",
+                        "path": "src/foo.py",
+                        "description": "Do something",
+                        "hash_anchors": {"before": "", "after": "sha256:after"},
+                    }
+                ],
+            }
+        )
+        assert parse_manifest_from_output(output) is None
+
+    def test_rejects_invalid_dependency_shape(self) -> None:
+        output = _wrap(
+            {
+                "manifest_version": "milknado.plan.v2",
+                "goal": "Refactor auth",
+                "goal_summary": "Extract auth slice",
+                "changes": [
+                    {
+                        "id": "c1",
+                        "path": "src/foo.py",
+                        "description": "Do something",
+                        "dependencies": [{"path": "", "reason": "bad dep"}],
+                    }
                 ],
             }
         )
