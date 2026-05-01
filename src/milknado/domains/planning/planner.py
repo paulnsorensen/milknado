@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.adapters.tilth import TilthAdapter
+from milknado.domains.batching.change import BatchPlan
 from milknado.domains.common.agent_argv import build_planning_subprocess
+from milknado.domains.common.errors import MegaBatchAborted
 from milknado.domains.planning.batching_bridge import (
     apply_batches_to_graph,
     run_batching,
@@ -80,6 +82,7 @@ class Planner:
         argv, extra = build_planning_subprocess(
             context_path,
             self._planning_agent,
+            project_root=project_root,
         )
         extra["stdout"] = subprocess.PIPE
         result = subprocess.run(argv, cwd=project_root, check=False, **extra)
@@ -193,3 +196,20 @@ def _safe_ensure_crg(
     except Exception as exc:
         _logger.warning("CRG unavailable, running without graph context: %s", exc)
         return crg, False
+
+
+def _check_mega_batch(
+    plan: BatchPlan,
+    force_single_batch: bool,
+    threshold: int,
+) -> None:
+    """Guard against oversized single batches.
+
+    If a plan has exactly 1 batch with > threshold changes and force_single_batch
+    is False, raise MegaBatchAborted. Otherwise, pass silently.
+    """
+    if force_single_batch or len(plan.batches) != 1:
+        return
+    change_count = len(plan.batches[0].change_ids)
+    if change_count > threshold:
+        raise MegaBatchAborted(change_count=change_count, threshold=threshold)

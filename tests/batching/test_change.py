@@ -4,7 +4,14 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
+from milknado.domains.batching import (
+    BatchPlan,
+    ChangeDependency,
+    FileChange,
+    HashAnchors,
+    NewRelationship,
+    SymbolRef,
+)
 from milknado.domains.batching.change import Batch, SymbolSpread
 
 
@@ -18,7 +25,29 @@ def test_file_change_defaults() -> None:
     c = FileChange(id="1", path="a.py")
     assert c.edit_kind == "modify"
     assert c.symbols == ()
+    assert c.hash_anchors is None
+    assert c.dependencies == ()
     assert c.depends_on == ()
+
+
+def test_hash_anchors_fields() -> None:
+    anchors = HashAnchors(before="sha256:before", after="sha256:after")
+    assert anchors.before == "sha256:before"
+    assert anchors.after == "sha256:after"
+
+
+def test_change_dependency_fields() -> None:
+    dep = ChangeDependency(
+        path="src/bar.py",
+        symbols=(SymbolRef(name="bar", file="src/bar.py"),),
+        hash_anchors=HashAnchors(before="sha256:a", after="sha256:b"),
+        reason="import edge",
+    )
+    assert dep.path == "src/bar.py"
+    assert dep.symbols[0].name == "bar"
+    assert dep.hash_anchors is not None
+    assert dep.hash_anchors.before == "sha256:a"
+    assert dep.reason == "import edge"
 
 
 def test_file_change_identity_by_id() -> None:

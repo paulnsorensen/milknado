@@ -80,6 +80,16 @@ def test_build_planning_subprocess_allows_external_mcp(tmp_path: Path) -> None:
     assert "env" not in extra
 
 
+def test_build_planning_subprocess_adds_repo_mcp_config(tmp_path: Path) -> None:
+    p = tmp_path / "ctx.md"
+    p.write_text("hello world", encoding="utf-8")
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+    argv, extra = build_planning_subprocess(p, "echo", project_root=tmp_path)
+    assert "--mcp-config" in argv
+    assert str(tmp_path / ".mcp.json") in argv
+    assert isinstance(extra.get("env"), dict)
+
+
 def test_build_minimal_mcp_env_strips_external_mcp() -> None:
     mocked_env = {
         "MCP_SERVER_URL": "https://example.com/mcp",
