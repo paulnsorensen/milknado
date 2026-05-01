@@ -443,6 +443,7 @@ class TestPlanner:
         stdout = _make_v2_manifest_stdout(
             [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
         )
+
         def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
             if argv and argv[0] == "python":
                 return MagicMock(returncode=0, stdout="", stderr="")
@@ -477,6 +478,7 @@ class TestPlanner:
         stdout = _make_v2_manifest_stdout(
             [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
         )
+
         def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
             if argv and argv[0] == "node":
                 return MagicMock(returncode=1, stdout="", stderr="missing goal summary")

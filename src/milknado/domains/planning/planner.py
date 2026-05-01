@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import shlex
 import subprocess
 from dataclasses import dataclass

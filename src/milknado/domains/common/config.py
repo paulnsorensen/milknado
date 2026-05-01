@@ -100,7 +100,10 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         "[milknado]",
         f'agent_family = "{config.agent_family}"',
         f'planning_agent = "{_escape_toml_string(config.planning_agent)}"',
-        f'planning_validation_hook = "{_escape_toml_string(config.planning_validation_hook or "")}"',
+        (
+            "planning_validation_hook = "
+            f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
+        ),
         f'execution_agent = "{_escape_toml_string(config.execution_agent)}"',
         f"quality_gates = {list(config.quality_gates)}",
         f'worktree_pattern = "{config.worktree_pattern}"',

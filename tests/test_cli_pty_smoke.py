@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import select
 import subprocess
 import sys
@@ -8,6 +9,12 @@ import time
 from pathlib import Path
 
 import pytest
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _read_available(fd: int) -> str:
@@ -31,10 +38,14 @@ def _wait_for_text(fd: int, needle: str, timeout_s: float) -> str:
     output = ""
     while time.time() < end:
         output += _read_available(fd)
-        if needle in output:
+        if needle in _strip_ansi(output):
             return output
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for {needle!r}. Output so far:\n{output}")
+
+
+def _milknado_db_rel(project_root: Path) -> Path:
+    return (project_root / ".milknado" / "milknado.db").relative_to(project_root)
 
 
 def _write_fake_planner(project_root: Path) -> Path:
@@ -43,9 +54,9 @@ def _write_fake_planner(project_root: Path) -> Path:
         (
             "import json\n"
             "import sys\n"
-            'body = sys.stdin.read().lower()\n'
+            "body = sys.stdin.read().lower()\n"
             'is_revision = "user revision request" in body\n'
-            'payload = {\n'
+            "payload = {\n"
             '  "manifest_version": "milknado.plan.v2",\n'
             '  "goal": "PTY plan goal",\n'
             '  "goal_summary": "Revised plan." if is_revision else "Initial plan.",\n'
@@ -103,7 +114,7 @@ def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
             "[milknado]\n"
             'agent_family = "claude"\n'
             f'planning_agent = "{sys.executable} {agent}"\n'
-            f'db_path = "{(project_root / ".milknado" / "milknado.db").relative_to(project_root)}"\n'
+            f'db_path = "{_milknado_db_rel(project_root)}"\n'
         ),
         encoding="utf-8",
     )
@@ -117,9 +128,10 @@ def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
     finally:
         os.close(master_fd)
 
+    clean = _strip_ansi(output)
     assert proc.returncode == 0, output
-    assert "Plan iteration 1" in output
-    assert "Choose next step" in output
+    assert "Plan iteration 1" in clean
+    assert "Choose next step" in clean
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY smoke test requires POSIX")
@@ -133,7 +145,7 @@ def test_plan_interactive_pty_revise_then_accept(tmp_path: Path) -> None:
             "[milknado]\n"
             'agent_family = "claude"\n'
             f'planning_agent = "{sys.executable} {agent}"\n'
-            f'db_path = "{(project_root / ".milknado" / "milknado.db").relative_to(project_root)}"\n'
+            f'db_path = "{_milknado_db_rel(project_root)}"\n'
         ),
         encoding="utf-8",
     )
@@ -150,7 +162,8 @@ def test_plan_interactive_pty_revise_then_accept(tmp_path: Path) -> None:
     finally:
         os.close(master_fd)
 
+    clean = _strip_ansi(output)
     assert proc.returncode == 0, output
-    assert "Plan iteration 1" in output
-    assert "Plan iteration 2" in output
-    assert "Choose next step" in output
+    assert "Plan iteration 1" in clean
+    assert "Plan iteration 2" in clean
+    assert "Choose next step" in clean

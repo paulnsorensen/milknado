@@ -506,7 +506,11 @@ def plan(
     ] = False,
     max_iterations: Annotated[
         int,
-        typer.Option("--max-iterations", min=1, help="Maximum planner iterations in interactive mode."),
+        typer.Option(
+            "--max-iterations",
+            min=1,
+            help="Maximum planner iterations in interactive mode.",
+        ),
     ] = 5,
 ) -> None:
     """Launch interactive planning session to decompose one or more specs/issues."""
@@ -571,7 +575,9 @@ def plan(
                 raise typer.Exit(code=1)
             feedback = typer.prompt("What should change in the plan?").strip()
             if not feedback:
-                console.print("[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]")
+                console.print(
+                    "[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]"
+                )
                 continue
             current_goal = _build_replan_goal(goal, feedback, result)
         console.print(f"[red]Reached max iterations ({max_iterations}) without acceptance.[/red]")
