@@ -443,6 +443,35 @@ def _plan_exit_code(result: PlanResult) -> int:
     return 0
 
 
+def _plan_iteration_summary(iteration: int, result: PlanResult) -> str:
+    return f"[bold]Plan iteration {iteration}[/bold]: {_plan_summary(result)}"
+
+
+def _build_replan_goal(base_goal: str, feedback: str, prior_result: PlanResult) -> str:
+    return (
+        f"{base_goal}\n\n"
+        "## User revision request\n"
+        f"{feedback.strip()}\n\n"
+        "## Prior planner result\n"
+        f"- solver_status: {prior_result.solver_status or 'UNKNOWN'}\n"
+        f"- changes: {prior_result.change_count}\n"
+        f"- batches: {prior_result.batch_count}\n"
+        "Revise the plan manifest to address this feedback while preserving valid parts."
+    )
+
+
+def _prompt_plan_action() -> str:
+    console.print("\n[bold]Choose next step:[/bold]")
+    console.print("  1) Accept plan")
+    console.print("  2) Revise with feedback")
+    console.print("  3) Cancel")
+    while True:
+        choice = typer.prompt("Selection", show_choices=False).strip()
+        if choice in {"1", "2", "3"}:
+            return choice
+        console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
+
+
 @app.command()
 def plan(
     spec: Annotated[
@@ -468,6 +497,21 @@ def plan(
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
+    interactive: Annotated[
+        bool,
+        typer.Option(
+            "--interactive/--no-interactive",
+            help="Iterate on planning with accept/revise/cancel prompts.",
+        ),
+    ] = False,
+    max_iterations: Annotated[
+        int,
+        typer.Option(
+            "--max-iterations",
+            min=1,
+            help="Maximum planner iterations in interactive mode.",
+        ),
+    ] = 5,
 ) -> None:
     """Launch interactive planning session to decompose one or more specs/issues."""
     from milknado.adapters.crg import CrgAdapter
@@ -488,17 +532,56 @@ def plan(
 
     try:
         crg = CrgAdapter(project_root)
-        planner = Planner(graph, crg, config.planning_agent)
+        planner = Planner(
+            graph,
+            crg,
+            config.planning_agent,
+            planning_validation_hook=config.planning_validation_hook,
+        )
         console.print(f"[bold]Planning:[/bold] {goal}")
-        result = planner.launch(goal, project_root, spec_path=effective_spec)
-        console.print(_plan_summary(result))
-        exit_code = _plan_exit_code(result)
-        if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
-            Console(stderr=True).print(
-                "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
-            )
-        if exit_code != 0:
-            raise typer.Exit(code=exit_code)
+        if not interactive:
+            result = planner.launch(goal, project_root, spec_path=effective_spec)
+            console.print(_plan_summary(result))
+            exit_code = _plan_exit_code(result)
+            if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+                Console(stderr=True).print(
+                    "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
+                )
+            if exit_code != 0:
+                raise typer.Exit(code=exit_code)
+            return
+
+        current_goal = goal
+        for iteration in range(1, max_iterations + 1):
+            result = planner.launch(current_goal, project_root, spec_path=effective_spec)
+            console.print(_plan_iteration_summary(iteration, result))
+            if result.context_path is not None:
+                console.print(f"[dim]Planner context: {result.context_path}[/dim]")
+            exit_code = _plan_exit_code(result)
+            if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+                Console(stderr=True).print(
+                    "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
+                )
+            if exit_code != 0:
+                console.print("[red]Planner output was invalid for execution.[/red]")
+            action = _prompt_plan_action()
+            if action == "1":
+                if exit_code != 0:
+                    console.print(
+                        "[yellow]Accepting current plan despite invalid planner status.[/yellow]"
+                    )
+                return
+            if action == "3":
+                raise typer.Exit(code=1)
+            feedback = typer.prompt("What should change in the plan?").strip()
+            if not feedback:
+                console.print(
+                    "[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]"
+                )
+                continue
+            current_goal = _build_replan_goal(goal, feedback, result)
+        console.print(f"[red]Reached max iterations ({max_iterations}) without acceptance.[/red]")
+        raise typer.Exit(code=1)
     finally:
         graph.close()
 

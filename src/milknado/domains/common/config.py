@@ -17,6 +17,7 @@ class MilknadoConfig:
 
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
+    planning_validation_hook: str | None = None
     execution_agent: str = "claude --model sonnet -p --dangerously-skip-permissions"
     quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check", "uv run ty check")
     worktree_pattern: str = "milknado-{node_id}-{slug}"
@@ -56,6 +57,7 @@ def load_config(path: Path) -> MilknadoConfig:
             f"Invalid agent_family '{family}'. Expected one of: {allowed}",
         )
     planning_agent_raw = milknado.get("planning_agent")
+    planning_validation_hook_raw = milknado.get("planning_validation_hook")
     execution_agent_raw = milknado.get("execution_agent")
     planning_agent = resolve_planning_agent_command(
         family,
@@ -69,6 +71,9 @@ def load_config(path: Path) -> MilknadoConfig:
     return MilknadoConfig(
         agent_family=family,
         planning_agent=planning_agent,
+        planning_validation_hook=(
+            str(planning_validation_hook_raw).strip() if planning_validation_hook_raw else None
+        ),
         execution_agent=execution_agent,
         quality_gates=tuple(
             milknado.get(
@@ -95,6 +100,10 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         "[milknado]",
         f'agent_family = "{config.agent_family}"',
         f'planning_agent = "{_escape_toml_string(config.planning_agent)}"',
+        (
+            "planning_validation_hook = "
+            f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
+        ),
         f'execution_agent = "{_escape_toml_string(config.execution_agent)}"',
         f"quality_gates = {list(config.quality_gates)}",
         f'worktree_pattern = "{config.worktree_pattern}"',

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +17,11 @@ from milknado.domains.planning.batching_bridge import (
     run_batching,
 )
 from milknado.domains.planning.context import build_planning_context
-from milknado.domains.planning.manifest import parse_manifest_from_output
+from milknado.domains.planning.manifest import (
+    PlanChangeManifest,
+    manifest_to_dict,
+    parse_manifest_from_output,
+)
 from milknado.domains.planning.telemetry import record_batch_snapshot
 
 if TYPE_CHECKING:
@@ -43,10 +49,12 @@ class Planner:
         graph: MikadoGraph,
         crg: CrgPort,
         planning_agent: str,
+        planning_validation_hook: str | None = None,
     ) -> None:
         self._graph = graph
         self._crg = crg
         self._planning_agent = planning_agent
+        self._planning_validation_hook = (planning_validation_hook or "").strip() or None
 
     def launch(
         self,
@@ -93,6 +101,19 @@ class Planner:
                 solver_status="NO_MANIFEST",
                 change_count=0,
             )
+        validation_error = self._run_validation_hook(manifest, project_root, context_path)
+        if validation_error:
+            _logger.warning("planner validation hook rejected manifest: %s", validation_error)
+            return PlanResult(
+                success=False,
+                exit_code=1,
+                context_path=context_path,
+                nodes_created=0,
+                batch_count=0,
+                oversized_count=0,
+                solver_status="VALIDATION_FAILED",
+                change_count=len(manifest.changes),
+            )
 
         plan = run_batching(manifest, crg if crg_ok else None, project_root)
         existing_root = self._graph.get_root()
@@ -123,6 +144,36 @@ class Planner:
         spec_path: Path | None = None,
     ) -> PlanResult:
         return self.launch(goal_delta, project_root, spec_path=spec_path)
+
+    def _run_validation_hook(
+        self,
+        manifest: PlanChangeManifest,
+        project_root: Path,
+        context_path: Path,
+    ) -> str | None:
+        if self._planning_validation_hook is None:
+            return None
+        argv = shlex.split(self._planning_validation_hook, posix=True)
+        if not argv:
+            return "empty planning_validation_hook command"
+        payload = {
+            "manifest": manifest_to_dict(manifest),
+            "project_root": str(project_root),
+            "context_path": str(context_path),
+        }
+        result = subprocess.run(
+            argv,
+            cwd=project_root,
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            return None
+        stderr = (result.stderr or "").strip()
+        stdout = (result.stdout or "").strip()
+        return stderr or stdout or f"exit {result.returncode}"
 
 
 def _read_spec(spec_path: Path | None) -> str | None:
