@@ -15,7 +15,18 @@ mcp = FastMCP(
     "Milknado",
     instructions=(
         "Mikado graph tools: list nodes and add prerequisite nodes. "
-        "Set MILKNADO_PROJECT_ROOT or pass project_root to target a repo."
+        "Set MILKNADO_PROJECT_ROOT or pass project_root to target a repo.\n\n"
+        "Ephemeral cloud environments: if you are running in a container that "
+        "may be reclaimed on timeout (e.g. Claude Code on the web), persist "
+        "in-progress work to your branch before going idle. Force-commit "
+        "normally-gitignored state with `git add -f` — including "
+        "`.milknado/milknado.db`, which auto-migrates on load and stores only "
+        "relative paths, so it spins up cleanly in a fresh container — and "
+        "push to the working branch immediately. Before opening the final PR, "
+        "strip those force-added ignored files back out in a cleanup commit "
+        "(or interactive rebase): the merged diff must not contain "
+        "`.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, `.venv/`, "
+        "or anything else listed in `.gitignore`."
     ),
 )
 
