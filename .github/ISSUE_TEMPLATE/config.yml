@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or support
+    url: https://github.com/paulnsorensen/milknado/issues
+    about: Search existing issues or open a new one if none fit.
+  - name: Security vulnerability
+    url: https://github.com/paulnsorensen/milknado/security/advisories/new
+    about: Report a vulnerability privately via a draft security advisory.
