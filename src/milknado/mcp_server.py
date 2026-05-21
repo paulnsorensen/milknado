@@ -10,7 +10,6 @@ from fastmcp import FastMCP
 
 from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import RelationshipReason
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 
 mcp = FastMCP(
     "Milknado",
@@ -164,119 +163,7 @@ def milknado_plan_batches(
     return _plan_batches_impl(changes, budget, root, new_relationships)
 
 
-_TODO_STATUS_MAP = {
-    "pending": NodeStatus.PENDING,
-    "in_progress": NodeStatus.RUNNING,
-    "blocked": NodeStatus.BLOCKED,
-    "done": NodeStatus.DONE,
-}
-
-
-def _parse_kind(value: str) -> NodeKind:
-    try:
-        return NodeKind(value)
-    except ValueError as exc:
-        valid = sorted(k.value for k in NodeKind)
-        raise ValueError(f"invalid kind {value!r}; expected one of {valid}") from exc
-
-
-def _parse_todo_status(value: str) -> NodeStatus:
-    if value not in _TODO_STATUS_MAP:
-        raise ValueError(f"invalid status {value!r}; expected one of {sorted(_TODO_STATUS_MAP)}")
-    return _TODO_STATUS_MAP[value]
-
-
-def _node_to_summary(node: MikadoNode) -> dict:
-    return {
-        "id": node.id,
-        "kind": node.kind.value,
-        "status": node.status.value,
-        "description": node.description,
-    }
-
-
-def _build_subtree(graph, node: MikadoNode) -> dict:
-    payload = _node_to_summary(node)
-    payload["children"] = [_build_subtree(graph, c) for c in graph.get_children(node.id)]
-    return payload
-
-
-@mcp.tool()
-def milknado_todo_tree(project_root: str = "", root_id: int | None = None) -> list[dict]:
-    """Return the todo tree from root_id, or the forest of all top-level nodes."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
-    try:
-        if root_id is not None:
-            node = graph.get_node(root_id)
-            if node is None:
-                raise ValueError(f"node {root_id} not found")
-            return [_build_subtree(graph, node)]
-        return [_build_subtree(graph, n) for n in graph.get_roots()]
-    finally:
-        graph.close()
-
-
-@mcp.tool()
-def milknado_todo_add(
-    description: str,
-    kind: str = "task",
-    parent_id: int | None = None,
-    project_root: str = "",
-) -> dict:
-    """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id."""
-    node_kind = _parse_kind(kind)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
-    try:
-        node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
-        return _node_to_summary(node)
-    finally:
-        graph.close()
-
-
-def _apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:
-    if target == NodeStatus.DONE and node.status == NodeStatus.PENDING:
-        graph.mark_running(node.id)
-    dispatch = {
-        NodeStatus.PENDING: graph.mark_pending,
-        NodeStatus.RUNNING: graph.mark_running,
-        NodeStatus.DONE: graph.mark_done,
-        NodeStatus.BLOCKED: graph.mark_blocked,
-    }
-    dispatch[target](node.id)
-
-
-@mcp.tool()
-def milknado_todo_set_status(node_id: int, status: str, project_root: str = "") -> dict:
-    """Set todo status: pending | in_progress | blocked | done."""
-    target = _parse_todo_status(status)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
-    try:
-        node = graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"node {node_id} not found")
-        _apply_todo_status(graph, node, target)
-        updated = graph.get_node(node_id)
-        assert updated is not None
-        return _node_to_summary(updated)
-    finally:
-        graph.close()
-
-
-@mcp.tool()
-def milknado_todo_next(kind: str = "task", project_root: str = "") -> dict | None:
-    """Return the next runnable node (leaf with no incomplete prereqs)."""
-    node_kind = _parse_kind(kind)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
-    try:
-        node = graph.get_next_runnable(node_kind)
-        return _node_to_summary(node) if node else None
-    finally:
-        graph.close()
-
-
 def main() -> None:
+    from milknado import mcp_todo  # noqa: F401  -- registers todo tools on import
+
     mcp.run()

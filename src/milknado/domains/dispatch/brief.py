@@ -1,0 +1,72 @@
+"""Render a markdown brief for a task node, derived from the graph."""
+
+from __future__ import annotations
+
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.graph import MikadoGraph
+
+
+def _ancestor_chain(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:
+    chain: list[MikadoNode] = []
+    current = node
+    while current.parent_id is not None:
+        parent = graph.get_node(current.parent_id)
+        if parent is None:
+            break
+        chain.append(parent)
+        current = parent
+    chain.reverse()
+    return chain
+
+
+def _done_prereqs(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:
+    if node.parent_id is None:
+        return []
+    siblings = graph.get_children(node.parent_id)
+    return [s for s in siblings if s.id != node.id and s.status == NodeStatus.DONE]
+
+
+def _format_goal_context(chain: list[MikadoNode]) -> list[str]:
+    if not chain:
+        return ["(no parent goal)"]
+    return [
+        f"- [{a.kind.value} #{a.id}] {a.description}"
+        for a in chain
+        if a.kind in (NodeKind.ROADMAP, NodeKind.GOAL)
+    ] or ["(no parent goal)"]
+
+
+def render_brief(graph: MikadoGraph, node_id: int) -> str:
+    node = graph.get_node(node_id)
+    if node is None:
+        raise ValueError(f"node {node_id} not found")
+
+    chain = _ancestor_chain(graph, node)
+    done = _done_prereqs(graph, node)
+    files = graph.get_file_ownership(node_id)
+
+    lines = [f"# Task: {node.description}", "", "## Goal context"]
+    lines.extend(_format_goal_context(chain))
+    lines.append("")
+
+    lines.append("## Prerequisites already done")
+    if done:
+        lines.extend(f"- [#{d.id}] {d.description}" for d in done)
+    else:
+        lines.append("(none)")
+    lines.append("")
+
+    lines.append("## Relevant files")
+    if files:
+        lines.extend(f"- {f}" for f in files)
+    else:
+        lines.append("(no file hints registered)")
+    lines.append("")
+
+    lines.append("## Instructions")
+    lines.append(
+        "Complete the task above. Touch only files listed under "
+        "'Relevant files' unless others are clearly needed. "
+        "Report blockers in stdout if you cannot proceed."
+    )
+    return "\n".join(lines) + "\n"

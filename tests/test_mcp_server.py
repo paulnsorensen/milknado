@@ -5,11 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_server import (
-    _open_graph,
-    _project_root,
+from milknado.mcp_server import _open_graph, _project_root
+from milknado.mcp_todo import (
     milknado_todo_add,
+    milknado_todo_brief,
     milknado_todo_next,
+    milknado_todo_run,
     milknado_todo_set_status,
     milknado_todo_tree,
 )
@@ -193,3 +194,125 @@ class TestTodoTools:
             assert reloaded.kind == NodeKind.ROADMAP
         finally:
             graph.close()
+
+
+class TestTodoBriefAndRun:
+    def test_brief_includes_goal_chain_and_done_siblings(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        roadmap = _call(
+            milknado_todo_add, description="ship product", kind="roadmap", project_root=root
+        )
+        goal = _call(
+            milknado_todo_add,
+            description="ship v1",
+            kind="goal",
+            parent_id=roadmap["id"],
+            project_root=root,
+        )
+        done_sib = _call(
+            milknado_todo_add,
+            description="schema migration",
+            kind="task",
+            parent_id=goal["id"],
+            project_root=root,
+        )
+        _call(milknado_todo_set_status, node_id=done_sib["id"], status="done", project_root=root)
+        task = _call(
+            milknado_todo_add,
+            description="wire MCP tools",
+            kind="task",
+            parent_id=goal["id"],
+            project_root=root,
+        )
+
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        brief = result["brief"]
+        assert "# Task: wire MCP tools" in brief
+        assert "ship product" in brief
+        assert "ship v1" in brief
+        assert "schema migration" in brief
+        assert "(no file hints registered)" in brief
+
+    def test_brief_with_file_ownership_lists_files(self, tmp_path: Path) -> None:
+        graph, _cfg = _open_graph(tmp_path)
+        try:
+            from milknado.domains.common import NodeKind
+
+            node = graph.add_node("touch foo", kind=NodeKind.TASK)
+            graph.set_file_ownership(node.id, ["src/foo.py", "src/bar.py"])
+        finally:
+            graph.close()
+
+        result = _call(milknado_todo_brief, node_id=node.id, project_root=str(tmp_path))
+        assert "src/foo.py" in result["brief"]
+        assert "src/bar.py" in result["brief"]
+        assert set(result["files"]) == {"src/foo.py", "src/bar.py"}
+
+    def test_brief_unknown_node_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(milknado_todo_brief, node_id=42, project_root=str(tmp_path))
+
+    def test_run_success_marks_done_and_writes_log(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="echo task", kind="task", project_root=root)
+        result = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert result["status"] == "done"
+        assert result["exit_code"] == 0
+        assert result["timed_out"] is False
+        assert "# Task: echo task" in result["summary"]
+        assert Path(result["log_path"]).exists()
+
+    def test_run_nonzero_exit_marks_failed(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="bad task", kind="task", project_root=root)
+        result = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="false",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert result["status"] == "failed"
+        assert result["exit_code"] != 0
+
+    def test_run_timeout_marks_failed(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="slow", kind="task", project_root=root)
+        result = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="sleep 5",
+            timeout_seconds=1,
+            project_root=root,
+        )
+        assert result["status"] == "failed"
+        assert result["timed_out"] is True
+
+    def test_run_unknown_node_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_todo_run,
+                node_id=99,
+                worker_cmd="cat",
+                timeout_seconds=5,
+                project_root=str(tmp_path),
+            )
+
+    def test_run_uses_env_worker_cmd_when_arg_omitted(self, tmp_path: Path, monkeypatch) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        result = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert result["status"] == "done"
+        assert "# Task: t" in result["summary"]
