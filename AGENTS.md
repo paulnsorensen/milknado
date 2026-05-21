@@ -50,3 +50,13 @@ Milknado is a Mikado execution engine — it decomposes goals into dependency gr
 ## No Migration Code
 
 This project is pre-release. Do not add migration backfills, deprecation shims, or compatibility layers.
+
+## Cloud Environment Persistence
+
+When running in an ephemeral cloud environment (e.g. Claude Code on the web), the container is reclaimed on timeout and any uncommitted files are lost. To survive a timeout:
+
+1. **Commit everything in progress to the working branch**, including normally-gitignored files (use `git add -f` for ignored paths). This includes `.milknado/milknado.db` if mid-run — the schema auto-migrates on load (`CREATE TABLE IF NOT EXISTS` + `ensure_schema()` in `src/milknado/domains/graph/graph.py`) and stores only relative paths, so the db spins back up cleanly in a fresh container.
+2. **Push immediately** so the state lives on the remote, not just the container.
+3. **Before opening a PR**, remove any force-added ignored files in a cleanup commit (or interactively rebase them out). The final PR diff must not contain `.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, `.venv/`, caches, or anything else listed in `.gitignore`.
+
+Treat force-added ignored files as scratch state — useful for resuming work, never part of the merged history.
