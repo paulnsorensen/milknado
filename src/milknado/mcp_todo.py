@@ -5,7 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.dispatch import render_brief, run_headless
+from milknado.domains.dispatch import (
+    poll_async_run,
+    render_brief,
+    run_headless,
+    start_headless_async,
+)
 from milknado.mcp_server import _open_graph, _project_root, mcp
 
 _TODO_STATUS_MAP = {
@@ -183,3 +188,65 @@ def milknado_todo_run(
         return _run_and_update_status(graph, node_id, root, worker_cmd, timeout_seconds)
     finally:
         graph.close()
+
+
+@mcp.tool()
+def milknado_todo_run_start(
+    node_id: int,
+    worker_cmd: str | None = None,
+    timeout_seconds: int = 600,
+    project_root: str = "",
+) -> dict:
+    """Start a worker asynchronously; returns immediately with a run_id for polling.
+
+    Refuses if the node is already running. Use milknado_todo_run_poll(run_id) to
+    check progress; node status is reconciled to done/failed on the first poll
+    after the worker exits.
+    """
+    root = _project_root(project_root or None)
+    graph, _cfg = _open_graph(root)
+    try:
+        node = graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"node {node_id} not found")
+        if node.status == NodeStatus.RUNNING:
+            raise ValueError(
+                f"node {node_id} is already running; set status back to pending to retry"
+            )
+        brief = render_brief(graph, node_id)
+        if node.status == NodeStatus.PENDING:
+            graph.mark_running(node_id)
+        ref = start_headless_async(root, node_id, brief, worker_cmd, timeout_seconds)
+        return {
+            "run_id": ref.run_id,
+            "node_id": node_id,
+            "status": "running",
+            "log_path": str(ref.log_path),
+            "state_path": str(ref.state_path),
+        }
+    finally:
+        graph.close()
+
+
+def _reconcile_node_status(graph, node_id: int, run_status: str) -> None:
+    node = graph.get_node(node_id)
+    if node is None:
+        return
+    if run_status == "done" and node.status != NodeStatus.DONE:
+        graph.mark_done(node_id)
+    elif run_status == "failed" and node.status != NodeStatus.FAILED:
+        graph.mark_failed(node_id)
+
+
+@mcp.tool()
+def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
+    """Poll an async run; reconciles node status to done/failed once the worker exits."""
+    root = _project_root(project_root or None)
+    state = poll_async_run(root, run_id)
+    if state["status"] in ("done", "failed"):
+        graph, _cfg = _open_graph(root)
+        try:
+            _reconcile_node_status(graph, state["node_id"], state["status"])
+        finally:
+            graph.close()
+    return state

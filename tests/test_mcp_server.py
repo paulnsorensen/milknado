@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -11,9 +12,22 @@ from milknado.mcp_todo import (
     milknado_todo_brief,
     milknado_todo_next,
     milknado_todo_run,
+    milknado_todo_run_poll,
+    milknado_todo_run_start,
     milknado_todo_set_status,
     milknado_todo_tree,
 )
+
+
+def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = _call(milknado_todo_run_poll, run_id=run_id, project_root=project_root)
+        if last["status"] in ("done", "failed"):
+            return last
+        time.sleep(0.05)
+    raise AssertionError(f"run {run_id} did not finish; last state={last}")
 
 
 def _call(tool, **kwargs):
@@ -316,3 +330,116 @@ class TestTodoBriefAndRun:
         )
         assert result["status"] == "done"
         assert "# Task: t" in result["summary"]
+
+
+class TestTodoAsyncRun:
+    def test_start_returns_run_id_and_marks_running(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-cat", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert started["status"] == "running"
+        assert started["run_id"].startswith(f"node-{task['id']}-")
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["status"] == "running"
+
+    def test_poll_reconciles_to_done_after_worker_finishes(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-done", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        final = _wait_for_terminal(started["run_id"], root)
+        assert final["status"] == "done"
+        assert final["exit_code"] == 0
+        assert final["timed_out"] is False
+        assert "# Task: async-done" in final["summary"]
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["status"] == "done"
+
+    def test_poll_reconciles_to_failed_on_nonzero(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-fail", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="false",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        final = _wait_for_terminal(started["run_id"], root)
+        assert final["status"] == "failed"
+        assert final["exit_code"] != 0
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["status"] == "failed"
+
+    def test_poll_reconciles_to_failed_on_timeout(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-slow", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="sleep 30",
+            timeout_seconds=1,
+            project_root=root,
+        )
+        final = _wait_for_terminal(started["run_id"], root, timeout=5.0)
+        assert final["status"] == "failed"
+        assert final["timed_out"] is True
+
+    def test_start_refuses_when_node_already_running(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="x", kind="task", project_root=root)
+        _call(
+            milknado_todo_set_status, node_id=task["id"], status="in_progress", project_root=root
+        )
+        with pytest.raises(ValueError, match="already running"):
+            _call(
+                milknado_todo_run_start,
+                node_id=task["id"],
+                worker_cmd="cat",
+                timeout_seconds=10,
+                project_root=root,
+            )
+
+    def test_start_unknown_node_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_todo_run_start,
+                node_id=42,
+                worker_cmd="cat",
+                timeout_seconds=10,
+                project_root=str(tmp_path),
+            )
+
+    def test_poll_unknown_run_id_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_todo_run_poll,
+                run_id="node-1-doesnotexist",
+                project_root=str(tmp_path),
+            )
+
+    def test_poll_returns_running_while_worker_in_flight(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-sleep", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="sleep 2",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        immediate = _call(milknado_todo_run_poll, run_id=started["run_id"], project_root=root)
+        assert immediate["status"] == "running"
+        assert immediate["exit_code"] is None
+        _wait_for_terminal(started["run_id"], root, timeout=5.0)
