@@ -2,6 +2,7 @@ from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
     RunResult,
+    fail_stale_running_runs,
     find_terminal_runs_for_node,
     poll_async_run,
     run_headless,
@@ -11,6 +12,7 @@ from milknado.domains.dispatch.runner import (
 __all__ = [
     "AsyncStartRef",
     "RunResult",
+    "fail_stale_running_runs",
     "find_terminal_runs_for_node",
     "poll_async_run",
     "render_brief",

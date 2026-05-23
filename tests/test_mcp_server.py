@@ -140,6 +140,64 @@ class TestTodoTools:
         )
         assert done["status"] == "done"
 
+    def test_set_status_blocked_to_done_routes_through_pending(self, tmp_path: Path) -> None:
+        """The facade exposes blocked->done, but the state machine only allows
+        BLOCKED->PENDING; the tool must step through pending/running to land done."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
+        _call(milknado_todo_set_status, node_id=task["id"], status="blocked", project_root=root)
+        done = _call(
+            milknado_todo_set_status, node_id=task["id"], status="done", project_root=root
+        )
+        assert done["status"] == "done"
+
+    def test_set_status_idempotent_set_is_noop(self, tmp_path: Path) -> None:
+        """Re-setting a node to its current status must not raise InvalidTransition."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
+        _call(milknado_todo_set_status, node_id=task["id"], status="blocked", project_root=root)
+        again = _call(
+            milknado_todo_set_status, node_id=task["id"], status="blocked", project_root=root
+        )
+        assert again["status"] == "blocked"
+
+    def test_set_status_reopening_done_node_raises(self, tmp_path: Path) -> None:
+        """Reopening a completed node stays disallowed by the state machine."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
+        _call(milknado_todo_set_status, node_id=task["id"], status="done", project_root=root)
+        with pytest.raises(Exception):  # noqa: B017 - InvalidTransition from the state machine
+            _call(
+                milknado_todo_set_status,
+                node_id=task["id"],
+                status="in_progress",
+                project_root=root,
+            )
+
+    def test_tree_materialises_nested_structure(self, tmp_path: Path) -> None:
+        """The single-scan children map must preserve multi-level nesting."""
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        t1 = _call(
+            milknado_todo_add,
+            description="t1",
+            kind="task",
+            parent_id=goal["id"],
+            project_root=root,
+        )
+        _call(
+            milknado_todo_add,
+            description="t1a",
+            kind="task",
+            parent_id=t1["id"],
+            project_root=root,
+        )
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert len(tree) == 1
+        assert tree[0]["description"] == "goal"
+        assert [c["description"] for c in tree[0]["children"]] == ["t1"]
+        assert [c["description"] for c in tree[0]["children"][0]["children"]] == ["t1a"]
+
     def test_set_status_invalid_value_raises(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
@@ -518,6 +576,110 @@ class TestTodoAsyncRun:
         )
         assert second["run_id"] != first["run_id"]
         _wait_for_terminal(second["run_id"], root, timeout=3.0)
+
+    def test_fail_stale_running_runs_flips_orphaned_run(self, tmp_path: Path) -> None:
+        """A 'running' state file past its timeout (worker thread vanished
+        without writing a terminal state) is flipped to failed."""
+        from datetime import UTC, datetime, timedelta
+
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        run_id = "node-7-20200101T000000Z-abcd"
+        state_path = runs_dir / f"{run_id}.state.json"
+        stale_started = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
+        state_path.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "node_id": 7,
+                    "started_at": stale_started,
+                    "log_path": str(runs_dir / f"{run_id}.log"),
+                    "timeout_seconds": 10,
+                    "status": "running",
+                    "exit_code": None,
+                    "timed_out": False,
+                    "ended_at": None,
+                }
+            )
+        )
+        flipped = fail_stale_running_runs(root, 7)
+        assert len(flipped) == 1
+        assert flipped[0]["status"] == "failed"
+        assert json.loads(state_path.read_text())["status"] == "failed"
+
+    def test_fail_stale_running_runs_leaves_fresh_run_untouched(self, tmp_path: Path) -> None:
+        """A 'running' run still within its timeout window must not be flipped."""
+        from datetime import UTC, datetime
+
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        run_id = "node-8-20200101T000000Z-beef"
+        state_path = runs_dir / f"{run_id}.state.json"
+        state_path.write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "node_id": 8,
+                    "started_at": datetime.now(UTC).isoformat(),
+                    "log_path": str(runs_dir / f"{run_id}.log"),
+                    "timeout_seconds": 600,
+                    "status": "running",
+                    "exit_code": None,
+                    "timed_out": False,
+                    "ended_at": None,
+                }
+            )
+        )
+        assert fail_stale_running_runs(root, 8) == []
+        assert json.loads(state_path.read_text())["status"] == "running"
+
+    def test_start_releases_node_locked_by_stale_run(self, tmp_path: Path) -> None:
+        """run_start sweeps a stale 'running' run so a node stuck on RUNNING
+        (worker thread vanished) is not locked out forever."""
+        from datetime import UTC, datetime, timedelta
+
+        from milknado.domains.dispatch.runner import _runs_dir
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="stale", kind="task", project_root=root)
+        graph, _cfg = open_graph(Path(root))
+        try:
+            graph.mark_running(task["id"])
+        finally:
+            graph.close()
+        runs_dir = _runs_dir(Path(root))
+        run_id = f"node-{task['id']}-20200101T000000Z-dead"
+        stale_started = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
+        (runs_dir / f"{run_id}.state.json").write_text(
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "node_id": task["id"],
+                    "started_at": stale_started,
+                    "log_path": str(runs_dir / f"{run_id}.log"),
+                    "timeout_seconds": 10,
+                    "status": "running",
+                    "exit_code": None,
+                    "timed_out": False,
+                    "ended_at": None,
+                }
+            )
+        )
+        # Must NOT raise "already running" — the stale run is reconciled first.
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="sh -c 'exit 1'",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert started["run_id"] != run_id
+        final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        assert final["status"] == "failed"
 
 
 class TestSchemaMigration:

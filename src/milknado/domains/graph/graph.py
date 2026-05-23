@@ -134,6 +134,22 @@ class MikadoGraph:
         ).fetchall()
         return [row_to_node(r) for r in rows]
 
+    def get_children_map(self) -> dict[int, list[MikadoNode]]:
+        """Map parent_id -> child nodes from a single nodes+edges scan.
+
+        Lets callers materialise an entire subtree without issuing one
+        get_children query per node (the N+1 pattern).
+        """
+        nodes = {n.id: n for n in self.get_all_nodes()}
+        mapping: dict[int, list[MikadoNode]] = {}
+        for parent_id, child_id in self._conn.execute(
+            "SELECT parent_id, child_id FROM edges"
+        ).fetchall():
+            child = nodes.get(child_id)
+            if child is not None:
+                mapping.setdefault(parent_id, []).append(child)
+        return mapping
+
     def get_leaves(self) -> list[MikadoNode]:
         rows = self._conn.execute(
             "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"

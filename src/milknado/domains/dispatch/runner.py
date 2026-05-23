@@ -16,6 +16,9 @@ from pathlib import Path
 _DEFAULT_WORKER_CMD = "claude -p"
 _SUMMARY_TAIL_BYTES = 2000
 _RUN_ID_RE = re.compile(r"^node-\d+-\d{8}T\d{6}Z-[0-9a-f]+$")
+# Grace beyond a run's own timeout before a still-"running" state file is
+# treated as orphaned by a vanished worker thread (e.g. the server crashed).
+_STALE_GRACE_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -185,6 +188,7 @@ def start_headless_async(
         "node_id": node_id,
         "started_at": _now_iso(),
         "log_path": str(log_path),
+        "timeout_seconds": timeout_seconds,
     }
     _write_state(
         state_path,
@@ -214,6 +218,50 @@ def poll_async_run(project_root: Path, run_id: str) -> dict:
     log_path = Path(state["log_path"])
     state["summary"] = _tail(log_path, _SUMMARY_TAIL_BYTES)
     return state
+
+
+def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
+    """Flip this node's orphaned "running" state files to "failed".
+
+    The async worker runs in a daemon thread; if the server process dies
+    mid-run the thread dies with it and never writes a terminal state, leaving
+    the state file stuck on "running" and the node locked on RUNNING forever
+    (orphan reconciliation only recovers runs that reached done/failed). A run
+    still "running" past its own timeout plus a grace margin can only mean the
+    thread vanished — `_execute` kills and reaps the subprocess at timeout, so
+    a live worker always reaches a terminal write. Mark such runs failed so the
+    caller's reconciliation can release the node. Returns the runs it flipped.
+    """
+    now = datetime.now(UTC)
+    flipped: list[dict] = []
+    for state_path in _runs_dir(project_root).glob(f"node-{node_id}-*.state.json"):
+        try:
+            state = _read_state(state_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if state.get("status") != "running":
+            continue
+        started_at = state.get("started_at")
+        timeout = state.get("timeout_seconds")
+        if not started_at or timeout is None:
+            continue
+        try:
+            started = datetime.fromisoformat(started_at)
+        except ValueError:
+            continue
+        if (now - started).total_seconds() <= timeout + _STALE_GRACE_SECONDS:
+            continue
+        failed = {
+            **state,
+            "status": "failed",
+            "exit_code": -1,
+            "timed_out": False,
+            "ended_at": _now_iso(),
+            "error": "worker vanished before writing terminal state (stale running run)",
+        }
+        _write_state(state_path, failed)
+        flipped.append(failed)
+    return flipped
 
 
 def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:

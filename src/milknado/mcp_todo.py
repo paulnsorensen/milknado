@@ -6,6 +6,7 @@ from pathlib import Path
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.dispatch import (
+    fail_stale_running_runs,
     find_terminal_runs_for_node,
     poll_async_run,
     render_brief,
@@ -45,14 +46,29 @@ def _node_to_summary(node: MikadoNode) -> dict:
     }
 
 
-def _build_subtree(graph, node: MikadoNode) -> dict:
+def _build_subtree(node: MikadoNode, children_map: dict[int, list[MikadoNode]]) -> dict:
     payload = _node_to_summary(node)
-    payload["children"] = [_build_subtree(graph, c) for c in graph.get_children(node.id)]
+    payload["children"] = [_build_subtree(c, children_map) for c in children_map.get(node.id, [])]
     return payload
 
 
 def _apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:
-    if target == NodeStatus.DONE and node.status == NodeStatus.PENDING:
+    """Move a node to one of the todo facade's statuses.
+
+    The facade exposes pending/in_progress/blocked/done, but the underlying
+    state machine only allows BLOCKED -> PENDING and forbids PENDING -> DONE
+    directly. Step through PENDING/RUNNING as needed so every reachable facade
+    status is reachable. Setting a node to its current status is a no-op.
+    Reopening a DONE node is intentionally disallowed and still raises
+    InvalidTransition.
+    """
+    current = node.status
+    if current == target:
+        return
+    if current == NodeStatus.BLOCKED and target in (NodeStatus.RUNNING, NodeStatus.DONE):
+        graph.mark_pending(node.id)
+        current = NodeStatus.PENDING
+    if target == NodeStatus.DONE and current == NodeStatus.PENDING:
         graph.mark_running(node.id)
     dispatch = {
         NodeStatus.PENDING: graph.mark_pending,
@@ -69,12 +85,13 @@ def milknado_todo_tree(project_root: str = "", root_id: int | None = None) -> li
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
+        children_map = graph.get_children_map()
         if root_id is not None:
             node = graph.get_node(root_id)
             if node is None:
                 raise ValueError(f"node {root_id} not found")
-            return [_build_subtree(graph, node)]
-        return [_build_subtree(graph, n) for n in graph.get_roots()]
+            return [_build_subtree(node, children_map)]
+        return [_build_subtree(n, children_map) for n in graph.get_roots()]
     finally:
         graph.close()
 
@@ -214,7 +231,11 @@ def milknado_todo_run_start(
             # Before refusing, reconcile any orphaned terminal runs for this
             # node — a prior worker may have finished without anyone polling,
             # leaving the node status stuck on RUNNING. Without this the node
-            # is locked out forever.
+            # is locked out forever. Also sweep runs stuck on "running" past
+            # their timeout: the worker thread vanished (e.g. server crash)
+            # without writing a terminal state, which would lock the node
+            # just as permanently.
+            fail_stale_running_runs(root, node_id)
             for state in find_terminal_runs_for_node(root, node_id):
                 _reconcile_node_status(graph, node_id, state["status"])
             node = graph.get_node(node_id)
