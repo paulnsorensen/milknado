@@ -6,6 +6,10 @@
     },
     "code-review-graph": {
       "command": "code-review-graph"
+    },
+    "milknado": {
+      "command": "uv",
+      "args": ["run", "milknado-mcp"]
     }
   }
 }
