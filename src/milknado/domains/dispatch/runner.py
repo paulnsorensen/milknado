@@ -157,6 +157,9 @@ def _async_worker(
             with log_path.open("a", encoding="utf-8") as log_fh:
                 log_fh.write(f"\n--- async worker raised: {type(exc).__name__}: {exc} ---\n")
         except OSError:
+            # Annotating the log is best-effort; the terminal state write below
+            # is what actually releases the node, so a log-write failure here is
+            # deliberately ignored.
             pass
         _write_state(
             state_path,

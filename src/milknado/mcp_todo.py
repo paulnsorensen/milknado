@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.dispatch import (
     fail_stale_running_runs,
@@ -13,7 +14,6 @@ from milknado.domains.dispatch import (
     run_headless,
     start_headless_async,
 )
-from milknado.mcp_server import mcp, open_graph, resolve_project_root
 
 _TODO_STATUS_MAP = {
     "pending": NodeStatus.PENDING,
