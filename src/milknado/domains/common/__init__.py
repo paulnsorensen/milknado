@@ -11,6 +11,7 @@ from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoEdge,
     MikadoNode,
+    NodeKind,
     NodeStatus,
     RebaseResult,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "MikadoEdge",
     "MikadoNode",
     "MilknadoConfig",
+    "NodeKind",
     "NodeStatus",
     "RebaseResult",
     "PluginHook",

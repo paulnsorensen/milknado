@@ -8,7 +8,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import MikadoNode, NodeStatus
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
@@ -29,7 +29,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             dispatched_at TEXT,
             completion_duration_seconds REAL,
             oversized INTEGER NOT NULL DEFAULT 0,
-            batch_index INTEGER
+            batch_index INTEGER,
+            kind TEXT NOT NULL DEFAULT 'task'
         );
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
@@ -70,6 +71,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE nodes ADD COLUMN completion_duration_seconds REAL",
         ),
         ("dispatched_at", "ALTER TABLE nodes ADD COLUMN dispatched_at TEXT"),
+        ("kind", "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'"),
     ]:
         if col not in columns:
             conn.execute(ddl)
@@ -85,6 +87,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     col = "completion_duration_seconds"
     duration = row[col] if col in keys else None
     completed_at_raw = row["completed_at"]
+    kind = NodeKind(row["kind"]) if "kind" in keys else NodeKind.TASK
     return MikadoNode(
         id=row["id"],
         description=row["description"],
@@ -99,6 +102,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         oversized=oversized,
         batch_index=batch_index,
         completion_duration_seconds=duration,
+        kind=kind,
     )
 
 

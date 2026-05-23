@@ -173,6 +173,17 @@ class TestGetReadyNodes:
         assert all(n.id != root.id for n in ready)
         assert len(ready) == 0
 
+    def test_all_roots_excluded_in_forest(self, graph: MikadoGraph) -> None:
+        # Every root must be excluded, not just one arbitrary get_root() pick —
+        # otherwise a second childless root leaks in as "ready".
+        r1 = graph.add_node("root1")
+        r2 = graph.add_node("root2")
+        leaf = graph.add_node("leaf", parent_id=r1.id)
+        ready_ids = {n.id for n in graph.get_ready_nodes()}
+        assert r1.id not in ready_ids
+        assert r2.id not in ready_ids
+        assert leaf.id in ready_ids
+
 
 class TestStatusTransitions:
     def test_pending_to_running(self, graph: MikadoGraph) -> None:
