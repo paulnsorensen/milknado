@@ -157,12 +157,12 @@ class MikadoGraph:
         return [row_to_node(r) for r in rows]
 
     def get_ready_nodes(self) -> list[MikadoNode]:
-        root = self.get_root()
+        root_ids = {r.id for r in self.get_roots()}
         ready = []
         for node in self.get_all_nodes():
             if node.status != NodeStatus.PENDING:
                 continue
-            if root is not None and node.id == root.id:
+            if node.id in root_ids:
                 continue
             children = self.get_children(node.id)
             if not children or all(c.status == NodeStatus.DONE for c in children):

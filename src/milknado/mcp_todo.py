@@ -158,6 +158,24 @@ def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
         graph.close()
 
 
+def _ensure_running(graph, node_id: int) -> bool:
+    """Move a node to RUNNING so a (re)run's terminal transition (RUNNING ->
+    DONE/FAILED) is always valid. BLOCKED/FAILED are reset through PENDING
+    first. A DONE node cannot be reopened by the state machine and is left
+    untouched — its prior result stands and callers must not record a new
+    terminal status for it. Returns True when the node is RUNNING afterward.
+    """
+    node = graph.get_node(node_id)
+    if node is None or node.status == NodeStatus.DONE:
+        return False
+    if node.status == NodeStatus.RUNNING:
+        return True
+    if node.status in (NodeStatus.BLOCKED, NodeStatus.FAILED):
+        graph.mark_pending(node_id)
+    graph.mark_running(node_id)
+    return True
+
+
 def _run_and_update_status(
     graph,
     node_id: int,
@@ -169,13 +187,13 @@ def _run_and_update_status(
     if node is None:
         raise ValueError(f"node {node_id} not found")
     brief = render_brief(graph, node_id)
-    if node.status == NodeStatus.PENDING:
-        graph.mark_running(node_id)
+    running = _ensure_running(graph, node_id)
     result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds)
-    if result.exit_code == 0 and not result.timed_out:
-        graph.mark_done(node_id)
-    else:
-        graph.mark_failed(node_id)
+    if running:
+        if result.exit_code == 0 and not result.timed_out:
+            graph.mark_done(node_id)
+        else:
+            graph.mark_failed(node_id)
     final = graph.get_node(node_id)
     assert final is not None
     return {
@@ -245,8 +263,10 @@ def milknado_todo_run_start(
                     f"node {node_id} is already running; set status back to pending to retry"
                 )
         brief = render_brief(graph, node_id)
-        if node.status == NodeStatus.PENDING:
-            graph.mark_running(node_id)
+        # Normalise to RUNNING before dispatch so the post-run poll
+        # reconciliation (RUNNING -> DONE/FAILED) is always a valid transition,
+        # even when re-running a node that was FAILED/BLOCKED from a prior run.
+        _ensure_running(graph, node_id)
         ref = start_headless_async(root, node_id, brief, worker_cmd, timeout_seconds)
         return {
             "run_id": ref.run_id,
@@ -261,11 +281,15 @@ def milknado_todo_run_start(
 
 def _reconcile_node_status(graph, node_id: int, run_status: str) -> None:
     node = graph.get_node(node_id)
-    if node is None:
+    # Only a RUNNING node can validly transition to a terminal status. Any other
+    # state (already terminal, or reset externally) is left alone so
+    # reconciliation never raises InvalidTransition — the first reconcile of a
+    # run wins, and a node taken out of RUNNING is not force-marked.
+    if node is None or node.status != NodeStatus.RUNNING:
         return
-    if run_status == "done" and node.status != NodeStatus.DONE:
+    if run_status == "done":
         graph.mark_done(node_id)
-    elif run_status == "failed" and node.status != NodeStatus.FAILED:
+    elif run_status == "failed":
         graph.mark_failed(node_id)
 
 

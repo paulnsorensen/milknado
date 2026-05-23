@@ -390,6 +390,29 @@ class TestTodoBriefAndRun:
         assert result["status"] == "done"
         assert "# Task: t" in result["summary"]
 
+    def test_run_reruns_failed_node_to_done(self, tmp_path: Path) -> None:
+        """A synchronous re-run of a FAILED node normalises to RUNNING before
+        recording the new terminal status, so the second run lands DONE instead
+        of raising InvalidTransition on the FAILED -> DONE mark."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="syncretry", kind="task", project_root=root)
+        failed = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="sh -c 'exit 1'",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert failed["status"] == "failed"
+        done = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert done["status"] == "done"
+
 
 class TestTodoAsyncRun:
     def test_start_returns_run_id_and_marks_running(self, tmp_path: Path) -> None:
@@ -680,6 +703,30 @@ class TestTodoAsyncRun:
         assert started["run_id"] != run_id
         final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
         assert final["status"] == "failed"
+
+    def test_run_start_reruns_failed_node_to_done(self, tmp_path: Path) -> None:
+        """A FAILED node re-run via run_start is normalised to RUNNING, so a
+        successful retry reconciles to DONE instead of raising InvalidTransition
+        in run_poll (FAILED -> DONE is not a valid direct transition)."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="retry", kind="task", project_root=root)
+        first = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="sh -c 'exit 1'",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert _wait_for_terminal(first["run_id"], root, timeout=3.0)["status"] == "failed"
+        second = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert _wait_for_terminal(second["run_id"], root, timeout=3.0)["status"] == "done"
+        assert _call(milknado_todo_tree, project_root=root)[0]["status"] == "done"
 
 
 class TestSchemaMigration:
