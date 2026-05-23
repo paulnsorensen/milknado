@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -494,13 +495,13 @@ class TestTodoAsyncRun:
             project_root=root,
         )
         # Wait for the worker thread to write the terminal state file.
+        # Read directly rather than via _wait_for_terminal — that helper polls
+        # through the MCP tool, which would auto-reconcile and defeat the test.
         state_path = Path(first["state_path"])
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
-            import json as _json
-
             if state_path.exists():
-                state = _json.loads(state_path.read_text())
+                state = json.loads(state_path.read_text())
                 if state["status"] in ("done", "failed"):
                     break
             time.sleep(0.05)

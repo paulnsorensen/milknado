@@ -148,11 +148,11 @@ def _async_worker(
     except Exception as exc:
         # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
         # write failures must not leave the state file stuck on "running" — that
-        # would silently lock out the node forever.
+        # would silently lock out the node forever. Append to the log so any
+        # partial subprocess output that did make it to disk is preserved.
         try:
-            log_path.write_text(
-                f"async worker raised: {type(exc).__name__}: {exc}\n", encoding="utf-8"
-            )
+            with log_path.open("a", encoding="utf-8") as log_fh:
+                log_fh.write(f"\n--- async worker raised: {type(exc).__name__}: {exc} ---\n")
         except OSError:
             pass
         _write_state(
