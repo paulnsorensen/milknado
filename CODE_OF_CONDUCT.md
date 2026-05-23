@@ -11,12 +11,13 @@ chat or events.
 ## Reporting
 
 Reports of behaviour that does not align with the Code of Conduct
-should be sent privately to the project maintainers via GitHub at:
+should be sent privately to the project maintainer by email at:
 
-> <https://github.com/paulnsorensen/milknado/issues/new>
+> <mailto:paulnsorensen@gmail.com>
 
 Please avoid public call-outs when a private report is possible. All
-reports will be reviewed and investigated promptly and fairly.
+reports will be reviewed and investigated promptly and fairly, and the
+reporter's identity will be kept confidential.
 
 ## Enforcement
 

@@ -59,7 +59,7 @@ NEW_FILE_LINES: dict[str, int] = {
 FLAT_COST: dict[str, int] = {"delete": 80, "rename": 120}
 HEADROOM: float = 1.25
 TIKTOKEN_BLOB_URL = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
-TIKTOKEN_CACHE_KEY = hashlib.sha1(TIKTOKEN_BLOB_URL.encode()).hexdigest()
+TIKTOKEN_CACHE_KEY = hashlib.sha1(TIKTOKEN_BLOB_URL.encode(), usedforsecurity=False).hexdigest()
 
 
 def _configure_tiktoken_cache() -> None:
@@ -68,11 +68,9 @@ def _configure_tiktoken_cache() -> None:
         os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_dir))
 
 
-_configure_tiktoken_cache()
-
-
 @functools.lru_cache(maxsize=1)
 def _get_encoder() -> tiktoken.Encoding:
+    _configure_tiktoken_cache()
     return tiktoken.get_encoding("cl100k_base")
 
 
