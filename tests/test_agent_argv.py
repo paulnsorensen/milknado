@@ -5,12 +5,25 @@ from unittest.mock import patch
 
 from milknado.domains.common import MilknadoConfig, default_config
 from milknado.domains.common.agent_argv import (
+    WORKER_ALLOWED_TOOLS,
     build_minimal_mcp_env,
     build_planning_subprocess,
     resolve_execution_agent_command,
     resolve_planning_agent_command,
 )
 from milknado.domains.common.config import load_config, save_config
+
+
+def test_worker_allowlist_grants_track_follow_up_not_delete_or_edit() -> None:
+    claude = WORKER_ALLOWED_TOOLS["claude"]
+    assert "mcp__milknado__milknado_track_follow_up" in claude
+    joined = ",".join(claude)
+    assert "delete_node" not in joined
+    assert "edit_node" not in joined
+
+
+def test_gemini_worker_allowlist_grants_track_follow_up() -> None:
+    assert "milknado_track_follow_up" in WORKER_ALLOWED_TOOLS["gemini"]
 
 
 def test_resolve_planning_uses_override() -> None:

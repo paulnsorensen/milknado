@@ -7,16 +7,21 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_server import open_graph, resolve_project_root
-from milknado.mcp_todo import (
-    milknado_todo_add,
-    milknado_todo_brief,
-    milknado_todo_next,
+from milknado.mcp_run import (
     milknado_todo_run,
     milknado_todo_run_poll,
     milknado_todo_run_start,
+)
+from milknado.mcp_server import open_graph, resolve_project_root
+from milknado.mcp_todo import (
+    milknado_delete_node,
+    milknado_edit_node,
+    milknado_todo_add,
+    milknado_todo_brief,
+    milknado_todo_next,
     milknado_todo_set_status,
     milknado_todo_tree,
+    milknado_track_follow_up,
 )
 
 
@@ -325,6 +330,12 @@ class TestTodoBriefAndRun:
         with pytest.raises(ValueError, match="not found"):
             _call(milknado_todo_brief, node_id=42, project_root=str(tmp_path))
 
+    def test_brief_instructs_worker_to_track_follow_ups(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="do thing", project_root=root)
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "milknado_track_follow_up" in result["brief"]
+
     def test_run_success_marks_done_and_writes_log(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="echo task", kind="task", project_root=root)
@@ -340,6 +351,18 @@ class TestTodoBriefAndRun:
         assert result["timed_out"] is False
         assert "# Task: echo task" in result["summary"]
         assert Path(result["log_path"]).exists()
+
+    def test_run_injects_node_id_into_worker_env(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="env task", kind="task", project_root=root)
+        result = _call(
+            milknado_todo_run,
+            node_id=task["id"],
+            worker_cmd="sh -c 'echo NODE=$MILKNADO_NODE_ID'",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert f"NODE={task['id']}" in result["summary"]
 
     def test_run_nonzero_exit_marks_failed(self, tmp_path: Path) -> None:
         root = str(tmp_path)
@@ -447,6 +470,22 @@ class TestTodoAsyncRun:
         assert "# Task: async-done" in final["summary"]
         tree = _call(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == "done"
+
+    def test_async_run_injects_node_id_into_worker_env(self, tmp_path: Path) -> None:
+        # The async path threads node_id through base_state into _execute; verify
+        # the worker subprocess sees MILKNADO_NODE_ID just like the sync path does.
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-env", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="sh -c 'echo NODE=$MILKNADO_NODE_ID'",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        final = _wait_for_terminal(started["run_id"], root)
+        assert final["status"] == "done"
+        assert f"NODE={task['id']}" in final["summary"]
 
     def test_poll_reconciles_to_failed_on_nonzero(self, tmp_path: Path) -> None:
         root = str(tmp_path)
@@ -780,3 +819,122 @@ class TestSchemaMigration:
             assert reloaded.kind == NodeKind.GOAL
         finally:
             graph.close()
+
+
+class TestTrackFollowUp:
+    def test_inserts_node_and_returns_summary(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        result = _call(milknado_track_follow_up, description="add retry", project_root=root)
+        assert result["description"] == "add retry"
+        assert result["kind"] == "task"
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert any(n["description"] == "add retry" for n in tree)
+
+    def test_defaults_parent_to_worker_node_id_env(self, tmp_path: Path, monkeypatch) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_todo_add, description="parent task", project_root=root)
+        monkeypatch.setenv("MILKNADO_NODE_ID", str(parent["id"]))
+        child = _call(milknado_track_follow_up, description="discovered work", project_root=root)
+        children = _call(milknado_todo_tree, project_root=root, root_id=parent["id"])[0][
+            "children"
+        ]
+        assert [c["id"] for c in children] == [child["id"]]
+
+    def test_blank_node_id_env_creates_root_level_node(self, tmp_path: Path, monkeypatch) -> None:
+        root = str(tmp_path)
+        monkeypatch.setenv("MILKNADO_NODE_ID", "")
+        result = _call(milknado_track_follow_up, description="rootish", project_root=root)
+        roots = _call(milknado_todo_tree, project_root=root)
+        assert any(n["id"] == result["id"] for n in roots)
+
+    def test_explicit_parent_overrides_worker_node_id_env(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # An explicit parent_id must win over MILKNADO_NODE_ID — the env default
+        # only fills in for the omitted case (parent_id is None).
+        root = str(tmp_path)
+        env_parent = _call(milknado_todo_add, description="env parent", project_root=root)
+        explicit = _call(milknado_todo_add, description="explicit parent", project_root=root)
+        monkeypatch.setenv("MILKNADO_NODE_ID", str(env_parent["id"]))
+        child = _call(
+            milknado_track_follow_up,
+            description="discovered",
+            parent_id=explicit["id"],
+            project_root=root,
+        )
+        under_explicit = _call(milknado_todo_tree, project_root=root, root_id=explicit["id"])[0][
+            "children"
+        ]
+        under_env = _call(milknado_todo_tree, project_root=root, root_id=env_parent["id"])[0][
+            "children"
+        ]
+        assert [c["id"] for c in under_explicit] == [child["id"]]
+        assert under_env == []
+
+    def test_malformed_node_id_env_raises(self, tmp_path: Path, monkeypatch) -> None:
+        # A corrupt MILKNADO_NODE_ID fails loud rather than silently dropping the
+        # parent link and creating a stray root node.
+        root = str(tmp_path)
+        monkeypatch.setenv("MILKNADO_NODE_ID", "not-an-int")
+        with pytest.raises(ValueError, match="invalid literal for int"):
+            _call(milknado_track_follow_up, description="orphan", project_root=root)
+
+    def test_invalid_kind_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        with pytest.raises(ValueError, match="invalid kind"):
+            _call(milknado_track_follow_up, description="x", kind="bogus", project_root=root)
+
+
+class TestDeleteAndEditTools:
+    def test_delete_leaf_returns_count_and_removes_node(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        result = _call(milknado_delete_node, node_id=task["id"], project_root=root)
+        assert result == {"deleted": 1}
+        assert _call(milknado_todo_tree, project_root=root) == []
+
+    def test_delete_node_with_children_without_cascade_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_todo_add, description="p", kind="goal", project_root=root)
+        _call(milknado_todo_add, description="c", parent_id=parent["id"], project_root=root)
+        with pytest.raises(ValueError, match="cascade"):
+            _call(milknado_delete_node, node_id=parent["id"], project_root=root)
+
+    def test_delete_cascade_removes_subtree(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_todo_add, description="p", kind="goal", project_root=root)
+        _call(milknado_todo_add, description="c", parent_id=parent["id"], project_root=root)
+        result = _call(milknado_delete_node, node_id=parent["id"], cascade=True, project_root=root)
+        assert result == {"deleted": 2}
+        assert _call(milknado_todo_tree, project_root=root) == []
+
+    def test_edit_description_updates_it(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="old", project_root=root)
+        result = _call(
+            milknado_edit_node, node_id=task["id"], description="new", project_root=root
+        )
+        assert result["description"] == "new"
+
+    def test_edit_kind_updates_it(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        result = _call(milknado_edit_node, node_id=task["id"], kind="goal", project_root=root)
+        assert result["kind"] == "goal"
+
+    def test_edit_with_no_fields_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        with pytest.raises(ValueError, match="nothing to edit"):
+            _call(milknado_edit_node, node_id=task["id"], project_root=root)
+
+    def test_edit_invalid_kind_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        with pytest.raises(ValueError, match="invalid kind"):
+            _call(milknado_edit_node, node_id=task["id"], kind="bogus", project_root=root)
+
+    def test_delete_unknown_node_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        with pytest.raises(ValueError, match="not found"):
+            _call(milknado_delete_node, node_id=999, project_root=root)

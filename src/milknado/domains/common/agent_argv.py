@@ -21,6 +21,7 @@ DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
 WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": (
         "mcp__tilth__*",
+        "mcp__milknado__milknado_track_follow_up",
         "Bash(rtk:*)",
         "Read",
         "Edit",
@@ -37,6 +38,7 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
         "tilth_deps",
         "tilth_diff",
         "tilth_edit",
+        "milknado_track_follow_up",
         "ShellTool(rtk *)",
         "read_file",
         "write_file",

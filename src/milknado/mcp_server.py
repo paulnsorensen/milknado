@@ -137,6 +137,6 @@ def milknado_plan_batches(
 
 
 def main() -> None:
-    from milknado import mcp_todo  # noqa: F401  -- registers todo tools on import
+    from milknado import mcp_run, mcp_todo  # noqa: F401  -- registers tools on import
 
     mcp.run()

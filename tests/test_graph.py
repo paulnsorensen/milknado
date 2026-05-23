@@ -39,6 +39,92 @@ class TestAddNode:
         assert {c.id for c in children} == {c1.id, c2.id}
 
 
+class TestDeleteNode:
+    def test_delete_leaf_removes_it(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("leaf")
+        assert graph.delete_node(node.id) == 1
+        assert graph.get_node(node.id) is None
+
+    def test_delete_leaf_removes_file_ownership(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("leaf")
+        graph.set_file_ownership(node.id, ["src/a.py"])
+        graph.delete_node(node.id)
+        assert graph.get_file_ownership(node.id) == []
+
+    def test_delete_node_with_children_without_cascade_raises(self, graph: MikadoGraph) -> None:
+        parent = graph.add_node("parent")
+        graph.add_node("child", parent_id=parent.id)
+        with pytest.raises(ValueError, match="cascade"):
+            graph.delete_node(parent.id)
+        assert graph.get_node(parent.id) is not None
+
+    def test_delete_cascade_removes_whole_subtree(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        grandchild = graph.add_node("grandchild", parent_id=child.id)
+        assert graph.delete_node(root.id, cascade=True) == 3
+        assert graph.get_node(root.id) is None
+        assert graph.get_node(child.id) is None
+        assert graph.get_node(grandchild.id) is None
+
+    def test_delete_cascade_diamond_deletes_shared_descendant_once(
+        self, graph: MikadoGraph
+    ) -> None:
+        # Diamond: root -> {left, right}; both left and right -> shared.
+        # The shared descendant is reachable via two paths; cascade must delete
+        # it exactly once rather than re-visiting it and raising mid-cascade.
+        root = graph.add_node("root")
+        left = graph.add_node("left", parent_id=root.id)
+        right = graph.add_node("right", parent_id=root.id)
+        shared = graph.add_node("shared", parent_id=left.id)
+        graph.add_edge(right.id, shared.id)
+
+        assert graph.delete_node(root.id, cascade=True) == 4
+        for node in (root, left, right, shared):
+            assert graph.get_node(node.id) is None
+
+    def test_delete_unknown_node_raises(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            graph.delete_node(999)
+
+
+class TestUpdateNode:
+    def test_update_description(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("old")
+        graph.update_node(node.id, description="new")
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.description == "new"
+
+    def test_update_kind(self, graph: MikadoGraph) -> None:
+        from milknado.domains.common import NodeKind
+
+        node = graph.add_node("n")
+        graph.update_node(node.id, kind=NodeKind.GOAL)
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.kind == NodeKind.GOAL
+
+    def test_update_both_fields_at_once(self, graph: MikadoGraph) -> None:
+        from milknado.domains.common import NodeKind
+
+        node = graph.add_node("old")
+        graph.update_node(node.id, description="new", kind=NodeKind.GOAL)
+        updated = graph.get_node(node.id)
+        assert updated is not None
+        assert updated.description == "new"
+        assert updated.kind == NodeKind.GOAL
+
+    def test_update_unknown_node_raises(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            graph.update_node(999, description="x")
+
+    def test_update_with_no_fields_raises(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("n")
+        with pytest.raises(ValueError, match="nothing to update"):
+            graph.update_node(node.id)
+
+
 class TestAddEdge:
     def test_explicit_edge(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")

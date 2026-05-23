@@ -87,9 +87,12 @@ def _read_state(state_path: Path) -> dict:
 
 
 def _execute(
-    project_root: Path, log_path: Path, brief: str, argv: list[str], timeout: int
+    project_root: Path, node_id: int, log_path: Path, brief: str, argv: list[str], timeout: int
 ) -> tuple[int, bool]:
     timed_out = False
+    # Make env explicit so the worker can attribute follow-up nodes it tracks
+    # back to the task it is running (milknado_track_follow_up reads this).
+    env = {**os.environ, "MILKNADO_NODE_ID": str(node_id)}
     with log_path.open("wb") as log_fh:
         proc = subprocess.Popen(
             argv,
@@ -97,6 +100,7 @@ def _execute(
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             cwd=str(project_root),
+            env=env,
         )
         try:
             proc.communicate(input=brief.encode("utf-8"), timeout=timeout)
@@ -117,7 +121,7 @@ def run_headless(
 ) -> RunResult:
     argv = _resolve_worker_cmd(worker_cmd)
     log_path = _log_path(project_root, node_id)
-    exit_code, timed_out = _execute(project_root, log_path, brief, argv, timeout_seconds)
+    exit_code, timed_out = _execute(project_root, node_id, log_path, brief, argv, timeout_seconds)
     return RunResult(
         exit_code=exit_code,
         log_path=log_path,
@@ -136,7 +140,9 @@ def _async_worker(
     base_state: dict,
 ) -> None:
     try:
-        exit_code, timed_out = _execute(project_root, log_path, brief, argv, timeout)
+        exit_code, timed_out = _execute(
+            project_root, base_state["node_id"], log_path, brief, argv, timeout
+        )
         terminal = "done" if exit_code == 0 and not timed_out else "failed"
         _write_state(
             state_path,

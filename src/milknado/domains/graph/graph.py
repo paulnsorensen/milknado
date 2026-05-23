@@ -15,6 +15,7 @@ from milknado.domains.common import (
 from milknado.domains.graph._persistence import (
     check_parallel_safety,
     create_tables,
+    delete_node,
     drop_all,
     ensure_schema,
     get_file_ownership,
@@ -27,6 +28,7 @@ from milknado.domains.graph._persistence import (
     set_dispatched_at,
     set_file_ownership,
     set_spec_hash,
+    update_node,
 )
 
 if TYPE_CHECKING:
@@ -93,6 +95,55 @@ class MikadoGraph:
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
+
+    def delete_node(self, node_id: int, cascade: bool = False) -> int:
+        """Delete a node, returning the count removed.
+
+        A node with children is refused unless cascade=True, which removes the
+        whole subtree post-order (children before parents) so no edge ever
+        dangles mid-delete. The subtree is a DAG, not a strict tree (diamond
+        wiring shares descendants), so the collect step dedups by id and each
+        node is deleted exactly once.
+        """
+        if self.get_node(node_id) is None:
+            raise ValueError(f"Node {node_id} not found")
+        children = self.get_children(node_id)
+        if children and not cascade:
+            raise ValueError(f"Node {node_id} has children; pass cascade=True to delete subtree")
+        ordered = self._collect_subtree_post_order(node_id)
+        for nid in ordered:
+            delete_node(self._conn, nid)
+        return len(ordered)
+
+    def _collect_subtree_post_order(self, node_id: int) -> list[int]:
+        """Return subtree ids in post-order (children before parents), each once.
+
+        Dedups shared descendants reachable via diamond wiring so a delete pass
+        touches every node exactly once and never re-visits an already-removed id.
+        """
+        visited: set[int] = set()
+        ordered: list[int] = []
+
+        def visit(nid: int) -> None:
+            if nid in visited:
+                return
+            visited.add(nid)
+            for child in self.get_children(nid):
+                visit(child.id)
+            ordered.append(nid)
+
+        visit(node_id)
+        return ordered
+
+    def update_node(
+        self,
+        node_id: int,
+        description: str | None = None,
+        kind: NodeKind | None = None,
+    ) -> None:
+        """Update description and/or kind on a node. Status stays governed by
+        the state machine and is not editable here."""
+        update_node(self._conn, node_id, description, kind)
 
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
