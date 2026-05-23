@@ -15,6 +15,12 @@ class NodeStatus(Enum):
     FAILED = "failed"
 
 
+class NodeKind(Enum):
+    ROADMAP = "roadmap"
+    GOAL = "goal"
+    TASK = "task"
+
+
 VALID_TRANSITIONS: dict[NodeStatus, set[NodeStatus]] = {
     NodeStatus.PENDING: {NodeStatus.RUNNING, NodeStatus.BLOCKED, NodeStatus.FAILED},
     NodeStatus.RUNNING: {
@@ -44,6 +50,7 @@ class MikadoNode:
     oversized: bool = False
     batch_index: int | None = None
     completion_duration_seconds: float | None = None
+    kind: NodeKind = NodeKind.TASK
 
 
 @dataclass(frozen=True)

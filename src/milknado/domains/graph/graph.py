@@ -9,6 +9,7 @@ from milknado.domains.common import (
     VALID_TRANSITIONS,
     MikadoEdge,
     MikadoNode,
+    NodeKind,
     NodeStatus,
 )
 from milknado.domains.graph._persistence import (
@@ -48,12 +49,13 @@ class MikadoGraph:
         *,
         oversized: bool = False,
         batch_index: int | None = None,
+        kind: NodeKind = NodeKind.TASK,
     ) -> MikadoNode:
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
-            "(description, status, parent_id, created_at, oversized, batch_index) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "(description, status, parent_id, created_at, oversized, batch_index, kind) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 description,
                 NodeStatus.PENDING.value,
@@ -61,6 +63,7 @@ class MikadoGraph:
                 now,
                 1 if oversized else 0,
                 batch_index,
+                kind.value,
             ),
         )
         self._conn.commit()
@@ -131,6 +134,22 @@ class MikadoGraph:
         ).fetchall()
         return [row_to_node(r) for r in rows]
 
+    def get_children_map(self) -> dict[int, list[MikadoNode]]:
+        """Map parent_id -> child nodes from a single nodes+edges scan.
+
+        Lets callers materialise an entire subtree without issuing one
+        get_children query per node (the N+1 pattern).
+        """
+        nodes = {n.id: n for n in self.get_all_nodes()}
+        mapping: dict[int, list[MikadoNode]] = {}
+        for parent_id, child_id in self._conn.execute(
+            "SELECT parent_id, child_id FROM edges"
+        ).fetchall():
+            child = nodes.get(child_id)
+            if child is not None:
+                mapping.setdefault(parent_id, []).append(child)
+        return mapping
+
     def get_leaves(self) -> list[MikadoNode]:
         rows = self._conn.execute(
             "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
@@ -138,12 +157,12 @@ class MikadoGraph:
         return [row_to_node(r) for r in rows]
 
     def get_ready_nodes(self) -> list[MikadoNode]:
-        root = self.get_root()
+        root_ids = {r.id for r in self.get_roots()}
         ready = []
         for node in self.get_all_nodes():
             if node.status != NodeStatus.PENDING:
                 continue
-            if root is not None and node.id == root.id:
+            if node.id in root_ids:
                 continue
             children = self.get_children(node.id)
             if not children or all(c.status == NodeStatus.DONE for c in children):
@@ -155,6 +174,19 @@ class MikadoGraph:
             "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
         ).fetchone()
         return row_to_node(row) if row else None
+
+    def get_roots(self) -> list[MikadoNode]:
+        rows = self._conn.execute(
+            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
+        ).fetchall()
+        return [row_to_node(r) for r in rows]
+
+    def get_next_runnable(self, kind: NodeKind | None = None) -> MikadoNode | None:
+        for node in self.get_ready_nodes():
+            if kind is not None and node.kind != kind:
+                continue
+            return node
+        return None
 
     def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
         from milknado.domains.common.errors import InvalidTransition

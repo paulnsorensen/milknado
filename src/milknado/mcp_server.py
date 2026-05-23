@@ -2,59 +2,21 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import cast
 
-from fastmcp import FastMCP
-
+from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import RelationshipReason
 
-mcp = FastMCP(
-    "Milknado",
-    instructions=(
-        "Mikado graph tools: list nodes and add prerequisite nodes. "
-        "Set MILKNADO_PROJECT_ROOT or pass project_root to target a repo.\n\n"
-        "Ephemeral cloud environments: if you are running in a container that "
-        "may be reclaimed on timeout (e.g. Claude Code on the web), persist "
-        "in-progress work to your branch before going idle. Force-commit "
-        "normally-gitignored state with `git add -f` — including "
-        "`.milknado/milknado.db`, which auto-migrates on load and stores only "
-        "relative paths, so it spins up cleanly in a fresh container — and "
-        "push to the working branch immediately. Before opening the final PR, "
-        "strip those force-added ignored files back out in a cleanup commit "
-        "(or interactive rebase): the merged diff must not contain "
-        "`.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, `.venv/`, "
-        "or anything else listed in `.gitignore`."
-    ),
-)
-
-
-def _project_root(explicit: str | None) -> Path:
-    if explicit and explicit.strip():
-        return Path(explicit).expanduser().resolve()
-    env = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
-    return Path.cwd().resolve()
-
-
-def _open_graph(root: Path):
-    from milknado.domains.common import default_config, load_config
-    from milknado.domains.graph import MikadoGraph
-
-    cfg_path = root / "milknado.toml"
-    cfg = load_config(cfg_path) if cfg_path.exists() else default_config(root)
-    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return MikadoGraph(cfg.db_path), cfg
+__all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
 
 
 @mcp.tool()
 def milknado_graph_summary(project_root: str = "") -> str:
     """Return Mikado nodes (id, status, description) for the given project."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         nodes = graph.get_all_nodes()
         if not nodes:
@@ -72,8 +34,8 @@ def milknado_add_node(
     project_root: str = "",
 ) -> str:
     """Add a Mikado node; optional parent_id links a prerequisite edge."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.add_node(description, parent_id=parent_id)
         return f"created node id={node.id} description={node.description!r}"
@@ -170,9 +132,11 @@ def milknado_plan_batches(
     new_relationships: list[dict] | None = None,
 ) -> dict:
     """Compute token-budgeted, precedence-respecting batches for changes."""
-    root = _project_root(project_root or None)
+    root = resolve_project_root(project_root or None)
     return _plan_batches_impl(changes, budget, root, new_relationships)
 
 
 def main() -> None:
+    from milknado import mcp_todo  # noqa: F401  -- registers todo tools on import
+
     mcp.run()
