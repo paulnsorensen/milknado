@@ -6,12 +6,13 @@ from pathlib import Path
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.dispatch import (
+    find_terminal_runs_for_node,
     poll_async_run,
     render_brief,
     run_headless,
     start_headless_async,
 )
-from milknado.mcp_server import _open_graph, _project_root, mcp
+from milknado.mcp_server import mcp, open_graph, resolve_project_root
 
 _TODO_STATUS_MAP = {
     "pending": NodeStatus.PENDING,
@@ -65,8 +66,8 @@ def _apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:
 @mcp.tool()
 def milknado_todo_tree(project_root: str = "", root_id: int | None = None) -> list[dict]:
     """Return the todo tree from root_id, or the forest of all top-level nodes."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         if root_id is not None:
             node = graph.get_node(root_id)
@@ -87,8 +88,8 @@ def milknado_todo_add(
 ) -> dict:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id."""
     node_kind = _parse_kind(kind)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
         return _node_to_summary(node)
@@ -100,8 +101,8 @@ def milknado_todo_add(
 def milknado_todo_set_status(node_id: int, status: str, project_root: str = "") -> dict:
     """Set todo status: pending | in_progress | blocked | done."""
     target = _parse_todo_status(status)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
         if node is None:
@@ -118,8 +119,8 @@ def milknado_todo_set_status(node_id: int, status: str, project_root: str = "") 
 def milknado_todo_next(kind: str = "task", project_root: str = "") -> dict | None:
     """Return the next runnable node (leaf with no incomplete prereqs)."""
     node_kind = _parse_kind(kind)
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.get_next_runnable(node_kind)
         return _node_to_summary(node) if node else None
@@ -130,8 +131,8 @@ def milknado_todo_next(kind: str = "task", project_root: str = "") -> dict | Non
 @mcp.tool()
 def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
     """Render a markdown brief for a task (description, ancestor goals, prereqs, files)."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         brief = render_brief(graph, node_id)
         files = graph.get_file_ownership(node_id)
@@ -182,8 +183,8 @@ def milknado_todo_run(
     worker_cmd defaults to $MILKNADO_WORKER_CMD then `claude -p`.
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     """
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         return _run_and_update_status(graph, node_id, root, worker_cmd, timeout_seconds)
     finally:
@@ -203,16 +204,25 @@ def milknado_todo_run_start(
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits.
     """
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
         if node.status == NodeStatus.RUNNING:
-            raise ValueError(
-                f"node {node_id} is already running; set status back to pending to retry"
-            )
+            # Before refusing, reconcile any orphaned terminal runs for this
+            # node — a prior worker may have finished without anyone polling,
+            # leaving the node status stuck on RUNNING. Without this the node
+            # is locked out forever.
+            for state in find_terminal_runs_for_node(root, node_id):
+                _reconcile_node_status(graph, node_id, state["status"])
+            node = graph.get_node(node_id)
+            assert node is not None
+            if node.status == NodeStatus.RUNNING:
+                raise ValueError(
+                    f"node {node_id} is already running; set status back to pending to retry"
+                )
         brief = render_brief(graph, node_id)
         if node.status == NodeStatus.PENDING:
             graph.mark_running(node_id)
@@ -241,10 +251,10 @@ def _reconcile_node_status(graph, node_id: int, run_status: str) -> None:
 @mcp.tool()
 def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
     """Poll an async run; reconciles node status to done/failed once the worker exits."""
-    root = _project_root(project_root or None)
+    root = resolve_project_root(project_root or None)
     state = poll_async_run(root, run_id)
     if state["status"] in ("done", "failed"):
-        graph, _cfg = _open_graph(root)
+        graph, _cfg = open_graph(root)
         try:
             _reconcile_node_status(graph, state["node_id"], state["status"])
         finally:

@@ -20,7 +20,7 @@ mcp = FastMCP(
 )
 
 
-def _project_root(explicit: str | None) -> Path:
+def resolve_project_root(explicit: str | None) -> Path:
     if explicit and explicit.strip():
         return Path(explicit).expanduser().resolve()
     env = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
@@ -29,7 +29,7 @@ def _project_root(explicit: str | None) -> Path:
     return Path.cwd().resolve()
 
 
-def _open_graph(root: Path):
+def open_graph(root: Path):
     from milknado.domains.common import default_config, load_config
     from milknado.domains.graph import MikadoGraph
 
@@ -42,8 +42,8 @@ def _open_graph(root: Path):
 @mcp.tool()
 def milknado_graph_summary(project_root: str = "") -> str:
     """Return Mikado nodes (id, status, description) for the given project."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         nodes = graph.get_all_nodes()
         if not nodes:
@@ -61,8 +61,8 @@ def milknado_add_node(
     project_root: str = "",
 ) -> str:
     """Add a Mikado node; optional parent_id links a prerequisite edge."""
-    root = _project_root(project_root or None)
-    graph, _cfg = _open_graph(root)
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
     try:
         node = graph.add_node(description, parent_id=parent_id)
         return f"created node id={node.id} description={node.description!r}"
@@ -159,7 +159,7 @@ def milknado_plan_batches(
     new_relationships: list[dict] | None = None,
 ) -> dict:
     """Compute token-budgeted, precedence-respecting batches for changes."""
-    root = _project_root(project_root or None)
+    root = resolve_project_root(project_root or None)
     return _plan_batches_impl(changes, budget, root, new_relationships)
 
 

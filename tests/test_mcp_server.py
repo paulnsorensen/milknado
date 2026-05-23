@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_server import _open_graph, _project_root
+from milknado.mcp_server import open_graph, resolve_project_root
 from milknado.mcp_todo import (
     milknado_todo_add,
     milknado_todo_brief,
@@ -38,7 +38,7 @@ def _call(tool, **kwargs):
 
 class TestMcpServer:
     def test_open_graph_creates_default_db_dir(self, tmp_path: Path) -> None:
-        graph, _cfg = _open_graph(tmp_path)
+        graph, _cfg = open_graph(tmp_path)
         try:
             assert graph.get_all_nodes() == []
         finally:
@@ -46,7 +46,7 @@ class TestMcpServer:
         assert (tmp_path / ".milknado" / "milknado.db").exists()
 
     def test_open_graph_and_add_node(self, tmp_path: Path) -> None:
-        graph, _cfg = _open_graph(tmp_path)
+        graph, _cfg = open_graph(tmp_path)
         try:
             node = graph.add_node("first task")
             nodes = graph.get_all_nodes()
@@ -61,15 +61,15 @@ class TestMcpServer:
         from_env = tmp_path / "from-env"
         monkeypatch.setenv("MILKNADO_PROJECT_ROOT", str(from_env))
 
-        assert _project_root(str(explicit)) == explicit.resolve()
-        assert _project_root(None) == from_env.resolve()
+        assert resolve_project_root(str(explicit)) == explicit.resolve()
+        assert resolve_project_root(None) == from_env.resolve()
 
     def test_project_root_falls_back_to_cwd(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.delenv("MILKNADO_PROJECT_ROOT", raising=False)
         old = Path.cwd()
         os.chdir(tmp_path)
         try:
-            assert _project_root(None) == tmp_path.resolve()
+            assert resolve_project_root(None) == tmp_path.resolve()
         finally:
             os.chdir(old)
 
@@ -198,7 +198,7 @@ class TestTodoTools:
         assert _call(milknado_todo_next, kind="task", project_root=root) is None
 
     def test_node_kind_persists_round_trip(self, tmp_path: Path) -> None:
-        graph, _cfg = _open_graph(tmp_path)
+        graph, _cfg = open_graph(tmp_path)
         try:
             from milknado.domains.common import NodeKind
 
@@ -248,7 +248,7 @@ class TestTodoBriefAndRun:
         assert "(no file hints registered)" in brief
 
     def test_brief_with_file_ownership_lists_files(self, tmp_path: Path) -> None:
-        graph, _cfg = _open_graph(tmp_path)
+        graph, _cfg = open_graph(tmp_path)
         try:
             from milknado.domains.common import NodeKind
 
@@ -425,7 +425,25 @@ class TestTodoAsyncRun:
         with pytest.raises(ValueError, match="not found"):
             _call(
                 milknado_todo_run_poll,
-                run_id="node-1-doesnotexist",
+                run_id="node-1-20260101T000000Z-abcd",
+                project_root=str(tmp_path),
+            )
+
+    @pytest.mark.parametrize(
+        "bad_run_id",
+        [
+            "../../etc/passwd",
+            "node-1-doesnotexist",
+            "",
+            "node-1-20260101T000000Z-../escape",
+            "../../../something.state",
+        ],
+    )
+    def test_poll_rejects_malformed_run_id(self, tmp_path: Path, bad_run_id: str) -> None:
+        with pytest.raises(ValueError, match="invalid run_id format"):
+            _call(
+                milknado_todo_run_poll,
+                run_id=bad_run_id,
                 project_root=str(tmp_path),
             )
 
@@ -443,3 +461,112 @@ class TestTodoAsyncRun:
         assert immediate["status"] == "running"
         assert immediate["exit_code"] is None
         _wait_for_terminal(started["run_id"], root, timeout=5.0)
+
+    def test_async_worker_spawn_failure_reaches_failed(self, tmp_path: Path) -> None:
+        """Bad worker_cmd must not leave the state file stuck on 'running'."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="bad-cmd", kind="task", project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="nonexistent-binary-xyz-12345",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        assert final["status"] == "failed"
+        assert final["exit_code"] == -1
+        assert "error" in final
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["status"] == "failed"
+
+    def test_start_reconciles_orphaned_terminal_runs(self, tmp_path: Path) -> None:
+        """If a worker finished but nobody polled, the next start should reconcile
+        and not be locked out by the RUNNING guard."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
+        # First run: succeeds, but we never poll → node stays RUNNING in the graph.
+        first = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        # Wait for the worker thread to write the terminal state file.
+        state_path = Path(first["state_path"])
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            import json as _json
+
+            if state_path.exists():
+                state = _json.loads(state_path.read_text())
+                if state["status"] in ("done", "failed"):
+                    break
+            time.sleep(0.05)
+        # Sanity: graph still thinks the node is running (no poll yet).
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["status"] == "running"
+        # Second start: should reconcile the orphan, then start a fresh run.
+        second = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd="cat",
+            timeout_seconds=10,
+            project_root=root,
+        )
+        assert second["run_id"] != first["run_id"]
+        _wait_for_terminal(second["run_id"], root, timeout=3.0)
+
+
+class TestSchemaMigration:
+    def test_mikado_graph_migrates_pre_kind_db(self, tmp_path: Path) -> None:
+        """A SQLite DB created before the `kind` column must be migrated by
+        MikadoGraph.__init__'s ensure_schema so that add_node's INSERT
+        (which includes `kind`) works on upgrade."""
+        import sqlite3
+
+        from milknado.domains.common import NodeKind
+
+        # Pre-populate the standard milknado db path with a pre-`kind` schema.
+        db_dir = tmp_path / ".milknado"
+        db_dir.mkdir()
+        db_path = db_dir / "milknado.db"
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                description TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                parent_id INTEGER,
+                worktree_path TEXT,
+                branch_name TEXT,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                oversized INTEGER NOT NULL DEFAULT 0,
+                batch_index INTEGER
+            );
+        """)
+        conn.execute(
+            "INSERT INTO nodes (description, created_at) VALUES (?, ?)",
+            ("legacy", "2026-01-01T00:00:00+00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        # Open MikadoGraph — its __init__ runs create_tables + ensure_schema,
+        # which must migrate the `kind` column onto the existing table.
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            # The legacy row reads back as TASK (default).
+            all_nodes = graph.get_all_nodes()
+            legacy_node = next(n for n in all_nodes if n.description == "legacy")
+            assert legacy_node.kind == NodeKind.TASK
+            # And a fresh add_node with a non-default kind must succeed
+            # (this is the INSERT that would fail without the migration).
+            node = graph.add_node("post-migration", kind=NodeKind.GOAL)
+            reloaded = graph.get_node(node.id)
+            assert reloaded is not None
+            assert reloaded.kind == NodeKind.GOAL
+        finally:
+            graph.close()

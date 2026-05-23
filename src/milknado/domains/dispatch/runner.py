@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import shlex
 import subprocess
@@ -14,6 +15,7 @@ from pathlib import Path
 
 _DEFAULT_WORKER_CMD = "claude -p"
 _SUMMARY_TAIL_BYTES = 2000
+_RUN_ID_RE = re.compile(r"^node-\d+-\d{8}T\d{6}Z-[0-9a-f]+$")
 
 
 @dataclass(frozen=True)
@@ -130,18 +132,40 @@ def _async_worker(
     timeout: int,
     base_state: dict,
 ) -> None:
-    exit_code, timed_out = _execute(project_root, log_path, brief, argv, timeout)
-    terminal = "done" if exit_code == 0 and not timed_out else "failed"
-    _write_state(
-        state_path,
-        {
-            **base_state,
-            "status": terminal,
-            "exit_code": exit_code,
-            "timed_out": timed_out,
-            "ended_at": _now_iso(),
-        },
-    )
+    try:
+        exit_code, timed_out = _execute(project_root, log_path, brief, argv, timeout)
+        terminal = "done" if exit_code == 0 and not timed_out else "failed"
+        _write_state(
+            state_path,
+            {
+                **base_state,
+                "status": terminal,
+                "exit_code": exit_code,
+                "timed_out": timed_out,
+                "ended_at": _now_iso(),
+            },
+        )
+    except Exception as exc:
+        # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
+        # write failures must not leave the state file stuck on "running" — that
+        # would silently lock out the node forever.
+        try:
+            log_path.write_text(
+                f"async worker raised: {type(exc).__name__}: {exc}\n", encoding="utf-8"
+            )
+        except OSError:
+            pass
+        _write_state(
+            state_path,
+            {
+                **base_state,
+                "status": "failed",
+                "exit_code": -1,
+                "timed_out": False,
+                "ended_at": _now_iso(),
+                "error": f"{type(exc).__name__}: {exc}",
+            },
+        )
 
 
 def start_headless_async(
@@ -181,6 +205,8 @@ def start_headless_async(
 
 
 def poll_async_run(project_root: Path, run_id: str) -> dict:
+    if not _RUN_ID_RE.match(run_id):
+        raise ValueError(f"invalid run_id format: {run_id!r}")
     state_path = _runs_dir(project_root) / f"{run_id}.state.json"
     if not state_path.exists():
         raise ValueError(f"run {run_id!r} not found")
@@ -188,3 +214,19 @@ def poll_async_run(project_root: Path, run_id: str) -> dict:
     log_path = Path(state["log_path"])
     state["summary"] = _tail(log_path, _SUMMARY_TAIL_BYTES)
     return state
+
+
+def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
+    """Scan the runs dir for state files whose node matches and which have reached
+    a terminal status. Used by callers that want to reconcile orphaned runs
+    (started, worker finished, but never polled — node still marked RUNNING)."""
+    runs_dir = _runs_dir(project_root)
+    out: list[dict] = []
+    for state_path in runs_dir.glob(f"node-{node_id}-*.state.json"):
+        try:
+            state = _read_state(state_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
+            out.append(state)
+    return out

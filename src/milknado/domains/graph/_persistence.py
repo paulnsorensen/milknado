@@ -71,6 +71,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "ALTER TABLE nodes ADD COLUMN completion_duration_seconds REAL",
         ),
         ("dispatched_at", "ALTER TABLE nodes ADD COLUMN dispatched_at TEXT"),
+        ("kind", "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'"),
     ]:
         if col not in columns:
             conn.execute(ddl)
