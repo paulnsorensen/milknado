@@ -38,6 +38,15 @@ class TestAddNode:
         children = graph.get_children(root.id)
         assert {c.id for c in children} == {c1.id, c2.id}
 
+    def test_add_node_rejects_nonexistent_parent_without_persisting(
+        self, graph: MikadoGraph
+    ) -> None:
+        # The node row commits before the edge, so a missing parent must be
+        # rejected up front rather than leaving a committed stray node.
+        with pytest.raises(ValueError, match="parent_id 999 not found"):
+            graph.add_node("orphan", parent_id=999)
+        assert graph.get_all_nodes() == []
+
 
 class TestDeleteNode:
     def test_delete_leaf_removes_it(self, graph: MikadoGraph) -> None:
@@ -86,6 +95,18 @@ class TestDeleteNode:
     def test_delete_unknown_node_raises(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="not found"):
             graph.delete_node(999)
+
+    def test_delete_nulls_dangling_parent_id_of_non_edge_child(self, graph: MikadoGraph) -> None:
+        # set_parent_id points parent_id at a node WITHOUT creating an edge
+        # (batching bridge). Deleting that parent must null the orphan's
+        # parent_id so no row references a deleted node.
+        parent = graph.add_node("parent")
+        orphan = graph.add_node("orphan")
+        graph.set_parent_id(orphan.id, parent.id)
+        graph.delete_node(parent.id)
+        refreshed = graph.get_node(orphan.id)
+        assert refreshed is not None
+        assert refreshed.parent_id is None
 
 
 class TestUpdateNode:

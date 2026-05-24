@@ -879,6 +879,20 @@ class TestTrackFollowUp:
         with pytest.raises(ValueError, match="invalid literal for int"):
             _call(milknado_track_follow_up, description="orphan", project_root=root)
 
+    def test_stale_valid_node_id_env_raises_and_persists_nothing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # A well-formed but stale MILKNADO_NODE_ID (points at a deleted node) must
+        # fail loud BEFORE inserting — never leave a committed stray node behind
+        # when the parent edge would fail its FK.
+        root = str(tmp_path)
+        gone = _call(milknado_todo_add, description="will be deleted", project_root=root)
+        _call(milknado_delete_node, node_id=gone["id"], project_root=root)
+        monkeypatch.setenv("MILKNADO_NODE_ID", str(gone["id"]))
+        with pytest.raises(ValueError, match="not found"):
+            _call(milknado_track_follow_up, description="orphan", project_root=root)
+        assert _call(milknado_todo_tree, project_root=root) == []
+
     def test_invalid_kind_raises(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         with pytest.raises(ValueError, match="invalid kind"):
