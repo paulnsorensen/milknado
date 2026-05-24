@@ -16,7 +16,6 @@ import os
 import shlex
 import subprocess
 import sys
-from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.common import NodeStatus
@@ -110,14 +109,28 @@ def milknado_ralph_run_start(
             "--timeout",
             str(timeout_seconds),
         ]
-        with log_path.open("wb") as log_fh:
-            subprocess.Popen(  # noqa: S603 — argv is built from validated parts
-                argv,
-                stdout=log_fh,
-                stderr=subprocess.STDOUT,
-                cwd=str(root),
-                start_new_session=True,
+        try:
+            with log_path.open("wb") as log_fh:
+                subprocess.Popen(  # noqa: S603 — argv is built from validated parts
+                    argv,
+                    stdout=log_fh,
+                    stderr=subprocess.STDOUT,
+                    cwd=str(root),
+                    start_new_session=True,
+                )
+        except OSError as exc:
+            # A bad runner_cmd or an unspawnable process would otherwise leave
+            # the state file stuck at "running" forever. Mark it terminal and
+            # re-raise so the caller sees a clean failure.
+            failed = read_state(state_path)
+            failed.update(
+                status="failed",
+                rebased=False,
+                detail=f"spawn failed: {type(exc).__name__}: {exc}",
+                ended_at=now_iso(),
             )
+            write_state(state_path, failed)
+            raise
         return {
             "run_id": run_id,
             "node_id": node_id,
@@ -140,9 +153,13 @@ def milknado_ralph_run_poll(run_id: str, project_root: str = "") -> dict:
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    state_path = runs_dir(root) / f"{run_id}.state.json"
+    rdir = runs_dir(root)
+    state_path = rdir / f"{run_id}.state.json"
     if not state_path.exists():
         raise ValueError(f"run {run_id!r} not found")
     state = read_state(state_path)
-    state["summary"] = tail(Path(state["log_path"]))
+    # Derive the log path from the validated run_id rather than trusting the
+    # stored field: no KeyError on a partial-write state, and no arbitrary-file
+    # read via a tampered log_path.
+    state["summary"] = tail(rdir / f"{run_id}.log")
     return state

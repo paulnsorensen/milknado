@@ -13,7 +13,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from milknado.domains.dispatch._runstate import now_iso, read_state, write_state
+from milknado.domains.dispatch._runstate import now_iso, read_state, runs_dir, write_state
 
 _logger = logging.getLogger("milknado")
 
@@ -31,7 +31,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         base = read_state(state_path)
     except (OSError, ValueError):
-        base = {"run_id": args.run_id, "node_id": args.node_id}
+        # Rebuild the same fields the MCP tool wrote so terminal writes below
+        # keep a stable schema (poll/consumers expect log_path/timeout_seconds).
+        base = {
+            "run_id": args.run_id,
+            "node_id": args.node_id,
+            "log_path": str(runs_dir(Path(args.project_root)) / f"{args.run_id}.log"),
+            "timeout_seconds": args.timeout,
+        }
 
     try:
         from milknado._mcp_core import open_graph
@@ -80,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if outcome.success else 1
     except Exception as exc:
         _logger.exception("ralph node runner failed for node %s", args.node_id)
+        msg = f"{type(exc).__name__}: {exc}"
         write_state(
             state_path,
             {
@@ -87,7 +95,10 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "failed",
                 "rebased": False,
                 "ended_at": now_iso(),
-                "error": f"{type(exc).__name__}: {exc}",
+                # `detail` is the documented poll contract field; keep `error`
+                # as an alias for callers that already read it.
+                "detail": msg,
+                "error": msg,
             },
         )
         return 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -147,3 +148,79 @@ def test_node_status_unaffected_by_start_until_runner_acts(tmp_path: Path) -> No
     )
     tree = _call(milknado_todo_tree, project_root=root)
     assert tree[0]["status"] == "pending"
+
+
+def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
+    """A runner_cmd that cannot be spawned must not leave the state stuck at
+    'running' forever: the spawn error is caught, the state turned terminal, and
+    the error re-raised so the caller sees a clean failure."""
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="badspawn", kind="task", project_root=root)
+    bad_cmd = str(tmp_path / "no-such-runner-binary")
+    with pytest.raises(OSError):
+        _call(
+            milknado_ralph_run_start,
+            node_id=task["id"],
+            runner_cmd=bad_cmd,
+            project_root=root,
+        )
+    states = list((tmp_path / ".milknado" / "runs").glob("*.state.json"))
+    assert len(states) == 1, "exactly one run-state file should have been written"
+    state = json.loads(states[0].read_text())
+    assert state["status"] == "failed"
+    assert state["rebased"] is False
+    assert "spawn failed" in state["detail"]
+    assert state["ended_at"] is not None
+
+
+def test_poll_survives_state_missing_log_path(tmp_path: Path) -> None:
+    """A partial-write state lacking 'log_path' must not crash poll with a
+    KeyError: the log path is derived from the validated run_id instead."""
+    root = str(tmp_path)
+    run_id = "node-1-20260101T000000Z-abcd"
+    rdir = tmp_path / ".milknado" / "runs"
+    rdir.mkdir(parents=True)
+    (rdir / f"{run_id}.state.json").write_text(json.dumps({"run_id": run_id, "status": "running"}))
+    state = _call(milknado_ralph_run_poll, run_id=run_id, project_root=root)
+    assert state["status"] == "running"
+    assert state["summary"] == ""  # derived log file absent -> empty tail, never KeyError
+
+
+def test_runner_crash_writes_detail_and_keeps_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the detached runner crashes before producing an outcome it must
+    surface the error under the documented 'detail' field, and a missing initial
+    state file must not drop log_path/timeout_seconds from the terminal schema."""
+    import milknado._mcp_core as mcp_core
+    from milknado import _ralph_node_runner
+
+    def _boom(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mcp_core, "open_graph", _boom)
+    run_id = "node-1-20260101T000000Z-abcd"
+    state_path = tmp_path / ".milknado" / "runs" / f"{run_id}.state.json"  # intentionally absent
+    rc = _ralph_node_runner.main(
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--state-path",
+            str(state_path),
+            "--timeout",
+            "12.5",
+        ]
+    )
+    assert rc == 1
+    state = json.loads(state_path.read_text())
+    assert state["status"] == "failed"
+    assert state["rebased"] is False
+    assert state["detail"] == "RuntimeError: boom"
+    assert state["error"] == state["detail"]
+    # fallback base must preserve the schema poll consumers rely on
+    assert state["log_path"].endswith(f"{run_id}.log")
+    assert state["timeout_seconds"] == 12.5
