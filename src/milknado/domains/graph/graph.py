@@ -6,14 +6,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
-    VALID_TRANSITIONS,
     MikadoEdge,
     MikadoNode,
     NodeKind,
     NodeStatus,
 )
+from milknado.domains.graph import _transitions
+from milknado.domains.graph._mutations import delete_subtree, update_node_fields
 from milknado.domains.graph._persistence import (
     check_parallel_safety,
+    children_id_map,
     create_tables,
     drop_all,
     ensure_schema,
@@ -51,6 +53,12 @@ class MikadoGraph:
         batch_index: int | None = None,
         kind: NodeKind = NodeKind.TASK,
     ) -> MikadoNode:
+        # Validate parent_id before inserting: the node row commits before the
+        # edge is added, so a nonexistent parent would otherwise leave a
+        # committed stray node when the edge FK insert fails (e.g. a stale
+        # MILKNADO_NODE_ID passed by milknado_track_follow_up).
+        if parent_id is not None and self.get_node(parent_id) is None:
+            raise ValueError(f"parent_id {parent_id} not found")
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
@@ -94,6 +102,24 @@ class MikadoGraph:
             raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
 
+    def delete_node(self, node_id: int, cascade: bool = False) -> int:
+        """Delete a node, returning the count removed.
+
+        A node with children is refused unless cascade=True, which removes the
+        whole subtree atomically (single transaction). See delete_subtree.
+        """
+        return delete_subtree(self._conn, node_id, cascade)
+
+    def update_node(
+        self,
+        node_id: int,
+        description: str | None = None,
+        kind: NodeKind | None = None,
+    ) -> None:
+        """Update description and/or kind on a node. Status stays governed by
+        the state machine and is not editable here."""
+        update_node_fields(self._conn, node_id, description, kind)
+
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
             raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
@@ -135,19 +161,17 @@ class MikadoGraph:
         return [row_to_node(r) for r in rows]
 
     def get_children_map(self) -> dict[int, list[MikadoNode]]:
-        """Map parent_id -> child nodes from a single nodes+edges scan.
+        """Map parent_id -> child nodes, reusing the persistence id-scan.
 
         Lets callers materialise an entire subtree without issuing one
         get_children query per node (the N+1 pattern).
         """
         nodes = {n.id: n for n in self.get_all_nodes()}
         mapping: dict[int, list[MikadoNode]] = {}
-        for parent_id, child_id in self._conn.execute(
-            "SELECT parent_id, child_id FROM edges"
-        ).fetchall():
-            child = nodes.get(child_id)
-            if child is not None:
-                mapping.setdefault(parent_id, []).append(child)
+        for parent_id, child_ids in children_id_map(self._conn).items():
+            kids = [nodes[cid] for cid in child_ids if cid in nodes]
+            if kids:
+                mapping[parent_id] = kids
         return mapping
 
     def get_leaves(self) -> list[MikadoNode]:
@@ -188,29 +212,8 @@ class MikadoGraph:
             return node
         return None
 
-    def _assert_transition(self, node_id: int, target: NodeStatus) -> None:
-        from milknado.domains.common.errors import InvalidTransition
-
-        node = self.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        allowed = VALID_TRANSITIONS.get(node.status, set())
-        if target not in allowed:
-            raise InvalidTransition(
-                node_id=node_id,
-                current=node.status,
-                target=target,
-                valid_targets=tuple(allowed),
-            )
-
     def _transition_status(self, node_id: int, target: NodeStatus) -> None:
-        self._assert_transition(node_id, target)
-        completed_at = datetime.now(UTC).isoformat() if target == NodeStatus.DONE else None
-        self._conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ?",
-            (target.value, completed_at, node_id),
-        )
-        self._conn.commit()
+        _transitions.transition_status(self._conn, node_id, target)
 
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
@@ -232,13 +235,7 @@ class MikadoGraph:
         return True
 
     def mark_failed(self, node_id: int) -> None:
-        self._assert_transition(node_id, NodeStatus.FAILED)
-        self._conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = NULL, "
-            "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
-            (NodeStatus.FAILED.value, node_id),
-        )
-        self._conn.commit()
+        _transitions.mark_failed(self._conn, node_id)
 
     def mark_running(
         self,
@@ -247,13 +244,7 @@ class MikadoGraph:
         branch_name: str | None = None,
         run_id: str | None = None,
     ) -> None:
-        self._assert_transition(node_id, NodeStatus.RUNNING)
-        self._conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = NULL, "
-            "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
-            (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id),
-        )
-        self._conn.commit()
+        _transitions.mark_running(self._conn, node_id, worktree_path, branch_name, run_id)
 
     def set_run_id(self, node_id: int, run_id: str) -> None:
         cur = self._conn.execute(
@@ -265,13 +256,7 @@ class MikadoGraph:
         self._conn.commit()
 
     def mark_pending(self, node_id: int) -> None:
-        self._assert_transition(node_id, NodeStatus.PENDING)
-        self._conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = NULL, "
-            "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
-            (NodeStatus.PENDING.value, node_id),
-        )
-        self._conn.commit()
+        _transitions.mark_pending(self._conn, node_id)
 
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)

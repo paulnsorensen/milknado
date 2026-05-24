@@ -1,5 +1,9 @@
 {
   "mcpServers": {
+    "milknado": {
+      "command": "uv",
+      "args": ["run", "milknado-mcp"]
+    },
     "tilth": {
       "command": "tilth",
       "args": ["--mcp"]
@@ -7,9 +11,15 @@
     "code-review-graph": {
       "command": "code-review-graph"
     },
-    "milknado": {
-      "command": "uv",
-      "args": ["run", "milknado-mcp"]
+    "serena": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--context=claude-code",
+        "--project-from-cwd",
+        "--enable-web-dashboard=false",
+        "--open-web-dashboard=false"
+      ]
     }
   }
 }

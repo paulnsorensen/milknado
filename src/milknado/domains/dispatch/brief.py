@@ -67,6 +67,9 @@ def render_brief(graph: MikadoGraph, node_id: int) -> str:
     lines.append(
         "Complete the task above. Touch only files listed under "
         "'Relevant files' unless others are clearly needed. "
-        "Report blockers in stdout if you cannot proceed."
+        "Report blockers in stdout if you cannot proceed. "
+        "If you discover follow-up work, register it by calling "
+        "milknado_track_follow_up with a one-line description rather than only "
+        "printing it."
     )
     return "\n".join(lines) + "\n"

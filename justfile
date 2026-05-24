@@ -124,6 +124,10 @@ plan-mock keep="0":
 mcp-server:
     uv run python -m milknado.mcp_server
 
+# Run the MCP server under a file watcher that restarts it on src/ changes
+mcp-dev:
+    uv run watchfiles "uv run milknado-mcp" src/milknado
+
 # Clean build artifacts and caches
 clean:
     rm -rf .pytest_cache .ruff_cache __pycache__ htmlcov .coverage

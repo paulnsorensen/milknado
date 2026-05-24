@@ -21,8 +21,13 @@ just test           # Run pytest (supports args: just test -k pattern)
 just test-file <f>  # Run a single test file
 just build          # Full pipeline with autofix — use this before every PR
 just build-ci       # Full pipeline no autofix — CI uses this
+just mcp-dev        # Run milknado-mcp under watchfiles, restarting on src/ changes
 just clean          # Remove build artifacts and caches
 ```
+
+`just mcp-dev` watches `src/milknado/` and restarts the MCP server on every change.
+Because the server speaks stdio, a restart drops the existing connection — the client
+must `/mcp` reconnect after each restart to pick up the new process.
 
 ## Project Overview
 

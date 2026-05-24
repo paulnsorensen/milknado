@@ -911,6 +911,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "watchfiles" },
 ]
 
 [package.metadata]
@@ -932,6 +933,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=7.1.0" },
     { name = "ruff", specifier = ">=0.15.13" },
     { name = "ty", specifier = ">=0.0.38" },
+    { name = "watchfiles", specifier = ">=1.2.0" },
 ]
 
 [[package]]
