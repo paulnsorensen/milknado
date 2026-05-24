@@ -106,6 +106,14 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     )
 
 
+def children_id_map(conn: sqlite3.Connection) -> dict[int, list[int]]:
+    """parent_id -> child_ids from a single edges scan (avoids per-node queries)."""
+    mapping: dict[int, list[int]] = {}
+    for parent_id, child_id in conn.execute("SELECT parent_id, child_id FROM edges").fetchall():
+        mapping.setdefault(parent_id, []).append(child_id)
+    return mapping
+
+
 def set_file_ownership(conn: sqlite3.Connection, node_id: int, files: list[str]) -> None:
     conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
     conn.executemany(

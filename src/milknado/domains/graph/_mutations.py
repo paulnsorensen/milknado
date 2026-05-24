@@ -9,14 +9,7 @@ from __future__ import annotations
 import sqlite3
 
 from milknado.domains.common import NodeKind
-
-
-def _children_map(conn: sqlite3.Connection) -> dict[int, list[int]]:
-    """parent_id -> child_ids from a single edges scan (avoids per-node queries)."""
-    mapping: dict[int, list[int]] = {}
-    for parent_id, child_id in conn.execute("SELECT parent_id, child_id FROM edges").fetchall():
-        mapping.setdefault(parent_id, []).append(child_id)
-    return mapping
+from milknado.domains.graph._persistence import children_id_map
 
 
 def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int) -> list[int]:
@@ -63,10 +56,17 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
     """
     if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
         raise ValueError(f"Node {node_id} not found")
-    children_map = _children_map(conn)
-    if children_map.get(node_id) and not cascade:
+    has_children = (
+        conn.execute("SELECT 1 FROM edges WHERE parent_id = ? LIMIT 1", (node_id,)).fetchone()
+        is not None
+    )
+    if has_children and not cascade:
         raise ValueError(f"Node {node_id} has children; pass cascade=True to delete subtree")
-    ordered = _collect_subtree_post_order(children_map, node_id)
+    if not has_children:
+        with conn:
+            _delete_one(conn, node_id)
+        return 1
+    ordered = _collect_subtree_post_order(children_id_map(conn), node_id)
     with conn:
         for nid in ordered:
             _delete_one(conn, nid)

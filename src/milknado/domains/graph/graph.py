@@ -15,6 +15,7 @@ from milknado.domains.graph import _transitions
 from milknado.domains.graph._mutations import delete_subtree, update_node_fields
 from milknado.domains.graph._persistence import (
     check_parallel_safety,
+    children_id_map,
     create_tables,
     drop_all,
     ensure_schema,
@@ -160,19 +161,17 @@ class MikadoGraph:
         return [row_to_node(r) for r in rows]
 
     def get_children_map(self) -> dict[int, list[MikadoNode]]:
-        """Map parent_id -> child nodes from a single nodes+edges scan.
+        """Map parent_id -> child nodes, reusing the persistence id-scan.
 
         Lets callers materialise an entire subtree without issuing one
         get_children query per node (the N+1 pattern).
         """
         nodes = {n.id: n for n in self.get_all_nodes()}
         mapping: dict[int, list[MikadoNode]] = {}
-        for parent_id, child_id in self._conn.execute(
-            "SELECT parent_id, child_id FROM edges"
-        ).fetchall():
-            child = nodes.get(child_id)
-            if child is not None:
-                mapping.setdefault(parent_id, []).append(child)
+        for parent_id, child_ids in children_id_map(self._conn).items():
+            kids = [nodes[cid] for cid in child_ids if cid in nodes]
+            if kids:
+                mapping[parent_id] = kids
         return mapping
 
     def get_leaves(self) -> list[MikadoNode]:
