@@ -19,7 +19,11 @@ import sys
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.common import NodeStatus
-from milknado.domains.dispatch import fail_stale_running_runs, find_terminal_runs_for_node
+from milknado.domains.dispatch import (
+    fail_stale_running_runs,
+    find_terminal_runs_for_node,
+    reconcile_node_status,
+)
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     make_run_id,
@@ -29,7 +33,6 @@ from milknado.domains.dispatch._runstate import (
     tail,
     write_state,
 )
-from milknado.mcp_run import _reconcile_node_status
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
 
@@ -70,7 +73,7 @@ def milknado_ralph_run_start(
             # process vanished, without anyone polling (mirrors run_start).
             fail_stale_running_runs(root, node_id)
             for state in find_terminal_runs_for_node(root, node_id):
-                _reconcile_node_status(graph, node_id, state["status"])
+                reconcile_node_status(graph, node_id, state["status"])
             node = graph.get_node(node_id)
             assert node is not None
             if node.status == NodeStatus.RUNNING:
@@ -94,6 +97,7 @@ def milknado_ralph_run_start(
                 "rebased": None,
                 "detail": None,
                 "ended_at": None,
+                "pid": None,
             },
         )
         argv = [
@@ -111,7 +115,7 @@ def milknado_ralph_run_start(
         ]
         try:
             with log_path.open("wb") as log_fh:
-                subprocess.Popen(  # noqa: S603 — argv is built from validated parts
+                proc = subprocess.Popen(  # noqa: S603 — argv is built from validated parts
                     argv,
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,
@@ -131,10 +135,19 @@ def milknado_ralph_run_start(
             )
             write_state(state_path, failed)
             raise
+        # Record the detached pid so poll/reconcile can liveness-check the run
+        # (the loop outlives this server). Guard against a runner that already
+        # wrote its terminal state, so the pid write never clobbers it back to
+        # "running".
+        running = read_state(state_path)
+        if running.get("status") == "running":
+            running["pid"] = proc.pid
+            write_state(state_path, running)
         return {
             "run_id": run_id,
             "node_id": node_id,
             "status": "running",
+            "pid": proc.pid,
             "log_path": str(log_path),
             "state_path": str(state_path),
         }

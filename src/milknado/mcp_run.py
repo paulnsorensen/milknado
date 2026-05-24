@@ -10,6 +10,7 @@ from milknado.domains.dispatch import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     poll_async_run,
+    reconcile_node_status,
     render_brief,
     run_headless,
     start_headless_async,
@@ -113,7 +114,7 @@ def milknado_todo_run_start(
             # just as permanently.
             fail_stale_running_runs(root, node_id)
             for state in find_terminal_runs_for_node(root, node_id):
-                _reconcile_node_status(graph, node_id, state["status"])
+                reconcile_node_status(graph, node_id, state["status"])
             node = graph.get_node(node_id)
             assert node is not None
             if node.status == NodeStatus.RUNNING:
@@ -137,20 +138,6 @@ def milknado_todo_run_start(
         graph.close()
 
 
-def _reconcile_node_status(graph, node_id: int, run_status: str) -> None:
-    node = graph.get_node(node_id)
-    # Only a RUNNING node can validly transition to a terminal status. Any other
-    # state (already terminal, or reset externally) is left alone so
-    # reconciliation never raises InvalidTransition — the first reconcile of a
-    # run wins, and a node taken out of RUNNING is not force-marked.
-    if node is None or node.status != NodeStatus.RUNNING:
-        return
-    if run_status == "done":
-        graph.mark_done(node_id)
-    elif run_status == "failed":
-        graph.mark_failed(node_id)
-
-
 @mcp.tool()
 def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
     """Poll an async run; reconciles node status to done/failed once the worker exits."""
@@ -159,7 +146,7 @@ def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
     if state["status"] in ("done", "failed"):
         graph, _cfg = open_graph(root)
         try:
-            _reconcile_node_status(graph, state["node_id"], state["status"])
+            reconcile_node_status(graph, state["node_id"], state["status"])
         finally:
             graph.close()
     return state

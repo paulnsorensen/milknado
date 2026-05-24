@@ -70,6 +70,23 @@ def test_start_returns_run_id_and_writes_running_state(tmp_path: Path) -> None:
     assert Path(started["state_path"]).exists()
 
 
+def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
+    """The detached pid is persisted in the running state (and returned) so
+    poll/reconcile can liveness-check a loop that outlives this server."""
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="pid", kind="task", project_root=root)
+    noop = f"{sys.executable} -c pass"
+    started = _call(
+        milknado_ralph_run_start,
+        node_id=task["id"],
+        runner_cmd=noop,
+        project_root=root,
+    )
+    assert isinstance(started["pid"], int)
+    state = json.loads(Path(started["state_path"]).read_text())
+    assert state["pid"] == started["pid"]
+
+
 def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="ralph-done", kind="task", project_root=root)
@@ -220,7 +237,143 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     assert state["status"] == "failed"
     assert state["rebased"] is False
     assert state["detail"] == "RuntimeError: boom"
-    assert state["error"] == state["detail"]
+    assert "error" not in state  # the redundant `error` alias was dropped
     # fallback base must preserve the schema poll consumers rely on
     assert state["log_path"].endswith(f"{run_id}.log")
     assert state["timeout_seconds"] == 12.5
+
+
+def test_runner_writes_done_on_successful_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The detached runner's happy path: open the graph, build adapters, run the
+    node to completion, then overwrite the state file with a terminal 'done' the
+    poll reads — preserving the base schema (log_path/timeout_seconds)."""
+    import milknado._mcp_core as mcp_core
+    import milknado.adapters as adapters
+    import milknado.domains.execution as execution
+    from milknado import _ralph_node_runner
+    from milknado.domains.execution.headless import HeadlessOutcome
+
+    class _Cfg:
+        execution_agent = "claude"
+        quality_gates = ()
+        worktree_pattern = "wt-{node}"
+
+    class _Graph:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _Git:
+        def __init__(self, _root: object) -> None: ...
+
+        def current_branch(self) -> str:
+            return "main"
+
+    graph = _Graph()
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(adapters, "GitAdapter", _Git)
+    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: object())
+    monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
+    monkeypatch.setattr(execution, "Executor", lambda **k: object())
+    monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
+    monkeypatch.setattr(
+        execution,
+        "run_node_to_completion",
+        lambda *a, **k: HeadlessOutcome(node_id=1, success=True, detail=None),
+    )
+
+    run_id = "node-1-20260101T000000Z-abcd"
+    rdir = tmp_path / ".milknado" / "runs"
+    rdir.mkdir(parents=True)
+    state_path = rdir / f"{run_id}.state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "node_id": 1,
+                "log_path": str(rdir / f"{run_id}.log"),
+                "timeout_seconds": 30.0,
+                "status": "running",
+            }
+        )
+    )
+    rc = _ralph_node_runner.main(
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--state-path",
+            str(state_path),
+            "--timeout",
+            "30",
+        ]
+    )
+    assert rc == 0
+    assert graph.closed is True  # the graph handle is always released
+    state = json.loads(state_path.read_text())
+    assert state["status"] == "done"
+    assert state["rebased"] is True
+    assert state["log_path"].endswith(f"{run_id}.log")  # base schema preserved
+    assert state["timeout_seconds"] == 30.0
+
+
+def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runner resolution order: explicit arg > MILKNADO_RALPH_RUNNER_CMD > default."""
+    from milknado.mcp_ralph import _DEFAULT_RUNNER, _resolve_runner_cmd
+
+    monkeypatch.delenv("MILKNADO_RALPH_RUNNER_CMD", raising=False)
+    assert _resolve_runner_cmd("/bin/run --flag") == ["/bin/run", "--flag"]
+    assert _resolve_runner_cmd("   ") == list(_DEFAULT_RUNNER)  # blank falls through
+    assert _resolve_runner_cmd(None) == list(_DEFAULT_RUNNER)
+
+    monkeypatch.setenv("MILKNADO_RALPH_RUNNER_CMD", "envrunner --x")
+    assert _resolve_runner_cmd(None) == ["envrunner", "--x"]
+    assert _resolve_runner_cmd("explicit-wins") == ["explicit-wins"]
+
+
+def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) -> None:
+    """A node stuck RUNNING because a finished run was never polled is reconciled
+    (the loop at the top of start), freeing it so a fresh run can spawn."""
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
+    node_id = task["id"]
+    # Mark the node RUNNING and drop a terminal 'done' state file for it that no
+    # one polled — exactly the orphan the start-time reconcile loop must clear.
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.mark_running(node_id)
+    finally:
+        graph.close()
+    rdir = tmp_path / ".milknado" / "runs"
+    rdir.mkdir(parents=True, exist_ok=True)
+    orphan_id = f"node-{node_id}-20260101T000000Z-dead"
+    (rdir / f"{orphan_id}.state.json").write_text(
+        json.dumps(
+            {
+                "run_id": orphan_id,
+                "node_id": node_id,
+                "status": "done",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "timeout_seconds": 1800,
+            }
+        )
+    )
+    started = _call(
+        milknado_ralph_run_start,
+        node_id=node_id,
+        runner_cmd=f"{sys.executable} -c pass",
+        project_root=root,
+    )
+    # Reconcile marked the orphan done, so start no longer sees RUNNING and spawns.
+    assert started["status"] == "running"
+    tree = _call(milknado_todo_tree, project_root=root)
+    assert tree[0]["status"] == "done"  # node was reconciled to done, not relocked

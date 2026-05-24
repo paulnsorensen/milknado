@@ -38,6 +38,16 @@ def run_node_to_completion(
     rebase-merge it back. Returns success only when the run completed AND the
     rebase merged cleanly; a timeout, a non-completed run, or a rebase conflict
     are all failures (the node is marked failed by `Executor.fail`/`complete`)."""
+    if feature_branch in ("", "HEAD"):
+        # current_branch() returns "HEAD" on a detached HEAD — not a valid
+        # rebase-onto target. Refuse before dispatching a worktree rather than
+        # rebase-merging onto the literal ref "HEAD". The node is left untouched
+        # (still pending) so a retry works once a real branch is checked out.
+        return HeadlessOutcome(
+            node_id,
+            success=False,
+            detail=f"invalid feature branch {feature_branch!r}; refusing to dispatch",
+        )
     dispatch = executor.dispatch(node_id, exec_config)
     try:
         _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)

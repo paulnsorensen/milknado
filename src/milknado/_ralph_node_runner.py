@@ -95,10 +95,8 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "failed",
                 "rebased": False,
                 "ended_at": now_iso(),
-                # `detail` is the documented poll contract field; keep `error`
-                # as an alias for callers that already read it.
+                # `detail` is the documented poll contract field.
                 "detail": msg,
-                "error": msg,
             },
         )
         return 1

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import make_run_id as _make_run_id
@@ -256,3 +257,21 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
         if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
             out.append(state)
     return out
+
+
+def reconcile_node_status(graph, node_id: int, run_status: str) -> None:  # noqa: ANN001
+    """Transition a node to its run's terminal status, idempotently.
+
+    Only a RUNNING node can validly transition to a terminal status. Any other
+    state (already terminal, or reset externally) is left alone so reconciliation
+    never raises InvalidTransition — the first reconcile of a run wins, and a node
+    taken out of RUNNING is not force-marked. Shared by the sync (`mcp_run`) and
+    detached worktree (`mcp_ralph`) dispatch tools.
+    """
+    node = graph.get_node(node_id)
+    if node is None or node.status != NodeStatus.RUNNING:
+        return
+    if run_status == "done":
+        graph.mark_done(node_id)
+    elif run_status == "failed":
+        graph.mark_failed(node_id)
