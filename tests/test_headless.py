@@ -94,10 +94,11 @@ def test_completion_timeout_fails_the_node() -> None:
 def test_detached_head_refuses_without_dispatching() -> None:
     """A detached HEAD surfaces as feature_branch == "HEAD"; the loop must refuse
     to dispatch rather than rebase-merge onto the literal ref "HEAD". The node is
-    left untouched (pending) for a retry once a real branch is checked out."""
+    marked failed for parity with the other failure branches (reset to pending to
+    retry once a real branch is checked out)."""
     ex = _FakeExecutor()
     outcome = run_node_to_completion(ex, _FakeRalph(completed=True), 5, object(), "HEAD", 30.0)
     assert outcome.success is False
     assert "HEAD" in (outcome.detail or "")
     assert ex.dispatched == []  # never dispatched onto a detached HEAD
-    assert ex.failed == []  # node not force-failed; stays pending for retry
+    assert ex.failed == [5]  # marked failed for parity with sibling failure paths

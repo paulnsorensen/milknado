@@ -1,4 +1,10 @@
-"""Spawn a subprocess worker, pipe the brief to stdin, capture combined output."""
+"""Subprocess-worker dispatch plus the run-state / node-status reconciliation
+helpers the MCP dispatch tools share.
+
+Covers sync and detached headless spawning (piping the brief to stdin and
+capturing combined output) alongside orphan-run recovery and the graph-side
+`reconcile_node_status` transition.
+"""
 
 from __future__ import annotations
 

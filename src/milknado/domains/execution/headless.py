@@ -41,8 +41,10 @@ def run_node_to_completion(
     if feature_branch in ("", "HEAD"):
         # current_branch() returns "HEAD" on a detached HEAD — not a valid
         # rebase-onto target. Refuse before dispatching a worktree rather than
-        # rebase-merging onto the literal ref "HEAD". The node is left untouched
-        # (still pending) so a retry works once a real branch is checked out.
+        # rebase-merging onto the literal ref "HEAD", and mark the node failed
+        # for parity with the timeout / non-completion / conflict branches below
+        # (PENDING -> FAILED is a valid transition; reset to pending to retry).
+        executor.fail(node_id)
         return HeadlessOutcome(
             node_id,
             success=False,
