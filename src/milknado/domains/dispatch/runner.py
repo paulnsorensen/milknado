@@ -1,11 +1,15 @@
-"""Spawn a subprocess worker, pipe the brief to stdin, capture combined output."""
+"""Subprocess-worker dispatch plus the run-state / node-status reconciliation
+helpers the MCP dispatch tools share.
+
+Covers sync and detached headless spawning (piping the brief to stdin and
+capturing combined output) alongside orphan-run recovery and the graph-side
+`reconcile_node_status` transition.
+"""
 
 from __future__ import annotations
 
 import json
 import os
-import re
-import secrets
 import shlex
 import subprocess
 import threading
@@ -13,9 +17,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from milknado.domains.common import NodeStatus
+from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
+from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
+from milknado.domains.dispatch._runstate import make_run_id as _make_run_id
+from milknado.domains.dispatch._runstate import now_iso as _now_iso
+from milknado.domains.dispatch._runstate import read_state as _read_state
+from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
+from milknado.domains.dispatch._runstate import tail as _tail
+from milknado.domains.dispatch._runstate import write_state as _write_state
+
 _DEFAULT_WORKER_CMD = "claude -p"
-_SUMMARY_TAIL_BYTES = 2000
-_RUN_ID_RE = re.compile(r"^node-\d+-\d{8}T\d{6}Z-[0-9a-f]+$")
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
@@ -45,45 +57,9 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
     return shlex.split(_DEFAULT_WORKER_CMD)
 
 
-def _runs_dir(project_root: Path) -> Path:
-    runs_dir = project_root / ".milknado" / "runs"
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    return runs_dir
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
-
-
-def _make_run_id(node_id: int) -> str:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"node-{node_id}-{stamp}-{secrets.token_hex(2)}"
-
-
-def _tail(path: Path, max_bytes: int) -> str:
-    if not path.exists():
-        return ""
-    size = path.stat().st_size
-    with path.open("rb") as fh:
-        if size > max_bytes:
-            fh.seek(size - max_bytes)
-        data = fh.read()
-    return data.decode("utf-8", errors="replace")
-
-
-def _write_state(state_path: Path, payload: dict) -> None:
-    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(state_path)
-
-
-def _read_state(state_path: Path) -> dict:
-    return json.loads(state_path.read_text(encoding="utf-8"))
 
 
 def _execute(
@@ -287,3 +263,21 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
         if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
             out.append(state)
     return out
+
+
+def reconcile_node_status(graph, node_id: int, run_status: str) -> None:  # noqa: ANN001
+    """Transition a node to its run's terminal status, idempotently.
+
+    Only a RUNNING node can validly transition to a terminal status. Any other
+    state (already terminal, or reset externally) is left alone so reconciliation
+    never raises InvalidTransition — the first reconcile of a run wins, and a node
+    taken out of RUNNING is not force-marked. Shared by the sync (`mcp_run`) and
+    detached worktree (`mcp_ralph`) dispatch tools.
+    """
+    node = graph.get_node(node_id)
+    if node is None or node.status != NodeStatus.RUNNING:
+        return
+    if run_status == "done":
+        graph.mark_done(node_id)
+    elif run_status == "failed":
+        graph.mark_failed(node_id)

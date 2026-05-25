@@ -1,0 +1,52 @@
+"""Shared run-state helpers for `.milknado/runs/` — used by both the headless
+worker path (`runner.py`) and the worktree-isolated ralph path (`mcp_ralph.py` +
+`_ralph_node_runner.py`). Run ids and state files share one namespace and format
+so reconciliation is uniform regardless of which path spawned the run.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import secrets
+from datetime import UTC, datetime
+from pathlib import Path
+
+SUMMARY_TAIL_BYTES = 2000
+RUN_ID_RE = re.compile(r"^node-\d+-\d{8}T\d{6}Z-[0-9a-f]+$")
+
+
+def runs_dir(project_root: Path) -> Path:
+    d = project_root / ".milknado" / "runs"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def make_run_id(node_id: int) -> str:
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"node-{node_id}-{stamp}-{secrets.token_hex(2)}"
+
+
+def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
+    if not path.exists():
+        return ""
+    size = path.stat().st_size
+    with path.open("rb") as fh:
+        if size > max_bytes:
+            fh.seek(size - max_bytes)
+        data = fh.read()
+    return data.decode("utf-8", errors="replace")
+
+
+def write_state(state_path: Path, payload: dict) -> None:
+    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(state_path)
+
+
+def read_state(state_path: Path) -> dict:
+    return json.loads(state_path.read_text(encoding="utf-8"))
