@@ -5,10 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from milknado._mcp_core import Kind, TodoStatus, mcp, open_graph, resolve_project_root
+from milknado._mcp_core import (
+    Kind,
+    TodoStatus,
+    _parse_kind,
+    _parse_todo_status,
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import RelationshipReason
-from milknado.mcp_todo import _parse_kind, _parse_todo_status
 
 __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
 

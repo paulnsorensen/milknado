@@ -13,6 +13,8 @@ from typing import Literal
 
 from fastmcp import FastMCP
 
+from milknado.domains.common import NodeKind, NodeStatus
+
 Kind = Literal["roadmap", "goal", "task"]
 TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
 
@@ -53,3 +55,25 @@ def open_graph(root: Path):
     cfg = load_config(cfg_path) if cfg_path.exists() else default_config(root)
     cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
     return MikadoGraph(cfg.db_path), cfg
+
+
+_TODO_STATUS_MAP = {
+    "pending": NodeStatus.PENDING,
+    "in_progress": NodeStatus.RUNNING,
+    "blocked": NodeStatus.BLOCKED,
+    "done": NodeStatus.DONE,
+}
+
+
+def _parse_kind(value: str) -> NodeKind:
+    try:
+        return NodeKind(value)
+    except ValueError as exc:
+        valid = sorted(k.value for k in NodeKind)
+        raise ValueError(f"invalid kind {value!r}; expected one of {valid}") from exc
+
+
+def _parse_todo_status(value: str) -> NodeStatus:
+    if value not in _TODO_STATUS_MAP:
+        raise ValueError(f"invalid status {value!r}; expected one of {sorted(_TODO_STATUS_MAP)}")
+    return _TODO_STATUS_MAP[value]

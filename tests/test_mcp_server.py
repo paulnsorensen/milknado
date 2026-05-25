@@ -1250,6 +1250,8 @@ class TestSetSubtreeStatus:
             )
 
     def test_invalid_status_raises(self, tmp_path: Path) -> None:
+        # Exercises the runtime _parse_todo_status guard, not the Literal
+        # schema — a schema-validated client can't send "bogus".
         root = str(tmp_path)
         node = _call(milknado_todo_add, description="n", project_root=root)
         with pytest.raises(ValueError, match="invalid status"):
