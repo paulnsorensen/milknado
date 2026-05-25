@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from fastmcp import FastMCP
+
+Kind = Literal["roadmap", "goal", "task"]
+TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
 
 mcp = FastMCP(
     "Milknado",

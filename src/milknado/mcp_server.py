@@ -5,20 +5,36 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from milknado._mcp_core import mcp, open_graph, resolve_project_root
+from milknado._mcp_core import Kind, TodoStatus, mcp, open_graph, resolve_project_root
 from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import RelationshipReason
+from milknado.mcp_todo import _parse_kind, _parse_todo_status
 
 __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
 
 
 @mcp.tool()
-def milknado_graph_summary(project_root: str = "") -> str:
-    """Return Mikado nodes (id, status, description) for the given project."""
+def milknado_graph_summary(
+    project_root: str = "",
+    status: TodoStatus | None = None,
+    kind: Kind | None = None,
+) -> str:
+    """Return Mikado nodes (id, status, description), optionally filtered.
+
+    status and kind narrow the listing to matching nodes; "(empty graph)" is
+    returned when no node matches (or the graph is empty).
+    """
+    want_status = _parse_todo_status(status) if status is not None else None
+    want_kind = _parse_kind(kind) if kind is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        nodes = graph.get_all_nodes()
+        nodes = [
+            n
+            for n in graph.get_all_nodes()
+            if (want_status is None or n.status == want_status)
+            and (want_kind is None or n.kind == want_kind)
+        ]
         if not nodes:
             return "(empty graph)"
         lines = [f"id={n.id} status={n.status.value} desc={n.description[:120]!r}" for n in nodes]

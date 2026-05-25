@@ -146,6 +146,63 @@ class TestUpdateNode:
             graph.update_node(node.id)
 
 
+class TestMoveNode:
+    def test_move_rewrites_edge_and_parent_id(self, graph: MikadoGraph) -> None:
+        old_parent = graph.add_node("old")
+        new_parent = graph.add_node("new")
+        child = graph.add_node("child", parent_id=old_parent.id)
+
+        graph.move_node(child.id, new_parent.id)
+
+        assert graph.get_node(child.id).parent_id == new_parent.id
+        assert [c.id for c in graph.get_children(old_parent.id)] == []
+        assert [c.id for c in graph.get_children(new_parent.id)] == [child.id]
+
+    def test_move_to_root_drops_edge(self, graph: MikadoGraph) -> None:
+        parent = graph.add_node("p")
+        child = graph.add_node("c", parent_id=parent.id)
+
+        graph.move_node(child.id, None)
+
+        assert graph.get_node(child.id).parent_id is None
+        assert graph.get_children(parent.id) == []
+
+    def test_move_under_grandchild_raises_cycle(self, graph: MikadoGraph) -> None:
+        """A multi-level descendant must also be rejected, not just direct children."""
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        grandchild = graph.add_node("grandchild", parent_id=child.id)
+
+        with pytest.raises(ValueError, match="cycle"):
+            graph.move_node(root.id, grandchild.id)
+
+    def test_move_unknown_node_raises(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            graph.move_node(999, None)
+
+    def test_move_to_unknown_parent_raises(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("n")
+        with pytest.raises(ValueError, match="not found"):
+            graph.move_node(node.id, 999)
+
+    def test_move_under_node_with_diamond_ancestry_allows_non_cycle(
+        self, graph: MikadoGraph
+    ) -> None:
+        """Cycle walk dedups the new parent's shared ancestors (diamond) yet still allows
+        a legal move."""
+        top = graph.add_node("top")
+        left = graph.add_node("left", parent_id=top.id)
+        right = graph.add_node("right", parent_id=top.id)
+        mid = graph.add_node("mid", parent_id=left.id)
+        graph.add_edge(right.id, mid.id)
+        loose = graph.add_node("loose")
+
+        # Re-parenting loose under mid walks mid's ancestors: top is reachable via
+        # both left and right, so the visited-set guard prevents reprocessing it.
+        graph.move_node(loose.id, mid.id)
+        assert graph.get_node(loose.id).parent_id == mid.id
+
+
 class TestAddEdge:
     def test_explicit_edge(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")

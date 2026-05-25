@@ -95,3 +95,53 @@ def update_node_fields(
     if cur.rowcount == 0:
         raise ValueError(f"Node {node_id} not found")
     conn.commit()
+
+
+def would_create_cycle(conn: sqlite3.Connection, parent_id: int, child_id: int) -> bool:
+    """True if edge parent_id->child_id would make child_id its own ancestor.
+
+    Walks ancestors of parent_id; reaching child_id means child_id already sits
+    above parent_id, so adding the edge closes a loop.
+    """
+    visited: set[int] = set()
+    stack = [parent_id]
+    while stack:
+        current = stack.pop()
+        if current == child_id:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        rows = conn.execute(
+            "SELECT parent_id FROM edges WHERE child_id = ?", (current,)
+        ).fetchall()
+        stack.extend(row[0] for row in rows)
+    return False
+
+
+def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) -> None:
+    """Move node_id under new_parent_id (or to root level when None).
+
+    Rewrites the incoming edge and the parent_id column atomically. Rejects a
+    missing node or new parent, and a new parent that is the node itself or one
+    of its descendants (which would create a cycle).
+
+    Assumes the single-parent tree model: every incoming edge is replaced, so a
+    node given multiple parents via add_edge collapses to the one new parent.
+    Multi-parent re-parenting is out of scope.
+    """
+    if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+        raise ValueError(f"Node {node_id} not found")
+    if new_parent_id is not None:
+        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (new_parent_id,)).fetchone() is None:
+            raise ValueError(f"new_parent_id {new_parent_id} not found")
+        if new_parent_id == node_id or would_create_cycle(conn, new_parent_id, node_id):
+            raise ValueError(f"re-parenting {node_id} under {new_parent_id} would create a cycle")
+    with conn:
+        conn.execute("DELETE FROM edges WHERE child_id = ?", (node_id,))
+        if new_parent_id is not None:
+            conn.execute(
+                "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+                (new_parent_id, node_id),
+            )
+        conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (new_parent_id, node_id))
