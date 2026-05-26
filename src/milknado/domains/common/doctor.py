@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from milknado.domains.common.config import MilknadoConfig
 
-PROBED_TOOLS = ("git", "ralphify", "code-review-graph")
+PROBED_TOOLS = ("git", "code-review-graph")
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,14 @@ def _probe(name: str) -> ToolProbe:
     return ToolProbe(name=name, path=path, version=ver)
 
 
+def _probe_python_package(name: str) -> ToolProbe:
+    try:
+        ver = pkg_version(name)
+    except PackageNotFoundError:
+        return ToolProbe(name=name, path=None, version="unknown")
+    return ToolProbe(name=name, path="(python package)", version=ver)
+
+
 def run_doctor(config_path: Path, config: MilknadoConfig) -> DoctorReport:
     try:
         milknado_version = pkg_version("milknado")
@@ -56,7 +64,7 @@ def run_doctor(config_path: Path, config: MilknadoConfig) -> DoctorReport:
 
     db_path = config.db_path.resolve()
     db_status = "OK" if db_path.exists() else "MISSING"
-    tools = tuple(_probe(t) for t in PROBED_TOOLS)
+    tools = tuple(_probe(t) for t in PROBED_TOOLS) + (_probe_python_package("ralphify"),)
 
     return DoctorReport(
         milknado_version=milknado_version,
