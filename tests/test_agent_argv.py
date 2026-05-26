@@ -27,6 +27,17 @@ def test_gemini_worker_allowlist_grants_track_follow_up() -> None:
     assert "milknado_track_follow_up" in WORKER_ALLOWED_TOOLS["gemini"]
 
 
+def test_worker_allowlist_grants_serena_symbol_tools() -> None:
+    claude = WORKER_ALLOWED_TOOLS["claude"]
+    assert "mcp__serena__replace_symbol_body" in claude
+    assert "mcp__serena__find_symbol" in claude
+    # Shell-exec stays out: workers remain deny-by-default on arbitrary Bash.
+    assert "mcp__serena__execute_shell_command" not in claude
+    gemini = WORKER_ALLOWED_TOOLS["gemini"]
+    assert "replace_symbol_body" in gemini
+    assert "find_symbol" in gemini
+
+
 def test_resolve_planning_uses_override() -> None:
     assert (
         resolve_planning_agent_command(
