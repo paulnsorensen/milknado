@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -7,15 +8,20 @@ from pathlib import Path
 
 import pytest
 
+from milknado._mcp_core import mcp
+from milknado.domains.common.errors import InvalidTransition
 from milknado.mcp_run import (
     milknado_todo_run,
     milknado_todo_run_poll,
     milknado_todo_run_start,
 )
-from milknado.mcp_server import open_graph, resolve_project_root
+from milknado.mcp_server import milknado_graph_summary, open_graph, resolve_project_root
 from milknado.mcp_todo import (
     milknado_delete_node,
     milknado_edit_node,
+    milknado_get_node,
+    milknado_move_node,
+    milknado_set_subtree_status,
     milknado_todo_add,
     milknado_todo_brief,
     milknado_todo_next,
@@ -952,3 +958,386 @@ class TestDeleteAndEditTools:
         root = str(tmp_path)
         with pytest.raises(ValueError, match="not found"):
             _call(milknado_delete_node, node_id=999, project_root=root)
+
+
+class TestGetNode:
+    def test_get_node_returns_summary_parent_and_prerequisites(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="g", kind="goal", project_root=root)
+        prereq_a = _call(
+            milknado_todo_add, description="a", parent_id=goal["id"], project_root=root
+        )
+        prereq_b = _call(
+            milknado_todo_add, description="b", parent_id=goal["id"], project_root=root
+        )
+
+        result = _call(milknado_get_node, node_id=goal["id"], project_root=root)
+        assert result["id"] == goal["id"]
+        assert result["kind"] == "goal"
+        assert result["status"] == "pending"
+        assert result["description"] == "g"
+        assert result["parent_id"] is None
+        assert sorted(result["prerequisite_ids"]) == sorted([prereq_a["id"], prereq_b["id"]])
+
+    def test_get_node_leaf_has_empty_prerequisites_and_parent_set(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="g", kind="goal", project_root=root)
+        leaf = _call(milknado_todo_add, description="t", parent_id=goal["id"], project_root=root)
+
+        result = _call(milknado_get_node, node_id=leaf["id"], project_root=root)
+        assert result["parent_id"] == goal["id"]
+        assert result["prerequisite_ids"] == []
+
+    def test_get_node_unknown_id_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(milknado_get_node, node_id=999, project_root=str(tmp_path))
+
+
+class TestTreeMaxDepth:
+    def _three_levels(self, root: str) -> dict[str, int]:
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        child = _call(
+            milknado_todo_add, description="child", parent_id=goal["id"], project_root=root
+        )
+        grandchild = _call(
+            milknado_todo_add, description="grandchild", parent_id=child["id"], project_root=root
+        )
+        return {"goal": goal["id"], "child": child["id"], "grandchild": grandchild["id"]}
+
+    def test_max_depth_zero_returns_root_only(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        self._three_levels(root)
+        tree = _call(milknado_todo_tree, project_root=root, max_depth=0)
+        assert len(tree) == 1
+        assert tree[0]["description"] == "goal"
+        assert tree[0]["children"] == []
+
+    def test_max_depth_one_returns_root_and_direct_children(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        self._three_levels(root)
+        tree = _call(milknado_todo_tree, project_root=root, max_depth=1)
+        assert [c["description"] for c in tree[0]["children"]] == ["child"]
+        assert tree[0]["children"][0]["children"] == []
+
+    def test_max_depth_none_returns_full_subtree(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        self._three_levels(root)
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["children"][0]["children"][0]["description"] == "grandchild"
+
+    def test_max_depth_with_explicit_root_id(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        ids = self._three_levels(root)
+        subtree = _call(milknado_todo_tree, project_root=root, root_id=ids["goal"], max_depth=1)
+        assert [c["description"] for c in subtree[0]["children"]] == ["child"]
+        assert subtree[0]["children"][0]["children"] == []
+
+
+class TestGraphSummaryFilters:
+    def test_status_filter_lists_only_matching(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        done = _call(milknado_todo_add, description="done-task", project_root=root)
+        _call(milknado_todo_add, description="pending-task", project_root=root)
+        _call(milknado_todo_set_status, node_id=done["id"], status="done", project_root=root)
+
+        summary = _call(milknado_graph_summary, project_root=root, status="done")
+        assert "done-task" in summary
+        assert "pending-task" not in summary
+
+    def test_kind_filter_lists_only_matching(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        _call(milknado_todo_add, description="the-goal", kind="goal", project_root=root)
+        _call(milknado_todo_add, description="the-task", kind="task", project_root=root)
+
+        summary = _call(milknado_graph_summary, project_root=root, kind="goal")
+        assert "the-goal" in summary
+        assert "the-task" not in summary
+
+    def test_no_match_returns_empty_graph_sentinel(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        _call(milknado_todo_add, description="t", kind="task", project_root=root)
+        assert _call(milknado_graph_summary, project_root=root, kind="roadmap") == "(empty graph)"
+
+    def test_unfiltered_lists_all(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        _call(milknado_todo_add, description="one", project_root=root)
+        _call(milknado_todo_add, description="two", project_root=root)
+        summary = _call(milknado_graph_summary, project_root=root)
+        assert "one" in summary
+        assert "two" in summary
+
+    def test_status_and_kind_filters_are_anded(self, tmp_path: Path) -> None:
+        """Both filters together match only nodes satisfying status AND kind."""
+        root = str(tmp_path)
+        done_goal = _call(
+            milknado_todo_add, description="done-goal", kind="goal", project_root=root
+        )
+        _call(milknado_todo_add, description="pending-goal", kind="goal", project_root=root)
+        done_task = _call(
+            milknado_todo_add, description="done-task", kind="task", project_root=root
+        )
+        _call(milknado_todo_set_status, node_id=done_goal["id"], status="done", project_root=root)
+        _call(milknado_todo_set_status, node_id=done_task["id"], status="done", project_root=root)
+
+        summary = _call(milknado_graph_summary, project_root=root, status="done", kind="goal")
+        assert "done-goal" in summary
+        assert "pending-goal" not in summary  # right kind, wrong status
+        assert "done-task" not in summary  # right status, wrong kind
+
+
+class TestMoveNode:
+    def test_move_to_new_parent_updates_parent_and_edges(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        goal_a = _call(milknado_todo_add, description="a", kind="goal", project_root=root)
+        goal_b = _call(milknado_todo_add, description="b", kind="goal", project_root=root)
+        task = _call(milknado_todo_add, description="t", parent_id=goal_a["id"], project_root=root)
+
+        moved = _call(
+            milknado_move_node,
+            node_id=task["id"],
+            new_parent_id=goal_b["id"],
+            project_root=root,
+        )
+        assert moved["id"] == task["id"]
+        node = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert node["parent_id"] == goal_b["id"]
+        assert (
+            _call(milknado_get_node, node_id=goal_a["id"], project_root=root)["prerequisite_ids"]
+            == []
+        )
+        assert _call(milknado_get_node, node_id=goal_b["id"], project_root=root)[
+            "prerequisite_ids"
+        ] == [task["id"]]
+
+    def test_move_to_root_clears_parent(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="g", kind="goal", project_root=root)
+        task = _call(milknado_todo_add, description="t", parent_id=goal["id"], project_root=root)
+
+        _call(milknado_move_node, node_id=task["id"], new_parent_id=None, project_root=root)
+        node = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert node["parent_id"] is None
+        assert (
+            _call(milknado_get_node, node_id=goal["id"], project_root=root)["prerequisite_ids"]
+            == []
+        )
+
+    def test_move_preserves_children(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        anchor = _call(milknado_todo_add, description="anchor", kind="goal", project_root=root)
+        parent = _call(milknado_todo_add, description="p", kind="goal", project_root=root)
+        child = _call(
+            milknado_todo_add, description="c", parent_id=parent["id"], project_root=root
+        )
+
+        _call(
+            milknado_move_node,
+            node_id=parent["id"],
+            new_parent_id=anchor["id"],
+            project_root=root,
+        )
+        moved = _call(milknado_get_node, node_id=parent["id"], project_root=root)
+        assert moved["parent_id"] == anchor["id"]
+        assert moved["prerequisite_ids"] == [child["id"]]
+
+    def test_move_under_descendant_raises_cycle(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_todo_add, description="p", kind="goal", project_root=root)
+        child = _call(
+            milknado_todo_add, description="c", parent_id=parent["id"], project_root=root
+        )
+        with pytest.raises(ValueError, match="cycle"):
+            _call(
+                milknado_move_node,
+                node_id=parent["id"],
+                new_parent_id=child["id"],
+                project_root=root,
+            )
+
+    def test_move_under_self_raises_cycle(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        node = _call(milknado_todo_add, description="n", project_root=root)
+        with pytest.raises(ValueError, match="cycle"):
+            _call(
+                milknado_move_node,
+                node_id=node["id"],
+                new_parent_id=node["id"],
+                project_root=root,
+            )
+
+    def test_move_unknown_node_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(milknado_move_node, node_id=999, new_parent_id=None, project_root=str(tmp_path))
+
+    def test_move_to_unknown_parent_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        node = _call(milknado_todo_add, description="n", project_root=root)
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_move_node,
+                node_id=node["id"],
+                new_parent_id=999,
+                project_root=root,
+            )
+
+
+class TestSetSubtreeStatus:
+    def _goal_with_two_tasks(self, root: str) -> dict[str, int]:
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        t1 = _call(milknado_todo_add, description="t1", parent_id=goal["id"], project_root=root)
+        t2 = _call(milknado_todo_add, description="t2", parent_id=goal["id"], project_root=root)
+        return {"goal": goal["id"], "t1": t1["id"], "t2": t2["id"]}
+
+    def test_marks_whole_subtree_done(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        ids = self._goal_with_two_tasks(root)
+        result = _call(
+            milknado_set_subtree_status, root_id=ids["goal"], status="done", project_root=root
+        )
+        assert result == {"updated": 3}
+        for key in ("goal", "t1", "t2"):
+            assert (
+                _call(milknado_get_node, node_id=ids[key], project_root=root)["status"] == "done"
+            )
+
+    def test_rerun_is_noop(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        ids = self._goal_with_two_tasks(root)
+        _call(milknado_set_subtree_status, root_id=ids["goal"], status="done", project_root=root)
+        again = _call(
+            milknado_set_subtree_status, root_id=ids["goal"], status="done", project_root=root
+        )
+        assert again == {"updated": 0}
+
+    def test_counts_only_changed_nodes(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        ids = self._goal_with_two_tasks(root)
+        _call(milknado_todo_set_status, node_id=ids["t1"], status="done", project_root=root)
+        result = _call(
+            milknado_set_subtree_status, root_id=ids["goal"], status="done", project_root=root
+        )
+        assert result == {"updated": 2}
+
+    def test_illegal_transition_leaves_subtree_untouched(self, tmp_path: Path) -> None:
+        # Post-order visit is [t1, t2, goal]. t1 is DONE so targeting in_progress
+        # must raise; the bulk update validates the whole subtree before writing,
+        # so t2 and goal must remain pending — no half-applied partial commit.
+        root = str(tmp_path)
+        ids = self._goal_with_two_tasks(root)
+        _call(milknado_todo_set_status, node_id=ids["t1"], status="done", project_root=root)
+        with pytest.raises(InvalidTransition):
+            _call(
+                milknado_set_subtree_status,
+                root_id=ids["goal"],
+                status="in_progress",
+                project_root=root,
+            )
+        assert _call(milknado_get_node, node_id=ids["t1"], project_root=root)["status"] == "done"
+        assert (
+            _call(milknado_get_node, node_id=ids["t2"], project_root=root)["status"] == "pending"
+        )
+        assert (
+            _call(milknado_get_node, node_id=ids["goal"], project_root=root)["status"] == "pending"
+        )
+
+    def test_unknown_root_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_set_subtree_status,
+                root_id=999,
+                status="done",
+                project_root=str(tmp_path),
+            )
+
+    def test_invalid_status_raises(self, tmp_path: Path) -> None:
+        # Exercises the runtime _parse_todo_status guard, not the Literal
+        # schema — a schema-validated client can't send "bogus".
+        root = str(tmp_path)
+        node = _call(milknado_todo_add, description="n", project_root=root)
+        with pytest.raises(ValueError, match="invalid status"):
+            _call(
+                milknado_set_subtree_status,
+                root_id=node["id"],
+                status="bogus",
+                project_root=root,
+            )
+
+    def test_diamond_shared_descendant_counted_once(self, tmp_path: Path) -> None:
+        """A node reachable via two parents in the subtree is visited once, not twice."""
+        root = str(tmp_path)
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            goal = graph.add_node("goal")
+            left = graph.add_node("left", parent_id=goal.id)
+            right = graph.add_node("right", parent_id=goal.id)
+            shared = graph.add_node("shared", parent_id=left.id)
+            graph.add_edge(right.id, shared.id)
+        finally:
+            graph.close()
+
+        result = _call(
+            milknado_set_subtree_status, root_id=goal.id, status="done", project_root=root
+        )
+        # goal, left, right, shared — shared counted once despite two parents.
+        assert result == {"updated": 4}
+
+    def test_leaf_root_updates_only_itself(self, tmp_path: Path) -> None:
+        """A root with no children is a one-node subtree: updated == 1."""
+        root = str(tmp_path)
+        leaf = _call(milknado_todo_add, description="solo", project_root=root)
+        result = _call(
+            milknado_set_subtree_status, root_id=leaf["id"], status="done", project_root=root
+        )
+        assert result == {"updated": 1}
+        assert _call(milknado_get_node, node_id=leaf["id"], project_root=root)["status"] == "done"
+
+
+def _advertised_param(tool_name: str, param: str) -> dict:
+    """The JSON-schema fragment FastMCP advertises for one tool parameter."""
+    tool = asyncio.run(mcp.get_tool(tool_name))
+    return tool.parameters["properties"][param]
+
+
+def _enum_values(fragment: dict) -> list[str]:
+    """Pull the enum list whether it sits on the property or under anyOf (X | None)."""
+    if "enum" in fragment:
+        return fragment["enum"]
+    for branch in fragment.get("anyOf", []):
+        if "enum" in branch:
+            return branch["enum"]
+    raise AssertionError(f"no enum advertised in schema fragment: {fragment}")
+
+
+class TestAdvertisedEnumSchema:
+    """#84: FastMCP must advertise kind/status as JSON-schema enums, not bare strings.
+
+    This is the headline deliverable — clients discover valid values from the
+    schema instead of by triggering a ValueError. If the Literal typing is lost
+    (reverted to ``str``), the advertised fragment drops the enum and these fail.
+    """
+
+    def test_todo_set_status_advertises_status_enum(self) -> None:
+        fragment = _advertised_param("milknado_todo_set_status", "status")
+        assert _enum_values(fragment) == ["pending", "in_progress", "blocked", "done"]
+
+    def test_todo_add_advertises_kind_enum(self) -> None:
+        fragment = _advertised_param("milknado_todo_add", "kind")
+        assert _enum_values(fragment) == ["roadmap", "goal", "task"]
+
+    def test_todo_next_advertises_kind_enum(self) -> None:
+        fragment = _advertised_param("milknado_todo_next", "kind")
+        assert _enum_values(fragment) == ["roadmap", "goal", "task"]
+
+    def test_track_follow_up_advertises_kind_enum(self) -> None:
+        fragment = _advertised_param("milknado_track_follow_up", "kind")
+        assert _enum_values(fragment) == ["roadmap", "goal", "task"]
+
+    def test_edit_node_advertises_kind_enum(self) -> None:
+        fragment = _advertised_param("milknado_edit_node", "kind")
+        assert _enum_values(fragment) == ["roadmap", "goal", "task"]
+
+    def test_graph_summary_advertises_status_and_kind_enums(self) -> None:
+        status = _advertised_param("milknado_graph_summary", "status")
+        kind = _advertised_param("milknado_graph_summary", "kind")
+        assert _enum_values(status) == ["pending", "in_progress", "blocked", "done"]
+        assert _enum_values(kind) == ["roadmap", "goal", "task"]

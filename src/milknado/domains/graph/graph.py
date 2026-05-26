@@ -3,7 +3,6 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     MikadoEdge,
@@ -12,7 +11,13 @@ from milknado.domains.common import (
     NodeStatus,
 )
 from milknado.domains.graph import _transitions
-from milknado.domains.graph._mutations import delete_subtree, update_node_fields
+from milknado.domains.graph._analytics_facade import _AnalyticsFacade
+from milknado.domains.graph._mutations import (
+    delete_subtree,
+    reparent,
+    update_node_fields,
+    would_create_cycle,
+)
 from milknado.domains.graph._persistence import (
     check_parallel_safety,
     children_id_map,
@@ -20,22 +25,12 @@ from milknado.domains.graph._persistence import (
     drop_all,
     ensure_schema,
     get_file_ownership,
-    get_latest_batch_plan,
-    get_spec_hash,
-    recent_completion_durations,
-    record_batch_plan,
-    record_completion_duration,
     row_to_node,
-    set_dispatched_at,
     set_file_ownership,
-    set_spec_hash,
 )
 
-if TYPE_CHECKING:
-    from milknado.domains.batching import BatchPlan
 
-
-class MikadoGraph:
+class MikadoGraph(_AnalyticsFacade):
     def __init__(self, db_path: Path) -> None:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
@@ -120,6 +115,10 @@ class MikadoGraph:
         the state machine and is not editable here."""
         update_node_fields(self._conn, node_id, description, kind)
 
+    def move_node(self, node_id: int, new_parent_id: int | None) -> None:
+        """Re-parent a node, rewriting its edge and parent_id with cycle checks."""
+        reparent(self._conn, node_id, new_parent_id)
+
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
         if self._creates_cycle(parent_id, child_id):
             raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
@@ -131,20 +130,7 @@ class MikadoGraph:
         return MikadoEdge(parent_id=parent_id, child_id=child_id)
 
     def _creates_cycle(self, parent_id: int, child_id: int) -> bool:
-        visited: set[int] = set()
-        stack = [parent_id]
-        while stack:
-            current = stack.pop()
-            if current == child_id:
-                return True
-            if current in visited:
-                continue
-            visited.add(current)
-            rows = self._conn.execute(
-                "SELECT parent_id FROM edges WHERE child_id = ?", (current,)
-            ).fetchall()
-            stack.extend(row[0] for row in rows)
-        return False
+        return would_create_cycle(self._conn, parent_id, child_id)
 
     def get_node(self, node_id: int) -> MikadoNode | None:
         row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
@@ -269,27 +255,6 @@ class MikadoGraph:
 
     def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
         return check_parallel_safety(self._conn, node_ids)
-
-    def record_batch_plan(self, plan: BatchPlan) -> int:
-        return record_batch_plan(self._conn, plan)
-
-    def get_latest_batch_plan(self) -> dict | None:
-        return get_latest_batch_plan(self._conn)
-
-    def record_completion_duration(self, node_id: int, duration_seconds: float) -> None:
-        record_completion_duration(self._conn, node_id, duration_seconds)
-
-    def recent_completion_durations(self, limit: int) -> list[float]:
-        return recent_completion_durations(self._conn, limit)
-
-    def set_dispatched_at(self, node_id: int) -> None:
-        set_dispatched_at(self._conn, node_id)
-
-    def set_spec_hash(self, spec_hash: str) -> None:
-        set_spec_hash(self._conn, spec_hash)
-
-    def get_spec_hash(self) -> str | None:
-        return get_spec_hash(self._conn)
 
     def drop_all(self) -> int:
         return drop_all(self._conn)
