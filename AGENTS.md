@@ -8,6 +8,10 @@
 just build   # lint-fix → test → coverage check (90% threshold, autofixes lint)
 ```
 
+Output is compacted: each step prints `✓ <step>` on success and the full tool
+output (with file:line) only on failure, then aborts. `just ci` is the same gate
+with no autofixes — exactly what CI runs.
+
 If `just build` is red, do not open a PR. Fix failing tests or coverage gaps first.
 Lint errors are auto-fixed by `just build` — re-run after if files changed.
 
@@ -20,7 +24,7 @@ just lint-fix       # Ruff check + format with autofix
 just test           # Run pytest (supports args: just test -k pattern)
 just test-file <f>  # Run a single test file
 just build          # Full pipeline with autofix — use this before every PR
-just build-ci       # Full pipeline no autofix — CI uses this
+just ci             # Full pipeline no autofix — CI uses this
 just mcp-dev        # Run milknado-mcp under watchfiles, restarting on src/ changes
 just clean          # Remove build artifacts and caches
 ```

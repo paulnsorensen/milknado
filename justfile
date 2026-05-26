@@ -1,9 +1,37 @@
 set dotenv-load := true
+set unstable  # for the [script] gate recipe
 
 COVERAGE_THRESHOLD := "90"
 
-# Show all available recipes
-default:
+# The one command to run after every change.
+default: build
+
+# Canonical gate (default) — autofix, then lint, test, coverage. Compact output.
+build: (_gate "fix")
+
+# CI gate — identical checks, NO autofix. A clean run here == a clean CI.
+ci: (_gate "check")
+
+[private]
+[script("bash")]
+_gate mode:
+    set -uo pipefail
+    # Run a step quietly: "✓ name" on success; on failure dump the captured
+    # output (ruff/pytest emit file:line) and abort the whole gate.
+    step() { local n=$1; shift; local o
+        if o=$("$@" 2>&1); then echo "✓ $n"
+        else echo "✗ $n"; printf '%s\n' "$o"; exit 1; fi; }
+    if [ "{{mode}}" = "fix" ]; then
+        step format uv run ruff format src/ tests/
+        step lint   uv run ruff check src/ tests/ --fix --preview
+    else
+        step format uv run ruff format --check src/ tests/
+        step lint   uv run ruff check src/ tests/ --preview
+    fi
+    step test uv run pytest tests/ --cov=src/milknado --cov-report=term-missing --cov-report=xml:coverage.xml --cov-fail-under={{COVERAGE_THRESHOLD}} -q
+
+# List all available recipes
+list:
     @just --list
 
 # Install dependencies using uv
@@ -58,14 +86,6 @@ coverage-check:
 
     if result.returncode != 0:
         sys.exit(result.returncode)
-
-# Full build with autofix: lint-fix → test → coverage check (for agents/developers)
-build: lint-fix test coverage-check
-    @echo "✅ Build passed — ready for PR"
-
-# Full build no autofix: lint → test → coverage check (for CI validation)
-build-ci: lint test coverage-check
-    @echo "✅ CI build passed"
 
 # Run the CLI for manual testing
 run *args:
