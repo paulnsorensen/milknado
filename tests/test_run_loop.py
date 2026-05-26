@@ -880,14 +880,14 @@ class TestOrphanCleanupTransientRetries:
 
         clean_calls: list[int] = []
         worktree_sizes: list[int] = []
-        original_ensure = executor._ensure_clean_worktree
+        original_ensure = executor._wt.ensure_clean
 
         def tracked_ensure(node_id: int) -> None:
-            worktree_sizes.append(len(executor._worktrees))
+            worktree_sizes.append(len(executor._wt._worktrees))
             clean_calls.append(node_id)
             return original_ensure(node_id)
 
-        executor._ensure_clean_worktree = tracked_ensure  # type: ignore
+        executor._wt.ensure_clean = tracked_ensure  # type: ignore
 
         retry_config = ExecutionConfig(
             execution_agent="claude",
@@ -903,10 +903,10 @@ class TestOrphanCleanupTransientRetries:
 
         # Called once at the start of each _dispatch_once attempt (3 fail + 1 success = 4)
         assert len(clean_calls) == 4
-        # At no point when _ensure_clean_worktree fires are there stale entries
+        # At no point when ensure_clean fires are there stale entries
         assert all(sz == 0 for sz in worktree_sizes)
         # Final state: successful dispatch recorded, not cleared
-        assert 1 in executor._worktrees
+        assert 1 in executor._wt._worktrees
 
 
 class TestBuildLogPanel:
