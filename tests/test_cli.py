@@ -614,7 +614,7 @@ class TestPlanIssueOption:
         completed.stderr = ""
         return completed
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_fetches_and_runs_planner(
@@ -642,7 +642,7 @@ class TestPlanIssueOption:
         assert spec_file.exists()
         assert spec_file.read_text().startswith("# Add --issue support")
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_and_spec_combine_into_one_plan(
@@ -685,7 +685,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "--spec or --issue" in result.output
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_issue_gh_failure_exits_one(
         self,
         mock_run: MagicMock,
@@ -717,7 +717,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "gh" in result.output.lower()
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_multiple_issues_merged_into_one_spec(
@@ -775,7 +775,7 @@ class TestPlanIssueOption:
         # Goal derived from combined heading
         assert "Plan for issues #42, #43" in result.output
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_comma_separated_issues_accepted(
@@ -849,7 +849,7 @@ class TestPlanIssueOption:
         assert "## Spec: valid" in content
         assert "## Spec: no_heading" in content
 
-    @patch("milknado.cli.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_multi_issue_second_fetch_fails_exits_one(
         self,
         mock_run: MagicMock,
@@ -879,7 +879,7 @@ class TestPlanIssueOption:
 
 
 class TestToolsCheck:
-    @patch("milknado.cli.get_required_tool_status")
+    @patch("milknado.cli_tools.get_required_tool_status")
     def test_all_installed_exits_zero(self, mock_status: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -892,7 +892,7 @@ class TestToolsCheck:
         assert "tilth" in result.output
         assert "mergiraf" in result.output
 
-    @patch("milknado.cli.get_required_tool_status")
+    @patch("milknado.cli_tools.get_required_tool_status")
     def test_missing_tool_exits_nonzero(self, mock_status: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -906,8 +906,8 @@ class TestToolsCheck:
 
 
 class TestToolsInstall:
-    @patch("milknado.cli.install_missing_rust_tools")
-    @patch("milknado.cli.get_required_tool_status")
+    @patch("milknado.cli_tools.install_missing_rust_tools")
+    @patch("milknado.cli_tools.get_required_tool_status")
     def test_success_exits_zero(self, mock_status: MagicMock, mock_install: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -919,7 +919,7 @@ class TestToolsInstall:
         assert result.exit_code == 0
         assert "tilth" in result.output
 
-    @patch("milknado.cli.install_missing_rust_tools")
+    @patch("milknado.cli_tools.install_missing_rust_tools")
     def test_failure_exits_nonzero(self, mock_install: MagicMock) -> None:
         mock_install.return_value = ([], ["mergiraf"])
         result = runner.invoke(app, ["tools", "install"])
@@ -928,8 +928,8 @@ class TestToolsInstall:
 
 
 class TestInitWithInstallRustTools:
-    @patch("milknado.cli.install_missing_rust_tools")
-    @patch("milknado.cli.get_required_tool_status")
+    @patch("milknado.cli_tools.install_missing_rust_tools")
+    @patch("milknado.cli_tools.get_required_tool_status")
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_flag_triggers_install_on_success(
         self,
@@ -948,7 +948,7 @@ class TestInitWithInstallRustTools:
         assert result.exit_code == 0
         mock_install.assert_called_once()
 
-    @patch("milknado.cli.install_missing_rust_tools")
+    @patch("milknado.cli_tools.install_missing_rust_tools")
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_flag_exits_nonzero_on_install_failure(
         self,
