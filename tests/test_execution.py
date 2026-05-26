@@ -435,6 +435,51 @@ class TestExecutorDispatch:
 
         graph.mark_pending = original_mark_pending  # restore
 
+    def test_path_traversal_in_worktree_pattern_raises(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """worktree_pattern that escapes project_root must be rejected before create_worktree."""
+        traversal_config = ExecutionConfig(
+            execution_agent=config.execution_agent,
+            quality_gates=config.quality_gates,
+            worktree_pattern="../../etc/{node_id}-{slug}",
+            project_root=config.project_root,
+        )
+        graph.add_node("sneaky task")
+        with pytest.raises(ValueError, match="resolves outside project_root"):
+            executor.dispatch(1, traversal_config)
+
+    def test_path_traversal_via_abs_pattern_raises(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """Absolute worktree_pattern that leaves project_root is also rejected."""
+        traversal_config = ExecutionConfig(
+            execution_agent=config.execution_agent,
+            quality_gates=config.quality_gates,
+            worktree_pattern="/tmp/evil-{node_id}-{slug}",
+            project_root=config.project_root,
+        )
+        graph.add_node("sneaky task 2")
+        with pytest.raises(ValueError, match="resolves outside project_root"):
+            executor.dispatch(1, traversal_config)
+
+    def test_normal_worktree_pattern_does_not_raise(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """Baseline: a normal pattern resolves within project_root without error."""
+        graph.add_node("safe task")
+        result = executor.dispatch(1, config)
+        assert result.node_id == 1
+
 
 class TestExecutorComplete:
     def test_marks_done_on_success(
