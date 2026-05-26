@@ -84,7 +84,7 @@ def load_config(path: Path) -> MilknadoConfig:
         worktree_pattern=milknado.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         concurrency_limit=milknado.get("concurrency_limit", 4),
         project_root=project_root,
-        db_path=project_root / Path(milknado.get("db_path", ".milknado/milknado.db")),
+        db_path=_validated_db_path(project_root, milknado.get("db_path", ".milknado/milknado.db")),
         plugins=tuple(milknado.get("plugins", [])),
         stall_threshold_seconds=int(milknado.get("stall_threshold_seconds", 300)),
         dispatch_max_retries=int(milknado.get("dispatch_max_retries", 2)),
@@ -118,6 +118,13 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         f"eta_sample_size = {config.eta_sample_size}",
     ]
     path.write_text("\n".join(lines) + "\n")
+
+
+def _validated_db_path(project_root: Path, raw: str) -> Path:
+    db_path = project_root / Path(raw)
+    if not db_path.resolve().is_relative_to(project_root.resolve()):
+        raise ValueError(f"db_path '{raw}' escapes project_root '{project_root}'")
+    return db_path
 
 
 def _escape_toml_string(value: str) -> str:
