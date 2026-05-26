@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     MikadoEdge,
@@ -29,13 +32,19 @@ from milknado.domains.graph._persistence import (
     set_file_ownership,
 )
 
+if TYPE_CHECKING:
+    from milknado.domains.common import PluginHook
+
+_logger = logging.getLogger(__name__)
+
 
 class MikadoGraph(_AnalyticsFacade):
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        self._plugins: tuple[PluginHook, ...] = tuple(plugins)
         create_tables(self._conn)
         ensure_schema(self._conn)
 
@@ -132,6 +141,24 @@ class MikadoGraph(_AnalyticsFacade):
     def _creates_cycle(self, parent_id: int, child_id: int) -> bool:
         return would_create_cycle(self._conn, parent_id, child_id)
 
+    def _node_status(self, node_id: int) -> NodeStatus | None:
+        row = self._conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return NodeStatus(row[0]) if row else None
+
+    def _notify_status_change(
+        self, node_id: int, old_status: NodeStatus, new_status: NodeStatus
+    ) -> None:
+        if not self._plugins:
+            return
+        node = self.get_node(node_id)
+        if node is None:
+            return
+        for plugin in self._plugins:
+            try:
+                plugin.on_node_status_change(node, old_status, new_status)
+            except Exception:
+                _logger.exception("Plugin %s raised in on_node_status_change", plugin.meta.name)
+
     def get_node(self, node_id: int) -> MikadoNode | None:
         row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return row_to_node(row) if row else None
@@ -199,7 +226,10 @@ class MikadoGraph(_AnalyticsFacade):
         return None
 
     def _transition_status(self, node_id: int, target: NodeStatus) -> None:
+        old = self._node_status(node_id)
         _transitions.transition_status(self._conn, node_id, target)
+        if old is not None:
+            self._notify_status_change(node_id, old, target)
 
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
@@ -221,7 +251,10 @@ class MikadoGraph(_AnalyticsFacade):
         return True
 
     def mark_failed(self, node_id: int) -> None:
+        old = self._node_status(node_id)
         _transitions.mark_failed(self._conn, node_id)
+        if old is not None:
+            self._notify_status_change(node_id, old, NodeStatus.FAILED)
 
     def mark_running(
         self,
@@ -230,7 +263,10 @@ class MikadoGraph(_AnalyticsFacade):
         branch_name: str | None = None,
         run_id: str | None = None,
     ) -> None:
+        old = self._node_status(node_id)
         _transitions.mark_running(self._conn, node_id, worktree_path, branch_name, run_id)
+        if old is not None:
+            self._notify_status_change(node_id, old, NodeStatus.RUNNING)
 
     def set_run_id(self, node_id: int, run_id: str) -> None:
         cur = self._conn.execute(
@@ -242,7 +278,10 @@ class MikadoGraph(_AnalyticsFacade):
         self._conn.commit()
 
     def mark_pending(self, node_id: int) -> None:
+        old = self._node_status(node_id)
         _transitions.mark_pending(self._conn, node_id)
+        if old is not None:
+            self._notify_status_change(node_id, old, NodeStatus.PENDING)
 
     def mark_blocked(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.BLOCKED)

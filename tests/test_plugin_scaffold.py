@@ -152,6 +152,118 @@ class TestLoadPlugins:
             self._cleanup_modules("log_plug")
 
 
+class TestPluginDispatch:
+    """Verify on_node_status_change is dispatched by MikadoGraph."""
+
+    def test_dispatch_on_mark_running(self, tmp_path: Path) -> None:
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import MikadoGraph
+
+        calls: list[tuple[int, NodeStatus, NodeStatus]] = []
+
+        class RecordingPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="recorder", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                calls.append((node.id, old_status, new_status))
+
+        graph = MikadoGraph(tmp_path / "test.db", plugins=[RecordingPlugin()])
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+
+        graph.mark_running(child.id)
+        assert len(calls) == 1
+        assert calls[0] == (child.id, NodeStatus.PENDING, NodeStatus.RUNNING)
+
+    def test_dispatch_on_mark_done(self, tmp_path: Path) -> None:
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import MikadoGraph
+
+        calls: list[tuple[int, NodeStatus, NodeStatus]] = []
+
+        class RecordingPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="recorder", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                calls.append((node.id, old_status, new_status))
+
+        graph = MikadoGraph(tmp_path / "test.db", plugins=[RecordingPlugin()])
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.mark_running(child.id)
+        calls.clear()
+
+        graph.mark_done(child.id)
+        assert len(calls) == 1
+        assert calls[0] == (child.id, NodeStatus.RUNNING, NodeStatus.DONE)
+
+    def test_dispatch_on_mark_failed(self, tmp_path: Path) -> None:
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import MikadoGraph
+
+        calls: list[tuple[int, NodeStatus, NodeStatus]] = []
+
+        class RecordingPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="recorder", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                calls.append((node.id, old_status, new_status))
+
+        graph = MikadoGraph(tmp_path / "test.db", plugins=[RecordingPlugin()])
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.mark_running(child.id)
+        calls.clear()
+
+        graph.mark_failed(child.id)
+        assert len(calls) == 1
+        assert calls[0] == (child.id, NodeStatus.RUNNING, NodeStatus.FAILED)
+
+    def test_faulty_plugin_does_not_crash_graph(self, tmp_path: Path) -> None:
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import MikadoGraph
+
+        class BoomPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="boom", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                raise RuntimeError("plugin exploded")
+
+        graph = MikadoGraph(tmp_path / "test.db", plugins=[BoomPlugin()])
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        # Must not raise even though the plugin raises
+        graph.mark_running(child.id)
+        assert graph.get_node(child.id).status == NodeStatus.RUNNING
+
+    def test_no_plugins_no_dispatch(self, tmp_path: Path) -> None:
+        """Graph with no plugins is a no-op fast path — just verify no error."""
+        from milknado.domains.common import NodeStatus
+        from milknado.domains.graph import MikadoGraph
+
+        graph = MikadoGraph(tmp_path / "test.db")
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.mark_running(child.id)
+        assert graph.get_node(child.id).status == NodeStatus.RUNNING
+
+
 class TestPluginInitCli:
     def test_plugin_init_creates_directory(self, tmp_path: Path) -> None:
         from typer.testing import CliRunner
