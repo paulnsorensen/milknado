@@ -62,13 +62,62 @@ def _log_path(project_root: Path, node_id: int) -> Path:
     return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
 
 
+_WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Runtime essentials
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        # Temporary files (platform-specific names)
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        # Locale / encoding
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_COLLATE",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        # Python runtime
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        # Git identity (not credentials)
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    }
+)
+
+
+def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a filtered environment for worker subprocesses.
+
+    Passes only allowlisted system vars plus MILKNADO_* config vars from the
+    parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in _WORKER_ENV_ALLOWLIST or k.startswith("MILKNADO_")
+    }
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _execute(
     project_root: Path, node_id: int, log_path: Path, brief: str, argv: list[str], timeout: int
 ) -> tuple[int, bool]:
     timed_out = False
-    # Make env explicit so the worker can attribute follow-up nodes it tracks
-    # back to the task it is running (milknado_track_follow_up reads this).
-    env = {**os.environ, "MILKNADO_NODE_ID": str(node_id)}
+    env = _build_worker_env({"MILKNADO_NODE_ID": str(node_id)})
     with log_path.open("wb") as log_fh:
         proc = subprocess.Popen(
             argv,
