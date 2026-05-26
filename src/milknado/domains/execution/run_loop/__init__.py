@@ -129,24 +129,15 @@ class RunLoop:
                 drain_input(self._input, self._active)
                 self._render_live_frame(live)
                 while self._active:
-                    try:
-                        run_id, success = self._ralph.wait_for_next_completion(
-                            set(self._active.keys()), timeout=timeout
-                        )
-                    except CompletionTimeout as ct:
-                        failed += self._handle_completion_timeout(ct)
-                        break
-                    self._absorb_progress()
-                    drain_input(self._input, self._active)
-                    c, f, cs = handle_completion(self, run_id, success, feature_branch, live)
+                    d, c, f, cs, timed_out = self._poll_and_complete(
+                        config, feature_branch, concurrency_limit, timeout, live
+                    )
+                    dispatched += d
                     completed += c
                     failed += f
                     conflicts.extend(cs)
-                    if not (self._strict and self._failure_triggered):
-                        d, f = self._dispatch_batch(config, concurrency_limit, live)
-                        dispatched += d
-                        failed += f
-                    self._render_live_frame(live)
+                    if timed_out:
+                        break
         except KeyboardInterrupt:
             interrupted = True
             _logger.warning("Run interrupted by user (KeyboardInterrupt)")
@@ -170,6 +161,38 @@ class RunLoop:
         if self._strict:
             self._failure_triggered = True
         return newly_failed
+
+    def _poll_and_complete(
+        self,
+        config: ExecutionConfig,
+        feature_branch: str,
+        concurrency_limit: int,
+        timeout: float,
+        live: Live,
+    ) -> tuple[int, int, int, list[RebaseConflict], bool]:
+        """One poll-and-handle iteration.
+
+        Returns (dispatched, completed, failed, conflicts, timed_out).
+        """
+        try:
+            run_id, success = self._ralph.wait_for_next_completion(
+                set(self._active.keys()), timeout=timeout
+            )
+        except CompletionTimeout as ct:
+            return 0, 0, self._handle_completion_timeout(ct), [], True
+        self._absorb_progress()
+        drain_input(self._input, self._active)
+        c, f, cs = handle_completion(self, run_id, success, feature_branch, live)
+        completed = c
+        failed = f
+        conflicts: list[RebaseConflict] = list(cs)
+        dispatched = 0
+        if not (self._strict and self._failure_triggered):
+            d, f2 = self._dispatch_batch(config, concurrency_limit, live)
+            dispatched += d
+            failed += f2
+        self._render_live_frame(live)
+        return dispatched, completed, failed, conflicts, False
 
     def _render_live_frame(self, live: Live) -> None:
         display = (
