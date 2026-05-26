@@ -83,9 +83,10 @@ def run(
     try:
         git = GitAdapter(project_root)
         ralph = RalphifyAdapter()
-        feature_branch = git.current_branch()
+        feature_branch: str | None = None
 
         if resume:
+            feature_branch = git.current_branch()
             result = reconcile_stale_nodes(graph, git, ralph, feature_branch)
             if result.resolved_done or result.reset_pending:
                 console.print(
@@ -97,6 +98,8 @@ def run(
             console.print("No nodes ready for execution.")
             return
 
+        if feature_branch is None:
+            feature_branch = git.current_branch()
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
