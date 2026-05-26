@@ -61,6 +61,7 @@ class MilknadoConfig:
     worker_tools: dict[str, WorkerToolsOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
+    pr_stack: bool = False
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -153,6 +154,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "protected_branches": list(config.protected_branches),
             "completion_timeout_seconds": config.completion_timeout_seconds,
             "eta_sample_size": config.eta_sample_size,
+            "pr_stack": config.pr_stack,
         }
     )
 
@@ -328,6 +330,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         worker_tools=worker_tools,
         planning_prompt_prepend=planning_prompt_prepend,
         worker_brief_prepend=worker_brief_prepend,
+        pr_stack=bool(raw.get("pr_stack", False)),
     )
 
 

@@ -347,6 +347,29 @@ class Executor:
             rebase_conflict=conflict,
         )
 
+    def stage_for_pr(self, node_id: int, feature_branch: str) -> str:
+        """Squash-commit and push the node's branch; mark done. Returns branch name."""
+        node = self._graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        if not node.branch_name:
+            raise ValueError(f"Node {node_id} has no branch_name")
+
+        worktree = Path(node.worktree_path) if node.worktree_path else None
+        if worktree and worktree.exists():
+            msg = _build_commit_message(node_id, node.description)
+            self._wt._git.squash_and_commit(worktree, feature_branch, msg)
+            self._wt._git.push_branch(node.branch_name)
+            self._wt.remove(node_id, worktree)
+
+        self._graph.mark_done(node_id)
+        if node.dispatched_at is not None:
+            completed_now = datetime.now(UTC)
+            duration = (completed_now - node.dispatched_at).total_seconds()
+            self._graph.record_completion_duration(node_id, duration)
+
+        return node.branch_name
+
     def fail(self, node_id: int) -> None:
         self._wt.ensure_clean(node_id)
         node = self._graph.get_node(node_id)
