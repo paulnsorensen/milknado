@@ -13,7 +13,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from milknado.domains.dispatch._runstate import now_iso, read_state, runs_dir, write_state
+from milknado.domains.dispatch import now_iso, read_state, runs_dir, write_state
 
 _logger = logging.getLogger("milknado")
 

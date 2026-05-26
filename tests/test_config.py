@@ -6,7 +6,6 @@ import pytest
 
 from milknado.domains.common.config import (
     MilknadoConfig,
-    _escape_toml_string,
     default_config,
     load_config,
     save_config,
@@ -221,14 +220,3 @@ class TestSaveConfig:
         content = path.read_text()
         assert "[milknado.prompts]" not in content
         assert "[milknado.worker.tools." not in content
-
-
-class TestEscapeTomlString:
-    def test_escapes_backslash(self) -> None:
-        assert _escape_toml_string("a\\b") == "a\\\\b"
-
-    def test_escapes_double_quote(self) -> None:
-        assert _escape_toml_string('a"b') == 'a\\"b'
-
-    def test_no_change_for_plain_string(self) -> None:
-        assert _escape_toml_string("hello world") == "hello world"

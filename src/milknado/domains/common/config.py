@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import tomli_w
+
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
     resolve_execution_agent_command,
@@ -131,55 +133,53 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             ),
         )
         suppress_execution_agent = config.execution_agent == derived_execution_agent
-    lines = [
-        "[milknado]",
-        f'agent_family = "{config.agent_family}"',
-        f'planning_agent = "{_escape_toml_string(config.planning_agent)}"',
-        (
-            "planning_validation_hook = "
-            f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
-        ),
-    ]
+    milknado: dict[str, Any] = {
+        "agent_family": config.agent_family,
+        "planning_agent": config.planning_agent,
+        "planning_validation_hook": config.planning_validation_hook or "",
+    }
     if not suppress_execution_agent:
-        lines.append(f'execution_agent = "{_escape_toml_string(config.execution_agent)}"')
-    lines.extend(
-        [
-            f"quality_gates = {list(config.quality_gates)}",
-            f'worktree_pattern = "{config.worktree_pattern}"',
-            f"concurrency_limit = {config.concurrency_limit}",
-            f'db_path = "{config.db_path.relative_to(config.project_root)}"',
-            f"plugins = {list(config.plugins)}",
-            f"stall_threshold_seconds = {config.stall_threshold_seconds}",
-            f"dispatch_max_retries = {config.dispatch_max_retries}",
-            f"dispatch_backoff_seconds = {config.dispatch_backoff_seconds}",
-            f"protected_branches = {list(config.protected_branches)}",
-            f"completion_timeout_seconds = {config.completion_timeout_seconds}",
-            f"eta_sample_size = {config.eta_sample_size}",
-        ]
+        milknado["execution_agent"] = config.execution_agent
+    milknado.update(
+        {
+            "quality_gates": list(config.quality_gates),
+            "worktree_pattern": config.worktree_pattern,
+            "concurrency_limit": config.concurrency_limit,
+            "db_path": str(config.db_path.relative_to(config.project_root)),
+            "plugins": list(config.plugins),
+            "stall_threshold_seconds": config.stall_threshold_seconds,
+            "dispatch_max_retries": config.dispatch_max_retries,
+            "dispatch_backoff_seconds": config.dispatch_backoff_seconds,
+            "protected_branches": list(config.protected_branches),
+            "completion_timeout_seconds": config.completion_timeout_seconds,
+            "eta_sample_size": config.eta_sample_size,
+        }
     )
-    if config.planning_prompt_prepend is not None or config.worker_brief_prepend is not None:
-        lines.append("")
-        lines.append("[milknado.prompts]")
-        if config.planning_prompt_prepend is not None:
-            lines.append(
-                f'planning_prepend = "{_escape_toml_string(config.planning_prompt_prepend)}"'
-            )
-        if config.worker_brief_prepend is not None:
-            lines.append(
-                f'worker_brief_prepend = "{_escape_toml_string(config.worker_brief_prepend)}"'
-            )
+
+    prompts: dict[str, str] = {}
+    if config.planning_prompt_prepend is not None:
+        prompts["planning_prepend"] = config.planning_prompt_prepend
+    if config.worker_brief_prepend is not None:
+        prompts["worker_brief_prepend"] = config.worker_brief_prepend
+    if prompts:
+        milknado["prompts"] = prompts
+
+    tools: dict[str, dict[str, list[str]]] = {}
     for family, override in sorted(config.worker_tools.items()):
         if override.allow is None and not override.extend and not override.deny:
             continue
-        lines.append("")
-        lines.append(f"[milknado.worker.tools.{family}]")
+        entry: dict[str, list[str]] = {}
         if override.allow is not None:
-            lines.append(f"allow = {list(override.allow)}")
+            entry["allow"] = list(override.allow)
         if override.extend:
-            lines.append(f"extend = {list(override.extend)}")
+            entry["extend"] = list(override.extend)
         if override.deny:
-            lines.append(f"deny = {list(override.deny)}")
-    path.write_text("\n".join(lines) + "\n")
+            entry["deny"] = list(override.deny)
+        tools[family] = entry
+    if tools:
+        milknado["worker"] = {"tools": tools}
+
+    path.write_bytes(tomli_w.dumps({"milknado": milknado}).encode())
 
 
 def _read_milknado_section(path: Path) -> dict[str, Any]:
@@ -422,21 +422,6 @@ def _load_prompt_prepend(
         text = resolved.read_text(encoding="utf-8").strip()
         return text or None
     return None
-
-
-def _escape_toml_string(value: str) -> str:
-    """Escape a string for embedding in a TOML basic (double-quoted) string.
-
-    TOML basic strings forbid literal newlines / tabs / control chars; escape
-    the ones a real config might carry so multi-line prepends round-trip.
-    """
-    return (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
 
 
 def _validated_db_path(project_root: Path, raw: str) -> Path:
