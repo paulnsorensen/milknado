@@ -57,6 +57,13 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
     return shlex.split(_DEFAULT_WORKER_CMD)
 
 
+def _inject_mcp_config(argv: list[str], project_root: Path) -> list[str]:
+    mcp_config = project_root / ".mcp.json"
+    if mcp_config.exists():
+        return [*argv, "--mcp-config", str(mcp_config)]
+    return argv
+
+
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
@@ -144,7 +151,7 @@ def run_headless(
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
 ) -> RunResult:
-    argv = _resolve_worker_cmd(worker_cmd)
+    argv = _inject_mcp_config(_resolve_worker_cmd(worker_cmd), project_root)
     log_path = _log_path(project_root, node_id)
     exit_code, timed_out = _execute(project_root, node_id, log_path, brief, argv, timeout_seconds)
     return RunResult(
@@ -212,7 +219,7 @@ def start_headless_async(
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
 ) -> AsyncStartRef:
-    argv = _resolve_worker_cmd(worker_cmd)
+    argv = _inject_mcp_config(_resolve_worker_cmd(worker_cmd), project_root)
     run_id = _make_run_id(node_id)
     runs_dir = _runs_dir(project_root)
     log_path = runs_dir / f"{run_id}.log"
