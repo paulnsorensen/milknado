@@ -1,7 +1,7 @@
 [milknado]
 agent_family = "claude"
 planning_agent = "claude --model opus -p --dangerously-skip-permissions"
-execution_agent = "claude --model sonnet -p --allowedTools 'mcp__tilth__*,Bash(rtk:*),Read,Edit,Write,Glob,Grep,MultiEdit'"
+execution_agent = "claude --model sonnet -p --allowedTools 'mcp__tilth__*,mcp__serena__get_symbols_overview,mcp__serena__find_symbol,mcp__serena__find_referencing_symbols,mcp__serena__find_declaration,mcp__serena__find_implementations,mcp__serena__get_diagnostics_for_file,mcp__serena__replace_symbol_body,mcp__serena__insert_before_symbol,mcp__serena__insert_after_symbol,mcp__serena__replace_content,mcp__serena__rename_symbol,mcp__serena__safe_delete_symbol,mcp__milknado__milknado_track_follow_up,Bash(rtk:*),Read,Edit,Write,Glob,Grep,MultiEdit'"
 quality_gates = ['uv run pytest', 'uv run ruff check', 'uv run ty check']
 worktree_pattern = "milknado-{node_id}-{slug}"
 concurrency_limit = 4
