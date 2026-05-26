@@ -33,6 +33,7 @@ from milknado.domains.dispatch._runstate import (
     tail,
     write_state,
 )
+from milknado.domains.dispatch.runner import _build_worker_env
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
 
@@ -121,6 +122,7 @@ def milknado_ralph_run_start(
                     stderr=subprocess.STDOUT,
                     cwd=str(root),
                     start_new_session=True,
+                    env=_build_worker_env(),
                 )
         except OSError as exc:
             # A bad runner_cmd or an unspawnable process would otherwise leave
