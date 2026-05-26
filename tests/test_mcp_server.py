@@ -849,6 +849,95 @@ class TestTodoAsyncRun:
         assert _call(milknado_todo_tree, project_root=root)[0]["status"] == "done"
 
 
+class TestMcpConfigInjection:
+    """--mcp-config must be appended to the worker argv when .mcp.json exists."""
+
+    def _fake_execute(self, captured: list[list[str]]):
+        def inner(project_root, node_id, log_path, brief, argv, timeout):
+            captured.append(list(argv))
+            return 0, False
+
+        return inner
+
+    def test_run_headless_appends_mcp_config_when_present(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from unittest.mock import patch
+
+        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="mcp-sync", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        captured: list[list[str]] = []
+        with patch(
+            "milknado.domains.dispatch.runner._execute",
+            side_effect=self._fake_execute(captured),
+        ):
+            _call(milknado_todo_run, node_id=task["id"], timeout_seconds=10, project_root=root)
+        assert captured, "worker was not dispatched"
+        argv = captured[0]
+        assert "--mcp-config" in argv
+        assert str(tmp_path / ".mcp.json") in argv
+
+    def test_run_headless_omits_mcp_config_when_absent(self, tmp_path: Path, monkeypatch) -> None:
+        from unittest.mock import patch
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="no-mcp-sync", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        captured: list[list[str]] = []
+        with patch(
+            "milknado.domains.dispatch.runner._execute",
+            side_effect=self._fake_execute(captured),
+        ):
+            _call(milknado_todo_run, node_id=task["id"], timeout_seconds=10, project_root=root)
+        assert captured, "worker was not dispatched"
+        assert "--mcp-config" not in captured[0]
+
+    def test_start_headless_async_appends_mcp_config_when_present(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from unittest.mock import patch
+
+        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="mcp-async", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        captured: list[list[str]] = []
+        with patch(
+            "milknado.domains.dispatch.runner._execute",
+            side_effect=self._fake_execute(captured),
+        ):
+            started = _call(
+                milknado_todo_run_start, node_id=task["id"], timeout_seconds=10, project_root=root
+            )
+            _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        assert captured, "worker was not dispatched"
+        argv = captured[0]
+        assert "--mcp-config" in argv
+        assert str(tmp_path / ".mcp.json") in argv
+
+    def test_start_headless_async_omits_mcp_config_when_absent(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from unittest.mock import patch
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="no-mcp-async", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        captured: list[list[str]] = []
+        with patch(
+            "milknado.domains.dispatch.runner._execute",
+            side_effect=self._fake_execute(captured),
+        ):
+            started = _call(
+                milknado_todo_run_start, node_id=task["id"], timeout_seconds=10, project_root=root
+            )
+            _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        assert captured, "worker was not dispatched"
+        assert "--mcp-config" not in captured[0]
+
+
 class TestSchemaMigration:
     def test_mikado_graph_migrates_pre_kind_db(self, tmp_path: Path) -> None:
         """A SQLite DB created before the `kind` column must be migrated by
