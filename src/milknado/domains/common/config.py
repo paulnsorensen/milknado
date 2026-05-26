@@ -43,7 +43,7 @@ class MilknadoConfig:
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
     planning_validation_hook: str | None = None
-    execution_agent: str = "claude --model sonnet -p --dangerously-skip-permissions"
+    execution_agent: str = resolve_execution_agent_command("claude")
     quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check", "uv run ty check")
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
