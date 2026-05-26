@@ -16,6 +16,19 @@ from milknado.domains.dispatch import (
     start_headless_async,
 )
 
+_ALLOWED_WORKER_PREFIXES = ("claude", "codex", "cursor-agent", "gemini")
+
+
+def _validate_worker_cmd(worker_cmd: str | None) -> None:
+    """Reject worker_cmd values that don't start with an allowed AI agent CLI."""
+    if not worker_cmd:
+        return
+    cmd = worker_cmd.strip()
+    if not any(cmd.startswith(p) for p in _ALLOWED_WORKER_PREFIXES):
+        raise ValueError(
+            f"worker_cmd must start with one of {list(_ALLOWED_WORKER_PREFIXES)!r}; got {cmd!r}"
+        )
+
 
 def _ensure_running(graph, node_id: int) -> bool:
     """Move a node to RUNNING so a (re)run's terminal transition (RUNNING ->
@@ -77,6 +90,7 @@ def milknado_todo_run(
     worker_cmd defaults to $MILKNADO_WORKER_CMD then `claude -p`.
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     """
+    _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
@@ -98,6 +112,7 @@ def milknado_todo_run_start(
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits.
     """
+    _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
