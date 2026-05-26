@@ -125,6 +125,18 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert "develop" in cfg.protected_branches
 
+    def test_pr_stack_defaults_false(self, tmp_path: Path) -> None:
+        toml = '[milknado]\nagent_family = "claude"\n'
+        path = self._write_toml(tmp_path, toml)
+        cfg = load_config(path)
+        assert cfg.pr_stack is False
+
+    def test_pr_stack_loads_true(self, tmp_path: Path) -> None:
+        toml = '[milknado]\nagent_family = "claude"\npr_stack = true\n'
+        path = self._write_toml(tmp_path, toml)
+        cfg = load_config(path)
+        assert cfg.pr_stack is True
+
     def test_top_level_without_milknado_section(self, tmp_path: Path) -> None:
         toml = 'agent_family = "claude"\n'
         path = self._write_toml(tmp_path, toml)

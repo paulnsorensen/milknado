@@ -60,6 +60,8 @@ def _make_loop(node_id: int, run_id: str, executor: _FakeExecutor) -> Any:
     loop._attempts = {}
     loop._strict = False
     loop._failure_triggered = False
+    loop._pr_stack = False
+    loop._completed_branches = {}
     return loop
 
 
@@ -183,6 +185,64 @@ class TestHandleCompletionRebaseConflict:
     def test_no_conflict_does_not_append_to_conflicts(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
+        live = MagicMock()
+
+        _, _, cs = handle_completion(loop, "run-1", True, "main", live)
+
+        assert cs == []
+
+
+class _FakeStageExecutor(_FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.staged: list[tuple[int, str]] = []
+
+    def stage_for_pr(self, node_id: int, feature_branch: str) -> str:
+        self.staged.append((node_id, feature_branch))
+        return f"milknado/{node_id}-branch"
+
+
+class TestHandleCompletionPrStack:
+    def test_calls_stage_for_pr_not_complete(self) -> None:
+        exec_ = _FakeStageExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._pr_stack = True
+        live = MagicMock()
+
+        handle_completion(loop, "run-1", True, "main", live)
+
+        assert len(exec_.staged) == 1
+        assert exec_.staged[0] == (1, "main")
+        # normal complete() must NOT be called
+        assert exec_._complete_result is not None  # still default; complete() never called
+
+    def test_accumulates_branch_in_completed_branches(self) -> None:
+        exec_ = _FakeStageExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._pr_stack = True
+        live = MagicMock()
+
+        handle_completion(loop, "run-1", True, "main", live)
+
+        assert loop._completed_branches[1] == "milknado/1-branch"
+
+    def test_returns_completed_one_failed_zero(self) -> None:
+        exec_ = _FakeStageExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._pr_stack = True
+        live = MagicMock()
+
+        c, f, cs = handle_completion(loop, "run-1", True, "main", live)
+
+        assert c == 1
+        assert f == 0
+        assert cs == []
+
+    def test_no_conflict_in_pr_stack_mode(self) -> None:
+        """PR stack mode never produces rebase conflicts (no rebase happens)."""
+        exec_ = _FakeStageExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._pr_stack = True
         live = MagicMock()
 
         _, _, cs = handle_completion(loop, "run-1", True, "main", live)

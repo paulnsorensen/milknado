@@ -33,6 +33,7 @@ class MilknadoConfig:
     protected_branches: tuple[str, ...] = ("main", "master")
     completion_timeout_seconds: float = 1800.0
     eta_sample_size: int = 10
+    pr_stack: bool = False
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -94,6 +95,7 @@ def load_config(path: Path) -> MilknadoConfig:
         protected_branches=tuple(milknado.get("protected_branches", ["main", "master"])),
         completion_timeout_seconds=float(milknado.get("completion_timeout_seconds", 1800.0)),
         eta_sample_size=int(milknado.get("eta_sample_size", 10)),
+        pr_stack=bool(milknado.get("pr_stack", False)),
     )
 
 
@@ -115,9 +117,15 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "protected_branches": list(config.protected_branches),
             "completion_timeout_seconds": config.completion_timeout_seconds,
             "eta_sample_size": config.eta_sample_size,
+            "pr_stack": config.pr_stack,
         }
     }
     path.write_bytes(tomli_w.dumps(data).encode())
+
+
+def _escape_toml_string(value: str) -> str:
+    """Escape backslashes and double-quotes for TOML inline string values."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _validated_db_path(project_root: Path, raw: str) -> Path:

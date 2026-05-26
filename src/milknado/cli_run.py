@@ -41,6 +41,11 @@ def _print_run_result(result: RunLoopResult) -> None:
             f"{result.failed_total} failed.[/yellow]"
         )
 
+    for pr in result.stacked_prs:
+        console.print(
+            f"  [cyan]PR[/cyan] node {pr.node_id} ({pr.branch} → {pr.base_branch}): {pr.pr_url}"
+        )
+
     for conflict in result.rebase_conflicts:
         console.print(
             f"\n[red bold]Rebase conflict — node {conflict.node_id}:[/red bold] "
@@ -57,33 +62,51 @@ def run(
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
+    resume: Annotated[
+        bool,
+        typer.Option("--resume/--no-resume", help="Reconcile stale RUNNING nodes before run."),
+    ] = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
-    from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
+    from milknado.domains.execution import (
+        Executor,
+        RunLoop,
+        get_dispatchable_nodes,
+        reconcile_stale_nodes,
+    )
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
 
     try:
+        git = GitAdapter(project_root)
+        ralph = RalphifyAdapter()
+        feature_branch = git.current_branch()
+
+        if resume:
+            result = reconcile_stale_nodes(graph, git, ralph, feature_branch)
+            if result.resolved_done or result.reset_pending:
+                console.print(
+                    f"[dim]Reconciled: {len(result.resolved_done)} marked done, "
+                    f"{len(result.reset_pending)} reset to pending.[/dim]"
+                )
+
         if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return
 
-        git = GitAdapter(project_root)
-        ralph = RalphifyAdapter()
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-
-        feature_branch = git.current_branch()
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
-        result = loop.run(
+        run_result = loop.run(
             config=_build_exec_config(config, project_root),
             feature_branch=feature_branch,
             concurrency_limit=config.concurrency_limit,
+            pr_stack=config.pr_stack,
         )
-        _print_run_result(result)
+        _print_run_result(run_result)
     finally:
         graph.close()

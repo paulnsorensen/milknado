@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from milknado.domains.execution.executor import RebaseConflict
+
+if TYPE_CHECKING:
+    from milknado.domains.execution.pr_stack import StackedPr
 
 
 @dataclass(frozen=True)
@@ -20,3 +24,4 @@ class RunLoopResult:
     rebase_conflicts: tuple[RebaseConflict, ...] = ()
     strict_exit: bool = False
     verify_outcome: VerifyOutcome | None = None
+    stacked_prs: tuple[StackedPr, ...] = ()
