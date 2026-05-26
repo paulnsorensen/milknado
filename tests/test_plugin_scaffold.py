@@ -250,7 +250,9 @@ class TestPluginDispatch:
         child = graph.add_node("child", parent_id=root.id)
         # Must not raise even though the plugin raises
         graph.mark_running(child.id)
-        assert graph.get_node(child.id).status == NodeStatus.RUNNING
+        node = graph.get_node(child.id)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING
 
     def test_no_plugins_no_dispatch(self, tmp_path: Path) -> None:
         """Graph with no plugins is a no-op fast path — just verify no error."""
@@ -261,7 +263,9 @@ class TestPluginDispatch:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
         graph.mark_running(child.id)
-        assert graph.get_node(child.id).status == NodeStatus.RUNNING
+        node = graph.get_node(child.id)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING
 
 
 class TestPluginInitCli:
