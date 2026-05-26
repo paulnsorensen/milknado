@@ -1,22 +1,15 @@
-"""CRG adapter — wraps code-review-graph for graph-based code intelligence.
-
-Phrase cap (2-4 words) on semantic_search prevents oversized MCP payloads.
-detail_level controls response verbosity:
-  "minimal" — file paths only (cheapest)
-  "full"    — name, file_path, kind, qualified_name per node
-"""
+"""CRG adapter — wraps code-review-graph for graph-based code intelligence."""
 
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
 from code_review_graph.communities import get_architecture_overview, get_communities
 from code_review_graph.flows import get_flows
 from code_review_graph.graph import GraphStore
-from code_review_graph.tools.context import get_minimal_context
 
 _SOURCE_EXTENSIONS = frozenset(
     {
@@ -147,71 +140,8 @@ class CrgAdapter:
     ) -> list[dict[str, Any]]:
         return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
 
-    def get_minimal_context(
-        self,
-        task: str = "",
-        changed_files: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return get_minimal_context(
-            task=task,
-            changed_files=changed_files,
-            repo_root=str(self._root),
-        )
-
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return find_bridge_nodes(self._get_store(), top_n=top_n)
 
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return find_hub_nodes(self._get_store(), top_n=top_n)
-
-    def semantic_search_nodes(
-        self,
-        query: str,
-        top_n: int = 5,
-    ) -> list[dict[str, Any]]:
-        """Spec-driven retrieval (no phrase cap).
-
-        Returns name/file_path/kind/qualified_name per node.
-        """
-        nodes = self._get_store().search_nodes(query, limit=top_n)
-        return [
-            {
-                "name": n.name,
-                "file_path": n.file_path,
-                "kind": n.kind,
-                "qualified_name": n.qualified_name,
-            }
-            for n in nodes
-        ]
-
-    def semantic_search(
-        self,
-        query: str,
-        top_n: int = 5,
-        detail_level: Literal["minimal", "full"] = "minimal",
-    ) -> list[dict[str, Any]]:
-        """Free-form retrieval; returns file paths (minimal) or full node records (full).
-
-        `top_n` caps the underlying node search; in `minimal` mode, dedup by
-        file_path runs after the cap, so the result may contain fewer than
-        `top_n` entries when multiple nodes share a file.
-        """
-        if detail_level not in ("minimal", "full"):
-            raise ValueError(f"detail_level must be 'minimal' or 'full', got: {detail_level!r}")
-        words = query.split()
-        if len(words) < 2:
-            raise ValueError(f"semantic_search query must be 2-4 words, got: {query!r}")
-        if len(words) > 4:
-            query = " ".join(words[:4])
-        nodes = self._get_store().search_nodes(query, limit=top_n)
-        if detail_level == "minimal":
-            return [{"file_path": fp} for fp in dict.fromkeys(n.file_path for n in nodes)]
-        return [
-            {
-                "name": n.name,
-                "file_path": n.file_path,
-                "kind": n.kind,
-                "qualified_name": n.qualified_name,
-            }
-            for n in nodes
-        ]
