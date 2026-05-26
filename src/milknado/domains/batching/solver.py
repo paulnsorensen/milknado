@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ortools.sat.python import cp_model
@@ -30,6 +31,17 @@ from milknado.domains.batching.graph_build import (
 )
 from milknado.domains.batching.weights import estimate_tokens_per_symbols
 from milknado.domains.common.protocols import CrgPort, TilthPort
+
+
+@dataclass
+class SolverConfig:
+    budget: int = 150_000
+    crg: CrgPort | None = None
+    new_relationships: Sequence[NewRelationship] = field(default_factory=tuple)
+    time_limit_s: float = 10.0
+    root: Path = field(default_factory=Path.cwd)
+    tilth_port: TilthPort | None = None
+
 
 STATUS_OPTIMAL: SolverStatus = "OPTIMAL"
 STATUS_FEASIBLE: SolverStatus = "FEASIBLE"
@@ -217,10 +229,6 @@ def _compute_batch_deps(
     return batch_deps
 
 
-# Public API: the 7 knobs are intentional — budget, time_limit_s, and root
-# each configure different concerns (solver scale, solver timeout, filesystem
-# root for token estimation) while ``crg``, ``new_relationships``, and
-# ``tilth_port`` are optional orchestration hooks.
 def plan_batches(
     changes: Sequence[FileChange],
     budget: int = 150_000,
@@ -242,40 +250,33 @@ def plan_batches(
     validate_no_symbol_overlap(changes)
     return _run_solver(
         changes,
-        budget=budget,
-        crg=crg,
-        new_relationships=new_relationships,
-        time_limit_s=time_limit_s,
-        root=root if root is not None else Path.cwd(),
-        tilth_port=tilth_port,
+        SolverConfig(
+            budget=budget,
+            crg=crg,
+            new_relationships=new_relationships,
+            time_limit_s=time_limit_s,
+            root=root if root is not None else Path.cwd(),
+            tilth_port=tilth_port,
+        ),
     )
 
 
-def _run_solver(
-    changes: Sequence[FileChange],
-    *,
-    budget: int,
-    crg: CrgPort | None,
-    new_relationships: Sequence[NewRelationship],
-    time_limit_s: float,
-    root: Path,
-    tilth_port: TilthPort | None,
-) -> BatchPlan:
-    graph = build_change_graph(changes, crg, new_relationships)
+def _run_solver(changes: Sequence[FileChange], config: SolverConfig) -> BatchPlan:
+    graph = build_change_graph(changes, config.crg, config.new_relationships)
     contracted: ContractedGraph = contract_sccs(graph.nodes, graph.edges)
     sccs, scc_members = _group_sccs(graph.nodes, contracted.scc_of)
-    tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, root, tilth_port)
-    oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, budget)
+    tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, config.root, config.tilth_port)
+    oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, config.budget)
     inputs = ModelInputs(
         sccs=sccs,
         dag_edges=contracted.dag_edges,
         tokens_by_scc=tokens_by_scc,
         sym_by_scc=symbols_by_scc(contracted.scc_of, graph.symbols_by_node),
-        budget=budget,
+        budget=config.budget,
         oversized_sccs=set(oversized_list),
     )
     bundle = build_model(inputs)
-    snapshot, status = _two_pass_solve(bundle, time_limit_s)
+    snapshot, status = _two_pass_solve(bundle, config.time_limit_s)
     if snapshot is None:
         return BatchPlan(batches=(), spread_report=(), solver_status=status)
     input_order = {c.id: i for i, c in enumerate(changes)}
