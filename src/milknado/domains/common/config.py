@@ -317,7 +317,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         worktree_pattern=raw.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         concurrency_limit=raw.get("concurrency_limit", 4),
         project_root=project_root,
-        db_path=project_root / Path(raw.get("db_path", ".milknado/milknado.db")),
+        db_path=_validated_db_path(project_root, raw.get("db_path", ".milknado/milknado.db")),
         plugins=tuple(raw.get("plugins", [])),
         stall_threshold_seconds=int(raw.get("stall_threshold_seconds", 300)),
         dispatch_max_retries=int(raw.get("dispatch_max_retries", 2)),
@@ -437,3 +437,10 @@ def _escape_toml_string(value: str) -> str:
         .replace("\r", "\\r")
         .replace("\t", "\\t")
     )
+
+
+def _validated_db_path(project_root: Path, raw: str) -> Path:
+    db_path = project_root / Path(raw)
+    if not db_path.resolve().is_relative_to(project_root.resolve()):
+        raise ValueError(f"db_path '{raw}' escapes project_root '{project_root}'")
+    return db_path
