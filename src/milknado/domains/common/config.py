@@ -4,6 +4,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import tomli_w
+
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
     resolve_execution_agent_command,
@@ -96,28 +98,26 @@ def load_config(path: Path) -> MilknadoConfig:
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:
-    lines = [
-        "[milknado]",
-        f'agent_family = "{config.agent_family}"',
-        f'planning_agent = "{_escape_toml_string(config.planning_agent)}"',
-        (
-            "planning_validation_hook = "
-            f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
-        ),
-        f'execution_agent = "{_escape_toml_string(config.execution_agent)}"',
-        f"quality_gates = {list(config.quality_gates)}",
-        f'worktree_pattern = "{config.worktree_pattern}"',
-        f"concurrency_limit = {config.concurrency_limit}",
-        f'db_path = "{config.db_path.relative_to(config.project_root)}"',
-        f"plugins = {list(config.plugins)}",
-        f"stall_threshold_seconds = {config.stall_threshold_seconds}",
-        f"dispatch_max_retries = {config.dispatch_max_retries}",
-        f"dispatch_backoff_seconds = {config.dispatch_backoff_seconds}",
-        f"protected_branches = {list(config.protected_branches)}",
-        f"completion_timeout_seconds = {config.completion_timeout_seconds}",
-        f"eta_sample_size = {config.eta_sample_size}",
-    ]
-    path.write_text("\n".join(lines) + "\n")
+    data = {
+        "milknado": {
+            "agent_family": config.agent_family,
+            "planning_agent": config.planning_agent,
+            "planning_validation_hook": config.planning_validation_hook or "",
+            "execution_agent": config.execution_agent,
+            "quality_gates": list(config.quality_gates),
+            "worktree_pattern": config.worktree_pattern,
+            "concurrency_limit": config.concurrency_limit,
+            "db_path": str(config.db_path.relative_to(config.project_root)),
+            "plugins": list(config.plugins),
+            "stall_threshold_seconds": config.stall_threshold_seconds,
+            "dispatch_max_retries": config.dispatch_max_retries,
+            "dispatch_backoff_seconds": config.dispatch_backoff_seconds,
+            "protected_branches": list(config.protected_branches),
+            "completion_timeout_seconds": config.completion_timeout_seconds,
+            "eta_sample_size": config.eta_sample_size,
+        }
+    }
+    path.write_bytes(tomli_w.dumps(data).encode())
 
 
 def _validated_db_path(project_root: Path, raw: str) -> Path:
@@ -125,7 +125,3 @@ def _validated_db_path(project_root: Path, raw: str) -> Path:
     if not db_path.resolve().is_relative_to(project_root.resolve()):
         raise ValueError(f"db_path '{raw}' escapes project_root '{project_root}'")
     return db_path
-
-
-def _escape_toml_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
