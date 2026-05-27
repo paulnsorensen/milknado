@@ -164,6 +164,19 @@ class WorktreeManager:
         finally:
             self.remove(node_id, worktree)
 
+    def stage_and_push(
+        self,
+        worktree: Path,
+        feature_branch: str,
+        node_id: int,
+        branch: str,
+        msg: str,
+    ) -> None:
+        """Squash onto feature_branch, push the node's branch, then remove the worktree."""
+        self._git.squash_and_commit(worktree, feature_branch, msg)
+        self._git.push_branch(branch)
+        self.remove(node_id, worktree)
+
 
 class Executor:
     def __init__(
@@ -358,9 +371,7 @@ class Executor:
         worktree = Path(node.worktree_path) if node.worktree_path else None
         if worktree and worktree.exists():
             msg = _build_commit_message(node_id, node.description)
-            self._wt._git.squash_and_commit(worktree, feature_branch, msg)
-            self._wt._git.push_branch(node.branch_name)
-            self._wt.remove(node_id, worktree)
+            self._wt.stage_and_push(worktree, feature_branch, node_id, node.branch_name, msg)
 
         self._graph.mark_done(node_id)
         if node.dispatched_at is not None:

@@ -867,7 +867,7 @@ class TestMcpConfigInjection:
         (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="mcp-sync", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
         captured: list[list[str]] = []
         with patch(
             "milknado.domains.dispatch.runner._execute",
@@ -884,7 +884,7 @@ class TestMcpConfigInjection:
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="no-mcp-sync", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
         captured: list[list[str]] = []
         with patch(
             "milknado.domains.dispatch.runner._execute",
@@ -902,7 +902,7 @@ class TestMcpConfigInjection:
         (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="mcp-async", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
         captured: list[list[str]] = []
         with patch(
             "milknado.domains.dispatch.runner._execute",
@@ -924,7 +924,7 @@ class TestMcpConfigInjection:
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="no-mcp-async", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
         captured: list[list[str]] = []
         with patch(
             "milknado.domains.dispatch.runner._execute",

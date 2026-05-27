@@ -34,7 +34,7 @@ def handle_completion(
 
     if success:
         loop._completion_durations.append(duration)
-        if getattr(loop, "_pr_stack", False):
+        if loop._pr_stack:
             branch = loop._executor.stage_for_pr(node_id, feature_branch)
             loop._completed_branches[node_id] = branch
             live.console.print(f"[green]✓[/green] [{node_id}] {desc} (staged → {branch})")

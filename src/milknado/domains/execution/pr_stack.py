@@ -89,7 +89,15 @@ def open_stacked_prs(
     base_branch: str,
     project_root: Path,
 ) -> list[StackedPr]:
-    """Group completed branches by file overlap and open stacked PRs via gh CLI."""
+    """Group completed branches by file overlap and open stacked PRs via gh CLI.
+
+    Limitation: pr_stack is sound only for file-independent nodes. Each node's
+    worktree branches from feature_branch HEAD and stage_for_pr never advances
+    feature_branch, so an overlapping dependent is NOT rebased onto its
+    prerequisite's staged branch during execution — its diff is computed against
+    feature_branch, not the prerequisite. We stack the *PRs* (base = prior staged
+    branch) but not the underlying branches. See flag-for-followup.
+    """
     if not completed_branches:
         return []
 

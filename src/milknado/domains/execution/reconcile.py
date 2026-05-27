@@ -33,6 +33,10 @@ def reconcile_stale_nodes(
 
     Nodes whose work was merged into *feature_branch* are marked DONE.
     All others are reset to PENDING so the next dispatch loop picks them up.
+
+    Contract: --resume assumes the prior run crashed. It stops every RUNNING
+    node's ralph run with no liveness check, so it must NOT be used while
+    another `run` is live — doing so kills that run's in-flight work.
     """
     from milknado.domains.common.types import NodeStatus
 
