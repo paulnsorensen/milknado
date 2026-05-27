@@ -82,11 +82,13 @@ class TestTopoSortGroup:
         graph = _make_graph({}, parents={1: None})
         assert _topo_sort_group([1], graph) == [1]
 
-    def test_parent_child_orders_parent_first(self) -> None:
-        # node 2 is a child of node 1 → 1 should come before 2
+    def test_child_prerequisite_orders_before_parent(self) -> None:
+        # node 2's parent is node 1, so 2 is a child of 1. In Mikado a node is
+        # ready once its children are DONE, so the child (2) is the prerequisite
+        # and must come before its dependent parent (1).
         graph = _make_graph({}, parents={1: None, 2: 1})
         result = _topo_sort_group([1, 2], graph)
-        assert result.index(1) < result.index(2)
+        assert result.index(2) < result.index(1)
 
     def test_independent_nodes_sorted_by_id(self) -> None:
         graph = _make_graph({}, parents={3: None, 1: None, 2: None})
@@ -94,10 +96,12 @@ class TestTopoSortGroup:
         assert result == [1, 2, 3]
 
     def test_chain_ordered_prerequisite_first(self) -> None:
-        # 1 ← 2 ← 3 (3 depends on 2 depends on 1)
+        # parent chain 3→2→1 (each node's parent_id is the next). The leaf 3 is
+        # the deepest prerequisite; 1 (root of the chain) depends on all below it.
+        # Prerequisites first → [3, 2, 1].
         graph = _make_graph({}, parents={1: None, 2: 1, 3: 2})
         result = _topo_sort_group([1, 2, 3], graph)
-        assert result == [1, 2, 3]
+        assert result == [3, 2, 1]
 
 
 class TestOpenStackedPrs:
@@ -117,20 +121,24 @@ class TestOpenStackedPrs:
         assert result[0].pr_url == "https://github.com/org/repo/pull/1"
 
     @patch("milknado.domains.execution.pr_stack._gh_create_pr")
-    def test_two_overlapping_nodes_stack_second_onto_first(self, mock_gh: MagicMock) -> None:
+    def test_two_overlapping_nodes_stack_dependent_onto_prerequisite(
+        self, mock_gh: MagicMock
+    ) -> None:
         mock_gh.side_effect = [
             "https://github.com/org/repo/pull/1",
             "https://github.com/org/repo/pull/2",
         ]
+        # node 2's parent is 1, so 2 is the prerequisite and 1 depends on it:
+        # 2's PR targets the base branch, 1's PR stacks onto 2's branch.
         graph = _make_graph({1: ["a.py"], 2: ["a.py"]}, parents={1: None, 2: 1})
         result = open_stacked_prs(
             {1: "milknado/1-a", 2: "milknado/2-b"}, graph, "main", Path("/repo")
         )
         assert len(result) == 2
-        first = next(pr for pr in result if pr.node_id == 1)
-        second = next(pr for pr in result if pr.node_id == 2)
-        assert first.base_branch == "main"
-        assert second.base_branch == first.branch
+        prerequisite = next(pr for pr in result if pr.node_id == 2)
+        dependent = next(pr for pr in result if pr.node_id == 1)
+        assert prerequisite.base_branch == "main"
+        assert dependent.base_branch == prerequisite.branch
 
     @patch("milknado.domains.execution.pr_stack._gh_create_pr")
     def test_disjoint_nodes_each_target_base_branch(self, mock_gh: MagicMock) -> None:

@@ -57,13 +57,17 @@ def _topo_sort_group(group: list[int], graph: MikadoGraph) -> list[int]:
     """Topological sort within a group using Mikado edges; tie-break by node_id."""
     group_set = set(group)
     in_degree: dict[int, int] = {nid: 0 for nid in group}
-    children_in_group: dict[int, list[int]] = {nid: [] for nid in group}
+    # Mikado edge parent_id -> child_id means the *child* is a prerequisite of the
+    # *parent* (a node is ready once its children are DONE). So a node's parent
+    # depends on it: the parent gains in-degree, and is unblocked once the
+    # prerequisite child is emitted. Maps prerequisite node_id -> dependent parents.
+    dependents_in_group: dict[int, list[int]] = {nid: [] for nid in group}
 
     for nid in group:
         node = graph.get_node(nid)
         if node and node.parent_id and node.parent_id in group_set:
-            in_degree[nid] += 1
-            children_in_group[node.parent_id].append(nid)
+            in_degree[node.parent_id] += 1
+            dependents_in_group[nid].append(node.parent_id)
 
     # Process nodes with zero in-degree first (i.e. prerequisites before dependents)
     queue = sorted(nid for nid, deg in in_degree.items() if deg == 0)
@@ -71,10 +75,10 @@ def _topo_sort_group(group: list[int], graph: MikadoGraph) -> list[int]:
     while queue:
         nid = queue.pop(0)
         result.append(nid)
-        for child in sorted(children_in_group[nid]):
-            in_degree[child] -= 1
-            if in_degree[child] == 0:
-                queue.append(child)
+        for dependent in sorted(dependents_in_group[nid]):
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                queue.append(dependent)
                 queue.sort()
 
     # Append any remaining (cycles or disconnected — shouldn't happen, but be safe)

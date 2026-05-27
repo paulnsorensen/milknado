@@ -142,6 +142,10 @@ class MikadoGraph(_AnalyticsFacade):
         return would_create_cycle(self._conn, parent_id, child_id)
 
     def _node_status(self, node_id: int) -> NodeStatus | None:
+        # Only the plugin-notify path needs the pre-transition status; skip the
+        # extra SELECT entirely when no plugins are registered.
+        if not self._plugins:
+            return None
         row = self._conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
         return NodeStatus(row[0]) if row else None
 
