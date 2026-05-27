@@ -30,10 +30,10 @@ everything else and for the read-step that precedes either.
 | Insert relative to a known symbol | `serena.insert_before_symbol` / `insert_after_symbol` |
 | Rename a symbol across the codebase | `serena.rename_symbol` |
 | Safe-delete an unused symbol | `serena.safe_delete_symbol` |
-| Sub-symbol edit (slice inside a function) | `tilth_write` hash-anchor |
-| Imports, config (TOML/JSON/YAML), Markdown, shell | `tilth_write` |
-| Create new file | `tilth_write` overwrite |
-| Bulk pattern across files | `tilth_search` + `tilth_write` batch |
+| Sub-symbol edit (slice inside a function) | `tilth_edit` hash-anchor |
+| Imports, config (TOML/JSON/YAML), Markdown, shell | `tilth_edit` |
+| Create new file | `tilth_edit` overwrite |
+| Bulk pattern across files | `tilth_search` + `tilth_edit` batch |
 
 Read-step: serena's `get_symbols_overview` + `find_symbol(include_body=true)`
 pulls only the target symbol out of a large file — reach for that when you need
