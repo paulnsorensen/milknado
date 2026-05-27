@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
-from milknado.domains.dispatch.runner import _WORKER_ENV_ALLOWLIST, _build_worker_env
+from milknado.domains.dispatch.runner import (
+    _WORKER_ENV_ALLOWLIST,
+    _build_worker_env,
+    run_headless,
+)
 
 
 def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,3 +67,30 @@ def test_allowlist_does_not_contain_credential_names() -> None:
         assert not matches, (
             f"allowlist contains a potentially sensitive name matching {forbidden!r}: {matches}"
         )
+
+
+def test_run_headless_does_not_leak_planted_secret_to_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end on the dispatch path that DOES filter env (run_headless ->
+    _execute -> _build_worker_env): a secret planted in the parent process must
+    never appear in the spawned worker's environment. The worker dumps its own
+    env to the log; we assert the secret value is absent and the allowlisted
+    MILKNADO_NODE_ID injection is present."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "claude"
+    # Passthrough agent stub: dumps the worker-visible environment to stdout (→ log).
+    stub.write_text("#!/bin/sh\nexec env\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
+    monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
+
+    result = run_headless(tmp_path, node_id=7, brief="hi", timeout_seconds=10)
+
+    assert result.exit_code == 0
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert "sk-ant-PLANTED-LEAK-CANARY" not in log_text
+    assert "ANTHROPIC_API_KEY" not in log_text
+    assert "MILKNADO_NODE_ID=7" in log_text

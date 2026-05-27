@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
@@ -15,19 +16,19 @@ from milknado.domains.dispatch import (
     run_headless,
     start_headless_async,
 )
-
-_ALLOWED_WORKER_PREFIXES = ("claude", "codex", "cursor-agent", "gemini")
+from milknado.domains.dispatch.runner import _validate_worker_argv
 
 
 def _validate_worker_cmd(worker_cmd: str | None) -> None:
-    """Reject worker_cmd values that don't start with an allowed AI agent CLI."""
-    if not worker_cmd:
+    """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
+
+    Eager pre-check on the MCP arg; the env fallback and built-in default are
+    validated again where they're resolved (`runner._resolve_worker_cmd`). Both
+    routes share `_validate_worker_argv`, so the allowlist lives in one place.
+    """
+    if not worker_cmd or not worker_cmd.strip():
         return
-    cmd = worker_cmd.strip()
-    if not any(cmd.startswith(p) for p in _ALLOWED_WORKER_PREFIXES):
-        raise ValueError(
-            f"worker_cmd must start with one of {list(_ALLOWED_WORKER_PREFIXES)!r}; got {cmd!r}"
-        )
+    _validate_worker_argv(shlex.split(worker_cmd))
 
 
 def _ensure_running(graph, node_id: int) -> bool:

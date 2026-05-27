@@ -32,6 +32,28 @@ _DEFAULT_WORKER_CMD = "claude -p"
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
 
+# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
+# executable name (basename of argv[0]) so neither a prefix trick
+# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
+_ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
+    {"claude", "codex", "cursor-agent", "gemini"}
+)
+
+
+def _validate_worker_argv(argv: list[str]) -> None:
+    """Reject a resolved worker argv whose executable isn't an allowed agent CLI.
+
+    Guards every worker_cmd source — the explicit MCP arg, the
+    $MILKNADO_WORKER_CMD env fallback, and the built-in default — by checking
+    the basename of argv[0] against the allowlist.
+    """
+    executable = Path(argv[0]).name if argv else ""
+    if executable not in _ALLOWED_WORKER_EXECUTABLES:
+        raise ValueError(
+            "worker_cmd must start with one of "
+            f"{sorted(_ALLOWED_WORKER_EXECUTABLES)!r}; got {executable!r}"
+        )
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -50,11 +72,12 @@ class AsyncStartRef:
 
 def _resolve_worker_cmd(explicit: str | None) -> list[str]:
     if explicit and explicit.strip():
-        return shlex.split(explicit)
-    env = os.environ.get("MILKNADO_WORKER_CMD", "").strip()
-    if env:
-        return shlex.split(env)
-    return shlex.split(_DEFAULT_WORKER_CMD)
+        argv = shlex.split(explicit)
+    else:
+        env = os.environ.get("MILKNADO_WORKER_CMD", "").strip()
+        argv = shlex.split(env) if env else shlex.split(_DEFAULT_WORKER_CMD)
+    _validate_worker_argv(argv)
+    return argv
 
 
 def _log_path(project_root: Path, node_id: int) -> Path:
@@ -103,6 +126,9 @@ def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     Passes only allowlisted system vars plus MILKNADO_* config vars from the
     parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only.
     """
+    # INVARIANT: no MILKNADO_* var may hold a secret — every one is forwarded to
+    # workers verbatim. Keep API keys, tokens, and DB URLs out of that namespace
+    # (they belong to the parent only); a new MILKNADO_SECRET_* would leak here.
     env = {
         k: v
         for k, v in os.environ.items()

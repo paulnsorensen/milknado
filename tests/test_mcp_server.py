@@ -48,6 +48,29 @@ def _call(tool, **kwargs):
     return fn(**kwargs)
 
 
+@pytest.fixture()
+def worker_stub(tmp_path_factory, monkeypatch):
+    """Install a `claude` passthrough executable on PATH so run-mechanics tests
+    can drive the dispatcher with the worker-cmd allowlist enforced.
+
+    The worker_cmd allowlist (`runner._validate_worker_argv`) only admits real
+    agent CLIs (claude/codex/...). These tests exercise dispatch plumbing, not a
+    live agent, so they route their throwaway commands (`cat`, `false`, `sleep`)
+    through a stub named `claude` that just `exec "$@"` — stdin, exit code, and
+    timeout behaviour all pass through unchanged.
+    """
+    bindir = tmp_path_factory.mktemp("worker-stub-bin")
+    stub = bindir / "claude"
+    stub.write_text('#!/bin/sh\nexec "$@"\n')
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    def _cmd(command: str) -> str:
+        return f"claude {command}"
+
+    return _cmd
+
+
 class TestMcpServer:
     def test_open_graph_creates_default_db_dir(self, tmp_path: Path) -> None:
         graph, _cfg = open_graph(tmp_path)
@@ -352,10 +375,12 @@ class TestTodoBriefAndRun:
                 project_root=str(tmp_path),
             )
 
-    def test_run_success_marks_done_and_writes_log(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_success_marks_done_and_writes_log(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="echo task", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         result = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -368,10 +393,14 @@ class TestTodoBriefAndRun:
         assert "# Task: echo task" in result["summary"]
         assert Path(result["log_path"]).exists()
 
-    def test_run_injects_node_id_into_worker_env(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_injects_node_id_into_worker_env(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="env task", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sh -c 'echo NODE=$MILKNADO_NODE_ID'")
+        monkeypatch.setenv(
+            "MILKNADO_WORKER_CMD", worker_stub("sh -c 'echo NODE=$MILKNADO_NODE_ID'")
+        )
         result = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -380,10 +409,10 @@ class TestTodoBriefAndRun:
         )
         assert f"NODE={task['id']}" in result["summary"]
 
-    def test_run_nonzero_exit_marks_failed(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_nonzero_exit_marks_failed(self, tmp_path: Path, monkeypatch, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="bad task", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "false")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("false"))
         result = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -393,10 +422,10 @@ class TestTodoBriefAndRun:
         assert result["status"] == "failed"
         assert result["exit_code"] != 0
 
-    def test_run_timeout_marks_failed(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_timeout_marks_failed(self, tmp_path: Path, monkeypatch, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="slow", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sleep 5")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 5"))
         result = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -416,10 +445,12 @@ class TestTodoBriefAndRun:
                 project_root=str(tmp_path),
             )
 
-    def test_run_uses_env_worker_cmd_when_arg_omitted(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_uses_env_worker_cmd_when_arg_omitted(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         result = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -429,13 +460,15 @@ class TestTodoBriefAndRun:
         assert result["status"] == "done"
         assert "# Task: t" in result["summary"]
 
-    def test_run_reruns_failed_node_to_done(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_reruns_failed_node_to_done(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         """A synchronous re-run of a FAILED node normalises to RUNNING before
         recording the new terminal status, so the second run lands DONE instead
         of raising InvalidTransition on the FAILED -> DONE mark."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="syncretry", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sh -c 'exit 1'")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sh -c 'exit 1'"))
         failed = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -443,7 +476,7 @@ class TestTodoBriefAndRun:
             project_root=root,
         )
         assert failed["status"] == "failed"
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         done = _call(
             milknado_todo_run,
             node_id=task["id"],
@@ -464,10 +497,12 @@ class TestTodoAsyncRun:
                 project_root=str(tmp_path),
             )
 
-    def test_start_returns_run_id_and_marks_running(self, tmp_path: Path, monkeypatch) -> None:
+    def test_start_returns_run_id_and_marks_running(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-cat", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -480,11 +515,11 @@ class TestTodoAsyncRun:
         assert tree[0]["status"] == "running"
 
     def test_poll_reconciles_to_done_after_worker_finishes(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch, worker_stub
     ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-done", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -499,12 +534,16 @@ class TestTodoAsyncRun:
         tree = _call(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == "done"
 
-    def test_async_run_injects_node_id_into_worker_env(self, tmp_path: Path, monkeypatch) -> None:
+    def test_async_run_injects_node_id_into_worker_env(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         # The async path threads node_id through base_state into _execute; verify
         # the worker subprocess sees MILKNADO_NODE_ID just like the sync path does.
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-env", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sh -c 'echo NODE=$MILKNADO_NODE_ID'")
+        monkeypatch.setenv(
+            "MILKNADO_WORKER_CMD", worker_stub("sh -c 'echo NODE=$MILKNADO_NODE_ID'")
+        )
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -515,10 +554,12 @@ class TestTodoAsyncRun:
         assert final["status"] == "done"
         assert f"NODE={task['id']}" in final["summary"]
 
-    def test_poll_reconciles_to_failed_on_nonzero(self, tmp_path: Path, monkeypatch) -> None:
+    def test_poll_reconciles_to_failed_on_nonzero(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-fail", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "false")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("false"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -531,10 +572,12 @@ class TestTodoAsyncRun:
         tree = _call(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == "failed"
 
-    def test_poll_reconciles_to_failed_on_timeout(self, tmp_path: Path, monkeypatch) -> None:
+    def test_poll_reconciles_to_failed_on_timeout(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-slow", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sleep 30")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -597,11 +640,11 @@ class TestTodoAsyncRun:
             )
 
     def test_poll_returns_running_while_worker_in_flight(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch, worker_stub
     ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-sleep", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sleep 2")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 2"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -614,10 +657,13 @@ class TestTodoAsyncRun:
         _wait_for_terminal(started["run_id"], root, timeout=5.0)
 
     def test_async_worker_spawn_failure_reaches_failed(self, tmp_path: Path, monkeypatch) -> None:
-        """Bad worker_cmd must not leave the state file stuck on 'running'."""
+        """A worker_cmd that passes the allowlist but can't be spawned (binary
+        missing on disk) must not leave the state file stuck on 'running'. Uses
+        an allowlisted basename (`claude`) at a path that does not exist, so the
+        FileNotFoundError surfaces in the async worker thread, not at validation."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="bad-cmd", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "nonexistent-binary-xyz-12345")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", str(tmp_path / "nonexistent" / "claude"))
         started = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -631,12 +677,14 @@ class TestTodoAsyncRun:
         tree = _call(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == "failed"
 
-    def test_start_reconciles_orphaned_terminal_runs(self, tmp_path: Path, monkeypatch) -> None:
+    def test_start_reconciles_orphaned_terminal_runs(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         """If a worker finished but nobody polled, the next start should reconcile
         and not be locked out by the RUNNING guard."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         # First run: succeeds, but we never poll → node stays RUNNING in the graph.
         first = _call(
             milknado_todo_run_start,
@@ -728,7 +776,9 @@ class TestTodoAsyncRun:
         assert fail_stale_running_runs(root, 8) == []
         assert json.loads(state_path.read_text())["status"] == "running"
 
-    def test_start_releases_node_locked_by_stale_run(self, tmp_path: Path, monkeypatch) -> None:
+    def test_start_releases_node_locked_by_stale_run(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         """run_start sweeps a stale 'running' run so a node stuck on RUNNING
         (worker thread vanished) is not locked out forever."""
         from datetime import UTC, datetime, timedelta
@@ -760,7 +810,7 @@ class TestTodoAsyncRun:
                 }
             )
         )
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sh -c 'exit 1'")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sh -c 'exit 1'"))
         # Must NOT raise "already running" — the stale run is reconciled first.
         started = _call(
             milknado_todo_run_start,
@@ -772,13 +822,15 @@ class TestTodoAsyncRun:
         final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
         assert final["status"] == "failed"
 
-    def test_run_start_reruns_failed_node_to_done(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_start_reruns_failed_node_to_done(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
         """A FAILED node re-run via run_start is normalised to RUNNING, so a
         successful retry reconciles to DONE instead of raising InvalidTransition
         in run_poll (FAILED -> DONE is not a valid direct transition)."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="retry", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "sh -c 'exit 1'")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sh -c 'exit 1'"))
         first = _call(
             milknado_todo_run_start,
             node_id=task["id"],
@@ -786,7 +838,7 @@ class TestTodoAsyncRun:
             project_root=root,
         )
         assert _wait_for_terminal(first["run_id"], root, timeout=3.0)["status"] == "failed"
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", "cat")
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
         second = _call(
             milknado_todo_run_start,
             node_id=task["id"],
