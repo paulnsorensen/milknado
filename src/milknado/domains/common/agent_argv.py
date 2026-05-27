@@ -22,8 +22,9 @@ DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
 WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": (
         "mcp__tilth__*",
-        # serena symbol layer (read + symbol-scoped edits). Shell-exec is
-        # intentionally omitted — workers stay deny-by-default on Bash.
+        # serena layer: read, symbol edits, and content edits. serena's
+        # shell-exec tool is intentionally omitted; the only Bash workers get
+        # is the rtk-hooked Bash(rtk:*) below.
         "mcp__serena__get_symbols_overview",
         "mcp__serena__find_symbol",
         "mcp__serena__find_referencing_symbols",

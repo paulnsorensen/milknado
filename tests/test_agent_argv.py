@@ -31,11 +31,15 @@ def test_worker_allowlist_grants_serena_symbol_tools() -> None:
     claude = WORKER_ALLOWED_TOOLS["claude"]
     assert "mcp__serena__replace_symbol_body" in claude
     assert "mcp__serena__find_symbol" in claude
-    # Shell-exec stays out: workers remain deny-by-default on arbitrary Bash.
-    assert "mcp__serena__execute_shell_command" not in claude
+    # Shell-exec stays out: no granted serena tool may execute a shell/command.
+    serena_shell = [
+        t for t in claude if t.startswith("mcp__serena__") and ("shell" in t or "execute" in t)
+    ]
+    assert not serena_shell
     gemini = WORKER_ALLOWED_TOOLS["gemini"]
     assert "replace_symbol_body" in gemini
     assert "find_symbol" in gemini
+    assert not [t for t in gemini if "shell" in t or "execute" in t]
 
 
 def test_resolve_planning_uses_override() -> None:
