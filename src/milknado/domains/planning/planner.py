@@ -50,11 +50,14 @@ class Planner:
         crg: CrgPort,
         planning_agent: str,
         planning_validation_hook: str | None = None,
+        *,
+        prompt_prepend: str | None = None,
     ) -> None:
         self._graph = graph
         self._crg = crg
         self._planning_agent = planning_agent
         self._planning_validation_hook = (planning_validation_hook or "").strip() or None
+        self._prompt_prepend = prompt_prepend
 
     def launch(
         self,
@@ -73,6 +76,7 @@ class Planner:
             spec_text=spec_text,
             tilth=tilth,
             scope=project_root,
+            prepend=self._prompt_prepend,
         )
         milknado_dir = project_root / ".milknado"
         milknado_dir.mkdir(parents=True, exist_ok=True)
