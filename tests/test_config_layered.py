@@ -221,3 +221,108 @@ def test_prompt_prepend_path_missing_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(FileNotFoundError):
         load_config(local)
+
+
+def test_prompt_prepend_empty_string_plus_path_still_rejected(tmp_path: Path) -> None:
+    """Empty-string inline + path is still a misconfigured pair: surface it
+    rather than silently picking the path branch."""
+    extras = tmp_path / "p.md"
+    extras.write_text("contents", encoding="utf-8")
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            'planning_prepend = ""\n'
+            'planning_prepend_path = "p.md"\n'
+        ),
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        load_config(local)
+
+
+def test_local_path_overrides_global_inline(xdg: Path, tmp_path: Path) -> None:
+    """A global ``planning_prepend`` plus a local ``planning_prepend_path``
+    should resolve to the local path's contents, not raise mutual-exclusion."""
+    _write(
+        xdg / "milknado" / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            'planning_prepend = "global text"\n'
+        ),
+    )
+    extras = tmp_path / "local.md"
+    extras.write_text("local from path", encoding="utf-8")
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            'planning_prepend_path = "local.md"\n'
+        ),
+    )
+    cfg = load_config(local)
+    assert cfg.planning_prompt_prepend == "local from path"
+
+
+def test_local_inline_overrides_global_path(xdg: Path, tmp_path: Path) -> None:
+    """Reverse direction: global uses ``_path``, local replaces with inline."""
+    global_extras = xdg / "global.md"
+    global_extras.write_text("global from path", encoding="utf-8")
+    _write(
+        xdg / "milknado" / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            f'planning_prepend_path = "{global_extras}"\n'
+        ),
+    )
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            'planning_prepend = "local inline wins"\n'
+        ),
+    )
+    cfg = load_config(local)
+    assert cfg.planning_prompt_prepend == "local inline wins"
+
+
+def test_worker_tools_allow_string_rejected(tmp_path: Path) -> None:
+    """A scalar string is not a list; reject it instead of splatting it into chars."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'allow = "Read"\n'
+        ),
+    )
+    with pytest.raises(ValueError, match="must be a list of strings"):
+        load_config(local)
+
+
+def test_worker_tools_extend_with_non_string_rejected(tmp_path: Path) -> None:
+    local = _write(
+        tmp_path / "milknado.toml",
+        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools.claude]\nextend = [42]\n'),
+    )
+    with pytest.raises(ValueError, match=r"extend\[0\] must be a non-empty string"):
+        load_config(local)
+
+
+def test_worker_tools_deny_with_empty_string_rejected(tmp_path: Path) -> None:
+    local = _write(
+        tmp_path / "milknado.toml",
+        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools.claude]\ndeny = [""]\n'),
+    )
+    with pytest.raises(ValueError, match="must be a non-empty string"):
+        load_config(local)

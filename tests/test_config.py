@@ -6,6 +6,7 @@ import pytest
 
 from milknado.domains.common.config import (
     MilknadoConfig,
+    WorkerToolsOverride,
     _escape_toml_string,
     default_config,
     load_config,
@@ -162,6 +163,46 @@ class TestSaveConfig:
         save_config(cfg, path)
         content = path.read_text()
         assert '\\"quoted\\"' in content
+
+    def test_roundtrip_preserves_prompt_prepends(self, tmp_path: Path) -> None:
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            planning_prompt_prepend="team rule: just build first",
+            worker_brief_prepend="touch only listed files\nfollow up via tracker",
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.planning_prompt_prepend == "team rule: just build first"
+        assert loaded.worker_brief_prepend == "touch only listed files\nfollow up via tracker"
+
+    def test_roundtrip_preserves_worker_tools(self, tmp_path: Path) -> None:
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            worker_tools={
+                "claude": WorkerToolsOverride(
+                    extend=("mcp__github__*",),
+                    deny=("Write",),
+                ),
+            },
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        # The execution_agent rebuild should reflect the round-tripped override.
+        assert "mcp__github__*" in loaded.execution_agent
+        allow_csv = loaded.execution_agent.split("--allowedTools")[1]
+        assert "Write" not in allow_csv
+
+    def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
+        cfg = default_config(tmp_path)
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert "[milknado.prompts]" not in content
+        assert "[milknado.worker.tools." not in content
 
 
 class TestEscapeTomlString:

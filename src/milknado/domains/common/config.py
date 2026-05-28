@@ -90,6 +90,7 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
     caller that must be reproducible regardless of the host's user config.
     """
     raw: dict[str, Any] = {}
+    local_raw = _read_milknado_section(path)
     if include_global:
         g = global_config_path()
         if g.exists():
@@ -97,12 +98,23 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
             _warn_local_only_keys(global_raw, g)
             for k in _LOCAL_ONLY_KEYS:
                 global_raw.pop(k, None)
+            _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
-    raw = _merge(raw, _read_milknado_section(path))
+    raw = _merge(raw, local_raw)
     return _build_config(raw, project_root=path.parent)
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:
+    # When the family has a structured worker_tools override, the resolved
+    # execution_agent is a derived artifact, not user intent — emitting it
+    # would shadow worker_tools on reload (an explicit execution_agent wins
+    # in resolve_execution_agent_command).
+    family_override = config.worker_tools.get(config.agent_family)
+    has_structured_tools = family_override is not None and (
+        family_override.allow is not None
+        or bool(family_override.extend)
+        or bool(family_override.deny)
+    )
     lines = [
         "[milknado]",
         f'agent_family = "{config.agent_family}"',
@@ -111,19 +123,46 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "planning_validation_hook = "
             f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
         ),
-        f'execution_agent = "{_escape_toml_string(config.execution_agent)}"',
-        f"quality_gates = {list(config.quality_gates)}",
-        f'worktree_pattern = "{config.worktree_pattern}"',
-        f"concurrency_limit = {config.concurrency_limit}",
-        f'db_path = "{config.db_path.relative_to(config.project_root)}"',
-        f"plugins = {list(config.plugins)}",
-        f"stall_threshold_seconds = {config.stall_threshold_seconds}",
-        f"dispatch_max_retries = {config.dispatch_max_retries}",
-        f"dispatch_backoff_seconds = {config.dispatch_backoff_seconds}",
-        f"protected_branches = {list(config.protected_branches)}",
-        f"completion_timeout_seconds = {config.completion_timeout_seconds}",
-        f"eta_sample_size = {config.eta_sample_size}",
     ]
+    if not has_structured_tools:
+        lines.append(f'execution_agent = "{_escape_toml_string(config.execution_agent)}"')
+    lines.extend(
+        [
+            f"quality_gates = {list(config.quality_gates)}",
+            f'worktree_pattern = "{config.worktree_pattern}"',
+            f"concurrency_limit = {config.concurrency_limit}",
+            f'db_path = "{config.db_path.relative_to(config.project_root)}"',
+            f"plugins = {list(config.plugins)}",
+            f"stall_threshold_seconds = {config.stall_threshold_seconds}",
+            f"dispatch_max_retries = {config.dispatch_max_retries}",
+            f"dispatch_backoff_seconds = {config.dispatch_backoff_seconds}",
+            f"protected_branches = {list(config.protected_branches)}",
+            f"completion_timeout_seconds = {config.completion_timeout_seconds}",
+            f"eta_sample_size = {config.eta_sample_size}",
+        ]
+    )
+    if config.planning_prompt_prepend is not None or config.worker_brief_prepend is not None:
+        lines.append("")
+        lines.append("[milknado.prompts]")
+        if config.planning_prompt_prepend is not None:
+            lines.append(
+                f'planning_prepend = "{_escape_toml_string(config.planning_prompt_prepend)}"'
+            )
+        if config.worker_brief_prepend is not None:
+            lines.append(
+                f'worker_brief_prepend = "{_escape_toml_string(config.worker_brief_prepend)}"'
+            )
+    for family, override in sorted(config.worker_tools.items()):
+        if override.allow is None and not override.extend and not override.deny:
+            continue
+        lines.append("")
+        lines.append(f"[milknado.worker.tools.{family}]")
+        if override.allow is not None:
+            lines.append(f"allow = {list(override.allow)}")
+        if override.extend:
+            lines.append(f"extend = {list(override.extend)}")
+        if override.deny:
+            lines.append(f"deny = {list(override.deny)}")
     path.write_text("\n".join(lines) + "\n")
 
 
@@ -145,6 +184,27 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         else:
             out[k] = v
     return out
+
+
+_PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
+
+
+def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
+    """Treat `<key>` and `<key>_path` as one logical slot during layered merge.
+
+    If the local layer sets either form of a prompt-prepend slot, drop both
+    forms from the global layer so the deep-merge doesn't leave a stale
+    alternate behind that would later trip the mutual-exclusion check.
+    """
+    g_prompts = global_raw.get("prompts")
+    l_prompts = local_raw.get("prompts")
+    if not isinstance(g_prompts, dict) or not isinstance(l_prompts, dict):
+        return
+    for slot in _PROMPT_PREPEND_SLOTS:
+        local_has = slot in l_prompts or f"{slot}_path" in l_prompts
+        if local_has:
+            g_prompts.pop(slot, None)
+            g_prompts.pop(f"{slot}_path", None)
 
 
 def _warn_local_only_keys(global_raw: dict[str, Any], path: Path) -> None:
@@ -246,6 +306,10 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, WorkerToolsOverride]:
         raise ValueError("[milknado.worker.tools] must be a table")
     out: dict[str, WorkerToolsOverride] = {}
     for family, override in tools_raw.items():
+        if not isinstance(family, str):
+            raise ValueError(
+                f"[milknado.worker.tools] family keys must be strings, got {family!r}"
+            )
         if not isinstance(override, dict):
             raise ValueError(
                 f"[milknado.worker.tools.{family}] must be a table with allow/extend/deny"
@@ -254,14 +318,38 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, WorkerToolsOverride]:
         if unknown:
             raise ValueError(f"[milknado.worker.tools.{family}] unknown keys: {sorted(unknown)}")
         allow = override.get("allow")
-        extend = override.get("extend") or ()
-        deny = override.get("deny") or ()
         out[family] = WorkerToolsOverride(
-            allow=tuple(allow) if allow is not None else None,
-            extend=tuple(extend),
-            deny=tuple(deny),
+            allow=(_coerce_tool_list(allow, family, "allow") if allow is not None else None),
+            extend=_coerce_tool_list(override.get("extend"), family, "extend"),
+            deny=_coerce_tool_list(override.get("deny"), family, "deny"),
         )
     return out
+
+
+def _coerce_tool_list(value: Any, family: str, key: str) -> tuple[str, ...]:
+    """Validate a worker.tools.<family>.<key> entry is a list of non-empty strings.
+
+    TOML lets a user write ``allow = "Read"`` — a bare string — which would
+    silently splat into ``('R', 'e', 'a', 'd')`` if we passed it through
+    ``tuple(...)``. Reject anything that isn't a list/tuple of strings so the
+    config error surfaces at load time instead of via a mangled CLI flag.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError(
+            f"[milknado.worker.tools.{family}] {key} must be a list of strings, "
+            f"got {type(value).__name__}"
+        )
+    items: list[str] = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            raise ValueError(
+                f"[milknado.worker.tools.{family}] {key}[{i}] must be a non-empty string, "
+                f"got {item!r}"
+            )
+        items.append(item)
+    return tuple(items)
 
 
 def _load_prompt_prepend(
@@ -275,7 +363,7 @@ def _load_prompt_prepend(
         raise ValueError("[milknado.prompts] must be a table")
     inline = prompts_raw.get(base_key)
     path_value = prompts_raw.get(f"{base_key}_path")
-    if inline and path_value:
+    if inline is not None and path_value is not None:
         raise ValueError(
             f"[milknado.prompts] {base_key} and {base_key}_path are mutually exclusive"
         )
@@ -296,4 +384,15 @@ def _load_prompt_prepend(
 
 
 def _escape_toml_string(value: str) -> str:
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape a string for embedding in a TOML basic (double-quoted) string.
+
+    TOML basic strings forbid literal newlines / tabs / control chars; escape
+    the ones a real config might carry so multi-line prepends round-trip.
+    """
+    return (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
