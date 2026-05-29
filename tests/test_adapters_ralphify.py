@@ -353,15 +353,14 @@ class TestVerifySpec:
         mock_manager_cls: MagicMock,
         adapter: RalphifyAdapter,
     ) -> None:
-        import time
-
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
         with patch("milknado.adapters.ralphify.time") as mock_time:
-            mock_time.monotonic.side_effect = [0.0, 0.0, 200.0]
-            mock_time.sleep = time.sleep
+            # deadline = monotonic() + 120; the next reading is past it, so
+            # remaining <= 0 trips before any blocking queue.get().
+            mock_time.monotonic.side_effect = [0.0, 200.0]
             result = adapter.verify_spec("spec", "graph")
 
         mock_manager.stop_run.assert_called_once()
