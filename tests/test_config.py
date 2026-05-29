@@ -6,7 +6,6 @@ import pytest
 
 from milknado.domains.common.config import (
     MilknadoConfig,
-    WorkerToolsOverride,
     _escape_toml_string,
     default_config,
     load_config,
@@ -178,16 +177,21 @@ class TestSaveConfig:
         assert loaded.worker_brief_prepend == "touch only listed files\nfollow up via tracker"
 
     def test_roundtrip_preserves_worker_tools(self, tmp_path: Path) -> None:
-        cfg = MilknadoConfig(
-            project_root=tmp_path,
-            db_path=tmp_path / ".milknado" / "milknado.db",
-            worker_tools={
-                "claude": WorkerToolsOverride(
-                    extend=("mcp__github__*",),
-                    deny=("Write",),
-                ),
-            },
+        # Build via load_config (no explicit execution_agent) so execution_agent
+        # is the command DERIVED from the override — the realistic shape that
+        # save_config suppresses and a reload re-derives. (A bare MilknadoConfig
+        # with the dataclass-default execution_agent is a state load_config never
+        # produces, and save_config now correctly preserves a non-derived value.)
+        src = tmp_path / "in.toml"
+        src.write_text(
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'extend = ["mcp__github__*"]\n'
+            'deny = ["Write"]\n',
+            encoding="utf-8",
         )
+        cfg = load_config(src, include_global=False)
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
         loaded = load_config(path, include_global=False)
@@ -195,6 +199,8 @@ class TestSaveConfig:
         assert "mcp__github__*" in loaded.execution_agent
         allow_csv = loaded.execution_agent.split("--allowedTools")[1]
         assert "Write" not in allow_csv
+        # And the structured override itself survives the round trip.
+        assert loaded.worker_tools["claude"].extend == ("mcp__github__*",)
 
     def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)

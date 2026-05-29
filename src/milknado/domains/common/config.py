@@ -98,6 +98,7 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
             _warn_local_only_keys(global_raw, g)
             for k in _LOCAL_ONLY_KEYS:
                 global_raw.pop(k, None)
+            _absolutize_global_prompt_paths(global_raw, g.parent)
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
     raw = _merge(raw, local_raw)
@@ -105,16 +106,31 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:
-    # When the family has a structured worker_tools override, the resolved
-    # execution_agent is a derived artifact, not user intent — emitting it
-    # would shadow worker_tools on reload (an explicit execution_agent wins
-    # in resolve_execution_agent_command).
+    # When the family has a structured worker_tools override AND the in-memory
+    # execution_agent is exactly the command that override would derive, the
+    # execution_agent is a derived artifact, not user intent — emitting it would
+    # shadow worker_tools on reload. But an explicit execution_agent that
+    # differs from the derived command IS user intent and must be preserved
+    # (resolve_execution_agent_command lets the explicit string win), so only
+    # suppress the field when it matches the derived value.
     family_override = config.worker_tools.get(config.agent_family)
     has_structured_tools = family_override is not None and (
         family_override.allow is not None
         or bool(family_override.extend)
         or bool(family_override.deny)
     )
+    suppress_execution_agent = False
+    if has_structured_tools:
+        derived_execution_agent = resolve_execution_agent_command(
+            config.agent_family,
+            tools=resolve_worker_tools(
+                config.agent_family,
+                allow=family_override.allow,
+                extend=family_override.extend,
+                deny=family_override.deny,
+            ),
+        )
+        suppress_execution_agent = config.execution_agent == derived_execution_agent
     lines = [
         "[milknado]",
         f'agent_family = "{config.agent_family}"',
@@ -124,7 +140,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             f'"{_escape_toml_string(config.planning_validation_hook or "")}"'
         ),
     ]
-    if not has_structured_tools:
+    if not suppress_execution_agent:
         lines.append(f'execution_agent = "{_escape_toml_string(config.execution_agent)}"')
     lines.extend(
         [
@@ -187,6 +203,27 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
 
 
 _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
+
+
+def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) -> None:
+    """Resolve relative prompt ``_path`` values in the GLOBAL config against the
+    global config directory.
+
+    Prompt paths are otherwise resolved in ``_build_config`` against the local
+    project root (``path.parent``) after the layered merge, so a relative global
+    ``planning_prepend_path = "team.md"`` would wrongly look for the file next to
+    the project's ``milknado.toml`` instead of next to the global config. Rewrite
+    them to absolute here, before the merge, so the global base dir is honoured.
+    Non-string values are left untouched for ``_load_prompt_prepend`` to reject.
+    """
+    prompts = global_raw.get("prompts")
+    if not isinstance(prompts, dict):
+        return
+    for slot in _PROMPT_PREPEND_SLOTS:
+        key = f"{slot}_path"
+        value = prompts.get(key)
+        if isinstance(value, str) and not Path(value).is_absolute():
+            prompts[key] = str((base_dir / value).resolve())
 
 
 def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
@@ -363,6 +400,10 @@ def _load_prompt_prepend(
         raise ValueError("[milknado.prompts] must be a table")
     inline = prompts_raw.get(base_key)
     path_value = prompts_raw.get(f"{base_key}_path")
+    if inline is not None and not isinstance(inline, str):
+        raise ValueError(f"[milknado.prompts] {base_key} must be a string")
+    if path_value is not None and not isinstance(path_value, str):
+        raise ValueError(f"[milknado.prompts] {base_key}_path must be a string")
     if inline is not None and path_value is not None:
         raise ValueError(
             f"[milknado.prompts] {base_key} and {base_key}_path are mutually exclusive"

@@ -404,10 +404,15 @@ def test_save_config_emits_allow_table_and_omits_derived_execution_agent(
 ) -> None:
     """A structured allow override is serialized; the derived execution_agent is
     suppressed so it cannot shadow the override on reload."""
-    cfg = replace(
-        default_config(tmp_path),
-        worker_tools={"claude": WorkerToolsOverride(allow=("Read", "Edit"))},
+    # Build the config the way load_config does: no explicit execution_agent, so
+    # the in-memory execution_agent IS the command derived from the override —
+    # a derived artifact that save_config should drop.
+    src = _write(
+        tmp_path / "in.toml",
+        '[milknado]\nagent_family = "claude"\n\n'
+        '[milknado.worker.tools.claude]\nallow = ["Read", "Edit"]\n',
     )
+    cfg = load_config(src, include_global=False)
     out = tmp_path / "milknado.toml"
     save_config(cfg, out)
     text = out.read_text(encoding="utf-8")
@@ -428,3 +433,61 @@ def test_save_config_skips_empty_worker_override(tmp_path: Path) -> None:
     save_config(cfg, out)
     text = out.read_text(encoding="utf-8")
     assert "[milknado.worker.tools.claude]" not in text
+
+
+def test_save_config_preserves_explicit_execution_agent_with_override(tmp_path: Path) -> None:
+    """An explicit execution_agent that differs from the derived command is user
+    intent and must survive a save->load round trip, even alongside a structured
+    worker override (which would otherwise re-derive a different command)."""
+    cfg = replace(
+        default_config(tmp_path),
+        execution_agent="claude --my-custom-exec",
+        worker_tools={"claude": WorkerToolsOverride(extend=("mcp__github__*",))},
+    )
+    out = tmp_path / "milknado.toml"
+    save_config(cfg, out)
+    text = out.read_text(encoding="utf-8")
+    assert 'execution_agent = "claude --my-custom-exec"' in text
+    # The explicit command wins over the derived allowlist on reload.
+    assert load_config(out, include_global=False).execution_agent == "claude --my-custom-exec"
+
+
+def test_global_relative_prompt_path_resolves_against_global_dir(
+    xdg: Path, tmp_path: Path
+) -> None:
+    """A relative prompt `_path` in the GLOBAL config resolves next to the global
+    config file, not the local project root."""
+    global_dir = xdg / "milknado"
+    _write(
+        global_dir / "milknado.toml",
+        '[milknado.prompts]\nplanning_prepend_path = "team.md"\n',
+    )
+    (global_dir / "team.md").write_text("GLOBAL TEAM NOTE", encoding="utf-8")
+    # A decoy with the same relative name in the project root: the buggy
+    # behaviour resolved against here and would pick this up.
+    (tmp_path / "team.md").write_text("LOCAL DECOY", encoding="utf-8")
+    local = _write(tmp_path / "milknado.toml", '[milknado]\nagent_family = "claude"\n')
+    cfg = load_config(local)
+    assert cfg.planning_prompt_prepend == "GLOBAL TEAM NOTE"
+
+
+def test_prompt_inline_non_string_rejected(tmp_path: Path) -> None:
+    """Prompt prepends are strings; a non-string inline value is rejected, not
+    stringified into garbage prompt text."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\n\n[milknado.prompts]\nplanning_prepend = ["x"]\n',
+    )
+    with pytest.raises(ValueError, match="planning_prepend must be a string"):
+        load_config(local)
+
+
+def test_prompt_path_non_string_rejected(tmp_path: Path) -> None:
+    """A non-string `_path` is rejected rather than coerced into a filename."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.prompts]\nworker_brief_prepend_path = 42\n",
+    )
+    with pytest.raises(ValueError, match=r"prepend_path must be a string"):
+        load_config(local)
