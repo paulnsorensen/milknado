@@ -39,7 +39,15 @@ def test_worker_allowlist_grants_serena_symbol_tools() -> None:
     gemini = WORKER_ALLOWED_TOOLS["gemini"]
     assert "replace_symbol_body" in gemini
     assert "find_symbol" in gemini
-    assert not [t for t in gemini if "shell" in t or "execute" in t]
+    # Same Serena-scoped check for Gemini's raw (unprefixed) names: derive the
+    # granted serena tool set from the Claude entries and assert none can exec.
+    # Scoping to serena tools — rather than scanning the whole allowlist —
+    # keeps the intentionally-granted ShellTool(rtk *) out of the check.
+    serena_names = {
+        t.removeprefix("mcp__serena__") for t in claude if t.startswith("mcp__serena__")
+    }
+    gemini_serena = [t for t in gemini if t in serena_names]
+    assert not [t for t in gemini_serena if "shell" in t or "execute" in t]
 
 
 def test_resolve_planning_uses_override() -> None:
