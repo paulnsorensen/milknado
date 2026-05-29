@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import global_config_path, load_config
+from milknado.domains.common import (
+    WorkerToolsOverride,
+    default_config,
+    global_config_path,
+    load_config,
+    save_config,
+)
+from milknado.domains.common.config import _parse_worker_tools
 
 
 def _write(path: Path, body: str) -> Path:
@@ -326,3 +334,97 @@ def test_worker_tools_deny_with_empty_string_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="must be a non-empty string"):
         load_config(local)
+
+
+def test_worker_not_table_rejected(tmp_path: Path) -> None:
+    """A scalar `worker` key is not a [milknado.worker] table; reject clearly."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\nworker = "oops"\n',
+    )
+    with pytest.raises(ValueError, match=r"\[milknado\.worker\] must be a table"):
+        load_config(local)
+
+
+def test_worker_tools_not_table_rejected(tmp_path: Path) -> None:
+    """A scalar `tools` key under [milknado.worker] is not a table; reject clearly."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\n\n[milknado.worker]\ntools = "oops"\n',
+    )
+    with pytest.raises(ValueError, match=r"\[milknado\.worker\.tools\] must be a table"):
+        load_config(local)
+
+
+def test_prompts_not_table_rejected(tmp_path: Path) -> None:
+    """A scalar `prompts` key is not a [milknado.prompts] table; reject clearly."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\nprompts = "oops"\n',
+    )
+    with pytest.raises(ValueError, match=r"\[milknado\.prompts\] must be a table"):
+        load_config(local)
+
+
+def test_worker_table_without_tools_yields_no_overrides(tmp_path: Path) -> None:
+    """A [milknado.worker] table without a tools subtable is valid and empty."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\n\n[milknado.worker]\n',
+    )
+    cfg = load_config(local)
+    assert cfg.worker_tools == {}
+
+
+def test_worker_tools_family_not_table_rejected(tmp_path: Path) -> None:
+    """A scalar under [milknado.worker.tools] is not a per-family table; reject."""
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "oops"\n',
+    )
+    with pytest.raises(ValueError, match=r"\[milknado\.worker\.tools\.claude\] must be a table"):
+        load_config(local)
+
+
+def test_parse_worker_tools_non_string_family_rejected() -> None:
+    """Non-string family keys (only reachable via a raw dict, not TOML) are rejected."""
+    with pytest.raises(ValueError, match="family keys must be strings"):
+        _parse_worker_tools({"tools": {1: {"allow": ["Read"]}}})
+
+
+def test_top_level_milknado_not_table_rejected(tmp_path: Path) -> None:
+    """A top-level scalar `milknado` value is not the [milknado] table; reject."""
+    local = _write(tmp_path / "milknado.toml", 'milknado = "oops"\n')
+    with pytest.raises(ValueError, match=r"\[milknado\] is not a table"):
+        load_config(local)
+
+
+def test_save_config_emits_allow_table_and_omits_derived_execution_agent(
+    tmp_path: Path,
+) -> None:
+    """A structured allow override is serialized; the derived execution_agent is
+    suppressed so it cannot shadow the override on reload."""
+    cfg = replace(
+        default_config(tmp_path),
+        worker_tools={"claude": WorkerToolsOverride(allow=("Read", "Edit"))},
+    )
+    out = tmp_path / "milknado.toml"
+    save_config(cfg, out)
+    text = out.read_text(encoding="utf-8")
+    assert "[milknado.worker.tools.claude]" in text
+    assert "allow = ['Read', 'Edit']" in text
+    assert "execution_agent" not in text
+    # Round-trips back to the same structured override.
+    assert load_config(out, include_global=False).worker_tools["claude"].allow == ("Read", "Edit")
+
+
+def test_save_config_skips_empty_worker_override(tmp_path: Path) -> None:
+    """An override with no allow/extend/deny is derived noise; don't serialize it."""
+    cfg = replace(
+        default_config(tmp_path),
+        worker_tools={"claude": WorkerToolsOverride()},
+    )
+    out = tmp_path / "milknado.toml"
+    save_config(cfg, out)
+    text = out.read_text(encoding="utf-8")
+    assert "[milknado.worker.tools.claude]" not in text

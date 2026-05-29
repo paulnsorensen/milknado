@@ -1,11 +1,20 @@
 import itertools
+import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
 
-from milknado.cli import app
+from milknado.cli import (
+    _write_claude_worker_settings,
+    _write_gemini_worker_settings,
+    _write_worker_hooks,
+    app,
+)
+from milknado.domains.common import default_config
+from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1089,3 +1098,59 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "2 completed" in result.output
+
+
+# ── worker hook writers ───────────────────────────────────────────────────────
+
+
+def test_write_claude_worker_settings_writes_resolved_tools(tmp_path: Path) -> None:
+    _write_claude_worker_settings(tmp_path, tools=("Read", "Edit"))
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    # The resolved tool tuple is what lands in the worker's allowlist.
+    assert settings["permissions"]["allow"] == ["Read", "Edit"]
+    pre = settings["hooks"]["PreToolUse"][0]
+    assert pre["matcher"] == "Bash"
+    assert pre["hooks"][0]["command"] == "rtk hook claude"
+
+
+def test_write_gemini_worker_settings_writes_resolved_tools(tmp_path: Path) -> None:
+    _write_gemini_worker_settings(tmp_path, tools=("tilth_search", "read_file"))
+    settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["includeTools"] == ["tilth_search", "read_file"]
+    before = settings["hooks"]["BeforeTool"][0]
+    assert before["matcher"] == "run_shell_command"
+    assert before["hooks"][0]["command"] == "rtk hook gemini"
+
+
+def test_write_worker_hooks_dispatches_to_family_writer(tmp_path: Path) -> None:
+    # With rtk present and a default claude config, the dispatcher resolves the
+    # family allowlist and routes to the claude writer.
+    config = default_config(tmp_path)
+    with patch("milknado.cli.shutil.which", return_value="/usr/bin/rtk"):
+        _write_worker_hooks(tmp_path, config)
+    settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["permissions"]["allow"] == list(WORKER_ALLOWED_TOOLS["claude"])
+
+
+def test_write_worker_hooks_skips_when_rtk_missing(tmp_path: Path) -> None:
+    # No rtk on PATH → early return, no settings file written.
+    config = default_config(tmp_path)
+    with patch("milknado.cli.shutil.which", return_value=None):
+        _write_worker_hooks(tmp_path, config)
+    assert not (tmp_path / ".claude").exists()
+
+
+def test_write_worker_hooks_dispatches_to_gemini(tmp_path: Path) -> None:
+    config = replace(default_config(tmp_path), agent_family="gemini")
+    with patch("milknado.cli.shutil.which", return_value="/usr/bin/rtk"):
+        _write_worker_hooks(tmp_path, config)
+    settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+    assert settings["includeTools"] == list(WORKER_ALLOWED_TOOLS["gemini"])
+
+
+def test_write_worker_hooks_dispatches_to_cursor(tmp_path: Path) -> None:
+    config = replace(default_config(tmp_path), agent_family="cursor")
+    with patch("milknado.cli.shutil.which", return_value="/usr/bin/rtk"):
+        _write_worker_hooks(tmp_path, config)
+    hooks = json.loads((tmp_path / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    assert hooks["hooks"][0]["command"] == "rtk hook cursor"
