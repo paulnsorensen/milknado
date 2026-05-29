@@ -36,7 +36,7 @@ def _format_goal_context(chain: list[MikadoNode]) -> list[str]:
     ] or ["(no parent goal)"]
 
 
-def render_brief(graph: MikadoGraph, node_id: int) -> str:
+def render_brief(graph: MikadoGraph, node_id: int, *, prepend: str | None = None) -> str:
     node = graph.get_node(node_id)
     if node is None:
         raise ValueError(f"node {node_id} not found")
@@ -72,4 +72,7 @@ def render_brief(graph: MikadoGraph, node_id: int) -> str:
         "milknado_track_follow_up with a one-line description rather than only "
         "printing it."
     )
-    return "\n".join(lines) + "\n"
+    body = "\n".join(lines) + "\n"
+    if prepend:
+        return prepend.rstrip() + "\n\n" + body
+    return body

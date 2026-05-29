@@ -10,6 +10,7 @@ from milknado.domains.common.agent_argv import (
     build_planning_subprocess,
     resolve_execution_agent_command,
     resolve_planning_agent_command,
+    resolve_worker_tools,
 )
 from milknado.domains.common.config import load_config, save_config
 
@@ -151,3 +152,155 @@ def test_load_config_rejects_unknown_family(tmp_path: Path) -> None:
         assert False, "Expected ValueError for invalid agent_family"
     except ValueError as exc:
         assert "Invalid agent_family" in str(exc)
+
+
+# ── resolve_worker_tools / structured allowlist ───────────────────────────────
+
+
+def test_resolve_worker_tools_default_returns_family_baseline() -> None:
+    tools = resolve_worker_tools("claude")
+    assert tools == WORKER_ALLOWED_TOOLS["claude"]
+
+
+def test_resolve_worker_tools_allow_replaces_default() -> None:
+    tools = resolve_worker_tools("claude", allow=["Read", "Edit"])
+    assert tools == ("Read", "Edit")
+    # And the family default really is dropped.
+    assert "mcp__tilth__*" not in tools
+
+
+def test_resolve_worker_tools_extend_appends_dedups() -> None:
+    tools = resolve_worker_tools(
+        "claude",
+        extend=["mcp__github__*", "Read"],  # Read already in default
+    )
+    assert tools[: len(WORKER_ALLOWED_TOOLS["claude"])] == WORKER_ALLOWED_TOOLS["claude"]
+    assert "mcp__github__*" in tools
+    assert tools.count("Read") == 1
+
+
+def test_resolve_worker_tools_deny_removes_entries() -> None:
+    tools = resolve_worker_tools("claude", deny=["Write"])
+    assert "Write" not in tools
+    assert "Read" in tools  # untouched
+
+
+def test_resolve_worker_tools_allow_then_deny() -> None:
+    tools = resolve_worker_tools(
+        "claude",
+        allow=["Read", "Write", "Edit"],
+        deny=["Write"],
+    )
+    assert tools == ("Read", "Edit")
+
+
+def test_resolve_execution_agent_uses_tools_kwarg() -> None:
+    cmd = resolve_execution_agent_command("claude", tools=["Read", "Edit"])
+    assert "--allowedTools 'Read,Edit'" in cmd
+
+
+def test_resolve_execution_agent_override_wins_over_tools() -> None:
+    # Explicit execution_agent string opts out of the allowlist machinery.
+    cmd = resolve_execution_agent_command(
+        "claude",
+        execution_agent="my-exec --custom",
+        tools=["Read"],
+    )
+    assert cmd == "my-exec --custom"
+
+
+def test_resolve_execution_agent_unknown_family_raises() -> None:
+    # No default command template exists for an unrecognised family; building
+    # one must fail loudly rather than silently emit a broken CLI string.
+    try:
+        resolve_execution_agent_command("powershell", tools=["Read"])
+        assert False, "Expected KeyError for unknown execution family"
+    except KeyError as exc:
+        assert "powershell" in str(exc)
+
+
+def test_resolve_execution_agent_gemini_builds_allowed_tools() -> None:
+    cmd = resolve_execution_agent_command("gemini", tools=["tilth_search"])
+    assert cmd.startswith("gemini")
+    assert "--allowed-tools 'tilth_search'" in cmd
+
+
+def test_resolve_execution_agent_cursor_ignores_tools() -> None:
+    # cursor-agent has no headless tool allowlist; the command is fixed.
+    cmd = resolve_execution_agent_command("cursor", tools=["Read"])
+    assert cmd == "cursor-agent --model sonnet -p"
+
+
+def test_resolve_execution_agent_codex_ignores_tools() -> None:
+    # codex scopes via --sandbox, not a tool allowlist; the command is fixed.
+    cmd = resolve_execution_agent_command("codex", tools=["Read"])
+    assert cmd.startswith("codex exec")
+    assert "--sandbox workspace-write" in cmd
+
+
+def test_load_config_structured_worker_tools_extend(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'extend = ["mcp__github__*"]\n'
+            'deny = ["Write"]\n'
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert "mcp__github__*" in cfg.execution_agent
+    assert "Write" not in cfg.execution_agent.split("--allowedTools")[1]
+
+
+def test_load_config_structured_worker_tools_allow_replaces(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'allow = ["Read", "Edit"]\n'
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert "Read,Edit" in cfg.execution_agent
+    # Default tool dropped because allow=replace semantics.
+    assert "mcp__tilth__*" not in cfg.execution_agent
+
+
+def test_load_config_structured_worker_tools_rejects_unknown_key(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'banana = ["x"]\n'
+        ),
+        encoding="utf-8",
+    )
+    try:
+        load_config(cfg_path)
+        assert False, "Expected ValueError for unknown worker.tools key"
+    except ValueError as exc:
+        assert "unknown keys" in str(exc)
+
+
+def test_load_config_explicit_execution_agent_bypasses_worker_tools(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        (
+            "[milknado]\n"
+            'agent_family = "claude"\n'
+            'execution_agent = "claude --custom"\n\n'
+            "[milknado.worker.tools.claude]\n"
+            'extend = ["mcp__github__*"]\n'
+        ),
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.execution_agent == "claude --custom"

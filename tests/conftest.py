@@ -10,6 +10,19 @@ from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
 from milknado.domains.graph import MikadoGraph
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_milknado_config(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Point XDG_CONFIG_HOME at an empty tmp dir so the dev's real
+    ~/.config/milknado/milknado.toml never leaks into the test suite.
+    Layered-config tests can still place a global file inside this dir.
+    """
+    xdg = tmp_path_factory.mktemp("xdg_config")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+
 @pytest.fixture()
 def graph(tmp_path: Path) -> Generator[MikadoGraph, None, None]:
     g = MikadoGraph(tmp_path / "test.db")

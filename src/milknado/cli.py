@@ -26,6 +26,7 @@ from milknado.domains.common import (
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
     build_planning_subprocess,
+    resolve_worker_tools,
 )
 from milknado.domains.common.toolchain import (
     get_required_tool_status,
@@ -119,7 +120,7 @@ def init(
     if install_rust_tools:
         _install_rust_tools_or_exit()
 
-    _write_worker_hooks(project_root, config.agent_family)
+    _write_worker_hooks(project_root, config)
 
 
 @app.command()
@@ -537,6 +538,7 @@ def plan(
             crg,
             config.planning_agent,
             planning_validation_hook=config.planning_validation_hook,
+            prompt_prepend=config.planning_prompt_prepend,
         )
         console.print(f"[bold]Planning:[/bold] {goal}")
         if not interactive:
@@ -743,20 +745,26 @@ def _install_rust_tools_or_exit() -> None:
 # config — no `rtk init -g` (global install) required.
 
 
-def _write_worker_hooks(project_root: Path, family: str) -> None:
+def _write_worker_hooks(project_root: Path, config: MilknadoConfig) -> None:
     if shutil.which("rtk") is None:
         console.print("[dim]rtk not on PATH; skipping hook wiring.[/dim]")
         return
-    writers = {
-        "claude": _write_claude_worker_settings,
-        "gemini": _write_gemini_worker_settings,
-        "cursor": _write_cursor_worker_hooks,
-    }
-    writer = writers.get(family)
-    if writer is None:
+    family = config.agent_family
+    override = config.worker_tools.get(family)
+    tools = resolve_worker_tools(
+        family,
+        allow=override.allow if override else None,
+        extend=override.extend if override else None,
+        deny=override.deny if override else None,
+    )
+    if family == "claude":
+        _write_claude_worker_settings(project_root, tools)
+    elif family == "gemini":
+        _write_gemini_worker_settings(project_root, tools)
+    elif family == "cursor":
+        _write_cursor_worker_hooks(project_root)
+    else:
         console.print(f"[dim]No hook template for family '{family}'; skipping.[/dim]")
-        return
-    writer(project_root)
 
 
 def _merge_json(path: Path, patch: dict) -> None:
@@ -781,14 +789,17 @@ def _deep_merge_dicts(base: dict, override: dict) -> None:
             base[key] = val
 
 
-def _write_claude_worker_settings(project_root: Path) -> None:
+def _write_claude_worker_settings(
+    project_root: Path,
+    tools: tuple[str, ...] = WORKER_ALLOWED_TOOLS["claude"],
+) -> None:
     path = project_root / ".claude" / "settings.json"
     path.parent.mkdir(exist_ok=True)
     _merge_json(
         path,
         {
             "permissions": {
-                "allow": list(WORKER_ALLOWED_TOOLS["claude"]),
+                "allow": list(tools),
             },
             "hooks": {
                 "PreToolUse": [
@@ -803,13 +814,16 @@ def _write_claude_worker_settings(project_root: Path) -> None:
     console.print(f"Worker hooks written: {path}")
 
 
-def _write_gemini_worker_settings(project_root: Path) -> None:
+def _write_gemini_worker_settings(
+    project_root: Path,
+    tools: tuple[str, ...] = WORKER_ALLOWED_TOOLS["gemini"],
+) -> None:
     path = project_root / ".gemini" / "settings.json"
     path.parent.mkdir(exist_ok=True)
     _merge_json(
         path,
         {
-            "includeTools": list(WORKER_ALLOWED_TOOLS["gemini"]),
+            "includeTools": list(tools),
             "hooks": {
                 "BeforeTool": [
                     {

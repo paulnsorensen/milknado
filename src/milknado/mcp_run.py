@@ -41,11 +41,13 @@ def _run_and_update_status(
     project_root: Path,
     worker_cmd: str | None,
     timeout_seconds: int,
+    *,
+    brief_prepend: str | None = None,
 ) -> dict:
     node = graph.get_node(node_id)
     if node is None:
         raise ValueError(f"node {node_id} not found")
-    brief = render_brief(graph, node_id)
+    brief = render_brief(graph, node_id, prepend=brief_prepend)
     running = _ensure_running(graph, node_id)
     result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds)
     if running:
@@ -78,9 +80,16 @@ def milknado_todo_run(
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     """
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
-        return _run_and_update_status(graph, node_id, root, worker_cmd, timeout_seconds)
+        return _run_and_update_status(
+            graph,
+            node_id,
+            root,
+            worker_cmd,
+            timeout_seconds,
+            brief_prepend=cfg.worker_brief_prepend,
+        )
     finally:
         graph.close()
 
@@ -99,7 +108,7 @@ def milknado_todo_run_start(
     after the worker exits.
     """
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
         if node is None:
@@ -121,7 +130,7 @@ def milknado_todo_run_start(
                 raise ValueError(
                     f"node {node_id} is already running; set status back to pending to retry"
                 )
-        brief = render_brief(graph, node_id)
+        brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
         # Normalise to RUNNING before dispatch so the post-run poll
         # reconciliation (RUNNING -> DONE/FAILED) is always a valid transition,
         # even when re-running a node that was FAILED/BLOCKED from a prior run.

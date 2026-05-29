@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
 
@@ -46,16 +47,54 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
-_CLAUDE_TOOLS_CSV = ",".join(WORKER_ALLOWED_TOOLS["claude"])
-_GEMINI_TOOLS_CSV = ",".join(WORKER_ALLOWED_TOOLS["gemini"])
 
-DEFAULT_EXECUTION_AGENT_BY_FAMILY: Final[dict[str, str]] = {
-    "claude": f"claude --model sonnet -p --allowedTools '{_CLAUDE_TOOLS_CSV}'",
-    "cursor": "cursor-agent --model sonnet -p",
-    # --allowed-tools replaces --yolo for execution; workers get deny-by-default, not trust-all.
-    "gemini": f"gemini --model gemini-2.5-flash -p --allowed-tools '{_GEMINI_TOOLS_CSV}'",
-    "codex": "codex exec --model gpt-5.4-mini --sandbox workspace-write",
-}
+def resolve_worker_tools(
+    family: str,
+    *,
+    allow: Sequence[str] | None = None,
+    extend: Sequence[str] | None = None,
+    deny: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    """Apply allow/extend/deny overlay to the family default tool list.
+
+    - ``allow`` (if set) replaces the family default entirely; ``extend`` is
+      ignored in that case.
+    - Otherwise the family default is concatenated with ``extend``.
+    - ``deny`` removes matching entries from the final list (always last).
+    Order is preserved; duplicates from ``extend`` are deduped (first wins).
+    """
+    base = WORKER_ALLOWED_TOOLS.get(family, ())
+    if allow is not None:
+        result: tuple[str, ...] = tuple(allow)
+    else:
+        seen: set[str] = set()
+        items: list[str] = []
+        for tool in (*base, *(extend or ())):
+            if tool in seen:
+                continue
+            seen.add(tool)
+            items.append(tool)
+        result = tuple(items)
+    if deny:
+        denied = set(deny)
+        result = tuple(t for t in result if t not in denied)
+    return result
+
+
+def _default_execution_command(family: str, tools: Sequence[str]) -> str:
+    """Build the family-specific default execution command from a tool list."""
+    csv = ",".join(tools)
+    if family == "claude":
+        return f"claude --model sonnet -p --allowedTools '{csv}'"
+    if family == "gemini":
+        # --allowed-tools replaces --yolo for execution; workers get
+        # deny-by-default, not trust-all.
+        return f"gemini --model gemini-2.5-flash -p --allowed-tools '{csv}'"
+    if family == "cursor":
+        return "cursor-agent --model sonnet -p"
+    if family == "codex":
+        return "codex exec --model gpt-5.4-mini --sandbox workspace-write"
+    raise KeyError(family)
 
 
 def resolve_planning_agent_command(
@@ -74,12 +113,21 @@ def resolve_execution_agent_command(
     family: str,
     *,
     execution_agent: str | None = None,
+    tools: Sequence[str] | None = None,
 ) -> str:
-    """Return execution agent command for ralph loop workers."""
+    """Return execution agent command for ralph loop workers.
+
+    Precedence:
+      1. ``execution_agent`` (explicit full CLI string) — opt out of the
+         allowlist machinery entirely.
+      2. Family default command, built around ``tools`` (or the family default
+         allowlist when ``tools`` is None).
+    """
     override = (execution_agent or "").strip()
     if override:
         return override
-    return DEFAULT_EXECUTION_AGENT_BY_FAMILY[family]
+    effective_tools = tuple(tools) if tools is not None else WORKER_ALLOWED_TOOLS.get(family, ())
+    return _default_execution_command(family, effective_tools)
 
 
 def build_planning_subprocess(

@@ -229,9 +229,9 @@ def milknado_todo_next(kind: Kind = "task", project_root: str = "") -> dict | No
 def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
     """Render a markdown brief for a task (description, ancestor goals, prereqs, files)."""
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
-        brief = render_brief(graph, node_id)
+        brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
         files = graph.get_file_ownership(node_id)
         return {"node_id": node_id, "brief": brief, "files": files}
     finally:

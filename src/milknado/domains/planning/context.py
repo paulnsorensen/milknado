@@ -17,18 +17,24 @@ def build_planning_context(
     spec_text: str | None = None,
     tilth: TilthPort | None = None,
     scope: Path | None = None,
+    prepend: str | None = None,
 ) -> str:
     if spec_text == "":
         raise ValueError("spec_text must not be empty string — pass None to omit the spec section")
     resuming = len(graph.get_all_nodes()) > 0
-    sections = [
-        _goal_section(goal),
-        _crg_compact_section(crg),
-        _structural_section(tilth, scope),
-        _graph_section(graph),
-        _batching_section(),
-        _instructions_section(resuming),
-    ]
+    sections: list[str] = []
+    if prepend:
+        sections.append(prepend.rstrip())
+    sections.extend(
+        [
+            _goal_section(goal),
+            _crg_compact_section(crg),
+            _structural_section(tilth, scope),
+            _graph_section(graph),
+            _batching_section(),
+            _instructions_section(resuming),
+        ]
+    )
     if spec_text is not None:
         sections.append(_spec_section(spec_text))
     return "\n\n".join(sections)
