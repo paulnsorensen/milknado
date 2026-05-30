@@ -290,6 +290,14 @@ class TestGetRoot:
     def test_empty_graph_returns_none(self, graph: MikadoGraph) -> None:
         assert graph.get_root() is None
 
+    def test_get_root_deterministic_in_forest(self, graph: MikadoGraph) -> None:
+        """get_root returns the lowest-id node when multiple roots exist."""
+        a = graph.add_node("first")
+        b = graph.add_node("second")
+        root = graph.get_root()
+        assert root is not None
+        assert root.id == min(a.id, b.id)
+
 
 class TestGetReadyNodes:
     def test_pending_leaf_is_ready(self, graph: MikadoGraph) -> None:
@@ -347,6 +355,23 @@ class TestGetReadyNodes:
         assert r1.id not in ready_ids
         assert r2.id not in ready_ids
         assert leaf.id in ready_ids
+
+    def test_get_ready_nodes_single_edges_scan(self, tmp_path: Path) -> None:
+        """get_ready_nodes issues O(1) queries regardless of tree size (was N+1)."""
+        g = MikadoGraph(tmp_path / "qcount.db")
+        root = g.add_node("root")
+        for i in range(20):
+            g.add_node(f"child {i}", parent_id=root.id)
+
+        queries: list[str] = []
+        g._conn.set_trace_callback(queries.append)
+        result = g.get_ready_nodes()
+        g._conn.set_trace_callback(None)
+        g.close()
+
+        edges_queries = [q for q in queries if "edges" in q]
+        assert len(edges_queries) <= 3, f"expected <=3 edges scans, got {len(edges_queries)}"
+        assert len(result) == 20
 
 
 class TestStatusTransitions:
@@ -680,3 +705,66 @@ class TestSchemaMigration:
         assert node is not None
         assert node.run_id is None
         graph.close()
+
+
+class TestDeleteSubtreePostOrder:
+    def test_collect_post_order_children_before_parent(self) -> None:
+        from milknado.domains.graph._mutations import _collect_subtree_post_order
+
+        children_map = {1: [2, 4], 2: [3]}
+        result = _collect_subtree_post_order(children_map, 1)
+        assert result.index(3) < result.index(2), "grandchild must precede child"
+        assert result.index(2) < result.index(1), "child must precede root"
+        assert result.index(4) < result.index(1), "sibling must precede root"
+        assert set(result) == {1, 2, 3, 4}
+
+    def test_collect_post_order_diamond_visits_each_once(self) -> None:
+        from milknado.domains.graph._mutations import _collect_subtree_post_order
+
+        children_map = {1: [2, 3], 2: [4], 3: [4]}
+        result = _collect_subtree_post_order(children_map, 1)
+        assert result.count(4) == 1, "shared descendant visited exactly once"
+        assert result.index(4) < result.index(2)
+        assert result.index(4) < result.index(3)
+        assert result.index(2) < result.index(1)
+        assert result.index(3) < result.index(1)
+
+    def test_delete_subtree_removes_all_nodes_atomically(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.add_node("grandchild", parent_id=child.id)
+        count = graph.delete_node(root.id, cascade=True)
+        assert count == 3
+        assert graph.get_all_nodes() == []
+
+    def test_delete_subtree_leaves_no_stale_edges(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.add_node("grandchild", parent_id=child.id)
+        graph.delete_node(root.id, cascade=True)
+        rows = graph._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        assert rows == 0
+
+    def test_delete_subtree_rolls_back_on_error(self, graph: MikadoGraph) -> None:
+        """If a cascade delete fails mid-way, the whole subtree survives."""
+        from unittest.mock import patch
+
+        from milknado.domains.graph._mutations import _delete_one as real_delete_one
+
+        root = graph.add_node("root")
+        graph.add_node("child1", parent_id=root.id)
+        graph.add_node("child2", parent_id=root.id)
+
+        call_count = {"n": 0}
+
+        def fail_on_second(conn, nid: int) -> None:
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("injected failure")
+            real_delete_one(conn, nid)
+
+        with patch("milknado.domains.graph._mutations._delete_one", side_effect=fail_on_second):
+            with pytest.raises(RuntimeError, match="injected failure"):
+                graph.delete_node(root.id, cascade=True)
+
+        assert len(graph.get_all_nodes()) == 3

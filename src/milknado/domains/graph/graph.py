@@ -83,7 +83,9 @@ class MikadoGraph(_AnalyticsFacade):
         )
         self._conn.commit()
         node_id = cur.lastrowid
-        assert node_id is not None
+        if node_id is None:
+            raise RuntimeError("add_node INSERT did not return lastrowid")
+        _logger.debug("node %d created: %r", node_id, description[:80])
         if parent_id is not None:
             self.add_edge(parent_id, node_id)
         return row_to_node(
@@ -198,20 +200,23 @@ class MikadoGraph(_AnalyticsFacade):
 
     def get_ready_nodes(self) -> list[MikadoNode]:
         root_ids = {r.id for r in self.get_roots()}
+        children_map = self.get_children_map()
         ready = []
         for node in self.get_all_nodes():
             if node.status != NodeStatus.PENDING:
                 continue
             if node.id in root_ids:
                 continue
-            children = self.get_children(node.id)
+            children = children_map.get(node.id, [])
             if not children or all(c.status == NodeStatus.DONE for c in children):
                 ready.append(node)
         return ready
 
     def get_root(self) -> MikadoNode | None:
         row = self._conn.execute(
-            "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
+            "SELECT * FROM nodes"
+            " WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
+            " ORDER BY id LIMIT 1"
         ).fetchone()
         return row_to_node(row) if row else None
 
@@ -231,6 +236,7 @@ class MikadoGraph(_AnalyticsFacade):
     def _transition_status(self, node_id: int, target: NodeStatus) -> None:
         old = self._node_status(node_id)
         _transitions.transition_status(self._conn, node_id, target)
+        _logger.debug("node %d: %s → %s", node_id, old.value if old else "?", target.value)
         if old is not None:
             self._notify_status_change(node_id, old, target)
 

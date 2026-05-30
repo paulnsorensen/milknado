@@ -15,7 +15,12 @@ from milknado.mcp_run import (
     milknado_todo_run_poll,
     milknado_todo_run_start,
 )
-from milknado.mcp_server import milknado_graph_summary, open_graph, resolve_project_root
+from milknado.mcp_server import (
+    milknado_add_node,
+    milknado_graph_summary,
+    open_graph,
+    resolve_project_root,
+)
 from milknado.mcp_todo import (
     milknado_delete_node,
     milknado_edit_node,
@@ -184,6 +189,18 @@ class TestTodoTools:
             milknado_todo_set_status, node_id=task["id"], status="done", project_root=root
         )
         assert done["status"] == "done"
+
+    def test_set_status_blocked_to_in_progress_routes_through_pending(
+        self, tmp_path: Path
+    ) -> None:
+        """BLOCKED→in_progress steps BLOCKED→PENDING→RUNNING without raising."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        _call(milknado_todo_set_status, node_id=task["id"], status="blocked", project_root=root)
+        result = _call(
+            milknado_todo_set_status, node_id=task["id"], status="in_progress", project_root=root
+        )
+        assert result["status"] == "running"
 
     def test_set_status_idempotent_set_is_noop(self, tmp_path: Path) -> None:
         """Re-setting a node to its current status must not raise InvalidTransition."""
@@ -1034,6 +1051,43 @@ class TestDeleteAndEditTools:
         with pytest.raises(ValueError, match="not found"):
             _call(milknado_delete_node, node_id=999, project_root=root)
 
+    def test_todo_set_status_raises_when_node_missing_after_update(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit ValueError fires where assert would be stripped under python -O."""
+        from milknado.domains.graph import MikadoGraph
+
+        root = str(tmp_path)
+        node = _call(milknado_todo_add, description="task", project_root=root)
+        nid = node["id"]
+
+        original = MikadoGraph.get_node
+        calls = {"n": 0}
+
+        def mock_get_node(self, nid_arg: int):
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                return None
+            return original(self, nid_arg)
+
+        monkeypatch.setattr(MikadoGraph, "get_node", mock_get_node)
+        with pytest.raises(ValueError, match="not found after status update"):
+            _call(milknado_todo_set_status, node_id=nid, status="in_progress", project_root=root)
+
+    def test_edit_node_raises_when_node_missing_after_update(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Explicit ValueError fires where assert would be stripped under python -O."""
+        from milknado.domains.graph import MikadoGraph
+
+        root = str(tmp_path)
+        node = _call(milknado_todo_add, description="task", project_root=root)
+        nid = node["id"]
+
+        monkeypatch.setattr(MikadoGraph, "get_node", lambda self, n: None)
+        with pytest.raises(ValueError, match="not found after edit"):
+            _call(milknado_edit_node, node_id=nid, description="new desc", project_root=root)
+
 
 class TestGetNode:
     def test_get_node_returns_summary_parent_and_prerequisites(self, tmp_path: Path) -> None:
@@ -1116,8 +1170,8 @@ class TestGraphSummaryFilters:
         _call(milknado_todo_set_status, node_id=done["id"], status="done", project_root=root)
 
         summary = _call(milknado_graph_summary, project_root=root, status="done")
-        assert "done-task" in summary
-        assert "pending-task" not in summary
+        assert any("done-task" in n["description"] for n in summary["nodes"])
+        assert all("pending-task" not in n["description"] for n in summary["nodes"])
 
     def test_kind_filter_lists_only_matching(self, tmp_path: Path) -> None:
         root = str(tmp_path)
@@ -1125,21 +1179,22 @@ class TestGraphSummaryFilters:
         _call(milknado_todo_add, description="the-task", kind="task", project_root=root)
 
         summary = _call(milknado_graph_summary, project_root=root, kind="goal")
-        assert "the-goal" in summary
-        assert "the-task" not in summary
+        assert any("the-goal" in n["description"] for n in summary["nodes"])
+        assert all("the-task" not in n["description"] for n in summary["nodes"])
 
     def test_no_match_returns_empty_graph_sentinel(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         _call(milknado_todo_add, description="t", kind="task", project_root=root)
-        assert _call(milknado_graph_summary, project_root=root, kind="roadmap") == "(empty graph)"
+        assert _call(milknado_graph_summary, project_root=root, kind="roadmap") == {"nodes": []}
 
     def test_unfiltered_lists_all(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         _call(milknado_todo_add, description="one", project_root=root)
         _call(milknado_todo_add, description="two", project_root=root)
         summary = _call(milknado_graph_summary, project_root=root)
-        assert "one" in summary
-        assert "two" in summary
+        descriptions = [n["description"] for n in summary["nodes"]]
+        assert "one" in descriptions
+        assert "two" in descriptions
 
     def test_status_and_kind_filters_are_anded(self, tmp_path: Path) -> None:
         """Both filters together match only nodes satisfying status AND kind."""
@@ -1155,9 +1210,10 @@ class TestGraphSummaryFilters:
         _call(milknado_todo_set_status, node_id=done_task["id"], status="done", project_root=root)
 
         summary = _call(milknado_graph_summary, project_root=root, status="done", kind="goal")
-        assert "done-goal" in summary
-        assert "pending-goal" not in summary  # right kind, wrong status
-        assert "done-task" not in summary  # right status, wrong kind
+        descriptions = [n["description"] for n in summary["nodes"]]
+        assert "done-goal" in descriptions
+        assert "pending-goal" not in descriptions  # right kind, wrong status
+        assert "done-task" not in descriptions  # right status, wrong kind
 
 
 class TestMoveNode:
@@ -1416,3 +1472,25 @@ class TestAdvertisedEnumSchema:
         kind = _advertised_param("milknado_graph_summary", "kind")
         assert _enum_values(status) == ["pending", "in_progress", "blocked", "done"]
         assert _enum_values(kind) == ["roadmap", "goal", "task"]
+
+
+class TestMilknadoAddNodeReturnsDict:
+    def test_add_node_returns_dict_with_expected_fields(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        result = _call(milknado_add_node, description="my node", project_root=root)
+        assert isinstance(result, dict)
+        assert "id" in result
+        assert result["status"] == "pending"
+        assert result["description"] == "my node"
+        assert result["kind"] == "task"
+
+    def test_add_node_with_parent_links_it(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_add_node, description="parent", project_root=root)
+        child = _call(
+            milknado_add_node, description="child", parent_id=parent["id"], project_root=root
+        )
+        assert isinstance(child, dict)
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert tree[0]["id"] == parent["id"]
+        assert tree[0]["children"][0]["id"] == child["id"]

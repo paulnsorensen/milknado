@@ -165,7 +165,8 @@ def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
     )
     conn.commit()
     plan_id = cur.lastrowid
-    assert plan_id is not None
+    if plan_id is None:
+        raise RuntimeError("record_batch_plan INSERT did not return lastrowid")
     return plan_id
 
 
