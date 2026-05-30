@@ -156,9 +156,13 @@ def milknado_ralph_run_start(
             "run_id": run_id,
             "node_id": node_id,
             "status": "running",
+            "exit_code": None,
+            "timed_out": None,
+            "rebased": None,
             "pid": proc.pid,
             "log_path": str(log_path),
             "state_path": str(state_path),
+            "summary": None,
         }
     finally:
         graph.close()
@@ -184,4 +188,7 @@ def milknado_ralph_run_poll(run_id: str, project_root: str = "") -> dict:
     # stored field: no KeyError on a partial-write state, and no arbitrary-file
     # read via a tampered log_path.
     state["summary"] = tail(rdir / f"{run_id}.log")
+    state["state_path"] = str(state_path)
+    state.setdefault("exit_code", None)
+    state.setdefault("timed_out", None)
     return state

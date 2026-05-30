@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 
 from fastmcp import FastMCP
 
@@ -17,6 +17,29 @@ from milknado.domains.common import NodeKind, NodeStatus
 
 Kind = Literal["roadmap", "goal", "task"]
 TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
+
+
+class RunDict(TypedDict):
+    """Unified superset schema returned by all five run tools.
+
+    Fields present but nullable when not applicable to the run type:
+    - run_id: None only for callers that don't produce a state file (legacy)
+    - exit_code / timed_out: None while running or for start tools
+    - rebased: None for headless (non-ralph) runs
+    - state_path: None for sync runs that predate state-file tracking
+    - summary: None for start tools (no log tail until polling)
+    """
+
+    run_id: str | None
+    node_id: int | None
+    status: str | None
+    exit_code: int | None
+    timed_out: bool | None
+    rebased: bool | None
+    log_path: str | None
+    state_path: str | None
+    summary: str | None
+
 
 mcp = FastMCP(
     "Milknado",
