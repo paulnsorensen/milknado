@@ -22,6 +22,7 @@ from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
+    latest_terminal_run,
     now_iso,
     read_state,
     reconcile_node_status,
@@ -73,10 +74,12 @@ def milknado_ralph_run_start(
             # Release a node locked by a run that finished, or whose detached
             # process vanished, without anyone polling (mirrors run_start).
             fail_stale_running_runs(root, node_id)
-            for state in find_terminal_runs_for_node(root, node_id):
-                reconcile_node_status(graph, node_id, state["status"])
+            winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
+            if winner is not None:
+                reconcile_node_status(graph, node_id, winner["status"])
             node = graph.get_node(node_id)
-            assert node is not None
+            if node is None:
+                raise RuntimeError(f"node {node_id} not found after orphan reconcile")
             if node.status == NodeStatus.RUNNING:
                 raise ValueError(
                     f"node {node_id} is already running; set status back to pending to retry"

@@ -9,7 +9,9 @@ capturing combined output) alongside orphan-run recovery and the graph-side
 from __future__ import annotations
 
 import json
+import logging
 import os
+import secrets
 import shlex
 import subprocess
 import threading
@@ -27,10 +29,28 @@ from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
 from milknado.domains.dispatch._runstate import write_state as _write_state
 
+_logger = logging.getLogger(__name__)
 _DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
+
+# Per-(project_root, node_id) locks that prevent concurrent run_start calls
+# from spawning duplicate workers on the same node. SQLite does not provide
+# read-under-write atomicity for the status-check + mark_running sequence
+# without BEGIN IMMEDIATE transactions (a graph-layer refactor); threading.Lock
+# is the minimal correct fix for the in-process MCP server case.
+_DISPATCH_LOCKS: dict[tuple[str, int], threading.Lock] = {}
+_DISPATCH_LOCKS_GUARD: threading.Lock = threading.Lock()
+
+
+def _dispatch_lock(project_root: Path, node_id: int) -> threading.Lock:
+    key = (str(project_root), node_id)
+    with _DISPATCH_LOCKS_GUARD:
+        if key not in _DISPATCH_LOCKS:
+            _DISPATCH_LOCKS[key] = threading.Lock()
+        return _DISPATCH_LOCKS[key]
+
 
 # Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
 # executable name (basename of argv[0]) so neither a prefix trick
@@ -82,7 +102,7 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
 
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
+    return _runs_dir(project_root) / f"node-{node_id}-{stamp}-{secrets.token_hex(2)}.log"
 
 
 _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
@@ -335,9 +355,24 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
             state = _read_state(state_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
+        if state.get("status") in ("done", "failed"):
             out.append(state)
     return out
+
+
+def latest_terminal_run(runs: list[dict]) -> dict | None:
+    """Return the most recent terminal run by ended_at, or None if runs is empty.
+
+    Deterministic selection for reconcile: when a node has multiple terminal
+    runs (e.g. a prior run finished after the node was reset and re-run), the
+    latest ended_at wins. Both the headless (mcp_run) and detached-ralph
+    (mcp_ralph) dispatch paths use this helper so the selection rule is shared
+    exactly — detached-ralph spec #54 reuses this byte-for-byte.
+    """
+    terminal = [r for r in runs if r.get("status") in ("done", "failed")]
+    if not terminal:
+        return None
+    return max(terminal, key=lambda r: r.get("ended_at") or "")
 
 
 def reconcile_node_status(graph, node_id: int, run_status: str) -> None:  # noqa: ANN001

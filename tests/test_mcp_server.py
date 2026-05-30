@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -864,6 +865,115 @@ class TestTodoAsyncRun:
         )
         assert _wait_for_terminal(second["run_id"], root, timeout=3.0)["status"] == "done"
         assert _call(milknado_todo_tree, project_root=root)[0]["status"] == "done"
+
+    def test_concurrent_run_start_spawns_exactly_one_worker(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
+        """Two concurrent run_start calls on the same PENDING node must result in
+        exactly one worker being spawned. Without the dispatch lock, both callers
+        can pass the RUNNING status check simultaneously and each spawn a worker —
+        this is the race #38 guards against."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="concurrent", kind="task", project_root=root)
+        # Use a slow worker so it's still running if the lock leaks two starters.
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 10"))
+
+        results: list[dict] = []
+        errors: list[str] = []
+        result_lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def _start() -> None:
+            barrier.wait()  # maximise overlap on the critical section
+            try:
+                r = _call(
+                    milknado_todo_run_start,
+                    node_id=task["id"],
+                    timeout_seconds=30,
+                    project_root=root,
+                )
+                with result_lock:
+                    results.append(r)
+            except ValueError as exc:
+                with result_lock:
+                    errors.append(str(exc))
+
+        threads = [threading.Thread(target=_start) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert len(results) == 1, (
+            f"expected exactly 1 successful dispatch, got {len(results)} "
+            f"(race: duplicate workers spawned). errors={errors}"
+        )
+        assert len(errors) == 1, f"expected exactly 1 'already running' error, got errors={errors}"
+        assert "already running" in errors[0]
+
+    def test_latest_terminal_run_picks_most_recent_by_ended_at(self, tmp_path: Path) -> None:
+        """When a node has multiple terminal runs, latest_terminal_run returns the
+        one with the highest ended_at timestamp. The older 'done' must not beat the
+        newer 'failed' — the most recent outcome is authoritative for reconcile."""
+        from milknado.domains.dispatch import latest_terminal_run
+        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+
+        root = Path(tmp_path)
+        node_id = 42
+        runs = _runs_dir(root)
+
+        for run_id, status, ended_at in [
+            ("node-42-20200101T000000Z-aaaa", "done", "2020-01-01T00:00:10+00:00"),
+            ("node-42-20200101T000001Z-bbbb", "failed", "2020-01-01T00:00:20+00:00"),
+        ]:
+            (runs / f"{run_id}.state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": status,
+                        "ended_at": ended_at,
+                        "exit_code": 0 if status == "done" else 1,
+                        "timed_out": False,
+                        "started_at": "2020-01-01T00:00:00+00:00",
+                        "log_path": str(runs / f"{run_id}.log"),
+                        "timeout_seconds": 10,
+                    }
+                )
+            )
+
+        terminal_runs = find_terminal_runs_for_node(root, node_id)
+        winner = latest_terminal_run(terminal_runs)
+        assert winner is not None
+        assert winner["status"] == "failed", "newer run (failed) must win over older run (done)"
+        assert winner["run_id"] == "node-42-20200101T000001Z-bbbb"
+
+    def test_latest_terminal_run_returns_none_for_empty(self, tmp_path: Path) -> None:
+        from milknado.domains.dispatch import latest_terminal_run
+
+        assert latest_terminal_run([]) is None
+
+    def test_start_sets_run_id_on_graph_node(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
+        """Async dispatch sets run_id on the graph node so reconcile/queries can
+        find the run without re-scanning the runs dir (finding #40)."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="run-id-check", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            timeout_seconds=10,
+            project_root=root,
+        )
+        graph, _cfg = open_graph(Path(root))
+        try:
+            node = graph.get_node(task["id"])
+        finally:
+            graph.close()
+        assert node is not None
+        assert node.run_id == started["run_id"]
 
 
 class TestSchemaMigration:
