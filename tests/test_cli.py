@@ -762,6 +762,29 @@ class TestPlanSpecOption:
 
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
+    def test_passes_planning_prompt_prepend(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        (project_dir / "milknado.toml").write_text(
+            '[milknado]\nagent_family = "claude"\n\n'
+            '[milknado.prompts]\nplanning_prepend = "team rule X"\n',
+            encoding="utf-8",
+        )
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert mock_planner_cls.call_args.kwargs["prompt_prepend"] == "team rule X"
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
     def test_heading_derived_as_goal(
         self,
         mock_planner_cls: MagicMock,
@@ -911,7 +934,7 @@ class TestPlanIssueOption:
         completed.stderr = ""
         return completed
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_fetches_and_runs_planner(
@@ -939,7 +962,7 @@ class TestPlanIssueOption:
         assert spec_file.exists()
         assert spec_file.read_text().startswith("# Add --issue support")
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_and_spec_combine_into_one_plan(
@@ -982,7 +1005,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "--spec or --issue" in result.output
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     def test_issue_gh_failure_exits_one(
         self,
         mock_run: MagicMock,
@@ -1001,7 +1024,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "no such issue" in result.output
 
-    @patch("milknado.cli.subprocess.run", side_effect=FileNotFoundError())
+    @patch("milknado.cli_plan_specs.subprocess.run", side_effect=FileNotFoundError())
     def test_issue_gh_not_installed_exits_one(
         self,
         _mock_run: MagicMock,
@@ -1014,7 +1037,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "gh" in result.output.lower()
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_multiple_issues_merged_into_one_spec(
@@ -1072,7 +1095,7 @@ class TestPlanIssueOption:
         # Goal derived from combined heading
         assert "Plan for issues #42, #43" in result.output
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_comma_separated_issues_accepted(
@@ -1146,7 +1169,7 @@ class TestPlanIssueOption:
         assert "## Spec: valid" in content
         assert "## Spec: no_heading" in content
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     def test_multi_issue_second_fetch_fails_exits_one(
         self,
         mock_run: MagicMock,

@@ -82,7 +82,7 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
 
 def _inject_mcp_config(argv: list[str], project_root: Path) -> list[str]:
     mcp_config = project_root / ".mcp.json"
-    if mcp_config.exists():
+    if Path(argv[0]).name == "claude" and mcp_config.exists():
         return [*argv, "--mcp-config", str(mcp_config)]
     return argv
 

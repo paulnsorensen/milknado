@@ -850,7 +850,7 @@ class TestTodoAsyncRun:
 
 
 class TestMcpConfigInjection:
-    """--mcp-config must be appended to the worker argv when .mcp.json exists."""
+    """--mcp-config must be appended only to Claude worker argv."""
 
     def _fake_execute(self, captured: list[list[str]]):
         def inner(project_root, node_id, log_path, brief, argv, timeout):
@@ -878,6 +878,24 @@ class TestMcpConfigInjection:
         argv = captured[0]
         assert "--mcp-config" in argv
         assert str(tmp_path / ".mcp.json") in argv
+
+    def test_run_headless_omits_mcp_config_for_non_claude_worker(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from unittest.mock import patch
+
+        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="mcp-codex", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", "codex exec")
+        captured: list[list[str]] = []
+        with patch(
+            "milknado.domains.dispatch.runner._execute",
+            side_effect=self._fake_execute(captured),
+        ):
+            _call(milknado_todo_run, node_id=task["id"], timeout_seconds=10, project_root=root)
+        assert captured, "worker was not dispatched"
+        assert captured[0] == ["codex", "exec"]
 
     def test_run_headless_omits_mcp_config_when_absent(self, tmp_path: Path, monkeypatch) -> None:
         from unittest.mock import patch
