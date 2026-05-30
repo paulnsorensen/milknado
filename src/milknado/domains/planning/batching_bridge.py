@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from milknado.domains.batching import plan_batches
+from milknado.domains.batching import DUMB_ZONE_BUDGET, plan_batches
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,7 +18,7 @@ def run_batching(
     crg: CrgPort | None,
     root: Path,
     *,
-    budget: int = 70_000,
+    budget: int = DUMB_ZONE_BUDGET,
     time_limit_s: float = 10.0,
 ) -> BatchPlan:
     return plan_batches(

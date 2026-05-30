@@ -14,7 +14,13 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.batching import BatchPlan, FileChange, NewRelationship, SymbolRef
+from milknado.domains.batching import (
+    DUMB_ZONE_BUDGET,
+    BatchPlan,
+    FileChange,
+    NewRelationship,
+    SymbolRef,
+)
 from milknado.domains.batching.change import RelationshipReason
 
 __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
@@ -150,7 +156,7 @@ def _plan_batches_impl(
 @mcp.tool()
 def milknado_plan_batches(
     changes: list[dict],
-    budget: int = 70_000,
+    budget: int = DUMB_ZONE_BUDGET,
     project_root: str = "",
     new_relationships: list[dict] | None = None,
 ) -> dict:
