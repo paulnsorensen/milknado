@@ -4,19 +4,7 @@ from __future__ import annotations
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph import MikadoGraph
-
-
-def _ancestor_chain(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:
-    chain: list[MikadoNode] = []
-    current = node
-    while current.parent_id is not None:
-        parent = graph.get_node(current.parent_id)
-        if parent is None:
-            break
-        chain.append(parent)
-        current = parent
-    chain.reverse()
-    return chain
+from milknado.domains.graph.traversals import walk_ancestors
 
 
 def _done_prereqs(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:
@@ -41,7 +29,9 @@ def render_brief(graph: MikadoGraph, node_id: int, *, prepend: str | None = None
     if node is None:
         raise ValueError(f"node {node_id} not found")
 
-    chain = _ancestor_chain(graph, node)
+    # walk_ancestors returns [node, parent, ..., root]; drop node itself, reverse to root-first
+    ancestors = walk_ancestors(graph, node_id)
+    chain = list(reversed(ancestors[1:]))
     done = _done_prereqs(graph, node)
     files = graph.get_file_ownership(node_id)
 

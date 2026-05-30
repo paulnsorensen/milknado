@@ -31,11 +31,11 @@ def milknado_graph_summary(
     project_root: str = "",
     status: TodoStatus | None = None,
     kind: Kind | None = None,
-) -> str:
+) -> dict:
     """Return Mikado nodes (id, status, description), optionally filtered.
 
-    status and kind narrow the listing to matching nodes; "(empty graph)" is
-    returned when no node matches (or the graph is empty).
+    status and kind narrow the listing to matching nodes; an empty "nodes"
+    list is returned when no node matches (or the graph is empty).
     """
     want_status = _parse_todo_status(status) if status is not None else None
     want_kind = _parse_kind(kind) if kind is not None else None
@@ -48,10 +48,11 @@ def milknado_graph_summary(
             if (want_status is None or n.status == want_status)
             and (want_kind is None or n.kind == want_kind)
         ]
-        if not nodes:
-            return "(empty graph)"
-        lines = [f"id={n.id} status={n.status.value} desc={n.description[:120]!r}" for n in nodes]
-        return "\n".join(lines)
+        return {
+            "nodes": [
+                {"id": n.id, "status": n.status.value, "description": n.description} for n in nodes
+            ]
+        }
     finally:
         graph.close()
 
@@ -61,13 +62,22 @@ def milknado_add_node(
     description: str,
     parent_id: int | None = None,
     project_root: str = "",
-) -> str:
-    """Add a Mikado node; optional parent_id links a prerequisite edge."""
+) -> dict:
+    """Add a Mikado node; optional parent_id links a prerequisite edge.
+
+    Returns the same node-summary dict as milknado_todo_add.
+    Prefer milknado_todo_add for kind-aware (roadmap/goal/task) adds.
+    """
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
         node = graph.add_node(description, parent_id=parent_id)
-        return f"created node id={node.id} description={node.description!r}"
+        return {
+            "id": node.id,
+            "kind": node.kind.value,
+            "status": node.status.value,
+            "description": node.description,
+        }
     finally:
         graph.close()
 

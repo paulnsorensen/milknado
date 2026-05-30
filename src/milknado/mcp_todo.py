@@ -152,7 +152,8 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
             raise ValueError(f"node {node_id} not found")
         _apply_todo_status(graph, node, target)
         updated = graph.get_node(node_id)
-        assert updated is not None
+        if updated is None:
+            raise ValueError(f"node {node_id} not found after status update")
         return _node_to_summary(updated)
     finally:
         graph.close()
@@ -336,7 +337,8 @@ def milknado_edit_node(
     try:
         graph.update_node(node_id, description=description, kind=node_kind)
         updated = graph.get_node(node_id)
-        assert updated is not None
+        if updated is None:
+            raise ValueError(f"node {node_id} not found after edit")
         return _node_to_summary(updated)
     finally:
         graph.close()
