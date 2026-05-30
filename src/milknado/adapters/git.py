@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -67,42 +68,50 @@ class GitAdapter:
             combined = result.stdout + result.stderr
             files = tuple(_CONFLICT_FILE_RE.findall(combined))
             if files and _try_mergiraf_resolve(worktree, files):
-                add_result = subprocess.run(
-                    ["git", "add", "-A"],
-                    cwd=worktree,
-                    capture_output=True,
-                    text=True,
-                )
-                continue_result = subprocess.run(
-                    ["git", "rebase", "--continue"],
-                    cwd=worktree,
-                    capture_output=True,
-                    text=True,
-                    env={**__import__("os").environ, "GIT_EDITOR": "true"},
-                )
-                if add_result.returncode == 0 and continue_result.returncode == 0:
-                    _logger.info("mergiraf: rebase completed successfully after resolve")
+                if self._rebase_continue(worktree):
                     return RebaseResult(success=True)
-                _logger.info("mergiraf: rebase --continue failed, falling through to abort")
-            abort_result = subprocess.run(
-                ["git", "rebase", "--abort"],
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-            )
-            if abort_result.returncode != 0:
-                _logger.error(
-                    "git rebase --abort failed in %s: %s",
-                    worktree,
-                    abort_result.stderr,
-                )
-                raise RebaseAbortError(worktree, stderr=abort_result.stderr)
-            return RebaseResult(
-                success=False,
-                conflicting_files=files,
-                detail=combined.strip(),
-            )
+            return self._abort_rebase(worktree, files, combined)
         return RebaseResult(success=True)
+
+    def _rebase_continue(self, worktree: Path) -> bool:
+        add_result = subprocess.run(
+            ["git", "add", "-A"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+        )
+        continue_result = subprocess.run(
+            ["git", "rebase", "--continue"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GIT_EDITOR": "true"},
+        )
+        if add_result.returncode == 0 and continue_result.returncode == 0:
+            _logger.info("mergiraf: rebase completed successfully after resolve")
+            return True
+        _logger.info("mergiraf: rebase --continue failed, falling through to abort")
+        return False
+
+    def _abort_rebase(self, worktree: Path, files: tuple[str, ...], combined: str) -> RebaseResult:
+        abort_result = subprocess.run(
+            ["git", "rebase", "--abort"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+        )
+        if abort_result.returncode != 0:
+            _logger.error(
+                "git rebase --abort failed in %s: %s",
+                worktree,
+                abort_result.stderr,
+            )
+            raise RebaseAbortError(worktree, stderr=abort_result.stderr)
+        return RebaseResult(
+            success=False,
+            conflicting_files=files,
+            detail=combined.strip(),
+        )
 
     def current_branch(self) -> str:
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])

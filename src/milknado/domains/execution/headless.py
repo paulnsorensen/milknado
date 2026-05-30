@@ -54,10 +54,12 @@ def run_node_to_completion(
     try:
         _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
     except CompletionTimeout:
+        ralph.stop_run(dispatch.run_id)
         executor.fail(node_id)
         return HeadlessOutcome(node_id, success=False, detail="completion timeout")
 
     if not completed:
+        ralph.stop_run(dispatch.run_id)
         executor.fail(node_id)
         return HeadlessOutcome(node_id, success=False, detail="worker run did not complete")
 
