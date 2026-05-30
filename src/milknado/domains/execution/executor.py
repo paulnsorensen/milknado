@@ -179,6 +179,15 @@ class Executor:
             slug=slug,
         )
         wt_path = config.project_root / worktree_name
+
+        resolved_root = config.project_root.resolve()
+        resolved_wt = wt_path.resolve()
+        if not resolved_wt.is_relative_to(resolved_root):
+            raise ValueError(
+                f"worktree_pattern resolves outside project_root: "
+                f"{resolved_wt!r} is not under {resolved_root!r}"
+            )
+
         branch = f"milknado/{node_id}-{slug}"
 
         self._git.create_worktree(wt_path, branch)

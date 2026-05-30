@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,10 +10,13 @@ from milknado.cli import app
 
 runner = CliRunner()
 
-_VERSION_OUTPUTS = {
+_CLI_VERSION_OUTPUTS = {
     "git": "git version 2.40.0",
-    "ralphify": "ralphify 1.0.0",
     "code-review-graph": "code-review-graph 0.5.0",
+}
+
+_PKG_VERSIONS = {
+    "ralphify": "1.0.0",
 }
 
 
@@ -22,20 +26,29 @@ def _fake_which(name: str) -> str | None:
 
 def _fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
     result = MagicMock()
-    result.stdout = _VERSION_OUTPUTS.get(cmd[0], "") + "\n"
+    result.stdout = _CLI_VERSION_OUTPUTS.get(cmd[0], "") + "\n"
     result.stderr = ""
     return result
 
 
-def _which_missing_ralphify(name: str) -> str | None:
-    return None if name == "ralphify" else f"/usr/bin/{name}"
+def _fake_pkg_version(name: str) -> str:
+    if name in _PKG_VERSIONS:
+        return _PKG_VERSIONS[name]
+    raise PackageNotFoundError(name)
+
+
+def _pkg_version_missing_ralphify(name: str) -> str:
+    if name == "ralphify":
+        raise PackageNotFoundError(name)
+    return _PKG_VERSIONS.get(name, "unknown")
 
 
 class TestDoctorHappyPath:
+    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_fake_pkg_version)
     @patch("milknado.domains.common.doctor.subprocess.run", side_effect=_fake_run)
     @patch("milknado.domains.common.doctor.shutil.which", side_effect=_fake_which)
     def test_exit_0_all_ok(
-        self, _mock_which: MagicMock, _mock_run: MagicMock, tmp_path: Path
+        self, _mock_which: MagicMock, _mock_run: MagicMock, _mock_ver: MagicMock, tmp_path: Path
     ) -> None:
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir(parents=True)
@@ -46,10 +59,11 @@ class TestDoctorHappyPath:
         assert result.exit_code == 0
         assert "doctor: ok" in result.output
 
+    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_fake_pkg_version)
     @patch("milknado.domains.common.doctor.subprocess.run", side_effect=_fake_run)
     @patch("milknado.domains.common.doctor.shutil.which", side_effect=_fake_which)
     def test_version_lines_present(
-        self, _mock_which: MagicMock, _mock_run: MagicMock, tmp_path: Path
+        self, _mock_which: MagicMock, _mock_run: MagicMock, _mock_ver: MagicMock, tmp_path: Path
     ) -> None:
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir(parents=True)
@@ -58,15 +72,16 @@ class TestDoctorHappyPath:
         result = runner.invoke(app, ["doctor", str(tmp_path)])
 
         assert "git version 2.40.0" in result.output
-        assert "ralphify 1.0.0" in result.output
+        assert "ralphify: (python package)  1.0.0" in result.output
         assert "code-review-graph 0.5.0" in result.output
 
 
 class TestDoctorMissingTool:
+    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_pkg_version_missing_ralphify)
     @patch("milknado.domains.common.doctor.subprocess.run", side_effect=_fake_run)
-    @patch("milknado.domains.common.doctor.shutil.which", side_effect=_which_missing_ralphify)
-    def test_exit_1_when_tool_missing(
-        self, _mock_which: MagicMock, _mock_run: MagicMock, tmp_path: Path
+    @patch("milknado.domains.common.doctor.shutil.which", side_effect=_fake_which)
+    def test_exit_1_when_ralphify_package_missing(
+        self, _mock_which: MagicMock, _mock_run: MagicMock, _mock_ver: MagicMock, tmp_path: Path
     ) -> None:
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir(parents=True)
@@ -75,15 +90,16 @@ class TestDoctorMissingTool:
         result = runner.invoke(app, ["doctor", str(tmp_path)])
 
         assert result.exit_code == 1
-        assert "not found" in result.output
+        assert "ralphify: not found" in result.output
         assert "doctor: 1 issue(s)" in result.output
 
 
 class TestDoctorDbMissing:
+    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_fake_pkg_version)
     @patch("milknado.domains.common.doctor.subprocess.run", side_effect=_fake_run)
     @patch("milknado.domains.common.doctor.shutil.which", side_effect=_fake_which)
     def test_exit_0_db_missing_not_an_issue(
-        self, _mock_which: MagicMock, _mock_run: MagicMock, tmp_path: Path
+        self, _mock_which: MagicMock, _mock_run: MagicMock, _mock_ver: MagicMock, tmp_path: Path
     ) -> None:
         result = runner.invoke(app, ["doctor", str(tmp_path)])
 

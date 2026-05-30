@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
@@ -15,6 +16,19 @@ from milknado.domains.dispatch import (
     run_headless,
     start_headless_async,
 )
+from milknado.domains.dispatch.runner import _validate_worker_argv
+
+
+def _validate_worker_cmd(worker_cmd: str | None) -> None:
+    """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
+
+    Eager pre-check on the MCP arg; the env fallback and built-in default are
+    validated again where they're resolved (`runner._resolve_worker_cmd`). Both
+    routes share `_validate_worker_argv`, so the allowlist lives in one place.
+    """
+    if not worker_cmd or not worker_cmd.strip():
+        return
+    _validate_worker_argv(shlex.split(worker_cmd))
 
 
 def _ensure_running(graph, node_id: int) -> bool:
@@ -79,6 +93,7 @@ def milknado_todo_run(
     worker_cmd defaults to $MILKNADO_WORKER_CMD then `claude -p`.
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     """
+    _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
@@ -107,6 +122,7 @@ def milknado_todo_run_start(
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits.
     """
+    _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:

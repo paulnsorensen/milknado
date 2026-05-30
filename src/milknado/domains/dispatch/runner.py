@@ -32,6 +32,28 @@ _DEFAULT_WORKER_CMD = "claude -p"
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
 
+# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
+# executable name (basename of argv[0]) so neither a prefix trick
+# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
+_ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
+    {"claude", "codex", "cursor-agent", "gemini"}
+)
+
+
+def _validate_worker_argv(argv: list[str]) -> None:
+    """Reject a resolved worker argv whose executable isn't an allowed agent CLI.
+
+    Guards every worker_cmd source — the explicit MCP arg, the
+    $MILKNADO_WORKER_CMD env fallback, and the built-in default — by checking
+    the basename of argv[0] against the allowlist.
+    """
+    executable = Path(argv[0]).name if argv else ""
+    if executable not in _ALLOWED_WORKER_EXECUTABLES:
+        raise ValueError(
+            "worker_cmd must start with one of "
+            f"{sorted(_ALLOWED_WORKER_EXECUTABLES)!r}; got {executable!r}"
+        )
+
 
 @dataclass(frozen=True)
 class RunResult:
@@ -50,11 +72,12 @@ class AsyncStartRef:
 
 def _resolve_worker_cmd(explicit: str | None) -> list[str]:
     if explicit and explicit.strip():
-        return shlex.split(explicit)
-    env = os.environ.get("MILKNADO_WORKER_CMD", "").strip()
-    if env:
-        return shlex.split(env)
-    return shlex.split(_DEFAULT_WORKER_CMD)
+        argv = shlex.split(explicit)
+    else:
+        env = os.environ.get("MILKNADO_WORKER_CMD", "").strip()
+        argv = shlex.split(env) if env else shlex.split(_DEFAULT_WORKER_CMD)
+    _validate_worker_argv(argv)
+    return argv
 
 
 def _log_path(project_root: Path, node_id: int) -> Path:
@@ -62,13 +85,65 @@ def _log_path(project_root: Path, node_id: int) -> Path:
     return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
 
 
+_WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        # Runtime essentials
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "TERM",
+        # Temporary files (platform-specific names)
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        # Locale / encoding
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LC_MESSAGES",
+        "LC_COLLATE",
+        "LC_MONETARY",
+        "LC_NUMERIC",
+        "LC_TIME",
+        # Python runtime
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "VIRTUAL_ENV",
+        # Git identity (not credentials)
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    }
+)
+
+
+def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Return a filtered environment for worker subprocesses.
+
+    Passes only allowlisted system vars plus MILKNADO_* config vars from the
+    parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only.
+    """
+    # INVARIANT: no MILKNADO_* var may hold a secret — every one is forwarded to
+    # workers verbatim. Keep API keys, tokens, and DB URLs out of that namespace
+    # (they belong to the parent only); a new MILKNADO_SECRET_* would leak here.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k in _WORKER_ENV_ALLOWLIST or k.startswith("MILKNADO_")
+    }
+    if extra:
+        env.update(extra)
+    return env
+
+
 def _execute(
     project_root: Path, node_id: int, log_path: Path, brief: str, argv: list[str], timeout: int
 ) -> tuple[int, bool]:
     timed_out = False
-    # Make env explicit so the worker can attribute follow-up nodes it tracks
-    # back to the task it is running (milknado_track_follow_up reads this).
-    env = {**os.environ, "MILKNADO_NODE_ID": str(node_id)}
+    env = _build_worker_env({"MILKNADO_NODE_ID": str(node_id)})
     with log_path.open("wb") as log_fh:
         proc = subprocess.Popen(
             argv,

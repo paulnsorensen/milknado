@@ -32,6 +32,26 @@ sp.write_text(json.dumps(state))
 """
 
 
+# A stub runner that echoes its inherited MILKNADO_NODE_ID into the run detail,
+# letting us assert the detached spawn injects the env var (parenting fix).
+_ENV_CAPTURE_RUNNER = """
+import argparse, json, os
+from pathlib import Path
+p = argparse.ArgumentParser()
+p.add_argument("--node-id", type=int)
+p.add_argument("--project-root")
+p.add_argument("--run-id")
+p.add_argument("--state-path")
+p.add_argument("--timeout")
+a = p.parse_args()
+sp = Path(a.state_path)
+state = json.loads(sp.read_text())
+state.update(status="done", rebased=True, detail=os.environ.get("MILKNADO_NODE_ID", "<unset>"))
+state["ended_at"] = "2026-01-01T00:00:00+00:00"
+sp.write_text(json.dumps(state))
+"""
+
+
 def _call(tool, **kwargs):
     fn = getattr(tool, "fn", tool)
     return fn(**kwargs)
@@ -85,6 +105,27 @@ def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
     assert isinstance(started["pid"], int)
     state = json.loads(Path(started["state_path"]).read_text())
     assert state["pid"] == started["pid"]
+
+
+def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
+    """The detached ralph runner must spawn with MILKNADO_NODE_ID set so
+    milknado_track_follow_up parents follow-ups under the executing node instead
+    of at the graph root (mirrors the headless dispatch path). The stub runner
+    echoes its inherited MILKNADO_NODE_ID into the run detail; we assert it
+    equals the node being executed. Fails if the spawn drops the var."""
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="env-node-id", kind="task", project_root=root)
+    script = tmp_path / "env_capture_runner.py"
+    script.write_text(_ENV_CAPTURE_RUNNER)
+    started = _call(
+        milknado_ralph_run_start,
+        node_id=task["id"],
+        runner_cmd=f"{sys.executable} {script}",
+        project_root=root,
+    )
+    final = _wait_for_terminal(started["run_id"], root)
+    assert final["status"] == "done"
+    assert final["detail"] == str(task["id"])
 
 
 def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:

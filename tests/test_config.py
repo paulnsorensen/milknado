@@ -131,6 +131,18 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert cfg.agent_family == "claude"
 
+    def test_db_path_dotdot_traversal_raises(self, tmp_path: Path) -> None:
+        toml = '[milknado]\nagent_family = "claude"\ndb_path = "../../evil.db"\n'
+        path = self._write_toml(tmp_path, toml)
+        with pytest.raises(ValueError, match="escapes project_root"):
+            load_config(path)
+
+    def test_db_path_absolute_path_raises(self, tmp_path: Path) -> None:
+        toml = '[milknado]\nagent_family = "claude"\ndb_path = "/etc/evil.db"\n'
+        path = self._write_toml(tmp_path, toml)
+        with pytest.raises(ValueError, match="escapes project_root"):
+            load_config(path)
+
 
 class TestSaveConfig:
     def test_writes_toml_file(self, tmp_path: Path) -> None:
