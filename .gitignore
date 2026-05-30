@@ -213,6 +213,7 @@ ralphs/
 
 # Local agent/editor state
 .claude/
+.cheese/
 .context/
 .serena/
 
