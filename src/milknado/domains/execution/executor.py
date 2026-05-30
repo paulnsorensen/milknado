@@ -344,14 +344,21 @@ class Executor:
             _logger.error("Rebase-merge failed for node %d", node_id, exc_info=True)
             rebase_result = RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
 
+        # Only a RUNNING node may take a terminal transition. A duplicate
+        # completion (the same run reported done twice, or a re-run of an
+        # already-finished node) leaves the prior result standing instead of
+        # raising InvalidTransition on the terminal-to-terminal move. Mirrors
+        # reconcile_node_status: the first completion of a run wins.
+        is_running = node.status == NodeStatus.RUNNING
         conflict: RebaseConflict | None = None
         if rebase_result.success:
-            wrote = self._mark_terminal(node, NodeStatus.DONE)
-            if wrote and node.dispatched_at is not None:
-                completed_now = datetime.now(UTC)
-                duration = (completed_now - node.dispatched_at).total_seconds()
-                self._graph.record_completion_duration(node_id, duration)
-        else:
+            if is_running:
+                wrote = self._mark_terminal(node, NodeStatus.DONE)
+                if wrote and node.dispatched_at is not None:
+                    completed_now = datetime.now(UTC)
+                    duration = (completed_now - node.dispatched_at).total_seconds()
+                    self._graph.record_completion_duration(node_id, duration)
+        elif is_running:
             self._mark_terminal(node, NodeStatus.FAILED)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(

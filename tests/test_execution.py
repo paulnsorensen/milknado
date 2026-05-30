@@ -554,6 +554,38 @@ class TestExecutorComplete:
         assert node is not None
         assert node.status == NodeStatus.DONE
 
+    def test_completing_already_done_node_is_idempotent(
+        self,
+        graph: MikadoGraph,
+    ) -> None:
+        """A duplicate completion of an already-DONE node must not raise.
+
+        A second completion signal for the same run (or a re-run of a finished
+        node) reaches complete() with the node already terminal. DONE has no
+        valid transitions, so an unguarded mark_done would raise
+        InvalidTransition; completion must instead leave the prior result
+        standing.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        graph.mark_running(1)
+        ex.complete(1, "main")
+        assert graph.get_node(1).status == NodeStatus.DONE  # type: ignore[union-attr]
+
+        # Second completion of the same node: a no-op, not a crash.
+        result = ex.complete(1, "main")
+
+        assert result.rebased is True
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE
+
     def test_marks_failed_on_rebase_conflict(
         self,
         graph: MikadoGraph,
