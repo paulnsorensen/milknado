@@ -72,24 +72,8 @@ class CrgPort(Protocol):
         sort_by: str = "criticality",
         limit: int = 50,
     ) -> list[dict[str, Any]]: ...
-    def get_minimal_context(
-        self,
-        task: str = "",
-        changed_files: list[str] | None = None,
-    ) -> dict[str, Any]: ...
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
-    def semantic_search_nodes(
-        self,
-        query: str,
-        top_n: int = 5,
-    ) -> list[dict[str, Any]]: ...
-    def semantic_search(
-        self,
-        query: str,
-        top_n: int = 5,
-        detail_level: Literal["minimal", "full"] = "minimal",
-    ) -> list[dict[str, Any]]: ...
 
 
 class RalphPort(Protocol):

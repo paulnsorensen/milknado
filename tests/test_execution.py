@@ -133,28 +133,10 @@ class FakeCrg:
     def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, Any]]:
         return []
 
-    def get_minimal_context(
-        self,
-        task: str = "",
-        changed_files: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return {}
-
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return []
 
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
-        return []
-
-    def semantic_search_nodes(self, query: str, top_n: int = 5) -> list[dict[str, Any]]:
-        return []
-
-    def semantic_search(
-        self,
-        query: str,
-        top_n: int = 5,
-        detail_level: str = "minimal",
-    ) -> list[dict[str, Any]]:
         return []
 
 
@@ -431,7 +413,7 @@ class TestExecutorDispatch:
 
         # Worktree cleanup must have run despite mark_pending raising
         assert len(fake_git.removed) == 1
-        assert 1 not in ex._worktrees
+        assert 1 not in ex._wt._worktrees
 
         graph.mark_pending = original_mark_pending  # restore
 
@@ -705,7 +687,7 @@ class TestEnsureCleanWorktree:
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        """_ensure_clean_worktree swallows remove_worktree errors."""
+        """WorktreeManager.ensure_clean swallows remove_worktree errors."""
         call_count = 0
 
         class BoomGit(FakeGit):
@@ -727,9 +709,9 @@ class TestEnsureCleanWorktree:
 
         # Second dispatch of same node triggers _ensure_clean_worktree which calls remove
         # To test the exception path, manually stash the worktree and call ensure
-        ex._worktrees[1] = result1.worktree
+        ex._wt._worktrees[1] = result1.worktree
         # Should not raise even though remove_worktree raises
-        ex._ensure_clean_worktree(1)
+        ex._wt.ensure_clean(1)
 
 
 class TestExecutorFail:

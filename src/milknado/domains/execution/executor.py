@@ -15,7 +15,7 @@ from milknado.domains.common.errors import (
     RebaseAbortError,
     TransientDispatchError,
 )
-from milknado.domains.common.types import NodeStatus, RebaseResult
+from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
@@ -102,22 +102,19 @@ def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
     return [nid for nid in ids if nid not in blocked]
 
 
-class Executor:
-    def __init__(
-        self,
-        graph: MikadoGraph,
-        git: GitPort,
-        ralph: RalphPort,
-        crg: CrgPort,
-    ) -> None:
-        self._graph = graph
-        self._git = git
-        self._ralph = ralph
-        self._crg = crg
-        self._worktrees: dict[int, Path] = {}
-        self._attempts_by_node: dict[int, int] = {}
+class WorktreeManager:
+    """Tracks and manages worktree lifecycle: create, clean up, rebase-and-merge."""
 
-    def _ensure_clean_worktree(self, node_id: int) -> None:
+    def __init__(self, git: GitPort) -> None:
+        self._git = git
+        self._worktrees: dict[int, Path] = {}
+
+    def create(self, node_id: int, wt_path: Path, branch: str) -> None:
+        self._git.create_worktree(wt_path, branch)
+        self._worktrees[node_id] = wt_path
+
+    def ensure_clean(self, node_id: int) -> None:
+        """Remove any tracked worktree for node_id, logging failures."""
         if node_id in self._worktrees:
             wt = self._worktrees.pop(node_id)
             if wt.exists():
@@ -130,6 +127,57 @@ class Executor:
                         node_id,
                         exc,
                     )
+
+    def remove(self, node_id: int, wt_path: Path) -> None:
+        """Remove a specific worktree path and untrack it, logging failures."""
+        self._worktrees.pop(node_id, None)
+        try:
+            self._git.remove_worktree(wt_path)
+        except Exception as exc:
+            _logger.warning(
+                "Failed to remove worktree %s for node %d: %s",
+                wt_path,
+                node_id,
+                exc,
+            )
+
+    def discard(self, node_id: int, wt_path: Path) -> None:
+        """Best-effort worktree removal — all exceptions suppressed."""
+        self._worktrees.pop(node_id, None)
+        with contextlib.suppress(Exception):
+            self._git.remove_worktree(wt_path)
+
+    def rebase_and_merge(
+        self,
+        worktree: Path | None,
+        feature_branch: str,
+        node_id: int,
+        description: str,
+    ) -> RebaseResult:
+        """Squash-commit, rebase onto feature_branch, then remove the worktree."""
+        if not worktree or not worktree.exists():
+            return RebaseResult(success=True)
+        try:
+            msg = _build_commit_message(node_id, description)
+            self._git.squash_and_commit(worktree, feature_branch, msg)
+            return self._git.rebase(worktree, feature_branch)
+        finally:
+            self.remove(node_id, worktree)
+
+
+class Executor:
+    def __init__(
+        self,
+        graph: MikadoGraph,
+        git: GitPort,
+        ralph: RalphPort,
+        crg: CrgPort,
+    ) -> None:
+        self._graph = graph
+        self._ralph = ralph
+        self._crg = crg
+        self._wt = WorktreeManager(git)
+        self._attempts_by_node: dict[int, int] = {}
 
     def get_attempt_count(self, node_id: int) -> int:
         return self._attempts_by_node.get(node_id, 0)
@@ -171,7 +219,7 @@ class Executor:
         if node is None:
             raise ValueError(f"Node {node_id} not found")
 
-        self._ensure_clean_worktree(node_id)
+        self._wt.ensure_clean(node_id)
 
         slug = _slugify(node.description)
         worktree_name = config.worktree_pattern.format(
@@ -190,34 +238,15 @@ class Executor:
 
         branch = f"milknado/{node_id}-{slug}"
 
-        self._git.create_worktree(wt_path, branch)
-        self._worktrees[node_id] = wt_path
+        self._wt.create(node_id, wt_path, branch)
         try:
             self._graph.mark_running(
                 node_id,
                 worktree_path=str(wt_path),
                 branch_name=branch,
             )
-
-            context = build_node_context(node, self._graph, self._crg)
-            ralph_path = self._ralph.generate_ralph_md(
-                node,
-                context,
-                list(config.quality_gates),
-                wt_path / "RALPH.md",
-            )
-
-            run = self._ralph.create_run(
-                agent=config.execution_agent,
-                ralph_dir=wt_path,
-                ralph_file=ralph_path,
-                commands=[],
-                quality_gates=list(config.quality_gates),
-                project_root=wt_path,
-            )
-            run_id = run.state.run_id
+            run_id = self._create_ralph_run(node, config, wt_path)
             self._graph.set_run_id(node_id, run_id)
-            self._ralph.start_run(run_id)
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -237,6 +266,32 @@ class Executor:
             run_id=run_id,
         )
 
+    def _create_ralph_run(
+        self,
+        node: MikadoNode,
+        config: ExecutionConfig,
+        wt_path: Path,
+    ) -> str:
+        """Generate RALPH.md, create the run, start it, and return the run_id."""
+        context = build_node_context(node, self._graph, self._crg)
+        ralph_path = self._ralph.generate_ralph_md(
+            node,
+            context,
+            list(config.quality_gates),
+            wt_path / "RALPH.md",
+        )
+        run = self._ralph.create_run(
+            agent=config.execution_agent,
+            ralph_dir=wt_path,
+            ralph_file=ralph_path,
+            commands=[],
+            quality_gates=list(config.quality_gates),
+            project_root=wt_path,
+        )
+        run_id = run.state.run_id
+        self._ralph.start_run(run_id)
+        return run_id
+
     def _cleanup_failed_dispatch(self, node_id: int, wt_path: Path) -> None:
         """Best-effort state reset; worktree cleanup always runs."""
         try:
@@ -246,9 +301,7 @@ class Executor:
         except Exception as reset_exc:
             _logger.warning("mark_pending failed during cleanup: %s", reset_exc)
         finally:
-            with contextlib.suppress(Exception):
-                self._git.remove_worktree(wt_path)
-            self._worktrees.pop(node_id, None)
+            self._wt.discard(node_id, wt_path)
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
@@ -257,7 +310,7 @@ class Executor:
 
         worktree = Path(node.worktree_path) if node.worktree_path else None
         try:
-            rebase_result = self._rebase_and_merge(
+            rebase_result = self._wt.rebase_and_merge(
                 worktree,
                 feature_branch,
                 node.id,
@@ -268,8 +321,6 @@ class Executor:
         except Exception as exc:
             _logger.error("Rebase-merge failed for node %d", node_id, exc_info=True)
             rebase_result = RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
-
-        self._worktrees.pop(node_id, None)
 
         conflict: RebaseConflict | None = None
         if rebase_result.success:
@@ -296,35 +347,11 @@ class Executor:
             rebase_conflict=conflict,
         )
 
-    def _rebase_and_merge(
-        self,
-        worktree: Path | None,
-        feature_branch: str,
-        node_id: int,
-        description: str,
-    ) -> RebaseResult:
-        if not worktree or not worktree.exists():
-            return RebaseResult(success=True)
-        try:
-            msg = _build_commit_message(node_id, description)
-            self._git.squash_and_commit(worktree, feature_branch, msg)
-            return self._git.rebase(worktree, feature_branch)
-        finally:
-            try:
-                self._git.remove_worktree(worktree)
-            except Exception as exc:
-                _logger.warning(
-                    "Failed to remove worktree %s for node %d: %s",
-                    worktree,
-                    node_id,
-                    exc,
-                )
-
     def fail(self, node_id: int) -> None:
-        self._ensure_clean_worktree(node_id)
+        self._wt.ensure_clean(node_id)
         node = self._graph.get_node(node_id)
         if node and node.worktree_path:
             wt = Path(node.worktree_path)
             if wt.exists():
-                self._git.remove_worktree(wt)
+                self._wt.remove(node_id, wt)
         self._graph.mark_failed(node_id)

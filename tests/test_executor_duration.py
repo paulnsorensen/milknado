@@ -120,28 +120,10 @@ class _FakeCrg:
     def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, Any]]:
         return []
 
-    def get_minimal_context(
-        self,
-        task: str = "",
-        changed_files: list[str] | None = None,
-    ) -> dict[str, Any]:
-        return {}
-
     def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
         return []
 
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
-        return []
-
-    def semantic_search_nodes(self, query: str, top_n: int = 5) -> list[dict[str, Any]]:
-        return []
-
-    def semantic_search(
-        self,
-        query: str,
-        top_n: int = 5,
-        detail_level: str = "minimal",
-    ) -> list[dict[str, Any]]:
         return []
 
 

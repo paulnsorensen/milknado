@@ -417,7 +417,8 @@ def test_save_config_emits_allow_table_and_omits_derived_execution_agent(
     save_config(cfg, out)
     text = out.read_text(encoding="utf-8")
     assert "[milknado.worker.tools.claude]" in text
-    assert "allow = ['Read', 'Edit']" in text
+    assert '"Read"' in text
+    assert '"Edit"' in text
     assert "execution_agent" not in text
     # Round-trips back to the same structured override.
     assert load_config(out, include_global=False).worker_tools["claude"].allow == ("Read", "Edit")

@@ -50,11 +50,13 @@ def resolve_project_root(explicit: str | None) -> Path:
 def open_graph(root: Path):
     from milknado.domains.common import default_config, load_config
     from milknado.domains.graph import MikadoGraph
+    from milknado.plugins import discover_entry_point_plugins, load_plugins
 
     cfg_path = root / "milknado.toml"
     cfg = load_config(cfg_path) if cfg_path.exists() else default_config(root)
     cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return MikadoGraph(cfg.db_path), cfg
+    plugins = [*load_plugins(cfg.plugins), *discover_entry_point_plugins()]
+    return MikadoGraph(cfg.db_path, plugins=plugins), cfg
 
 
 _TODO_STATUS_MAP = {
