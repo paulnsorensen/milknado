@@ -122,7 +122,7 @@ def milknado_ralph_run_start(
                     stderr=subprocess.STDOUT,
                     cwd=str(root),
                     start_new_session=True,
-                    env=_build_worker_env(),
+                    env=_build_worker_env({"MILKNADO_NODE_ID": str(node_id)}),
                 )
         except OSError as exc:
             # A bad runner_cmd or an unspawnable process would otherwise leave
