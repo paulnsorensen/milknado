@@ -8,7 +8,7 @@ excludeAgent: "coding-agent"
 Focus reviews on these categories, in priority order:
 
 1. **Security** - Flag hardcoded secrets, SQL injection, XSS, command injection, path traversal, and insecure deserialization
-2. **Silent failures** - Flag empty catch blocks, swallowed errors, missing error propagation, or functions that return null/undefined on failure without signaling
+2. **Silent failures** - Flag empty catch blocks, swallowed errors, missing error propagation, or functions that return `None`/null/undefined on failure without signaling
 3. **Coupling violations** - Flag domain/model code that imports infrastructure (HTTP, DB, file I/O, framework decorators)
 4. **Complexity violations** - Flag functions over 40 lines, files over 300 lines, functions with more than 4 parameters, nesting deeper than 3 levels
 5. **Architectural violations** - Flag cross-slice internal imports, mutable shared state, God classes/modules
