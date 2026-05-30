@@ -71,6 +71,20 @@ One batch = one ralphify iteration = one LLM context window.
 - **Sibling batches** (batches with no dependency relationship) fan out: ralph
   runs them concurrently as independent ralphify iterations.
 
+## Choosing a Budget
+
+The `budget` is not the model's hard context limit — it is the size of one
+implementation context window we are willing to hand the solver. Past a point,
+piling on more context makes the model *dumber*, not more capable: it loses the
+thread, misreads earlier edits, and degrades. Call that the **dumb zone**.
+
+For the implementation solver, keep the budget at or below the **~100K–120K**
+range. Treat 120K as the ceiling and 100K as the safer target; above it you are
+buying context the model can't use well. The ceiling is the `DUMB_ZONE_BUDGET`
+constant (120K), which is the default budget across `plan_batches`,
+`run_batching`, and the `milknado_plan_batches` MCP tool. Drop it toward 100K
+when you want extra margin.
+
 ## Degenerate Singleton Case (Q4)
 
 When the change graph is acyclic, Tarjan's SCC algorithm produces one SCC per
@@ -179,16 +193,19 @@ The solver uses a **lexicographic two-pass** strategy. BIG constants and ALPHA
 weights are not used.
 
 **Pass 1 — minimise batch count:**
+
 - Objective: `minimise max_batch_idx`
 - Time budget: `time_limit_s / 2`
 - Captures `K* = solver.value(max_batch_idx)` from the solution.
 
 **Pass 2 — minimise symbol spread:**
+
 - Additional constraint: `max_batch_idx == K*`  (batch count is now fixed)
 - Objective: `minimise sum(spread_vars.values())`
 - Time budget: remaining half of `time_limit_s`
 
 **Status resolution:**
+
 - If pass 1 is `INFEASIBLE` → return `INFEASIBLE`.
 - If pass 1 is `UNKNOWN` → return `UNKNOWN`.
 - Otherwise: `solver_status` = worse of the two passes' statuses. Pass 2 can
@@ -280,17 +297,20 @@ SCC so the solver can track spread at the SCC level.
 `plan_batches` passes the contracted graph to Google OR-Tools' CP-SAT solver.
 
 **Decision variables:**
+
 - `batch_of[s]` — integer in `[0, K-1]`: batch index assigned to SCC `s`.
 - `in_batch[(s, b)]` — boolean indicator: `1` iff `batch_of[s] == b`.
 
 **Constraints:**
 
 Budget (one per batch index):
+
 ```
 sum(tokens[s] * in_batch[(s, b)]  for all s) <= budget
 ```
 
 Ordering (one per DAG edge):
+
 ```
 batch_of[src] <= batch_of[dst]
 ```
