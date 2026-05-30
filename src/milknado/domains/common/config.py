@@ -145,7 +145,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "quality_gates": list(config.quality_gates),
             "worktree_pattern": config.worktree_pattern,
             "concurrency_limit": config.concurrency_limit,
-            "db_path": str(config.db_path.relative_to(config.project_root)),
+            "db_path": os.path.relpath(config.db_path, config.project_root),
             "plugins": list(config.plugins),
             "stall_threshold_seconds": config.stall_threshold_seconds,
             "dispatch_max_retries": config.dispatch_max_retries,

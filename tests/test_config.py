@@ -220,3 +220,17 @@ class TestSaveConfig:
         content = path.read_text()
         assert "[milknado.prompts]" not in content
         assert "[milknado.worker.tools." not in content
+
+    def test_save_config_with_relative_project_root_and_absolute_db_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """os.path.relpath handles mixed absolute/relative roots; Path.relative_to raises."""
+        monkeypatch.chdir(tmp_path)
+        cfg = MilknadoConfig(
+            project_root=Path("."),
+            db_path=tmp_path / ".milknado" / "milknado.db",
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert "milknado.db" in content
