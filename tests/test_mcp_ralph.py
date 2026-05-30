@@ -317,7 +317,11 @@ def test_runner_writes_done_on_successful_outcome(
     graph = _Graph()
     monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
-    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: object())
+    class _StubRalph:
+        def poll_progress_events(self) -> list:
+            return []
+
+    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: _StubRalph())
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
     monkeypatch.setattr(execution, "Executor", lambda **k: object())
     monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
@@ -418,3 +422,58 @@ def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) ->
     assert started["status"] == "running"
     tree = _call(milknado_todo_tree, project_root=root)
     assert tree[0]["status"] == "done"  # node was reconciled to done, not relocked
+
+
+def test_orphan_worktree_removed_before_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#50: milknado_ralph_run_start must prune an orphaned worktree left by a
+    killed runner before spawning a new run so git-worktree-add does not fail."""
+    import milknado.adapters as adapters
+
+    removed: list[Path] = []
+
+    def _stub_remove(self: object, wt: Path) -> None:  # noqa: ANN001
+        removed.append(wt)
+
+    monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _stub_remove)
+
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="orphan-wt", kind="task", project_root=root)
+    node_id = task["id"]
+
+    # Simulate a node stuck RUNNING with a worktree path that physically exists
+    orphan_wt = tmp_path / "milknado-orphan-wt"
+    orphan_wt.mkdir()
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.mark_running(node_id, worktree_path=str(orphan_wt), branch_name="milknado/orphan")
+    finally:
+        graph.close()
+
+    # Drop a terminal 'done' state file so orphan reconcile has something to act on
+    rdir = tmp_path / ".milknado" / "runs"
+    rdir.mkdir(parents=True, exist_ok=True)
+    orphan_id = f"node-{node_id}-20260101T000000Z-dead"
+    (rdir / f"{orphan_id}.state.json").write_text(
+        json.dumps(
+            {
+                "run_id": orphan_id,
+                "node_id": node_id,
+                "status": "done",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "timeout_seconds": 1800,
+                "ended_at": "2026-01-01T01:00:00+00:00",
+            }
+        )
+    )
+
+    started = _call(
+        milknado_ralph_run_start,
+        node_id=node_id,
+        runner_cmd=f"{sys.executable} -c pass",
+        project_root=root,
+    )
+    assert started["status"] == "running"
+    assert removed == [orphan_wt], "orphaned worktree must be removed before retry"

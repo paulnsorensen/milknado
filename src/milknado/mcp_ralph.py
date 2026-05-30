@@ -12,20 +12,20 @@ and node status in SQLite.
 
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
+from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
-    fail_stale_running_runs,
-    find_terminal_runs_for_node,
-    latest_terminal_run,
     now_iso,
     read_state,
-    reconcile_node_status,
+    reconcile_orphan_node,
     runs_dir,
     write_state,
 )
@@ -37,6 +37,7 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch.runner import _build_worker_env
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
+_logger = logging.getLogger(__name__)
 
 
 def _resolve_runner_cmd(explicit: str | None) -> list[str]:
@@ -73,10 +74,13 @@ def milknado_ralph_run_start(
         if node.status == NodeStatus.RUNNING:
             # Release a node locked by a run that finished, or whose detached
             # process vanished, without anyone polling (mirrors run_start).
-            fail_stale_running_runs(root, node_id)
-            winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-            if winner is not None:
-                reconcile_node_status(graph, node_id, winner["status"])
+            orphan_wt = Path(node.worktree_path) if node.worktree_path else None
+            reconcile_orphan_node(graph, root, node_id)
+            if orphan_wt is not None and orphan_wt.exists():
+                try:
+                    GitAdapter(root).remove_worktree(orphan_wt)
+                except Exception as exc:
+                    _logger.warning("Failed to remove orphan worktree %s: %s", orphan_wt, exc)
             node = graph.get_node(node_id)
             if node is None:
                 raise RuntimeError(f"node {node_id} not found after orphan reconcile")
@@ -119,7 +123,7 @@ def milknado_ralph_run_start(
         ]
         try:
             with log_path.open("wb") as log_fh:
-                proc = subprocess.Popen(  # noqa: S603 — argv is built from validated parts
+                proc = subprocess.Popen(  # noqa: S603 — runner_cmd is caller-supplied; remaining argv is internal
                     argv,
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,

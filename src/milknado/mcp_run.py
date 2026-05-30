@@ -9,11 +9,9 @@ from pathlib import Path
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
-    fail_stale_running_runs,
-    find_terminal_runs_for_node,
-    latest_terminal_run,
     poll_async_run,
     reconcile_node_status,
+    reconcile_orphan_node,
     render_brief,
     run_headless,
     start_headless_async,
@@ -139,17 +137,7 @@ def milknado_todo_run_start(
             if node is None:
                 raise ValueError(f"node {node_id} not found")
             if node.status == NodeStatus.RUNNING:
-                # Before refusing, reconcile any orphaned terminal runs for this
-                # node — a prior worker may have finished without anyone polling,
-                # leaving the node status stuck on RUNNING. Without this the node
-                # is locked out forever. Also sweep runs stuck on "running" past
-                # their timeout: the worker thread vanished (e.g. server crash)
-                # without writing a terminal state, which would lock the node
-                # just as permanently.
-                fail_stale_running_runs(root, node_id)
-                winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-                if winner is not None:
-                    reconcile_node_status(graph, node_id, winner["status"])
+                reconcile_orphan_node(graph, root, node_id)
                 node = graph.get_node(node_id)
                 if node is None:
                     raise RuntimeError(f"node {node_id} not found after orphan reconcile")
