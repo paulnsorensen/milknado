@@ -50,7 +50,31 @@ class GitAdapter:
         )
 
     def create_worktree(self, path: Path, branch: str) -> Path:
-        self._run(["worktree", "add", "-b", branch, str(path)])
+        # Auto-recover from an interrupted prior run. A leftover worktree dir or
+        # a branch of the same name makes `git worktree add -b` fail fatally
+        # (exit 255), which the run loop converts into a permanent node failure.
+        # Best-effort drop a stale worktree at this path, prune the admin state,
+        # then `add -B` to create-or-reset the branch from HEAD so re-dispatch is
+        # idempotent (orphaned commits on the old branch are discarded).
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(path)],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        if path.exists():
+            # Only reclaim a path that is itself a git worktree (has a `.git`
+            # gitlink). `worktree_pattern` is user-configurable within the
+            # project root, so a collision with an ordinary directory must fail
+            # loudly rather than recursively delete unrelated files.
+            if not (path / ".git").exists():
+                raise RuntimeError(
+                    f"worktree path {path} exists but is not a git worktree "
+                    "(no .git gitlink); refusing to delete it"
+                )
+            shutil.rmtree(path, ignore_errors=True)
+        self._run(["worktree", "prune"])
+        self._run(["worktree", "add", "-B", branch, str(path)])
         return path
 
     def remove_worktree(self, path: Path) -> None:
@@ -107,6 +131,29 @@ class GitAdapter:
     def current_branch(self) -> str:
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])
         return result.stdout.strip()
+
+    def branch_exists(self, branch: str) -> bool:
+        """Return True if a local branch with this name exists."""
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def is_ancestor(self, ref: str, of_ref: str) -> bool:
+        """Return True if *ref* is reachable from *of_ref* (i.e. merged into it)."""
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ref, of_ref],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
+    def push_branch(self, branch: str, remote: str = "origin") -> None:
+        self._run(["push", remote, f"{branch}:{branch}"])
 
     def commit_all(self, worktree: Path, message: str) -> None:
         self._run(["add", "-A"], cwd=worktree)

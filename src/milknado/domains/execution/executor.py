@@ -164,6 +164,19 @@ class WorktreeManager:
         finally:
             self.remove(node_id, worktree)
 
+    def stage_and_push(
+        self,
+        worktree: Path,
+        feature_branch: str,
+        node_id: int,
+        branch: str,
+        msg: str,
+    ) -> None:
+        """Squash onto feature_branch, push the node's branch, then remove the worktree."""
+        self._git.squash_and_commit(worktree, feature_branch, msg)
+        self._git.push_branch(branch)
+        self.remove(node_id, worktree)
+
 
 class Executor:
     def __init__(
@@ -346,6 +359,27 @@ class Executor:
             newly_ready=newly_ready,
             rebase_conflict=conflict,
         )
+
+    def stage_for_pr(self, node_id: int, feature_branch: str) -> str:
+        """Squash-commit and push the node's branch; mark done. Returns branch name."""
+        node = self._graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        if not node.branch_name:
+            raise ValueError(f"Node {node_id} has no branch_name")
+
+        worktree = Path(node.worktree_path) if node.worktree_path else None
+        if worktree and worktree.exists():
+            msg = _build_commit_message(node_id, node.description)
+            self._wt.stage_and_push(worktree, feature_branch, node_id, node.branch_name, msg)
+
+        self._graph.mark_done(node_id)
+        if node.dispatched_at is not None:
+            completed_now = datetime.now(UTC)
+            duration = (completed_now - node.dispatched_at).total_seconds()
+            self._graph.record_completion_duration(node_id, duration)
+
+        return node.branch_name
 
     def fail(self, node_id: int) -> None:
         self._wt.ensure_clean(node_id)

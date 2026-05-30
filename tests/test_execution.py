@@ -16,6 +16,7 @@ from milknado.domains.execution import (
     DispatchResult,
     ExecutionConfig,
     Executor,
+    RunLoop,
     get_dispatchable_nodes,
 )
 from milknado.domains.graph import MikadoGraph
@@ -36,6 +37,7 @@ class FakeGit:
         self.created: list[tuple[Path, str]] = []
         self.removed: list[Path] = []
         self.commits: list[tuple[Path, str]] = []
+        self.pushed: list[str] = []
         self.rebase_result: RebaseResult = RebaseResult(success=True)
 
     def create_worktree(self, path: Path, branch: str) -> Path:
@@ -56,6 +58,15 @@ class FakeGit:
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
         self.commits.append((worktree, msg))
+
+    def push_branch(self, branch: str, remote: str = "origin") -> None:
+        self.pushed.append(branch)
+
+    def branch_exists(self, branch: str) -> bool:
+        return False
+
+    def is_ancestor(self, ref: str, of_ref: str) -> bool:
+        return False
 
 
 class FakeRalph:
@@ -1052,3 +1063,262 @@ class TestBuildNodeContext:
         assert "## Impact Radius" in result
         assert "CRG unavailable" in result
         assert "CRG exploded" in result
+
+
+class TestShutdownActiveWorkers:
+    """RunLoop._shutdown_active_workers — graceful SIGINT cleanup."""
+
+    def _make_loop(self, graph: MikadoGraph) -> Any:
+        from milknado.domains.execution.run_loop import RunLoop
+
+        executor = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        return RunLoop(executor=executor, graph=graph, ralph=FakeRalph())
+
+    def test_resets_active_nodes_to_pending(self, graph: MikadoGraph) -> None:
+        graph.add_node("task")
+        graph.mark_running(1)
+        loop = self._make_loop(graph)
+        loop._active = {"run-abc": 1}
+
+        loop._shutdown_active_workers()
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.PENDING
+
+    def test_clears_active_map(self, graph: MikadoGraph) -> None:
+        graph.add_node("task")
+        graph.mark_running(1)
+        loop = self._make_loop(graph)
+        loop._active = {"run-abc": 1}
+
+        loop._shutdown_active_workers()
+
+        assert loop._active == {}
+
+    def test_stop_run_called_for_each_active_run(self, graph: MikadoGraph) -> None:
+        graph.add_node("task-a")
+        graph.add_node("task-b")
+        graph.mark_running(1)
+        graph.mark_running(2)
+
+        stopped: list[str] = []
+
+        class TrackingRalph(FakeRalph):
+            def stop_run(self, run_id: str) -> None:
+                stopped.append(run_id)
+
+        executor = Executor(graph=graph, git=FakeGit(), ralph=TrackingRalph(), crg=FakeCrg())
+        loop = RunLoop(executor=executor, graph=graph, ralph=TrackingRalph())
+        loop._active = {"run-1": 1, "run-2": 2}
+
+        loop._shutdown_active_workers()
+
+        assert sorted(stopped) == ["run-1", "run-2"]
+
+    def test_stop_run_failure_does_not_abort_shutdown(self, graph: MikadoGraph) -> None:
+        graph.add_node("task")
+        graph.mark_running(1)
+
+        class BoomRalph(FakeRalph):
+            def stop_run(self, run_id: str) -> None:
+                raise RuntimeError("network error")
+
+        executor = Executor(graph=graph, git=FakeGit(), ralph=BoomRalph(), crg=FakeCrg())
+        loop = RunLoop(executor=executor, graph=graph, ralph=BoomRalph())
+        loop._active = {"run-1": 1}
+
+        loop._shutdown_active_workers()  # must not raise
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.PENDING
+        assert loop._active == {}
+
+    def test_removes_worktree_on_shutdown(self, graph: MikadoGraph, tmp_path: Path) -> None:
+        graph.add_node("task")
+        wt = tmp_path / "milknado-1-task"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+
+        fake_git = FakeGit()
+        executor = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        loop = RunLoop(executor=executor, graph=graph, ralph=FakeRalph())
+        loop._active = {"run-1": 1}
+
+        loop._shutdown_active_workers()
+
+        assert wt in fake_git.removed
+
+
+class TestExecutorStageForPr:
+    def test_marks_node_done(self, graph: MikadoGraph, tmp_path: Path) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("my task")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-my-task")
+        ex.stage_for_pr(1, "main")
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE
+
+    def test_pushes_branch_to_remote(self, graph: MikadoGraph, tmp_path: Path) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("my task")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-my-task")
+        ex.stage_for_pr(1, "main")
+        assert "milknado/1-my-task" in fake_git.pushed
+
+    def test_removes_worktree(self, graph: MikadoGraph, tmp_path: Path) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("my task")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-my-task")
+        ex.stage_for_pr(1, "main")
+        assert wt in fake_git.removed
+
+    def test_returns_branch_name(self, graph: MikadoGraph, tmp_path: Path) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("my task")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-my-task")
+        branch = ex.stage_for_pr(1, "main")
+        assert branch == "milknado/1-my-task"
+
+    def test_raises_for_missing_node(self, graph: MikadoGraph) -> None:
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        with pytest.raises(ValueError, match="not found"):
+            ex.stage_for_pr(999, "main")
+
+    def test_raises_for_node_without_branch(self, graph: MikadoGraph) -> None:
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("branchless")
+        graph.mark_running(1)
+        with pytest.raises(ValueError, match="no branch_name"):
+            ex.stage_for_pr(1, "main")
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: WorktreeManager.remove() exception handler (lines 136-137)
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeManagerRemove:
+    def test_remove_logs_warning_and_does_not_raise_when_remove_worktree_fails(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """WorktreeManager.remove() must swallow remove_worktree exceptions."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        class BoomGit(FakeGit):
+            def remove_worktree(self, path: Path) -> None:
+                raise OSError("device busy")
+
+        wm = WorktreeManager(BoomGit())
+        wt = tmp_path / "node-99"
+        wm._worktrees[99] = wt
+        # Must not raise
+        wm.remove(99, wt)
+        # Node is untracked regardless of the failure
+        assert 99 not in wm._worktrees
+
+    def test_remove_unregisters_node_before_calling_git(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """Node must be popped from _worktrees even when remove_worktree succeeds."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        wm = WorktreeManager(FakeGit())
+        wt = tmp_path / "node-5"
+        wm._worktrees[5] = wt
+        wm.remove(5, wt)
+        assert 5 not in wm._worktrees
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: Executor.dispatch() safety raise after exhausted retries (line 228)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchExhaustedRetries:
+    def test_negative_max_retries_raises_runtime_error(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """dispatch_max_retries=-1 skips the retry loop; safety raise fires."""
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        config_no_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=(),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=tmp_path,
+            dispatch_max_retries=-1,
+        )
+        graph.add_node("task")
+        with pytest.raises(RuntimeError, match="dispatch exhausted retries"):
+            ex.dispatch(1, config_no_retry)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: Executor.stage_for_pr() duration recording (lines 378-380)
+# ---------------------------------------------------------------------------
+
+
+class TestStageForPrDurationRecording:
+    def test_records_completion_duration_when_dispatched_at_is_set(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """stage_for_pr records duration when the node has a dispatched_at timestamp."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("task with timing")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        # set_dispatched_at writes the timestamp used to compute duration
+        graph.set_dispatched_at(1)
+
+        ex.stage_for_pr(1, "main")
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE
+        # Duration should have been recorded (completion_duration_seconds is not None)
+        assert node.completion_duration_seconds is not None
+        assert node.completion_duration_seconds >= 0
+
+    def test_no_duration_recorded_when_dispatched_at_is_none(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """stage_for_pr skips duration recording when dispatched_at was never set."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("no timing")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-no-timing")
+        # Do NOT call set_dispatched_at — node.dispatched_at stays None
+
+        ex.stage_for_pr(1, "main")
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE

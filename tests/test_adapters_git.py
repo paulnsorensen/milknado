@@ -25,24 +25,91 @@ def _fail(rc: int = 1, stdout: str = "", stderr: str = "") -> subprocess.Complet
 
 class TestCreateWorktree:
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_add(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+    def test_cleans_stale_state_then_adds_with_force_create(
+        self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
         mock_run.return_value = _ok()
-        wt = Path("/tmp/wt")
+        wt = tmp_path / "wt"  # does not exist -> rmtree branch skipped
         result = adapter.create_worktree(wt, "feat-branch")
-        mock_run.assert_called_once_with(
-            ["git", "worktree", "add", "-b", "feat-branch", str(wt)],
-            cwd=adapter._root,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        # best-effort stale-worktree removal, prune, then create-or-reset branch
+        assert ["git", "worktree", "remove", "--force", str(wt)] in calls
+        assert ["git", "worktree", "prune"] in calls
+        # -B (not -b) so a leftover branch is reset rather than fatally colliding
+        assert ["git", "worktree", "add", "-B", "feat-branch", str(wt)] in calls
         assert result == wt
 
     @patch("milknado.adapters.git.subprocess.run")
-    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
-        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+    def test_reclaims_stale_worktree_dir_with_gitlink(
+        self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
+        # A leftover dir that IS a git worktree (has a .git gitlink) is safe to
+        # rmtree-reclaim when `git worktree remove` left it behind.
+        mock_run.return_value = _ok()
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: /somewhere\n", encoding="utf-8")
+        result = adapter.create_worktree(wt, "feat-branch")
+        assert result == wt
+        assert not wt.exists()  # rmtree reclaimed it before re-add
+
+    def test_refuses_to_delete_ordinary_directory_collision(
+        self, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
+        # worktree_pattern is user-configurable; a collision with an ordinary
+        # project directory must fail loudly, never be recursively deleted.
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        precious = wt / "important.txt"
+        precious.write_text("do not delete", encoding="utf-8")
+        with patch("milknado.adapters.git.subprocess.run", return_value=_ok()):
+            with pytest.raises(RuntimeError, match="not a git worktree"):
+                adapter.create_worktree(wt, "feat-branch")
+        assert precious.exists()  # untouched
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_propagates_error_on_add(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        # remove (best-effort, no check) and prune succeed; the add call raises
+        mock_run.side_effect = [_ok(), _ok(), subprocess.CalledProcessError(1, "git")]
         with pytest.raises(subprocess.CalledProcessError):
-            adapter.create_worktree(Path("/tmp/wt"), "branch")
+            adapter.create_worktree(Path("/tmp/wt-x"), "branch")
+
+    def test_recovers_when_branch_already_exists(self, tmp_path: Path) -> None:
+        """Reproduces node 5's failure: a worktree is created, the dir removed but
+        the branch left behind, then the node is re-dispatched. With `-b` this
+        raised exit 255 and failed the node; `-B` must recreate it cleanly."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "Test")
+        (repo / "f.txt").write_text("x", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+
+        adapter = GitAdapter(repo)
+        wt = repo / "milknado-5-wt"
+
+        adapter.create_worktree(wt, "milknado/5-x")
+        assert wt.exists()
+
+        # Interrupted run: worktree dir gone, branch milknado/5-x lingers.
+        adapter.remove_worktree(wt)
+        branches = subprocess.run(
+            ["git", "branch", "--list", "milknado/5-x"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert "milknado/5-x" in branches  # stale branch present
+
+        # Re-dispatch must NOT raise and must recreate the worktree.
+        adapter.create_worktree(wt, "milknado/5-x")
+        assert wt.exists()
 
 
 class TestRemoveWorktree:
@@ -253,3 +320,92 @@ class TestSquashAndCommit:
         # Should not raise; commit skipped because nothing staged
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert not any("commit" in c for c in calls if isinstance(c, list))
+
+
+class TestBranchExists:
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_returns_true_when_branch_exists(
+        self, mock_run: MagicMock, adapter: GitAdapter
+    ) -> None:
+        mock_run.return_value = _ok("abc123\n")
+        assert adapter.branch_exists("milknado/1-task") is True
+        args = mock_run.call_args[0][0]
+        assert args == ["git", "rev-parse", "--verify", "refs/heads/milknado/1-task"]
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_returns_false_when_branch_missing(
+        self, mock_run: MagicMock, adapter: GitAdapter
+    ) -> None:
+        mock_run.return_value = _fail(128)
+        assert adapter.branch_exists("milknado/99-gone") is False
+
+    def test_real_repo_existing_branch_returns_true(self, tmp_path: Path) -> None:
+        import subprocess as sp
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> None:
+            sp.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "Test")
+        (repo / "f.txt").write_text("x", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        git("branch", "feature/foo")
+
+        a = GitAdapter(repo)
+        assert a.branch_exists("feature/foo") is True
+        assert a.branch_exists("feature/nonexistent") is False
+
+
+class TestIsAncestor:
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_returns_true_when_ancestor(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.return_value = _ok()  # exit 0 = is ancestor
+        assert adapter.is_ancestor("milknado/1-task", "main") is True
+        args = mock_run.call_args[0][0]
+        assert args == ["git", "merge-base", "--is-ancestor", "milknado/1-task", "main"]
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_returns_false_when_not_ancestor(
+        self, mock_run: MagicMock, adapter: GitAdapter
+    ) -> None:
+        mock_run.return_value = _fail(1)  # exit 1 = not ancestor
+        assert adapter.is_ancestor("milknado/1-task", "main") is False
+
+    def test_real_repo_ancestor_detection(self, tmp_path: Path) -> None:
+        import subprocess as sp
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+
+        def git(*args: str) -> str:
+            r = sp.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+            return r.stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "t@example.com")
+        git("config", "user.name", "Test")
+        (repo / "a.txt").write_text("a", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "init")
+        git("checkout", "-qb", "feature/x")
+        (repo / "b.txt").write_text("b", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "feat")
+        git("checkout", "-q", "main")
+        git("merge", "--ff-only", "feature/x")
+
+        a = GitAdapter(repo)
+        # feature/x is now merged into main (fast-forward)
+        assert a.is_ancestor("feature/x", "main") is True
+        # A new branch with uncommitted work is NOT an ancestor of main
+        git("checkout", "-qb", "feature/y")
+        (repo / "c.txt").write_text("c", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "feat-y")
+        git("checkout", "-q", "main")
+        assert a.is_ancestor("feature/y", "main") is False

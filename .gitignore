@@ -213,7 +213,9 @@ ralphs/
 
 # Local agent/editor state
 .claude/
+.cheese/
 .context/
+.serena/
 
 # Local Milknado runtime state
 .milknado/

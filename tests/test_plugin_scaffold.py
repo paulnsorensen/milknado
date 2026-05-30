@@ -4,6 +4,7 @@ import importlib
 import logging
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -266,6 +267,45 @@ class TestPluginDispatch:
         node = graph.get_node(child.id)
         assert node is not None
         assert node.status == NodeStatus.RUNNING
+
+    def test_notify_status_change_guard_short_circuits(self) -> None:
+        """notify_status_change returns before iterating when there are no
+        plugins or the node lookup came back None — no plugin is invoked."""
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import _status_notify
+
+        invoked: list[tuple] = []
+
+        class RecordingPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="recorder", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                invoked.append((old_status, new_status))
+
+        # No plugins → guard returns immediately.
+        _status_notify.notify_status_change((), None, NodeStatus.PENDING, NodeStatus.RUNNING)
+        # Plugins present but node is None → still returns without dispatch.
+        _status_notify.notify_status_change(
+            (RecordingPlugin(),), None, NodeStatus.PENDING, NodeStatus.RUNNING
+        )
+
+        assert invoked == []
+
+    def test_graph_notify_guard_returns_without_plugins(self, tmp_path: Path) -> None:
+        """MikadoGraph._notify_status_change short-circuits when the graph was
+        built with no plugins — it must not look the node up or raise."""
+        from milknado.domains.common import NodeStatus
+        from milknado.domains.graph import MikadoGraph
+
+        graph = MikadoGraph(tmp_path / "noplugins.db")
+        root = graph.add_node("root")
+        with patch.object(graph, "get_node", side_effect=AssertionError) as get_node:
+            graph._notify_status_change(root.id, NodeStatus.PENDING, NodeStatus.RUNNING)
+        get_node.assert_not_called()
 
 
 class TestPluginInitCli:

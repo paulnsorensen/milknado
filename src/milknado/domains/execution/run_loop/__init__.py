@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from milknado.domains.common.config import MilknadoConfig
     from milknado.domains.common.protocols import RalphPort
     from milknado.domains.execution.executor import ExecutionConfig, Executor
+    from milknado.domains.execution.pr_stack import StackedPr
     from milknado.domains.graph import MikadoGraph
     from milknado.domains.planning.planner import Planner
 
@@ -69,6 +70,8 @@ class RunLoop:
         self._completion_durations: deque[float] = deque(maxlen=eta_n)
         self._input: InputState = InputState()
         self._exec_config: ExecutionConfig | None = None
+        self._pr_stack: bool = False
+        self._completed_branches: dict[int, str] = {}
 
     def run(
         self,
@@ -78,10 +81,13 @@ class RunLoop:
         strict: bool = False,
         spec_text: str | None = None,
         spec_path: Path | None = None,
+        pr_stack: bool = False,
     ) -> RunLoopResult:
         from rich.console import Console
 
         self._strict = strict
+        self._pr_stack = pr_stack
+        self._completed_branches = {}
         self._exec_config = config
         timeout = (
             self._milknado_config.completion_timeout_seconds if self._milknado_config else 1800.0
@@ -89,7 +95,7 @@ class RunLoop:
 
         with configure_run_logging(config.project_root) as log_path:
             Console().print(f"[dim]Log → {log_path}[/dim]")
-            _logger.info("Run started feature_branch=%s", feature_branch)
+            _logger.info("Run started feature_branch=%s pr_stack=%s", feature_branch, pr_stack)
             self._input.input_stop.clear()
             start_input_thread(self._input)
             dispatched, completed, failed, conflicts, interrupted = self._execute_run(
@@ -99,6 +105,17 @@ class RunLoop:
         self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
         verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
         root = self._graph.get_root()
+
+        stacked_prs: tuple[StackedPr, ...] = ()
+        if pr_stack and self._completed_branches:
+            from milknado.domains.execution.pr_stack import open_stacked_prs
+
+            stacked_prs = tuple(
+                open_stacked_prs(
+                    self._completed_branches, self._graph, feature_branch, config.project_root
+                )
+            )
+
         return RunLoopResult(
             root_done=root is not None and root.status == NodeStatus.DONE,
             dispatched_total=dispatched,
@@ -107,6 +124,7 @@ class RunLoop:
             rebase_conflicts=tuple(conflicts),
             strict_exit=strict and self._failure_triggered,
             verify_outcome=verify_outcome,
+            stacked_prs=stacked_prs,
         )
 
     def _execute_run(
@@ -141,10 +159,29 @@ class RunLoop:
         except KeyboardInterrupt:
             interrupted = True
             _logger.warning("Run interrupted by user (KeyboardInterrupt)")
+            self._shutdown_active_workers()
             raise
         finally:
             stop_input_thread(self._input)
         return dispatched, completed, failed, conflicts, interrupted
+
+    def _shutdown_active_workers(self) -> None:
+        """Stop Ralph workers and reset nodes to PENDING on interrupt."""
+        for run_id, node_id in list(self._active.items()):
+            try:
+                self._ralph.stop_run(run_id)
+            except Exception as exc:
+                _logger.warning("stop_run(%s) failed during shutdown: %s", run_id, exc)
+            try:
+                self._executor.fail(node_id)
+            except Exception as exc:
+                _logger.warning("fail(node %d) during shutdown: %s", node_id, exc)
+                continue
+            try:
+                self._graph.mark_pending(node_id)
+            except Exception as exc:
+                _logger.warning("mark_pending(node %d) during shutdown: %s", node_id, exc)
+        self._active.clear()
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
         _logger.warning(

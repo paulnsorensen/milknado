@@ -33,27 +33,40 @@ def handle_completion(
     duration = time.monotonic() - start
 
     if success:
-        result = loop._executor.complete(node_id, feature_branch)
         loop._completion_durations.append(duration)
-        if result.rebase_conflict:
-            conflicts.append(result.rebase_conflict)
-            files = ", ".join(result.rebase_conflict.conflicting_files)
-            live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")
-            _logger.warning(
-                "node_conflict node_id=%d files=%s",
+        if loop._pr_stack:
+            branch = loop._executor.stage_for_pr(node_id, feature_branch)
+            loop._completed_branches[node_id] = branch
+            live.console.print(f"[green]✓[/green] [{node_id}] {desc} (staged → {branch})")
+            _logger.info(
+                "node_staged_for_pr node_id=%d branch=%s duration=%.1fs",
                 node_id,
-                list(result.rebase_conflict.conflicting_files),
+                branch,
+                duration,
             )
-            loop._logs.append(f"[{ts()}] ✗ node {node_id} conflict")
-            loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
-            if loop._strict:
-                loop._failure_triggered = True
-            failed += 1
-        else:
-            live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
-            _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
-            loop._logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
+            loop._logs.append(f"[{ts()}] ✓ node {node_id} staged in {int(duration)}s")
             completed += 1
+        else:
+            result = loop._executor.complete(node_id, feature_branch)
+            if result.rebase_conflict:
+                conflicts.append(result.rebase_conflict)
+                files = ", ".join(result.rebase_conflict.conflicting_files)
+                live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")
+                _logger.warning(
+                    "node_conflict node_id=%d files=%s",
+                    node_id,
+                    list(result.rebase_conflict.conflicting_files),
+                )
+                loop._logs.append(f"[{ts()}] ✗ node {node_id} conflict")
+                loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
+                if loop._strict:
+                    loop._failure_triggered = True
+                failed += 1
+            else:
+                live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
+                _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
+                loop._logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
+                completed += 1
     else:
         loop._executor.fail(node_id)
         live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
