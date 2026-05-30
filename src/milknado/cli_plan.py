@@ -403,6 +403,7 @@ def plan(
             crg,
             config.planning_agent,
             planning_validation_hook=config.planning_validation_hook,
+            prompt_prepend=config.planning_prompt_prepend,
         )
         console.print(f"[bold]Planning:[/bold] {goal}")
         if not interactive:
