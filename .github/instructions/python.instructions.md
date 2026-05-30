@@ -7,4 +7,4 @@ applyTo: "**/*.py"
 - Use Ruff for linting and formatting (`just lint-fix`)
 - Prefer frozen dataclasses over raw dicts for structured data
 - Use `from __future__ import annotations` for forward references
-- Raise specific exceptions, never bare `raise` or `raise Exception`
+- Raise specific exceptions; avoid `raise Exception`, and use bare `raise` only to re-raise the active exception
