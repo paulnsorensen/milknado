@@ -686,9 +686,9 @@ class TestPlanInteractive:
 
 
 class TestIssueHelpers:
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli_plan_specs.subprocess.run")
     def test_fetch_issue_invalid_json_exits(self, mock_run: MagicMock) -> None:
-        from milknado.cli_plan import _fetch_issue
+        from milknado.cli_plan_specs import _fetch_issue
 
         mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
         with pytest.raises(typer.Exit) as exc:
@@ -696,13 +696,13 @@ class TestIssueHelpers:
         assert exc.value.exit_code == 1
 
     def test_issue_title_falls_back_to_number(self) -> None:
-        from milknado.cli_plan import _issue_title
+        from milknado.cli_plan_specs import _issue_title
 
         assert _issue_title({"number": 7}) == "Issue 7"
         assert _issue_title({}) == "Issue"
 
     def test_materialize_issue_spec_rejects_empty_refs(self, project_dir: Path) -> None:
-        from milknado.cli_plan import _materialize_issue_spec
+        from milknado.cli_plan_specs import _materialize_issue_spec
 
         with pytest.raises(ValueError, match="issue_refs must not be empty"):
             _materialize_issue_spec([], project_dir)
