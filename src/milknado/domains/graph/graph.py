@@ -44,6 +44,9 @@ class MikadoGraph(_AnalyticsFacade):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # Explicit so the concurrent-writer wait window (detached runner + server
+        # both writing the same db) is documented, not implicit in connect()'s default.
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._plugins: tuple[PluginHook, ...] = tuple(plugins)
         create_tables(self._conn)
         ensure_schema(self._conn)
@@ -299,4 +302,14 @@ class MikadoGraph(_AnalyticsFacade):
         return drop_all(self._conn)
 
     def close(self) -> None:
-        self._conn.close()
+        # Fold the WAL into the main .db file so the documented
+        # `git add -f .milknado/milknado.db` persistence step captures every
+        # committed write. A non-last-connection close does no implicit
+        # checkpoint, so without this an MCP tool call or detached run can leave
+        # its tail in the -wal sidecar and lose it on container reclaim.
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.Error:
+            _logger.warning("WAL checkpoint on close failed", exc_info=True)
+        finally:
+            self._conn.close()

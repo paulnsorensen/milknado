@@ -27,8 +27,11 @@ def now_iso() -> str:
 
 
 def make_run_id(node_id: int) -> str:
+    # 4 bytes of entropy (not 2): back-to-back runs of the same node land in the
+    # same wall-clock second, so the suffix is the only thing distinguishing
+    # their ids — and a collision also clobbers the shared `<run_id>.state.json`.
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return f"node-{node_id}-{stamp}-{secrets.token_hex(2)}"
+    return f"node-{node_id}-{stamp}-{secrets.token_hex(4)}"
 
 
 def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
