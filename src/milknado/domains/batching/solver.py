@@ -31,6 +31,11 @@ from milknado.domains.batching.graph_build import (
 from milknado.domains.batching.weights import estimate_tokens_per_symbols
 from milknado.domains.common.protocols import CrgPort, TilthPort
 
+# Per-batch token budget ceiling. One batch is one implementation context
+# window; past ~120K the model enters the "dumb zone" and degrades rather than
+# improving. See domains/batching/README.md "Choosing a Budget".
+DUMB_ZONE_BUDGET = 120_000
+
 STATUS_OPTIMAL: SolverStatus = "OPTIMAL"
 STATUS_FEASIBLE: SolverStatus = "FEASIBLE"
 STATUS_INFEASIBLE: SolverStatus = "INFEASIBLE"
@@ -223,7 +228,7 @@ def _compute_batch_deps(
 # ``tilth_port`` are optional orchestration hooks.
 def plan_batches(
     changes: Sequence[FileChange],
-    budget: int = 150_000,
+    budget: int = DUMB_ZONE_BUDGET,
     *,
     crg: CrgPort | None = None,
     new_relationships: Sequence[NewRelationship] = (),
