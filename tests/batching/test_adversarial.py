@@ -387,16 +387,16 @@ class TestPlanBatchesImpl:
 
         monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
 
-    def test_missing_id_raises_key_error(self, tmp_path):
+    def test_missing_id_raises_value_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="id"):
             _plan_batches_impl([{"path": "a.py"}], 70_000, tmp_path)
 
-    def test_missing_path_raises_key_error(self, tmp_path):
+    def test_missing_path_raises_value_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError, match="path"):
             _plan_batches_impl([{"id": "1"}], 70_000, tmp_path)
 
     def test_extra_keys_ignored(self, tmp_path):

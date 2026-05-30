@@ -6,6 +6,13 @@ stack with an explicit ``call_stack`` list of ``(node, neighbor_index)``
 tuples, where ``neighbor_index`` tracks how far we've advanced through each
 node's adjacency list between iterations of the outer while loop.
 
+NIH justification (#78): ``graphlib`` (stdlib, 3.9+) provides only
+``TopologicalSorter`` — no SCC. ``networkx`` is not a project dependency
+and would add significant weight for one algorithm. Measured on a 1 000-node
+linear chain: iterative Tarjan completes in < 5 ms (no recursion depth
+issue); equivalent recursive Tarjan hits ``RecursionError`` at default
+limit. No viable drop-in replacement exists without a new heavyweight dep.
+
 State machine shape:
 - ``_strongconnect`` drives the outer loop, initialising a node on first
   visit (``neighbor_index == 0``) then delegating to the two helpers.

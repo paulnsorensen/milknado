@@ -214,3 +214,53 @@ def test_shared_path_tokens_counted_once_per_scc(tmp_path) -> None:
     # Without dedupe: SCC mass = 160 > 100 → oversized passthrough.
     assert len(plan.batches) == 1
     assert not plan.batches[0].oversized
+
+
+# ---------------------------------------------------------------------------
+# #75 — _two_pass_solve pass-2 tie-break pins spread minimization
+# ---------------------------------------------------------------------------
+
+
+def test_two_pass_tie_break_minimizes_spread(tmp_path) -> None:
+    """Pass-2 tie-break: among equal-cost plans, co-locate changes sharing a symbol.
+
+    Why this matters: three deletes at 80 tokens each, budget=160.
+    Any 2-batch split has the same pass-1 cost.  Pass-2 must prefer the
+    split that minimises spread — i.e., puts the two symbol-sharing
+    changes (a, b) in the same batch (spread=0 wins over spread=1).
+    """
+    sym = SymbolRef(name="Shared", file="shared.py")
+    a = FileChange(id="a", path="a.py", edit_kind="delete", symbols=(sym,))
+    b = FileChange(id="b", path="b.py", edit_kind="delete", symbols=(sym,))
+    c = FileChange(id="c", path="c.py", edit_kind="delete")
+    # delete = 80 tokens flat; budget=160 → exactly 2 fit per batch, forces 2 batches.
+    plan = plan_batches([a, b, c], budget=160, root=tmp_path)
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
+    assert len(plan.batches) == 2
+    # a and b must land in the same batch (spread == 0)
+    batch_a = _batch_index(plan, "a")
+    batch_b = _batch_index(plan, "b")
+    assert batch_a == batch_b, "tie-break must co-locate symbol-sharing changes (spread=0)"
+    spread_entry = next(ss for ss in plan.spread_report if ss.symbol == sym)
+    assert spread_entry.spread == 0
+
+
+# ---------------------------------------------------------------------------
+# #73 — _build_total_cost scaling: no hang at larger SCC counts
+# ---------------------------------------------------------------------------
+
+
+def test_build_total_cost_scales_without_hanging(tmp_path) -> None:
+    """_build_total_cost (O(K^2)) must complete in reasonable time at K=50.
+
+    50 delete changes at budget=80 → each forced into its own batch (K=50).
+    If the O(K^2) model-building were pathological this would time out.
+    """
+    import time
+
+    changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete") for i in range(50)]
+    start = time.monotonic()
+    plan = plan_batches(changes, budget=80, time_limit_s=10.0, root=tmp_path)
+    elapsed = time.monotonic() - start
+    assert plan.solver_status in ("OPTIMAL", "FEASIBLE", "UNKNOWN")
+    assert elapsed < 30.0, f"solver took too long at K=50: {elapsed:.1f}s"
