@@ -1205,3 +1205,120 @@ class TestExecutorStageForPr:
         graph.mark_running(1)
         with pytest.raises(ValueError, match="no branch_name"):
             ex.stage_for_pr(1, "main")
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: WorktreeManager.remove() exception handler (lines 136-137)
+# ---------------------------------------------------------------------------
+
+
+class TestWorktreeManagerRemove:
+    def test_remove_logs_warning_and_does_not_raise_when_remove_worktree_fails(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """WorktreeManager.remove() must swallow remove_worktree exceptions."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        class BoomGit(FakeGit):
+            def remove_worktree(self, path: Path) -> None:
+                raise OSError("device busy")
+
+        wm = WorktreeManager(BoomGit())
+        wt = tmp_path / "node-99"
+        wm._worktrees[99] = wt
+        # Must not raise
+        wm.remove(99, wt)
+        # Node is untracked regardless of the failure
+        assert 99 not in wm._worktrees
+
+    def test_remove_unregisters_node_before_calling_git(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """Node must be popped from _worktrees even when remove_worktree succeeds."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        wm = WorktreeManager(FakeGit())
+        wt = tmp_path / "node-5"
+        wm._worktrees[5] = wt
+        wm.remove(5, wt)
+        assert 5 not in wm._worktrees
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: Executor.dispatch() safety raise after exhausted retries (line 228)
+# ---------------------------------------------------------------------------
+
+
+class TestDispatchExhaustedRetries:
+    def test_negative_max_retries_raises_runtime_error(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """dispatch_max_retries=-1 skips the retry loop; safety raise fires."""
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        config_no_retry = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=(),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=tmp_path,
+            dispatch_max_retries=-1,
+        )
+        graph.add_node("task")
+        with pytest.raises(RuntimeError, match="dispatch exhausted retries"):
+            ex.dispatch(1, config_no_retry)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gap: Executor.stage_for_pr() duration recording (lines 378-380)
+# ---------------------------------------------------------------------------
+
+
+class TestStageForPrDurationRecording:
+    def test_records_completion_duration_when_dispatched_at_is_set(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """stage_for_pr records duration when the node has a dispatched_at timestamp."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("task with timing")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        # set_dispatched_at writes the timestamp used to compute duration
+        graph.set_dispatched_at(1)
+
+        ex.stage_for_pr(1, "main")
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE
+        # Duration should have been recorded (completion_duration_seconds is not None)
+        assert node.completion_duration_seconds is not None
+        assert node.completion_duration_seconds >= 0
+
+    def test_no_duration_recorded_when_dispatched_at_is_none(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """stage_for_pr skips duration recording when dispatched_at was never set."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.add_node("no timing")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-no-timing")
+        # Do NOT call set_dispatched_at — node.dispatched_at stays None
+
+        ex.stage_for_pr(1, "main")
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE

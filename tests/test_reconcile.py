@@ -254,3 +254,43 @@ class TestReconcileStaleNodes:
         assert 3 in result.resolved_done
         assert graph.get_node(2).status == NodeStatus.PENDING  # type: ignore[union-attr]
         assert graph.get_node(3).status == NodeStatus.DONE  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: _clean_worktree internal paths (lines 101, 104-105)
+# ---------------------------------------------------------------------------
+
+
+class TestCleanWorktreeInternals:
+    def test_clean_worktree_skips_when_path_does_not_exist(
+        self, graph: MikadoGraph, tmp_path: Path
+    ) -> None:
+        """_clean_worktree returns early when the worktree path is absent — no git call."""
+        nonexistent = tmp_path / "gone"
+        # Make sure it really doesn't exist
+        assert not nonexistent.exists()
+        graph.add_node("task")
+        graph.mark_running(1, worktree_path=str(nonexistent))
+        git = FakeGit()
+
+        reconcile_stale_nodes(graph, git, FakeRalph(), "main")
+
+        # remove_worktree must NOT have been called — path was already gone
+        assert git.removed == []
+
+    def test_clean_worktree_swallows_remove_worktree_exception(
+        self, graph: MikadoGraph, tmp_path: Path
+    ) -> None:
+        """_clean_worktree logs and does not re-raise when remove_worktree fails."""
+        wt = tmp_path / "milknado-1-task"
+        wt.mkdir()
+        graph.add_node("task")
+        graph.mark_running(1, worktree_path=str(wt))
+
+        class BoomGit(FakeGit):
+            def remove_worktree(self, path: Path) -> None:
+                raise OSError("filesystem error")
+
+        # Must not raise — reconcile continues gracefully
+        result = reconcile_stale_nodes(graph, BoomGit(), FakeRalph(), "main")
+        assert 1 in result.reset_pending
