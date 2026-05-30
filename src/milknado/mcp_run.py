@@ -2,23 +2,33 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import shlex
+import signal
 from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
+from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     latest_terminal_run,
+    make_run_id,
+    now_iso,
     poll_async_run,
+    read_state,
     reconcile_node_status,
     render_brief,
     run_headless,
+    runs_dir,
     start_headless_async,
+    write_state,
 )
 from milknado.domains.dispatch._runstate import make_run_id, now_iso
+from milknado.domains.dispatch._runstate import RUN_ID_RE
 from milknado.domains.dispatch.runner import _validate_worker_argv
 
 _logger = logging.getLogger(__name__)
@@ -68,21 +78,41 @@ def _run_and_update_status(
         raise ValueError(f"node {node_id} not found")
     brief = render_brief(graph, node_id, prepend=brief_prepend)
     running = _ensure_running(graph, node_id)
-    result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds)
+    run_id = make_run_id(node_id)
+    result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id)
+    worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
-        if result.exit_code == 0 and not result.timed_out:
+        if worker_terminal == "done":
             graph.mark_done(node_id)
         else:
             graph.mark_failed(node_id)
     final = graph.get_node(node_id)
     if final is None:
         raise RuntimeError(f"node {node_id} not found after run completed")
+    rdir = runs_dir(project_root)
+    state_path = rdir / f"{run_id}.state.json"
+    write_state(
+        state_path,
+        {
+            "run_id": run_id,
+            "node_id": node_id,
+            "status": worker_terminal,
+            "exit_code": result.exit_code,
+            "timed_out": result.timed_out,
+            "log_path": str(result.log_path),
+            "rebased": None,
+        },
+    )
+    graph.set_run_id(node_id, run_id)
     return {
+        "run_id": run_id,
         "node_id": node_id,
         "status": final.status.value,
         "exit_code": result.exit_code,
         "timed_out": result.timed_out,
+        "rebased": None,
         "log_path": str(result.log_path),
+        "state_path": str(state_path),
         "summary": result.summary,
     }
 
@@ -196,8 +226,12 @@ def milknado_todo_run_start(
             "run_id": ref.run_id,
             "node_id": node_id,
             "status": "running",
+            "exit_code": None,
+            "timed_out": None,
+            "rebased": None,
             "log_path": str(ref.log_path),
             "state_path": str(ref.state_path),
+            "summary": None,
         }
     finally:
         graph.close()
@@ -218,4 +252,115 @@ def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
             )
         finally:
             graph.close()
+    rdir = runs_dir(root)
+    state["state_path"] = str(rdir / f"{run_id}.state.json")
+    state.setdefault("rebased", None)
     return state
+
+
+@mcp.tool()
+def milknado_run_list(project_root: str = "") -> list[dict]:
+    """List active and recent runs from .milknado/runs/, sorted newest first.
+
+    Returns superset-schema dicts. summary is always None — use
+    milknado_todo_run_poll or milknado_ralph_run_poll for log tails.
+    """
+    root = resolve_project_root(project_root or None)
+    rdir = runs_dir(root)
+    entries: list[tuple[str, dict]] = []
+    for sp in rdir.glob("*.state.json"):
+        try:
+            state = read_state(sp)
+        except (OSError, json.JSONDecodeError):
+            continue
+        entries.append(
+            (
+                state.get("started_at") or "",
+                {
+                    "run_id": state.get("run_id"),
+                    "node_id": state.get("node_id"),
+                    "status": state.get("status"),
+                    "exit_code": state.get("exit_code"),
+                    "timed_out": state.get("timed_out"),
+                    "rebased": state.get("rebased"),
+                    "log_path": state.get("log_path"),
+                    "state_path": str(sp),
+                    "summary": None,
+                },
+            )
+        )
+    entries.sort(key=lambda x: x[0], reverse=True)
+    return [e[1] for e in entries]
+
+
+def _state_to_run_dict(state: dict, state_path: Path) -> dict:
+    return {
+        "run_id": state.get("run_id"),
+        "node_id": state.get("node_id"),
+        "status": state.get("status"),
+        "exit_code": state.get("exit_code"),
+        "timed_out": state.get("timed_out"),
+        "rebased": state.get("rebased"),
+        "log_path": state.get("log_path"),
+        "state_path": str(state_path),
+        "summary": None,
+    }
+
+
+@mcp.tool()
+def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
+    """Cancel a run: signal the process group, reconcile node status, prune worktree.
+
+    No-ops cleanly if the run is already terminal. Returns the final run state
+    in the unified superset schema.
+    """
+    root = resolve_project_root(project_root or None)
+    if not RUN_ID_RE.match(run_id):
+        raise ValueError(f"invalid run_id format: {run_id!r}")
+    rdir = runs_dir(root)
+    state_path = rdir / f"{run_id}.state.json"
+    if not state_path.exists():
+        raise ValueError(f"run {run_id!r} not found")
+    state = read_state(state_path)
+    if state.get("status") != "running":
+        return _state_to_run_dict(state, state_path)
+
+    pid = state.get("pid")
+    if pid is not None:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass  # process already gone
+
+    cancelled = {
+        **state,
+        "status": "failed",
+        "exit_code": -1,
+        "timed_out": False,
+        "ended_at": now_iso(),
+        "error": "cancelled",
+    }
+    write_state(state_path, cancelled)
+
+    node_id = state.get("node_id")
+    if node_id is not None:
+        graph, _cfg = open_graph(root)
+        try:
+            node = graph.get_node(node_id)
+            if node is not None and node.worktree_path:
+                wt = Path(node.worktree_path)
+                if wt.exists():
+                    try:
+                        GitAdapter(root).remove_worktree(wt)
+                    except Exception as exc:
+                        _logger.warning("Failed to remove worktree %s on cancel: %s", wt, exc)
+            reconcile_node_status(graph, node_id, "failed")
+        finally:
+            graph.close()
+        try:
+            GitAdapter(root).prune_worktrees()
+        except Exception as exc:
+            _logger.warning("git worktree prune failed on cancel: %s", exc)
+
+    _logger.info("milknado_run_cancel: run_id=%s node_id=%s", run_id, node_id)
+    return _state_to_run_dict(cancelled, state_path)

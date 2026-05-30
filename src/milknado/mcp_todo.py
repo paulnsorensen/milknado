@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from milknado._mcp_core import (
@@ -16,6 +17,8 @@ from milknado._mcp_core import (
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import render_brief
+
+_logger = logging.getLogger(__name__)
 
 
 def _node_to_summary(node: MikadoNode) -> dict:
@@ -154,6 +157,9 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after status update")
+        _logger.info(
+            "milknado_todo_set_status: node=%d %s->%s", node_id, node.status.value, status
+        )
         return _node_to_summary(updated)
     finally:
         graph.close()
@@ -208,6 +214,9 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
             if n.status != target:
                 _apply_todo_status(graph, n, target)
                 updated += 1
+        _logger.info(
+            "milknado_set_subtree_status: root=%d status=%s updated=%d", root_id, status, updated
+        )
         return {"updated": updated}
     finally:
         graph.close()
@@ -297,7 +306,11 @@ def milknado_delete_node(node_id: int, cascade: bool = False, project_root: str 
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        return {"deleted": graph.delete_node(node_id, cascade=cascade)}
+        count = graph.delete_node(node_id, cascade=cascade)
+        _logger.info(
+            "milknado_delete_node: node=%d cascade=%s deleted=%d", node_id, cascade, count
+        )
+        return {"deleted": count}
     finally:
         graph.close()
 
@@ -316,6 +329,7 @@ def milknado_move_node(node_id: int, new_parent_id: int | None, project_root: st
         moved = graph.get_node(node_id)
         if moved is None:
             raise ValueError(f"node {node_id} not found")
+        _logger.info("milknado_move_node: node=%d -> parent=%s", node_id, new_parent_id)
         return _node_to_summary(moved)
     finally:
         graph.close()

@@ -171,9 +171,15 @@ def run_headless(
     brief: str,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    *,
+    run_id: str | None = None,
 ) -> RunResult:
     argv = _resolve_worker_cmd(worker_cmd)
-    log_path = _log_path(project_root, node_id)
+    log_path = (
+        _runs_dir(project_root) / f"{run_id}.log"
+        if run_id is not None
+        else _log_path(project_root, node_id)
+    )
     exit_code, timed_out = _execute(project_root, node_id, log_path, brief, argv, timeout_seconds)
     return RunResult(
         exit_code=exit_code,
