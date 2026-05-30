@@ -93,13 +93,19 @@ class CrgAdapter:
         return sources
 
     def _run_crg(self, command: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["code-review-graph", command],
-            cwd=self._root,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=True,
-        )
+        # #79: re-raise with stderr so callers can log/surface the failure reason
+        try:
+            return subprocess.run(
+                ["code-review-graph", command],
+                cwd=self._root,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise RuntimeError(
+                f"code-review-graph {command!r} failed (exit {exc.returncode}): {exc.stderr}"
+            ) from exc
 
     def build_graph(self, project_root: Path) -> None:
         self._root = project_root

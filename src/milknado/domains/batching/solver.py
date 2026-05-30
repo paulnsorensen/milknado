@@ -91,7 +91,7 @@ def _two_pass_solve(
 ) -> tuple[Snapshot | None, SolverStatus]:
     solver = cp_model.CpSolver()
     model = bundle.model
-    cost_objective = bundle.total_cost if bundle.total_cost is not None else bundle.max_batch_idx
+    cost_objective = bundle.total_cost
     model.minimize(cost_objective)  # type: ignore
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status1 = _status_name(solver.solve(model))
