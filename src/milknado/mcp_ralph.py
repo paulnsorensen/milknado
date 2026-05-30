@@ -12,6 +12,7 @@ and node status in SQLite.
 
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import subprocess
@@ -35,6 +36,8 @@ from milknado.domains.dispatch._runstate import (
     tail,
 )
 from milknado.domains.dispatch.runner import _build_worker_env
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
 
@@ -148,6 +151,13 @@ def milknado_ralph_run_start(
         if running.get("status") == "running":
             running["pid"] = proc.pid
             write_state(state_path, running)
+        _logger.info(
+            "milknado_ralph_run_start: node=%d run_id=%s timeout=%ds pid=%d",
+            node_id,
+            run_id,
+            timeout_seconds,
+            proc.pid,
+        )
         return {
             "run_id": run_id,
             "node_id": node_id,

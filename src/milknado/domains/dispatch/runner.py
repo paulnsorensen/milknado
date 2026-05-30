@@ -102,7 +102,7 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
 
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return _runs_dir(project_root) / f"node-{node_id}-{stamp}-{secrets.token_hex(2)}.log"
+    return _runs_dir(project_root) / f"node-{node_id}-{stamp}-{secrets.token_hex(4)}.log"
 
 
 _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
