@@ -1,10 +1,12 @@
 import itertools
 import json
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -105,6 +107,57 @@ class TestInit:
         mock_crg_cls.return_value.ensure_graph.assert_called_once_with(project_dir)
         assert "Code-review-graph ready" in result.output
 
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_init_crg_build_failure_exits(
+        self, mock_crg_cls: MagicMock, project_dir: Path
+    ) -> None:
+        mock_crg_cls.return_value.ensure_graph.side_effect = subprocess.CalledProcessError(
+            returncode=2, cmd="crg", stderr="boom"
+        )
+        result = runner.invoke(app, ["init", str(project_dir)])
+        assert result.exit_code == 1
+        assert "CRG build failed (exit 2)" in result.output
+        assert "boom" in result.output
+
+
+class TestIndex:
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_index_rebuilds(self, mock_crg_cls: MagicMock, project_dir: Path) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        result = runner.invoke(app, ["index", str(project_dir)])
+        assert result.exit_code == 0
+        assert "Code-review-graph rebuilt." in result.output
+        mock_crg_cls.return_value.build_graph.assert_called_once_with(project_dir)
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_index_crg_build_failure_exits(
+        self, mock_crg_cls: MagicMock, project_dir: Path
+    ) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        mock_crg_cls.return_value.build_graph.side_effect = subprocess.CalledProcessError(
+            returncode=3, cmd="crg", stderr="index boom"
+        )
+        result = runner.invoke(app, ["index", str(project_dir)])
+        assert result.exit_code == 1
+        assert "CRG build failed (exit 3)" in result.output
+        assert "index boom" in result.output
+
+
+class TestCrgCommand:
+    def test_crg_no_index_exits(self, project_dir: Path) -> None:
+        result = runner.invoke(app, ["crg", str(project_dir)])
+        assert result.exit_code == 1
+        assert "No CRG index" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_crg_prints_overview(self, mock_crg_cls: MagicMock, project_dir: Path) -> None:
+        (project_dir / ".code-review-graph").mkdir(parents=True)
+        (project_dir / ".code-review-graph" / "graph.db").write_text("", encoding="utf-8")
+        mock_crg_cls.return_value.get_architecture_overview.return_value = {"hubs": ["a"]}
+        result = runner.invoke(app, ["crg", str(project_dir)])
+        assert result.exit_code == 0
+        assert '"hubs"' in result.output
+
 
 class TestStatus:
     def test_empty_graph(self, project_dir: Path) -> None:
@@ -201,6 +254,51 @@ class TestStatus:
         result = runner.invoke(app, ["status", str(project_dir)])
         assert result.exit_code == 0
         assert "/tmp/milknado-wt" in result.output
+
+    @patch("milknado.adapters.ralphify.RalphifyAdapter")
+    def test_enriches_running_node_with_run_state(
+        self, mock_ralph_cls: MagicMock, project_dir: Path
+    ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Root")
+        worker = graph.add_node("Worker", parent_id=root.id)
+        graph.mark_running(worker.id, run_id="run-42")
+        graph.close()
+
+        fake_run = MagicMock()
+        fake_run.status = "in_progress"
+        mock_ralph_cls.return_value.get_run.return_value = fake_run
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        assert result.exit_code == 0
+        mock_ralph_cls.return_value.get_run.assert_called_once_with("run-42")
+
+    @patch("milknado.adapters.ralphify.RalphifyAdapter")
+    def test_run_state_enrichment_is_best_effort(
+        self, mock_ralph_cls: MagicMock, project_dir: Path
+    ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Root")
+        worker = graph.add_node("Worker", parent_id=root.id)
+        graph.mark_running(worker.id, run_id="run-99")
+        graph.close()
+
+        mock_ralph_cls.return_value.get_run.side_effect = RuntimeError("ralph down")
+
+        result = runner.invoke(app, ["status", str(project_dir)])
+        # Enrichment failure must not break the status render.
+        assert result.exit_code == 0
+        assert "Worker" in result.output
 
 
 class TestAddNode:
@@ -331,6 +429,38 @@ class TestPlanCommand:
         )
         assert result.exit_code == 1
 
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_plan_passes_prompt_prepend_from_config(
+        self,
+        mock_planner_cls: MagicMock,
+        mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        """The plan command must wire config.planning_prompt_prepend into Planner.
+
+        Pins the regression from 19d53ec: a CLI refactor dropped this kwarg, so
+        the user's planning_prepend config was silently ignored. If the argument
+        is dropped again, the kwarg assertion below fails.
+        """
+        (project_dir / "milknado.toml").write_text(
+            "[milknado]\n"
+            'agent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            'planning_prepend = "team rule X"\n',
+            encoding="utf-8",
+        )
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+
+        result = runner.invoke(
+            app,
+            ["plan", "--spec", str(FIXTURES / "valid.md"), "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_planner_cls.assert_called_once()
+        assert mock_planner_cls.call_args.kwargs["prompt_prepend"] == "team rule X"
+
 
 class TestPlanInteractive:
     @patch("milknado.adapters.crg.CrgAdapter")
@@ -418,6 +548,164 @@ class TestPlanInteractive:
         )
         assert result.exit_code == 1
         assert "Choose next step" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_invalid_selection_reprompts(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="9\n1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Please enter 1, 2, or 3." in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_context_path_and_unknown_warning_printed(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="UNKNOWN",
+            batch_count=1,
+            context_path=str(project_dir / "ctx.md"),
+        )
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Planner context:" in result.output
+        assert "solver returned UNKNOWN" in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_accept_despite_invalid_status(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result(
+            solver_status="NO_MANIFEST",
+            success=False,
+            exit_code=1,
+        )
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Accepting current plan despite invalid planner status." in result.output
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_empty_feedback_keeps_goal_then_accept(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="2\n \n1\n",
+        )
+        assert result.exit_code == 0, result.output
+        assert "Empty feedback; keeping original goal for next iteration." in result.output
+        # Goal unchanged across both iterations (empty feedback does not rebuild it).
+        first_goal = mock_planner_cls.return_value.launch.call_args_list[0].args[0]
+        second_goal = mock_planner_cls.return_value.launch.call_args_list[1].args[0]
+        assert first_goal == second_goal
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    @patch("milknado.domains.planning.Planner")
+    def test_max_iterations_without_acceptance_exits_one(
+        self,
+        mock_planner_cls: MagicMock,
+        _mock_crg_cls: MagicMock,
+        project_dir: Path,
+    ) -> None:
+        mock_planner_cls.return_value.launch.return_value = _make_plan_result()
+        result = runner.invoke(
+            app,
+            [
+                "plan",
+                "--interactive",
+                "--max-iterations",
+                "2",
+                "--spec",
+                str(FIXTURES / "valid.md"),
+                "--project-root",
+                str(project_dir),
+            ],
+            input="2\nrevise once\n2\nrevise again\n",
+        )
+        assert result.exit_code == 1, result.output
+        assert "Reached max iterations (2) without acceptance." in result.output
+
+
+class TestIssueHelpers:
+    @patch("milknado.cli_plan.subprocess.run")
+    def test_fetch_issue_invalid_json_exits(self, mock_run: MagicMock) -> None:
+        from milknado.cli_plan import _fetch_issue
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
+        with pytest.raises(typer.Exit) as exc:
+            _fetch_issue("42")
+        assert exc.value.exit_code == 1
+
+    def test_issue_title_falls_back_to_number(self) -> None:
+        from milknado.cli_plan import _issue_title
+
+        assert _issue_title({"number": 7}) == "Issue 7"
+        assert _issue_title({}) == "Issue"
+
+    def test_materialize_issue_spec_rejects_empty_refs(self, project_dir: Path) -> None:
+        from milknado.cli_plan import _materialize_issue_spec
+
+        with pytest.raises(ValueError, match="issue_refs must not be empty"):
+            _materialize_issue_spec([], project_dir)
 
 
 def _make_plan_result(**kwargs: object) -> MagicMock:
@@ -1154,3 +1442,96 @@ def test_write_worker_hooks_dispatches_to_cursor(tmp_path: Path) -> None:
         _write_worker_hooks(tmp_path, config)
     hooks = json.loads((tmp_path / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert hooks["hooks"][0]["command"] == "rtk hook cursor"
+
+
+class TestPrintRunResult:
+    def test_root_done_prints_success(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from milknado.cli_run import _print_run_result
+        from milknado.domains.execution.run_loop import RunLoopResult
+
+        _print_run_result(
+            RunLoopResult(
+                root_done=True,
+                dispatched_total=1,
+                completed_total=1,
+                failed_total=0,
+            )
+        )
+        assert "Root goal achieved" in capsys.readouterr().out
+
+    def test_rebase_conflicts_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from milknado.cli_run import _print_run_result
+        from milknado.domains.execution.executor import RebaseConflict
+        from milknado.domains.execution.run_loop import RunLoopResult
+
+        conflict = RebaseConflict(
+            node_id=3,
+            description="merge node 3",
+            conflicting_files=("a.py", "b.py"),
+            detail="rebase aborted",
+        )
+        _print_run_result(
+            RunLoopResult(
+                root_done=False,
+                dispatched_total=2,
+                completed_total=1,
+                failed_total=1,
+                rebase_conflicts=(conflict,),
+            )
+        )
+        out = capsys.readouterr().out
+        assert "Loop ended: 1 completed, 1 failed" in out
+        assert "Rebase conflict — node 3" in out
+        assert "a.py" in out
+        assert "b.py" in out
+        assert "rebase aborted" in out
+
+
+def test_write_worker_hooks_unknown_family_skips(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = replace(default_config(tmp_path), agent_family="acme")
+    with patch("milknado.cli_tools.shutil.which", return_value="/usr/bin/rtk"):
+        _write_worker_hooks(tmp_path, config)
+    assert "No hook template for family 'acme'" in capsys.readouterr().out
+    assert not (tmp_path / ".claude").exists()
+
+
+def test_merge_json_recovers_from_corrupt_file(tmp_path: Path) -> None:
+    from milknado.cli_tools import _merge_json
+
+    target = tmp_path / "settings.json"
+    target.write_text("{not valid json", encoding="utf-8")
+    _merge_json(target, {"key": "value"})
+    assert json.loads(target.read_text(encoding="utf-8")) == {"key": "value"}
+
+
+def test_ensure_plugins_loaded_announces_each_plugin(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from milknado._cli_helpers import _ensure_plugins_loaded
+
+    config = default_config(tmp_path)
+    local_plugin = MagicMock()
+    local_plugin.meta.name = "local-hook"
+    ep_plugin = MagicMock()
+    ep_plugin.meta.name = "entry-hook"
+
+    with (
+        patch("milknado.plugins.load_plugins", return_value=[local_plugin]),
+        patch("milknado.plugins.discover_entry_point_plugins", return_value=[ep_plugin]),
+    ):
+        loaded = _ensure_plugins_loaded(config)
+
+    assert loaded == [local_plugin, ep_plugin]
+    out = capsys.readouterr().out
+    assert "Plugin loaded: local-hook" in out
+    assert "Plugin loaded: entry-hook (entry point)" in out
+
+
+def test_plan_exit_code_default_fallthrough() -> None:
+    from milknado.cli_plan import _plan_exit_code
+
+    # solver_status not in any special case, success True → final return 0.
+    result = _make_plan_result(solver_status="UNKNOWN", batch_count=0, success=True)
+    assert _plan_exit_code(result) == 0

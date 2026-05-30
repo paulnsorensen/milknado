@@ -35,6 +35,11 @@ from milknado.domains.common import (
 )
 from milknado.domains.graph import render_tree
 
+# Public surface of this facade: the Typer app plus the `_derive_goal`
+# re-export consumed by tests/adversarial/test_cli_chaos.py. Listing the
+# re-export here marks it exported (clears CodeQL py/unused-import #55).
+__all__ = ["_derive_goal", "app"]
+
 app = typer.Typer(name="milknado", help="Mikado execution engine")
 
 app.add_typer(agents_app)
