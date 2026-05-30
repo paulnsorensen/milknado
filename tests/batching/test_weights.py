@@ -180,3 +180,45 @@ def test_per_symbols_delete_flat_cost_ignores_tilth(tmp_path: Path) -> None:
     c = FileChange(id="1", path="x.py", edit_kind="delete")
     assert estimate_tokens_per_symbols(c, tmp_path, port) == 80
     port.search_symbol.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# #80 — warn-log write failure must not propagate to caller
+# ---------------------------------------------------------------------------
+
+
+def test_log_degradation_absorbs_oserror(tmp_path: Path) -> None:
+    """_log_degradation silently absorbs OSError from the log file write."""
+    from milknado.domains.batching.weights import _log_degradation
+
+    c = FileChange(id="1", path="a.py", edit_kind="modify")
+    with patch("builtins.open", side_effect=OSError("no space left on device")):
+        _log_degradation(tmp_path, c, "test reason")  # must not raise
+
+
+def test_estimate_survives_log_write_oserror(tmp_path: Path) -> None:
+    """estimate_tokens_per_symbols returns a valid int even when the warn-log write OSErrors.
+
+    Why: _log_degradation is called from a bare except-block in estimate_tokens_per_symbols;
+    if _log_degradation itself raises, the fallback path-level estimate would never run.
+    The OSError must be absorbed inside _log_degradation so the caller always gets a result.
+    """
+    port = MagicMock()
+    port.search_symbol.return_value = []  # triggers ValueError → _log_degradation call
+
+    c = FileChange(
+        id="1",
+        path="src/foo.py",
+        edit_kind="modify",
+        symbols=(SymbolRef(name="foo", file="src/foo.py"),),
+    )
+    real_open = open
+
+    def selective_fail(path, *args, **kwargs):
+        if "planning-context-warn" in str(path):
+            raise OSError("disk full")
+        return real_open(path, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=selective_fail):
+        result = estimate_tokens_per_symbols(c, tmp_path, port)
+    assert isinstance(result, int) and result > 0

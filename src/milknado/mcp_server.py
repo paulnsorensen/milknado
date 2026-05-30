@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import cast
 
@@ -17,13 +18,20 @@ from milknado._mcp_core import (
 from milknado.domains.batching import (
     DUMB_ZONE_BUDGET,
     BatchPlan,
+    ChangeDependency,
     FileChange,
+    HashAnchors,
     NewRelationship,
     SymbolRef,
 )
 from milknado.domains.batching.change import RelationshipReason
 
 __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
+
+_logger = logging.getLogger(__name__)
+
+# Guard: raise MegaBatchAborted when a single batch exceeds this many changes.
+_MEGA_BATCH_THRESHOLD = 5
 
 
 @mcp.tool()
@@ -82,28 +90,83 @@ def milknado_add_node(
         graph.close()
 
 
-def _dict_to_file_change(d: dict) -> FileChange:
-    path = d["path"]
-    if Path(path).is_absolute() or ".." in Path(path).parts:
-        raise ValueError(f"path must be repo-relative without traversal, got {path!r}")
-    raw_symbols = d.get("symbols") or []
-    if not isinstance(raw_symbols, (list, tuple)):
-        raise ValueError("symbols must be a list of dicts")
-    symbols_list: list[SymbolRef] = []
-    for i, s in enumerate(raw_symbols):
+def _parse_mcp_hash_anchors(raw: object) -> HashAnchors | None:
+    if not isinstance(raw, dict):
+        return None
+    before = raw.get("before")
+    after = raw.get("after")
+    if not isinstance(before, str) or not isinstance(after, str):
+        return None
+    return HashAnchors(before=before, after=after)
+
+
+def _parse_mcp_symbols(raw: object, label: str) -> list[SymbolRef]:
+    if not isinstance(raw, (list, tuple)):
+        raise ValueError(f"{label} must be a list of dicts")
+    out: list[SymbolRef] = []
+    for i, s in enumerate(raw):
         if not isinstance(s, dict):
-            raise ValueError(f"symbols[{i}] must be a dict")
+            raise ValueError(f"{label}[{i}] must be a dict")
         name = s.get("name")
         file = s.get("file")
         if not isinstance(name, str) or not isinstance(file, str):
-            raise ValueError(f"symbols[{i}] must have string 'name' and 'file'")
-        symbols_list.append(SymbolRef(name=name, file=file))
+            raise ValueError(f"{label}[{i}] must have string 'name' and 'file'")
+        if Path(file).is_absolute() or ".." in Path(file).parts:
+            raise ValueError(
+                f"{label}[{i}].file must be repo-relative without traversal, got {file!r}"
+            )
+        out.append(SymbolRef(name=name, file=file))
+    return out
+
+
+def _dict_to_file_change(d: dict) -> FileChange:
+    # #74: validate id/path with clear ValueError instead of opaque KeyError
+    _id = d.get("id")
+    if not isinstance(_id, str) or not _id:
+        raise ValueError(f"change 'id' must be a non-empty string, got {_id!r}")
+    path = d.get("path")
+    if not isinstance(path, str) or not path:
+        raise ValueError(f"change 'path' must be a non-empty string, got {path!r}")
+    # #76: traversal guard on path
+    if Path(path).is_absolute() or ".." in Path(path).parts:
+        raise ValueError(f"path must be repo-relative without traversal, got {path!r}")
+    # #76: traversal guard on symbols[].file
+    symbols_list = _parse_mcp_symbols(d.get("symbols") or [], "symbols")
+    # #66: carry hash_anchors
+    hash_anchors = _parse_mcp_hash_anchors(d.get("hash_anchors"))
+    # #66: carry dependencies
+    raw_deps = d.get("dependencies") or []
+    if not isinstance(raw_deps, (list, tuple)):
+        raise ValueError("dependencies must be a list of dicts")
+    dependencies_list: list[ChangeDependency] = []
+    for i, dep in enumerate(raw_deps):
+        if not isinstance(dep, dict):
+            raise ValueError(f"dependencies[{i}] must be a dict")
+        dep_path = dep.get("path")
+        if not isinstance(dep_path, str) or not dep_path:
+            raise ValueError(f"dependencies[{i}].path must be a non-empty string")
+        dep_syms = _parse_mcp_symbols(dep.get("symbols") or [], f"dependencies[{i}].symbols")
+        dep_anchors = _parse_mcp_hash_anchors(dep.get("hash_anchors"))
+        dep_reason = dep.get("reason", "")
+        dependencies_list.append(
+            ChangeDependency(
+                path=dep_path,
+                symbols=tuple(dep_syms),
+                hash_anchors=dep_anchors,
+                reason=dep_reason if isinstance(dep_reason, str) else "",
+            )
+        )
+    # #66: carry description
+    description = d.get("description", "")
     return FileChange(
-        id=d["id"],
+        id=_id,
         path=path,
         edit_kind=d.get("edit_kind", "modify"),
         symbols=tuple(symbols_list),
+        hash_anchors=hash_anchors,
+        dependencies=tuple(dependencies_list),
         depends_on=tuple(d.get("depends_on", [])),
+        description=description if isinstance(description, str) else "",
     )
 
 
@@ -147,19 +210,38 @@ def _plan_batches_impl(
     budget: int,
     project_root: Path,
     new_relationships: list[dict] | None = None,
+    *,
+    force_single_batch: bool = False,
 ) -> dict:
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.batching import plan_batches
+    from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
+    from milknado.domains.planning.planner import _check_mega_batch
+    from milknado.domains.planning.telemetry import record_batch_snapshot
 
     file_changes = [_dict_to_file_change(c) for c in changes]
     rels = tuple(_dict_to_new_relationship(r) for r in (new_relationships or []))
+    # #71: log CRG failures instead of swallowing them silently
     crg = None
     try:
         crg = CrgAdapter(project_root)
         crg.ensure_graph(project_root)
-    except Exception:
+    except Exception as exc:
+        _logger.warning("CRG unavailable for MCP planning, proceeding without graph: %s", exc)
         crg = None
     plan = plan_batches(file_changes, budget, crg=crg, new_relationships=rels, root=project_root)
+    # #68: apply same mega-batch guard the CLI path uses
+    _check_mega_batch(plan, force_single_batch, _MEGA_BATCH_THRESHOLD)
+    # #68: record telemetry as the CLI path does
+    manifest = PlanChangeManifest(
+        manifest_version=MANIFEST_VERSION,
+        goal="(mcp)",
+        goal_summary="",
+        spec_path=None,
+        changes=tuple(file_changes),
+        new_relationships=rels,
+    )
+    record_batch_snapshot(project_root, manifest, plan)
     return _plan_to_dict(plan)
 
 
@@ -169,10 +251,13 @@ def milknado_plan_batches(
     budget: int = DUMB_ZONE_BUDGET,
     project_root: str = "",
     new_relationships: list[dict] | None = None,
+    force_single_batch: bool = False,
 ) -> dict:
     """Compute token-budgeted, precedence-respecting batches for changes."""
     root = resolve_project_root(project_root or None)
-    return _plan_batches_impl(changes, budget, root, new_relationships)
+    return _plan_batches_impl(
+        changes, budget, root, new_relationships, force_single_batch=force_single_batch
+    )
 
 
 def main() -> None:
