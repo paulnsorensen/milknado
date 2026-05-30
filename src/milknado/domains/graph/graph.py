@@ -83,7 +83,7 @@ class MikadoGraph(_AnalyticsFacade):
         )
         self._conn.commit()
         node_id = cur.lastrowid
-        if node_id is None:
+        if node_id is None:  # pragma: no cover - defensive: plain INSERT always sets lastrowid
             raise RuntimeError("add_node INSERT did not return lastrowid")
         _logger.debug("node %d created: %r", node_id, description[:80])
         if parent_id is not None:
