@@ -63,6 +63,15 @@ class GitAdapter:
             text=True,
         )
         if path.exists():
+            # Only reclaim a path that is itself a git worktree (has a `.git`
+            # gitlink). `worktree_pattern` is user-configurable within the
+            # project root, so a collision with an ordinary directory must fail
+            # loudly rather than recursively delete unrelated files.
+            if not (path / ".git").exists():
+                raise RuntimeError(
+                    f"worktree path {path} exists but is not a git worktree "
+                    "(no .git gitlink); refusing to delete it"
+                )
             shutil.rmtree(path, ignore_errors=True)
         self._run(["worktree", "prune"])
         self._run(["worktree", "add", "-B", branch, str(path)])

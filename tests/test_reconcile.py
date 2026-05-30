@@ -142,9 +142,12 @@ class TestReconcileStaleNodes:
     def test_running_node_branch_merged_marked_done(self, graph: MikadoGraph) -> None:
         graph.add_node("task")
         graph.mark_running(1, branch_name="milknado/1-task")
+        # complete() squash-rebases the node branch ONTO feature_branch without
+        # advancing feature_branch's tip, so the merged signature is
+        # feature_branch (main) being an ancestor of the node branch.
         git = FakeGit(
             branches={"milknado/1-task"},
-            ancestors={("milknado/1-task", "main")},
+            ancestors={("main", "milknado/1-task")},
         )
         result = reconcile_stale_nodes(graph, git, FakeRalph(), "main")
 
@@ -153,6 +156,27 @@ class TestReconcileStaleNodes:
         node = graph.get_node(1)
         assert node is not None
         assert node.status == NodeStatus.DONE
+
+    def test_node_branch_ancestor_of_feature_branch_is_not_merged(
+        self, graph: MikadoGraph
+    ) -> None:
+        # Regression: the reversed direction — node branch being an ancestor of
+        # feature_branch — is NOT the completion signature (that would mean the
+        # node added nothing on top of main). Such a node must reset to PENDING,
+        # not be falsely marked DONE.
+        graph.add_node("task")
+        graph.mark_running(1, branch_name="milknado/1-task")
+        git = FakeGit(
+            branches={"milknado/1-task"},
+            ancestors={("milknado/1-task", "main")},
+        )
+        result = reconcile_stale_nodes(graph, git, FakeRalph(), "main")
+
+        assert 1 in result.reset_pending
+        assert 1 not in result.resolved_done
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.PENDING
 
     def test_worktree_still_exists_prevents_merged_detection(
         self, graph: MikadoGraph, tmp_path: Path
@@ -246,7 +270,7 @@ class TestReconcileStaleNodes:
         graph.mark_running(3, branch_name="milknado/3-child-b")
         git = FakeGit(
             branches={"milknado/3-child-b"},
-            ancestors={("milknado/3-child-b", "main")},
+            ancestors={("main", "milknado/3-child-b")},
         )
         result = reconcile_stale_nodes(graph, git, FakeRalph(), "main")
 

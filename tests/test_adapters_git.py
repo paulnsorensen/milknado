@@ -40,6 +40,34 @@ class TestCreateWorktree:
         assert result == wt
 
     @patch("milknado.adapters.git.subprocess.run")
+    def test_reclaims_stale_worktree_dir_with_gitlink(
+        self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
+        # A leftover dir that IS a git worktree (has a .git gitlink) is safe to
+        # rmtree-reclaim when `git worktree remove` left it behind.
+        mock_run.return_value = _ok()
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        (wt / ".git").write_text("gitdir: /somewhere\n", encoding="utf-8")
+        result = adapter.create_worktree(wt, "feat-branch")
+        assert result == wt
+        assert not wt.exists()  # rmtree reclaimed it before re-add
+
+    def test_refuses_to_delete_ordinary_directory_collision(
+        self, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
+        # worktree_pattern is user-configurable; a collision with an ordinary
+        # project directory must fail loudly, never be recursively deleted.
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        precious = wt / "important.txt"
+        precious.write_text("do not delete", encoding="utf-8")
+        with patch("milknado.adapters.git.subprocess.run", return_value=_ok()):
+            with pytest.raises(RuntimeError, match="not a git worktree"):
+                adapter.create_worktree(wt, "feat-branch")
+        assert precious.exists()  # untouched
+
+    @patch("milknado.adapters.git.subprocess.run")
     def test_propagates_error_on_add(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         # remove (best-effort, no check) and prune succeed; the add call raises
         mock_run.side_effect = [_ok(), _ok(), subprocess.CalledProcessError(1, "git")]

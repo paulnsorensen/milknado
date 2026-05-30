@@ -78,16 +78,21 @@ def _appears_merged(
     git: GitPort,
     feature_branch: str,
 ) -> bool:
-    """True when the node branch was squash-rebased into feature_branch but mark_done
+    """True when the node branch was squash-rebased onto feature_branch but mark_done
     never ran — i.e. rebase_and_merge completed but the process crashed before the DB
-    was updated."""
+    was updated.
+
+    rebase_and_merge squashes the node's work and rebases the node branch *onto*
+    feature_branch without advancing feature_branch's tip, so the completed branch is
+    feature_branch + the squashed commit. The merged signature is therefore
+    feature_branch being an ancestor of the node branch — not the reverse."""
     if not branch_name:
         return False
     # Worktree still present → rebase_and_merge never finished (it removes it).
     if worktree_path and Path(worktree_path).exists():
         return False
     try:
-        return git.branch_exists(branch_name) and git.is_ancestor(branch_name, feature_branch)
+        return git.branch_exists(branch_name) and git.is_ancestor(feature_branch, branch_name)
     except Exception as exc:
         _logger.warning("reconcile: git check for branch %r failed: %s", branch_name, exc)
         return False
