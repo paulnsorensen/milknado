@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -13,7 +12,7 @@ from milknado.domains.common import (
     NodeKind,
     NodeStatus,
 )
-from milknado.domains.graph import _transitions
+from milknado.domains.graph import _status_notify, _transitions
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
 from milknado.domains.graph._mutations import (
     delete_subtree,
@@ -34,8 +33,6 @@ from milknado.domains.graph._persistence import (
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
-
-_logger = logging.getLogger(__name__)
 
 
 class MikadoGraph(_AnalyticsFacade):
@@ -142,26 +139,16 @@ class MikadoGraph(_AnalyticsFacade):
         return would_create_cycle(self._conn, parent_id, child_id)
 
     def _node_status(self, node_id: int) -> NodeStatus | None:
-        # Only the plugin-notify path needs the pre-transition status; skip the
-        # extra SELECT entirely when no plugins are registered.
-        if not self._plugins:
-            return None
-        row = self._conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
-        return NodeStatus(row[0]) if row else None
+        return _status_notify.node_status(self._conn, self._plugins, node_id)
 
     def _notify_status_change(
         self, node_id: int, old_status: NodeStatus, new_status: NodeStatus
     ) -> None:
         if not self._plugins:
             return
-        node = self.get_node(node_id)
-        if node is None:
-            return
-        for plugin in self._plugins:
-            try:
-                plugin.on_node_status_change(node, old_status, new_status)
-            except Exception:
-                _logger.exception("Plugin %s raised in on_node_status_change", plugin.meta.name)
+        _status_notify.notify_status_change(
+            self._plugins, self.get_node(node_id), old_status, new_status
+        )
 
     def get_node(self, node_id: int) -> MikadoNode | None:
         row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
