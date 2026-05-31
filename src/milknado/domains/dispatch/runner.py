@@ -35,22 +35,6 @@ _DEFAULT_WORKER_CMD = "claude -p"
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
 
-# Per-(project_root, node_id) locks that prevent concurrent run_start calls
-# from spawning duplicate workers on the same node. SQLite does not provide
-# read-under-write atomicity for the status-check + mark_running sequence
-# without BEGIN IMMEDIATE transactions (a graph-layer refactor); threading.Lock
-# is the minimal correct fix for the in-process MCP server case.
-_DISPATCH_LOCKS: dict[tuple[str, int], threading.Lock] = {}
-_DISPATCH_LOCKS_GUARD: threading.Lock = threading.Lock()
-
-
-def _dispatch_lock(project_root: Path, node_id: int) -> threading.Lock:
-    key = (str(project_root), node_id)
-    with _DISPATCH_LOCKS_GUARD:
-        if key not in _DISPATCH_LOCKS:
-            _DISPATCH_LOCKS[key] = threading.Lock()
-        return _DISPATCH_LOCKS[key]
-
 
 # Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
 # executable name (basename of argv[0]) so neither a prefix trick
@@ -257,9 +241,13 @@ def start_headless_async(
     brief: str,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    run_id: str | None = None,
 ) -> AsyncStartRef:
     argv = _resolve_worker_cmd(worker_cmd)
-    run_id = _make_run_id(node_id)
+    # The caller (milknado_todo_run_start) claims the node under a run_id before
+    # spawning, then hands that same id here so the node row and the run-state file
+    # agree on the fence; standalone callers let us mint one.
+    run_id = run_id or _make_run_id(node_id)
     runs_dir = _runs_dir(project_root)
     log_path = runs_dir / f"{run_id}.log"
     state_path = runs_dir / f"{run_id}.state.json"

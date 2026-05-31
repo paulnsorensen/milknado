@@ -61,10 +61,14 @@ def milknado_ralph_run_start(
     """Dispatch a node into its own git worktree and run a full ralph loop to
     completion in a detached process; returns immediately with a run_id.
 
-    Creates a worktree + branch, iterates the ralph loop until the node's quality
-    gates pass, then rebase-merges the branch back (the detached runner marks the
-    node done/failed itself). The loop survives this server restarting. Poll with
-    milknado_ralph_run_poll(run_id). Refuses if the node is already running;
+    Atomically claims the node RUNNING in this parent process BEFORE spawning the
+    detached runner — the SQLite conditional UPDATE is the cross-process
+    mutual-exclusion point, so a second concurrent caller loses the claim and is
+    refused. Creates a worktree + branch, iterates the ralph loop until the node's
+    quality gates pass, then rebase-merges the branch back (the detached runner
+    marks the node done/failed itself). The loop survives this server restarting.
+    Poll with milknado_ralph_run_poll(run_id). A node left RUNNING by a dead runner
+    is reclaimed by process-liveness check before the claim (no stale-timeout wait);
     orphaned runs that finished or vanished without a poll are reconciled first.
     """
     root = resolve_project_root(project_root or None)
@@ -73,22 +77,33 @@ def milknado_ralph_run_start(
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
+        now = now_iso()
         if node.status == NodeStatus.RUNNING:
-            # Release a node locked by a run that finished, or whose detached
+            # First release a node locked by a run that finished, or whose detached
             # process vanished, without anyone polling (mirrors run_start).
             fail_stale_running_runs(root, node_id)
             winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
             if winner is not None:
                 reconcile_node_status(graph, node_id, winner["status"])
-            node = graph.get_node(node_id)
-            if node is None:
-                raise RuntimeError(f"node {node_id} not found after orphan reconcile")
-            if node.status == NodeStatus.RUNNING:
-                raise ValueError(
-                    f"node {node_id} is already running; set status back to pending to retry"
+            # Then free a provably-dead owner by pid-liveness, so a crashed
+            # runner does not lock the node for the full timeout (default 1800s).
+            if graph.try_reclaim(node_id, now=now):
+                _logger.info(
+                    "milknado_ralph_run_start: reclaimed node=%d from a dead runner "
+                    "(pid-liveness); re-dispatching without the stale-timeout wait",
+                    node_id,
                 )
 
         run_id = make_run_id(node_id)
+        if not graph.claim_node(node_id, run_id, now=now):
+            current = graph.get_node(node_id)
+            status = current.status.value if current is not None else "gone"
+            raise ValueError(
+                f"node {node_id} is already {status}; set status back to pending to retry"
+            )
+        # The node is RUNNING under our run_id BEFORE we spawn — a second concurrent
+        # caller's claim above already lost. From here a failure must release the
+        # claim (mark_terminal failed) so the node is not stranded RUNNING.
         rdir = runs_dir(root)
         log_path = rdir / f"{run_id}.log"
         state_path = rdir / f"{run_id}.state.json"
@@ -97,7 +112,7 @@ def milknado_ralph_run_start(
             {
                 "run_id": run_id,
                 "node_id": node_id,
-                "started_at": now_iso(),
+                "started_at": now,
                 "log_path": str(log_path),
                 "timeout_seconds": timeout_seconds,
                 "status": "running",
@@ -131,8 +146,9 @@ def milknado_ralph_run_start(
                     env=_build_worker_env({"MILKNADO_NODE_ID": str(node_id)}),
                 )
         except OSError as exc:
-            # A bad runner_cmd or an unspawnable process would otherwise leave
-            # the state file stuck at "running" forever. Mark it terminal and
+            # A bad runner_cmd or an unspawnable process would otherwise leave the
+            # state file stuck at "running" and the node stranded RUNNING. Mark both
+            # terminal (the node via the fenced write that releases our claim) and
             # re-raise so the caller sees a clean failure.
             failed = read_state(state_path)
             failed.update(
@@ -142,15 +158,17 @@ def milknado_ralph_run_start(
                 ended_at=now_iso(),
             )
             write_state(state_path, failed)
+            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise
-        # Record the detached pid so poll/reconcile can liveness-check the run
-        # (the loop outlives this server). Guard against a runner that already
-        # wrote its terminal state, so the pid write never clobbers it back to
-        # "running".
+        # Record the detached pid on the node row (fenced on run_id) AND in the state
+        # file so the next dispatch can liveness-check this run and reclaim it
+        # immediately if it dies. Guard against a runner that already wrote its
+        # terminal state, so the pid write never clobbers it back to "running".
         running = read_state(state_path)
         if running.get("status") == "running":
             running["pid"] = proc.pid
             write_state(state_path, running)
+        graph.set_pid(node_id, run_id, proc.pid)
         _logger.info(
             "milknado_ralph_run_start: node=%d run_id=%s timeout=%ds pid=%d",
             node_id,

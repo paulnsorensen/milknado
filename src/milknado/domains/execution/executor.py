@@ -238,15 +238,27 @@ class Executor:
 
         branch = f"milknado/{node_id}-{slug}"
 
+        # The ralph MCP path claims the node RUNNING in the dispatching parent
+        # (cross-process mutual exclusion) before this detached runner gets here;
+        # the in-process TUI / e2e path arrives with a still-PENDING node.
+        already_claimed = node.status == NodeStatus.RUNNING and node.run_id is not None
         self._wt.create(node_id, wt_path, branch)
         try:
-            self._graph.mark_running(
-                node_id,
-                worktree_path=str(wt_path),
-                branch_name=branch,
-            )
-            run_id = self._create_ralph_run(node, config, wt_path)
-            self._graph.set_run_id(node_id, run_id)
+            if already_claimed:
+                # Re-marking RUNNING would be an illegal RUNNING -> RUNNING transition
+                # that kills the detached run on startup. Attach worktree metadata via a
+                # fence-gated update instead, and do NOT clobber the claim's run_id — the
+                # parent's set_pid and the completion fence both depend on it.
+                self._graph.set_worktree(node_id, node.run_id, str(wt_path), branch)
+                run_id = self._create_ralph_run(node, config, wt_path)
+            else:
+                self._graph.mark_running(
+                    node_id,
+                    worktree_path=str(wt_path),
+                    branch_name=branch,
+                )
+                run_id = self._create_ralph_run(node, config, wt_path)
+                self._graph.set_run_id(node_id, run_id)
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -324,13 +336,13 @@ class Executor:
 
         conflict: RebaseConflict | None = None
         if rebase_result.success:
-            self._graph.mark_done(node_id)
-            if node.dispatched_at is not None:
+            wrote = self._mark_terminal(node, NodeStatus.DONE)
+            if wrote and node.dispatched_at is not None:
                 completed_now = datetime.now(UTC)
                 duration = (completed_now - node.dispatched_at).total_seconds()
                 self._graph.record_completion_duration(node_id, duration)
         else:
-            self._graph.mark_failed(node_id)
+            self._mark_terminal(node, NodeStatus.FAILED)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(
                     node_id=node_id,
@@ -346,6 +358,19 @@ class Executor:
             newly_ready=newly_ready,
             rebase_conflict=conflict,
         )
+
+    def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:
+        """Write a node's terminal status, fenced on its run_id so a run that was
+        reclaimed mid-flight cannot overwrite the fresh owner's row. A node with no
+        run_id (in-process TUI legacy / direct test calls) has no fence to honour,
+        so the transition is unconditional. Returns whether the write landed."""
+        if node.run_id is None:
+            if status is NodeStatus.DONE:
+                self._graph.mark_done(node.id)
+            else:
+                self._graph.mark_failed(node.id)
+            return True
+        return self._graph.mark_terminal(node.id, node.run_id, status)
 
     def fail(self, node_id: int) -> None:
         self._wt.ensure_clean(node_id)

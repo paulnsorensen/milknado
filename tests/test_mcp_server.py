@@ -699,11 +699,14 @@ class TestTodoAsyncRun:
         self, tmp_path: Path, monkeypatch, worker_stub
     ) -> None:
         """If a worker finished but nobody polled, the next start should reconcile
-        and not be locked out by the RUNNING guard."""
+        and not be locked out by the RUNNING guard. A 'failed' orphan reconciles to
+        FAILED, which the atomic claim can re-acquire for a retry (a 'done' orphan
+        reconciles to DONE and is correctly refused — a completed node is not
+        silently re-run)."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        # First run: succeeds, but we never poll → node stays RUNNING in the graph.
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sh -c 'exit 1'"))
+        # First run: finishes (failed), but we never poll → node stays RUNNING.
         first = _call(
             milknado_todo_run_start,
             node_id=task["id"],

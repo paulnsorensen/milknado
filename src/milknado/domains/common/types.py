@@ -44,6 +44,7 @@ class MikadoNode:
     worktree_path: str | None = None
     branch_name: str | None = None
     run_id: str | None = None
+    pid: int | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     completed_at: datetime | None = None
     dispatched_at: datetime | None = None
