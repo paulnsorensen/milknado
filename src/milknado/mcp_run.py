@@ -149,7 +149,11 @@ def milknado_todo_run_start(
             # on this reconcile plus the stale-timeout backstop.)
             fail_stale_running_runs(root, node_id)
             winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-            if winner is not None:
+            # Fence the reconcile on the terminal file's run_id: only the node's
+            # current owner's run may drive its terminal transition, so a stale
+            # terminal file from an older run cannot clobber a live run still
+            # holding the node. A legacy node with no run_id has no fence to honour.
+            if winner is not None and (node.run_id is None or winner.get("run_id") == node.run_id):
                 reconcile_node_status(graph, node_id, winner["status"])
         brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
         # Atomic optimistic claim: the cross-process mutual-exclusion point that
@@ -164,9 +168,17 @@ def milknado_todo_run_start(
             raise ValueError(
                 f"node {node_id} is already {status}; set status back to pending to retry"
             )
-        ref = start_headless_async(
-            root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id
-        )
+        try:
+            ref = start_headless_async(
+                root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id
+            )
+        except Exception:
+            # Startup failed after the claim (bad worker cmd resolved in
+            # start_headless_async, or a state-file write): release the claim with a
+            # fenced terminal write so the node is not stranded RUNNING until the
+            # stale-timeout backstop, then re-raise for a clean caller failure.
+            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
+            raise
         _logger.info(
             "milknado_todo_run_start: node=%d run_id=%s timeout=%ds",
             node_id,

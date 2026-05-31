@@ -9,7 +9,6 @@ capturing combined output) alongside orphan-run recovery and the graph-side
 from __future__ import annotations
 
 import json
-import logging
 import os
 import secrets
 import shlex
@@ -29,7 +28,6 @@ from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
 from milknado.domains.dispatch._runstate import write_state as _write_state
 
-_logger = logging.getLogger(__name__)
 _DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
@@ -343,7 +341,7 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
             state = _read_state(state_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if state.get("status") in ("done", "failed"):
+        if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
             out.append(state)
     return out
 

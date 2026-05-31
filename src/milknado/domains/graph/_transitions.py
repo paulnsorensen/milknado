@@ -131,17 +131,23 @@ def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: N
     run_id — the caller was reclaimed and must NOT treat its run as authoritative.
     DONE sets completed_at and keeps the worktree/branch (already removed on disk);
     FAILED clears worktree/branch/run_id, mirroring mark_failed.
+
+    The `status = 'running'` guard makes the transition fire exactly once from the
+    active owner: DONE keeps its run_id, so without it a later same-run_id
+    mark_terminal(..., FAILED) would walk a DONE node back to FAILED, bypassing
+    the terminal state machine.
     """
     if status is NodeStatus.DONE:
         completed_at = datetime.now(UTC).isoformat()
         cur = conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ? AND run_id = ?",
+            "UPDATE nodes SET status = ?, completed_at = ? "
+            "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.DONE.value, completed_at, node_id, run_id),
         )
     elif status is NodeStatus.FAILED:
         cur = conn.execute(
             "UPDATE nodes SET status = ?, completed_at = NULL, worktree_path = NULL, "
-            "branch_name = NULL, run_id = NULL WHERE id = ? AND run_id = ?",
+            "branch_name = NULL, run_id = NULL WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.FAILED.value, node_id, run_id),
         )
     else:

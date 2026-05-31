@@ -17,6 +17,7 @@ import os
 import shlex
 import subprocess
 import sys
+from contextlib import suppress
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.common import NodeStatus
@@ -83,7 +84,11 @@ def milknado_ralph_run_start(
             # process vanished, without anyone polling (mirrors run_start).
             fail_stale_running_runs(root, node_id)
             winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-            if winner is not None:
+            # Fence the reconcile on the terminal file's run_id: only the node's
+            # current owner's run may drive its terminal transition, so a stale
+            # terminal file from an older run cannot clobber a live run still
+            # holding the node. A legacy node with no run_id has no fence to honour.
+            if winner is not None and (node.run_id is None or winner.get("run_id") == node.run_id):
                 reconcile_node_status(graph, node_id, winner["status"])
             # Then free a provably-dead owner by pid-liveness, so a crashed
             # runner does not lock the node for the full timeout (default 1800s).
@@ -107,21 +112,18 @@ def milknado_ralph_run_start(
         rdir = runs_dir(root)
         log_path = rdir / f"{run_id}.log"
         state_path = rdir / f"{run_id}.state.json"
-        write_state(
-            state_path,
-            {
-                "run_id": run_id,
-                "node_id": node_id,
-                "started_at": now,
-                "log_path": str(log_path),
-                "timeout_seconds": timeout_seconds,
-                "status": "running",
-                "rebased": None,
-                "detail": None,
-                "ended_at": None,
-                "pid": None,
-            },
-        )
+        running_state = {
+            "run_id": run_id,
+            "node_id": node_id,
+            "started_at": now,
+            "log_path": str(log_path),
+            "timeout_seconds": timeout_seconds,
+            "status": "running",
+            "rebased": None,
+            "detail": None,
+            "ended_at": None,
+            "pid": None,
+        }
         argv = [
             *_resolve_runner_cmd(runner_cmd),
             "--node-id",
@@ -136,6 +138,11 @@ def milknado_ralph_run_start(
             str(timeout_seconds),
         ]
         try:
+            # Both the state-file write and the spawn are inside the guard: a
+            # failure in either (fs permissions, partial .milknado setup, or an
+            # unspawnable process) must release the claim, or the node is left
+            # stranded RUNNING with no worker and no terminal state to reconcile.
+            write_state(state_path, running_state)
             with log_path.open("wb") as log_fh:
                 proc = subprocess.Popen(  # noqa: S603 — argv is built from validated parts
                     argv,
@@ -146,18 +153,18 @@ def milknado_ralph_run_start(
                     env=_build_worker_env({"MILKNADO_NODE_ID": str(node_id)}),
                 )
         except OSError as exc:
-            # A bad runner_cmd or an unspawnable process would otherwise leave the
-            # state file stuck at "running" and the node stranded RUNNING. Mark both
-            # terminal (the node via the fenced write that releases our claim) and
-            # re-raise so the caller sees a clean failure.
-            failed = read_state(state_path)
-            failed.update(
-                status="failed",
-                rebased=False,
-                detail=f"spawn failed: {type(exc).__name__}: {exc}",
-                ended_at=now_iso(),
-            )
-            write_state(state_path, failed)
+            # Mark the node terminal via the fenced write that releases our claim,
+            # then re-raise so the caller sees a clean failure. The terminal state
+            # file is best-effort — it may not exist if write_state itself failed.
+            terminal_state = {
+                **running_state,
+                "status": "failed",
+                "rebased": False,
+                "detail": f"spawn failed: {type(exc).__name__}: {exc}",
+                "ended_at": now_iso(),
+            }
+            with suppress(OSError):
+                write_state(state_path, terminal_state)
             graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise
         # Record the detached pid on the node row (fenced on run_id) AND in the state
