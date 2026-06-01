@@ -1,6 +1,7 @@
 set dotenv-load := true
 
-COVERAGE_THRESHOLD := "90"
+# Matches codecov.yml project/patch target (95%)
+COVERAGE_THRESHOLD := "95"
 
 # Show all available recipes
 default:
@@ -66,6 +67,53 @@ build: lint-fix test coverage-check
 # Full build no autofix: lint → test → coverage check (for CI validation)
 build-ci: lint test coverage-check
     @echo "✅ CI build passed"
+
+# Agent gate: lint + format + tests + project coverage + diff coverage in one shot.
+# Quiet on success (one line), full output only on the failing step. Non-mutating.
+# diff-coverage mirrors codecov/patch: it fails if the lines THIS branch changes
+# (vs origin/main, including staged/uncommitted edits) aren't covered to threshold.
+check-llm:
+    #!/usr/bin/env python3
+    import subprocess
+    import sys
+
+    threshold = "{{COVERAGE_THRESHOLD}}"
+    base = "origin/main"
+
+    # Best-effort refresh of the base ref so diff coverage matches codecov/patch.
+    subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, text=True)
+
+    steps = [
+        ("lint", ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"]),
+        ("format", ["uv", "run", "ruff", "format", "--check", "src/", "tests/"]),
+        (
+            "tests+coverage",
+            [
+                "uv", "run", "pytest", "tests/", "-q",
+                "--cov=src/milknado",
+                "--cov-report=term-missing",
+                "--cov-report=xml:coverage.xml",
+                f"--cov-fail-under={threshold}",
+            ],
+        ),
+        (
+            "diff-coverage",
+            [
+                "uv", "run", "diff-cover", "coverage.xml",
+                f"--compare-branch={base}",
+                f"--fail-under={threshold}",
+            ],
+        ),
+    ]
+
+    for name, cmd in steps:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"❌ check:llm FAILED at: {name}\n")
+            print((result.stdout + result.stderr).strip())
+            sys.exit(result.returncode)
+
+    print(f"✅ check:llm PASS — lint+format clean, tests green, project+diff coverage ≥{threshold}%")
 
 # Run the CLI for manual testing
 run *args:
