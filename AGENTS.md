@@ -2,14 +2,23 @@
 
 ## Build Gate
 
-**Run `just build` before opening any PR.** It must pass cleanly.
+**`just check-llm` is the gate. Run it before opening any PR — and only this command.**
 
 ```
-just build   # lint-fix → test → coverage check (90% threshold, autofixes lint)
+just check-llm   # lint + format + tests + project coverage + diff coverage (95%)
 ```
 
-If `just build` is red, do not open a PR. Fix failing tests or coverage gaps first.
-Lint errors are auto-fixed by `just build` — re-run after if files changed.
+It is token-efficient by design: on success it prints a single PASS line; on failure
+it prints only the failing step's output. Do not run the individual recipes to gate —
+`check-llm` covers lint, format, tests, project coverage, and **diff coverage** in one
+shot. Diff coverage mirrors `codecov/patch`: it fails if the lines this branch changes
+(vs `origin/main`) aren't covered to 95% — catching a CI patch failure before you push.
+
+- **Green** (PASS line printed) → open the PR.
+- **Red** → do not open a PR. Fix the reported failure, then re-run `just check-llm`.
+
+`check-llm` is non-mutating (no autofix). If it fails on lint/format, run `just lint-fix`,
+then re-run the gate.
 
 ## Key Recipes
 
@@ -19,7 +28,8 @@ just lint           # Ruff check + format check (no changes — used by CI)
 just lint-fix       # Ruff check + format with autofix
 just test           # Run pytest (supports args: just test -k pattern)
 just test-file <f>  # Run a single test file
-just build          # Full pipeline with autofix — use this before every PR
+just check-llm      # THE PR GATE — lint + format + tests + project & diff coverage, quiet on success
+just build          # Full pipeline with autofix (lint-fix → test → coverage)
 just build-ci       # Full pipeline no autofix — CI uses this
 just mcp-dev        # Run milknado-mcp under watchfiles, restarting on src/ changes
 just clean          # Remove build artifacts and caches
@@ -35,7 +45,7 @@ Milknado is a Mikado execution engine — it decomposes goals into dependency gr
 
 - **Entry points**: `milknado` CLI (`src/milknado/cli.py`), `milknado-mcp` MCP server (`src/milknado/mcp_server.py`)
 - **Architecture**: Sliced Bread — vertical slices under `src/milknado/domains/`, adapters in `src/milknado/adapters/`
-- **Tests**: `tests/` — pytest, 90% coverage required
+- **Tests**: `tests/` — pytest, 95% coverage required (matches `codecov.yml`)
 
 ## Code Style
 
@@ -55,3 +65,48 @@ Milknado is a Mikado execution engine — it decomposes goals into dependency gr
 ## No Migration Code
 
 This project is pre-release. Do not add migration backfills, deprecation shims, or compatibility layers.
+
+## Code-Intelligence Routing
+
+Three MCP servers cover code intelligence; they layer rather than overlap. The
+worktree ships an `.mcp.json` wiring all of them — prefer them over raw
+`grep`/`cat`/`sed`/`Edit`.
+
+- **tilth** — file I/O floor. Default for read/search/edit; replaces host
+  Grep/Read/Edit/Glob. Always search first (`tilth_search`), then read
+  (`tilth_read`), then edit.
+- **serena** — LSP-grounded symbol layer. Use when ground-truth semantics
+  matter (overloads, generics, dispatch, type info) or for symbol-bounded edits.
+- **code-review-graph** — project-scale graph. Use for blast-radius,
+  "what does this codebase do", and review-scope queries — not routine search.
+
+### Editing: serena vs tilth
+
+Pick by edit *shape*, not preference. Serena is more context-efficient for
+symbol-bounded edits (no need to re-ship the surrounding body); tilth wins for
+everything else and for the read-step that precedes either.
+
+| Edit shape | Pick |
+|---|---|
+| Replace whole function / method / class body | `serena.replace_symbol_body` |
+| Insert relative to a known symbol | `serena.insert_before_symbol` / `insert_after_symbol` |
+| Rename a symbol across the codebase | `serena.rename_symbol` |
+| Safe-delete an unused symbol | `serena.safe_delete_symbol` |
+| Sub-symbol edit (slice inside a function) | `tilth_edit` hash-anchor |
+| Imports, config (TOML/JSON/YAML), Markdown, shell | `tilth_edit` |
+| Create new file | `tilth_edit` overwrite |
+| Bulk pattern across files | `tilth_search` + `tilth_edit` batch |
+
+Read-step: serena's `get_symbols_overview` + `find_symbol(include_body=true)`
+pulls only the target symbol out of a large file — reach for that when you need
+one function from a long file rather than reading the whole thing.
+
+### Routing self-check
+
+Before each tool call, ask the shape of the question:
+
+- Symbol-level read or edit → **serena**
+- File-level read, search, or edit → **tilth**
+- Graph-level analysis (impact, architecture, flows) → **code-review-graph**
+
+If unsure, pick the smallest-scope tool that answers the question.

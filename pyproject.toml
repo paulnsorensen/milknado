@@ -45,6 +45,7 @@ select = ["E", "F", "I", "UP"]
 
 [dependency-groups]
 dev = [
+    "diff-cover>=9.0.0",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "pytest-asyncio>=1.3.0",
