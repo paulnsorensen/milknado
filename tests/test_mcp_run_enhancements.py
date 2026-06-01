@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import time
@@ -509,6 +510,59 @@ class TestRunCancel:
             graph2.close()
         assert not cancel_path(_runs_dir(tmp_path), run_id).exists(), "sentinel must be cleared"
 
+    def test_cancel_logs_when_worktree_removal_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """If `git worktree remove` raises mid-cancel, _reconcile_cancel logs a
+        warning and still reconciles the node + prunes — a failed removal must
+        never strand the node RUNNING."""
+        import milknado.adapters as adapters
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="wt-fail", kind="task", project_root=root)
+        node_id = task["id"]
+        orphan_wt = tmp_path / "milknado-wt-fail"
+        orphan_wt.mkdir()
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id, worktree_path=str(orphan_wt), branch_name="milknado/x")
+        finally:
+            graph.close()
+        rdir = tmp_path / ".milknado" / "runs"
+        rdir.mkdir(parents=True, exist_ok=True)
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
+        (rdir / f"{run_id}.state.json").write_text(
+            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
+        )
+
+        pruned: list[bool] = []
+
+        def boom(self, wt):
+            raise RuntimeError("worktree locked")
+
+        monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", boom)
+        monkeypatch.setattr(
+            adapters.GitAdapter, "prune_worktrees", lambda self: pruned.append(True)
+        )
+        monkeypatch.setattr(os, "killpg", lambda *a: None)
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+        with caplog.at_level(logging.WARNING, logger="milknado.mcp_run"):
+            result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
+
+        assert result["status"] == "failed"
+        assert any("Failed to remove worktree" in r.getMessage() for r in caplog.records), (
+            "a failed worktree removal must be logged"
+        )
+        assert pruned, "prune must still run even when removal fails"
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed", "removal failure must not strand node RUNNING"
+        finally:
+            graph2.close()
+
 
 class TestAsyncCancel:
     """The regression the review flagged: cancel must genuinely stop a real
@@ -727,3 +781,160 @@ class TestPidCancelReconcile:
             assert node.run_id == newer_run, "newer run's ownership must survive a stale cancel"
         finally:
             graph2.close()
+
+    def test_pid_cancel_tolerates_already_gone_process(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A detached-ralph run whose process group is already gone (killpg raises
+        ProcessLookupError) must still finalize cleanly: write the terminal state
+        and reconcile the node, not propagate the signal error."""
+        run_id = "node-1-20260101T000000Z-cccc"
+        node_id = self._running_node_owned_by(tmp_path, run_id)
+        state_path = self._write_pid_state(tmp_path, run_id, node_id)
+
+        def gone(*_a):
+            raise ProcessLookupError("no such process")
+
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", gone)
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+
+        assert result["status"] == "failed"
+        assert result["exit_code"] == -1
+        on_disk = json.loads(state_path.read_text())
+        assert on_disk["status"] == "failed"
+        assert on_disk["error"] == "cancelled"
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed", "cancel must finalize despite a dead pgroup"
+        finally:
+            graph2.close()
+
+
+class TestCancelFinalizeAndRace:
+    """Helper-level coverage for the async-cancel finalize path: the unreadable-
+    state warning and the last-poll-gap race re-read that must not clobber a
+    worker's genuine terminal write."""
+
+    def test_await_cancel_finalize_logs_after_unreadable_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """If the state file stays unreadable for the whole finalize window, the
+        bound elapses to None and a warning naming the read-error count is logged,
+        so a wedged/permission-denied state file is diagnosable, not silent."""
+        import milknado.mcp_run as mcp_run_mod
+
+        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
+        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_POLL_SECS", 0.01)
+
+        def boom(_sp):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(mcp_run_mod, "read_state", boom)
+
+        with caplog.at_level(logging.WARNING, logger="milknado.mcp_run"):
+            out = mcp_run_mod._await_cancel_finalize(tmp_path / "missing.state.json")
+
+        assert out is None, "an unreadable state for the whole window must time out to None"
+        assert any("unreadable state reads" in r.getMessage() for r in caplog.records), (
+            "the read-error count must be logged when the bound elapses"
+        )
+
+    def test_async_cancel_race_reread_adopts_last_gap_finalize(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The race fence (mcp_run.py:452): _await_cancel_finalize returns None
+        (bound elapsed) but the worker wrote its terminal state in the final poll
+        gap. Cancel must re-read and ADOPT that write, not overwrite a genuine
+        `done` with `cancelled`."""
+        import milknado.mcp_run as mcp_run_mod
+        from milknado.domains.dispatch import runs_dir as _runs_dir
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="race", kind="task", project_root=root)
+        node_id = task["id"]
+        run_id = f"node-{node_id}-20260101T000000Z-dddd"
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id)
+            graph.set_run_id(node_id, run_id)
+        finally:
+            graph.close()
+        rdir = _runs_dir(tmp_path)
+        rdir.mkdir(parents=True, exist_ok=True)
+        state_path = rdir / f"{run_id}.state.json"
+        state_path.write_text(
+            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
+        )
+
+        done_state = {
+            "run_id": run_id,
+            "node_id": node_id,
+            "status": "done",
+            "exit_code": 0,
+            "ended_at": "2026-01-01T00:00:00+00:00",
+        }
+
+        def elapsed_after_done(sp: Path):
+            sp.write_text(json.dumps(done_state))
+            return None
+
+        monkeypatch.setattr(mcp_run_mod, "_await_cancel_finalize", elapsed_after_done)
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
+
+        assert result["status"] == "done", "must adopt the worker's last-gap terminal write"
+        on_disk = json.loads(state_path.read_text())
+        assert on_disk["status"] == "done", "must not clobber the worker's done write"
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "done", "node reconciles to the run's real status"
+        finally:
+            graph2.close()
+
+
+class TestTerminateWorker:
+    """_terminate_worker's SIGKILL escalation: a worker that ignores SIGTERM must
+    be force-killed after the grace window (runner.py:196-198)."""
+
+    def test_terminate_worker_escalates_to_sigkill_when_sigterm_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import signal as sig_mod
+        import subprocess as sp_mod
+
+        import milknado.domains.dispatch.runner as runner_mod
+
+        monkeypatch.setattr(runner_mod, "_CANCEL_GRACE_SECS", 0.2)
+        ready = tmp_path / "handler-ready"
+        # Trap+ignore SIGTERM, signal readiness, then sleep far past the grace
+        # window: the only way this worker dies is the kill() escalation.
+        code = (
+            "import signal, time, pathlib; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            f"pathlib.Path({str(ready)!r}).write_text('ok'); "
+            "time.sleep(30)"
+        )
+        proc = sp_mod.Popen([sys.executable, "-c", code])
+        deadline = time.monotonic() + 5.0
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists(), "worker did not install its SIGTERM handler in time"
+        try:
+            runner_mod._terminate_worker(proc)
+            # _terminate_worker must have reaped the process itself — capture the
+            # code BEFORE the cleanup net so a regressed escalation can't be masked.
+            rc = proc.returncode
+        finally:
+            if proc.poll() is None:  # cleanup net; only fires if escalation regressed
+                proc.kill()
+                proc.wait()
+
+        assert rc == -sig_mod.SIGKILL, (
+            "a worker ignoring SIGTERM must be escalated to SIGKILL after the grace window"
+        )
