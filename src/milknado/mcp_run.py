@@ -27,7 +27,6 @@ from milknado.domains.dispatch import (
     start_headless_async,
     write_state,
 )
-from milknado.domains.dispatch._runstate import make_run_id, now_iso
 from milknado.domains.dispatch._runstate import RUN_ID_RE
 from milknado.domains.dispatch.runner import _validate_worker_argv
 
@@ -79,6 +78,7 @@ def _run_and_update_status(
     brief = render_brief(graph, node_id, prepend=brief_prepend)
     running = _ensure_running(graph, node_id)
     run_id = make_run_id(node_id)
+    started_at = now_iso()
     result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id)
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
@@ -96,6 +96,7 @@ def _run_and_update_status(
         {
             "run_id": run_id,
             "node_id": node_id,
+            "started_at": started_at,
             "status": worker_terminal,
             "exit_code": result.exit_code,
             "timed_out": result.timed_out,
