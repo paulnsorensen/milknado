@@ -9,11 +9,13 @@ capturing combined output) alongside orphan-run recovery and the graph-side
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import shlex
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,6 +23,8 @@ from pathlib import Path
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
+from milknado.domains.dispatch._runstate import clear_cancel as _clear_cancel
+from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import make_run_id as _make_run_id
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
 from milknado.domains.dispatch._runstate import read_state as _read_state
@@ -28,10 +32,17 @@ from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
 from milknado.domains.dispatch._runstate import write_state as _write_state
 
+_logger = logging.getLogger(__name__)
+
 _DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
+# Cooperative-cancel tuning for the async worker's poll loop: how often it
+# checks the cancel sentinel / timeout, and how long it waits after SIGTERM
+# before escalating to SIGKILL.
+_CANCEL_POLL_SECS = 0.5
+_CANCEL_GRACE_SECS = 5
 
 
 # Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
@@ -141,20 +152,30 @@ def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
+def _spawn_worker(project_root: Path, node_id: int, log_fh, argv: list[str]) -> subprocess.Popen:  # noqa: ANN001
+    """Popen a worker with the filtered env, stdin piped and output to log_fh.
+
+    Shared by the blocking `_execute` (sync path) and the polling
+    `_execute_cancellable` (async path) so the spawn + env + redirection contract
+    lives in one place; only the wait strategy differs between the two.
+    """
+    env = _build_worker_env({"MILKNADO_NODE_ID": str(node_id)})
+    return subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        cwd=str(project_root),
+        env=env,
+    )
+
+
 def _execute(
     project_root: Path, node_id: int, log_path: Path, brief: str, argv: list[str], timeout: int
 ) -> tuple[int, bool]:
     timed_out = False
-    env = _build_worker_env({"MILKNADO_NODE_ID": str(node_id)})
     with log_path.open("wb") as log_fh:
-        proc = subprocess.Popen(
-            argv,
-            stdin=subprocess.PIPE,
-            stdout=log_fh,
-            stderr=subprocess.STDOUT,
-            cwd=str(project_root),
-            env=env,
-        )
+        proc = _spawn_worker(project_root, node_id, log_fh, argv)
         try:
             proc.communicate(input=brief.encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -165,15 +186,95 @@ def _execute(
     return exit_code, timed_out
 
 
+def _terminate_worker(proc: subprocess.Popen) -> None:
+    """SIGTERM the worker, allow a grace window, then SIGKILL if still alive.
+
+    The async subprocess shares the MCP server's process group, so signalling
+    the group (`killpg`) would kill the server itself — we terminate this one
+    process directly instead.
+    """
+    proc.terminate()
+    try:
+        proc.wait(timeout=_CANCEL_GRACE_SECS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
+def _write_worker_stdin(stdin, brief: str) -> None:  # noqa: ANN001
+    """Write the brief to the worker's stdin and close it.
+
+    Runs in a daemon thread (async path) so a brief larger than the OS pipe
+    buffer can't block before the cancel/timeout poll loop starts. A
+    BrokenPipeError/OSError just means the worker already exited — nothing to do.
+    """
+    try:
+        stdin.write(brief.encode("utf-8"))
+        stdin.close()
+    except (BrokenPipeError, OSError) as exc:
+        _logger.debug("Worker stdin unavailable while sending brief (worker likely exited): %s", exc)
+
+
+def _execute_cancellable(
+    project_root: Path,
+    node_id: int,
+    log_path: Path,
+    brief: str,
+    argv: list[str],
+    timeout: int,
+    *,
+    runs_dir: Path,
+    run_id: str,
+) -> tuple[int, bool, bool]:
+    """Run a worker under a poll loop so a cancel sentinel can stop it mid-run.
+
+    Mirrors `_execute`'s spawn but cannot use the blocking `communicate`: the
+    brief is written to stdin and the loop polls `proc.poll()` on a short
+    interval, enforcing the timeout deadline and checking the cancel sentinel.
+    Returns `(exit_code, timed_out, cancelled)`. Used only by the async worker;
+    the sync `_execute` path stays blocking.
+    """
+    timed_out = False
+    cancelled = False
+    deadline = time.monotonic() + timeout
+    with log_path.open("wb") as log_fh:
+        proc = _spawn_worker(project_root, node_id, log_fh, argv)
+        # Write the brief from a daemon thread so a brief larger than the OS pipe
+        # buffer can't block before the cancel/timeout poll loop starts — a
+        # synchronous write would be unkillable until the worker drained stdin.
+        if proc.stdin is not None:
+            threading.Thread(
+                target=_write_worker_stdin, args=(proc.stdin, brief), daemon=True
+            ).start()
+        while proc.poll() is None:
+            if _is_cancel_requested(runs_dir, run_id):
+                _terminate_worker(proc)
+                cancelled = True
+                break
+            if time.monotonic() >= deadline:
+                _terminate_worker(proc)
+                timed_out = True
+                break
+            time.sleep(_CANCEL_POLL_SECS)
+    exit_code = proc.returncode if proc.returncode is not None else -1
+    return exit_code, timed_out, cancelled
+
+
 def run_headless(
     project_root: Path,
     node_id: int,
     brief: str,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    *,
+    run_id: str | None = None,
 ) -> RunResult:
     argv = _resolve_worker_cmd(worker_cmd)
-    log_path = _log_path(project_root, node_id)
+    log_path = (
+        _runs_dir(project_root) / f"{run_id}.log"
+        if run_id is not None
+        else _log_path(project_root, node_id)
+    )
     exit_code, timed_out = _execute(project_root, node_id, log_path, brief, argv, timeout_seconds)
     return RunResult(
         exit_code=exit_code,
@@ -192,22 +293,38 @@ def _async_worker(
     timeout: int,
     base_state: dict,
 ) -> None:
+    rdir = _runs_dir(project_root)
+    run_id = base_state["run_id"]
     try:
-        exit_code, timed_out = _execute(
-            project_root, base_state["node_id"], log_path, brief, argv, timeout
+        exit_code, timed_out, cancelled = _execute_cancellable(
+            project_root,
+            base_state["node_id"],
+            log_path,
+            brief,
+            argv,
+            timeout,
+            runs_dir=rdir,
+            run_id=run_id,
         )
-        terminal = "done" if exit_code == 0 and not timed_out else "failed"
+        # The worker owns the terminal write for a cancelled run: run_cancel only
+        # requests cancellation, so finalizing here (not there) is what closes the
+        # state-clobber race the old signal-then-overwrite path left open.
+        if cancelled:
+            terminal_fields = {"status": "failed", "exit_code": -1, "error": "cancelled"}
+        else:
+            terminal = "done" if exit_code == 0 and not timed_out else "failed"
+            terminal_fields = {"status": terminal, "exit_code": exit_code}
         _write_state(
             state_path,
             {
                 **base_state,
-                "status": terminal,
-                "exit_code": exit_code,
+                **terminal_fields,
                 "timed_out": timed_out,
                 "ended_at": _now_iso(),
             },
         )
     except Exception as exc:
+        _logger.warning("async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc)
         # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
         # write failures must not leave the state file stuck on "running" — that
         # would silently lock out the node forever. Append to the log so any
@@ -231,6 +348,10 @@ def _async_worker(
                 "error": f"{type(exc).__name__}: {exc}",
             },
         )
+    finally:
+        # Clear the sentinel after the terminal write (both branches) so a reused
+        # run dir never carries a stale cancel request into the next run.
+        _clear_cancel(rdir, run_id)
 
 
 def start_headless_async(

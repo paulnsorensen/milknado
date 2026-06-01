@@ -57,6 +57,9 @@ class GitAdapter:
     def remove_worktree(self, path: Path) -> None:
         self._run(["worktree", "remove", "--force", str(path)])
 
+    def prune_worktrees(self) -> None:
+        self._run(["worktree", "prune"])
+
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         result = subprocess.run(
             ["git", "rebase", onto],

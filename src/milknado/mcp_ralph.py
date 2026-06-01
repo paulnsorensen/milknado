@@ -30,7 +30,6 @@ from milknado.domains.dispatch import (
     now_iso,
     read_state,
     reconcile_node_status,
-    reconcile_orphan_node,
     runs_dir,
     write_state,
 )
@@ -44,7 +43,6 @@ from milknado.domains.dispatch.runner import _build_worker_env
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
-_logger = logging.getLogger(__name__)
 
 
 def _resolve_runner_cmd(explicit: str | None) -> list[str]:
@@ -208,9 +206,13 @@ def milknado_ralph_run_start(
             "run_id": run_id,
             "node_id": node_id,
             "status": "running",
+            "exit_code": None,
+            "timed_out": None,
+            "rebased": None,
             "pid": proc.pid,
             "log_path": str(log_path),
             "state_path": str(state_path),
+            "summary": None,
         }
     finally:
         graph.close()
@@ -236,4 +238,7 @@ def milknado_ralph_run_poll(run_id: str, project_root: str = "") -> dict:
     # stored field: no KeyError on a partial-write state, and no arbitrary-file
     # read via a tampered log_path.
     state["summary"] = tail(rdir / f"{run_id}.log")
+    state["state_path"] = str(state_path)
+    state.setdefault("exit_code", None)
+    state.setdefault("timed_out", None)
     return state
