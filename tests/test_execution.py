@@ -338,6 +338,75 @@ class TestExecutorDispatch:
         assert node is not None
         assert node.run_id == "run-1"
 
+    def test_adopts_an_existing_claim_without_remarking_running(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """When the dispatching parent (the ralph MCP tool) has already claimed the
+        node RUNNING under its run_id, the detached runner's dispatch must NOT
+        re-mark RUNNING (an illegal RUNNING -> RUNNING transition that would kill the
+        run) and must NOT clobber the claim's run_id — that run_id is the fence the
+        parent's set_pid and the completion guard depend on. It only attaches the
+        worktree, gated on the fence."""
+        from milknado.domains.dispatch._runstate import now_iso
+
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("claimed upstream")
+        claim_run_id = "node-1-20260101T000000Z-claim"
+        assert graph.claim_node(1, claim_run_id, now=now_iso()) is True
+
+        result = ex.dispatch(1, config)  # must not raise InvalidTransition
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING
+        assert node.run_id == claim_run_id, "the parent's fence run_id is preserved"
+        assert node.worktree_path is not None and "milknado-1-" in node.worktree_path
+        assert result.run_id == "run-1", "the ralph run_id is returned for completion waiting"
+
+    def test_complete_rejects_a_zombie_terminal_write_after_reclaim_mid_merge(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """The spec's 'main risk': complete snapshots the node (run_id=A) at entry,
+        then does the slow rebase-merge. If a concurrent dispatch reclaims the node
+        under a fresh run_id during that merge window, the post-merge terminal write
+        is fenced on the stale run_id A and must hit zero rows — the fresh owner's
+        RUNNING row is left intact and no completion duration is recorded for the
+        zombie. Without the run_id fence, complete would clobber the fresh run to
+        DONE."""
+        from milknado.domains.dispatch._runstate import now_iso
+
+        dead_pid = 2**31 - 1  # unreapable: os.kill(pid, 0) -> ProcessLookupError
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("zombie-completer")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        assert graph.claim_node(1, "run-A", now=now_iso()) is True
+        graph.set_pid(1, "run-A", dead_pid)
+        graph.set_worktree(1, "run-A", str(wt), "milknado/1-x")
+
+        def _reclaim_during_merge(worktree: Path, onto: str) -> RebaseResult:
+            # A second dispatch lands while run-A is mid-merge: run-A is presumed
+            # dead (its pid is gone), so it is reclaimed and a fresh run-B claims.
+            graph.try_reclaim(1, now=now_iso())
+            assert graph.claim_node(1, "run-B", now=now_iso()) is True
+            return RebaseResult(success=True)
+
+        fake_git.rebase = _reclaim_during_merge  # type: ignore[method-assign]
+
+        result = ex.complete(1, "main")
+
+        assert result.rebased is True, "the merge itself succeeded"
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING, "fresh owner (run-B) not clobbered to DONE"
+        assert node.run_id == "run-B", "run-B still owns the node; the zombie write was rejected"
+        assert node.completed_at is None, "no completion recorded for the reclaimed zombie run"
+
     def test_cleans_up_worktree_on_dispatch_failure(
         self,
         graph: MikadoGraph,

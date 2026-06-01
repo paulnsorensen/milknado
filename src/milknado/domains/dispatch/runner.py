@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shlex
 import subprocess
 import threading
@@ -31,6 +32,7 @@ _DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
+
 
 # Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
 # executable name (basename of argv[0]) so neither a prefix trick
@@ -82,7 +84,7 @@ def _resolve_worker_cmd(explicit: str | None) -> list[str]:
 
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    return _runs_dir(project_root) / f"node-{node_id}-{stamp}.log"
+    return _runs_dir(project_root) / f"node-{node_id}-{stamp}-{secrets.token_hex(4)}.log"
 
 
 _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
@@ -237,9 +239,13 @@ def start_headless_async(
     brief: str,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    run_id: str | None = None,
 ) -> AsyncStartRef:
     argv = _resolve_worker_cmd(worker_cmd)
-    run_id = _make_run_id(node_id)
+    # The caller (milknado_todo_run_start) claims the node under a run_id before
+    # spawning, then hands that same id here so the node row and the run-state file
+    # agree on the fence; standalone callers let us mint one.
+    run_id = run_id or _make_run_id(node_id)
     runs_dir = _runs_dir(project_root)
     log_path = runs_dir / f"{run_id}.log"
     state_path = runs_dir / f"{run_id}.state.json"
@@ -324,10 +330,17 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
     return flipped
 
 
-def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
+def find_terminal_runs_for_node(
+    project_root: Path, node_id: int, run_id: str | None = None
+) -> list[dict]:
     """Scan the runs dir for state files whose node matches and which have reached
     a terminal status. Used by callers that want to reconcile orphaned runs
-    (started, worker finished, but never polled — node still marked RUNNING)."""
+    (started, worker finished, but never polled — node still marked RUNNING).
+
+    When `run_id` is given, filter to that fence: only the node's current owner's
+    terminal file is returned, so a stale terminal file from an older run cannot be
+    selected. Callers must filter to the fence BEFORE picking the latest run —
+    otherwise a stale run with a later `ended_at` could mask the owner's file."""
     runs_dir = _runs_dir(project_root)
     out: list[dict] = []
     for state_path in runs_dir.glob(f"node-{node_id}-*.state.json"):
@@ -335,24 +348,54 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
             state = _read_state(state_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
-            out.append(state)
+        if state.get("node_id") != node_id or state.get("status") not in ("done", "failed"):
+            continue
+        if run_id is not None and state.get("run_id") != run_id:
+            continue
+        out.append(state)
     return out
 
 
-def reconcile_node_status(graph, node_id: int, run_status: str) -> None:  # noqa: ANN001
-    """Transition a node to its run's terminal status, idempotently.
+def latest_terminal_run(runs: list[dict]) -> dict | None:
+    """Return the most recent terminal run by ended_at, or None if runs is empty.
 
-    Only a RUNNING node can validly transition to a terminal status. Any other
-    state (already terminal, or reset externally) is left alone so reconciliation
-    never raises InvalidTransition — the first reconcile of a run wins, and a node
-    taken out of RUNNING is not force-marked. Shared by the sync (`mcp_run`) and
-    detached worktree (`mcp_ralph`) dispatch tools.
+    Deterministic selection for reconcile: when a node has multiple terminal
+    runs (e.g. a prior run finished after the node was reset and re-run), the
+    latest ended_at wins. Callers that fence on run_id must filter to the fence
+    first (see find_terminal_runs_for_node) so a stale run with a later ended_at
+    cannot mask the current owner's terminal file. Shared by the headless
+    (mcp_run) and detached-ralph (mcp_ralph) dispatch paths.
+    """
+    terminal = [r for r in runs if r.get("status") in ("done", "failed")]
+    if not terminal:
+        return None
+    return max(terminal, key=lambda r: r.get("ended_at") or "")
+
+
+def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | None = None) -> None:  # noqa: ANN001
+    """Transition a node to its run's terminal status, idempotently and fenced.
+
+    When `run_id` is given AND the node carries a run_id, the write goes through
+    `graph.mark_terminal`, whose atomic `WHERE run_id = ? AND status = 'running'`
+    is the real fence: a node re-claimed under a newer run_id (or already terminal)
+    matches zero rows and is left for its current owner. This closes the TOCTOU a
+    pre-check-then-unfenced-write left open — two concurrent reconcilers can both
+    pass a Python-level run_id check, but only the matching atomic UPDATE lands.
+
+    A node with no run_id (in-process TUI / legacy) has no fence to honour, so it
+    falls back to the unconditional transition; only a RUNNING node is touched, so
+    a node reset out of RUNNING is never force-marked. Shared by the sync (`mcp_run`)
+    and detached worktree (`mcp_ralph`) dispatch tools.
     """
     node = graph.get_node(node_id)
     if node is None or node.status != NodeStatus.RUNNING:
         return
-    if run_status == "done":
+    target = {"done": NodeStatus.DONE, "failed": NodeStatus.FAILED}.get(run_status)
+    if target is None:
+        return
+    if run_id is not None and node.run_id is not None:
+        graph.mark_terminal(node_id, run_id, target)
+    elif target is NodeStatus.DONE:
         graph.mark_done(node_id)
-    elif run_status == "failed":
+    else:
         graph.mark_failed(node_id)

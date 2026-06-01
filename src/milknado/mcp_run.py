@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shlex
 from pathlib import Path
 
@@ -10,13 +11,17 @@ from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
+    latest_terminal_run,
     poll_async_run,
     reconcile_node_status,
     render_brief,
     run_headless,
     start_headless_async,
 )
+from milknado.domains.dispatch._runstate import make_run_id, now_iso
 from milknado.domains.dispatch.runner import _validate_worker_argv
+
+_logger = logging.getLogger(__name__)
 
 
 def _validate_worker_cmd(worker_cmd: str | None) -> None:
@@ -70,7 +75,8 @@ def _run_and_update_status(
         else:
             graph.mark_failed(node_id)
     final = graph.get_node(node_id)
-    assert final is not None
+    if final is None:
+        raise RuntimeError(f"node {node_id} not found after run completed")
     return {
         "node_id": node_id,
         "status": final.status.value,
@@ -92,10 +98,13 @@ def milknado_todo_run(
 
     worker_cmd defaults to $MILKNADO_WORKER_CMD then `claude -p`.
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
+    Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
+    use milknado_todo_run_start / milknado_todo_run_poll.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
+    _logger.info("milknado_todo_run: node=%d timeout=%ds", node_id, timeout_seconds)
     try:
         return _run_and_update_status(
             graph,
@@ -130,28 +139,59 @@ def milknado_todo_run_start(
         if node is None:
             raise ValueError(f"node {node_id} not found")
         if node.status == NodeStatus.RUNNING:
-            # Before refusing, reconcile any orphaned terminal runs for this
-            # node — a prior worker may have finished without anyone polling,
-            # leaving the node status stuck on RUNNING. Without this the node
-            # is locked out forever. Also sweep runs stuck on "running" past
-            # their timeout: the worker thread vanished (e.g. server crash)
-            # without writing a terminal state, which would lock the node
-            # just as permanently.
+            # Before the claim can succeed, reconcile any orphaned terminal runs
+            # for this node — a prior worker may have finished without anyone
+            # polling, leaving the node stuck on RUNNING. Also sweep runs stuck on
+            # "running" past their timeout: the worker thread vanished (e.g. server
+            # crash) without writing a terminal state, which would lock the node
+            # just as permanently. (The headless worker is an in-process thread
+            # with no pid, so there is no pid-liveness fast path here — it relies
+            # on this reconcile plus the stale-timeout backstop.)
             fail_stale_running_runs(root, node_id)
-            for state in find_terminal_runs_for_node(root, node_id):
-                reconcile_node_status(graph, node_id, state["status"])
-            node = graph.get_node(node_id)
-            assert node is not None
-            if node.status == NodeStatus.RUNNING:
-                raise ValueError(
-                    f"node {node_id} is already running; set status back to pending to retry"
+            # Filter terminal files to this node's fence BEFORE picking the latest,
+            # so a stale run with a later ended_at cannot mask the current owner's
+            # file. reconcile_node_status then routes the write through the atomic
+            # run_id + status fence (graph.mark_terminal), closing the TOCTOU a
+            # pre-check-then-unfenced-write left open: a node re-claimed under a
+            # newer run cannot be clobbered. A legacy node with no run_id has no
+            # fence to honour and falls back to the unconditional reconcile.
+            winner = latest_terminal_run(
+                find_terminal_runs_for_node(root, node_id, run_id=node.run_id)
+            )
+            if winner is not None:
+                reconcile_node_status(
+                    graph, node_id, winner["status"], run_id=winner.get("run_id")
                 )
         brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
-        # Normalise to RUNNING before dispatch so the post-run poll
-        # reconciliation (RUNNING -> DONE/FAILED) is always a valid transition,
-        # even when re-running a node that was FAILED/BLOCKED from a prior run.
-        _ensure_running(graph, node_id)
-        ref = start_headless_async(root, node_id, brief, worker_cmd, timeout_seconds)
+        # Atomic optimistic claim: the cross-process mutual-exclusion point that
+        # replaces the in-process dispatch lock. The PENDING/FAILED/BLOCKED ->
+        # RUNNING transition and the run_id fence are written in one statement, so a
+        # second concurrent caller sees RUNNING and loses. The same run_id names the
+        # run-state file, keeping the node row and the file in agreement.
+        run_id = make_run_id(node_id)
+        if not graph.claim_node(node_id, run_id, now=now_iso()):
+            current = graph.get_node(node_id)
+            status = current.status.value if current is not None else "gone"
+            raise ValueError(
+                f"node {node_id} is already {status}; set status back to pending to retry"
+            )
+        try:
+            ref = start_headless_async(
+                root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id
+            )
+        except Exception:
+            # Startup failed after the claim (bad worker cmd resolved in
+            # start_headless_async, or a state-file write): release the claim with a
+            # fenced terminal write so the node is not stranded RUNNING until the
+            # stale-timeout backstop, then re-raise for a clean caller failure.
+            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
+            raise
+        _logger.info(
+            "milknado_todo_run_start: node=%d run_id=%s timeout=%ds",
+            node_id,
+            ref.run_id,
+            timeout_seconds,
+        )
         return {
             "run_id": ref.run_id,
             "node_id": node_id,
@@ -171,7 +211,11 @@ def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
     if state["status"] in ("done", "failed"):
         graph, _cfg = open_graph(root)
         try:
-            reconcile_node_status(graph, state["node_id"], state["status"])
+            # Fence on the polled run's run_id so polling an older run cannot
+            # clobber a newer RUNNING owner that re-claimed this node.
+            reconcile_node_status(
+                graph, state["node_id"], state["status"], run_id=state.get("run_id")
+            )
         finally:
             graph.close()
     return state

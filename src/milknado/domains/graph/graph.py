@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -30,12 +31,33 @@ from milknado.domains.graph._persistence import (
     get_file_ownership,
     row_to_node,
     set_file_ownership,
+    set_pid,
+    set_worktree,
 )
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
 
 _logger = logging.getLogger(__name__)
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if a process with this pid exists on the local machine.
+
+    `os.kill(pid, 0)` sends no signal but performs the existence + permission
+    check. PermissionError means the process exists but is owned by another user
+    (still alive); ProcessLookupError / other OSError means it is gone. Cross-machine
+    runners are out of scope (the spec assumes runners are local to the daemon).
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 class MikadoGraph(_AnalyticsFacade):
@@ -285,6 +307,82 @@ class MikadoGraph(_AnalyticsFacade):
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
+
+    def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool:
+        """Atomically claim a claimable (pending/failed/blocked) node as RUNNING.
+
+        The cross-process mutual-exclusion point: a single conditional UPDATE that
+        either wins (returns True) or loses to a concurrent claimant (False). The
+        run_id written becomes the fence guarding later ownership-gated writes.
+        """
+        old = self._node_status(node_id)
+        claimed = _transitions.claim_node(self._conn, node_id, run_id, now)
+        if claimed and old is not None:
+            self._notify_status_change(node_id, old, NodeStatus.RUNNING)
+        return claimed
+
+    def try_reclaim(self, node_id: int, *, now: str) -> bool:
+        """Free a RUNNING node whose owner process is provably dead.
+
+        Reads the current owner (run_id, pid); if the pid is recorded and no longer
+        alive, releases the node back to PENDING so the next dispatch can claim it
+        without waiting out the stale-running timeout. A live (or pid-unknown) owner
+        is left intact — a failed claim refuses the new caller instead.
+
+        Returns True iff a dead owner was actually released, so the dispatch boundary
+        can log the recovery (an operationally interesting event on the worker path).
+        """
+        row = self._conn.execute(
+            "SELECT status, run_id, pid FROM nodes WHERE id = ?", (node_id,)
+        ).fetchone()
+        if row is None or NodeStatus(row["status"]) != NodeStatus.RUNNING:
+            return False
+        owner_run_id, pid = row["run_id"], row["pid"]
+        if owner_run_id is None or pid is None or _pid_alive(pid):
+            return False
+        if _transitions.release(self._conn, node_id, owner_run_id):
+            self._notify_status_change(node_id, NodeStatus.RUNNING, NodeStatus.PENDING)
+            return True
+        return False
+
+    def release(self, node_id: int, run_id: str) -> bool:
+        """Release a RUNNING claim back to PENDING, fenced on the run_id.
+
+        Used by dispatch cleanup to undo a claim whose startup failed, without
+        clobbering a node already re-claimed under a different run. Fenced on both
+        run_id and status = 'running' (see _transitions.release), so a node that
+        completed DONE between the caller's read and this write is never walked
+        back to PENDING. Returns whether the release landed.
+        """
+        ok = _transitions.release(self._conn, node_id, run_id)
+        if ok:
+            self._notify_status_change(node_id, NodeStatus.RUNNING, NodeStatus.PENDING)
+        return ok
+
+    def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool:
+        """Write a terminal status (DONE/FAILED) gated on the run_id fence.
+
+        Returns False when the node was re-claimed under a new run_id — the caller
+        was reclaimed and its terminal write is rejected (zero rows).
+        """
+        ok = _transitions.mark_terminal(self._conn, node_id, run_id, status)
+        if ok:
+            # The fenced UPDATE matched only because status was 'running', so the
+            # source state is RUNNING by construction. Emit that instead of a
+            # pre-read that could be stale under cross-process contention.
+            self._notify_status_change(node_id, NodeStatus.RUNNING, status)
+        return ok
+
+    def set_pid(self, node_id: int, run_id: str, pid: int) -> None:
+        """Record the worker pid on the node, CAS-gated on the run_id fence."""
+        set_pid(self._conn, node_id, run_id, pid)
+
+    def set_worktree(
+        self, node_id: int, run_id: str, worktree_path: str, branch_name: str
+    ) -> None:
+        """Attach worktree/branch to an already-claimed node (no status change),
+        CAS-gated on the run_id fence."""
+        set_worktree(self._conn, node_id, run_id, worktree_path, branch_name)
 
     def mark_pending(self, node_id: int) -> None:
         old = self._node_status(node_id)

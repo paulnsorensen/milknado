@@ -74,3 +74,88 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
         (NodeStatus.PENDING.value, node_id),
     )
     conn.commit()
+
+
+# --- Atomic optimistic claim / reclaim / fence ---------------------------------
+# These bypass assert_transition deliberately: the SQL WHERE clause IS the guard,
+# evaluated atomically by SQLite (a single conditional UPDATE serialized by the
+# write lock), which makes it correct across processes — unlike an in-process
+# mutex. `cursor.rowcount == 1` tells the caller whether it won.
+
+_CLAIMABLE = ("pending", "failed", "blocked")
+
+
+def claim_node(conn: sqlite3.Connection, node_id: int, run_id: str, now: str) -> bool:
+    """Atomically claim a claimable node, returning True iff this caller won.
+
+    The PENDING/FAILED/BLOCKED -> RUNNING transition, the run_id fence, and the
+    dispatch timestamp are written in one statement; a concurrent caller (another
+    thread OR another process sharing the db) sees RUNNING and gets rowcount 0.
+
+    `pid` is reset to NULL: a FAILED node carries the dead prior run's pid
+    (mark_terminal clears run_id but not pid), so without this reset a freshly
+    re-claimed node would advertise a stale-and-dead pid in the window before
+    set_pid records the real one — and a concurrent try_reclaim would read that
+    dead pid and release this legitimate claim. NULL means "pid-unknown", which
+    try_reclaim correctly refuses to reclaim.
+    """
+    cur = conn.execute(
+        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = NULL "  # noqa: S608 — fixed tuple
+        f"WHERE id = ? AND status IN {_CLAIMABLE}",
+        (run_id, now, node_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
+    """Flip a RUNNING node back to PENDING, clearing ownership, gated on run_id.
+
+    Used by try_reclaim to free a provably-dead owner and by dispatch cleanup to
+    release a claim whose startup failed. The run_id guard means a node already
+    re-claimed under a different run is left untouched.
+
+    The `status = 'running'` guard mirrors mark_terminal: DONE keeps its run_id, so
+    without it an owner that committed DONE between a reclaim's SELECT and this
+    UPDATE could be walked back from DONE to PENDING, resurrecting a completed node.
+    """
+    cur = conn.execute(
+        "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
+        "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
+        "WHERE id = ? AND run_id = ? AND status = 'running'",
+        (node_id, owner_run_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: NodeStatus) -> bool:
+    """Write a node's terminal status (DONE/FAILED), gated on the run_id fence.
+
+    Returns False (zero rows) when the node has been re-claimed under a new
+    run_id — the caller was reclaimed and must NOT treat its run as authoritative.
+    DONE sets completed_at and keeps the worktree/branch (already removed on disk);
+    FAILED clears worktree/branch/run_id, mirroring mark_failed.
+
+    The `status = 'running'` guard makes the transition fire exactly once from the
+    active owner: DONE keeps its run_id, so without it a later same-run_id
+    mark_terminal(..., FAILED) would walk a DONE node back to FAILED, bypassing
+    the terminal state machine.
+    """
+    if status is NodeStatus.DONE:
+        completed_at = datetime.now(UTC).isoformat()
+        cur = conn.execute(
+            "UPDATE nodes SET status = ?, completed_at = ? "
+            "WHERE id = ? AND run_id = ? AND status = 'running'",
+            (NodeStatus.DONE.value, completed_at, node_id, run_id),
+        )
+    elif status is NodeStatus.FAILED:
+        cur = conn.execute(
+            "UPDATE nodes SET status = ?, completed_at = NULL, worktree_path = NULL, "
+            "branch_name = NULL, run_id = NULL WHERE id = ? AND run_id = ? AND status = 'running'",
+            (NodeStatus.FAILED.value, node_id, run_id),
+        )
+    else:
+        raise ValueError(f"mark_terminal status must be DONE or FAILED, got {status}")
+    conn.commit()
+    return cur.rowcount == 1

@@ -193,19 +193,30 @@ def test_poll_rejects_malformed_run_id(tmp_path: Path) -> None:
         _call(milknado_ralph_run_poll, run_id="../etc/passwd", project_root=str(tmp_path))
 
 
-def test_node_status_unaffected_by_start_until_runner_acts(tmp_path: Path) -> None:
-    """start does not pre-mark RUNNING; the detached runner owns node status.
-    With a no-op runner the node stays pending."""
+def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
+    """start now atomically claims the node RUNNING in the parent (the cross-process
+    mutual-exclusion point) BEFORE spawning the detached runner, so a second
+    concurrent caller loses the claim. With a no-op runner that never reaches a
+    terminal write, the node stays RUNNING under the claim."""
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="pend", kind="task", project_root=root)
-    _call(
+    started = _call(
         milknado_ralph_run_start,
         node_id=task["id"],
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
     )
     tree = _call(milknado_todo_tree, project_root=root)
-    assert tree[0]["status"] == "pending"
+    assert tree[0]["status"] == "running"
+    # the node carries the claim run_id as its fence (matches the run-state file name)
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(task["id"])
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.run_id == started["run_id"]
+    assert node.pid == started["pid"]
 
 
 def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
@@ -229,6 +240,19 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     assert state["rebased"] is False
     assert "spawn failed" in state["detail"]
     assert state["ended_at"] is not None
+    # The node is claimed RUNNING in the parent BEFORE the spawn attempt, so the
+    # spawn-failure path must release that claim (fenced mark_terminal FAILED) —
+    # otherwise the node is stranded RUNNING forever and no retry can re-claim it.
+    from milknado.domains.common import NodeStatus
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(task["id"])
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status == NodeStatus.FAILED, "spawn failure frees the claim, no strand RUNNING"
+    assert node.run_id is None, "the fence run_id is cleared so the node is freed for re-dispatch"
 
 
 def test_poll_survives_state_missing_log_path(tmp_path: Path) -> None:
@@ -383,11 +407,13 @@ def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
 
 def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) -> None:
     """A node stuck RUNNING because a finished run was never polled is reconciled
-    (the loop at the top of start), freeing it so a fresh run can spawn."""
+    (the loop at the top of start), freeing it so a fresh claim can spawn. A
+    'failed' orphan reconciles to FAILED, which the new claim can re-acquire (a
+    'done' orphan reconciles to DONE and is correctly refused — done is terminal)."""
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
     node_id = task["id"]
-    # Mark the node RUNNING and drop a terminal 'done' state file for it that no
+    # Mark the node RUNNING and drop a terminal 'failed' state file for it that no
     # one polled — exactly the orphan the start-time reconcile loop must clear.
     graph, _cfg = open_graph(tmp_path)
     try:
@@ -402,7 +428,7 @@ def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) ->
             {
                 "run_id": orphan_id,
                 "node_id": node_id,
-                "status": "done",
+                "status": "failed",
                 "started_at": "2026-01-01T00:00:00+00:00",
                 "timeout_seconds": 1800,
             }
@@ -414,7 +440,118 @@ def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) ->
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
     )
-    # Reconcile marked the orphan done, so start no longer sees RUNNING and spawns.
+    # Reconcile freed the node (FAILED), so the fresh claim wins and start spawns.
     assert started["status"] == "running"
-    tree = _call(milknado_todo_tree, project_root=root)
-    assert tree[0]["status"] == "done"  # node was reconciled to done, not relocked
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.run_id == started["run_id"]  # re-claimed under the new run, not relocked
+
+
+def test_start_refuses_when_node_running_with_live_pid(tmp_path: Path) -> None:
+    """A node RUNNING under a live owner pid with a non-expired claim is refused —
+    no second worker. (This process's own pid stands in for a live owner.)"""
+    import os
+
+    from milknado.domains.dispatch._runstate import now_iso
+
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="live", kind="task", project_root=root)
+    node_id = task["id"]
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.claim_node(node_id, "node-1-20260101T000000Z-live", now=now_iso())
+        graph.set_pid(node_id, "node-1-20260101T000000Z-live", os.getpid())
+    finally:
+        graph.close()
+    with pytest.raises(ValueError, match="already running"):
+        _call(
+            milknado_ralph_run_start,
+            node_id=node_id,
+            runner_cmd=f"{sys.executable} -c pass",
+            project_root=root,
+        )
+
+
+def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
+    """A node left RUNNING by a DEAD pid is reclaimed on the next start and a fresh
+    worker dispatched immediately — no 1800s timeout wait. The dead owner is
+    detected by process-liveness (os.kill(pid, 0)), not by the stale-timeout sweep."""
+    from milknado.domains.dispatch._runstate import now_iso
+
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="deadpid", kind="task", project_root=root)
+    node_id = task["id"]
+    dead_pid = 2**31 - 1  # unreapable: no process holds it
+    dead_run_id = f"node-{node_id}-20260101T000000Z-dead"
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        # Simulate a runner that claimed, recorded its pid, then died without
+        # writing a terminal state — node stuck RUNNING, well within the 1800s
+        # timeout (so only pid-liveness, not the stale sweep, can free it).
+        graph.claim_node(node_id, dead_run_id, now=now_iso())
+        graph.set_pid(node_id, dead_run_id, dead_pid)
+    finally:
+        graph.close()
+    started = _call(
+        milknado_ralph_run_start,
+        node_id=node_id,
+        runner_cmd=f"{sys.executable} -c pass",
+        project_root=root,
+    )
+    assert started["status"] == "running"
+    assert started["run_id"] != dead_run_id  # a fresh run won the reclaimed node
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.run_id == started["run_id"]
+
+
+def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) -> None:
+    """Two concurrent milknado_ralph_run_start calls on the same PENDING node must
+    spawn exactly one detached worker; the loser raises 'already running'. The
+    atomic claim_node UPDATE — not an in-process lock — is the cross-process gate."""
+    import threading
+
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="concurrent-ralph", kind="task", project_root=root)
+    node_id = task["id"]
+    # A no-op runner that never reaches terminal, so a leaked second claim would
+    # leave the node RUNNING under two run_ids and we'd see two successes.
+    noop = f"{sys.executable} -c pass"
+
+    results: list[dict] = []
+    errors: list[str] = []
+    result_lock = threading.Lock()
+    barrier = threading.Barrier(2)
+
+    def _start() -> None:
+        barrier.wait()
+        try:
+            r = _call(
+                milknado_ralph_run_start,
+                node_id=node_id,
+                runner_cmd=noop,
+                project_root=root,
+            )
+            with result_lock:
+                results.append(r)
+        except ValueError as exc:
+            with result_lock:
+                errors.append(str(exc))
+
+    threads = [threading.Thread(target=_start) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert len(results) == 1, f"expected exactly 1 successful dispatch, errors={errors}"
+    assert len(errors) == 1, f"expected exactly 1 'already running', errors={errors}"
+    assert "already running" in errors[0]
