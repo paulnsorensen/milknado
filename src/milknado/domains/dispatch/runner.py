@@ -211,8 +211,8 @@ def _write_worker_stdin(stdin, brief: str) -> None:  # noqa: ANN001
     try:
         stdin.write(brief.encode("utf-8"))
         stdin.close()
-    except (BrokenPipeError, OSError):
-        pass
+    except (BrokenPipeError, OSError) as exc:
+        _logger.debug("Worker stdin unavailable while sending brief (worker likely exited): %s", exc)
 
 
 def _execute_cancellable(
