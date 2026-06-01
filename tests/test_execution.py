@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from milknado.domains.common.errors import RebaseAbortError, TransientDispatchError
+from milknado.domains.common.errors import (
+    InvalidTransition,
+    RebaseAbortError,
+    TransientDispatchError,
+)
 from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
@@ -553,6 +557,105 @@ class TestExecutorComplete:
         node = graph.get_node(1)
         assert node is not None
         assert node.status == NodeStatus.DONE
+
+    def test_completing_already_done_node_is_idempotent(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """A duplicate completion of an already-DONE node must be a true no-op.
+
+        A second completion signal for the same run (or a re-run of a finished
+        node) reaches complete() with the node already terminal. DONE has no
+        valid transitions, so an unguarded mark_done would raise
+        InvalidTransition. Beyond not raising, the duplicate must not re-run the
+        squash/rebase/worktree-remove side effects: mark_done leaves
+        worktree_path set, so a node whose prior worktree cleanup failed would
+        otherwise have its rebase_and_merge workflow run a second time.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        ex.complete(1, "main")
+        assert graph.get_node(1).status == NodeStatus.DONE  # type: ignore[union-attr]
+        assert len(fake_git.commits) == 1  # first completion squashed exactly once
+
+        # Second completion of the same node. The worktree dir still exists
+        # (FakeGit.remove only records the path) and worktree_path is still set,
+        # so an unguarded re-run would squash again. It must instead be a no-op:
+        # not a crash, and not a second squash/rebase/remove.
+        result = ex.complete(1, "main")
+
+        assert result.rebased is True
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.DONE
+        assert len(fake_git.commits) == 1  # duplicate completion did not re-squash
+
+    def test_completing_a_failed_node_is_a_noop(
+        self,
+        graph: MikadoGraph,
+    ) -> None:
+        """A FAILED node reaching complete() again is a terminal duplicate: a true
+        no-op that returns rebased=False without raising or re-running the
+        squash/rebase workflow. FAILED -> DONE is not a valid transition, so an
+        unguarded mark_done would raise InvalidTransition instead.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        graph.mark_failed(1)
+
+        result = ex.complete(1, "main")
+
+        assert result.rebased is False  # terminal-but-not-DONE no-op
+        assert len(fake_git.commits) == 0  # short-circuited before rebase_and_merge
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.FAILED
+
+    @pytest.mark.parametrize("status", [NodeStatus.PENDING, NodeStatus.BLOCKED])
+    def test_completing_a_non_terminal_node_raises(
+        self,
+        graph: MikadoGraph,
+        status: NodeStatus,
+    ) -> None:
+        """A non-RUNNING, non-terminal node (PENDING/BLOCKED) is never a valid
+        completion target. complete() must fail loud with InvalidTransition rather
+        than silently no-op: a silent no-op would hide a real state-machine bug and,
+        in the run loop, print a false completion for a node that never finished.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        if status is NodeStatus.BLOCKED:
+            graph.mark_blocked(1)
+
+        with pytest.raises(InvalidTransition):
+            ex.complete(1, "main")
+
+        assert len(fake_git.commits) == 0  # raised before any squash/rebase
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == status
 
     def test_marks_failed_on_rebase_conflict(
         self,
