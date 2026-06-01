@@ -316,9 +316,7 @@ class TestRunCancel:
     def _fast_cancel_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No-pid states hand-written here have no live worker, so cancel falls
         back after the finalize bound. Shorten it so these tests stay fast."""
-        import milknado.mcp_run as mcp_run_mod
-
-        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
+        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
 
     def test_cancel_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
@@ -650,8 +648,6 @@ class TestAsyncCancel:
         """Regression (age:correctness): when the worker finishes `done` inside the
         finalize window, cancel observes a `done` state — it must reconcile the node
         `done`, not force-fail a genuinely-completed run and discard its work."""
-        import milknado.mcp_run as mcp_run_mod
-
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="done-in-win", kind="task", project_root=root)
         node_id = task["id"]
@@ -677,7 +673,7 @@ class TestAsyncCancel:
             sp.write_text(json.dumps(done_state))
             return done_state
 
-        monkeypatch.setattr(mcp_run_mod, "_await_cancel_finalize", fake_finalize)
+        monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", fake_finalize)
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
@@ -825,18 +821,18 @@ class TestCancelFinalizeAndRace:
         """If the state file stays unreadable for the whole finalize window, the
         bound elapses to None and a warning naming the read-error count is logged,
         so a wedged/permission-denied state file is diagnosable, not silent."""
-        import milknado.mcp_run as mcp_run_mod
+        from milknado.mcp_run import _await_cancel_finalize
 
-        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
-        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_POLL_SECS", 0.01)
+        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
+        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_POLL_SECS", 0.01)
 
         def boom(_sp):
             raise OSError("permission denied")
 
-        monkeypatch.setattr(mcp_run_mod, "read_state", boom)
+        monkeypatch.setattr("milknado.mcp_run.read_state", boom)
 
         with caplog.at_level(logging.WARNING, logger="milknado.mcp_run"):
-            out = mcp_run_mod._await_cancel_finalize(tmp_path / "missing.state.json")
+            out = _await_cancel_finalize(tmp_path / "missing.state.json")
 
         assert out is None, "an unreadable state for the whole window must time out to None"
         assert any("unreadable state reads" in r.getMessage() for r in caplog.records), (
@@ -850,7 +846,6 @@ class TestCancelFinalizeAndRace:
         (bound elapsed) but the worker wrote its terminal state in the final poll
         gap. Cancel must re-read and ADOPT that write, not overwrite a genuine
         `done` with `cancelled`."""
-        import milknado.mcp_run as mcp_run_mod
         from milknado.domains.dispatch import runs_dir as _runs_dir
 
         root = str(tmp_path)
@@ -882,7 +877,7 @@ class TestCancelFinalizeAndRace:
             sp.write_text(json.dumps(done_state))
             return None
 
-        monkeypatch.setattr(mcp_run_mod, "_await_cancel_finalize", elapsed_after_done)
+        monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", elapsed_after_done)
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 

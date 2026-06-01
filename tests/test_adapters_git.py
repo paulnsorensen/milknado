@@ -59,6 +59,26 @@ class TestRemoveWorktree:
         )
 
 
+class TestPruneWorktrees:
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_calls_git_worktree_prune(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.return_value = _ok()
+        adapter.prune_worktrees()
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "prune"],
+            cwd=adapter._root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+        with pytest.raises(subprocess.CalledProcessError):
+            adapter.prune_worktrees()
+
+
 class TestRebase:
     @patch("milknado.adapters.git.subprocess.run")
     def test_successful_rebase(self, mock_run: MagicMock, adapter: GitAdapter) -> None:

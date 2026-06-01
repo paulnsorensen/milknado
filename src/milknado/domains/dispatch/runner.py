@@ -9,6 +9,7 @@ capturing combined output) alongside orphan-run recovery and the graph-side
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import shlex
@@ -30,6 +31,8 @@ from milknado.domains.dispatch._runstate import read_state as _read_state
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
 from milknado.domains.dispatch._runstate import write_state as _write_state
+
+_logger = logging.getLogger(__name__)
 
 _DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
@@ -198,6 +201,20 @@ def _terminate_worker(proc: subprocess.Popen) -> None:
         proc.wait()
 
 
+def _write_worker_stdin(stdin, brief: str) -> None:  # noqa: ANN001
+    """Write the brief to the worker's stdin and close it.
+
+    Runs in a daemon thread (async path) so a brief larger than the OS pipe
+    buffer can't block before the cancel/timeout poll loop starts. A
+    BrokenPipeError/OSError just means the worker already exited — nothing to do.
+    """
+    try:
+        stdin.write(brief.encode("utf-8"))
+        stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+
+
 def _execute_cancellable(
     project_root: Path,
     node_id: int,
@@ -222,11 +239,13 @@ def _execute_cancellable(
     deadline = time.monotonic() + timeout
     with log_path.open("wb") as log_fh:
         proc = _spawn_worker(project_root, node_id, log_fh, argv)
+        # Write the brief from a daemon thread so a brief larger than the OS pipe
+        # buffer can't block before the cancel/timeout poll loop starts — a
+        # synchronous write would be unkillable until the worker drained stdin.
         if proc.stdin is not None:
-            try:
-                proc.stdin.write(brief.encode("utf-8"))
-            finally:
-                proc.stdin.close()
+            threading.Thread(
+                target=_write_worker_stdin, args=(proc.stdin, brief), daemon=True
+            ).start()
         while proc.poll() is None:
             if _is_cancel_requested(runs_dir, run_id):
                 _terminate_worker(proc)
@@ -305,6 +324,7 @@ def _async_worker(
             },
         )
     except Exception as exc:
+        _logger.warning("async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc)
         # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
         # write failures must not leave the state file stuck on "running" — that
         # would silently lock out the node forever. Append to the log so any

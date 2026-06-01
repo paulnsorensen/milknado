@@ -84,4 +84,4 @@ def clear_cancel(runs_dir: Path, run_id: str) -> None:
     try:
         cancel_path(runs_dir, run_id).unlink()
     except FileNotFoundError:
-        pass
+        pass  # sentinel already absent — nothing to clear

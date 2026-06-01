@@ -1,4 +1,5 @@
 from milknado.domains.dispatch._runstate import (
+    RUN_ID_RE,
     cancel_path,
     clear_cancel,
     is_cancel_requested,
@@ -25,6 +26,7 @@ from milknado.domains.dispatch.runner import (
 
 __all__ = [
     "AsyncStartRef",
+    "RUN_ID_RE",
     "RunResult",
     "cancel_path",
     "clear_cancel",

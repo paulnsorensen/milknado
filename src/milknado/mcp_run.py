@@ -14,6 +14,7 @@ from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
+    RUN_ID_RE,
     clear_cancel,
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -30,7 +31,6 @@ from milknado.domains.dispatch import (
     start_headless_async,
     write_state,
 )
-from milknado.domains.dispatch._runstate import RUN_ID_RE
 from milknado.domains.dispatch.runner import _validate_worker_argv
 
 _logger = logging.getLogger(__name__)
@@ -270,36 +270,34 @@ def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
 
 
 @mcp.tool()
-def milknado_run_list(project_root: str = "") -> list[dict]:
+def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
     """List active and recent runs from .milknado/runs/, sorted newest first.
 
     Returns superset-schema dicts. summary is always None — use
-    milknado_todo_run_poll or milknado_ralph_run_poll for log tails.
+    milknado_todo_run_poll or milknado_ralph_run_poll for log tails. Bounded to
+    the `limit` most-recently-updated runs (by state-file mtime) so read cost
+    stays flat as run history grows; raise `limit` to widen the window.
     """
     root = resolve_project_root(project_root or None)
     rdir = runs_dir(root)
+
+    def _mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    # Read only the newest `limit` state files (by mtime, a good proxy for
+    # recency) so a project with a long run history doesn't parse every file.
+    recent = sorted(rdir.glob("*.state.json"), key=_mtime, reverse=True)[: max(limit, 0)]
     entries: list[tuple[str, dict]] = []
-    for sp in rdir.glob("*.state.json"):
+    for sp in recent:
         try:
             state = read_state(sp)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError) as exc:
+            _logger.warning("milknado_run_list: skipping unreadable state file %s: %s", sp, exc)
             continue
-        entries.append(
-            (
-                state.get("started_at") or "",
-                {
-                    "run_id": state.get("run_id"),
-                    "node_id": state.get("node_id"),
-                    "status": state.get("status"),
-                    "exit_code": state.get("exit_code"),
-                    "timed_out": state.get("timed_out"),
-                    "rebased": state.get("rebased"),
-                    "log_path": state.get("log_path"),
-                    "state_path": str(sp),
-                    "summary": None,
-                },
-            )
-        )
+        entries.append((state.get("started_at") or "", _state_to_run_dict(state, sp)))
     entries.sort(key=lambda x: x[0], reverse=True)
     return [e[1] for e in entries]
 
@@ -428,8 +426,10 @@ def _cancel_pid_run(root: Path, state: dict, state_path: Path, run_id: str) -> d
     pid = state["pid"]
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        pass  # process already gone
+    except ProcessLookupError:
+        pass  # process already gone — fall through to finalize the terminal state
+    # Any other OSError (e.g. EPERM) means the process may still be alive: let it
+    # propagate rather than reporting a run cancelled that we never signalled.
     final = _cancelled_state(state)
     write_state(state_path, final)
     _reconcile_cancel(root, state.get("node_id"), run_id)
