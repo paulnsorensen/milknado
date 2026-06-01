@@ -164,6 +164,47 @@ class TestTryReclaim:
         graph.try_reclaim(node_id, now=now_iso())  # still pending
         assert graph.get_node(node_id).status == NodeStatus.PENDING
 
+    def test_does_not_resurrect_a_completed_node(self, graph: MikadoGraph) -> None:
+        """A DONE node keeps its run_id AND its (now-dead) pid — mark_terminal(DONE)
+        clears neither. Without the status guard on release, try_reclaim would read
+        that dead pid, judge the owner dead, and walk the completed node back to
+        PENDING — re-running work that already finished. The guard refuses it."""
+        node_id = _add_pending(graph)
+        graph.claim_node(node_id, "run-A", now=now_iso())
+        graph.set_pid(node_id, "run-A", _DEAD_PID)
+        graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)  # completes; keeps run_id + pid
+        graph.try_reclaim(node_id, now=now_iso())
+        assert graph.get_node(node_id).status == NodeStatus.DONE, (
+            "a completed node must never be reclaimed back to PENDING"
+        )
+
+
+class TestRelease:
+    def test_releases_a_running_owner(self, graph: MikadoGraph) -> None:
+        node_id = _add_pending(graph)
+        graph.claim_node(node_id, "run-A", now=now_iso())
+        graph.set_worktree(node_id, "run-A", "/tmp/wt", "milknado/1-x")
+        assert graph.release(node_id, "run-A") is True
+        node = graph.get_node(node_id)
+        assert node.status == NodeStatus.PENDING
+        assert node.run_id is None
+        assert node.worktree_path is None
+
+    def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
+        node_id = _add_pending(graph)
+        graph.claim_node(node_id, "run-A", now=now_iso())
+        assert graph.release(node_id, "run-stale") is False
+        assert graph.get_node(node_id).status == NodeStatus.RUNNING, "a fresh owner is protected"
+
+    def test_refuses_a_completed_node(self, graph: MikadoGraph) -> None:
+        """DONE keeps its run_id, so a same-run_id release would match the fence —
+        the status='running' guard is what stops it walking DONE back to PENDING."""
+        node_id = _add_pending(graph)
+        graph.claim_node(node_id, "run-A", now=now_iso())
+        graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)
+        assert graph.release(node_id, "run-A") is False
+        assert graph.get_node(node_id).status == NodeStatus.DONE
+
 
 class TestMarkTerminal:
     def test_marks_done_for_the_owner(self, graph: MikadoGraph) -> None:

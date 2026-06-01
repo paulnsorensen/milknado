@@ -148,13 +148,20 @@ def milknado_todo_run_start(
             # with no pid, so there is no pid-liveness fast path here — it relies
             # on this reconcile plus the stale-timeout backstop.)
             fail_stale_running_runs(root, node_id)
-            winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-            # Fence the reconcile on the terminal file's run_id: only the node's
-            # current owner's run may drive its terminal transition, so a stale
-            # terminal file from an older run cannot clobber a live run still
-            # holding the node. A legacy node with no run_id has no fence to honour.
-            if winner is not None and (node.run_id is None or winner.get("run_id") == node.run_id):
-                reconcile_node_status(graph, node_id, winner["status"])
+            # Filter terminal files to this node's fence BEFORE picking the latest,
+            # so a stale run with a later ended_at cannot mask the current owner's
+            # file. reconcile_node_status then routes the write through the atomic
+            # run_id + status fence (graph.mark_terminal), closing the TOCTOU a
+            # pre-check-then-unfenced-write left open: a node re-claimed under a
+            # newer run cannot be clobbered. A legacy node with no run_id has no
+            # fence to honour and falls back to the unconditional reconcile.
+            winner = latest_terminal_run(
+                find_terminal_runs_for_node(root, node_id, run_id=node.run_id)
+            )
+            if winner is not None:
+                reconcile_node_status(
+                    graph, node_id, winner["status"], run_id=winner.get("run_id")
+                )
         brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
         # Atomic optimistic claim: the cross-process mutual-exclusion point that
         # replaces the in-process dispatch lock. The PENDING/FAILED/BLOCKED ->
@@ -204,7 +211,11 @@ def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
     if state["status"] in ("done", "failed"):
         graph, _cfg = open_graph(root)
         try:
-            reconcile_node_status(graph, state["node_id"], state["status"])
+            # Fence on the polled run's run_id so polling an older run cannot
+            # clobber a newer RUNNING owner that re-claimed this node.
+            reconcile_node_status(
+                graph, state["node_id"], state["status"], run_id=state.get("run_id")
+            )
         finally:
             graph.close()
     return state

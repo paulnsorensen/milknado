@@ -345,16 +345,32 @@ class MikadoGraph(_AnalyticsFacade):
             return True
         return False
 
+    def release(self, node_id: int, run_id: str) -> bool:
+        """Release a RUNNING claim back to PENDING, fenced on the run_id.
+
+        Used by dispatch cleanup to undo a claim whose startup failed, without
+        clobbering a node already re-claimed under a different run. Fenced on both
+        run_id and status = 'running' (see _transitions.release), so a node that
+        completed DONE between the caller's read and this write is never walked
+        back to PENDING. Returns whether the release landed.
+        """
+        ok = _transitions.release(self._conn, node_id, run_id)
+        if ok:
+            self._notify_status_change(node_id, NodeStatus.RUNNING, NodeStatus.PENDING)
+        return ok
+
     def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool:
         """Write a terminal status (DONE/FAILED) gated on the run_id fence.
 
         Returns False when the node was re-claimed under a new run_id — the caller
         was reclaimed and its terminal write is rejected (zero rows).
         """
-        old = self._node_status(node_id)
         ok = _transitions.mark_terminal(self._conn, node_id, run_id, status)
-        if ok and old is not None:
-            self._notify_status_change(node_id, old, status)
+        if ok:
+            # The fenced UPDATE matched only because status was 'running', so the
+            # source state is RUNNING by construction. Emit that instead of a
+            # pre-read that could be stale under cross-process contention.
+            self._notify_status_change(node_id, NodeStatus.RUNNING, status)
         return ok
 
     def set_pid(self, node_id: int, run_id: str, pid: int) -> None:

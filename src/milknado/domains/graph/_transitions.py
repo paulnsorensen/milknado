@@ -109,15 +109,20 @@ def claim_node(conn: sqlite3.Connection, node_id: int, run_id: str, now: str) ->
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
-    """Flip a node back to PENDING, clearing ownership, gated on the owner's run_id.
+    """Flip a RUNNING node back to PENDING, clearing ownership, gated on run_id.
 
-    Used by try_reclaim to free a provably-dead owner. The run_id guard means a
-    node already re-claimed under a different run is left untouched.
+    Used by try_reclaim to free a provably-dead owner and by dispatch cleanup to
+    release a claim whose startup failed. The run_id guard means a node already
+    re-claimed under a different run is left untouched.
+
+    The `status = 'running'` guard mirrors mark_terminal: DONE keeps its run_id, so
+    without it an owner that committed DONE between a reclaim's SELECT and this
+    UPDATE could be walked back from DONE to PENDING, resurrecting a completed node.
     """
     cur = conn.execute(
         "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
         "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
-        "WHERE id = ? AND run_id = ?",
+        "WHERE id = ? AND run_id = ? AND status = 'running'",
         (node_id, owner_run_id),
     )
     conn.commit()

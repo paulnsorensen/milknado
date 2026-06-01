@@ -305,13 +305,23 @@ class Executor:
         return run_id
 
     def _cleanup_failed_dispatch(self, node_id: int, wt_path: Path) -> None:
-        """Best-effort state reset; worktree cleanup always runs."""
+        """Best-effort state reset; worktree cleanup always runs.
+
+        Release fenced on the node's run_id when it has one (the already-claimed
+        ralph path owns the claim under run_id), so a failed dispatch cannot walk
+        a node back to PENDING after a different run has re-claimed it. A node with
+        no run_id (in-process TUI / a fresh dispatch that failed before set_run_id)
+        has no fence to honour and falls back to the unconditional reset.
+        """
         try:
             current = self._graph.get_node(node_id)
             if current and current.status == NodeStatus.RUNNING:
-                self._graph.mark_pending(node_id)
+                if current.run_id is not None:
+                    self._graph.release(node_id, current.run_id)
+                else:
+                    self._graph.mark_pending(node_id)
         except Exception as reset_exc:
-            _logger.warning("mark_pending failed during cleanup: %s", reset_exc)
+            _logger.warning("state reset failed during cleanup: %s", reset_exc)
         finally:
             self._wt.discard(node_id, wt_path)
 

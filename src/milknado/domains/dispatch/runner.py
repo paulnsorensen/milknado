@@ -330,10 +330,17 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
     return flipped
 
 
-def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
+def find_terminal_runs_for_node(
+    project_root: Path, node_id: int, run_id: str | None = None
+) -> list[dict]:
     """Scan the runs dir for state files whose node matches and which have reached
     a terminal status. Used by callers that want to reconcile orphaned runs
-    (started, worker finished, but never polled — node still marked RUNNING)."""
+    (started, worker finished, but never polled — node still marked RUNNING).
+
+    When `run_id` is given, filter to that fence: only the node's current owner's
+    terminal file is returned, so a stale terminal file from an older run cannot be
+    selected. Callers must filter to the fence BEFORE picking the latest run —
+    otherwise a stale run with a later `ended_at` could mask the owner's file."""
     runs_dir = _runs_dir(project_root)
     out: list[dict] = []
     for state_path in runs_dir.glob(f"node-{node_id}-*.state.json"):
@@ -341,8 +348,11 @@ def find_terminal_runs_for_node(project_root: Path, node_id: int) -> list[dict]:
             state = _read_state(state_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if state.get("node_id") == node_id and state.get("status") in ("done", "failed"):
-            out.append(state)
+        if state.get("node_id") != node_id or state.get("status") not in ("done", "failed"):
+            continue
+        if run_id is not None and state.get("run_id") != run_id:
+            continue
+        out.append(state)
     return out
 
 
@@ -351,9 +361,10 @@ def latest_terminal_run(runs: list[dict]) -> dict | None:
 
     Deterministic selection for reconcile: when a node has multiple terminal
     runs (e.g. a prior run finished after the node was reset and re-run), the
-    latest ended_at wins. Both the headless (mcp_run) and detached-ralph
-    (mcp_ralph) dispatch paths use this helper so the selection rule is shared
-    exactly — detached-ralph spec #54 reuses this byte-for-byte.
+    latest ended_at wins. Callers that fence on run_id must filter to the fence
+    first (see find_terminal_runs_for_node) so a stale run with a later ended_at
+    cannot mask the current owner's terminal file. Shared by the headless
+    (mcp_run) and detached-ralph (mcp_ralph) dispatch paths.
     """
     terminal = [r for r in runs if r.get("status") in ("done", "failed")]
     if not terminal:
@@ -361,19 +372,30 @@ def latest_terminal_run(runs: list[dict]) -> dict | None:
     return max(terminal, key=lambda r: r.get("ended_at") or "")
 
 
-def reconcile_node_status(graph, node_id: int, run_status: str) -> None:  # noqa: ANN001
-    """Transition a node to its run's terminal status, idempotently.
+def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | None = None) -> None:  # noqa: ANN001
+    """Transition a node to its run's terminal status, idempotently and fenced.
 
-    Only a RUNNING node can validly transition to a terminal status. Any other
-    state (already terminal, or reset externally) is left alone so reconciliation
-    never raises InvalidTransition — the first reconcile of a run wins, and a node
-    taken out of RUNNING is not force-marked. Shared by the sync (`mcp_run`) and
-    detached worktree (`mcp_ralph`) dispatch tools.
+    When `run_id` is given AND the node carries a run_id, the write goes through
+    `graph.mark_terminal`, whose atomic `WHERE run_id = ? AND status = 'running'`
+    is the real fence: a node re-claimed under a newer run_id (or already terminal)
+    matches zero rows and is left for its current owner. This closes the TOCTOU a
+    pre-check-then-unfenced-write left open — two concurrent reconcilers can both
+    pass a Python-level run_id check, but only the matching atomic UPDATE lands.
+
+    A node with no run_id (in-process TUI / legacy) has no fence to honour, so it
+    falls back to the unconditional transition; only a RUNNING node is touched, so
+    a node reset out of RUNNING is never force-marked. Shared by the sync (`mcp_run`)
+    and detached worktree (`mcp_ralph`) dispatch tools.
     """
     node = graph.get_node(node_id)
     if node is None or node.status != NodeStatus.RUNNING:
         return
-    if run_status == "done":
+    target = {"done": NodeStatus.DONE, "failed": NodeStatus.FAILED}.get(run_status)
+    if target is None:
+        return
+    if run_id is not None and node.run_id is not None:
+        graph.mark_terminal(node_id, run_id, target)
+    elif target is NodeStatus.DONE:
         graph.mark_done(node_id)
-    elif run_status == "failed":
+    else:
         graph.mark_failed(node_id)

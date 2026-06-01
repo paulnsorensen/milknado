@@ -83,13 +83,20 @@ def milknado_ralph_run_start(
             # First release a node locked by a run that finished, or whose detached
             # process vanished, without anyone polling (mirrors run_start).
             fail_stale_running_runs(root, node_id)
-            winner = latest_terminal_run(find_terminal_runs_for_node(root, node_id))
-            # Fence the reconcile on the terminal file's run_id: only the node's
-            # current owner's run may drive its terminal transition, so a stale
-            # terminal file from an older run cannot clobber a live run still
-            # holding the node. A legacy node with no run_id has no fence to honour.
-            if winner is not None and (node.run_id is None or winner.get("run_id") == node.run_id):
-                reconcile_node_status(graph, node_id, winner["status"])
+            # Filter terminal files to this node's fence BEFORE picking the latest,
+            # so a stale run with a later ended_at cannot mask the current owner's
+            # file. reconcile_node_status routes the write through the atomic
+            # run_id + status fence (graph.mark_terminal), closing the TOCTOU a
+            # pre-check-then-unfenced-write left open: a node re-claimed under a
+            # newer run cannot be clobbered. A legacy node with no run_id has no
+            # fence to honour and falls back to the unconditional reconcile.
+            winner = latest_terminal_run(
+                find_terminal_runs_for_node(root, node_id, run_id=node.run_id)
+            )
+            if winner is not None:
+                reconcile_node_status(
+                    graph, node_id, winner["status"], run_id=winner.get("run_id")
+                )
             # Then free a provably-dead owner by pid-liveness, so a crashed
             # runner does not lock the node for the full timeout (default 1800s).
             if graph.try_reclaim(node_id, now=now):

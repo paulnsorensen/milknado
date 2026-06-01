@@ -951,6 +951,70 @@ class TestTodoAsyncRun:
         assert winner["status"] == "failed", "newer run (failed) must win over older run (done)"
         assert winner["run_id"] == "node-42-20200101T000001Z-bbbb"
 
+    def test_find_terminal_runs_filters_by_run_id(self, tmp_path: Path) -> None:
+        """The fence must be applied BEFORE picking the latest run: a stale run with
+        a later ended_at must not mask the current owner's terminal file. Filtering
+        by run_id first leaves only the owner's run for latest_terminal_run."""
+        from milknado.domains.dispatch import latest_terminal_run
+        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+
+        root = Path(tmp_path)
+        node_id = 7
+        runs = _runs_dir(root)
+        owner = "node-7-20200101T000000Z-own0"
+        stale = "node-7-20200101T000001Z-stal"
+        for run_id, status, ended_at in [
+            (owner, "done", "2020-01-01T00:00:10+00:00"),
+            (stale, "failed", "2020-01-01T00:01:00+00:00"),  # later ended_at, but not the owner
+        ]:
+            (runs / f"{run_id}.state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": status,
+                        "ended_at": ended_at,
+                        "exit_code": 0 if status == "done" else 1,
+                        "timed_out": False,
+                        "started_at": "2020-01-01T00:00:00+00:00",
+                        "log_path": str(runs / f"{run_id}.log"),
+                        "timeout_seconds": 10,
+                    }
+                )
+            )
+        fenced = find_terminal_runs_for_node(root, node_id, run_id=owner)
+        assert [r["run_id"] for r in fenced] == [owner]
+        assert latest_terminal_run(fenced)["status"] == "done", (
+            "the owner's file wins once the stale later-ended_at run is fenced out"
+        )
+        unfenced = find_terminal_runs_for_node(root, node_id)
+        assert len(unfenced) == 2, "legacy (no fence) returns both terminal files"
+
+    def test_reconcile_node_status_is_fenced_on_run_id(self, tmp_path: Path) -> None:
+        """A reconcile carrying a stale run_id must not clobber a node now RUNNING
+        under a newer run; only the matching run_id finalizes it. Closes the TOCTOU
+        where two starters reconcile the same orphan and the loser marks the fresh
+        owner done/failed."""
+        from milknado.domains.common import NodeStatus
+        from milknado.domains.dispatch import reconcile_node_status
+        from milknado.domains.dispatch._runstate import now_iso
+        from milknado.domains.graph import MikadoGraph
+
+        g = MikadoGraph(Path(tmp_path) / "g.db")
+        try:
+            node_id = g.add_node("reconcile-fence").id
+            g.claim_node(node_id, "run-new", now=now_iso())
+            reconcile_node_status(g, node_id, "done", run_id="run-stale")
+            assert g.get_node(node_id).status == NodeStatus.RUNNING, (
+                "a stale run cannot finalize a newer owner"
+            )
+            reconcile_node_status(g, node_id, "done", run_id="run-new")
+            assert g.get_node(node_id).status == NodeStatus.DONE, (
+                "the current owner's run finalizes"
+            )
+        finally:
+            g.close()
+
     def test_latest_terminal_run_returns_none_for_empty(self, tmp_path: Path) -> None:
         from milknado.domains.dispatch import latest_terminal_run
 
