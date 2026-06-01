@@ -7,12 +7,14 @@ import logging
 import os
 import shlex
 import signal
+import time
 from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch import (
+    clear_cancel,
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     latest_terminal_run,
@@ -22,6 +24,7 @@ from milknado.domains.dispatch import (
     read_state,
     reconcile_node_status,
     render_brief,
+    request_cancel,
     run_headless,
     runs_dir,
     start_headless_async,
@@ -31,6 +34,13 @@ from milknado.domains.dispatch._runstate import RUN_ID_RE
 from milknado.domains.dispatch.runner import _validate_worker_argv
 
 _logger = logging.getLogger(__name__)
+
+# How long milknado_run_cancel waits for an async worker to observe the cancel
+# sentinel and write its own terminal state before falling back to writing it
+# directly. Must exceed the worker's worst-case finalize (poll interval +
+# SIGTERM→SIGKILL grace in runner.py) so a live worker reliably wins the write.
+_CANCEL_FINALIZE_TIMEOUT_SECS = 8.0
+_CANCEL_FINALIZE_POLL_SECS = 0.25
 
 
 def _validate_worker_cmd(worker_cmd: str | None) -> None:
@@ -308,12 +318,91 @@ def _state_to_run_dict(state: dict, state_path: Path) -> dict:
     }
 
 
+def _cancelled_state(state: dict) -> dict:
+    """The terminal state for a run cancel finalizes directly (pid path, or the
+    fallback when the async worker never responds)."""
+    return {
+        **state,
+        "status": "failed",
+        "exit_code": -1,
+        "timed_out": False,
+        "ended_at": now_iso(),
+        "error": "cancelled",
+    }
+
+
+def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") -> None:  # noqa: ANN001
+    """Prune the run's worktree and reconcile its node to `status`, fenced on run_id.
+
+    Routes through the run_id-fenced `reconcile_node_status` (graph.mark_terminal)
+    so a node re-claimed under a newer run cannot be clobbered by a stale cancel —
+    the merged worker-dispatch fencing invariant. A node with no run_id falls back
+    to the unconditional RUNNING→terminal transition. `status` is the run's actual
+    terminal status: a worker that finished `done` inside the cancel window must
+    reconcile its node `done`, not be force-failed.
+    """
+    if node_id is None:
+        return
+    graph, _cfg = open_graph(root)
+    try:
+        node = graph.get_node(node_id)
+        if node is not None and node.worktree_path:
+            wt = Path(node.worktree_path)
+            if wt.exists():
+                try:
+                    GitAdapter(root).remove_worktree(wt)
+                except Exception as exc:
+                    _logger.warning("Failed to remove worktree %s on cancel: %s", wt, exc)
+        reconcile_node_status(graph, node_id, status, run_id=run_id)
+    finally:
+        graph.close()
+    try:
+        GitAdapter(root).prune_worktrees()
+    except Exception as exc:
+        _logger.warning("git worktree prune failed on cancel: %s", exc)
+
+
+def _await_cancel_finalize(state_path: Path) -> dict | None:
+    """Poll the state file for the async worker's terminal write, up to a bound.
+
+    Returns the terminal state once the worker finalizes, or None if the bound
+    elapses (the worker is wedged, dead, or never existed) so the caller can take
+    over the terminal write itself.
+    """
+    deadline = time.monotonic() + _CANCEL_FINALIZE_TIMEOUT_SECS
+    read_errors = 0
+    while time.monotonic() < deadline:
+        time.sleep(_CANCEL_FINALIZE_POLL_SECS)
+        try:
+            state = read_state(state_path)
+        except (OSError, json.JSONDecodeError) as exc:
+            read_errors += 1
+            last_error = exc
+            continue
+        if state.get("status") != "running":
+            return state
+    if read_errors:
+        _logger.warning(
+            "cancel finalize bound elapsed for %s after %d unreadable state reads (last: %s)",
+            state_path.name,
+            read_errors,
+            last_error,
+        )
+    return None
+
+
 @mcp.tool()
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
-    """Cancel a run: signal the process group, reconcile node status, prune worktree.
+    """Cancel a run, reconcile node status, and prune any worktree.
 
-    No-ops cleanly if the run is already terminal. Returns the final run state
-    in the unified superset schema.
+    A detached-ralph run (has a recorded process-group pid) is signalled with
+    SIGTERM and finalized immediately. An async-headless run shares the MCP
+    server's process group, so it cannot be signalled — instead a cancel sentinel
+    is written and the worker cooperatively terminates its own subprocess and
+    writes the terminal state, which closes the state-clobber race. Cancel waits a
+    bounded window for that finalize, then takes over the terminal write only if
+    the worker never responds (wedged or crashed). No-ops cleanly if the run is
+    already terminal. Returns the final run state in the unified superset schema.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
@@ -326,42 +415,48 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
     if state.get("status") != "running":
         return _state_to_run_dict(state, state_path)
 
-    pid = state.get("pid")
-    if pid is not None:
-        try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            pass  # process already gone
+    if state.get("pid") is not None:
+        final = _cancel_pid_run(root, state, state_path, run_id)
+    else:
+        final = _cancel_async_run(root, rdir, state, state_path, run_id)
+    return _state_to_run_dict(final, state_path)
 
-    cancelled = {
-        **state,
-        "status": "failed",
-        "exit_code": -1,
-        "timed_out": False,
-        "ended_at": now_iso(),
-        "error": "cancelled",
-    }
-    write_state(state_path, cancelled)
 
-    node_id = state.get("node_id")
-    if node_id is not None:
-        graph, _cfg = open_graph(root)
-        try:
-            node = graph.get_node(node_id)
-            if node is not None and node.worktree_path:
-                wt = Path(node.worktree_path)
-                if wt.exists():
-                    try:
-                        GitAdapter(root).remove_worktree(wt)
-                    except Exception as exc:
-                        _logger.warning("Failed to remove worktree %s on cancel: %s", wt, exc)
-            reconcile_node_status(graph, node_id, "failed")
-        finally:
-            graph.close()
-        try:
-            GitAdapter(root).prune_worktrees()
-        except Exception as exc:
-            _logger.warning("git worktree prune failed on cancel: %s", exc)
+def _cancel_pid_run(root: Path, state: dict, state_path: Path, run_id: str) -> dict:
+    """Cancel a detached-ralph run: its own process group → killpg is safe, and the
+    run owns no in-process worker, so finalize the terminal state here directly."""
+    pid = state["pid"]
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        pass  # process already gone
+    final = _cancelled_state(state)
+    write_state(state_path, final)
+    _reconcile_cancel(root, state.get("node_id"), run_id)
+    _logger.info("milknado_run_cancel(pid): run_id=%s node_id=%s", run_id, state.get("node_id"))
+    return final
 
-    _logger.info("milknado_run_cancel: run_id=%s node_id=%s", run_id, node_id)
-    return _state_to_run_dict(cancelled, state_path)
+
+def _cancel_async_run(root: Path, rdir: Path, state: dict, state_path: Path, run_id: str) -> dict:
+    """Cancel an async-headless run (or a crashed run stuck "running"). Request
+    cooperative cancellation and let the worker own the terminal write; only take
+    over if the worker never finalizes within the bound."""
+    request_cancel(rdir, run_id)
+    final = _await_cancel_finalize(state_path)
+    if final is None:
+        # Worker never finalized within the bound: it is wedged, dead, or was never
+        # alive (crashed sync run). Take over the terminal write so the node is not
+        # stranded RUNNING, and clear the sentinel we wrote.
+        latest = read_state(state_path)
+        if latest.get("status") != "running":
+            final = latest  # worker finalized in the last poll gap — don't clobber
+        else:
+            final = _cancelled_state(state)
+            write_state(state_path, final)
+        clear_cancel(rdir, run_id)
+
+    # Reconcile to the run's ACTUAL terminal status: a worker that finished `done`
+    # inside the finalize window must not have its node force-failed.
+    _reconcile_cancel(root, final.get("node_id"), run_id, final.get("status", "failed"))
+    _logger.info("milknado_run_cancel(async): run_id=%s node_id=%s", run_id, state.get("node_id"))
+    return final

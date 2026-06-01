@@ -30,7 +30,6 @@ from milknado.domains.dispatch import (
     now_iso,
     read_state,
     reconcile_node_status,
-    reconcile_orphan_node,
     runs_dir,
     write_state,
 )

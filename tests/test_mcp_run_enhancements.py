@@ -311,6 +311,14 @@ class TestRunList:
 
 
 class TestRunCancel:
+    @pytest.fixture(autouse=True)
+    def _fast_cancel_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No-pid states hand-written here have no live worker, so cancel falls
+        back after the finalize bound. Shorten it so these tests stay fast."""
+        import milknado.mcp_run as mcp_run_mod
+
+        monkeypatch.setattr(mcp_run_mod, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
+
     def test_cancel_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
             _call(
@@ -459,3 +467,263 @@ class TestRunCancel:
 
         assert removed == [orphan_wt], "orphaned worktree must be removed on cancel"
         assert pruned, "git worktree prune must be called after cancel"
+
+    def test_sync_stuck_running_cancel_reconciles_and_clears(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run stuck "running" with no pid and no live worker (crashed sync run)
+        must still be cleared: cancel falls back to writing the terminal state,
+        reconciles the node, and leaves no stale sentinel."""
+        from milknado.domains.dispatch import cancel_path
+        from milknado.domains.dispatch import runs_dir as _runs_dir
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="sync-stuck", kind="task", project_root=root)
+        node_id = task["id"]
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id)
+        finally:
+            graph.close()
+        rdir = tmp_path / ".milknado" / "runs"
+        rdir.mkdir(parents=True, exist_ok=True)
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
+        state_path = rdir / f"{run_id}.state.json"
+        state_path.write_text(
+            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
+        )
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
+
+        assert result["status"] == "failed"
+        assert result["exit_code"] == -1
+        on_disk = json.loads(state_path.read_text())
+        assert on_disk["status"] == "failed"
+        assert on_disk["error"] == "cancelled"
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed"
+        finally:
+            graph2.close()
+        assert not cancel_path(_runs_dir(tmp_path), run_id).exists(), "sentinel must be cleared"
+
+
+class TestAsyncCancel:
+    """The regression the review flagged: cancel must genuinely stop a real
+    async-headless worker mid-run, not falsely mark it failed while the worker
+    keeps running and later clobbers the cancelled state."""
+
+    def test_cancel_stops_async_worker_and_finalizes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
+    ) -> None:
+        from milknado.domains.dispatch import cancel_path
+        from milknado.domains.dispatch import runs_dir as _runs_dir
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async-cancel", kind="task", project_root=root)
+        node_id = task["id"]
+        # A genuinely mid-run worker: sleeps far longer than the test, so any
+        # "failed" terminal state can only come from cooperative cancellation.
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
+        started = _call(milknado_todo_run_start, node_id=node_id, project_root=root)
+        run_id = started["run_id"]
+        assert started["status"] == "running"
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
+
+        # (b) final state is cooperative-cancel terminal
+        assert result["status"] == "failed"
+        assert result["exit_code"] == -1
+        state_path = Path(result["state_path"])
+        on_disk = json.loads(state_path.read_text())
+        assert on_disk["status"] == "failed"
+        assert on_disk["error"] == "cancelled"
+
+        # (a)+(c) the worker stopped and does NOT overwrite the cancelled state:
+        # had it kept running, `sleep 30` would later flip the state to done.
+        time.sleep(1.0)
+        after = json.loads(state_path.read_text())
+        assert after["status"] == "failed", "worker must not clobber the cancelled state"
+        assert after["error"] == "cancelled"
+
+        # (d) node reconciled to failed under the run_id fence
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed"
+            # the fenced FAILED transition clears run_id (mark_terminal), proving
+            # reconcile went through the run_id fence rather than stranding it
+            assert node.run_id is None
+        finally:
+            graph.close()
+
+        # sentinel cleared after the terminal write
+        assert not cancel_path(_runs_dir(tmp_path), run_id).exists(), "sentinel must be cleared"
+
+    def test_async_worker_timeout_marks_failed_and_timed_out(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
+    ) -> None:
+        """The async poll loop (`_execute_cancellable`) enforces the run's own
+        timeout deadline — distinct from the sync `_execute` `communicate(timeout=)`
+        path. A worker that outlives its timeout must be terminated and finalized
+        `failed` / `timed_out=True`, with no cancel sentinel involved."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="a-timeout", kind="task", project_root=root)
+        node_id = task["id"]
+        # Worker sleeps far past its 1s timeout, so a terminal state can only come
+        # from the poll loop's deadline enforcement, not from the worker exiting.
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
+        started = _call(
+            milknado_todo_run_start, node_id=node_id, timeout_seconds=1, project_root=root
+        )
+        run_id = started["run_id"]
+
+        final = _wait_for_terminal(run_id, root, milknado_todo_run_poll, timeout=8.0)
+
+        assert final["status"] == "failed"
+        assert final["timed_out"] is True, "timeout must be recorded, not a plain fail"
+        # Timeout is not a cancellation: no sentinel was written, and the terminal
+        # write must not masquerade as error='cancelled'.
+        on_disk = json.loads(Path(final["state_path"]).read_text())
+        assert on_disk.get("error") != "cancelled"
+
+    def test_async_cancel_done_in_window_reconciles_done_not_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression (age:correctness): when the worker finishes `done` inside the
+        finalize window, cancel observes a `done` state — it must reconcile the node
+        `done`, not force-fail a genuinely-completed run and discard its work."""
+        import milknado.mcp_run as mcp_run_mod
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="done-in-win", kind="task", project_root=root)
+        node_id = task["id"]
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id)
+            graph.set_run_id(node_id, run_id)
+        finally:
+            graph.close()
+        rdir = tmp_path / ".milknado" / "runs"
+        rdir.mkdir(parents=True, exist_ok=True)
+        state_path = rdir / f"{run_id}.state.json"
+        state_path.write_text(
+            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
+        )
+
+        # The worker finalizes `done` during the finalize poll window: the state
+        # flips to done and that is what `_await_cancel_finalize` returns.
+        done_state = {"run_id": run_id, "node_id": node_id, "status": "done", "exit_code": 0}
+
+        def fake_finalize(sp: Path) -> dict:
+            sp.write_text(json.dumps(done_state))
+            return done_state
+
+        monkeypatch.setattr(mcp_run_mod, "_await_cancel_finalize", fake_finalize)
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
+
+        assert result["status"] == "done", "a run that finished done must be reported done"
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "done", "node must reconcile done, not be force-failed"
+        finally:
+            graph2.close()
+
+
+class TestPidCancelReconcile:
+    """The pid (detached-ralph) cancel branch. The cooked change routes its node
+    reconcile through the run_id-fenced `_reconcile_cancel` — the deliberate
+    deviation from the spec's "keep the pid path unchanged". These lock both the
+    positive reconcile and the fence that the deviation exists to preserve."""
+
+    def _running_node_owned_by(self, tmp_path: Path, run_id: str) -> int:
+        """Create a RUNNING node fenced to `run_id` (the active owner)."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="pid-cancel", kind="task", project_root=root)
+        node_id = task["id"]
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id)
+            graph.set_run_id(node_id, run_id)
+        finally:
+            graph.close()
+        return node_id
+
+    def _write_pid_state(self, tmp_path: Path, run_id: str, node_id: int) -> Path:
+        rdir = tmp_path / ".milknado" / "runs"
+        rdir.mkdir(parents=True, exist_ok=True)
+        state_path = rdir / f"{run_id}.state.json"
+        state_path.write_text(
+            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running", "pid": 9999})
+        )
+        return state_path
+
+    def test_pid_cancel_reconciles_node_to_failed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A detached-ralph run (has pid) cancels: SIGTERM the group, write the
+        terminal state, and reconcile the node to failed through the run_id fence.
+        Previously only the async branch's reconcile had a real-node test."""
+        import signal as sig_mod
+
+        run_id = "node-1-20260101T000000Z-aaaa"
+        node_id = self._running_node_owned_by(tmp_path, run_id)
+        self._write_pid_state(tmp_path, run_id, node_id)
+
+        killed: list[tuple] = []
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+
+        assert killed == [(9999, sig_mod.SIGTERM)], "pid branch must SIGTERM the process group"
+        assert result["status"] == "failed"
+        assert result["exit_code"] == -1
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed", "pid cancel must reconcile the node to failed"
+            # FAILED via the fenced mark_terminal clears run_id — proves the
+            # reconcile went through the fence, not a bare unconditional write.
+            assert node.run_id is None
+        finally:
+            graph2.close()
+
+    def test_pid_cancel_reconcile_is_fenced_against_reclaim(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fence the deviation preserves: a stale cancel for run-A must NOT
+        clobber a node already re-claimed under a newer run-B. A regression to an
+        unfenced `mark_failed` here would walk the live run-B node to FAILED."""
+        stale_run = "node-1-20260101T000000Z-aaaa"
+        newer_run = "node-1-20260102T000000Z-bbbb"
+        node_id = self._running_node_owned_by(tmp_path, stale_run)
+        # Re-own the still-RUNNING node under the newer run, then cancel the stale one.
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.set_run_id(node_id, newer_run)
+        finally:
+            graph.close()
+        self._write_pid_state(tmp_path, stale_run, node_id)
+
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)
+
+        _call(milknado_run_cancel, run_id=stale_run, project_root=str(tmp_path))
+
+        graph2, _cfg2 = open_graph(tmp_path)
+        try:
+            node = graph2.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "running", "stale cancel must not clobber reclaimed node"
+            assert node.run_id == newer_run, "newer run's ownership must survive a stale cancel"
+        finally:
+            graph2.close()

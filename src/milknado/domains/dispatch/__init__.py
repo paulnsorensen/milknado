@@ -1,7 +1,11 @@
 from milknado.domains.dispatch._runstate import (
+    cancel_path,
+    clear_cancel,
+    is_cancel_requested,
     make_run_id,
     now_iso,
     read_state,
+    request_cancel,
     runs_dir,
     write_state,
 )
@@ -22,8 +26,11 @@ from milknado.domains.dispatch.runner import (
 __all__ = [
     "AsyncStartRef",
     "RunResult",
+    "cancel_path",
+    "clear_cancel",
     "fail_stale_running_runs",
     "find_terminal_runs_for_node",
+    "is_cancel_requested",
     "latest_terminal_run",
     "make_run_id",
     "now_iso",
@@ -32,6 +39,7 @@ __all__ = [
     "reconcile_node_status",
     "reconcile_orphan_node",
     "render_brief",
+    "request_cancel",
     "run_headless",
     "runs_dir",
     "start_headless_async",
