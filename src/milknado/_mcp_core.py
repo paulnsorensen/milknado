@@ -24,7 +24,8 @@ class RunDict(TypedDict):
 
     Fields present but nullable when not applicable to the run type:
     - run_id: None only for callers that don't produce a state file (legacy)
-    - exit_code / timed_out: None while running or for start tools
+    - exit_code: None while running or for start tools
+    - timed_out: False while running; True only once failed by timeout; None for start tools
     - rebased: None for headless (non-ralph) runs
     - state_path: None for sync runs that predate state-file tracking
     - summary: None for start tools (no log tail until polling)
