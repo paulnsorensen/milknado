@@ -9,7 +9,7 @@ In the executor, `Executor.complete()` originally short-circuited on **any**
 non-RUNNING status (`if node.status != RUNNING: return no-op`). That made
 duplicate completions idempotent — but it also silently swallowed *invalid*
 completions of non-terminal nodes (PENDING/BLOCKED). Worse, the run loop
-(`run_loop/_completion.py`) then printed a green ✓ and counted the node as
+(`src/milknado/domains/execution/run_loop/_completion.py`) then printed a green ✓ and counted the node as
 `completed` even though no terminal transition ever happened. (#109)
 
 **Rule:** an idempotency guard must distinguish "already terminal, safe to
