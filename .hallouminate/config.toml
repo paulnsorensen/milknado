@@ -1,0 +1,21 @@
+# Hallouminate configuration for milknado.
+#
+# The XDG baseline (~/.config/hallouminate/config.toml) supplies embeddings,
+# search, and storage defaults. This repo-local file only declares the
+# repository so the MCP server resolves a default corpus from this workspace.
+
+[[repository]]
+name = "milknado"
+# Relative to this config's repo root (resolved from the config file location,
+# not the invoker's cwd) so the committed config is portable across checkouts.
+path = "."
+# The LLM-managed wiki is always derived as `repo:milknado:wiki` and lives at
+# <path>/.hallouminate/wiki — the canonical home for cross-session knowledge:
+# architecture, conventions, gotchas, "why this design not that one".
+#
+# Optional source-document corpus (derived as `repo:milknado:corpus`) — left
+# off to avoid indexing worktree / cache / vendored markdown noise. Uncomment
+# and scope tightly if immediate grounding over project docs is wanted:
+# corpus_paths  = ["README.md", "docs"]
+# corpus_globs  = ["**/*.md"]
+# corpus_exclude = ["**/.worktrees/**", "**/.cheese/**", "**/_vendor/**"]
