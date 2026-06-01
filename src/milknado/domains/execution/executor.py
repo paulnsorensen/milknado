@@ -330,6 +330,22 @@ class Executor:
         if node is None:
             raise ValueError(f"Node {node_id} not found")
 
+        # Only a RUNNING node may take a terminal transition. A duplicate
+        # completion (the same run reported done twice, or a re-run of an
+        # already-finished node) must be a true no-op: short-circuit *before*
+        # rebase_and_merge so its squash/rebase/worktree-remove side effects are
+        # not re-run. mark_done leaves worktree_path set, so without this guard a
+        # node whose prior worktree cleanup failed would re-run the workflow.
+        # The prior result stands; mirrors reconcile_node_status — the first
+        # completion of a run wins.
+        if node.status != NodeStatus.RUNNING:
+            return CompletionResult(
+                node_id=node_id,
+                rebased=node.status == NodeStatus.DONE,
+                newly_ready=[],
+                rebase_conflict=None,
+            )
+
         worktree = Path(node.worktree_path) if node.worktree_path else None
         try:
             rebase_result = self._wt.rebase_and_merge(
@@ -344,21 +360,14 @@ class Executor:
             _logger.error("Rebase-merge failed for node %d", node_id, exc_info=True)
             rebase_result = RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
 
-        # Only a RUNNING node may take a terminal transition. A duplicate
-        # completion (the same run reported done twice, or a re-run of an
-        # already-finished node) leaves the prior result standing instead of
-        # raising InvalidTransition on the terminal-to-terminal move. Mirrors
-        # reconcile_node_status: the first completion of a run wins.
-        is_running = node.status == NodeStatus.RUNNING
         conflict: RebaseConflict | None = None
         if rebase_result.success:
-            if is_running:
-                wrote = self._mark_terminal(node, NodeStatus.DONE)
-                if wrote and node.dispatched_at is not None:
-                    completed_now = datetime.now(UTC)
-                    duration = (completed_now - node.dispatched_at).total_seconds()
-                    self._graph.record_completion_duration(node_id, duration)
-        elif is_running:
+            wrote = self._mark_terminal(node, NodeStatus.DONE)
+            if wrote and node.dispatched_at is not None:
+                completed_now = datetime.now(UTC)
+                duration = (completed_now - node.dispatched_at).total_seconds()
+                self._graph.record_completion_duration(node_id, duration)
+        else:
             self._mark_terminal(node, NodeStatus.FAILED)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(

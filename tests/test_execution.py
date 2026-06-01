@@ -557,14 +557,17 @@ class TestExecutorComplete:
     def test_completing_already_done_node_is_idempotent(
         self,
         graph: MikadoGraph,
+        tmp_path: Path,
     ) -> None:
-        """A duplicate completion of an already-DONE node must not raise.
+        """A duplicate completion of an already-DONE node must be a true no-op.
 
         A second completion signal for the same run (or a re-run of a finished
         node) reaches complete() with the node already terminal. DONE has no
         valid transitions, so an unguarded mark_done would raise
-        InvalidTransition; completion must instead leave the prior result
-        standing.
+        InvalidTransition. Beyond not raising, the duplicate must not re-run the
+        squash/rebase/worktree-remove side effects: mark_done leaves
+        worktree_path set, so a node whose prior worktree cleanup failed would
+        otherwise have its rebase_and_merge workflow run a second time.
         """
         fake_git = FakeGit()
         ex = Executor(
@@ -574,17 +577,24 @@ class TestExecutorComplete:
             crg=FakeCrg(),
         )
         graph.add_node("task")
-        graph.mark_running(1)
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
         ex.complete(1, "main")
         assert graph.get_node(1).status == NodeStatus.DONE  # type: ignore[union-attr]
+        assert len(fake_git.commits) == 1  # first completion squashed exactly once
 
-        # Second completion of the same node: a no-op, not a crash.
+        # Second completion of the same node. The worktree dir still exists
+        # (FakeGit.remove only records the path) and worktree_path is still set,
+        # so an unguarded re-run would squash again. It must instead be a no-op:
+        # not a crash, and not a second squash/rebase/remove.
         result = ex.complete(1, "main")
 
         assert result.rebased is True
         node = graph.get_node(1)
         assert node is not None
         assert node.status == NodeStatus.DONE
+        assert len(fake_git.commits) == 1  # duplicate completion did not re-squash
 
     def test_marks_failed_on_rebase_conflict(
         self,
