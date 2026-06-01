@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 
-from milknado.domains.common.errors import RebaseAbortError, TransientDispatchError
+from milknado.domains.common.errors import (
+    InvalidTransition,
+    RebaseAbortError,
+    TransientDispatchError,
+)
 from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
@@ -595,6 +599,63 @@ class TestExecutorComplete:
         assert node is not None
         assert node.status == NodeStatus.DONE
         assert len(fake_git.commits) == 1  # duplicate completion did not re-squash
+
+    def test_completing_a_failed_node_is_a_noop(
+        self,
+        graph: MikadoGraph,
+    ) -> None:
+        """A FAILED node reaching complete() again is a terminal duplicate: a true
+        no-op that returns rebased=False without raising or re-running the
+        squash/rebase workflow. FAILED -> DONE is not a valid transition, so an
+        unguarded mark_done would raise InvalidTransition instead.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        graph.mark_failed(1)
+
+        result = ex.complete(1, "main")
+
+        assert result.rebased is False  # terminal-but-not-DONE no-op
+        assert len(fake_git.commits) == 0  # short-circuited before rebase_and_merge
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.FAILED
+
+    @pytest.mark.parametrize("status", [NodeStatus.PENDING, NodeStatus.BLOCKED])
+    def test_completing_a_non_terminal_node_raises(
+        self,
+        graph: MikadoGraph,
+        status: NodeStatus,
+    ) -> None:
+        """A non-RUNNING, non-terminal node (PENDING/BLOCKED) is never a valid
+        completion target. complete() must fail loud with InvalidTransition rather
+        than silently no-op: a silent no-op would hide a real state-machine bug and,
+        in the run loop, print a false completion for a node that never finished.
+        """
+        fake_git = FakeGit()
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        if status is NodeStatus.BLOCKED:
+            graph.mark_blocked(1)
+
+        with pytest.raises(InvalidTransition):
+            ex.complete(1, "main")
+
+        assert len(fake_git.commits) == 0  # raised before any squash/rebase
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == status
 
     def test_marks_failed_on_rebase_conflict(
         self,

@@ -15,7 +15,12 @@ from milknado.domains.common.errors import (
     RebaseAbortError,
     TransientDispatchError,
 )
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.types import (
+    VALID_TRANSITIONS,
+    MikadoNode,
+    NodeStatus,
+    RebaseResult,
+)
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
@@ -330,20 +335,31 @@ class Executor:
         if node is None:
             raise ValueError(f"Node {node_id} not found")
 
-        # Only a RUNNING node may take a terminal transition. A duplicate
-        # completion (the same run reported done twice, or a re-run of an
-        # already-finished node) must be a true no-op: short-circuit *before*
-        # rebase_and_merge so its squash/rebase/worktree-remove side effects are
-        # not re-run. mark_done leaves worktree_path set, so without this guard a
-        # node whose prior worktree cleanup failed would re-run the workflow.
-        # The prior result stands; mirrors reconcile_node_status — the first
-        # completion of a run wins.
-        if node.status != NodeStatus.RUNNING:
+        # A terminal node (DONE/FAILED) reaching complete() again is a legitimate
+        # duplicate — the same run reported done twice, or a re-run of an already-
+        # finished node. Short-circuit *before* rebase_and_merge so its
+        # squash/rebase/worktree-remove side effects are not re-run: mark_done
+        # leaves worktree_path set, so without this guard a node whose prior
+        # worktree cleanup failed would re-run the workflow. The prior result
+        # stands; mirrors reconcile_node_status — the first completion wins.
+        if node.status in (NodeStatus.DONE, NodeStatus.FAILED):
             return CompletionResult(
                 node_id=node_id,
                 rebased=node.status == NodeStatus.DONE,
                 newly_ready=[],
                 rebase_conflict=None,
+            )
+
+        # Any other non-RUNNING status (PENDING/BLOCKED) is not a valid completion
+        # target. Silently treating it as a no-op would hide a real state-machine
+        # bug — and in the run loop a worker-reported success would print a false
+        # completion — so fail loud, exactly as the unguarded mark_done once did.
+        if node.status != NodeStatus.RUNNING:
+            raise InvalidTransition(
+                node_id,
+                node.status,
+                NodeStatus.DONE,
+                tuple(VALID_TRANSITIONS[node.status]),
             )
 
         worktree = Path(node.worktree_path) if node.worktree_path else None
