@@ -35,11 +35,15 @@ class _FakeRalph:
     def __init__(self, *, completed: bool = True, timeout: bool = False) -> None:
         self._completed = completed
         self._timeout = timeout
+        self.stopped: list[str] = []
 
     def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
         if self._timeout:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
         return next(iter(active_run_ids)), self._completed
+
+    def stop_run(self, run_id: str) -> None:
+        self.stopped.append(run_id)
 
 
 def _ok_completion(node_id: int) -> CompletionResult:
@@ -102,3 +106,24 @@ def test_detached_head_refuses_without_dispatching() -> None:
     assert "HEAD" in (outcome.detail or "")
     assert ex.dispatched == []  # never dispatched onto a detached HEAD
     assert ex.failed == [5]  # marked failed for parity with sibling failure paths
+
+
+def test_timeout_stops_the_ralph_run() -> None:
+    """#46: CompletionTimeout must stop the underlying ralph run so the loop does
+    not keep running as a zombie after the timeout fires."""
+    ex = _FakeExecutor()
+    ralph = _FakeRalph(timeout=True)
+    outcome = run_node_to_completion(ex, ralph, 10, object(), "main", 5.0)
+    assert outcome.success is False
+    assert "timeout" in (outcome.detail or "")
+    assert ralph.stopped == ["run-10"], "timeout must stop the ralph run"
+
+
+def test_non_completed_stops_the_ralph_run() -> None:
+    """#56: A non-completed run must also stop the ralph loop before failing the
+    node, same class of fix as #46."""
+    ex = _FakeExecutor()
+    ralph = _FakeRalph(completed=False)
+    outcome = run_node_to_completion(ex, ralph, 11, object(), "main", 30.0)
+    assert outcome.success is False
+    assert ralph.stopped == ["run-11"], "non-completion must stop the ralph run"

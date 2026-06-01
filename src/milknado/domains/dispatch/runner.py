@@ -399,3 +399,16 @@ def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | No
         graph.mark_done(node_id)
     else:
         graph.mark_failed(node_id)
+
+
+def reconcile_orphan_node(graph, project_root: Path, node_id: int) -> None:  # noqa: ANN001
+    """Flip stale 'running' state files to failed, reconcile the node's status
+    to the latest terminal run. No-op if the node is not RUNNING.
+
+    Shared entry-point for mcp_run (#39) and mcp_ralph (#54) — the three-call
+    orphan-release pattern must not be duplicated inline in either caller.
+    """
+    fail_stale_running_runs(project_root, node_id)
+    winner = latest_terminal_run(find_terminal_runs_for_node(project_root, node_id))
+    if winner is not None:
+        reconcile_node_status(graph, node_id, winner["status"])

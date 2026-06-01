@@ -1,10 +1,11 @@
 """Detached headless single-node ralph runner.
 
 Spawned as its own process by `milknado_ralph_run_start` so a worktree-isolated
-ralph loop survives the MCP server restarting (hot-reload) or a cloud env being
-reclaimed: the loop owns its own process, and node status + worktree path live
-in SQLite. It reads the `running` state file the MCP tool wrote, runs the node
-to completion, and overwrites the file with the terminal state the poll reads.
+ralph loop survives the MCP server restarting (hot-reload). Node status and
+worktree path persist in SQLite so a retried run can reconcile state from an
+earlier process. It reads the `running` state file the MCP tool wrote, runs the
+node to completion, and overwrites the file with the terminal state the poll
+reads.
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             graph.close()
 
+        events = ralph.poll_progress_events()
         write_state(
             state_path,
             {
@@ -82,6 +84,9 @@ def main(argv: list[str] | None = None) -> int:
                 "rebased": outcome.success,
                 "detail": outcome.detail,
                 "ended_at": now_iso(),
+                "progress": [
+                    {"work": e.work, "total": e.total, "message": e.message} for e in events
+                ],
             },
         )
         return 0 if outcome.success else 1

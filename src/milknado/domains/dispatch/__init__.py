@@ -8,6 +8,7 @@ from milknado.domains.dispatch.runner import (
     latest_terminal_run,
     poll_async_run,
     reconcile_node_status,
+    reconcile_orphan_node,
     run_headless,
     start_headless_async,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "poll_async_run",
     "read_state",
     "reconcile_node_status",
+    "reconcile_orphan_node",
     "render_brief",
     "run_headless",
     "runs_dir",
