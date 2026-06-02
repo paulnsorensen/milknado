@@ -1,4 +1,5 @@
 from milknado.domains.batching.change import (
+    MEGA_BATCH_THRESHOLD,
     Batch,
     BatchPlan,
     ChangeDependency,
@@ -15,6 +16,7 @@ from milknado.domains.batching.weights import estimate_tokens, estimate_tokens_p
 
 __all__ = [
     "DUMB_ZONE_BUDGET",
+    "MEGA_BATCH_THRESHOLD",
     "Batch",
     "BatchPlan",
     "ChangeDependency",

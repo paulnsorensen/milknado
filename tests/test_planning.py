@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.domains.batching import FileChange, NewRelationship, SymbolRef
+from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
 from milknado.domains.common.types import DegradationMarker, TilthMap
 from milknado.domains.graph import MikadoGraph
@@ -386,6 +386,62 @@ class TestPlanner:
         result = planner.launch("my goal", tmp_path)
         assert result.success is False
         assert result.exit_code == 1
+
+    @patch("milknado.domains.planning.planner.run_batching")
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_propagates_mega_batch_change_count(
+        self,
+        mock_run: MagicMock,
+        mock_run_batching: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        """launch must flow plan.mega_batch_change_count into PlanResult.
+
+        Without this the CLI can never report a mega-batch — a regression to None
+        here would silently disable the new CLI surface.
+        """
+        change_ids = tuple(f"c{i}" for i in range(6))
+        stdout = _make_v2_manifest_stdout(
+            [
+                {"id": cid, "path": f"src/f{i}.py", "description": f"Change {i}"}
+                for i, cid in enumerate(change_ids)
+            ]
+        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
+        mock_run_batching.return_value = BatchPlan(
+            batches=(Batch(index=0, change_ids=change_ids, depends_on=()),),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+        planner = Planner(tmp_graph, mock_crg, "claude")
+        result = planner.launch("goal", tmp_path)
+        assert result.mega_batch_change_count == 6
+
+    @patch("milknado.domains.planning.planner.run_batching")
+    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_mega_batch_change_count_none_when_within_threshold(
+        self,
+        mock_run: MagicMock,
+        mock_run_batching: MagicMock,
+        tmp_path: Path,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+    ) -> None:
+        """A plan with no offending batch leaves mega_batch_change_count None."""
+        stdout = _make_v2_manifest_stdout(
+            [{"id": "c0", "path": "src/f0.py", "description": "Change 0"}]
+        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
+        mock_run_batching.return_value = BatchPlan(
+            batches=(Batch(index=0, change_ids=("c0",), depends_on=()),),
+            spread_report=(),
+            solver_status="OPTIMAL",
+        )
+        planner = Planner(tmp_graph, mock_crg, "claude")
+        result = planner.launch("goal", tmp_path)
+        assert result.mega_batch_change_count is None
 
     @patch("milknado.domains.planning.planner.subprocess.run")
     def test_custom_agent_command(

@@ -9,9 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.adapters.tilth import TilthAdapter
-from milknado.domains.batching.change import BatchPlan
 from milknado.domains.common.agent_argv import build_planning_subprocess
-from milknado.domains.common.errors import MegaBatchAborted
 from milknado.domains.planning.batching_bridge import (
     apply_batches_to_graph,
     run_batching,
@@ -41,6 +39,7 @@ class PlanResult:
     oversized_count: int = 0
     solver_status: str = ""
     change_count: int = 0
+    mega_batch_change_count: int | None = None
 
 
 class Planner:
@@ -139,6 +138,7 @@ class Planner:
             oversized_count=sum(1 for b in plan.batches if b.oversized),
             solver_status=plan.solver_status,
             change_count=len(manifest.changes),
+            mega_batch_change_count=plan.mega_batch_change_count,
         )
 
     def replan_with_delta(
@@ -200,24 +200,3 @@ def _safe_ensure_crg(
     except Exception as exc:
         _logger.warning("CRG unavailable, running without graph context: %s", exc)
         return crg, False
-
-
-# Guard: raise MegaBatchAborted when a single batch exceeds this many changes.
-MEGA_BATCH_THRESHOLD = 5
-
-
-def check_mega_batch(
-    plan: BatchPlan,
-    force_single_batch: bool,
-    threshold: int,
-) -> None:
-    """Guard against oversized single batches.
-
-    If a plan has exactly 1 batch with > threshold changes and force_single_batch
-    is False, raise MegaBatchAborted. Otherwise, pass silently.
-    """
-    if force_single_batch or len(plan.batches) != 1:
-        return
-    change_count = len(plan.batches[0].change_ids)
-    if change_count > threshold:
-        raise MegaBatchAborted(change_count=change_count, threshold=threshold)

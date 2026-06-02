@@ -91,9 +91,32 @@ Uses a single atomic `os.write()` on an `O_APPEND` fd so concurrent appends from
 processes never interleave. **Never raises** — telemetry must not block the planner; OS
 errors are swallowed with a warning.
 
-## Gotcha: mega-batch guard
+## Mega-batch detection (domain-owned)
 
-`_check_mega_batch` exists in `planner.py` (raises `MegaBatchAborted` when a single batch
-exceeds a change threshold without `force_single_batch`) but is not wired into `launch`.
-`<speculative>` it is invoked by a higher-level caller (CLI/MCP) rather than the Planner
-itself.
+`BatchPlan.mega_batch_change_count` (`domains/batching/change.py`) is the canonical
+mega-batch signal: it scans **all** batches and returns the largest change count exceeding
+`MEGA_BATCH_THRESHOLD = 5`, else `None`. Detection is owned by the plan producer; both
+entrypoints read the property and choose their own **reaction**:
+
+- **MCP** (`_plan_batches_impl`) raises `MegaBatchAborted` when any batch exceeds the
+  threshold and `force_single_batch` is False — autonomous, fail-fast.
+- **CLI** (`_plan_summary`) appends a mega-batch note to the plan summary — human-in-loop,
+  non-fatal.
+
+The CLI-reports / MCP-aborts split is intentional (milknado#90, resolved-by-design: a human
+watching the CLI can eyeball the report; an autonomous MCP caller has no human, so it fails
+fast). Detection is domain-owned *by construction*; reaction stays per-entrypoint policy.
+
+Keep this distinct from `Batch.oversized` / `oversized_count` — that is a **token-budget**
+signal (`DUMB_ZONE_BUDGET`), not a change count. The two must not be folded.
+`MEGA_BATCH_THRESHOLD` is an uncalibrated heuristic ("one batch = one ralph loop = one
+review unit"); tune it in `change.py` if calibration data appears.
+
+**History.** This replaced a caller-shadowed guard: `check_mega_batch` lived in `planner.py`,
+was promoted public in #111 only so the MCP entrypoint could reach it across the slice
+boundary, and was never wired into `Planner.launch` — an encapsulation smell a diff-scoped
+`/age` pass graded as clean. It also early-returned unless the plan had exactly one batch, so
+a multi-batch plan holding one oversized batch passed silently. The producer-owned property
+fixes both. See `history/review-lessons.md` § "Review scope: diff-scoped review can't see an
+inherited encapsulation smell" and
+[easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).

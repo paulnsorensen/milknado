@@ -226,11 +226,14 @@ def _derive_goal(spec_path: Path) -> str:
 
 
 def _plan_summary(result: PlanResult) -> str:
-    return (
+    summary = (
         f"Planned {result.change_count} changes → {result.batch_count} batches"
         f" ({result.oversized_count} oversized), solver={result.solver_status};"
         f" {result.nodes_created} Mikado nodes created"
     )
+    if result.mega_batch_change_count is not None:
+        summary += f"; mega-batch: {result.mega_batch_change_count} changes in one batch"
+    return summary
 
 
 def _plan_exit_code(result: PlanResult) -> int:

@@ -203,6 +203,23 @@ class TestSolverStatusExitCodes:
         assert "5" in output or "Planned" in output
 
 
+class TestMegaBatchReport:
+    """_plan_summary surfaces a mega-batch note only when one was detected."""
+
+    def test_summary_includes_mega_batch_when_present(self) -> None:
+        from milknado.cli_plan import _plan_summary
+
+        summary = _plan_summary(_make_plan_result(mega_batch_change_count=6))
+        assert "mega-batch" in summary
+        assert "6" in summary
+
+    def test_summary_omits_mega_batch_when_none(self) -> None:
+        from milknado.cli_plan import _plan_summary
+
+        summary = _plan_summary(_make_plan_result())
+        assert "mega-batch" not in summary
+
+
 class TestDeriveGoal:
     def test_first_heading_extracted(self, tmp_path: Path) -> None:
         from milknado.cli import _derive_goal
