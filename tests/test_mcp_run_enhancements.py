@@ -282,7 +282,6 @@ class TestSyncRunOrphanRescue:
         from datetime import UTC, datetime, timedelta
 
         import milknado.domains.dispatch.runner as runner_mod
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
 
         def _crash_execute(project_root, node_id, log_path, brief, argv, timeout):
             raise RuntimeError("server killed mid-run before terminal write")
@@ -296,7 +295,7 @@ class TestSyncRunOrphanRescue:
         with pytest.raises(RuntimeError):
             _call(milknado_todo_run, node_id=task["id"], project_root=root)
 
-        runs_dir = _runs_dir(Path(root))
+        runs_dir = runner_mod._runs_dir(Path(root))
         files = list(runs_dir.glob(f"node-{task['id']}-*.state.json"))
         assert files, "orphaned sync run left no state file to rescue"
         state = json.loads(files[0].read_text())
@@ -306,7 +305,7 @@ class TestSyncRunOrphanRescue:
         state["started_at"] = aged.isoformat()
         files[0].write_text(json.dumps(state))
 
-        flipped = fail_stale_running_runs(Path(root), task["id"])
+        flipped = runner_mod.fail_stale_running_runs(Path(root), task["id"])
         assert len(flipped) == 1
         assert flipped[0]["status"] == "failed"
 
