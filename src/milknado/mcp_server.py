@@ -211,11 +211,8 @@ def _plan_batches_impl(
     force_single_batch: bool = False,
 ) -> dict:
     from milknado.adapters.crg import CrgAdapter
-    from milknado.domains.batching import plan_batches
-    from milknado.domains.planning import (
-        MEGA_BATCH_THRESHOLD,
-        check_mega_batch,
-    )
+    from milknado.domains.batching import MEGA_BATCH_THRESHOLD, plan_batches
+    from milknado.domains.common.errors import MegaBatchAborted
     from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
     from milknado.domains.planning.telemetry import record_batch_snapshot
 
@@ -231,7 +228,9 @@ def _plan_batches_impl(
         crg = None
     plan = plan_batches(file_changes, budget, crg=crg, new_relationships=rels, root=project_root)
     # #68: abort oversized single batches (MCP-only guard; CLI reports oversized_count instead)
-    check_mega_batch(plan, force_single_batch, MEGA_BATCH_THRESHOLD)
+    n = plan.mega_batch_change_count
+    if n is not None and not force_single_batch:
+        raise MegaBatchAborted(change_count=n, threshold=MEGA_BATCH_THRESHOLD)
     # #68: record telemetry as the CLI path does
     manifest = PlanChangeManifest(
         manifest_version=MANIFEST_VERSION,

@@ -64,11 +64,29 @@ class SymbolSpread:
     spread: int
 
 
+# one batch = one ralph-loop execution context = one review unit;
+# more than this many CHANGES in a single batch is too coarse to review/run atomically.
+# Distinct from token-budget `oversized`; uncalibrated heuristic, tune here if needed.
+MEGA_BATCH_THRESHOLD = 5
+
+
 @dataclass(frozen=True)
 class BatchPlan:
     batches: tuple[Batch, ...]
     spread_report: tuple[SymbolSpread, ...]
     solver_status: SolverStatus
+
+    @property
+    def mega_batch_change_count(self) -> int | None:
+        """Largest change count among batches exceeding MEGA_BATCH_THRESHOLD, else None.
+
+        Scans ALL batches — a mega-batch is any single batch with too many changes,
+        not only the degenerate single-batch plan.
+        """
+        offending = [
+            len(b.change_ids) for b in self.batches if len(b.change_ids) > MEGA_BATCH_THRESHOLD
+        ]
+        return max(offending) if offending else None
 
 
 class ChangeGraph(NamedTuple):

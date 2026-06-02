@@ -216,7 +216,11 @@ def test_symbol_file_absolute_rejected() -> None:
 
 
 def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
-    """_check_mega_batch must fire via the MCP path when 1 batch > threshold."""
+    """MCP aborts via the BatchPlan property when a batch exceeds the threshold.
+
+    Also pins that the reaction passes the detected change count into the error,
+    not a stale or hardcoded value.
+    """
     from milknado.adapters import crg as crg_mod
     from milknado.domains.common.errors import MegaBatchAborted
 
@@ -231,11 +235,13 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
-    # Lower threshold to 2 so 3 changes in a single budget-fitting batch triggers the guard
-    monkeypatch.setattr("milknado.domains.planning.MEGA_BATCH_THRESHOLD", 2)
+    # Lower threshold to 2 so 3 changes in a single budget-fitting batch triggers the guard.
+    # The property reads change.MEGA_BATCH_THRESHOLD, so that is the binding to patch.
+    monkeypatch.setattr("milknado.domains.batching.change.MEGA_BATCH_THRESHOLD", 2)
     changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
-    with pytest.raises(MegaBatchAborted):
+    with pytest.raises(MegaBatchAborted) as exc_info:
         _plan_batches_impl(changes, 70_000, tmp_path)
+    assert exc_info.value.change_count == 3
 
 
 def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
@@ -253,7 +259,7 @@ def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
-    monkeypatch.setattr("milknado.domains.planning.MEGA_BATCH_THRESHOLD", 2)
+    monkeypatch.setattr("milknado.domains.batching.change.MEGA_BATCH_THRESHOLD", 2)
     changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
     result = _plan_batches_impl(changes, 70_000, tmp_path, force_single_batch=True)
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE")

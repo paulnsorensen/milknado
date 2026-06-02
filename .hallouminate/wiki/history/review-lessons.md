@@ -1,6 +1,6 @@
 # Review Lessons — Recurring Findings & Gotchas
 
-Distilled from review/cure cycles on PRs #96, #109, #110. Grouped by theme —
+Distilled from review/cure cycles on PRs #96, #109, #110, #114. Grouped by theme —
 things that bit us, don't repeat them.
 
 ## Lifecycle: completion guards must fail loud, not swallow
@@ -107,3 +107,44 @@ The cheap signal: a `/cheese-factory` decomposer that reads the code before
 fanning out catches this for free — its first pass found 5/6 curds already
 implemented. When a "fix" backlog is suspiciously large, suspect stale-open
 issues before suspecting unfixed work.
+
+## Review scope: diff-scoped review can't see an inherited encapsulation smell
+
+On #111, `/age` reviewed the diff that promoted `_check_mega_batch` →
+public `check_mega_batch` and routed it through the planning crust. The
+encapsulation dimension passed it clean — *"helper promoted to public within its
+owning slice … no cross-slice leak."* That grade was locally correct and
+globally wrong. The real smell is structural and **predates the diff**:
+`check_mega_batch` is a `BatchPlan` invariant that lives in `domains/planning`
+but is **never called by the planner** — only by the MCP entrypoint
+`_plan_batches_impl`. The CLI (`Planner.launch`) silently skips it, so the
+invariant is enforced by *convention at call sites*, not by the producer. The
+producer already owns a parallel size signal (`Batch.oversized` /
+`PlanResult.oversized_count`), making the guard redundant as well as misplaced.
+
+Why it slipped past:
+
+1. **Diff-scoped review grades the delta, not the design.** The violation came
+   in earlier (#27 added the guard, #104 wired the MCP path); the #111 diff only
+   renamed + deduped, and within that frame encapsulation got *locally better*.
+2. **The fix matched the "good" side of a hygiene pattern.** "Private symbol
+   crossing a slice boundary → promote to public + crust-export" is a real
+   Sliced-Bread rule. Promoting `check_mega_batch` pattern-matched the *good*
+   side and masked the structural smell — the public surface only exists to be
+   called from above the domain layer.
+3. **Nobody challenged the spec's premise.** The mini-spec said "promote to
+   public"; cook and age both asked "is that done well?" — never "should this
+   be public, or should the validation move into the producer?"
+
+**Rule:** when a spec's premise is "make X public" or "share X across the
+boundary," challenge whether X should exist at the seam at all. A guard/
+validation that **all callers must invoke** (or that lives in a slice but is
+only called from outside it) signals the **domain isn't validating its own
+invariant** — move the invariant into the producer so every caller inherits it,
+and the public surface + cross-slice import both disappear. Asymmetry (one
+caller applies the check, another skips it) is the proof it's enforced by
+convention, not construction. This pattern is being added to `/age`'s
+encapsulation dimension as a `high` trigger — see
+[easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).
+Diff-scoped review is the right default, but its blind spot is an inherited
+violation that the diff *tidies*.
