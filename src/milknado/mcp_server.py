@@ -30,9 +30,6 @@ __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
 
 _logger = logging.getLogger(__name__)
 
-# Guard: raise MegaBatchAborted when a single batch exceeds this many changes.
-_MEGA_BATCH_THRESHOLD = 5
-
 
 @mcp.tool()
 def milknado_graph_summary(
@@ -216,7 +213,10 @@ def _plan_batches_impl(
     from milknado.adapters.crg import CrgAdapter
     from milknado.domains.batching import plan_batches
     from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
-    from milknado.domains.planning.planner import _check_mega_batch
+    from milknado.domains.planning.planner import (
+        MEGA_BATCH_THRESHOLD,
+        check_mega_batch,
+    )
     from milknado.domains.planning.telemetry import record_batch_snapshot
 
     file_changes = [_dict_to_file_change(c) for c in changes]
@@ -231,7 +231,7 @@ def _plan_batches_impl(
         crg = None
     plan = plan_batches(file_changes, budget, crg=crg, new_relationships=rels, root=project_root)
     # #68: apply same mega-batch guard the CLI path uses
-    _check_mega_batch(plan, force_single_batch, _MEGA_BATCH_THRESHOLD)
+    check_mega_batch(plan, force_single_batch, MEGA_BATCH_THRESHOLD)
     # #68: record telemetry as the CLI path does
     manifest = PlanChangeManifest(
         manifest_version=MANIFEST_VERSION,
