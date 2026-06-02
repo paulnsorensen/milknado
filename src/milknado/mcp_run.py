@@ -89,6 +89,28 @@ def _run_and_update_status(
     running = _ensure_running(graph, node_id)
     run_id = make_run_id(node_id)
     started_at = now_iso()
+    rdir = runs_dir(project_root)
+    state_path = rdir / f"{run_id}.state.json"
+    if running:
+        # Write a rescuable "running" state file BEFORE blocking in run_headless.
+        # The sync call blocks up to timeout_seconds; if the client times out and
+        # the server is killed mid-run, the post-run terminal write never lands,
+        # stranding the node RUNNING forever. With this file fail_stale_running_runs
+        # releases the node past timeout, matching start_headless_async.
+        write_state(
+            state_path,
+            {
+                "run_id": run_id,
+                "node_id": node_id,
+                "started_at": started_at,
+                "log_path": str(rdir / f"{run_id}.log"),
+                "timeout_seconds": timeout_seconds,
+                "status": "running",
+                "exit_code": None,
+                "timed_out": False,
+                "ended_at": None,
+            },
+        )
     result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id)
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
@@ -99,8 +121,6 @@ def _run_and_update_status(
     final = graph.get_node(node_id)
     if final is None:
         raise RuntimeError(f"node {node_id} not found after run completed")
-    rdir = runs_dir(project_root)
-    state_path = rdir / f"{run_id}.state.json"
     write_state(
         state_path,
         {

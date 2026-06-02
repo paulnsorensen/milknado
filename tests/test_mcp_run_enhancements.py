@@ -240,6 +240,104 @@ class TestSyncRunSchema:
             graph.close()
 
 
+class TestSyncRunOrphanRescue:
+    """#42: a sync run must write a rescuable 'running' state file BEFORE it
+    blocks in the worker. A client timeout can orphan the call (server killed
+    mid-run, no terminal write ever lands); without the up-front file the node
+    stays RUNNING forever, since fail_stale_running_runs has nothing to find.
+    The async path already gets this via start_headless_async."""
+
+    def test_sync_run_writes_rescuable_running_state_before_worker(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import milknado.domains.dispatch.runner as runner_mod
+
+        observed: dict = {}
+
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
+            # Snapshot on-disk state WHILE the worker runs — the exact window a
+            # client timeout orphans the sync call in.
+            for sp in runner_mod._runs_dir(project_root).glob(f"node-{node_id}-*.state.json"):
+                observed["state"] = json.loads(sp.read_text())
+            log_path.write_bytes(b"ok")
+            return 0, False
+
+        monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
+
+        from milknado.mcp_run import milknado_todo_run
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+
+        state = observed.get("state")
+        assert state is not None, "no 'running' state file existed while the worker ran"
+        assert state["status"] == "running"
+        # fail_stale_running_runs keys on both fields; missing either makes an
+        # orphaned run unrescuable.
+        assert state["started_at"]
+        assert state["timeout_seconds"] is not None
+
+    def test_orphaned_sync_run_is_rescuable(self, tmp_path: Path, monkeypatch) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        import milknado.domains.dispatch.runner as runner_mod
+
+        def _crash_execute(project_root, node_id, log_path, brief, argv, timeout):
+            raise RuntimeError("server killed mid-run before terminal write")
+
+        monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
+
+        from milknado.mcp_run import milknado_todo_run
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="orphan-stale", kind="task", project_root=root)
+        with pytest.raises(RuntimeError):
+            _call(milknado_todo_run, node_id=task["id"], project_root=root)
+
+        runs_dir = runner_mod._runs_dir(Path(root))
+        files = list(runs_dir.glob(f"node-{task['id']}-*.state.json"))
+        assert files, "orphaned sync run left no state file to rescue"
+        state = json.loads(files[0].read_text())
+        assert state["status"] == "running"
+        # Age the run past its timeout and the stale sweep must release the node.
+        aged = datetime.now(UTC) - timedelta(seconds=state["timeout_seconds"] + 3600)
+        state["started_at"] = aged.isoformat()
+        files[0].write_text(json.dumps(state))
+
+        flipped = runner_mod.fail_stale_running_runs(Path(root), task["id"])
+        assert len(flipped) == 1
+        assert flipped[0]["status"] == "failed"
+
+    def test_done_node_rerun_writes_no_running_state(self, tmp_path: Path, monkeypatch) -> None:
+        """The running-state write is gated on an actual PENDING/FAILED->RUNNING
+        transition. A DONE node re-run must NOT drop a 'running' file the stale
+        sweep could later force-fail, which would clobber the prior DONE result."""
+        import milknado.domains.dispatch.runner as runner_mod
+
+        observed: dict = {}
+
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
+            files = runner_mod._runs_dir(project_root).glob(f"node-{node_id}-*.state.json")
+            observed["running"] = [
+                s for f in files if (s := json.loads(f.read_text())).get("status") == "running"
+            ]
+            log_path.write_bytes(b"ok")
+            return 0, False
+
+        monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
+
+        from milknado.mcp_run import milknado_todo_run
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="done-rerun", kind="task", project_root=root)
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)  # -> DONE
+        # Second run sees a DONE node: _ensure_running returns False, so the gate
+        # must skip the running-state write — no 'running' file exists mid-run.
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+        assert observed["running"] == [], "DONE-node re-run must not write a 'running' state file"
+
+
 # ---------------------------------------------------------------------------
 # #82 — milknado_run_list
 # ---------------------------------------------------------------------------
