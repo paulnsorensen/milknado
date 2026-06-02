@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import NodeStatus, pid_alive
 from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import clear_cancel as _clear_cancel
@@ -416,11 +416,14 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
     The async worker runs in a daemon thread; if the server process dies
     mid-run the thread dies with it and never writes a terminal state, leaving
     the state file stuck on "running" and the node locked on RUNNING forever
-    (orphan reconciliation only recovers runs that reached done/failed). A run
-    still "running" past its own timeout plus a grace margin can only mean the
-    thread vanished — `_execute` kills and reaps the subprocess at timeout, so
-    a live worker always reaches a terminal write. Mark such runs failed so the
-    caller's reconciliation can release the node. Returns the runs it flipped.
+    (orphan reconciliation only recovers runs that reached done/failed). For the
+    worker model a run still "running" past its own timeout plus a grace margin
+    can only mean the thread vanished — `_execute` kills and reaps the subprocess
+    at timeout, so a live worker always reaches a terminal write. A detached-ralph
+    runner has no such killer (its only timeout is `wait_for_next_completion`), so
+    this also skips any run whose recorded pid is still alive — slow, not dead.
+    Mark the rest failed so the caller's reconciliation can release the node.
+    Returns the runs it flipped.
     """
     now = datetime.now(UTC)
     flipped: list[dict] = []
@@ -440,6 +443,16 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
         except ValueError:
             continue
         if (now - started).total_seconds() <= timeout + _STALE_GRACE_SECONDS:
+            continue
+        # A detached-ralph runner records its own pid; a live process past the
+        # grace window is slow (e.g. wedged in `git rebase`, which has no
+        # subprocess timeout), not orphaned. Flipping it would thrash a run about
+        # to write "done" — and could cross-fail another run kind sharing the
+        # node-<id>-* glob. The async-worker path records no pid, so its orphan
+        # sweep (server crash → daemon thread vanished, no terminal write) is
+        # unchanged: pid-unknown still falls through to the timeout flip.
+        pid = state.get("pid")
+        if pid is not None and pid_alive(pid):
             continue
         failed = {
             **state,
