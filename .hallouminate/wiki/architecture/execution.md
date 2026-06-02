@@ -133,6 +133,37 @@ starts. `_async_worker`'s except branch guarantees a terminal "failed" write on
 any spawn/write failure — otherwise the state file sticks on "running" and locks
 the node out forever.
 
+## MCP run surface — five tools, one schema (#82, #83, #107)
+
+Five coordinator-facing MCP tools drive runs: `milknado_todo_run` (blocking),
+`milknado_todo_run_start` / `milknado_todo_run_poll` (async in-process worker),
+and `milknado_ralph_run_start` / `milknado_ralph_run_poll` (detached
+worktree-isolated ralph loop). All five return the **unified superset schema**
+`RunDict` (`_mcp_core.py`): `run_id, node_id, status, exit_code, timed_out,
+rebased, log_path, state_path, summary`, every field nullable where it doesn't
+apply (`summary` is None until a poll tails the log; `rebased` is None for
+non-ralph runs; the start tools return `exit_code`/`timed_out` None). One client
+code path handles every run type — fixing signature finding S5, where three
+divergent dict shapes used to force per-tool branching.
+
+Two management tools close the lifecycle (the structural fix the run-lifecycle
+bugs #38/#39/#50 pointed at):
+
+- `milknado_run_list(project_root="", limit=50)` — enumerate recent runs from
+  `.milknado/runs/`, newest first by state-file mtime, bounded by `limit` so read
+  cost stays flat as run history grows.
+- `milknado_run_cancel(run_id)` — validates the `run_id` against `RUN_ID_RE`,
+  then forks on run type. A **detached-ralph** run has its own process group, so
+  `os.killpg(SIGTERM)` is safe and cancel finalizes the terminal state directly
+  (`_cancel_pid_run`). An **async-headless** run shares the server's process
+  group, so cancel writes the cooperative sentinel and waits a bounded window
+  (`_CANCEL_FINALIZE_TIMEOUT_SECS`) for the worker to own the terminal write,
+  taking over only if the worker never responds (`_cancel_async_run`). Both paths
+  reconcile the node fenced on `run_id` (`_reconcile_cancel` → the same
+  `reconcile_node_status` orphan recovery uses) and prune the worktree
+  (`remove_worktree` + `git worktree prune`). No-ops cleanly when the run is
+  already terminal.
+
 ## Orphan recovery & reconciliation
 
 A worker can vanish (server crash) leaving a "running" state file and a RUNNING
@@ -165,3 +196,6 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, state-file I/O, cancel sentinel.
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin).
+- `src/milknado/mcp_run.py` — `milknado_todo_run*`, `milknado_run_list`, `milknado_run_cancel`.
+- `src/milknado/mcp_ralph.py` — `milknado_ralph_run_start` / `_poll` (COORDINATOR-ONLY).
+- `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema.

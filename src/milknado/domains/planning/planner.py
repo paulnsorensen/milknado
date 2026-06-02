@@ -202,7 +202,11 @@ def _safe_ensure_crg(
         return crg, False
 
 
-def _check_mega_batch(
+# Guard: raise MegaBatchAborted when a single batch exceeds this many changes.
+MEGA_BATCH_THRESHOLD = 5
+
+
+def check_mega_batch(
     plan: BatchPlan,
     force_single_batch: bool,
     threshold: int,

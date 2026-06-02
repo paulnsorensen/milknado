@@ -79,3 +79,31 @@ claims against intent: on #110 Copilot flagged the broadened Claude allowlist as
 a security regression when the broadening *was* the PR's titled intent
 (structured `worker.tools` as the new single source of truth, pinned by
 `test_cli.py:1420`). Correct mechanics + wrong intent = reject the finding.
+
+## Triage: open issues outlive their fix — verify against HEAD
+
+The May 2026 MCP steel-thread review (#81) filed 43 findings. They were
+remediated across PRs #103/#104/#105/#106/#107 (plus #99 and #21) and merged —
+but the **issues were never closed**. A later triage pass took "open issue" as
+"unfixed work" and nearly fanned out a 6-curd `/cheese-factory` run to
+re-implement fixes already in `main`. Verifying each finding against HEAD found
+**35 of 38** "high-priority" tickets already done; only #111 finding-3 was
+genuinely unfixed.
+
+**Rule:** before triaging or dispatching a finding backlog, verify each item
+against current HEAD — read the cited `file:line` and check whether the
+recommendation is already applied. A remediation PR routinely lands the fix
+without closing the tracking issue, and area labels mislead on attribution
+(#69's `tomli_w` fix was #99 not the graph-core batch; #58's rebase split was
+#21). The #81 remediation map:
+
+- **#104** — batch-planner (#66 #68 #71 #74–77 #79 #80)
+- **#103** — graph-core (#41 #43 #45 #48 #59 #63–65 #67 #70 #72)
+- **#105** — worker-dispatch (#38 #39 #40 #44 #47 #53)
+- **#106** — detached-ralph (#46 #50 #52 #56 #57 #60 #62)
+- **#107** — MCP enhancements (#82 run_list/run_cancel, #83 unified `RunDict`, #89 logging)
+
+The cheap signal: a `/cheese-factory` decomposer that reads the code before
+fanning out catches this for free — its first pass found 5/6 curds already
+implemented. When a "fix" backlog is suspiciously large, suspect stale-open
+issues before suspecting unfixed work.

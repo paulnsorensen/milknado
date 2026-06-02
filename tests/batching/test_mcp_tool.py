@@ -232,7 +232,7 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
     # Lower threshold to 2 so 3 changes in a single budget-fitting batch triggers the guard
-    monkeypatch.setattr("milknado.mcp_server._MEGA_BATCH_THRESHOLD", 2)
+    monkeypatch.setattr("milknado.domains.planning.MEGA_BATCH_THRESHOLD", 2)
     changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
     with pytest.raises(MegaBatchAborted):
         _plan_batches_impl(changes, 70_000, tmp_path)
@@ -253,7 +253,7 @@ def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
-    monkeypatch.setattr("milknado.mcp_server._MEGA_BATCH_THRESHOLD", 2)
+    monkeypatch.setattr("milknado.domains.planning.MEGA_BATCH_THRESHOLD", 2)
     changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
     result = _plan_batches_impl(changes, 70_000, tmp_path, force_single_batch=True)
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE")
