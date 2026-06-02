@@ -453,14 +453,32 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
         # unchanged: pid-unknown still falls through to the timeout flip.
         pid = state.get("pid")
         if pid is not None and pid_alive(pid):
+            # Log the skip: a run wedged past timeout+grace that keeps getting
+            # skipped as "slow, not dead" would otherwise leave no trace, since
+            # the caller discards this function's return value.
+            _logger.info(
+                "stale-run sweep skipped live run %s (node %s, pid %s) — slow, not orphaned",
+                state.get("run_id"),
+                node_id,
+                pid,
+            )
             continue
+        # A pid-recording detached run that reached here has a dead pid (the
+        # liveness skip above did not fire), so "vanished" understates it — name
+        # the exited process. The async-worker path records no pid and keeps the
+        # daemon-thread "vanished" wording.
+        error = (
+            f"detached runner (pid {pid}) exited before writing terminal state (stale running run)"
+            if pid is not None
+            else "worker vanished before writing terminal state (stale running run)"
+        )
         failed = {
             **state,
             "status": "failed",
             "exit_code": -1,
             "timed_out": False,
             "ended_at": _now_iso(),
-            "error": "worker vanished before writing terminal state (stale running run)",
+            "error": error,
         }
         _write_state(state_path, failed)
         flipped.append(failed)
