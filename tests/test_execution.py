@@ -400,7 +400,7 @@ class TestExecutorDispatch:
             assert graph.claim_node(1, "run-B", now=now_iso()) is True
             return RebaseResult(success=True)
 
-        fake_git.rebase = _reclaim_during_merge  # type: ignore[method-assign]
+        fake_git.rebase = _reclaim_during_merge  # ty: ignore[invalid-assignment]
 
         result = ex.complete(1, "main")
 
@@ -488,7 +488,7 @@ class TestExecutorDispatch:
         assert len(fake_git.removed) == 1
         assert 1 not in ex._wt._worktrees
 
-        graph.mark_pending = original_mark_pending  # restore
+        graph.mark_pending = original_mark_pending  # ty: ignore[invalid-assignment]  # restore
 
     def test_path_traversal_in_worktree_pattern_raises(
         self,
@@ -585,7 +585,9 @@ class TestExecutorComplete:
         wt.mkdir()
         graph.mark_running(1, worktree_path=str(wt))
         ex.complete(1, "main")
-        assert graph.get_node(1).status == NodeStatus.DONE  # type: ignore[union-attr]
+        first_node = graph.get_node(1)
+        assert first_node is not None
+        assert first_node.status == NodeStatus.DONE
         assert len(fake_git.commits) == 1  # first completion squashed exactly once
 
         # Second completion of the same node. The worktree dir still exists

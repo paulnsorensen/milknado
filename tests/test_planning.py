@@ -947,7 +947,7 @@ class TestPlanChangeManifest:
             new_relationships=(),
         )
         with pytest.raises(Exception):  # noqa: B017, PT011 — frozen dataclass
-            manifest.changes = ()  # type: ignore[misc]
+            manifest.changes = ()  # ty: ignore[invalid-assignment]
 
     def test_v2_parse_with_descriptions(self) -> None:
         output = _wrap(

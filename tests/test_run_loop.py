@@ -810,11 +810,10 @@ class TestStrictDrain:
 
 
 class TestProtectedBranchGuard:
-    @pytest.mark.skip(reason="protected-branch guard lives in app/run_command (β slice)")
     def test_protected_branch_raises_exit_2_before_log_created(self, tmp_path: Path) -> None:
         import typer
-        from milknado.app.run_command import _check_protected_branch
 
+        from milknado.app.run_command import _check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -829,6 +828,48 @@ class TestProtectedBranchGuard:
 
         assert exc_info.value.exit_code == 2
         assert not any(log_dir.glob("run-*.log"))
+
+    def test_protected_branch_with_allow_protected_does_not_raise(self, tmp_path: Path) -> None:
+        from milknado.app.run_command import _check_protected_branch
+        from milknado.domains.common.config import MilknadoConfig
+
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            protected_branches=("main", "master"),
+        )
+
+        # Explicit opt-in past the guard: no exception, returns None.
+        assert _check_protected_branch(cfg, "main", allow_protected=True) is None
+
+    def test_unprotected_branch_does_not_raise(self, tmp_path: Path) -> None:
+        from milknado.app.run_command import _check_protected_branch
+        from milknado.domains.common.config import MilknadoConfig
+
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            protected_branches=("main", "master"),
+        )
+
+        assert _check_protected_branch(cfg, "feature-x", allow_protected=False) is None
+
+    def test_second_protected_branch_also_raises_exit_2(self, tmp_path: Path) -> None:
+        import typer
+
+        from milknado.app.run_command import _check_protected_branch
+        from milknado.domains.common.config import MilknadoConfig
+
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            protected_branches=("main", "master"),
+        )
+
+        with pytest.raises(typer.Exit) as exc_info:
+            _check_protected_branch(cfg, "master", allow_protected=False)
+
+        assert exc_info.value.exit_code == 2
 
 
 class TestStalledWorkerGlyph:
@@ -1275,9 +1316,9 @@ class TestVerifySpecGapsPath:
     ) -> None:
         ralph = FakeRalph()
         verify_calls: list = []
-        ralph.verify_spec = lambda *a: (
+        ralph.verify_spec = lambda *a: (  # ty: ignore[invalid-assignment]
             verify_calls.append(a)
-            or __import__(  # type: ignore
+            or __import__(
                 "milknado.domains.common.protocols", fromlist=["VerifySpecResult"]
             ).VerifySpecResult(outcome="done")
         )

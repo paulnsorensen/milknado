@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from milknado._mcp_core import (
     Kind,
@@ -65,8 +65,9 @@ def milknado_graph_summary(
 def _parse_mcp_hash_anchors(raw: object) -> HashAnchors | None:
     if not isinstance(raw, dict):
         return None
-    before = raw.get("before")
-    after = raw.get("after")
+    d = cast("dict[str, Any]", raw)
+    before = d.get("before")
+    after = d.get("after")
     if not isinstance(before, str) or not isinstance(after, str):
         return None
     return HashAnchors(before=before, after=after)
@@ -79,8 +80,9 @@ def _parse_mcp_symbols(raw: object, label: str) -> list[SymbolRef]:
     for i, s in enumerate(raw):
         if not isinstance(s, dict):
             raise ValueError(f"{label}[{i}] must be a dict")
-        name = s.get("name")
-        file = s.get("file")
+        sd = cast("dict[str, Any]", s)
+        name = sd.get("name")
+        file = sd.get("file")
         if not isinstance(name, str) or not isinstance(file, str):
             raise ValueError(f"{label}[{i}] must have string 'name' and 'file'")
         if Path(file).is_absolute() or ".." in Path(file).parts:

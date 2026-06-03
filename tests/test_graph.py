@@ -154,7 +154,9 @@ class TestMoveNode:
 
         graph.move_node(child.id, new_parent.id)
 
-        assert graph.get_node(child.id).parent_id == new_parent.id
+        moved = graph.get_node(child.id)
+        assert moved is not None
+        assert moved.parent_id == new_parent.id
         assert [c.id for c in graph.get_children(old_parent.id)] == []
         assert [c.id for c in graph.get_children(new_parent.id)] == [child.id]
 
@@ -164,7 +166,9 @@ class TestMoveNode:
 
         graph.move_node(child.id, None)
 
-        assert graph.get_node(child.id).parent_id is None
+        moved = graph.get_node(child.id)
+        assert moved is not None
+        assert moved.parent_id is None
         assert graph.get_children(parent.id) == []
 
     def test_move_under_grandchild_raises_cycle(self, graph: MikadoGraph) -> None:
@@ -200,7 +204,9 @@ class TestMoveNode:
         # Re-parenting loose under mid walks mid's ancestors: top is reachable via
         # both left and right, so the visited-set guard prevents reprocessing it.
         graph.move_node(loose.id, mid.id)
-        assert graph.get_node(loose.id).parent_id == mid.id
+        moved = graph.get_node(loose.id)
+        assert moved is not None
+        assert moved.parent_id == mid.id
 
 
 class TestAddEdge:

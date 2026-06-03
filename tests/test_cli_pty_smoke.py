@@ -73,7 +73,7 @@ def _write_fake_planner(project_root: Path) -> Path:
     return agent
 
 
-def _start_plan_proc(project_root: Path, spec: Path) -> tuple[subprocess.Popen[str], int]:
+def _start_plan_proc(project_root: Path, spec: Path) -> tuple[subprocess.Popen[bytes], int]:
     master_fd, slave_fd = os.openpty()
     try:
         env = dict(os.environ)

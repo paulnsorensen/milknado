@@ -122,6 +122,7 @@ class TestInvalidTransition:
         assert err.node_id == 3
         assert err.current == NodeStatus.RUNNING
         assert err.target == NodeStatus.FAILED
+        assert err.valid_targets == (NodeStatus.DONE,)
 
 
 class TestTransientDispatchError:

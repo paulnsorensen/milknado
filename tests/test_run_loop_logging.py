@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,11 @@ class TestConfigureRunLoggingFileCreation:
     def test_log_filename_ends_with_z(self, tmp_path: Path) -> None:
         with configure_run_logging(tmp_path) as log_path:
             assert log_path.name.endswith(".log")
+
+    def test_log_filename_matches_iso8601_pattern(self, tmp_path: Path) -> None:
+        # US-009 contract: run-<ISO8601 basic-format UTC>.log, e.g. run-20260602T141530Z.log.
+        with configure_run_logging(tmp_path) as log_path:
+            assert re.fullmatch(r"run-\d{8}T\d{6}Z\.log", log_path.name)
 
     def test_creates_milknado_dir_if_missing(self, tmp_path: Path) -> None:
         project = tmp_path / "project"
