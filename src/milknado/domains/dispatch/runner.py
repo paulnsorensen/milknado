@@ -498,12 +498,16 @@ def find_terminal_runs_for_node(
     otherwise a stale run with a later `ended_at` could mask the owner's file."""
     runs_dir = _runs_dir(project_root)
     out: list[dict] = []
+    # The `node-<id>-*` glob anchors the node id — the trailing `-` keeps
+    # `node-1-` from matching `node-12-`, so a payload node_id re-check would
+    # only fire on a hand-corrupted filename/payload mismatch. Scope on the glob
+    # alone, mirroring fail_stale_running_runs above.
     for state_path in runs_dir.glob(f"node-{node_id}-*.state.json"):
         try:
             state = _read_state(state_path)
         except (OSError, json.JSONDecodeError):
             continue
-        if state.get("node_id") != node_id or state.get("status") not in ("done", "failed"):
+        if state.get("status") not in ("done", "failed"):
             continue
         if run_id is not None and state.get("run_id") != run_id:
             continue

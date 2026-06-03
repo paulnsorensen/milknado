@@ -1092,6 +1092,74 @@ class TestTodoAsyncRun:
         unfenced = find_terminal_runs_for_node(root, node_id)
         assert len(unfenced) == 2, "legacy (no fence) returns both terminal files"
 
+    def test_find_terminal_runs_glob_isolates_node_id_prefix(self, tmp_path: Path) -> None:
+        """Node scoping rides entirely on the `node-<id>-*` glob, not a payload
+        node_id re-check: the trailing `-` keeps node 1's scan from matching node
+        12's files. Regression guard for dropping the redundant payload check
+        (#49) — node isolation must hold on the glob alone, or a node-12 terminal
+        file would leak into node 1's reconcile."""
+        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+
+        root = Path(tmp_path)
+        runs = _runs_dir(root)
+        for run_id, node_id in [
+            ("node-1-20200101T000000Z-aaaa", 1),
+            ("node-12-20200101T000000Z-bbbb", 12),
+        ]:
+            (runs / f"{run_id}.state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "node_id": node_id,
+                        "status": "done",
+                        "ended_at": "2020-01-01T00:00:10+00:00",
+                        "exit_code": 0,
+                        "timed_out": False,
+                        "started_at": "2020-01-01T00:00:00+00:00",
+                        "log_path": str(runs / f"{run_id}.log"),
+                        "timeout_seconds": 10,
+                    }
+                )
+            )
+        result = find_terminal_runs_for_node(root, 1)
+        assert [r["run_id"] for r in result] == ["node-1-20200101T000000Z-aaaa"], (
+            "node 1's scan must not pick up node 12's terminal file — the glob's "
+            "trailing `-` is the only thing isolating the prefix now"
+        )
+
+    def test_find_terminal_runs_excludes_non_terminal_runs(self, tmp_path: Path) -> None:
+        """The status filter is the sole terminality gate now that the payload
+        node_id re-check is gone (#49): a still-'running' state file for the node
+        must be excluded, only done/failed runs returned. Guards against the
+        terminal-status tuple regressing into letting a live run reconcile."""
+        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+
+        root = Path(tmp_path)
+        runs = _runs_dir(root)
+        for run_id, status in [
+            ("node-5-20200101T000000Z-done", "done"),
+            ("node-5-20200101T000001Z-runn", "running"),
+        ]:
+            (runs / f"{run_id}.state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "node_id": 5,
+                        "status": status,
+                        "ended_at": "2020-01-01T00:00:10+00:00" if status != "running" else None,
+                        "exit_code": 0 if status == "done" else None,
+                        "timed_out": False,
+                        "started_at": "2020-01-01T00:00:00+00:00",
+                        "log_path": str(runs / f"{run_id}.log"),
+                        "timeout_seconds": 10,
+                    }
+                )
+            )
+        result = find_terminal_runs_for_node(root, 5)
+        assert [r["run_id"] for r in result] == ["node-5-20200101T000000Z-done"], (
+            "a 'running' state file must not be returned as a terminal run"
+        )
+
     def test_reconcile_node_status_is_fenced_on_run_id(self, tmp_path: Path) -> None:
         """A reconcile carrying a stale run_id must not clobber a node now RUNNING
         under a newer run; only the matching run_id finalizes it. Closes the TOCTOU
