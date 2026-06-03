@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from milknado.domains.batching import (
     ChangeDependency,
@@ -231,8 +231,9 @@ def _parse_hash_anchors(
     if not isinstance(raw, dict):
         _logger.warning("change %r: %s must be an object", cid, field_name)
         return None
-    before = raw.get("before")
-    after = raw.get("after")
+    d = cast("dict[str, Any]", raw)
+    before = d.get("before")
+    after = d.get("after")
     if not isinstance(before, str) or not before.strip():
         _logger.warning("change %r: %s.before must be a non-empty string", cid, field_name)
         return None

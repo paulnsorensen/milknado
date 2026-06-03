@@ -712,7 +712,7 @@ def _make_plan_result(**kwargs: object) -> MagicMock:
     """Build a PlanResult-like mock with sensible defaults."""
     from milknado.domains.planning.planner import PlanResult
 
-    defaults = {
+    defaults: dict[str, object] = {
         "success": True,
         "exit_code": 0,
         "context_path": None,
@@ -722,8 +722,9 @@ def _make_plan_result(**kwargs: object) -> MagicMock:
         "solver_status": "OPTIMAL",
         "change_count": 4,
     }
-    defaults.update(kwargs)
-    return PlanResult(**defaults)  # type: ignore[arg-type]
+    for k, v in kwargs.items():
+        defaults[k] = v
+    return PlanResult(**defaults)  # ty: ignore[invalid-argument-type, invalid-return-type]
 
 
 class TestPlanSpecOption:
@@ -1279,7 +1280,15 @@ class TestAgentsCheck:
 
 
 class TestRunCommand:
-    def test_no_nodes_ready(self, project_dir: Path) -> None:
+    def test_no_nodes_ready(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        # The protected-branch guard now runs before the no-nodes check, so the
+        # branch must resolve to a valid, non-protected name for this path.
+        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
         runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(
             app,
@@ -1288,10 +1297,16 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "No nodes ready" in result.output
 
-    def test_no_nodes_ready_all_done(self, project_dir: Path) -> None:
+    def test_no_nodes_ready_all_done(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
+        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1386,6 +1401,153 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "2 completed" in result.output
+
+    def test_strict_flag_maps_strict_exit_to_exit_1(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """US-102.1 — a strict-drain result must map to CLI exit code 1.
+
+        The drain behaviour itself is covered by TestStrictDrain; this asserts
+        the CLI wiring: --strict is threaded into loop.run and a True
+        strict_exit becomes typer.Exit(code=1).
+        """
+        from milknado.domains.common import default_config
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.close()
+
+        strict_result = RunLoopResult(
+            root_done=False,
+            dispatched_total=1,
+            completed_total=0,
+            failed_total=1,
+            strict_exit=True,
+        )
+        with patch("milknado.domains.execution.RunLoop") as mock_loop_cls:
+            mock_loop_cls.return_value.run.return_value = strict_result
+            result = runner.invoke(
+                app,
+                ["run", "--strict", "--project-root", str(project_dir)],
+            )
+
+        assert result.exit_code == 1
+        assert mock_loop_cls.return_value.run.call_args.kwargs["strict"] is True
+
+    def test_non_strict_failure_does_not_exit_1(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """--strict is opt-in: a mid-run failure without the flag still exits 0.
+
+        Guards against a naive ``failed_total -> exit 1`` regression that would
+        break the opt-in contract; only strict_exit may force exit 1.
+        """
+        from milknado.domains.common import default_config
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.close()
+
+        failed_result = RunLoopResult(
+            root_done=False,
+            dispatched_total=1,
+            completed_total=0,
+            failed_total=1,
+            strict_exit=False,
+        )
+        with patch("milknado.domains.execution.RunLoop") as mock_loop_cls:
+            mock_loop_cls.return_value.run.return_value = failed_result
+            result = runner.invoke(
+                app,
+                ["run", "--project-root", str(project_dir)],
+            )
+
+        assert result.exit_code == 0
+        assert mock_loop_cls.return_value.run.call_args.kwargs["strict"] is False
+
+    def test_protected_branch_exits_2_without_dispatch(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """US-102.2 — running on a protected branch exits 2 with no side effects."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "main"
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 2
+        assert "Starting execution loop" not in result.output
+        assert "Refusing to run on protected branch" in result.output
+        # No executor/worktree constructed: the adapter class is never instantiated.
+        mock_ralph_cls.assert_not_called()
+        mock_ralph_cls.return_value.create_run.assert_not_called()
+
+    def test_allow_protected_bypasses_guard_on_protected_branch(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """US-102.2 — --allow-protected is the explicit opt-in past the guard."""
+        from milknado.domains.common import default_config
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "main"
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.close()
+
+        ok_result = RunLoopResult(
+            root_done=True,
+            dispatched_total=1,
+            completed_total=1,
+            failed_total=0,
+        )
+        with patch("milknado.domains.execution.RunLoop") as mock_loop_cls:
+            mock_loop_cls.return_value.run.return_value = ok_result
+            result = runner.invoke(
+                app,
+                ["run", "--allow-protected", "--project-root", str(project_dir)],
+            )
+
+        assert result.exit_code == 0
+        assert "Starting execution loop" in result.output
+        mock_loop_cls.return_value.run.assert_called_once()
 
 
 # ── worker hook writers ───────────────────────────────────────────────────────

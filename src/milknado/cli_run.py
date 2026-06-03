@@ -17,6 +17,21 @@ from milknado.domains.common import MilknadoConfig
 
 console = Console()
 
+StrictOption = Annotated[
+    bool,
+    typer.Option(
+        "--strict",
+        help="Exit 1 if any node fails mid-run (drain in-flight, no new dispatch).",
+    ),
+]
+AllowProtectedOption = Annotated[
+    bool,
+    typer.Option(
+        "--allow-protected",
+        help="Permit execution on a protected branch (e.g. main).",
+    ),
+]
+
 
 def _build_exec_config(
     config: MilknadoConfig,
@@ -57,13 +72,21 @@ def run(
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
     ] = Path("."),
+    strict: StrictOption = False,
+    allow_protected: AllowProtectedOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
+    from milknado.app.run_command import check_protected_branch
     from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
+
+    git = GitAdapter(project_root)
+    feature_branch = git.current_branch()
+    check_protected_branch(config, feature_branch, allow_protected)
+
     graph = _ensure_db(config, plugins)
 
     try:
@@ -71,19 +94,19 @@ def run(
             console.print("No nodes ready for execution.")
             return
 
-        git = GitAdapter(project_root)
         ralph = RalphifyAdapter()
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-
-        feature_branch = git.current_branch()
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
         result = loop.run(
             config=_build_exec_config(config, project_root),
             feature_branch=feature_branch,
             concurrency_limit=config.concurrency_limit,
+            strict=strict,
         )
         _print_run_result(result)
+        if result.strict_exit:
+            raise typer.Exit(code=1)
     finally:
         graph.close()

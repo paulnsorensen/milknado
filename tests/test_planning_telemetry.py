@@ -45,7 +45,7 @@ def _make_plan(
     return BatchPlan(
         batches=batches,
         spread_report=spread_report,
-        solver_status=solver_status,  # type: ignore[arg-type]
+        solver_status=solver_status,  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -170,7 +170,7 @@ class TestDiskError:
         def bad_open(self: Path, *args: object, **kwargs: object) -> object:
             if "calibration.jsonl" in str(self):
                 raise OSError("disk full")
-            return original_open(self, *args, **kwargs)  # type: ignore[arg-type]
+            return original_open(self, *args, **kwargs)  # ty: ignore[no-matching-overload]
 
         monkeypatch.setattr(Path, "open", bad_open)
 

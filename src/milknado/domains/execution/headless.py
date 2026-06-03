@@ -10,13 +10,16 @@ headless server process or a detached subprocess. This function reuses the same
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from milknado.domains.common.errors import CompletionTimeout
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import RalphPort
-    from milknado.domains.execution.executor import ExecutionConfig, Executor
+    from milknado.domains.execution.executor import (
+        CompletionResult,
+        DispatchResult,
+        ExecutionConfig,
+    )
 
 
 @dataclass(frozen=True)
@@ -26,9 +29,22 @@ class HeadlessOutcome:
     detail: str | None = None
 
 
+class _ExecutorLike(Protocol):
+    def dispatch(self, node_id: int, config: ExecutionConfig) -> DispatchResult: ...
+    def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
+    def fail(self, node_id: int) -> None: ...
+
+
+class _RalphLike(Protocol):
+    def wait_for_next_completion(
+        self, active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, bool]: ...
+    def stop_run(self, run_id: str) -> None: ...
+
+
 def run_node_to_completion(
-    executor: Executor,
-    ralph: RalphPort,
+    executor: _ExecutorLike,
+    ralph: _RalphLike,
     node_id: int,
     exec_config: ExecutionConfig,
     feature_branch: str,

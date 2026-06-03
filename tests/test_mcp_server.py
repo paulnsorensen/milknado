@@ -1085,7 +1085,9 @@ class TestTodoAsyncRun:
             )
         fenced = find_terminal_runs_for_node(root, node_id, run_id=owner)
         assert [r["run_id"] for r in fenced] == [owner]
-        assert latest_terminal_run(fenced)["status"] == "done", (
+        latest = latest_terminal_run(fenced)
+        assert latest is not None
+        assert latest["status"] == "done", (
             "the owner's file wins once the stale later-ended_at run is fenced out"
         )
         unfenced = find_terminal_runs_for_node(root, node_id)
@@ -1174,13 +1176,15 @@ class TestTodoAsyncRun:
             node_id = g.add_node("reconcile-fence").id
             g.claim_node(node_id, "run-new", now=now_iso())
             reconcile_node_status(g, node_id, "done", run_id="run-stale")
-            assert g.get_node(node_id).status == NodeStatus.RUNNING, (
+            node_stale = g.get_node(node_id)
+            assert node_stale is not None
+            assert node_stale.status == NodeStatus.RUNNING, (
                 "a stale run cannot finalize a newer owner"
             )
             reconcile_node_status(g, node_id, "done", run_id="run-new")
-            assert g.get_node(node_id).status == NodeStatus.DONE, (
-                "the current owner's run finalizes"
-            )
+            node_final = g.get_node(node_id)
+            assert node_final is not None
+            assert node_final.status == NodeStatus.DONE, "the current owner's run finalizes"
         finally:
             g.close()
 
@@ -1772,6 +1776,7 @@ class TestSetSubtreeStatus:
 def _advertised_param(tool_name: str, param: str) -> dict:
     """The JSON-schema fragment FastMCP advertises for one tool parameter."""
     tool = asyncio.run(mcp.get_tool(tool_name))
+    assert tool is not None
     return tool.parameters["properties"][param]
 
 
