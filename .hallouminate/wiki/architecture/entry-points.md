@@ -55,7 +55,7 @@ an import cycle. Project root comes from the `project_root` arg or `MILKNADO_PRO
 instance at import time — then calls `mcp.run()`. Tools are grouped by capability:
 
 - **Graph editing / inspection** (`mcp_server.py` + `mcp_todo.py`): `milknado_graph_summary`,
-  `milknado_add_node`, `milknado_get_node`, `milknado_edit_node`, `milknado_delete_node`,
+  `milknado_get_node`, `milknado_edit_node`, `milknado_delete_node`,
   `milknado_move_node`, `milknado_set_subtree_status`.
 - **Planning** (`mcp_server.py`): `milknado_plan_batches` — accepts file changes + new
   relationships (with hash anchors / symbol refs) and turns them into a batch plan; guards

@@ -17,7 +17,6 @@ from milknado.mcp_run import (
     milknado_todo_run_start,
 )
 from milknado.mcp_server import (
-    milknado_add_node,
     milknado_graph_summary,
     open_graph,
     resolve_project_root,
@@ -1819,25 +1818,3 @@ class TestAdvertisedEnumSchema:
         kind = _advertised_param("milknado_graph_summary", "kind")
         assert _enum_values(status) == ["pending", "in_progress", "blocked", "done"]
         assert _enum_values(kind) == ["roadmap", "goal", "task"]
-
-
-class TestMilknadoAddNodeReturnsDict:
-    def test_add_node_returns_dict_with_expected_fields(self, tmp_path: Path) -> None:
-        root = str(tmp_path)
-        result = _call(milknado_add_node, description="my node", project_root=root)
-        assert isinstance(result, dict)
-        assert "id" in result
-        assert result["status"] == "pending"
-        assert result["description"] == "my node"
-        assert result["kind"] == "task"
-
-    def test_add_node_with_parent_links_it(self, tmp_path: Path) -> None:
-        root = str(tmp_path)
-        parent = _call(milknado_add_node, description="parent", project_root=root)
-        child = _call(
-            milknado_add_node, description="child", parent_id=parent["id"], project_root=root
-        )
-        assert isinstance(child, dict)
-        tree = _call(milknado_todo_tree, project_root=root)
-        assert tree[0]["id"] == parent["id"]
-        assert tree[0]["children"][0]["id"] == child["id"]

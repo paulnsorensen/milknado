@@ -21,4 +21,4 @@ description: >
 
 ## MCP
 
-This plugin ships `mcp.json` registering the `milknado-mcp` stdio server (`milknado_graph_summary`, `milknado_add_node`). Install the `milknado` package in the workspace (e.g. path dep in `pyproject.toml`) so `uv run milknado-mcp` resolves.
+This plugin ships `mcp.json` registering the `milknado-mcp` stdio server (`milknado_graph_summary`, `milknado_todo_add`). Install the `milknado` package in the workspace (e.g. path dep in `pyproject.toml`) so `uv run milknado-mcp` resolves.
