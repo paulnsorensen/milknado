@@ -26,13 +26,21 @@ from milknado.domains.graph._persistence import (
     check_parallel_safety,
     children_id_map,
     create_tables,
+    deposit_run_message,
     drop_all,
     ensure_schema,
+    finish_run,
     get_file_ownership,
+    get_run,
+    latest_run_message,
+    recent_runs,
     row_to_node,
+    runs_for_node,
     set_file_ownership,
     set_pid,
+    set_run_pid,
     set_worktree,
+    start_run,
 )
 
 if TYPE_CHECKING:
@@ -364,6 +372,71 @@ class MikadoGraph(_AnalyticsFacade):
         """Attach worktree/branch to an already-claimed node (no status change),
         CAS-gated on the run_id fence."""
         set_worktree(self._conn, node_id, run_id, worktree_path, branch_name)
+
+    # ── Run repository (replaces the JSON sidecars) ──────────────────────────
+
+    def start_run(
+        self,
+        run_id: str,
+        node_id: int,
+        log_path: str,
+        started_at: str,
+        timeout_seconds: int | None,
+        pid: int | None = None,
+    ) -> None:
+        """INSERT a status='running' run row (replaces the initial sidecar write)."""
+        start_run(self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid)
+
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        exit_code: int | None,
+        timed_out: bool,
+        ended_at: str,
+        error: str | None = None,
+        detail: str | None = None,
+        rebased: bool | None = None,
+    ) -> None:
+        """UPDATE a run to a terminal status (replaces the terminal sidecar write)."""
+        finish_run(
+            self._conn,
+            run_id,
+            status=status,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            ended_at=ended_at,
+            error=error,
+            detail=detail,
+            rebased=rebased,
+        )
+
+    def set_run_pid(self, run_id: str, pid: int) -> None:
+        """Record the detached runner's pid on a still-running run (fenced)."""
+        set_run_pid(self._conn, run_id, pid)
+
+    def get_run(self, run_id: str) -> dict | None:
+        """Return one run row as a dict, or None."""
+        return get_run(self._conn, run_id)
+
+    def runs_for_node(
+        self, node_id: int, *, terminal_only: bool = False, run_id: str | None = None
+    ) -> list[dict]:
+        """Return this node's runs as dicts. Caller applies fence-before-latest."""
+        return runs_for_node(self._conn, node_id, terminal_only=terminal_only, run_id=run_id)
+
+    def recent_runs(self, limit: int) -> list[dict]:
+        """Return the most-recently-started runs as dicts."""
+        return recent_runs(self._conn, limit)
+
+    def deposit_run_message(self, run_id: str, role: str, body: str, created_at: str) -> int:
+        """Append a run message; return its seq."""
+        return deposit_run_message(self._conn, run_id, role, body, created_at)
+
+    def latest_run_message(self, run_id: str, role: str) -> str | None:
+        """Return the body of the latest message for this run+role, or None."""
+        return latest_run_message(self._conn, run_id, role)
 
     def mark_pending(self, node_id: int) -> None:
         old = self._node_status(node_id)

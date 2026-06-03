@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import time
 from pathlib import Path
@@ -15,40 +14,56 @@ from milknado.mcp_todo import milknado_todo_add, milknado_todo_tree
 # the same argv the MCP tool appends and writes the requested terminal state,
 # letting us exercise the start->spawn->poll plumbing without a real ralph loop.
 _STUB_RUNNER = """
-import argparse, json
+import argparse
 from pathlib import Path
+from milknado._mcp_core import open_graph
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
-p.add_argument("--state-path")
 p.add_argument("--timeout")
 a = p.parse_args()
-sp = Path(a.state_path)
-state = json.loads(sp.read_text())
-state.update(status="{status}", rebased={rebased}, detail={detail})
-state["ended_at"] = "2026-01-01T00:00:00+00:00"
-sp.write_text(json.dumps(state))
+graph, _cfg = open_graph(Path(a.project_root))
+try:
+    graph.finish_run(
+        a.run_id,
+        status="{status}",
+        exit_code={exit_code},
+        timed_out=False,
+        ended_at="2026-01-01T00:00:00+00:00",
+        rebased={rebased},
+        detail={detail},
+    )
+finally:
+    graph.close()
 """
 
 
 # A stub runner that echoes its inherited MILKNADO_NODE_ID into the run detail,
 # letting us assert the detached spawn injects the env var (parenting fix).
 _ENV_CAPTURE_RUNNER = """
-import argparse, json, os
+import argparse, os
 from pathlib import Path
+from milknado._mcp_core import open_graph
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
-p.add_argument("--state-path")
 p.add_argument("--timeout")
 a = p.parse_args()
-sp = Path(a.state_path)
-state = json.loads(sp.read_text())
-state.update(status="done", rebased=True, detail=os.environ.get("MILKNADO_NODE_ID", "<unset>"))
-state["ended_at"] = "2026-01-01T00:00:00+00:00"
-sp.write_text(json.dumps(state))
+graph, _cfg = open_graph(Path(a.project_root))
+try:
+    graph.finish_run(
+        a.run_id,
+        status="done",
+        exit_code=0,
+        timed_out=False,
+        ended_at="2026-01-01T00:00:00+00:00",
+        rebased=True,
+        detail=os.environ.get("MILKNADO_NODE_ID", "<unset>"),
+    )
+finally:
+    graph.close()
 """
 
 
@@ -57,9 +72,70 @@ def _call(tool, **kwargs):
     return fn(**kwargs)
 
 
+def _read_run(root: Path, run_id: str) -> dict | None:
+    graph, _cfg = open_graph(root)
+    try:
+        return graph.get_run(run_id)
+    finally:
+        graph.close()
+
+
+def _node_runs(root: Path, node_id: int) -> list[dict]:
+    graph, _cfg = open_graph(root)
+    try:
+        return graph.runs_for_node(node_id)
+    finally:
+        graph.close()
+
+
+def _seed_run(
+    root: Path,
+    *,
+    run_id: str,
+    node_id: int,
+    status: str = "running",
+    started_at: str | None = None,
+    timeout_seconds: int | None = 10,
+    ended_at: str | None = None,
+    exit_code: int | None = None,
+    pid: int | None = None,
+) -> None:
+    """Insert a runs row directly (replaces writing a .state.json sidecar)."""
+    from datetime import UTC, datetime
+
+    graph, _cfg = open_graph(root)
+    try:
+        graph._conn.execute(
+            "INSERT OR IGNORE INTO nodes (id, description, status, created_at) "
+            "VALUES (?, ?, 'running', ?)",
+            (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
+        )
+        started_at = started_at or datetime.now(UTC).isoformat()
+        log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
+        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        if status != "running":
+            graph.finish_run(
+                run_id,
+                status=status,
+                exit_code=exit_code,
+                timed_out=False,
+                ended_at=ended_at or datetime.now(UTC).isoformat(),
+            )
+        graph._conn.commit()
+    finally:
+        graph.close()
+
+
 def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool, detail: str = "None") -> str:
     script = tmp_path / f"stub_runner_{status}.py"
-    script.write_text(_STUB_RUNNER.format(status=status, rebased=rebased, detail=detail))
+    script.write_text(
+        _STUB_RUNNER.format(
+            status=status,
+            rebased=rebased,
+            detail=detail,
+            exit_code=0 if status == "done" else 1,
+        )
+    )
     return f"{sys.executable} {script}"
 
 
@@ -87,11 +163,11 @@ def test_start_returns_run_id_and_writes_running_state(tmp_path: Path) -> None:
     )
     assert started["status"] == "running"
     assert started["run_id"].startswith(f"node-{task['id']}-")
-    assert Path(started["state_path"]).exists()
+    assert _read_run(tmp_path, started["run_id"])["status"] == "running"
 
 
 def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
-    """The detached pid is persisted in the running state (and returned) so
+    """The detached pid is persisted on the running run row (and returned) so
     poll/reconcile can liveness-check a loop that outlives this server."""
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="pid", kind="task", project_root=root)
@@ -103,7 +179,7 @@ def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
         project_root=root,
     )
     assert isinstance(started["pid"], int)
-    state = json.loads(Path(started["state_path"]).read_text())
+    state = _read_run(tmp_path, started["run_id"])
     assert state["pid"] == started["pid"]
 
 
@@ -220,8 +296,8 @@ def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
 
 
 def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
-    """A runner_cmd that cannot be spawned must not leave the state stuck at
-    'running' forever: the spawn error is caught, the state turned terminal, and
+    """A runner_cmd that cannot be spawned must not leave the run stuck at
+    'running' forever: the spawn error is caught, the run row turned terminal, and
     the error re-raised so the caller sees a clean failure."""
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="badspawn", kind="task", project_root=root)
@@ -233,9 +309,9 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
             runner_cmd=bad_cmd,
             project_root=root,
         )
-    states = list((tmp_path / ".milknado" / "runs").glob("*.state.json"))
-    assert len(states) == 1, "exactly one run-state file should have been written"
-    state = json.loads(states[0].read_text())
+    runs = _node_runs(tmp_path, task["id"])
+    assert len(runs) == 1, "exactly one run row should have been written"
+    state = runs[0]
     assert state["status"] == "failed"
     assert state["rebased"] is False
     assert "spawn failed" in state["detail"]
@@ -255,14 +331,13 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     assert node.run_id is None, "the fence run_id is cleared so the node is freed for re-dispatch"
 
 
-def test_poll_survives_state_missing_log_path(tmp_path: Path) -> None:
-    """A partial-write state lacking 'log_path' must not crash poll with a
-    KeyError: the log path is derived from the validated run_id instead."""
+def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
+    """Poll derives the log path from the validated run_id, not the stored field,
+    so a tampered log_path can't read an arbitrary file. With no log file on disk
+    the summary is an empty tail rather than an error."""
     root = str(tmp_path)
     run_id = "node-1-20260101T000000Z-abcd"
-    rdir = tmp_path / ".milknado" / "runs"
-    rdir.mkdir(parents=True)
-    (rdir / f"{run_id}.state.json").write_text(json.dumps({"run_id": run_id, "status": "running"}))
+    _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
     state = _call(milknado_ralph_run_poll, run_id=run_id, project_root=root)
     assert state["status"] == "running"
     assert state["summary"] == ""  # derived log file absent -> empty tail, never KeyError
@@ -271,41 +346,29 @@ def test_poll_survives_state_missing_log_path(tmp_path: Path) -> None:
 def test_runner_crash_writes_detail_and_keeps_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When the detached runner crashes before producing an outcome it must
-    surface the error under the documented 'detail' field, and a missing initial
-    state file must not drop log_path/timeout_seconds from the terminal schema."""
-    import milknado._mcp_core as mcp_core
+    """When the detached runner crashes mid-execution it must finalize the run row
+    'failed' with the error under the documented 'detail' field."""
+    import milknado.adapters as adapters
     from milknado import _ralph_node_runner
 
     def _boom(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(mcp_core, "open_graph", _boom)
+    # GitAdapter is the first adapter the runner builds; raising there exercises
+    # the runner's terminal failed-write path after open_graph succeeded.
+    monkeypatch.setattr(adapters, "GitAdapter", _boom)
     run_id = "node-1-20260101T000000Z-abcd"
-    state_path = tmp_path / ".milknado" / "runs" / f"{run_id}.state.json"  # intentionally absent
+    _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
     rc = _ralph_node_runner.main(
-        [
-            "--node-id",
-            "1",
-            "--project-root",
-            str(tmp_path),
-            "--run-id",
-            run_id,
-            "--state-path",
-            str(state_path),
-            "--timeout",
-            "12.5",
-        ]
+        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "12"]
     )
     assert rc == 1
-    state = json.loads(state_path.read_text())
+    state = _read_run(tmp_path, run_id)
     assert state["status"] == "failed"
     assert state["rebased"] is False
     assert state["detail"] == "RuntimeError: boom"
-    assert "error" not in state  # the redundant `error` alias was dropped
-    # fallback base must preserve the schema poll consumers rely on
     assert state["log_path"].endswith(f"{run_id}.log")
-    assert state["timeout_seconds"] == 12.5
+    assert state["timeout_seconds"] == 10
 
 
 def test_runner_writes_done_on_successful_outcome(
@@ -328,6 +391,13 @@ def test_runner_writes_done_on_successful_outcome(
     class _Graph:
         def __init__(self) -> None:
             self.closed = False
+            self.finished: dict | None = None
+
+        def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
+            self.finished = {"run_id": run_id, **fields}
+
+        def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
+            return 1
 
         def close(self) -> None:
             self.closed = True
@@ -357,41 +427,15 @@ def test_runner_writes_done_on_successful_outcome(
     )
 
     run_id = "node-1-20260101T000000Z-abcd"
-    rdir = tmp_path / ".milknado" / "runs"
-    rdir.mkdir(parents=True)
-    state_path = rdir / f"{run_id}.state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "node_id": 1,
-                "log_path": str(rdir / f"{run_id}.log"),
-                "timeout_seconds": 30.0,
-                "status": "running",
-            }
-        )
-    )
     rc = _ralph_node_runner.main(
-        [
-            "--node-id",
-            "1",
-            "--project-root",
-            str(tmp_path),
-            "--run-id",
-            run_id,
-            "--state-path",
-            str(state_path),
-            "--timeout",
-            "30",
-        ]
+        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "30"]
     )
     assert rc == 0
     assert graph.closed is True  # the graph handle is always released
-    state = json.loads(state_path.read_text())
-    assert state["status"] == "done"
-    assert state["rebased"] is True
-    assert state["log_path"].endswith(f"{run_id}.log")  # base schema preserved
-    assert state["timeout_seconds"] == 30.0
+    assert graph.finished is not None
+    assert graph.finished["status"] == "done"
+    assert graph.finished["rebased"] is True
+    assert graph.finished["run_id"] == run_id
 
 
 def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,6 +458,13 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     class _Graph:
         def __init__(self) -> None:
             self.closed = False
+            self.finished: dict | None = None
+
+        def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
+            self.finished = {"run_id": run_id, **fields}
+
+        def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
+            return 1
 
         def close(self) -> None:
             self.closed = True
@@ -456,39 +507,14 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
 
     run_id = "node-1-20260101T000000Z-abcd"
-    rdir = tmp_path / ".milknado" / "runs"
-    rdir.mkdir(parents=True)
-    state_path = rdir / f"{run_id}.state.json"
-    state_path.write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "node_id": 1,
-                "log_path": str(rdir / f"{run_id}.log"),
-                "timeout_seconds": 5.0,
-                "status": "running",
-            }
-        )
-    )
     rc = _ralph_node_runner.main(
-        [
-            "--node-id",
-            "1",
-            "--project-root",
-            str(tmp_path),
-            "--run-id",
-            run_id,
-            "--state-path",
-            str(state_path),
-            "--timeout",
-            "5",
-        ]
+        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "5"]
     )
     assert rc == 1
     assert stub_ralph.stopped == ["run-1"], "timeout must call stop_run on the ralph adapter"
-    state = json.loads(state_path.read_text())
-    assert state["status"] == "failed"
-    assert "timeout" in (state.get("detail") or "")
+    assert graph.finished is not None
+    assert graph.finished["status"] == "failed"
+    assert "timeout" in (graph.finished.get("detail") or "")
 
 
 def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
@@ -522,19 +548,16 @@ def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) ->
         graph.mark_running(node_id)
     finally:
         graph.close()
-    rdir = tmp_path / ".milknado" / "runs"
-    rdir.mkdir(parents=True, exist_ok=True)
     orphan_id = f"node-{node_id}-20260101T000000Z-dead"
-    (rdir / f"{orphan_id}.state.json").write_text(
-        json.dumps(
-            {
-                "run_id": orphan_id,
-                "node_id": node_id,
-                "status": "failed",
-                "started_at": "2026-01-01T00:00:00+00:00",
-                "timeout_seconds": 1800,
-            }
-        )
+    _seed_run(
+        tmp_path,
+        run_id=orphan_id,
+        node_id=node_id,
+        status="failed",
+        started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-01T01:00:00+00:00",
+        timeout_seconds=1800,
+        exit_code=1,
     )
     started = _call(
         milknado_ralph_run_start,
@@ -687,23 +710,19 @@ def test_orphan_worktree_removed_before_retry(
     finally:
         graph.close()
 
-    # Drop a terminal 'failed' state file so orphan reconcile has something to act on.
+    # Seed a terminal 'failed' run so orphan reconcile has something to act on.
     # (A 'done' orphan would reconcile to DONE — a terminal state the claim correctly
     # refuses. Use 'failed' so the node is freed to FAILED and the fresh claim wins.)
-    rdir = tmp_path / ".milknado" / "runs"
-    rdir.mkdir(parents=True, exist_ok=True)
     orphan_id = f"node-{node_id}-20260101T000000Z-dead"
-    (rdir / f"{orphan_id}.state.json").write_text(
-        json.dumps(
-            {
-                "run_id": orphan_id,
-                "node_id": node_id,
-                "status": "failed",
-                "started_at": "2026-01-01T00:00:00+00:00",
-                "timeout_seconds": 1800,
-                "ended_at": "2026-01-01T01:00:00+00:00",
-            }
-        )
+    _seed_run(
+        tmp_path,
+        run_id=orphan_id,
+        node_id=node_id,
+        status="failed",
+        started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-01T01:00:00+00:00",
+        timeout_seconds=1800,
+        exit_code=1,
     )
 
     started = _call(

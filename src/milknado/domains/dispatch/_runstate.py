@@ -1,12 +1,13 @@
-"""Shared run-state helpers for `.milknado/runs/` — used by both the headless
-worker path (`runner.py`) and the worktree-isolated ralph path (`mcp_ralph.py` +
-`_ralph_node_runner.py`). Run ids and state files share one namespace and format
-so reconciliation is uniform regardless of which path spawned the run.
+"""Shared run-id, log-tail, and cancel-sentinel helpers for `.milknado/runs/` —
+used by both the headless worker path (`runner.py`) and the worktree-isolated
+ralph path (`mcp_ralph.py` + `_ralph_node_runner.py`). Run ids share one namespace
+and format so reconciliation is uniform regardless of which path spawned the run.
+Run *state* lives in the SQLite `runs` table; only log files and cancel sentinels
+remain on the filesystem here.
 """
 
 from __future__ import annotations
 
-import json
 import re
 import secrets
 from datetime import UTC, datetime
@@ -29,7 +30,7 @@ def now_iso() -> str:
 def make_run_id(node_id: int) -> str:
     # 4 bytes of entropy (not 2): back-to-back runs of the same node land in the
     # same wall-clock second, so the suffix is the only thing distinguishing
-    # their ids — and a collision also clobbers the shared `<run_id>.state.json`.
+    # their ids.
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"node-{node_id}-{stamp}-{secrets.token_hex(4)}"
 
@@ -45,16 +46,6 @@ def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def write_state(state_path: Path, payload: dict) -> None:
-    tmp = state_path.with_suffix(state_path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(state_path)
-
-
-def read_state(state_path: Path) -> dict:
-    return json.loads(state_path.read_text(encoding="utf-8"))
-
-
 def cancel_path(runs_dir: Path, run_id: str) -> Path:
     return runs_dir / f"{run_id}.cancel"
 
@@ -65,7 +56,7 @@ def request_cancel(runs_dir: Path, run_id: str) -> None:
     The async worker polls `is_cancel_requested` and terminates its own
     subprocess when the sentinel appears — the cooperative-cancel signal that
     replaces process-group signalling for runs that share the MCP server's group.
-    Write-tmp-then-replace mirrors `write_state` so a concurrent poll never sees a
+    Write-tmp-then-replace so a concurrent poll never sees a
     half-written sentinel.
     """
     path = cancel_path(runs_dir, run_id)

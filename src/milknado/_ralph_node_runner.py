@@ -1,20 +1,21 @@
 """Detached headless single-node ralph runner.
 
 Spawned as its own process by `milknado_ralph_run_start` so a worktree-isolated
-ralph loop survives the MCP server restarting (hot-reload). Node status and
-worktree path persist in SQLite so a retried run can reconcile state from an
-earlier process. It reads the `running` state file the MCP tool wrote, runs the
-node to completion, and overwrites the file with the terminal state the poll
-reads.
+ralph loop survives the MCP server restarting (hot-reload). Node status, worktree
+path, and run state all persist in SQLite so a retried run can reconcile state
+from an earlier process. The MCP tool inserted the `running` run row before
+spawning; this process runs the node to completion and writes the terminal run
+row the poll reads.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
-from milknado.domains.dispatch import now_iso, read_state, runs_dir, write_state
+from milknado.domains.dispatch import now_iso
 
 _logger = logging.getLogger("milknado")
 
@@ -24,34 +25,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--node-id", type=int, required=True)
     parser.add_argument("--project-root", required=True)
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--state-path", required=True)
     parser.add_argument("--timeout", type=float, default=1800.0)
     args = parser.parse_args(argv)
 
-    state_path = Path(args.state_path)
-    try:
-        base = read_state(state_path)
-    except (OSError, ValueError):
-        # Rebuild the same fields the MCP tool wrote so terminal writes below
-        # keep a stable schema (poll/consumers expect log_path/timeout_seconds).
-        base = {
-            "run_id": args.run_id,
-            "node_id": args.node_id,
-            "log_path": str(runs_dir(Path(args.project_root)) / f"{args.run_id}.log"),
-            "timeout_seconds": args.timeout,
-        }
+    from milknado._mcp_core import open_graph
+    from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
+    from milknado.domains.execution import (
+        ExecutionConfig,
+        Executor,
+        run_node_to_completion,
+    )
 
+    root = Path(args.project_root)
+    graph, cfg = open_graph(root)
     try:
-        from milknado._mcp_core import open_graph
-        from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
-        from milknado.domains.execution import (
-            ExecutionConfig,
-            Executor,
-            run_node_to_completion,
-        )
-
-        root = Path(args.project_root)
-        graph, cfg = open_graph(root)
         try:
             git = GitAdapter(root)
             ralph = RalphifyAdapter()
@@ -72,39 +59,43 @@ def main(argv: list[str] | None = None) -> int:
                 feature_branch,
                 args.timeout,
             )
-        finally:
-            graph.close()
-
-        events = ralph.poll_progress_events()
-        write_state(
-            state_path,
-            {
-                **base,
-                "status": "done" if outcome.success else "failed",
-                "rebased": outcome.success,
-                "detail": outcome.detail,
-                "ended_at": now_iso(),
-                "progress": [
-                    {"work": e.work, "total": e.total, "message": e.message} for e in events
-                ],
-            },
-        )
-        return 0 if outcome.success else 1
-    except Exception as exc:
-        _logger.exception("ralph node runner failed for node %s", args.node_id)
-        msg = f"{type(exc).__name__}: {exc}"
-        write_state(
-            state_path,
-            {
-                **base,
-                "status": "failed",
-                "rebased": False,
-                "ended_at": now_iso(),
-                # `detail` is the documented poll contract field.
-                "detail": msg,
-            },
-        )
-        return 1
+            events = ralph.poll_progress_events()
+            graph.finish_run(
+                args.run_id,
+                status="done" if outcome.success else "failed",
+                exit_code=0 if outcome.success else 1,
+                timed_out=False,
+                ended_at=now_iso(),
+                rebased=outcome.success,
+                detail=outcome.detail,
+            )
+            if events:
+                # The run_messages table carries progress; the run row's `detail`
+                # stays the human poll string. No consumer reads progress yet
+                # (YAGNI) but it is durable for one that does.
+                graph.deposit_run_message(
+                    args.run_id,
+                    "progress",
+                    json.dumps(
+                        [{"work": e.work, "total": e.total, "message": e.message} for e in events]
+                    ),
+                    now_iso(),
+                )
+            return 0 if outcome.success else 1
+        except Exception as exc:
+            _logger.exception("ralph node runner failed for node %s", args.node_id)
+            graph.finish_run(
+                args.run_id,
+                status="failed",
+                exit_code=1,
+                timed_out=False,
+                ended_at=now_iso(),
+                rebased=False,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return 1
+    finally:
+        graph.close()
 
 
 if __name__ == "__main__":

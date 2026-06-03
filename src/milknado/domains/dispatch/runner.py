@@ -8,7 +8,6 @@ capturing combined output) alongside orphan-run recovery and the graph-side
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import secrets
@@ -27,10 +26,8 @@ from milknado.domains.dispatch._runstate import clear_cancel as _clear_cancel
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import make_run_id as _make_run_id
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
-from milknado.domains.dispatch._runstate import read_state as _read_state
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
-from milknado.domains.dispatch._runstate import write_state as _write_state
 
 _logger = logging.getLogger(__name__)
 
@@ -43,6 +40,20 @@ _STALE_GRACE_SECONDS = 30
 # before escalating to SIGKILL.
 _CANCEL_POLL_SECS = 0.5
 _CANCEL_GRACE_SECS = 5
+
+
+def _open_worker_graph(project_root: Path):  # noqa: ANN202
+    """Open a fresh MikadoGraph for the worker thread.
+
+    sqlite connections are not cross-thread, so the async worker cannot reuse the
+    dispatching tool's connection — it opens its own in-thread for the run-row
+    writes. Imported lazily to avoid a domains -> _mcp_core import cycle (the same
+    pattern the detached _ralph_node_runner uses).
+    """
+    from milknado._mcp_core import open_graph
+
+    graph, _cfg = open_graph(project_root)
+    return graph
 
 
 # Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
@@ -80,7 +91,6 @@ class RunResult:
 class AsyncStartRef:
     run_id: str
     log_path: Path
-    state_path: Path
 
 
 def _resolve_worker_cmd(explicit: str | None) -> list[str]:
@@ -152,14 +162,21 @@ def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def _spawn_worker(project_root: Path, node_id: int, log_fh, argv: list[str]) -> subprocess.Popen:  # noqa: ANN001
+def _spawn_worker(  # noqa: ANN001
+    project_root: Path, node_id: int, log_fh, argv: list[str], run_id: str | None = None
+) -> subprocess.Popen:
     """Popen a worker with the filtered env, stdin piped and output to log_fh.
 
     Shared by the blocking `_execute` (sync path) and the polling
     `_execute_cancellable` (async path) so the spawn + env + redirection contract
-    lives in one place; only the wait strategy differs between the two.
+    lives in one place; only the wait strategy differs between the two. The worker
+    receives MILKNADO_NODE_ID and, when this is a tracked run, MILKNADO_RUN_ID so
+    it can deposit its result via milknado_deposit_result.
     """
-    env = _build_worker_env({"MILKNADO_NODE_ID": str(node_id)})
+    extra = {"MILKNADO_NODE_ID": str(node_id)}
+    if run_id is not None:
+        extra["MILKNADO_RUN_ID"] = run_id
+    env = _build_worker_env(extra)
     return subprocess.Popen(
         argv,
         stdin=subprocess.PIPE,
@@ -171,11 +188,17 @@ def _spawn_worker(project_root: Path, node_id: int, log_fh, argv: list[str]) -> 
 
 
 def _execute(
-    project_root: Path, node_id: int, log_path: Path, brief: str, argv: list[str], timeout: int
+    project_root: Path,
+    node_id: int,
+    log_path: Path,
+    brief: str,
+    argv: list[str],
+    timeout: int,
+    run_id: str | None = None,
 ) -> tuple[int, bool]:
     timed_out = False
     with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(project_root, node_id, log_fh, argv)
+        proc = _spawn_worker(project_root, node_id, log_fh, argv, run_id)
         try:
             proc.communicate(input=brief.encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -241,7 +264,7 @@ def _execute_cancellable(
     cancelled = False
     deadline = time.monotonic() + timeout
     with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(project_root, node_id, log_fh, argv)
+        proc = _spawn_worker(project_root, node_id, log_fh, argv, run_id)
         # Write the brief from a daemon thread so a brief larger than the OS pipe
         # buffer can't block before the cancel/timeout poll loop starts — a
         # synchronous write would be unkillable until the worker drained stdin.
@@ -278,7 +301,9 @@ def run_headless(
         if run_id is not None
         else _log_path(project_root, node_id)
     )
-    exit_code, timed_out = _execute(project_root, node_id, log_path, brief, argv, timeout_seconds)
+    exit_code, timed_out = _execute(
+        project_root, node_id, log_path, brief, argv, timeout_seconds, run_id
+    )
     return RunResult(
         exit_code=exit_code,
         log_path=log_path,
@@ -288,7 +313,6 @@ def run_headless(
 
 
 def _async_worker(
-    state_path: Path,
     project_root: Path,
     log_path: Path,
     brief: str,
@@ -298,6 +322,9 @@ def _async_worker(
 ) -> None:
     rdir = _runs_dir(project_root)
     run_id = base_state["run_id"]
+    # sqlite connections are not cross-thread: open a fresh in-thread graph for
+    # the terminal write rather than reusing the dispatching tool's connection.
+    graph = _open_worker_graph(project_root)
     try:
         exit_code, timed_out, cancelled = _execute_cancellable(
             project_root,
@@ -313,45 +340,47 @@ def _async_worker(
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
         if cancelled:
-            terminal_fields = {"status": "failed", "exit_code": -1, "error": "cancelled"}
+            graph.finish_run(
+                run_id,
+                status="failed",
+                exit_code=-1,
+                timed_out=timed_out,
+                ended_at=_now_iso(),
+                error="cancelled",
+            )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
-            terminal_fields = {"status": terminal, "exit_code": exit_code}
-        _write_state(
-            state_path,
-            {
-                **base_state,
-                **terminal_fields,
-                "timed_out": timed_out,
-                "ended_at": _now_iso(),
-            },
-        )
+            graph.finish_run(
+                run_id,
+                status=terminal,
+                exit_code=exit_code,
+                timed_out=timed_out,
+                ended_at=_now_iso(),
+            )
     except Exception as exc:
         _logger.warning("async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc)
         # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
-        # write failures must not leave the state file stuck on "running" — that
-        # would silently lock out the node forever. Append to the log so any
-        # partial subprocess output that did make it to disk is preserved.
+        # write failures must not leave the run stuck on "running" — that would
+        # silently lock out the node forever. Append to the log so any partial
+        # subprocess output that did make it to disk is preserved.
         try:
             with log_path.open("a", encoding="utf-8") as log_fh:
                 log_fh.write(f"\n--- async worker raised: {type(exc).__name__}: {exc} ---\n")
         except OSError:
-            # Annotating the log is best-effort; the terminal state write below
-            # is what actually releases the node, so a log-write failure here is
+            # Annotating the log is best-effort; the terminal run write below is
+            # what actually releases the node, so a log-write failure here is
             # deliberately ignored.
             pass
-        _write_state(
-            state_path,
-            {
-                **base_state,
-                "status": "failed",
-                "exit_code": -1,
-                "timed_out": False,
-                "ended_at": _now_iso(),
-                "error": f"{type(exc).__name__}: {exc}",
-            },
+        graph.finish_run(
+            run_id,
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at=_now_iso(),
+            error=f"{type(exc).__name__}: {exc}",
         )
     finally:
+        graph.close()
         # Clear the sentinel after the terminal write (both branches) so a reused
         # run dir never carries a stale cancel request into the next run.
         _clear_cancel(rdir, run_id)
@@ -367,55 +396,45 @@ def start_headless_async(
 ) -> AsyncStartRef:
     argv = _resolve_worker_cmd(worker_cmd)
     # The caller (milknado_todo_run_start) claims the node under a run_id before
-    # spawning, then hands that same id here so the node row and the run-state file
-    # agree on the fence; standalone callers let us mint one.
+    # spawning, then hands that same id here so the node row and the run row agree
+    # on the fence; standalone callers let us mint one.
     run_id = run_id or _make_run_id(node_id)
     runs_dir = _runs_dir(project_root)
     log_path = runs_dir / f"{run_id}.log"
-    state_path = runs_dir / f"{run_id}.state.json"
-    base_state = {
-        "run_id": run_id,
-        "node_id": node_id,
-        "started_at": _now_iso(),
-        "log_path": str(log_path),
-        "timeout_seconds": timeout_seconds,
-    }
-    _write_state(
-        state_path,
-        {
-            **base_state,
-            "status": "running",
-            "exit_code": None,
-            "timed_out": False,
-            "ended_at": None,
-        },
-    )
+    started_at = _now_iso()
+    base_state = {"run_id": run_id, "node_id": node_id}
+    # Insert the rescuable "running" run row BEFORE spawning the worker thread, on
+    # a short-lived connection (the thread opens its own for the terminal write).
+    graph = _open_worker_graph(project_root)
+    try:
+        graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
+    finally:
+        graph.close()
     threading.Thread(
         target=_async_worker,
-        args=(state_path, project_root, log_path, brief, argv, timeout_seconds, base_state),
+        args=(project_root, log_path, brief, argv, timeout_seconds, base_state),
         daemon=True,
     ).start()
-    return AsyncStartRef(run_id=run_id, log_path=log_path, state_path=state_path)
+    return AsyncStartRef(run_id=run_id, log_path=log_path)
 
 
-def poll_async_run(project_root: Path, run_id: str) -> dict:
+def poll_async_run(graph, project_root: Path, run_id: str) -> dict:  # noqa: ANN001
     if not _RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    state_path = _runs_dir(project_root) / f"{run_id}.state.json"
-    if not state_path.exists():
+    state = graph.get_run(run_id)
+    if state is None:
         raise ValueError(f"run {run_id!r} not found")
-    state = _read_state(state_path)
     log_path = Path(state["log_path"])
     state["summary"] = _tail(log_path, _SUMMARY_TAIL_BYTES)
     return state
 
 
-def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
-    """Flip this node's orphaned "running" state files to "failed".
+def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
+    """Flip this node's orphaned "running" runs to "failed".
 
     The async worker runs in a daemon thread; if the server process dies
     mid-run the thread dies with it and never writes a terminal state, leaving
-    the state file stuck on "running" and the node locked on RUNNING forever
+    the run stuck on "running" and the node locked on RUNNING forever
     (orphan reconciliation only recovers runs that reached done/failed). For the
     worker model a run still "running" past its own timeout plus a grace margin
     can only mean the thread vanished — `_execute` kills and reaps the subprocess
@@ -427,11 +446,7 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
     """
     now = datetime.now(UTC)
     flipped: list[dict] = []
-    for state_path in _runs_dir(project_root).glob(f"node-{node_id}-*.state.json"):
-        try:
-            state = _read_state(state_path)
-        except (OSError, json.JSONDecodeError):
-            continue
+    for state in graph.runs_for_node(node_id):
         if state.get("status") != "running":
             continue
         started_at = state.get("started_at")
@@ -448,9 +463,9 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
         # grace window is slow (e.g. wedged in `git rebase`, which has no
         # subprocess timeout), not orphaned. Flipping it would thrash a run about
         # to write "done" — and could cross-fail another run kind sharing the
-        # node-<id>-* glob. The async-worker path records no pid, so its orphan
-        # sweep (server crash → daemon thread vanished, no terminal write) is
-        # unchanged: pid-unknown still falls through to the timeout flip.
+        # node. The async-worker path records no pid, so its orphan sweep (server
+        # crash → daemon thread vanished, no terminal write) is unchanged:
+        # pid-unknown still falls through to the timeout flip.
         pid = state.get("pid")
         if pid is not None and pid_alive(pid):
             # Log the skip: a run wedged past timeout+grace that keeps getting
@@ -472,47 +487,42 @@ def fail_stale_running_runs(project_root: Path, node_id: int) -> list[dict]:
             if pid is not None
             else "worker vanished before writing terminal state (stale running run)"
         )
-        failed = {
-            **state,
-            "status": "failed",
-            "exit_code": -1,
-            "timed_out": False,
-            "ended_at": _now_iso(),
-            "error": error,
-        }
-        _write_state(state_path, failed)
-        flipped.append(failed)
+        ended_at = _now_iso()
+        graph.finish_run(
+            state["run_id"],
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at=ended_at,
+            error=error,
+        )
+        flipped.append(
+            {
+                **state,
+                "status": "failed",
+                "exit_code": -1,
+                "timed_out": False,
+                "ended_at": ended_at,
+                "error": error,
+            }
+        )
     return flipped
 
 
 def find_terminal_runs_for_node(
-    project_root: Path, node_id: int, run_id: str | None = None
+    graph,
+    node_id: int,
+    run_id: str | None = None,  # noqa: ANN001
 ) -> list[dict]:
-    """Scan the runs dir for state files whose node matches and which have reached
-    a terminal status. Used by callers that want to reconcile orphaned runs
-    (started, worker finished, but never polled — node still marked RUNNING).
+    """Return this node's runs that reached a terminal status. Used by callers that
+    want to reconcile orphaned runs (started, worker finished, but never polled —
+    node still marked RUNNING).
 
     When `run_id` is given, filter to that fence: only the node's current owner's
-    terminal file is returned, so a stale terminal file from an older run cannot be
+    terminal run is returned, so a stale terminal run from an older run cannot be
     selected. Callers must filter to the fence BEFORE picking the latest run —
-    otherwise a stale run with a later `ended_at` could mask the owner's file."""
-    runs_dir = _runs_dir(project_root)
-    out: list[dict] = []
-    # The `node-<id>-*` glob anchors the node id — the trailing `-` keeps
-    # `node-1-` from matching `node-12-`, so a payload node_id re-check would
-    # only fire on a hand-corrupted filename/payload mismatch. Scope on the glob
-    # alone, mirroring fail_stale_running_runs above.
-    for state_path in runs_dir.glob(f"node-{node_id}-*.state.json"):
-        try:
-            state = _read_state(state_path)
-        except (OSError, json.JSONDecodeError):
-            continue
-        if state.get("status") not in ("done", "failed"):
-            continue
-        if run_id is not None and state.get("run_id") != run_id:
-            continue
-        out.append(state)
-    return out
+    otherwise a stale run with a later `ended_at` could mask the owner's run."""
+    return graph.runs_for_node(node_id, terminal_only=True, run_id=run_id)
 
 
 def latest_terminal_run(runs: list[dict]) -> dict | None:
@@ -560,14 +570,14 @@ def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | No
         graph.mark_failed(node_id)
 
 
-def reconcile_orphan_node(graph, project_root: Path, node_id: int) -> None:  # noqa: ANN001
-    """Flip stale 'running' state files to failed, reconcile the node's status
-    to the latest terminal run. No-op if the node is not RUNNING.
+def reconcile_orphan_node(graph, node_id: int) -> None:  # noqa: ANN001
+    """Flip stale 'running' runs to failed, reconcile the node's status to the
+    latest terminal run. No-op if the node is not RUNNING.
 
     Shared entry-point for mcp_run (#39) and mcp_ralph (#54) — the three-call
     orphan-release pattern must not be duplicated inline in either caller.
     """
-    fail_stale_running_runs(project_root, node_id)
-    winner = latest_terminal_run(find_terminal_runs_for_node(project_root, node_id))
+    fail_stale_running_runs(graph, node_id)
+    winner = latest_terminal_run(find_terminal_runs_for_node(graph, node_id))
     if winner is not None:
         reconcile_node_status(graph, node_id, winner["status"])

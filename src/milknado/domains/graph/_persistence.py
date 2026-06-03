@@ -60,6 +60,30 @@ def create_tables(conn: sqlite3.Connection) -> None:
             max_spread INTEGER NOT NULL,
             spread_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id          TEXT PRIMARY KEY,
+            node_id         INTEGER NOT NULL REFERENCES nodes(id),
+            status          TEXT NOT NULL,
+            pid             INTEGER,
+            log_path        TEXT NOT NULL,
+            started_at      TEXT NOT NULL,
+            ended_at        TEXT,
+            timed_out       INTEGER NOT NULL DEFAULT 0,
+            exit_code       INTEGER,
+            error           TEXT,
+            timeout_seconds INTEGER,
+            detail          TEXT,
+            rebased         INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_runs_node_status ON runs(node_id, status);
+        CREATE TABLE IF NOT EXISTS run_messages (
+            run_id     TEXT NOT NULL REFERENCES runs(run_id),
+            seq        INTEGER NOT NULL,
+            role       TEXT NOT NULL,
+            body       TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, seq)
+        );
     """)
 
 
@@ -210,6 +234,8 @@ def get_spec_hash(conn: sqlite3.Connection) -> str | None:
 
 def drop_all(conn: sqlite3.Connection) -> int:
     count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+    conn.execute("DELETE FROM run_messages")
+    conn.execute("DELETE FROM runs")
     conn.execute("DELETE FROM file_ownership")
     conn.execute("DELETE FROM edges")
     conn.execute("DELETE FROM nodes")
@@ -274,3 +300,159 @@ def set_worktree(
         (worktree_path, branch_name, node_id, run_id),
     )
     conn.commit()
+
+
+_RUN_COLUMNS = (
+    "run_id",
+    "node_id",
+    "status",
+    "pid",
+    "log_path",
+    "started_at",
+    "ended_at",
+    "timed_out",
+    "exit_code",
+    "error",
+    "timeout_seconds",
+    "detail",
+    "rebased",
+)
+
+
+def _run_row_to_dict(row: sqlite3.Row) -> dict:
+    """Serialize a runs row to the sidecar-shaped dict callers consumed before.
+
+    `timed_out` / `rebased` are stored as INTEGER and re-hydrated to bool/None so
+    a poll payload reads the same as the old JSON sidecar (which carried bools).
+    """
+    d = {col: row[col] for col in _RUN_COLUMNS}
+    d["timed_out"] = bool(d["timed_out"]) if d["timed_out"] is not None else False
+    if d["rebased"] is not None:
+        d["rebased"] = bool(d["rebased"])
+    return d
+
+
+def start_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    node_id: int,
+    log_path: str,
+    started_at: str,
+    timeout_seconds: int | None,
+    pid: int | None = None,
+) -> None:
+    """INSERT a status='running' run row (replaces the initial sidecar write)."""
+    conn.execute(
+        "INSERT INTO runs "
+        "(run_id, node_id, status, pid, log_path, started_at, timeout_seconds, timed_out) "
+        "VALUES (?, ?, 'running', ?, ?, ?, ?, 0)",
+        (run_id, node_id, pid, log_path, started_at, timeout_seconds),
+    )
+    conn.commit()
+
+
+def finish_run(
+    conn: sqlite3.Connection,
+    run_id: str,
+    *,
+    status: str,
+    exit_code: int | None,
+    timed_out: bool,
+    ended_at: str,
+    error: str | None = None,
+    detail: str | None = None,
+    rebased: bool | None = None,
+) -> None:
+    """UPDATE a run to a terminal status (replaces the terminal sidecar write)."""
+    conn.execute(
+        "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
+        "error = ?, detail = ?, rebased = ? WHERE run_id = ?",
+        (
+            status,
+            exit_code,
+            1 if timed_out else 0,
+            ended_at,
+            error,
+            detail,
+            None if rebased is None else (1 if rebased else 0),
+            run_id,
+        ),
+    )
+    conn.commit()
+
+
+def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
+    """Record the detached runner's pid on a still-running run.
+
+    Gated on status='running' so a runner that already wrote its terminal state
+    is never clobbered back toward running (mirrors the old read-then-write
+    guard the sidecar path used).
+    """
+    conn.execute(
+        "UPDATE runs SET pid = ? WHERE run_id = ? AND status = 'running'",
+        (pid, run_id),
+    )
+    conn.commit()
+
+
+def get_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
+    """SELECT one run row as a dict (replaces read_state for poll)."""
+    row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+    return _run_row_to_dict(row) if row else None
+
+
+def runs_for_node(
+    conn: sqlite3.Connection,
+    node_id: int,
+    *,
+    terminal_only: bool = False,
+    run_id: str | None = None,
+) -> list[dict]:
+    """Return this node's runs as dicts (replaces find_terminal_runs_for_node).
+
+    Callers still apply fence-before-latest: pass run_id to filter to the fence
+    BEFORE calling latest_terminal_run, so a stale run with a later ended_at
+    cannot mask the owner.
+    """
+    sql = "SELECT * FROM runs WHERE node_id = ?"
+    params: list[object] = [node_id]
+    if terminal_only:
+        sql += " AND status IN ('done', 'failed')"
+    if run_id is not None:
+        sql += " AND run_id = ?"
+        params.append(run_id)
+    rows = conn.execute(sql, params).fetchall()
+    return [_run_row_to_dict(r) for r in rows]
+
+
+def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
+    """Return the most-recently-started runs as dicts (replaces the run-list scan)."""
+    rows = conn.execute(
+        "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (max(limit, 0),)
+    ).fetchall()
+    return [_run_row_to_dict(r) for r in rows]
+
+
+def deposit_run_message(
+    conn: sqlite3.Connection, run_id: str, role: str, body: str, created_at: str
+) -> int:
+    """Append a run_messages row with the next seq for this run; return that seq."""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM run_messages WHERE run_id = ?", (run_id,)
+    ).fetchone()
+    seq = row[0]
+    conn.execute(
+        "INSERT INTO run_messages (run_id, seq, role, body, created_at) VALUES (?, ?, ?, ?, ?)",
+        (run_id, seq, role, body, created_at),
+    )
+    conn.commit()
+    return seq
+
+
+def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:
+    """Return the body of the latest message for this run+role, or None."""
+    row = conn.execute(
+        "SELECT body FROM run_messages WHERE run_id = ? AND role = ? ORDER BY seq DESC LIMIT 1",
+        (run_id, role),
+    ).fetchone()
+    return row[0] if row else None
