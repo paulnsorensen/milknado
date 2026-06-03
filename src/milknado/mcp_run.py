@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shlex
@@ -22,14 +21,12 @@ from milknado.domains.dispatch import (
     make_run_id,
     now_iso,
     poll_async_run,
-    read_state,
     reconcile_node_status,
     render_brief,
     request_cancel,
     run_headless,
     runs_dir,
     start_headless_async,
-    write_state,
 )
 from milknado.domains.dispatch.runner import _validate_worker_argv
 
@@ -90,28 +87,26 @@ def _run_and_update_status(
     run_id = make_run_id(node_id)
     started_at = now_iso()
     rdir = runs_dir(project_root)
-    state_path = rdir / f"{run_id}.state.json"
+    log_path = rdir / f"{run_id}.log"
     if running:
-        # Write a rescuable "running" state file BEFORE blocking in run_headless.
+        # Insert a rescuable "running" run row BEFORE blocking in run_headless.
         # The sync call blocks up to timeout_seconds; if the client times out and
         # the server is killed mid-run, the post-run terminal write never lands,
-        # stranding the node RUNNING forever. With this file fail_stale_running_runs
+        # stranding the node RUNNING forever. With this row fail_stale_running_runs
         # releases the node past timeout, matching start_headless_async.
-        write_state(
-            state_path,
-            {
-                "run_id": run_id,
-                "node_id": node_id,
-                "started_at": started_at,
-                "log_path": str(rdir / f"{run_id}.log"),
-                "timeout_seconds": timeout_seconds,
-                "status": "running",
-                "exit_code": None,
-                "timed_out": False,
-                "ended_at": None,
-            },
-        )
-    result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id)
+        graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
+    # Only inject MILKNADO_RUN_ID when a 'running' run row exists. On a DONE-node
+    # re-run no row is inserted (start_run is gated on `running`), so passing the
+    # run_id would have the worker deposit into a row that doesn't exist —
+    # milknado_deposit_result raises "run not found". Pass None instead.
+    result = run_headless(
+        project_root,
+        node_id,
+        brief,
+        worker_cmd,
+        timeout_seconds,
+        run_id=run_id if running else None,
+    )
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
         if worker_terminal == "done":
@@ -121,19 +116,14 @@ def _run_and_update_status(
     final = graph.get_node(node_id)
     if final is None:
         raise RuntimeError(f"node {node_id} not found after run completed")
-    write_state(
-        state_path,
-        {
-            "run_id": run_id,
-            "node_id": node_id,
-            "started_at": started_at,
-            "status": worker_terminal,
-            "exit_code": result.exit_code,
-            "timed_out": result.timed_out,
-            "log_path": str(result.log_path),
-            "rebased": None,
-        },
-    )
+    if running:
+        graph.finish_run(
+            run_id,
+            status=worker_terminal,
+            exit_code=result.exit_code,
+            timed_out=result.timed_out,
+            ended_at=now_iso(),
+        )
     graph.set_run_id(node_id, run_id)
     return {
         "run_id": run_id,
@@ -143,7 +133,6 @@ def _run_and_update_status(
         "timed_out": result.timed_out,
         "rebased": None,
         "log_path": str(result.log_path),
-        "state_path": str(state_path),
         "summary": result.summary,
     }
 
@@ -208,7 +197,7 @@ def milknado_todo_run_start(
             # just as permanently. (The headless worker is an in-process thread
             # with no pid, so there is no pid-liveness fast path here — it relies
             # on this reconcile plus the stale-timeout backstop.)
-            fail_stale_running_runs(root, node_id)
+            fail_stale_running_runs(graph, node_id)
             # Filter terminal files to this node's fence BEFORE picking the latest,
             # so a stale run with a later ended_at cannot mask the current owner's
             # file. reconcile_node_status then routes the write through the atomic
@@ -217,7 +206,7 @@ def milknado_todo_run_start(
             # newer run cannot be clobbered. A legacy node with no run_id has no
             # fence to honour and falls back to the unconditional reconcile.
             winner = latest_terminal_run(
-                find_terminal_runs_for_node(root, node_id, run_id=node.run_id)
+                find_terminal_runs_for_node(graph, node_id, run_id=node.run_id)
             )
             if winner is not None:
                 reconcile_node_status(
@@ -227,8 +216,8 @@ def milknado_todo_run_start(
         # Atomic optimistic claim: the cross-process mutual-exclusion point that
         # replaces the in-process dispatch lock. The PENDING/FAILED/BLOCKED ->
         # RUNNING transition and the run_id fence are written in one statement, so a
-        # second concurrent caller sees RUNNING and loses. The same run_id names the
-        # run-state file, keeping the node row and the file in agreement.
+        # second concurrent caller sees RUNNING and loses. The same run_id keys the
+        # run row, keeping the node row and the run row in agreement.
         run_id = make_run_id(node_id)
         if not graph.claim_node(node_id, run_id, now=now_iso()):
             current = graph.get_node(node_id)
@@ -261,7 +250,6 @@ def milknado_todo_run_start(
             "timed_out": None,
             "rebased": None,
             "log_path": str(ref.log_path),
-            "state_path": str(ref.state_path),
             "summary": None,
         }
     finally:
@@ -270,59 +258,46 @@ def milknado_todo_run_start(
 
 @mcp.tool()
 def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
-    """Poll an async run; reconciles node status to done/failed once the worker exits."""
+    """Poll an async run; reconciles node status to done/failed once the worker exits.
+
+    Returns the deposited result payload (latest role='result' run message) under
+    `result` when one exists, alongside the log-tail `summary`.
+    """
     root = resolve_project_root(project_root or None)
-    state = poll_async_run(root, run_id)
-    if state["status"] in ("done", "failed"):
-        graph, _cfg = open_graph(root)
-        try:
+    graph, _cfg = open_graph(root)
+    try:
+        state = poll_async_run(graph, root, run_id)
+        if state["status"] in ("done", "failed"):
             # Fence on the polled run's run_id so polling an older run cannot
             # clobber a newer RUNNING owner that re-claimed this node.
             reconcile_node_status(
                 graph, state["node_id"], state["status"], run_id=state.get("run_id")
             )
-        finally:
-            graph.close()
-    rdir = runs_dir(root)
-    state["state_path"] = str(rdir / f"{run_id}.state.json")
+        state["result"] = graph.latest_run_message(run_id, "result")
+    finally:
+        graph.close()
     state.setdefault("rebased", None)
     return state
 
 
 @mcp.tool()
 def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
-    """List active and recent runs from .milknado/runs/, sorted newest first.
+    """List active and recent runs from the db, sorted newest first.
 
     Returns superset-schema dicts. summary is always None — use
     milknado_todo_run_poll or milknado_ralph_run_poll for log tails. Bounded to
-    the `limit` most-recently-updated runs (by state-file mtime) so read cost
-    stays flat as run history grows; raise `limit` to widen the window.
+    the `limit` most-recently-started runs so read cost stays flat as run history
+    grows; raise `limit` to widen the window.
     """
     root = resolve_project_root(project_root or None)
-    rdir = runs_dir(root)
-
-    def _mtime(p: Path) -> float:
-        try:
-            return p.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    # Read only the newest `limit` state files (by mtime, a good proxy for
-    # recency) so a project with a long run history doesn't parse every file.
-    recent = sorted(rdir.glob("*.state.json"), key=_mtime, reverse=True)[: max(limit, 0)]
-    entries: list[tuple[str, dict]] = []
-    for sp in recent:
-        try:
-            state = read_state(sp)
-        except (OSError, json.JSONDecodeError) as exc:
-            _logger.warning("milknado_run_list: skipping unreadable state file %s: %s", sp, exc)
-            continue
-        entries.append((state.get("started_at") or "", _state_to_run_dict(state, sp)))
-    entries.sort(key=lambda x: x[0], reverse=True)
-    return [e[1] for e in entries]
+    graph, _cfg = open_graph(root)
+    try:
+        return [_state_to_run_dict(r) for r in graph.recent_runs(limit)]
+    finally:
+        graph.close()
 
 
-def _state_to_run_dict(state: dict, state_path: Path) -> dict:
+def _state_to_run_dict(state: dict) -> dict:
     return {
         "run_id": state.get("run_id"),
         "node_id": state.get("node_id"),
@@ -331,22 +306,25 @@ def _state_to_run_dict(state: dict, state_path: Path) -> dict:
         "timed_out": state.get("timed_out"),
         "rebased": state.get("rebased"),
         "log_path": state.get("log_path"),
-        "state_path": str(state_path),
         "summary": None,
     }
 
 
-def _cancelled_state(state: dict) -> dict:
-    """The terminal state for a run cancel finalizes directly (pid path, or the
-    fallback when the async worker never responds)."""
-    return {
-        **state,
-        "status": "failed",
-        "exit_code": -1,
-        "timed_out": False,
-        "ended_at": now_iso(),
-        "error": "cancelled",
-    }
+def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
+    """Write the cancelled terminal run row and return its refreshed dict.
+
+    The direct-finalize path (pid run, or the fallback when the async worker never
+    responds within the bound).
+    """
+    graph.finish_run(
+        run_id,
+        status="failed",
+        exit_code=-1,
+        timed_out=False,
+        ended_at=now_iso(),
+        error="cancelled",
+    )
+    return graph.get_run(run_id)
 
 
 def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") -> None:  # noqa: ANN001
@@ -380,32 +358,19 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
         _logger.warning("git worktree prune failed on cancel: %s", exc)
 
 
-def _await_cancel_finalize(state_path: Path) -> dict | None:
-    """Poll the state file for the async worker's terminal write, up to a bound.
+def _await_cancel_finalize(graph, run_id: str) -> dict | None:  # noqa: ANN001
+    """Poll the run row for the async worker's terminal write, up to a bound.
 
-    Returns the terminal state once the worker finalizes, or None if the bound
+    Returns the terminal run dict once the worker finalizes, or None if the bound
     elapses (the worker is wedged, dead, or never existed) so the caller can take
     over the terminal write itself.
     """
     deadline = time.monotonic() + _CANCEL_FINALIZE_TIMEOUT_SECS
-    read_errors = 0
     while time.monotonic() < deadline:
         time.sleep(_CANCEL_FINALIZE_POLL_SECS)
-        try:
-            state = read_state(state_path)
-        except (OSError, json.JSONDecodeError) as exc:
-            read_errors += 1
-            last_error = exc
-            continue
-        if state.get("status") != "running":
+        state = graph.get_run(run_id)
+        if state is not None and state.get("status") != "running":
             return state
-    if read_errors:
-        _logger.warning(
-            "cancel finalize bound elapsed for %s after %d unreadable state reads (last: %s)",
-            state_path.name,
-            read_errors,
-            last_error,
-        )
     return None
 
 
@@ -425,22 +390,23 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    rdir = runs_dir(root)
-    state_path = rdir / f"{run_id}.state.json"
-    if not state_path.exists():
-        raise ValueError(f"run {run_id!r} not found")
-    state = read_state(state_path)
-    if state.get("status") != "running":
-        return _state_to_run_dict(state, state_path)
+    graph, _cfg = open_graph(root)
+    try:
+        state = graph.get_run(run_id)
+        if state is None:
+            raise ValueError(f"run {run_id!r} not found")
+        if state.get("status") != "running":
+            return _state_to_run_dict(state)
+        if state.get("pid") is not None:
+            final = _cancel_pid_run(graph, root, state, run_id)
+        else:
+            final = _cancel_async_run(graph, root, state, run_id)
+    finally:
+        graph.close()
+    return _state_to_run_dict(final)
 
-    if state.get("pid") is not None:
-        final = _cancel_pid_run(root, state, state_path, run_id)
-    else:
-        final = _cancel_async_run(root, rdir, state, state_path, run_id)
-    return _state_to_run_dict(final, state_path)
 
-
-def _cancel_pid_run(root: Path, state: dict, state_path: Path, run_id: str) -> dict:
+def _cancel_pid_run(graph, root: Path, state: dict, run_id: str) -> dict:  # noqa: ANN001
     """Cancel a detached-ralph run: its own process group → killpg is safe, and the
     run owns no in-process worker, so finalize the terminal state here directly."""
     pid = state["pid"]
@@ -450,29 +416,28 @@ def _cancel_pid_run(root: Path, state: dict, state_path: Path, run_id: str) -> d
         pass  # process already gone — fall through to finalize the terminal state
     # Any other OSError (e.g. EPERM) means the process may still be alive: let it
     # propagate rather than reporting a run cancelled that we never signalled.
-    final = _cancelled_state(state)
-    write_state(state_path, final)
+    final = _finalize_cancelled(graph, run_id)
     _reconcile_cancel(root, state.get("node_id"), run_id)
     _logger.info("milknado_run_cancel(pid): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
 
 
-def _cancel_async_run(root: Path, rdir: Path, state: dict, state_path: Path, run_id: str) -> dict:
+def _cancel_async_run(graph, root: Path, state: dict, run_id: str) -> dict:  # noqa: ANN001
     """Cancel an async-headless run (or a crashed run stuck "running"). Request
     cooperative cancellation and let the worker own the terminal write; only take
     over if the worker never finalizes within the bound."""
+    rdir = runs_dir(root)
     request_cancel(rdir, run_id)
-    final = _await_cancel_finalize(state_path)
+    final = _await_cancel_finalize(graph, run_id)
     if final is None:
         # Worker never finalized within the bound: it is wedged, dead, or was never
         # alive (crashed sync run). Take over the terminal write so the node is not
         # stranded RUNNING, and clear the sentinel we wrote.
-        latest = read_state(state_path)
-        if latest.get("status") != "running":
+        latest = graph.get_run(run_id)
+        if latest is not None and latest.get("status") != "running":
             final = latest  # worker finalized in the last poll gap — don't clobber
         else:
-            final = _cancelled_state(state)
-            write_state(state_path, final)
+            final = _finalize_cancelled(graph, run_id)
         clear_cancel(rdir, run_id)
 
     # Reconcile to the run's ACTUAL terminal status: a worker that finished `done`
@@ -480,3 +445,26 @@ def _cancel_async_run(root: Path, rdir: Path, state: dict, state_path: Path, run
     _reconcile_cancel(root, final.get("node_id"), run_id, final.get("status", "failed"))
     _logger.info("milknado_run_cancel(async): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
+
+
+@mcp.tool()
+def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -> dict:
+    """Persist a worker's complete deliverable to the run's durable result sink.
+
+    Called by a worker as its final step with its *complete* deliverable in
+    `payload` (the full text, not a reference to content that lives only in the
+    worker's own context). Stored as a role='result' run message so it survives the
+    process boundary; milknado_todo_run_poll returns it under `result`. Returns the
+    run_id and the assigned message seq.
+    """
+    if not RUN_ID_RE.match(run_id):
+        raise ValueError(f"invalid run_id format: {run_id!r}")
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
+    try:
+        if graph.get_run(run_id) is None:
+            raise ValueError(f"run {run_id!r} not found")
+        seq = graph.deposit_run_message(run_id, "result", payload, now_iso())
+    finally:
+        graph.close()
+    return {"run_id": run_id, "seq": seq}

@@ -3,7 +3,7 @@
 How a solved batch of ready Mikado nodes is dispatched into isolated git
 worktrees, run as parallel ralph loops, and merged back. Two domains cooperate:
 `execution/` owns the per-node worktree lifecycle and terminal state machine;
-`dispatch/` owns subprocess workers, run-state files, and node-status
+`dispatch/` owns subprocess workers, run-state rows, and node-status
 reconciliation.
 
 ## What runs in parallel
@@ -109,10 +109,25 @@ brief piped to stdin, combined stdout/stderr to a log file, cwd = worktree.
   plus `MILKNADO_*`. INVARIANT: no `MILKNADO_*` var may hold a secret — every one
   is forwarded verbatim. API keys / tokens / DB URLs stay in the parent.
 
-Run-state lives in `.milknado/runs/<run_id>.state.json`, written atomically
-(tmp-then-replace). `run_id` format: `node-<id>-<UTCstamp>-<8hex>`. The 4-byte
-suffix (not 2) is required because back-to-back runs of one node share a
-wall-clock second and would otherwise collide on the shared state file.
+Run-state lives in the **SQLite `runs` table** (PR #127, closes #100) — schema
+and repo functions in [[graph]]. Only **log files and cancel sentinels** remain
+on the filesystem under `.milknado/runs/`; the JSON `.state.json` sidecars are
+gone, as a clean cut with no migration or sidecar-import shim (pre-release "No
+Migration Code" rule). `run_id` format: `node-<id>-<UTCstamp>-<8hex>`; the
+4-byte suffix (not 2) is required because back-to-back runs of one node share a
+wall-clock second and only the suffix distinguishes their ids.
+
+Lifecycle: `start_run` INSERTs a rescuable `running` row **before**
+spawning/blocking — if the client times out and the server is killed mid-run,
+the terminal write never lands, and without that early row
+`fail_stale_running_runs` could not release the node. The worker runs, then
+`finish_run` UPDATEs to terminal. `finish_run` is gated
+`AND status = 'running'` — **first terminal write wins** (commit 2d0c833): a
+wedged worker that recovers after cancel already took over the terminal write
+cannot clobber `cancelled`/`failed` back to `done`, and vice versa; a dropped
+late write is logged, never silent. Both cancel takeover paths re-read the row
+after writing, so the run's *actual* terminal status — not the canceller's
+assumption — is what reconciles the node.
 
 ### Cancellation (cooperative, not signals)
 
@@ -123,15 +138,39 @@ SIGTERMs its own process, waits `_CANCEL_GRACE_SECS`, then SIGKILLs.
 
 **The worker owns the terminal write for a cancelled run** — `run_cancel` only
 requests cancellation. Finalizing in `_async_worker` (not in the cancel call)
-closes the state-clobber race the old signal-then-overwrite path left open. The
-sentinel is cleared in a `finally` after the terminal write so a reused run dir
-never carries a stale cancel into the next run.
+closes the state-clobber race the old signal-then-overwrite path left open, and
+the storage layer now enforces the same invariant from the other side:
+`finish_run`'s running-gate drops the loser of the race in either direction.
+The sentinel is cleared in a `finally` after the terminal write so a reused run
+dir never carries a stale cancel into the next run.
 
 The brief is written from a daemon thread (`_write_worker_stdin`) so a brief
 larger than the OS pipe buffer can't block before the cancel/timeout poll loop
 starts. `_async_worker`'s except branch guarantees a terminal "failed" write on
-any spawn/write failure — otherwise the state file sticks on "running" and locks
+any spawn/write failure — otherwise the run row sticks on "running" and locks
 the node out forever.
+
+## Deposit channel — worker → coordinator results (#122)
+
+The log-tail `summary` is lossy: a worker's complete deliverable rarely survives
+a 2 KB tail. PR #127 adds a durable return channel — `run_messages`, an
+append-only per-run message table (seq assigned atomically in a single
+`INSERT … SELECT MAX(seq)+1 … RETURNING` statement, so concurrent depositors
+cannot collide). The MCP tool `milknado_deposit_result(run_id, payload)` writes
+`role='result'` rows; `milknado_todo_run_poll` returns the latest one under
+`result` alongside the log-tail `summary`.
+
+**The brief contract is the root fix, not the storage**: the worker brief
+(`brief.py`) mandates depositing the complete deliverable before finishing,
+because storage alone cannot recover a deliverable the worker never restated.
+
+`MILKNADO_RUN_ID` is injected into the worker env **only when a `running` run
+row exists**. A DONE-node re-run inserts no row (`start_run` is gated on the
+node actually transitioning), so the worker gets no run_id and the mandated
+deposit soft-no-ops instead of raising "run not found".
+
+Progress messaging and coordinator→worker inbound are deliberately NOT built;
+the `run_messages` shape permits them later (YAGNI — spec non-goal).
 
 ## MCP run surface — five tools, one schema (#82, #83, #107)
 
@@ -140,18 +179,25 @@ Five coordinator-facing MCP tools drive runs: `milknado_todo_run` (blocking),
 and `milknado_ralph_run_start` / `milknado_ralph_run_poll` (detached
 worktree-isolated ralph loop). All five return the **unified superset schema**
 `RunDict` (`_mcp_core.py`): `run_id, node_id, status, exit_code, timed_out,
-rebased, log_path, state_path, summary`, every field nullable where it doesn't
-apply (`summary` is None until a poll tails the log; `rebased` is None for
-non-ralph runs; the start tools return `exit_code`/`timed_out` None). One client
-code path handles every run type — fixing signature finding S5, where three
-divergent dict shapes used to force per-tool branching.
+rebased, log_path, summary`, every field nullable where it doesn't apply
+(`summary` is None until a poll tails the log; `rebased` is None for non-ralph
+runs; the start tools return `exit_code`/`timed_out` None). One client code
+path handles every run type — fixing signature finding S5, where three
+divergent dict shapes used to force per-tool branching. `state_path` was
+dropped from the schema with the sidecars (PR #127).
+
+Both poll tools **derive the log path from the regex-validated run_id**
+(`runs_dir / f"{run_id}.log"`) rather than trusting the stored `runs.log_path`:
+the db is user-editable, and a tampered path must not turn a poll into an
+arbitrary-file read.
 
 Two management tools close the lifecycle (the structural fix the run-lifecycle
 bugs #38/#39/#50 pointed at):
 
 - `milknado_run_list(project_root="", limit=50)` — enumerate recent runs from
-  `.milknado/runs/`, newest first by state-file mtime, bounded by `limit` so read
-  cost stays flat as run history grows.
+  the `runs` table, newest first by `started_at`, bounded by `limit` so read
+  cost stays flat as run history grows (an indexed query, where the sidecar
+  model had to glob and stat the runs dir).
 - `milknado_run_cancel(run_id)` — validates the `run_id` against `RUN_ID_RE`,
   then forks on run type. A **detached-ralph** run has its own process group, so
   `os.killpg(SIGTERM)` is safe and cancel finalizes the terminal state directly
@@ -166,14 +212,17 @@ bugs #38/#39/#50 pointed at):
 
 ## Orphan recovery & reconciliation
 
-A worker can vanish (server crash) leaving a "running" state file and a RUNNING
+A worker can vanish (server crash) leaving a `running` run row and a RUNNING
 node. `reconcile_orphan_node` is the shared three-call recovery:
 
-1. `fail_stale_running_runs` — flip "running" files older than
-   `timeout + _STALE_GRACE_SECONDS` (30s) to "failed".
-2. `find_terminal_runs_for_node` (+ optional `run_id` fence) → `latest_terminal_run`
-   (max by `ended_at`). **Fence before picking latest**: a stale run with a later
-   `ended_at` could otherwise mask the current owner's file.
+1. `fail_stale_running_runs` — flip `running` rows older than
+   `timeout + _STALE_GRACE_SECONDS` (30s) to `failed` — **skipping (and
+   logging) a row whose recorded pid is still alive** (#54), so a slow live
+   worker is never force-failed by the sweep.
+2. `runs_for_node` (+ optional `run_id` fence pushed into the SQL) →
+   `latest_terminal_run` (max by `ended_at`). **Fence before picking latest**:
+   a stale run with a later `ended_at` could otherwise mask the current owner's
+   row.
 3. `reconcile_node_status` — fenced terminal transition. With a `run_id` it uses
    the atomic fenced `mark_terminal` (closes the TOCTOU where two reconcilers both
    pass a Python-level run_id check but only the matching UPDATE lands); with no
@@ -183,7 +232,8 @@ node. `reconcile_orphan_node` is the shared three-call recovery:
 
 Don't confuse them. `brief.render_brief` (dispatch) is the markdown piped to a
 **subprocess worker's stdin** — goal context, done prerequisites, owned files,
-and instructions (including registering follow-ups via `milknado_track_follow_up`).
+and instructions (including registering follow-ups via `milknado_track_follow_up`
+and depositing the final deliverable via `milknado_deposit_result`).
 `_context.build_node_context` (execution) is the context **embedded in
 `RALPH.md`** for a ralph run, including CRG impact radius. Headless/MCP workers
 get a brief; ralph loops get RALPH.md.
@@ -194,8 +244,9 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/execution/headless.py` — `run_node_to_completion`.
 - `src/milknado/domains/execution/_context.py` — `build_node_context` (RALPH.md context).
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
-- `src/milknado/domains/dispatch/_runstate.py` — run-id format, state-file I/O, cancel sentinel.
-- `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin).
-- `src/milknado/mcp_run.py` — `milknado_todo_run*`, `milknado_run_list`, `milknado_run_cancel`.
+- `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
+- `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
+- `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`).
+- `src/milknado/mcp_run.py` — `milknado_todo_run*`, `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
 - `src/milknado/mcp_ralph.py` — `milknado_ralph_run_start` / `_poll` (COORDINATOR-ONLY).
 - `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema.

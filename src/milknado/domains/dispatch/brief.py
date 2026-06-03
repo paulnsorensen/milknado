@@ -60,7 +60,12 @@ def render_brief(graph: MikadoGraph, node_id: int, *, prepend: str | None = None
         "Report blockers in stdout if you cannot proceed. "
         "If you discover follow-up work, register it by calling "
         "milknado_track_follow_up with a one-line description rather than only "
-        "printing it."
+        "printing it. "
+        "As your final step, call milknado_deposit_result with run_id set to the "
+        "MILKNADO_RUN_ID environment variable and payload set to your COMPLETE "
+        "deliverable — the full text of what you produced, not a reference to "
+        "content that lives only in this context. The deposited payload is what "
+        "the coordinator reads back; anything left only in your reply is lost."
     )
     body = "\n".join(lines) + "\n"
     if prepend:

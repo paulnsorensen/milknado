@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import threading
 import time
@@ -51,6 +50,72 @@ def _call(tool, **kwargs):
     """Invoke a fastmcp-wrapped tool function with the underlying Python callable."""
     fn = getattr(tool, "fn", tool)
     return fn(**kwargs)
+
+
+def _seed_run(
+    root: Path,
+    *,
+    run_id: str,
+    node_id: int,
+    status: str = "running",
+    started_at: str | None = None,
+    timeout_seconds: int | None = 10,
+    log_path: str | None = None,
+    ended_at: str | None = None,
+    exit_code: int | None = None,
+    timed_out: bool = False,
+    error: str | None = None,
+    pid: int | None = None,
+) -> None:
+    """Insert a runs row directly (replaces writing a .state.json sidecar).
+
+    Ensures a node row with `node_id` exists first so the runs FK is satisfied,
+    then inserts the run row at the requested status. The graph is closed so its
+    WAL is checkpointed and a subsequent open on the same db sees the row.
+    """
+    from datetime import UTC, datetime
+
+    graph, _cfg = open_graph(root)
+    try:
+        conn = graph._conn
+        conn.execute(
+            "INSERT OR IGNORE INTO nodes (id, description, status, created_at) "
+            "VALUES (?, ?, 'running', ?)",
+            (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
+        )
+        started_at = started_at or datetime.now(UTC).isoformat()
+        log_path = log_path or str(root / ".milknado" / "runs" / f"{run_id}.log")
+        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        if status != "running":
+            graph.finish_run(
+                run_id,
+                status=status,
+                exit_code=exit_code,
+                timed_out=timed_out,
+                ended_at=ended_at or datetime.now(UTC).isoformat(),
+                error=error,
+            )
+        conn.commit()
+    finally:
+        graph.close()
+
+
+def _read_run(root: Path, run_id: str) -> dict | None:
+    """Read a runs row back (replaces reading a .state.json sidecar)."""
+    graph, _cfg = open_graph(root)
+    try:
+        return graph.get_run(run_id)
+    finally:
+        graph.close()
+
+
+def _run_status(graph, run_id: str) -> str:  # noqa: ANN001
+    """Fetch a run's status, asserting the row exists first. Keeps the
+    stale-sweep assertions from masking a missing row (get_run -> None) as a raw
+    TypeError instead of a clear 'run vanished' failure."""
+    row = graph.get_run(run_id)
+    assert row is not None, f"run {run_id!r} not found"
+    return row["status"]
 
 
 @pytest.fixture()
@@ -712,16 +777,14 @@ class TestTodoAsyncRun:
             timeout_seconds=10,
             project_root=root,
         )
-        # Wait for the worker thread to write the terminal state file.
-        # Read directly rather than via _wait_for_terminal — that helper polls
-        # through the MCP tool, which would auto-reconcile and defeat the test.
-        state_path = Path(first["state_path"])
+        # Wait for the worker thread to write the terminal run row. Read the row
+        # directly rather than via _wait_for_terminal — that helper polls through
+        # the MCP tool, which would auto-reconcile and defeat the test.
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
-            if state_path.exists():
-                state = json.loads(state_path.read_text())
-                if state["status"] in ("done", "failed"):
-                    break
+            state = _read_run(Path(root), first["run_id"])
+            if state is not None and state["status"] in ("done", "failed"):
+                break
             time.sleep(0.05)
         # Sanity: graph still thinks the node is running (no poll yet).
         tree = _call(milknado_todo_tree, project_root=root)
@@ -737,90 +800,56 @@ class TestTodoAsyncRun:
         _wait_for_terminal(second["run_id"], root, timeout=3.0)
 
     def test_fail_stale_running_runs_flips_orphaned_run(self, tmp_path: Path) -> None:
-        """A 'running' state file past its timeout (worker thread vanished
-        without writing a terminal state) is flipped to failed."""
+        """A 'running' run past its timeout (worker thread vanished without writing
+        a terminal state) is flipped to failed."""
         from datetime import UTC, datetime, timedelta
 
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+        from milknado.domains.dispatch.runner import fail_stale_running_runs
 
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
         run_id = "node-7-20200101T000000Z-abcd"
-        state_path = runs_dir / f"{run_id}.state.json"
         stale_started = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
-        state_path.write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "node_id": 7,
-                    "started_at": stale_started,
-                    "log_path": str(runs_dir / f"{run_id}.log"),
-                    "timeout_seconds": 10,
-                    "status": "running",
-                    "exit_code": None,
-                    "timed_out": False,
-                    "ended_at": None,
-                }
-            )
-        )
-        flipped = fail_stale_running_runs(root, 7)
-        assert len(flipped) == 1
-        assert flipped[0]["status"] == "failed"
-        assert json.loads(state_path.read_text())["status"] == "failed"
+        _seed_run(root, run_id=run_id, node_id=7, started_at=stale_started, timeout_seconds=10)
+        graph, _cfg = open_graph(root)
+        try:
+            flipped = fail_stale_running_runs(graph, 7)
+            assert len(flipped) == 1
+            assert flipped[0]["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
+        finally:
+            graph.close()
 
     def test_fail_stale_running_runs_leaves_fresh_run_untouched(self, tmp_path: Path) -> None:
         """A 'running' run still within its timeout window must not be flipped."""
-        from datetime import UTC, datetime
-
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
-
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
         run_id = "node-8-20200101T000000Z-beef"
-        state_path = runs_dir / f"{run_id}.state.json"
-        state_path.write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "node_id": 8,
-                    "started_at": datetime.now(UTC).isoformat(),
-                    "log_path": str(runs_dir / f"{run_id}.log"),
-                    "timeout_seconds": 600,
-                    "status": "running",
-                    "exit_code": None,
-                    "timed_out": False,
-                    "ended_at": None,
-                }
-            )
-        )
-        assert fail_stale_running_runs(root, 8) == []
-        assert json.loads(state_path.read_text())["status"] == "running"
+        _seed_run(root, run_id=run_id, node_id=8, timeout_seconds=600)
+        graph, _cfg = open_graph(root)
+        try:
+            from milknado.domains.dispatch.runner import fail_stale_running_runs
 
-    def _write_stale_running(
-        self, runs_dir: Path, run_id: str, node_id: int, *, pid: int | None
-    ) -> Path:
-        """Write a 'running' state file aged well past its timeout. `pid=None`
-        models the async-worker path (no pid recorded); an int models the
-        detached-ralph path, which records its process pid."""
+            assert fail_stale_running_runs(graph, 8) == []
+            assert _run_status(graph, run_id) == "running"
+        finally:
+            graph.close()
+
+    def _seed_stale_running(
+        self, root: Path, run_id: str, node_id: int, *, pid: int | None
+    ) -> None:
+        """Seed a 'running' run aged well past its timeout. `pid=None` models the
+        async-worker path (no pid recorded); an int models the detached-ralph
+        path, which records its process pid."""
         from datetime import UTC, datetime, timedelta
 
         stale_started = (datetime.now(UTC) - timedelta(seconds=7200)).isoformat()
-        state: dict = {
-            "run_id": run_id,
-            "node_id": node_id,
-            "started_at": stale_started,
-            "log_path": str(runs_dir / f"{run_id}.log"),
-            "timeout_seconds": 1800,
-            "status": "running",
-            "exit_code": None,
-            "timed_out": False,
-            "ended_at": None,
-        }
-        if pid is not None:
-            state["pid"] = pid
-        state_path = runs_dir / f"{run_id}.state.json"
-        state_path.write_text(json.dumps(state))
-        return state_path
+        _seed_run(
+            root,
+            run_id=run_id,
+            node_id=node_id,
+            started_at=stale_started,
+            timeout_seconds=1800,
+            pid=pid,
+        )
 
     def test_fail_stale_does_not_flip_live_detached_run(self, tmp_path: Path) -> None:
         """#54: a detached-ralph run still 'running' past timeout+grace but whose
@@ -828,75 +857,77 @@ class TestTodoAsyncRun:
         force-failed — that thrashes a run about to write 'done'."""
         import os
 
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+        from milknado.domains.dispatch.runner import fail_stale_running_runs
 
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
+        run_id = "node-9-20200101T000000Z-aaaa"
         # This test process is a guaranteed-alive pid.
-        state_path = self._write_stale_running(
-            runs_dir, "node-9-20200101T000000Z-aaaa", 9, pid=os.getpid()
-        )
-
-        assert fail_stale_running_runs(root, 9) == [], "a live runner was wrongly flipped"
-        assert json.loads(state_path.read_text())["status"] == "running"
+        self._seed_stale_running(root, run_id, 9, pid=os.getpid())
+        graph, _cfg = open_graph(root)
+        try:
+            assert fail_stale_running_runs(graph, 9) == [], "a live runner was wrongly flipped"
+            assert _run_status(graph, run_id) == "running"
+        finally:
+            graph.close()
 
     def test_fail_stale_flips_dead_detached_run(self, tmp_path: Path) -> None:
         """#54: a detached run whose recorded pid is DEAD is genuinely orphaned and
         must still be flipped to failed (the liveness guard cleans up, not hides)."""
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+        from milknado.domains.dispatch.runner import fail_stale_running_runs
 
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
+        run_id = "node-10-20200101T000000Z-bbbb"
         # PID 2**31-1 is unassigned on Linux — os.kill(_, 0) -> ProcessLookupError.
-        state_path = self._write_stale_running(
-            runs_dir, "node-10-20200101T000000Z-bbbb", 10, pid=2**31 - 1
-        )
-
-        flipped = fail_stale_running_runs(root, 10)
-        assert len(flipped) == 1
-        assert flipped[0]["status"] == "failed"
-        assert json.loads(state_path.read_text())["status"] == "failed"
+        self._seed_stale_running(root, run_id, 10, pid=2**31 - 1)
+        graph, _cfg = open_graph(root)
+        try:
+            flipped = fail_stale_running_runs(graph, 10)
+            assert len(flipped) == 1
+            assert flipped[0]["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
+        finally:
+            graph.close()
 
     def test_fail_stale_flips_pidless_async_run(self, tmp_path: Path) -> None:
         """#54 regression guard: the async-worker path records NO pid; its orphan
         sweep (server crash → daemon thread vanished) must stay unchanged — a
         pid-less stale run still flips to failed."""
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+        from milknado.domains.dispatch.runner import fail_stale_running_runs
 
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
-        state_path = self._write_stale_running(
-            runs_dir, "node-11-20200101T000000Z-cccc", 11, pid=None
-        )
-
-        flipped = fail_stale_running_runs(root, 11)
-        assert len(flipped) == 1
-        assert flipped[0]["status"] == "failed"
-        assert json.loads(state_path.read_text())["status"] == "failed"
+        run_id = "node-11-20200101T000000Z-cccc"
+        self._seed_stale_running(root, run_id, 11, pid=None)
+        graph, _cfg = open_graph(root)
+        try:
+            flipped = fail_stale_running_runs(graph, 11)
+            assert len(flipped) == 1
+            assert flipped[0]["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
+        finally:
+            graph.close()
 
     def test_fail_stale_mixed_kinds_flips_only_the_dead_one(self, tmp_path: Path) -> None:
-        """#54 cross-namespace guard: the `node-<id>-*` glob matches BOTH a
-        detached-ralph run (records a pid) and a pid-less async run for the same
-        node. The sweep must flip only the genuinely-dead one — a live ralph run
-        sharing the node's glob must survive, not be cross-failed."""
+        """#54 cross-namespace guard: BOTH a detached-ralph run (records a pid) and
+        a pid-less async run exist for the same node. The sweep must flip only the
+        genuinely-dead one — a live ralph run for the node must survive, not be
+        cross-failed."""
         import os
 
-        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+        from milknado.domains.dispatch.runner import fail_stale_running_runs
 
         root = Path(tmp_path)
-        runs_dir = _runs_dir(root)
-        live_ralph = self._write_stale_running(
-            runs_dir, "node-12-20200101T000000Z-1111", 12, pid=os.getpid()
-        )
-        dead_async = self._write_stale_running(
-            runs_dir, "node-12-20200102T000000Z-2222", 12, pid=None
-        )
-
-        flipped = fail_stale_running_runs(root, 12)
-
-        assert [f["run_id"] for f in flipped] == ["node-12-20200102T000000Z-2222"]
-        assert json.loads(live_ralph.read_text())["status"] == "running"
-        assert json.loads(dead_async.read_text())["status"] == "failed"
+        live = "node-12-20200101T000000Z-1111"
+        dead = "node-12-20200102T000000Z-2222"
+        self._seed_stale_running(root, live, 12, pid=os.getpid())
+        self._seed_stale_running(root, dead, 12, pid=None)
+        graph, _cfg = open_graph(root)
+        try:
+            flipped = fail_stale_running_runs(graph, 12)
+            assert [f["run_id"] for f in flipped] == [dead]
+            assert _run_status(graph, live) == "running"
+            assert _run_status(graph, dead) == "failed"
+        finally:
+            graph.close()
 
     def test_start_releases_node_locked_by_stale_run(
         self, tmp_path: Path, monkeypatch, worker_stub
@@ -905,8 +936,6 @@ class TestTodoAsyncRun:
         (worker thread vanished) is not locked out forever."""
         from datetime import UTC, datetime, timedelta
 
-        from milknado.domains.dispatch.runner import _runs_dir
-
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="stale", kind="task", project_root=root)
         graph, _cfg = open_graph(Path(root))
@@ -914,23 +943,14 @@ class TestTodoAsyncRun:
             graph.mark_running(task["id"])
         finally:
             graph.close()
-        runs_dir = _runs_dir(Path(root))
         run_id = f"node-{task['id']}-20200101T000000Z-dead"
         stale_started = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
-        (runs_dir / f"{run_id}.state.json").write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "node_id": task["id"],
-                    "started_at": stale_started,
-                    "log_path": str(runs_dir / f"{run_id}.log"),
-                    "timeout_seconds": 10,
-                    "status": "running",
-                    "exit_code": None,
-                    "timed_out": False,
-                    "ended_at": None,
-                }
-            )
+        _seed_run(
+            Path(root),
+            run_id=run_id,
+            node_id=task["id"],
+            started_at=stale_started,
+            timeout_seconds=10,
         )
         monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sh -c 'exit 1'"))
         # Must NOT raise "already running" — the stale run is reconciled first.
@@ -1020,145 +1040,120 @@ class TestTodoAsyncRun:
         one with the highest ended_at timestamp. The older 'done' must not beat the
         newer 'failed' — the most recent outcome is authoritative for reconcile."""
         from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         node_id = 42
-        runs = _runs_dir(root)
-
         for run_id, status, ended_at in [
             ("node-42-20200101T000000Z-aaaa", "done", "2020-01-01T00:00:10+00:00"),
             ("node-42-20200101T000001Z-bbbb", "failed", "2020-01-01T00:00:20+00:00"),
         ]:
-            (runs / f"{run_id}.state.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": run_id,
-                        "node_id": node_id,
-                        "status": status,
-                        "ended_at": ended_at,
-                        "exit_code": 0 if status == "done" else 1,
-                        "timed_out": False,
-                        "started_at": "2020-01-01T00:00:00+00:00",
-                        "log_path": str(runs / f"{run_id}.log"),
-                        "timeout_seconds": 10,
-                    }
-                )
+            _seed_run(
+                root,
+                run_id=run_id,
+                node_id=node_id,
+                status=status,
+                ended_at=ended_at,
+                exit_code=0 if status == "done" else 1,
             )
-
-        terminal_runs = find_terminal_runs_for_node(root, node_id)
-        winner = latest_terminal_run(terminal_runs)
+        graph, _cfg = open_graph(root)
+        try:
+            terminal_runs = find_terminal_runs_for_node(graph, node_id)
+            winner = latest_terminal_run(terminal_runs)
+        finally:
+            graph.close()
         assert winner is not None
         assert winner["status"] == "failed", "newer run (failed) must win over older run (done)"
         assert winner["run_id"] == "node-42-20200101T000001Z-bbbb"
 
     def test_find_terminal_runs_filters_by_run_id(self, tmp_path: Path) -> None:
         """The fence must be applied BEFORE picking the latest run: a stale run with
-        a later ended_at must not mask the current owner's terminal file. Filtering
+        a later ended_at must not mask the current owner's terminal run. Filtering
         by run_id first leaves only the owner's run for latest_terminal_run."""
         from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         node_id = 7
-        runs = _runs_dir(root)
         owner = "node-7-20200101T000000Z-own0"
         stale = "node-7-20200101T000001Z-stal"
         for run_id, status, ended_at in [
             (owner, "done", "2020-01-01T00:00:10+00:00"),
             (stale, "failed", "2020-01-01T00:01:00+00:00"),  # later ended_at, but not the owner
         ]:
-            (runs / f"{run_id}.state.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": run_id,
-                        "node_id": node_id,
-                        "status": status,
-                        "ended_at": ended_at,
-                        "exit_code": 0 if status == "done" else 1,
-                        "timed_out": False,
-                        "started_at": "2020-01-01T00:00:00+00:00",
-                        "log_path": str(runs / f"{run_id}.log"),
-                        "timeout_seconds": 10,
-                    }
-                )
+            _seed_run(
+                root,
+                run_id=run_id,
+                node_id=node_id,
+                status=status,
+                ended_at=ended_at,
+                exit_code=0 if status == "done" else 1,
             )
-        fenced = find_terminal_runs_for_node(root, node_id, run_id=owner)
-        assert [r["run_id"] for r in fenced] == [owner]
-        latest = latest_terminal_run(fenced)
-        assert latest is not None
-        assert latest["status"] == "done", (
-            "the owner's file wins once the stale later-ended_at run is fenced out"
-        )
-        unfenced = find_terminal_runs_for_node(root, node_id)
-        assert len(unfenced) == 2, "legacy (no fence) returns both terminal files"
+        graph, _cfg = open_graph(root)
+        try:
+            fenced = find_terminal_runs_for_node(graph, node_id, run_id=owner)
+            assert [r["run_id"] for r in fenced] == [owner]
+            latest = latest_terminal_run(fenced)
+            assert latest is not None
+            assert latest["status"] == "done", (
+                "the owner's run wins once the stale later-ended_at run is fenced out"
+            )
+            unfenced = find_terminal_runs_for_node(graph, node_id)
+            assert len(unfenced) == 2, "no fence returns both terminal runs"
+        finally:
+            graph.close()
 
-    def test_find_terminal_runs_glob_isolates_node_id_prefix(self, tmp_path: Path) -> None:
-        """Node scoping rides entirely on the `node-<id>-*` glob, not a payload
-        node_id re-check: the trailing `-` keeps node 1's scan from matching node
-        12's files. Regression guard for dropping the redundant payload check
-        (#49) — node isolation must hold on the glob alone, or a node-12 terminal
-        file would leak into node 1's reconcile."""
-        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+    def test_find_terminal_runs_isolates_node_id(self, tmp_path: Path) -> None:
+        """Node scoping is the runs query's `WHERE node_id = ?`: node 1's runs must
+        not pick up node 12's terminal run. Replaces the old glob-prefix isolation
+        — the db keys runs on the integer node_id directly."""
+        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
 
         root = Path(tmp_path)
-        runs = _runs_dir(root)
         for run_id, node_id in [
             ("node-1-20200101T000000Z-aaaa", 1),
             ("node-12-20200101T000000Z-bbbb", 12),
         ]:
-            (runs / f"{run_id}.state.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": run_id,
-                        "node_id": node_id,
-                        "status": "done",
-                        "ended_at": "2020-01-01T00:00:10+00:00",
-                        "exit_code": 0,
-                        "timed_out": False,
-                        "started_at": "2020-01-01T00:00:00+00:00",
-                        "log_path": str(runs / f"{run_id}.log"),
-                        "timeout_seconds": 10,
-                    }
-                )
+            _seed_run(
+                root,
+                run_id=run_id,
+                node_id=node_id,
+                status="done",
+                ended_at="2020-01-01T00:00:10+00:00",
+                exit_code=0,
             )
-        result = find_terminal_runs_for_node(root, 1)
+        graph, _cfg = open_graph(root)
+        try:
+            result = find_terminal_runs_for_node(graph, 1)
+        finally:
+            graph.close()
         assert [r["run_id"] for r in result] == ["node-1-20200101T000000Z-aaaa"], (
-            "node 1's scan must not pick up node 12's terminal file — the glob's "
-            "trailing `-` is the only thing isolating the prefix now"
+            "node 1's query must not pick up node 12's terminal run"
         )
 
     def test_find_terminal_runs_excludes_non_terminal_runs(self, tmp_path: Path) -> None:
-        """The status filter is the sole terminality gate now that the payload
-        node_id re-check is gone (#49): a still-'running' state file for the node
-        must be excluded, only done/failed runs returned. Guards against the
-        terminal-status tuple regressing into letting a live run reconcile."""
-        from milknado.domains.dispatch.runner import _runs_dir, find_terminal_runs_for_node
+        """The status filter is the terminality gate: a still-'running' run for the
+        node must be excluded, only done/failed runs returned. Guards against the
+        terminal-status filter regressing into letting a live run reconcile."""
+        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
 
         root = Path(tmp_path)
-        runs = _runs_dir(root)
-        for run_id, status in [
-            ("node-5-20200101T000000Z-done", "done"),
-            ("node-5-20200101T000001Z-runn", "running"),
-        ]:
-            (runs / f"{run_id}.state.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": run_id,
-                        "node_id": 5,
-                        "status": status,
-                        "ended_at": "2020-01-01T00:00:10+00:00" if status != "running" else None,
-                        "exit_code": 0 if status == "done" else None,
-                        "timed_out": False,
-                        "started_at": "2020-01-01T00:00:00+00:00",
-                        "log_path": str(runs / f"{run_id}.log"),
-                        "timeout_seconds": 10,
-                    }
-                )
-            )
-        result = find_terminal_runs_for_node(root, 5)
+        _seed_run(
+            root,
+            run_id="node-5-20200101T000000Z-done",
+            node_id=5,
+            status="done",
+            ended_at="2020-01-01T00:00:10+00:00",
+            exit_code=0,
+        )
+        _seed_run(root, run_id="node-5-20200101T000001Z-runn", node_id=5, status="running")
+        graph, _cfg = open_graph(root)
+        try:
+            result = find_terminal_runs_for_node(graph, 5)
+        finally:
+            graph.close()
         assert [r["run_id"] for r in result] == ["node-5-20200101T000000Z-done"], (
-            "a 'running' state file must not be returned as a terminal run"
+            "a 'running' run must not be returned as a terminal run"
         )
 
     def test_reconcile_node_status_is_fenced_on_run_id(self, tmp_path: Path) -> None:

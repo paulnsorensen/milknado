@@ -6,8 +6,8 @@ piped a brief on stdin, run in the shared working tree), these dispatch a node
 into its own git worktree + branch, iterate the ralph loop until the node's
 quality gates pass, then rebase-merge the branch back. The loop runs in its own
 detached process so it survives the MCP server restarting (hot-reload) or a
-cloud env being reclaimed; run state lives in `.milknado/runs/<run_id>.state.json`
-and node status in SQLite.
+cloud env being reclaimed; run state and node status both live in SQLite (the
+`runs` table and the `nodes` table), with log files on the filesystem.
 """
 
 from __future__ import annotations
@@ -28,10 +28,8 @@ from milknado.domains.dispatch import (
     find_terminal_runs_for_node,
     latest_terminal_run,
     now_iso,
-    read_state,
     reconcile_node_status,
     runs_dir,
-    write_state,
 )
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
@@ -88,7 +86,7 @@ def milknado_ralph_run_start(
             orphan_wt = Path(node.worktree_path) if node.worktree_path else None
             # First release a node locked by a run that finished, or whose detached
             # process vanished, without anyone polling (mirrors run_start).
-            fail_stale_running_runs(root, node_id)
+            fail_stale_running_runs(graph, node_id)
             # Filter terminal files to this node's fence BEFORE picking the latest,
             # so a stale run with a later ended_at cannot mask the current owner's
             # file. reconcile_node_status routes the write through the atomic
@@ -97,7 +95,7 @@ def milknado_ralph_run_start(
             # newer run cannot be clobbered. A legacy node with no run_id has no
             # fence to honour and falls back to the unconditional reconcile.
             winner = latest_terminal_run(
-                find_terminal_runs_for_node(root, node_id, run_id=node.run_id)
+                find_terminal_runs_for_node(graph, node_id, run_id=node.run_id)
             )
             if winner is not None:
                 reconcile_node_status(
@@ -130,19 +128,6 @@ def milknado_ralph_run_start(
         # claim (mark_terminal failed) so the node is not stranded RUNNING.
         rdir = runs_dir(root)
         log_path = rdir / f"{run_id}.log"
-        state_path = rdir / f"{run_id}.state.json"
-        running_state = {
-            "run_id": run_id,
-            "node_id": node_id,
-            "started_at": now,
-            "log_path": str(log_path),
-            "timeout_seconds": timeout_seconds,
-            "status": "running",
-            "rebased": None,
-            "detail": None,
-            "ended_at": None,
-            "pid": None,
-        }
         argv = [
             *_resolve_runner_cmd(runner_cmd),
             "--node-id",
@@ -151,17 +136,15 @@ def milknado_ralph_run_start(
             str(root),
             "--run-id",
             run_id,
-            "--state-path",
-            str(state_path),
             "--timeout",
             str(timeout_seconds),
         ]
         try:
-            # Both the state-file write and the spawn are inside the guard: a
-            # failure in either (fs permissions, partial .milknado setup, or an
-            # unspawnable process) must release the claim, or the node is left
-            # stranded RUNNING with no worker and no terminal state to reconcile.
-            write_state(state_path, running_state)
+            # Both the run-row insert and the spawn are inside the guard: a failure
+            # in either (fs permissions, partial .milknado setup, or an unspawnable
+            # process) must release the claim, or the node is left stranded RUNNING
+            # with no worker and no terminal run to reconcile.
+            graph.start_run(run_id, node_id, str(log_path), now, timeout_seconds)
             with log_path.open("wb") as log_fh:
                 proc = subprocess.Popen(  # noqa: S603 — COORDINATOR-ONLY module (see docstring); argv is coordinator-assembled, not external input
                     argv,
@@ -169,31 +152,31 @@ def milknado_ralph_run_start(
                     stderr=subprocess.STDOUT,
                     cwd=str(root),
                     start_new_session=True,
-                    env=_build_worker_env({"MILKNADO_NODE_ID": str(node_id)}),
+                    env=_build_worker_env(
+                        {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
+                    ),
                 )
         except OSError as exc:
             # Mark the node terminal via the fenced write that releases our claim,
-            # then re-raise so the caller sees a clean failure. The terminal state
-            # file is best-effort — it may not exist if write_state itself failed.
-            terminal_state = {
-                **running_state,
-                "status": "failed",
-                "rebased": False,
-                "detail": f"spawn failed: {type(exc).__name__}: {exc}",
-                "ended_at": now_iso(),
-            }
-            with suppress(OSError):
-                write_state(state_path, terminal_state)
+            # then re-raise so the caller sees a clean failure. The terminal run
+            # write is best-effort — the run row exists only if start_run landed.
+            with suppress(Exception):
+                graph.finish_run(
+                    run_id,
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=now_iso(),
+                    rebased=False,
+                    detail=f"spawn failed: {type(exc).__name__}: {exc}",
+                )
             graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise
-        # Record the detached pid on the node row (fenced on run_id) AND in the state
-        # file so the next dispatch can liveness-check this run and reclaim it
-        # immediately if it dies. Guard against a runner that already wrote its
-        # terminal state, so the pid write never clobbers it back to "running".
-        running = read_state(state_path)
-        if running.get("status") == "running":
-            running["pid"] = proc.pid
-            write_state(state_path, running)
+        # Record the detached pid on the node row (fenced on run_id) AND on the run
+        # row so the next dispatch can liveness-check this run and reclaim it
+        # immediately if it dies. set_run_pid is gated on status='running', so the
+        # pid write never clobbers a runner that already wrote its terminal state.
+        graph.set_run_pid(run_id, proc.pid)
         graph.set_pid(node_id, run_id, proc.pid)
         _logger.info(
             "milknado_ralph_run_start: node=%d run_id=%s timeout=%ds pid=%d",
@@ -211,7 +194,6 @@ def milknado_ralph_run_start(
             "rebased": None,
             "pid": proc.pid,
             "log_path": str(log_path),
-            "state_path": str(state_path),
             "summary": None,
         }
     finally:
@@ -224,21 +206,23 @@ def milknado_ralph_run_poll(run_id: str, project_root: str = "") -> dict:
 
     Returns the run state (status running|done|failed, rebased, detail) plus a
     log tail. The detached runner reconciles node status itself via the executor,
-    so unlike milknado_todo_run_poll this does not touch the graph.
+    so unlike milknado_todo_run_poll this only reads the run row — it never
+    transitions the node.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
     rdir = runs_dir(root)
-    state_path = rdir / f"{run_id}.state.json"
-    if not state_path.exists():
+    graph, _cfg = open_graph(root)
+    try:
+        state = graph.get_run(run_id)
+    finally:
+        graph.close()
+    if state is None:
         raise ValueError(f"run {run_id!r} not found")
-    state = read_state(state_path)
     # Derive the log path from the validated run_id rather than trusting the
-    # stored field: no KeyError on a partial-write state, and no arbitrary-file
-    # read via a tampered log_path.
+    # stored field: no arbitrary-file read via a tampered log_path.
     state["summary"] = tail(rdir / f"{run_id}.log")
-    state["state_path"] = str(state_path)
     state.setdefault("exit_code", None)
     state.setdefault("timed_out", None)
     return state

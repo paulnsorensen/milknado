@@ -27,7 +27,6 @@ class RunDict(TypedDict):
     - exit_code: None while running or for start tools
     - timed_out: False while running; True only once failed by timeout; None for start tools
     - rebased: None for headless (non-ralph) runs
-    - state_path: None for sync runs that predate state-file tracking
     - summary: None for start tools (no log tail until polling)
     """
 
@@ -38,7 +37,6 @@ class RunDict(TypedDict):
     timed_out: bool | None
     rebased: bool | None
     log_path: str | None
-    state_path: str | None
     summary: str | None
 
 

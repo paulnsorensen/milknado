@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -15,6 +14,7 @@ import pytest
 
 from milknado.mcp_ralph import milknado_ralph_run_poll, milknado_ralph_run_start
 from milknado.mcp_run import (
+    milknado_deposit_result,
     milknado_run_cancel,
     milknado_run_list,
     milknado_todo_run_poll,
@@ -32,26 +32,33 @@ _SUPERSET_KEYS = frozenset(
         "timed_out",
         "rebased",
         "log_path",
-        "state_path",
         "summary",
     }
 )
 
 _STUB_RUNNER = """
-import argparse, json
+import argparse
 from pathlib import Path
+from milknado._mcp_core import open_graph
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
-p.add_argument("--state-path")
 p.add_argument("--timeout")
 a = p.parse_args()
-sp = Path(a.state_path)
-state = json.loads(sp.read_text())
-state.update(status="{status}", rebased={rebased}, detail=None)
-state["ended_at"] = "2026-01-01T00:00:00+00:00"
-sp.write_text(json.dumps(state))
+graph, _cfg = open_graph(Path(a.project_root))
+try:
+    graph.finish_run(
+        a.run_id,
+        status="{status}",
+        exit_code={exit_code},
+        timed_out=False,
+        ended_at="2026-01-01T00:00:00+00:00",
+        rebased={rebased},
+        detail=None,
+    )
+finally:
+    graph.close()
 """
 
 
@@ -60,9 +67,69 @@ def _call(tool, **kwargs):
     return fn(**kwargs)
 
 
+def _seed_run(
+    root: Path,
+    *,
+    run_id: str,
+    node_id: int,
+    status: str = "running",
+    started_at: str | None = None,
+    timeout_seconds: int | None = 10,
+    ended_at: str | None = None,
+    exit_code: int | None = None,
+    timed_out: bool = False,
+    error: str | None = None,
+    pid: int | None = None,
+) -> None:
+    """Insert a runs row directly (replaces writing a .state.json sidecar)."""
+    from datetime import UTC, datetime
+
+    graph, _cfg = open_graph(root)
+    try:
+        graph._conn.execute(
+            "INSERT OR IGNORE INTO nodes (id, description, status, created_at) "
+            "VALUES (?, ?, 'running', ?)",
+            (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
+        )
+        started_at = started_at or datetime.now(UTC).isoformat()
+        log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
+        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        if status != "running":
+            graph.finish_run(
+                run_id,
+                status=status,
+                exit_code=exit_code,
+                timed_out=timed_out,
+                ended_at=ended_at or datetime.now(UTC).isoformat(),
+                error=error,
+            )
+        graph._conn.commit()
+    finally:
+        graph.close()
+
+
+def _read_run(root: Path, run_id: str) -> dict | None:
+    graph, _cfg = open_graph(root)
+    try:
+        return graph.get_run(run_id)
+    finally:
+        graph.close()
+
+
+def _node_running_runs(root: Path, node_id: int) -> list[dict]:
+    """Return this node's 'running' run rows (replaces a runs-dir glob)."""
+    graph, _cfg = open_graph(root)
+    try:
+        return [r for r in graph.runs_for_node(node_id) if r["status"] == "running"]
+    finally:
+        graph.close()
+
+
 def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool) -> str:
     script = tmp_path / f"stub_{status}.py"
-    script.write_text(_STUB_RUNNER.format(status=status, rebased=rebased))
+    script.write_text(
+        _STUB_RUNNER.format(status=status, rebased=rebased, exit_code=0 if status == "done" else 1)
+    )
     return f"{sys.executable} {script}"
 
 
@@ -116,7 +183,6 @@ class TestUnifiedRunSchema:
         assert result["timed_out"] is None
         assert result["rebased"] is None
         assert result["summary"] is None
-        assert result["state_path"] is not None
 
     def test_todo_run_poll_returns_superset_schema(
         self, tmp_path: Path, monkeypatch, worker_stub
@@ -129,7 +195,6 @@ class TestUnifiedRunSchema:
         missing = _SUPERSET_KEYS - final.keys()
         assert not missing, f"milknado_todo_run_poll missing keys: {missing}"
         assert final["run_id"] == started["run_id"]
-        assert final["state_path"] is not None
         assert "rebased" in final  # may be None for headless runs
 
     def test_ralph_run_start_returns_superset_schema(self, tmp_path: Path) -> None:
@@ -165,7 +230,6 @@ class TestUnifiedRunSchema:
         final = _wait_for_terminal(started["run_id"], root, milknado_ralph_run_poll)
         missing = _SUPERSET_KEYS - final.keys()
         assert not missing, f"milknado_ralph_run_poll missing keys: {missing}"
-        assert final["state_path"] is not None
         assert final["rebased"] is True
 
 
@@ -175,7 +239,7 @@ class TestSyncRunSchema:
     def test_todo_run_returns_superset_schema(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -189,15 +253,14 @@ class TestSyncRunSchema:
         missing = _SUPERSET_KEYS - result.keys()
         assert not missing, f"milknado_todo_run missing keys: {missing}"
         assert result["run_id"] is not None
-        assert result["state_path"] is not None
         assert result["rebased"] is None
         assert result["exit_code"] == 0
         assert result["timed_out"] is False
 
-    def test_todo_run_writes_state_file(self, tmp_path: Path, monkeypatch) -> None:
+    def test_todo_run_writes_run_row(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -208,9 +271,8 @@ class TestSyncRunSchema:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-state", kind="task", project_root=root)
         result = _call(milknado_todo_run, node_id=task["id"], project_root=root)
-        state_path = Path(result["state_path"])
-        assert state_path.exists(), "sync run must write a state file"
-        state = json.loads(state_path.read_text())
+        state = _read_run(tmp_path, result["run_id"])
+        assert state is not None, "sync run must write a terminal run row"
         assert state["run_id"] == result["run_id"]
         assert state["status"] == "done"
 
@@ -218,7 +280,7 @@ class TestSyncRunSchema:
         """#40: run_id must be threaded into the node after a sync run."""
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -254,11 +316,12 @@ class TestSyncRunOrphanRescue:
 
         observed: dict = {}
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
-            # Snapshot on-disk state WHILE the worker runs — the exact window a
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+            # Snapshot the run row WHILE the worker runs — the exact window a
             # client timeout orphans the sync call in.
-            for sp in runner_mod._runs_dir(project_root).glob(f"node-{node_id}-*.state.json"):
-                observed["state"] = json.loads(sp.read_text())
+            rows = _node_running_runs(Path(project_root), node_id)
+            if rows:
+                observed["state"] = rows[0]
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -271,7 +334,7 @@ class TestSyncRunOrphanRescue:
         _call(milknado_todo_run, node_id=task["id"], project_root=root)
 
         state = observed.get("state")
-        assert state is not None, "no 'running' state file existed while the worker ran"
+        assert state is not None, "no 'running' run row existed while the worker ran"
         assert state["status"] == "running"
         # fail_stale_running_runs keys on both fields; missing either makes an
         # orphaned run unrescuable.
@@ -283,7 +346,7 @@ class TestSyncRunOrphanRescue:
 
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _crash_execute(project_root, node_id, log_path, brief, argv, timeout):
+        def _crash_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
             raise RuntimeError("server killed mid-run before terminal write")
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
@@ -295,33 +358,35 @@ class TestSyncRunOrphanRescue:
         with pytest.raises(RuntimeError):
             _call(milknado_todo_run, node_id=task["id"], project_root=root)
 
-        runs_dir = runner_mod._runs_dir(Path(root))
-        files = list(runs_dir.glob(f"node-{task['id']}-*.state.json"))
-        assert files, "orphaned sync run left no state file to rescue"
-        state = json.loads(files[0].read_text())
+        rows = _node_running_runs(tmp_path, task["id"])
+        assert rows, "orphaned sync run left no running run row to rescue"
+        state = rows[0]
         assert state["status"] == "running"
         # Age the run past its timeout and the stale sweep must release the node.
-        aged = datetime.now(UTC) - timedelta(seconds=state["timeout_seconds"] + 3600)
-        state["started_at"] = aged.isoformat()
-        files[0].write_text(json.dumps(state))
-
-        flipped = runner_mod.fail_stale_running_runs(Path(root), task["id"])
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            aged = datetime.now(UTC) - timedelta(seconds=state["timeout_seconds"] + 3600)
+            graph._conn.execute(
+                "UPDATE runs SET started_at = ? WHERE run_id = ?",
+                (aged.isoformat(), state["run_id"]),
+            )
+            graph._conn.commit()
+            flipped = runner_mod.fail_stale_running_runs(graph, task["id"])
+        finally:
+            graph.close()
         assert len(flipped) == 1
         assert flipped[0]["status"] == "failed"
 
     def test_done_node_rerun_writes_no_running_state(self, tmp_path: Path, monkeypatch) -> None:
         """The running-state write is gated on an actual PENDING/FAILED->RUNNING
-        transition. A DONE node re-run must NOT drop a 'running' file the stale
+        transition. A DONE node re-run must NOT drop a 'running' run the stale
         sweep could later force-fail, which would clobber the prior DONE result."""
         import milknado.domains.dispatch.runner as runner_mod
 
         observed: dict = {}
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout):
-            files = runner_mod._runs_dir(project_root).glob(f"node-{node_id}-*.state.json")
-            observed["running"] = [
-                s for f in files if (s := json.loads(f.read_text())).get("status") == "running"
-            ]
+        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+            observed["running"] = _node_running_runs(Path(project_root), node_id)
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -333,9 +398,59 @@ class TestSyncRunOrphanRescue:
         task = _call(milknado_todo_add, description="done-rerun", kind="task", project_root=root)
         _call(milknado_todo_run, node_id=task["id"], project_root=root)  # -> DONE
         # Second run sees a DONE node: _ensure_running returns False, so the gate
-        # must skip the running-state write — no 'running' file exists mid-run.
+        # must skip the running-run write — no 'running' run exists mid-run.
         _call(milknado_todo_run, node_id=task["id"], project_root=root)
-        assert observed["running"] == [], "DONE-node re-run must not write a 'running' state file"
+        assert observed["running"] == [], "DONE-node re-run must not write a 'running' run row"
+
+    def test_done_node_rerun_omits_run_id_from_worker_env(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A DONE-node re-run inserts no 'running' run row, so it must NOT inject
+        MILKNADO_RUN_ID. If it did, the brief's mandated final step
+        (milknado_deposit_result(run_id=$MILKNADO_RUN_ID, ...)) would deposit into a
+        run row that doesn't exist and fail with "run not found" — the exact #122
+        channel this consolidation protects. The first (PENDING->RUNNING) run does
+        have a row, so it MUST inject MILKNADO_RUN_ID. This exercises the real
+        _execute -> _spawn_worker env-build path instead of stubbing past it.
+        """
+        import milknado.domains.dispatch.runner as runner_mod
+
+        class _FakeProc:
+            returncode = 0
+            stdin = None
+
+            def communicate(self, input=None, timeout=None):  # noqa: A002, ARG002
+                return b"", b""
+
+        envs: list[dict] = []
+
+        def _capture_popen(argv, **kwargs):  # noqa: ARG001
+            # Run the real _spawn_worker so the captured env is exactly what the
+            # worker process would receive; intercept only the Popen boundary.
+            envs.append(kwargs["env"])
+            return _FakeProc()
+
+        monkeypatch.setattr(runner_mod.subprocess, "Popen", _capture_popen)
+
+        from milknado.mcp_run import milknado_todo_run
+
+        root = str(tmp_path)
+        desc = "done-rerun-env"
+        task = _call(milknado_todo_add, description=desc, kind="task", project_root=root)
+        # First run: PENDING -> RUNNING -> DONE (a run row exists).
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+        # Second run sees a DONE node: no run row, so no MILKNADO_RUN_ID.
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+
+        assert len(envs) == 2
+        first_env, rerun_env = envs
+        assert "MILKNADO_RUN_ID" in first_env, (
+            "a real (running) run must inject MILKNADO_RUN_ID so the worker can deposit"
+        )
+        assert "MILKNADO_RUN_ID" not in rerun_env, (
+            "DONE-node re-run has no run row; injecting MILKNADO_RUN_ID would make the "
+            "brief's deposit step fail with 'run not found'"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -374,34 +489,24 @@ class TestRunList:
 
     def test_sorted_newest_first(self, tmp_path: Path) -> None:
         root = str(tmp_path)
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
         older_id = "node-1-20260101T000000Z-aaaa"
         newer_id = "node-1-20260101T010000Z-bbbb"
         for rid, started_at in [
             (older_id, "2026-01-01T00:00:00+00:00"),
             (newer_id, "2026-01-01T01:00:00+00:00"),
         ]:
-            (rdir / f"{rid}.state.json").write_text(
-                json.dumps(
-                    {
-                        "run_id": rid,
-                        "node_id": 1,
-                        "status": "done",
-                        "started_at": started_at,
-                    }
-                )
+            _seed_run(
+                tmp_path,
+                run_id=rid,
+                node_id=1,
+                status="done",
+                started_at=started_at,
+                ended_at=started_at,
+                exit_code=0,
             )
         runs = _call(milknado_run_list, project_root=root)
         assert runs[0]["run_id"] == newer_id
         assert runs[1]["run_id"] == older_id
-
-    def test_tolerates_corrupt_state_file(self, tmp_path: Path) -> None:
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
-        (rdir / "node-1-20260101T000000Z-dead.state.json").write_text("not-json{{{")
-        result = _call(milknado_run_list, project_root=str(tmp_path))
-        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -431,12 +536,8 @@ class TestRunCancel:
     def test_cancel_terminal_run_returns_without_kill(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
         run_id = "node-1-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": 1, "status": "done"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
         killed = []
         monkeypatch.setattr(os, "killpg", lambda *a: killed.append(a))
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
@@ -448,12 +549,8 @@ class TestRunCancel:
     ) -> None:
         import signal as sig_mod
 
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
         run_id = "node-1-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": None, "status": "running", "pid": 9999})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=9999)
         killed: list[tuple] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
@@ -463,29 +560,22 @@ class TestRunCancel:
     def test_cancel_writes_failed_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
         run_id = "node-1-20260101T000000Z-abcd"
-        state_path = rdir / f"{run_id}.state.json"
-        state_path.write_text(json.dumps({"run_id": run_id, "node_id": None, "status": "running"}))
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
         monkeypatch.setattr(os, "killpg", lambda *a: None)
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
-        on_disk = json.loads(state_path.read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk["status"] == "failed"
         assert on_disk["error"] == "cancelled"
 
     def test_cancel_returns_superset_schema(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True)
         run_id = "node-1-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": None, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
         monkeypatch.setattr(os, "killpg", lambda *a: None)
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
@@ -503,12 +593,8 @@ class TestRunCancel:
             graph.mark_running(node_id)
         finally:
             graph.close()
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
         run_id = f"node-{node_id}-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
         monkeypatch.setattr(os, "killpg", lambda *a: None)
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
         _call(milknado_run_cancel, run_id=run_id, project_root=root)
@@ -541,12 +627,8 @@ class TestRunCancel:
         finally:
             graph.close()
 
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
         run_id = f"node-{node_id}-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         removed: list[Path] = []
         pruned: list[bool] = []
@@ -582,19 +664,14 @@ class TestRunCancel:
             graph.mark_running(node_id)
         finally:
             graph.close()
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
         run_id = f"node-{node_id}-20260101T000000Z-abcd"
-        state_path = rdir / f"{run_id}.state.json"
-        state_path.write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
-        on_disk = json.loads(state_path.read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk["status"] == "failed"
         assert on_disk["error"] == "cancelled"
         graph2, _cfg2 = open_graph(tmp_path)
@@ -624,12 +701,8 @@ class TestRunCancel:
             graph.mark_running(node_id, worktree_path=str(orphan_wt), branch_name="milknado/x")
         finally:
             graph.close()
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
         run_id = f"node-{node_id}-20260101T000000Z-abcd"
-        (rdir / f"{run_id}.state.json").write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         pruned: list[bool] = []
 
@@ -686,15 +759,14 @@ class TestAsyncCancel:
         # (b) final state is cooperative-cancel terminal
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
-        state_path = Path(result["state_path"])
-        on_disk = json.loads(state_path.read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk["status"] == "failed"
         assert on_disk["error"] == "cancelled"
 
         # (a)+(c) the worker stopped and does NOT overwrite the cancelled state:
         # had it kept running, `sleep 30` would later flip the state to done.
         time.sleep(1.0)
-        after = json.loads(state_path.read_text())
+        after = _read_run(tmp_path, run_id)
         assert after["status"] == "failed", "worker must not clobber the cancelled state"
         assert after["error"] == "cancelled"
 
@@ -737,7 +809,7 @@ class TestAsyncCancel:
         assert final["timed_out"] is True, "timeout must be recorded, not a plain fail"
         # Timeout is not a cancellation: no sentinel was written, and the terminal
         # write must not masquerade as error='cancelled'.
-        on_disk = json.loads(Path(final["state_path"]).read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk.get("error") != "cancelled"
 
     def test_async_cancel_done_in_window_reconciles_done_not_failed(
@@ -756,20 +828,15 @@ class TestAsyncCancel:
             graph.set_run_id(node_id, run_id)
         finally:
             graph.close()
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
-        state_path = rdir / f"{run_id}.state.json"
-        state_path.write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
-        # The worker finalizes `done` during the finalize poll window: the state
+        # The worker finalizes `done` during the finalize poll window: the run row
         # flips to done and that is what `_await_cancel_finalize` returns.
-        done_state = {"run_id": run_id, "node_id": node_id, "status": "done", "exit_code": 0}
-
-        def fake_finalize(sp: Path) -> dict:
-            sp.write_text(json.dumps(done_state))
-            return done_state
+        def fake_finalize(graph, rid: str) -> dict:
+            graph.finish_run(
+                rid, status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+            )
+            return graph.get_run(rid)
 
         monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", fake_finalize)
 
@@ -804,14 +871,8 @@ class TestPidCancelReconcile:
             graph.close()
         return node_id
 
-    def _write_pid_state(self, tmp_path: Path, run_id: str, node_id: int) -> Path:
-        rdir = tmp_path / ".milknado" / "runs"
-        rdir.mkdir(parents=True, exist_ok=True)
-        state_path = rdir / f"{run_id}.state.json"
-        state_path.write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running", "pid": 9999})
-        )
-        return state_path
+    def _write_pid_state(self, tmp_path: Path, run_id: str, node_id: int) -> None:
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running", pid=9999)
 
     def test_pid_cancel_reconciles_node_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -884,7 +945,7 @@ class TestPidCancelReconcile:
         and reconcile the node, not propagate the signal error."""
         run_id = "node-1-20260101T000000Z-cccc"
         node_id = self._running_node_owned_by(tmp_path, run_id)
-        state_path = self._write_pid_state(tmp_path, run_id, node_id)
+        self._write_pid_state(tmp_path, run_id, node_id)
 
         def gone(*_a):
             raise ProcessLookupError("no such process")
@@ -896,7 +957,7 @@ class TestPidCancelReconcile:
 
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
-        on_disk = json.loads(state_path.read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk["status"] == "failed"
         assert on_disk["error"] == "cancelled"
         graph2, _cfg2 = open_graph(tmp_path)
@@ -913,39 +974,33 @@ class TestCancelFinalizeAndRace:
     state warning and the last-poll-gap race re-read that must not clobber a
     worker's genuine terminal write."""
 
-    def test_await_cancel_finalize_logs_after_unreadable_reads(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    def test_await_cancel_finalize_returns_none_when_run_stays_running(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If the state file stays unreadable for the whole finalize window, the
-        bound elapses to None and a warning naming the read-error count is logged,
-        so a wedged/permission-denied state file is diagnosable, not silent."""
+        """If the run row stays 'running' for the whole finalize window (the worker
+        is wedged or dead), the bound elapses to None so the caller takes over the
+        terminal write itself."""
         from milknado.mcp_run import _await_cancel_finalize
 
         monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
         monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_POLL_SECS", 0.01)
 
-        def boom(_sp):
-            raise OSError("permission denied")
-
-        monkeypatch.setattr("milknado.mcp_run.read_state", boom)
-
-        with caplog.at_level(logging.WARNING, logger="milknado.mcp_run"):
-            out = _await_cancel_finalize(tmp_path / "missing.state.json")
-
-        assert out is None, "an unreadable state for the whole window must time out to None"
-        assert any("unreadable state reads" in r.getMessage() for r in caplog.records), (
-            "the read-error count must be logged when the bound elapses"
-        )
+        run_id = "node-1-20260101T000000Z-wedg"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            out = _await_cancel_finalize(graph, run_id)
+        finally:
+            graph.close()
+        assert out is None, "a run still 'running' for the whole window must time out to None"
 
     def test_async_cancel_race_reread_adopts_last_gap_finalize(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The race fence (mcp_run.py:452): _await_cancel_finalize returns None
-        (bound elapsed) but the worker wrote its terminal state in the final poll
-        gap. Cancel must re-read and ADOPT that write, not overwrite a genuine
-        `done` with `cancelled`."""
-        from milknado.domains.dispatch import runs_dir as _runs_dir
-
+        """The race fence: _await_cancel_finalize returns None (bound elapsed) but
+        the worker wrote its terminal run row in the final poll gap. Cancel must
+        re-read and ADOPT that write, not overwrite a genuine `done` with
+        `cancelled`."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="race", kind="task", project_root=root)
         node_id = task["id"]
@@ -956,23 +1011,12 @@ class TestCancelFinalizeAndRace:
             graph.set_run_id(node_id, run_id)
         finally:
             graph.close()
-        rdir = _runs_dir(tmp_path)
-        rdir.mkdir(parents=True, exist_ok=True)
-        state_path = rdir / f"{run_id}.state.json"
-        state_path.write_text(
-            json.dumps({"run_id": run_id, "node_id": node_id, "status": "running"})
-        )
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
-        done_state = {
-            "run_id": run_id,
-            "node_id": node_id,
-            "status": "done",
-            "exit_code": 0,
-            "ended_at": "2026-01-01T00:00:00+00:00",
-        }
-
-        def elapsed_after_done(sp: Path):
-            sp.write_text(json.dumps(done_state))
+        def elapsed_after_done(graph, rid: str):
+            graph.finish_run(
+                rid, status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+            )
             return None
 
         monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", elapsed_after_done)
@@ -980,7 +1024,7 @@ class TestCancelFinalizeAndRace:
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
         assert result["status"] == "done", "must adopt the worker's last-gap terminal write"
-        on_disk = json.loads(state_path.read_text())
+        on_disk = _read_run(tmp_path, run_id)
         assert on_disk["status"] == "done", "must not clobber the worker's done write"
         graph2, _cfg2 = open_graph(tmp_path)
         try:
@@ -1031,3 +1075,121 @@ class TestTerminateWorker:
         assert rc == -sig_mod.SIGKILL, (
             "a worker ignoring SIGTERM must be escalated to SIGKILL after the grace window"
         )
+
+
+# ---------------------------------------------------------------------------
+# #122 — milknado_deposit_result + result round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestDepositResult:
+    def test_deposit_rejects_malformed_run_id(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="invalid run_id"):
+            _call(
+                milknado_deposit_result,
+                run_id="../etc/passwd",
+                payload="x",
+                project_root=str(tmp_path),
+            )
+
+    def test_deposit_unknown_run_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_deposit_result,
+                run_id="node-1-20260101T000000Z-abcd",
+                payload="x",
+                project_root=str(tmp_path),
+            )
+
+    def test_deposit_persists_and_returns_seq(self, tmp_path: Path) -> None:
+        run_id = "node-1-20260101T000000Z-abcd"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+        first = _call(
+            milknado_deposit_result, run_id=run_id, payload="hello", project_root=str(tmp_path)
+        )
+        assert first == {"run_id": run_id, "seq": 1}
+        second = _call(
+            milknado_deposit_result, run_id=run_id, payload="again", project_root=str(tmp_path)
+        )
+        assert second["seq"] == 2, "seq must increment per deposit"
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            assert graph.latest_run_message(run_id, "result") == "again"
+        finally:
+            graph.close()
+
+    def test_todo_run_poll_returns_deposited_result(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
+        """The async-run poll must surface the deposited result under `result`."""
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="deposit-poll", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
+        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
+        _call(
+            milknado_deposit_result,
+            run_id=started["run_id"],
+            payload="the deliverable",
+            project_root=root,
+        )
+        final = _call(milknado_todo_run_poll, run_id=started["run_id"], project_root=root)
+        assert final["result"] == "the deliverable"
+
+    def test_poll_result_is_none_without_deposit(
+        self, tmp_path: Path, monkeypatch, worker_stub
+    ) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="no-deposit", kind="task", project_root=root)
+        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
+        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        final = _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
+        assert final["result"] is None, "no deposit -> result is None, not a missing key"
+
+    def test_todo_run_poll_derives_log_path_from_run_id(self, tmp_path: Path) -> None:
+        """The poll must tail the log derived from the validated run_id — a
+        tampered runs.log_path in the user-editable db must not cause an
+        arbitrary-file read (mirrors milknado_ralph_run_poll's derivation)."""
+        decoy = tmp_path / "secret.txt"
+        decoy.write_text("SECRET-CONTENT", encoding="utf-8")
+        run_id = "node-1-20260101T000000Z-feed"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
+        derived = tmp_path / ".milknado" / "runs" / f"{run_id}.log"
+        derived.parent.mkdir(parents=True, exist_ok=True)
+        derived.write_text("real log", encoding="utf-8")
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph._conn.execute(
+                "UPDATE runs SET log_path = ? WHERE run_id = ?", (str(decoy), run_id)
+            )
+            graph._conn.commit()
+        finally:
+            graph.close()
+        final = _call(milknado_todo_run_poll, run_id=run_id, project_root=str(tmp_path))
+        assert final["summary"] == "real log"
+        assert "SECRET-CONTENT" not in (final["summary"] or "")
+        assert final["log_path"] == str(derived), "returned log_path must be the derived one"
+
+    def test_multipart_deliverable_round_trips_intact(self, tmp_path: Path) -> None:
+        """Dogfood shape (#122): a multi-part deliverable — several before/after
+        items — deposited as one payload must come back whole through the poll,
+        not truncated to a 14-line log tail."""
+        run_id = "node-1-20260101T000000Z-abcd"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+        payload = "\n".join(f"item {i}: before X{i} -> after Y{i}" for i in range(40))
+        _call(milknado_deposit_result, run_id=run_id, payload=payload, project_root=str(tmp_path))
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.finish_run(
+                run_id,
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:00:00Z",
+            )
+            graph._conn.commit()
+        finally:
+            graph.close()
+        final = _call(milknado_todo_run_poll, run_id=run_id, project_root=str(tmp_path))
+        assert final["result"] == payload
+        assert final["result"].count("\n") == 39, "every line of the deliverable must survive"
