@@ -95,7 +95,18 @@ def _run_and_update_status(
         # stranding the node RUNNING forever. With this row fail_stale_running_runs
         # releases the node past timeout, matching start_headless_async.
         graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
-    result = run_headless(project_root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id)
+    # Only inject MILKNADO_RUN_ID when a 'running' run row exists. On a DONE-node
+    # re-run no row is inserted (start_run is gated on `running`), so passing the
+    # run_id would have the worker deposit into a row that doesn't exist —
+    # milknado_deposit_result raises "run not found". Pass None instead.
+    result = run_headless(
+        project_root,
+        node_id,
+        brief,
+        worker_cmd,
+        timeout_seconds,
+        run_id=run_id if running else None,
+    )
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
         if worker_terminal == "done":

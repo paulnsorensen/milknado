@@ -402,6 +402,56 @@ class TestSyncRunOrphanRescue:
         _call(milknado_todo_run, node_id=task["id"], project_root=root)
         assert observed["running"] == [], "DONE-node re-run must not write a 'running' run row"
 
+    def test_done_node_rerun_omits_run_id_from_worker_env(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A DONE-node re-run inserts no 'running' run row, so it must NOT inject
+        MILKNADO_RUN_ID. If it did, the brief's mandated final step
+        (milknado_deposit_result(run_id=$MILKNADO_RUN_ID, ...)) would deposit into a
+        run row that doesn't exist and fail with "run not found" — the exact #122
+        channel this consolidation protects. The first (PENDING->RUNNING) run does
+        have a row, so it MUST inject MILKNADO_RUN_ID. This exercises the real
+        _execute -> _spawn_worker env-build path instead of stubbing past it.
+        """
+        import milknado.domains.dispatch.runner as runner_mod
+
+        class _FakeProc:
+            returncode = 0
+            stdin = None
+
+            def communicate(self, input=None, timeout=None):  # noqa: A002, ARG002
+                return b"", b""
+
+        envs: list[dict] = []
+
+        def _capture_popen(argv, **kwargs):  # noqa: ARG001
+            # Run the real _spawn_worker so the captured env is exactly what the
+            # worker process would receive; intercept only the Popen boundary.
+            envs.append(kwargs["env"])
+            return _FakeProc()
+
+        monkeypatch.setattr(runner_mod.subprocess, "Popen", _capture_popen)
+
+        from milknado.mcp_run import milknado_todo_run
+
+        root = str(tmp_path)
+        desc = "done-rerun-env"
+        task = _call(milknado_todo_add, description=desc, kind="task", project_root=root)
+        # First run: PENDING -> RUNNING -> DONE (a run row exists).
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+        # Second run sees a DONE node: no run row, so no MILKNADO_RUN_ID.
+        _call(milknado_todo_run, node_id=task["id"], project_root=root)
+
+        assert len(envs) == 2
+        first_env, rerun_env = envs
+        assert "MILKNADO_RUN_ID" in first_env, (
+            "a real (running) run must inject MILKNADO_RUN_ID so the worker can deposit"
+        )
+        assert "MILKNADO_RUN_ID" not in rerun_env, (
+            "DONE-node re-run has no run row; injecting MILKNADO_RUN_ID would make the "
+            "brief's deposit step fail with 'run not found'"
+        )
+
 
 # ---------------------------------------------------------------------------
 # #82 — milknado_run_list
