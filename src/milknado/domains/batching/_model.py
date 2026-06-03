@@ -119,11 +119,14 @@ def _build_total_cost(
     if not normal_sccs:
         return model.new_constant(0)
 
-    size_cost_x100 = [_batch_size_cost(k) * 100 for k in range(K + 1)]
+    # size_b is bounded by len(normal_sccs), not K; tighten size-bucket arrays
+    # to that bound so at_size variable count doesn't grow with oversized SCCs.
+    max_size = len(normal_sccs)
+    size_cost_x100 = [_batch_size_cost(k) * 100 for k in range(max_size + 1)]
     # file_mult_x100: per-file multiplier, x100 to keep CP-SAT values integer.
     # Formula (k*12 - 1)*10 gives each batch-size bucket k a linearly growing
     # penalty so larger batches cost more per token.  k=0 stays at 100 (neutral).
-    file_mult_x100 = [100 + (k * 12 - 1) * 10 if k > 0 else 100 for k in range(K + 1)]
+    file_mult_x100 = [100 + (k * 12 - 1) * 10 if k > 0 else 100 for k in range(max_size + 1)]
 
     sum_tokens = sum(inputs.tokens_by_scc.values())
     max_size_cost = max(size_cost_x100)
@@ -133,20 +136,20 @@ def _build_total_cost(
 
     per_batch_costs: list[cp_model.IntVar] = []
     for b in range(K):
-        size_b = model.new_int_var(0, len(normal_sccs), f"size_b{b}")
+        size_b = model.new_int_var(0, max_size, f"size_b{b}")
         model.add(size_b == sum(in_batch[(s, b)] for s in normal_sccs))
         file_b = model.new_int_var(0, sum_tokens, f"file_b{b}")
         model.add(file_b == sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs))
         at_size: dict[int, cp_model.IntVar] = {}
-        for k in range(K + 1):
+        for k in range(max_size + 1):
             at_size[k] = model.new_bool_var(f"atsize_b{b}_k{k}")
             model.add(size_b == k).only_enforce_if(at_size[k])
             model.add(size_b != k).only_enforce_if(at_size[k].negated())
         model.add_exactly_one(list(at_size.values()))
         size_cost_b = model.new_int_var(0, max_size_cost, f"sizecost_b{b}")
-        model.add(size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(K + 1)))
+        model.add(size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(max_size + 1)))
         file_cost_b = model.new_int_var(0, sum_tokens * max_mult, f"filecost_b{b}")
-        for k in range(K + 1):
+        for k in range(max_size + 1):
             model.add(file_cost_b == file_b * file_mult_x100[k]).only_enforce_if(at_size[k])
         cost_b = model.new_int_var(0, big_m, f"cost_b{b}")
         model.add(cost_b == size_cost_b + file_cost_b)

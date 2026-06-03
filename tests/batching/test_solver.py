@@ -251,10 +251,12 @@ def test_two_pass_tie_break_minimizes_spread(tmp_path) -> None:
 
 
 def test_build_total_cost_scales_without_hanging(tmp_path) -> None:
-    """_build_total_cost (O(K^2)) must complete in reasonable time at K=50.
+    """_build_total_cost must find OPTIMAL at K=50 well within the solver budget.
 
     50 delete changes at budget=80 → each forced into its own batch (K=50).
-    If the O(K^2) model-building were pathological this would time out.
+    Asserts OPTIMAL (not just non-hang) so a degraded-but-sub-cliff regression
+    that prevents CP-SAT from proving optimality is caught.  15s total covers
+    the 10s solver limit plus model-build headroom.
     """
     import time
 
@@ -262,5 +264,5 @@ def test_build_total_cost_scales_without_hanging(tmp_path) -> None:
     start = time.monotonic()
     plan = plan_batches(changes, budget=80, time_limit_s=10.0, root=tmp_path)
     elapsed = time.monotonic() - start
-    assert plan.solver_status in ("OPTIMAL", "FEASIBLE", "UNKNOWN")
-    assert elapsed < 30.0, f"solver took too long at K=50: {elapsed:.1f}s"
+    assert plan.solver_status == "OPTIMAL", f"expected OPTIMAL at K=50, got {plan.solver_status}"
+    assert elapsed < 15.0, f"solver took too long at K=50: {elapsed:.1f}s"
