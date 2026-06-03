@@ -797,6 +797,108 @@ class TestTodoAsyncRun:
         assert fail_stale_running_runs(root, 8) == []
         assert json.loads(state_path.read_text())["status"] == "running"
 
+    def _write_stale_running(
+        self, runs_dir: Path, run_id: str, node_id: int, *, pid: int | None
+    ) -> Path:
+        """Write a 'running' state file aged well past its timeout. `pid=None`
+        models the async-worker path (no pid recorded); an int models the
+        detached-ralph path, which records its process pid."""
+        from datetime import UTC, datetime, timedelta
+
+        stale_started = (datetime.now(UTC) - timedelta(seconds=7200)).isoformat()
+        state: dict = {
+            "run_id": run_id,
+            "node_id": node_id,
+            "started_at": stale_started,
+            "log_path": str(runs_dir / f"{run_id}.log"),
+            "timeout_seconds": 1800,
+            "status": "running",
+            "exit_code": None,
+            "timed_out": False,
+            "ended_at": None,
+        }
+        if pid is not None:
+            state["pid"] = pid
+        state_path = runs_dir / f"{run_id}.state.json"
+        state_path.write_text(json.dumps(state))
+        return state_path
+
+    def test_fail_stale_does_not_flip_live_detached_run(self, tmp_path: Path) -> None:
+        """#54: a detached-ralph run still 'running' past timeout+grace but whose
+        recorded pid is ALIVE (slow, e.g. wedged in `git rebase`) must NOT be
+        force-failed — that thrashes a run about to write 'done'."""
+        import os
+
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        # This test process is a guaranteed-alive pid.
+        state_path = self._write_stale_running(
+            runs_dir, "node-9-20200101T000000Z-aaaa", 9, pid=os.getpid()
+        )
+
+        assert fail_stale_running_runs(root, 9) == [], "a live runner was wrongly flipped"
+        assert json.loads(state_path.read_text())["status"] == "running"
+
+    def test_fail_stale_flips_dead_detached_run(self, tmp_path: Path) -> None:
+        """#54: a detached run whose recorded pid is DEAD is genuinely orphaned and
+        must still be flipped to failed (the liveness guard cleans up, not hides)."""
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        # PID 2**31-1 is unassigned on Linux — os.kill(_, 0) -> ProcessLookupError.
+        state_path = self._write_stale_running(
+            runs_dir, "node-10-20200101T000000Z-bbbb", 10, pid=2**31 - 1
+        )
+
+        flipped = fail_stale_running_runs(root, 10)
+        assert len(flipped) == 1
+        assert flipped[0]["status"] == "failed"
+        assert json.loads(state_path.read_text())["status"] == "failed"
+
+    def test_fail_stale_flips_pidless_async_run(self, tmp_path: Path) -> None:
+        """#54 regression guard: the async-worker path records NO pid; its orphan
+        sweep (server crash → daemon thread vanished) must stay unchanged — a
+        pid-less stale run still flips to failed."""
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        state_path = self._write_stale_running(
+            runs_dir, "node-11-20200101T000000Z-cccc", 11, pid=None
+        )
+
+        flipped = fail_stale_running_runs(root, 11)
+        assert len(flipped) == 1
+        assert flipped[0]["status"] == "failed"
+        assert json.loads(state_path.read_text())["status"] == "failed"
+
+    def test_fail_stale_mixed_kinds_flips_only_the_dead_one(self, tmp_path: Path) -> None:
+        """#54 cross-namespace guard: the `node-<id>-*` glob matches BOTH a
+        detached-ralph run (records a pid) and a pid-less async run for the same
+        node. The sweep must flip only the genuinely-dead one — a live ralph run
+        sharing the node's glob must survive, not be cross-failed."""
+        import os
+
+        from milknado.domains.dispatch.runner import _runs_dir, fail_stale_running_runs
+
+        root = Path(tmp_path)
+        runs_dir = _runs_dir(root)
+        live_ralph = self._write_stale_running(
+            runs_dir, "node-12-20200101T000000Z-1111", 12, pid=os.getpid()
+        )
+        dead_async = self._write_stale_running(
+            runs_dir, "node-12-20200102T000000Z-2222", 12, pid=None
+        )
+
+        flipped = fail_stale_running_runs(root, 12)
+
+        assert [f["run_id"] for f in flipped] == ["node-12-20200102T000000Z-2222"]
+        assert json.loads(live_ralph.read_text())["status"] == "running"
+        assert json.loads(dead_async.read_text())["status"] == "failed"
+
     def test_start_releases_node_locked_by_stale_run(
         self, tmp_path: Path, monkeypatch, worker_stub
     ) -> None:

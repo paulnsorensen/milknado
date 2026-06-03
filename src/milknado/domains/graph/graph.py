@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -13,6 +12,7 @@ from milknado.domains.common import (
     MikadoNode,
     NodeKind,
     NodeStatus,
+    pid_alive,
 )
 from milknado.domains.graph import _transitions
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
@@ -39,25 +39,6 @@ if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
 
 _logger = logging.getLogger(__name__)
-
-
-def _pid_alive(pid: int) -> bool:
-    """True if a process with this pid exists on the local machine.
-
-    `os.kill(pid, 0)` sends no signal but performs the existence + permission
-    check. PermissionError means the process exists but is owned by another user
-    (still alive); ProcessLookupError / other OSError means it is gone. Cross-machine
-    runners are out of scope (the spec assumes runners are local to the daemon).
-    """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return False
-    return True
 
 
 class MikadoGraph(_AnalyticsFacade):
@@ -338,7 +319,7 @@ class MikadoGraph(_AnalyticsFacade):
         if row is None or NodeStatus(row["status"]) != NodeStatus.RUNNING:
             return False
         owner_run_id, pid = row["run_id"], row["pid"]
-        if owner_run_id is None or pid is None or _pid_alive(pid):
+        if owner_run_id is None or pid is None or pid_alive(pid):
             return False
         if _transitions.release(self._conn, node_id, owner_run_id):
             self._notify_status_change(node_id, NodeStatus.RUNNING, NodeStatus.PENDING)

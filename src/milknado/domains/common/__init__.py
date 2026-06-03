@@ -8,6 +8,7 @@ from milknado.domains.common.config import (
 )
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.common.plugin import PluginHook, PluginMeta
+from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
@@ -32,6 +33,7 @@ __all__ = [
     "PluginMeta",
     "RalphPort",
     "VALID_TRANSITIONS",
+    "pid_alive",
     "WorkerToolsOverride",
     "default_config",
     "global_config_path",

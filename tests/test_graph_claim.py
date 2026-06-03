@@ -13,7 +13,6 @@ import os
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.graph import graph as graph_module
 
 _DEAD_PID = 2**31 - 1  # no process can hold this pid; os.kill(_, 0) -> ProcessLookupError
 
@@ -136,7 +135,7 @@ class TestTryReclaim:
         def _refuse(_pid: int, _sig: int) -> None:
             raise PermissionError
 
-        monkeypatch.setattr(graph_module.os, "kill", _refuse)
+        monkeypatch.setattr("milknado.domains.common.process.os.kill", _refuse)
         graph.try_reclaim(node_id, now=now_iso())
         assert graph.get_node(node_id).status == NodeStatus.RUNNING, (
             "a live cross-uid owner is protected from reclaim"
@@ -153,7 +152,7 @@ class TestTryReclaim:
         def _other_oserror(_pid: int, _sig: int) -> None:
             raise OSError(22, "EINVAL")
 
-        monkeypatch.setattr(graph_module.os, "kill", _other_oserror)
+        monkeypatch.setattr("milknado.domains.common.process.os.kill", _other_oserror)
         graph.try_reclaim(node_id, now=now_iso())
         assert graph.get_node(node_id).status == NodeStatus.PENDING, (
             "an unexpected os.kill error frees the node (treated as dead)"
