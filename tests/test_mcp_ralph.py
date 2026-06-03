@@ -394,6 +394,103 @@ def test_runner_writes_done_on_successful_outcome(
     assert state["timeout_seconds"] == 30.0
 
 
+def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A timed-out run must call stop_run on the ralph adapter so the underlying
+    loop does not outlive its timeout as a zombie process. Exercises the full
+    _ralph_node_runner.main path without monkeypatching run_node_to_completion,
+    so the real CompletionTimeout handler is exercised end-to-end."""
+    import milknado._mcp_core as mcp_core
+    import milknado.adapters as adapters
+    import milknado.domains.execution as execution
+    from milknado import _ralph_node_runner
+    from milknado.domains.common.errors import CompletionTimeout
+    from milknado.domains.execution.executor import DispatchResult
+
+    class _Cfg:
+        execution_agent = "claude"
+        quality_gates = ()
+        worktree_pattern = "wt-{node}"
+
+    class _Graph:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _Git:
+        def __init__(self, _root: object) -> None: ...
+
+        def current_branch(self) -> str:
+            return "main"
+
+    class _StubRalph:
+        def __init__(self) -> None:
+            self.stopped: list[str] = []
+
+        def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
+            raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
+
+        def stop_run(self, run_id: str) -> None:
+            self.stopped.append(run_id)
+
+        def poll_progress_events(self) -> list:
+            return []
+
+    class _StubExecutor:
+        def dispatch(self, node_id: int, config) -> DispatchResult:  # noqa: ANN001
+            return DispatchResult(
+                node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
+            )
+
+        def fail(self, node_id: int) -> None:
+            pass
+
+    stub_ralph = _StubRalph()
+    graph = _Graph()
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(adapters, "GitAdapter", _Git)
+    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: stub_ralph)
+    monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
+    monkeypatch.setattr(execution, "Executor", lambda **k: _StubExecutor())
+    monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
+
+    run_id = "node-1-20260101T000000Z-abcd"
+    rdir = tmp_path / ".milknado" / "runs"
+    rdir.mkdir(parents=True)
+    state_path = rdir / f"{run_id}.state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "node_id": 1,
+                "log_path": str(rdir / f"{run_id}.log"),
+                "timeout_seconds": 5.0,
+                "status": "running",
+            }
+        )
+    )
+    rc = _ralph_node_runner.main(
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--state-path",
+            str(state_path),
+            "--timeout",
+            "5",
+        ]
+    )
+    assert rc == 1
+    assert stub_ralph.stopped == ["run-1"], "timeout must call stop_run on the ralph adapter"
+    state = json.loads(state_path.read_text())
+    assert state["status"] == "failed"
+    assert "timeout" in (state.get("detail") or "")
+
+
 def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
