@@ -77,21 +77,22 @@ def run(
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
-    from milknado.app.run_command import _check_protected_branch
+    from milknado.app.run_command import check_protected_branch
     from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
+
+    git = GitAdapter(project_root)
+    feature_branch = git.current_branch()
+    check_protected_branch(config, feature_branch, allow_protected)
+
     graph = _ensure_db(config, plugins)
 
     try:
         if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return
-
-        git = GitAdapter(project_root)
-        feature_branch = git.current_branch()
-        _check_protected_branch(config, feature_branch, allow_protected)
 
         ralph = RalphifyAdapter()
         crg = CrgAdapter(project_root)

@@ -1280,7 +1280,15 @@ class TestAgentsCheck:
 
 
 class TestRunCommand:
-    def test_no_nodes_ready(self, project_dir: Path) -> None:
+    def test_no_nodes_ready(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        # The protected-branch guard now runs before the no-nodes check, so the
+        # branch must resolve to a valid, non-protected name for this path.
+        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
         runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(
             app,
@@ -1289,10 +1297,16 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "No nodes ready" in result.output
 
-    def test_no_nodes_ready_all_done(self, project_dir: Path) -> None:
+    def test_no_nodes_ready_all_done(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
+        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
