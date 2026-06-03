@@ -11,7 +11,6 @@ row the poll reads.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 from pathlib import Path
 
@@ -59,7 +58,6 @@ def main(argv: list[str] | None = None) -> int:
                 feature_branch,
                 args.timeout,
             )
-            events = ralph.poll_progress_events()
             graph.finish_run(
                 args.run_id,
                 status="done" if outcome.success else "failed",
@@ -69,18 +67,6 @@ def main(argv: list[str] | None = None) -> int:
                 rebased=outcome.success,
                 detail=outcome.detail,
             )
-            if events:
-                # The run_messages table carries progress; the run row's `detail`
-                # stays the human poll string. No consumer reads progress yet
-                # (YAGNI) but it is durable for one that does.
-                graph.deposit_run_message(
-                    args.run_id,
-                    "progress",
-                    json.dumps(
-                        [{"work": e.work, "total": e.total, "message": e.message} for e in events]
-                    ),
-                    now_iso(),
-                )
             return 0 if outcome.success else 1
         except Exception as exc:
             _logger.exception("ralph node runner failed for node %s", args.node_id)
