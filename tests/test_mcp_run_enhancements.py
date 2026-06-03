@@ -1146,6 +1146,30 @@ class TestDepositResult:
         final = _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         assert final["result"] is None, "no deposit -> result is None, not a missing key"
 
+    def test_todo_run_poll_derives_log_path_from_run_id(self, tmp_path: Path) -> None:
+        """The poll must tail the log derived from the validated run_id — a
+        tampered runs.log_path in the user-editable db must not cause an
+        arbitrary-file read (mirrors milknado_ralph_run_poll's derivation)."""
+        decoy = tmp_path / "secret.txt"
+        decoy.write_text("SECRET-CONTENT", encoding="utf-8")
+        run_id = "node-1-20260101T000000Z-feed"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
+        derived = tmp_path / ".milknado" / "runs" / f"{run_id}.log"
+        derived.parent.mkdir(parents=True, exist_ok=True)
+        derived.write_text("real log", encoding="utf-8")
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph._conn.execute(
+                "UPDATE runs SET log_path = ? WHERE run_id = ?", (str(decoy), run_id)
+            )
+            graph._conn.commit()
+        finally:
+            graph.close()
+        final = _call(milknado_todo_run_poll, run_id=run_id, project_root=str(tmp_path))
+        assert final["summary"] == "real log"
+        assert "SECRET-CONTENT" not in (final["summary"] or "")
+        assert final["log_path"] == str(derived), "returned log_path must be the derived one"
+
     def test_multipart_deliverable_round_trips_intact(self, tmp_path: Path) -> None:
         """Dogfood shape (#122): a multi-part deliverable — several before/after
         items — deposited as one payload must come back whole through the poll,

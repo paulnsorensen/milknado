@@ -186,6 +186,35 @@ class TestRunsRepo:
         assert row is not None
         assert row["rebased"] is True
 
+    def test_finish_run_does_not_clobber_terminal_status(self, graph: MikadoGraph) -> None:
+        """First terminal write wins: a late worker finish landing after the run
+        was already finalized (e.g. cancel's takeover write) must not flip the
+        recorded outcome — an unconditional UPDATE would reintroduce the
+        terminal-state clobber race the old sidecar flow guarded against."""
+        nid = self._node(graph)
+        graph.start_run("rc", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.finish_run(
+            "rc",
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at="2026-01-01T00:01:00+00:00",
+            error="cancelled",
+        )
+        # The wedged worker finally finishes and lands its own terminal write.
+        graph.finish_run(
+            "rc",
+            status="done",
+            exit_code=0,
+            timed_out=False,
+            ended_at="2026-01-01T00:02:00+00:00",
+        )
+        row = graph.get_run("rc")
+        assert row is not None
+        assert row["status"] == "failed", "late terminal write must not clobber the first"
+        assert row["error"] == "cancelled"
+        assert row["ended_at"] == "2026-01-01T00:01:00+00:00"
+
     def test_set_run_pid_writes_on_running(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
         graph.start_run("rp", nid, "/l", "2026-01-01T00:00:00+00:00", 600)

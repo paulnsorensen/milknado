@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -12,6 +13,8 @@ from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
+
+_logger = logging.getLogger(__name__)
 
 
 def create_tables(conn: sqlite3.Connection) -> None:
@@ -363,10 +366,15 @@ def finish_run(
     detail: str | None = None,
     rebased: bool | None = None,
 ) -> None:
-    """UPDATE a run to a terminal status (replaces the terminal sidecar write)."""
-    conn.execute(
+    """UPDATE a running run to a terminal status; first terminal write wins.
+
+    Gated on status = 'running' so a late terminal write (e.g. a wedged worker
+    finishing after milknado_run_cancel already finalized the run) cannot
+    clobber an already-terminal row back to a different outcome.
+    """
+    cur = conn.execute(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
-        "error = ?, detail = ?, rebased = ? WHERE run_id = ?",
+        "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = 'running'",
         (
             status,
             exit_code,
@@ -379,6 +387,10 @@ def finish_run(
         ),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        _logger.warning(
+            "finish_run dropped late terminal write for run %s (status=%s)", run_id, status
+        )
 
 
 def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
@@ -436,17 +448,19 @@ def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
 def deposit_run_message(
     conn: sqlite3.Connection, run_id: str, role: str, body: str, created_at: str
 ) -> int:
-    """Append a run_messages row with the next seq for this run; return that seq."""
+    """Append a run_messages row with the next seq for this run; return that seq.
+
+    Seq assignment and insert happen in one statement so concurrent depositors
+    for the same run cannot race MAX(seq) into a UNIQUE collision.
+    """
     row = conn.execute(
-        "SELECT COALESCE(MAX(seq), 0) + 1 FROM run_messages WHERE run_id = ?", (run_id,)
+        "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+        "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages WHERE run_id = ? "
+        "RETURNING seq",
+        (run_id, role, body, created_at, run_id),
     ).fetchone()
-    seq = row[0]
-    conn.execute(
-        "INSERT INTO run_messages (run_id, seq, role, body, created_at) VALUES (?, ?, ?, ?, ?)",
-        (run_id, seq, role, body, created_at),
-    )
     conn.commit()
-    return seq
+    return row[0]
 
 
 def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:

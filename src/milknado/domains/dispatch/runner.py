@@ -424,7 +424,10 @@ def poll_async_run(graph, project_root: Path, run_id: str) -> dict:  # noqa: ANN
     state = graph.get_run(run_id)
     if state is None:
         raise ValueError(f"run {run_id!r} not found")
-    log_path = Path(state["log_path"])
+    # Derive the log path from the validated run_id rather than trusting the
+    # stored field: no arbitrary-file read via a tampered log_path.
+    log_path = _runs_dir(project_root) / f"{run_id}.log"
+    state["log_path"] = str(log_path)
     state["summary"] = _tail(log_path, _SUMMARY_TAIL_BYTES)
     return state
 
