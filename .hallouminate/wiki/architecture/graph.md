@@ -21,7 +21,10 @@ children are `DONE`. Leaves run first; the root completes last.
 State lives in a SQLite db at `.milknado/milknado.db` (gitignored; force-add to
 carry across ephemeral containers). Tables: `nodes`, `edges` (composite PK,
 FKs to nodes, **no** `ON DELETE CASCADE`), `file_ownership` (node → owned file
-paths), `plan_state` (single-row spec hash), `batch_plans` (solver history).
+paths), `plan_state` (single-row spec hash), `batch_plans` (solver history),
+`runs` (run lifecycle rows — replaced the `.milknado/runs/*.state.json`
+sidecars in PR #127, closes #100), and `run_messages` (append-only worker
+deposit channel, UNIQUE `(run_id, seq)` — closes #122).
 
 `MikadoGraph.__init__` (`graph.py`) opens the connection in **WAL mode** with
 `foreign_keys=ON` and `busy_timeout=5000` — the detached runner and the MCP
@@ -29,10 +32,34 @@ server both write the same db concurrently, so the busy window is explicit.
 `create_tables` + `ensure_schema` run on every open: `ensure_schema` is an
 additive `ALTER TABLE` migration for columns added over time (`run_id`, `pid`,
 `dispatched_at`, `kind`, `completion_duration_seconds`), and `row_to_node`
-defends missing columns so old rows still deserialize. `close()` runs
+defends missing columns so old rows still deserialize. `runs` and
+`run_messages` are created directly in `create_tables` with **no
+`ensure_schema` ladder entry** — a deliberate clean cut (pre-release "No
+Migration Code" rule): the ladder touches only `nodes` columns. `close()` runs
 `PRAGMA wal_checkpoint(TRUNCATE)` so a non-last-connection close folds the WAL
 tail into the main `.db` — without it a tool call's committed writes could be
 lost on container reclaim before the WAL checkpoints.
+
+### Runs repo (`runs` / `run_messages`)
+
+Lifecycle semantics live in [[execution]]; the repo invariants live here:
+
+- **`start_run`** INSERTs a `status='running'` row; **`finish_run`** UPDATEs to
+  terminal, gated `AND status = 'running'` — **first terminal write wins**
+  (commit 2d0c833). A late terminal write (wedged worker recovering after
+  cancel's takeover) hits zero rows and is logged, never clobbers. This is the
+  run-level mirror of the node-level `mark_terminal` philosophy below.
+- **`set_run_pid`** is gated on `status='running'` for the same reason — a
+  runner that already wrote terminal state is never walked back toward running.
+- **`deposit_run_message`** assigns `seq` and inserts in **one statement**
+  (`INSERT … SELECT COALESCE(MAX(seq),0)+1 … RETURNING seq`) so concurrent
+  depositors for the same run cannot race `MAX(seq)` into a UNIQUE collision.
+  Requires SQLite ≥3.35 (`RETURNING`).
+- **`runs_for_node(run_id=…)`** pushes the fence into the SQL so
+  fence-before-latest holds: a stale run with a later `ended_at` cannot mask
+  the owning run.
+- Connections are **not cross-thread**: the async worker thread and the
+  detached runner each open their own graph for the terminal write.
 
 ## Module split
 
@@ -83,6 +110,11 @@ which is correct across processes where an in-process mutex would not be.
 - The `AND status = 'running'` guard on `release` / `mark_terminal` prevents
   walking a `DONE` node backward (DONE keeps its run_id, so the fence alone
   isn't enough).
+- **`nodes.run_id` is a column, not an FK**: a DONE-node re-run via the sync
+  MCP tool overwrites the fence with a freshly minted run_id that has no `runs`
+  row — intentional and harmless, because the fence is only consumed during
+  RUNNING-node reconciliation and a later re-dispatch overwrites it with a
+  tracked row (reviewed and kept in PR #127).
 - **`try_reclaim`** (`graph.py`) frees a RUNNING node whose owner pid is
   provably dead (`_pid_alive`), short-circuiting the stale-running timeout. A
   live or pid-unknown owner is left intact.
