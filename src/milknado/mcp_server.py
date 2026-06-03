@@ -62,31 +62,6 @@ def milknado_graph_summary(
         graph.close()
 
 
-@mcp.tool()
-def milknado_add_node(
-    description: str,
-    parent_id: int | None = None,
-    project_root: str = "",
-) -> dict:
-    """Add a Mikado node; optional parent_id links a prerequisite edge.
-
-    Returns the same node-summary dict as milknado_todo_add.
-    Prefer milknado_todo_add for kind-aware (roadmap/goal/task) adds.
-    """
-    root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
-    try:
-        node = graph.add_node(description, parent_id=parent_id)
-        return {
-            "id": node.id,
-            "kind": node.kind.value,
-            "status": node.status.value,
-            "description": node.description,
-        }
-    finally:
-        graph.close()
-
-
 def _parse_mcp_hash_anchors(raw: object) -> HashAnchors | None:
     if not isinstance(raw, dict):
         return None
