@@ -1340,6 +1340,11 @@ class TestTrackFollowUp:
         sibling = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
         assert sibling["status"] == "pending"
         assert sibling["parent_id"] == goal["id"]
+        # The discovered work must actually be dispatchable — not just pending:
+        # the scheduler should hand it out as the next runnable node.
+        next_node = _call(milknado_todo_next, project_root=root)
+        assert next_node is not None
+        assert next_node["id"] == follow_up["id"]
 
     def test_blank_node_id_env_creates_root_level_node(self, tmp_path: Path, monkeypatch) -> None:
         root = str(tmp_path)
