@@ -185,10 +185,11 @@ def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
 
 def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
     """The detached ralph runner must spawn with MILKNADO_NODE_ID set so
-    milknado_track_follow_up parents follow-ups under the executing node instead
-    of at the graph root (mirrors the headless dispatch path). The stub runner
-    echoes its inherited MILKNADO_NODE_ID into the run detail; we assert it
-    equals the node being executed. Fails if the spawn drops the var."""
+    milknado_track_follow_up parents follow-ups as siblings of the executing
+    node (under its parent) instead of at the graph root (mirrors the headless
+    dispatch path). The stub runner echoes its inherited MILKNADO_NODE_ID into
+    the run detail; we assert it equals the node being executed. Fails if the
+    spawn drops the var."""
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="env-node-id", kind="task", project_root=root)
     script = tmp_path / "env_capture_runner.py"

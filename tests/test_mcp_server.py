@@ -10,6 +10,7 @@ import pytest
 
 from milknado._mcp_core import mcp
 from milknado.domains.common.errors import InvalidTransition
+from milknado.domains.dispatch import reconcile_node_status
 from milknado.mcp_run import (
     milknado_todo_run,
     milknado_todo_run_poll,
@@ -1273,15 +1274,77 @@ class TestTrackFollowUp:
         tree = _call(milknado_todo_tree, project_root=root)
         assert any(n["description"] == "add retry" for n in tree)
 
-    def test_defaults_parent_to_worker_node_id_env(self, tmp_path: Path, monkeypatch) -> None:
+    def test_defaults_parent_to_worker_nodes_parent_as_sibling(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # #124: the auto-parented follow-up lands under the worker node's PARENT
+        # (a sibling), never under the worker node itself — the worker's exit-0
+        # reconcile drives its node to done, and children are prerequisites, so
+        # a child here would leave a done node holding unmet work.
         root = str(tmp_path)
-        parent = _call(milknado_todo_add, description="parent task", project_root=root)
-        monkeypatch.setenv("MILKNADO_NODE_ID", str(parent["id"]))
-        child = _call(milknado_track_follow_up, description="discovered work", project_root=root)
-        children = _call(milknado_todo_tree, project_root=root, root_id=parent["id"])[0][
-            "children"
-        ]
-        assert [c["id"] for c in children] == [child["id"]]
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        task = _call(
+            milknado_todo_add, description="task", parent_id=goal["id"], project_root=root
+        )
+        monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+        follow_up = _call(
+            milknado_track_follow_up, description="discovered work", project_root=root
+        )
+        detail = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
+        assert detail["parent_id"] == goal["id"]
+        task_detail = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert follow_up["id"] not in task_detail["prerequisite_ids"]
+
+    def test_root_level_worker_node_creates_root_level_follow_up(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        # A worker node with no parent has no goal to attach the sibling under;
+        # the follow-up becomes a new root-level node (same as unset env).
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="rootless task", project_root=root)
+        monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+        follow_up = _call(
+            milknado_track_follow_up, description="discovered work", project_root=root
+        )
+        detail = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
+        assert detail["parent_id"] is None
+
+    def test_follow_up_during_run_never_gates_the_completing_node(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """#124 regression: worker on a running node registers a follow-up, then
+        exit-0 reconcile drives the node to done. The follow-up must not be a
+        prerequisite (child) of the done node — children gate readiness, so the
+        inversion would mark work complete while holding an unmet prerequisite —
+        and the follow-up itself must stay dispatchable under the same goal."""
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        task = _call(
+            milknado_todo_add, description="task", parent_id=goal["id"], project_root=root
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            assert graph.claim_node(task["id"], "run-124", now="2026-06-03T00:00:00+00:00")
+            monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+            follow_up = _call(
+                milknado_track_follow_up,
+                description="discovered apply-work",
+                project_root=root,
+            )
+            reconcile_node_status(graph, task["id"], "done", "run-124")
+        finally:
+            graph.close()
+        done_node = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert done_node["status"] == "done"
+        assert done_node["prerequisite_ids"] == []
+        sibling = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
+        assert sibling["status"] == "pending"
+        assert sibling["parent_id"] == goal["id"]
+        # The discovered work must actually be dispatchable — not just pending:
+        # the scheduler should hand it out as the next runnable node.
+        next_node = _call(milknado_todo_next, project_root=root)
+        assert next_node is not None
+        assert next_node["id"] == follow_up["id"]
 
     def test_blank_node_id_env_creates_root_level_node(self, tmp_path: Path, monkeypatch) -> None:
         root = str(tmp_path)
