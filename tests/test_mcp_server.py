@@ -109,6 +109,15 @@ def _read_run(root: Path, run_id: str) -> dict | None:
         graph.close()
 
 
+def _run_status(graph, run_id: str) -> str:  # noqa: ANN001
+    """Fetch a run's status, asserting the row exists first. Keeps the
+    stale-sweep assertions from masking a missing row (get_run -> None) as a raw
+    TypeError instead of a clear 'run vanished' failure."""
+    row = graph.get_run(run_id)
+    assert row is not None, f"run {run_id!r} not found"
+    return row["status"]
+
+
 @pytest.fixture()
 def worker_stub(tmp_path_factory, monkeypatch):
     """Install a `claude` passthrough executable on PATH so run-mechanics tests
@@ -806,7 +815,7 @@ class TestTodoAsyncRun:
             flipped = fail_stale_running_runs(graph, 7)
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
-            assert graph.get_run(run_id)["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
         finally:
             graph.close()
 
@@ -820,7 +829,7 @@ class TestTodoAsyncRun:
             from milknado.domains.dispatch.runner import fail_stale_running_runs
 
             assert fail_stale_running_runs(graph, 8) == []
-            assert graph.get_run(run_id)["status"] == "running"
+            assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
 
@@ -857,7 +866,7 @@ class TestTodoAsyncRun:
         graph, _cfg = open_graph(root)
         try:
             assert fail_stale_running_runs(graph, 9) == [], "a live runner was wrongly flipped"
-            assert graph.get_run(run_id)["status"] == "running"
+            assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
 
@@ -875,7 +884,7 @@ class TestTodoAsyncRun:
             flipped = fail_stale_running_runs(graph, 10)
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
-            assert graph.get_run(run_id)["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
         finally:
             graph.close()
 
@@ -893,7 +902,7 @@ class TestTodoAsyncRun:
             flipped = fail_stale_running_runs(graph, 11)
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
-            assert graph.get_run(run_id)["status"] == "failed"
+            assert _run_status(graph, run_id) == "failed"
         finally:
             graph.close()
 
@@ -915,8 +924,8 @@ class TestTodoAsyncRun:
         try:
             flipped = fail_stale_running_runs(graph, 12)
             assert [f["run_id"] for f in flipped] == [dead]
-            assert graph.get_run(live)["status"] == "running"
-            assert graph.get_run(dead)["status"] == "failed"
+            assert _run_status(graph, live) == "running"
+            assert _run_status(graph, dead) == "failed"
         finally:
             graph.close()
 
