@@ -163,7 +163,7 @@ def milknado_ralph_run_start(
             # stranded RUNNING with no worker and no terminal state to reconcile.
             write_state(state_path, running_state)
             with log_path.open("wb") as log_fh:
-                proc = subprocess.Popen(  # noqa: S603 — runner_cmd is caller-supplied; remaining argv is internal
+                proc = subprocess.Popen(  # noqa: S603 — COORDINATOR-ONLY module (see docstring); argv is coordinator-assembled, not external input
                     argv,
                     stdout=log_fh,
                     stderr=subprocess.STDOUT,
