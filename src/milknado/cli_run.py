@@ -79,6 +79,7 @@ def run(
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
     from milknado.app.run_command import check_protected_branch
     from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
+    from milknado.domains.graph.runnability import validate_runnable_roots
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
@@ -90,6 +91,17 @@ def run(
     graph = _ensure_db(config, plugins)
 
     try:
+        root_reports = validate_runnable_roots(graph)
+        all_errors: list[str] = []
+        for goal_id, report in root_reports:
+            for msg in report.warnings:
+                console.print(f"[yellow]warning (goal {goal_id}): {msg}[/yellow]")
+            all_errors.extend(f"goal {goal_id}: {e}" for e in report.errors)
+        if all_errors:
+            for msg in all_errors:
+                console.print(f"[red]error: {msg}[/red]")
+            raise typer.Exit(code=1)
+
         if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return

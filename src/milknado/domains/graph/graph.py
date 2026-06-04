@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
+    VALID_CHILD_KINDS,
     MikadoEdge,
     MikadoNode,
     NodeKind,
     NodeStatus,
     pid_alive,
 )
+from milknado.domains.common.errors import InvalidContainment
+from milknado.domains.common.types import TaskFlavor
 from milknado.domains.graph import _transitions
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
 from milknado.domains.graph._mutations import (
@@ -70,18 +73,27 @@ class MikadoGraph(_AnalyticsFacade):
         oversized: bool = False,
         batch_index: int | None = None,
         kind: NodeKind = NodeKind.TASK,
+        flavor: TaskFlavor | None = None,
     ) -> MikadoNode:
         # Validate parent_id before inserting: the node row commits before the
         # edge is added, so a nonexistent parent would otherwise leave a
         # committed stray node when the edge FK insert fails (e.g. a stale
         # MILKNADO_NODE_ID passed by milknado_track_follow_up).
-        if parent_id is not None and self.get_node(parent_id) is None:
-            raise ValueError(f"parent_id {parent_id} not found")
+        if parent_id is not None:
+            parent = self.get_node(parent_id)
+            if parent is None:
+                raise ValueError(f"parent_id {parent_id} not found")
+            if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
+                raise InvalidContainment(parent.kind, kind)
+        # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
+        if kind != NodeKind.TASK and flavor is not None:
+            raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
+        flavor_value = (flavor or TaskFlavor.IMPLEMENT).value if kind == NodeKind.TASK else None
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
-            "(description, status, parent_id, created_at, oversized, batch_index, kind) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(description, status, parent_id, created_at, oversized, batch_index, kind, flavor) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 description,
                 NodeStatus.PENDING.value,
@@ -90,6 +102,7 @@ class MikadoGraph(_AnalyticsFacade):
                 1 if oversized else 0,
                 batch_index,
                 kind.value,
+                flavor_value,
             ),
         )
         self._conn.commit()
@@ -135,10 +148,11 @@ class MikadoGraph(_AnalyticsFacade):
         node_id: int,
         description: str | None = None,
         kind: NodeKind | None = None,
+        flavor: TaskFlavor | None = None,
     ) -> None:
-        """Update description and/or kind on a node. Status stays governed by
+        """Update description, kind, and/or flavor on a node. Status stays governed by
         the state machine and is not editable here."""
-        update_node_fields(self._conn, node_id, description, kind)
+        update_node_fields(self._conn, node_id, description, kind, flavor)
 
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         """Re-parent a node, rewriting its edge and parent_id with cycle checks."""

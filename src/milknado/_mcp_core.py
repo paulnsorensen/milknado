@@ -14,8 +14,10 @@ from typing import Literal, TypedDict
 from fastmcp import FastMCP
 
 from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.types import TaskFlavor
 
 Kind = Literal["roadmap", "goal", "task"]
+Flavor = Literal["implement", "spec", "spike", "prototype", "research"]
 TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
 
 
@@ -104,3 +106,11 @@ def _parse_todo_status(value: str) -> NodeStatus:
     if value not in _TODO_STATUS_MAP:
         raise ValueError(f"invalid status {value!r}; expected one of {sorted(_TODO_STATUS_MAP)}")
     return _TODO_STATUS_MAP[value]
+
+
+def _parse_flavor(value: str) -> TaskFlavor:
+    try:
+        return TaskFlavor(value)
+    except ValueError as exc:
+        valid = sorted(f.value for f in TaskFlavor)
+        raise ValueError(f"invalid flavor {value!r}; expected one of {valid}") from exc

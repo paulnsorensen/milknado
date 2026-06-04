@@ -15,7 +15,7 @@ from milknado.cli_tools import (
     _write_gemini_worker_settings,
     _write_worker_hooks,
 )
-from milknado.domains.common import default_config
+from milknado.domains.common import NodeKind, default_config
 from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1564,6 +1564,136 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "Starting execution loop" in result.output
         mock_loop_cls.return_value.run.assert_called_once()
+
+
+# ── runnability gate on milknado run ────────────────────────────────────
+
+
+class TestRunRunnabilityGate:
+    """milknado run gates on goal-subtree shape before dispatching."""
+
+    def test_run_refuses_when_root_goal_has_pending_zero_child_subgoal(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """Exit 1 + errors printed when a root GOAL subtree contains a PENDING
+        zero-child sub-goal (undecomposed stub)."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        # Root GOAL with a sub-goal that has no children (undecomposed stub)
+        root = graph.add_node("root goal", kind=NodeKind.GOAL)
+        graph.add_node("sub-goal", parent_id=root.id, kind=NodeKind.GOAL)
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 1, (
+            f"expected exit 1; got {result.exit_code}; output:\n{result.output}"
+        )
+        assert (
+            "undecomposed" in result.output.lower() or "zero children" in result.output.lower()
+        ), f"expected error message in output; got:\n{result.output}"
+
+    def test_run_proceeds_when_all_leaves_are_tasks(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """run proceeds (no runnability error) when root GOAL has all leaf tasks."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root goal", kind=NodeKind.GOAL)
+        graph.add_node("task", parent_id=root.id, kind=NodeKind.TASK)
+        graph.close()
+
+        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, (
+            f"expected exit 0; got {result.exit_code}; output:\n{result.output}"
+        )
+        assert "Starting execution loop" in result.output
+
+    def test_run_bare_task_root_graph_skips_validation(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """Bare TASK-root graphs (no GOAL at root) run without runnability validation."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        # Default kind=TASK — no GOAL roots, no validation should run
+        root = graph.add_node("root task")
+        graph.add_node("leaf task", parent_id=root.id)
+        graph.close()
+
+        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, (
+            f"expected exit 0; got {result.exit_code}; output:\n{result.output}"
+        )
+        assert "Starting execution loop" in result.output
+
+    def test_run_prints_warnings_but_does_not_block(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+    ) -> None:
+        """implement-task without file hints emits a warning but run proceeds."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root goal", kind=NodeKind.GOAL)
+        # IMPLEMENT task (default flavor) without file hints → warning only
+        graph.add_node("task", parent_id=root.id, kind=NodeKind.TASK)
+        graph.close()
+
+        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+
+        result = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+
+        assert result.exit_code == 0, (
+            f"expected exit 0; got {result.exit_code}; output:\n{result.output}"
+        )
+        assert "Starting execution loop" in result.output
+        # Warning must be printed
+        assert "hint" in result.output.lower() or "file hints" in result.output.lower(), (
+            f"expected warning about file hints; got:\n{result.output}"
+        )
 
 
 # ── worker hook writers ───────────────────────────────────────────────────────

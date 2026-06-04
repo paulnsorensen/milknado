@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from milknado.domains.batching import DUMB_ZONE_BUDGET, plan_batches
+from milknado.domains.common import VALID_CHILD_KINDS, NodeKind
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -61,10 +62,18 @@ def apply_batches_to_graph(
             raise ValueError(
                 "manifest.goal and manifest.goal_summary must be non-empty when parent_id is None"
             )
-        goal_root = graph.add_node(manifest.goal_summary)
+        goal_root = graph.add_node(manifest.goal_summary, kind=NodeKind.GOAL)
         created.append(goal_root.id)
         attach_to = goal_root.id
     else:
+        parent_node = graph.get_node(parent_id)
+        if parent_node is None:
+            raise ValueError(f"parent_id {parent_id} not found")
+        if NodeKind.TASK not in VALID_CHILD_KINDS.get(parent_node.kind, set()):
+            raise ValueError(
+                f"parent_id {parent_id} has kind={parent_node.kind.value}; "
+                f"TASK is not a valid child of {parent_node.kind.value}"
+            )
         attach_to = parent_id
 
     if not plan.batches:
@@ -83,6 +92,7 @@ def apply_batches_to_graph(
             parent_id=None,
             oversized=batch.oversized,
             batch_index=batch.index,
+            kind=NodeKind.TASK,
         )
         if batch.depends_on:
             sorted_deps = sorted(batch.depends_on)

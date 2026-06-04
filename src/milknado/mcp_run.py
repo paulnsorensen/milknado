@@ -11,7 +11,7 @@ from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters import GitAdapter
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.dispatch import (
     RUN_ID_RE,
     clear_cancel,
@@ -156,6 +156,13 @@ def milknado_todo_run(
     graph, cfg = open_graph(root)
     _logger.info("milknado_todo_run: node=%d timeout=%ds", node_id, timeout_seconds)
     try:
+        node = graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"node {node_id} not found")
+        if node.kind != NodeKind.TASK:
+            raise ValueError(
+                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
+            )
         return _run_and_update_status(
             graph,
             node_id,
@@ -188,6 +195,10 @@ def milknado_todo_run_start(
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
+        if node.kind != NodeKind.TASK:
+            raise ValueError(
+                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
+            )
         if node.status == NodeStatus.RUNNING:
             # Before the claim can succeed, reconcile any orphaned terminal runs
             # for this node — a prior worker may have finished without anyone

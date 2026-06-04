@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 
 from milknado.domains.common import NodeKind
+from milknado.domains.common.errors import InvalidContainment
+from milknado.domains.common.types import VALID_CHILD_KINDS, TaskFlavor
 from milknado.domains.graph._persistence import children_id_map
 
 
@@ -73,21 +75,61 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
     return len(ordered)
 
 
+def _validate_kind_change_containment(
+    conn: sqlite3.Connection, node_id: int, new_kind: NodeKind
+) -> None:
+    """Reject a kind change that would create an illegal parent->child pair.
+
+    Mirrors the containment guard in ``reparent``/``add_node`` so editing a
+    node's kind cannot bypass ``VALID_CHILD_KINDS`` via its existing edges.
+    """
+    parent = conn.execute(
+        "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.parent_id WHERE e.child_id = ?",
+        (node_id,),
+    ).fetchone()
+    if parent is not None:
+        parent_kind = NodeKind(parent["kind"])
+        if new_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
+            raise InvalidContainment(parent_kind, new_kind)
+    children = conn.execute(
+        "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.child_id WHERE e.parent_id = ?",
+        (node_id,),
+    ).fetchall()
+    for child in children:
+        child_kind = NodeKind(child["kind"])
+        if child_kind not in VALID_CHILD_KINDS.get(new_kind, set()):
+            raise InvalidContainment(new_kind, child_kind)
+
+
 def update_node_fields(
     conn: sqlite3.Connection,
     node_id: int,
     description: str | None,
     kind: NodeKind | None,
+    flavor: TaskFlavor | None = None,
 ) -> None:
-    """Update description and/or kind on a node; raise if it does not exist."""
+    """Update description, kind, and/or flavor on a node; raise if it does not exist."""
     fields: list[str] = []
     values: list[object] = []
     if description is not None:
         fields.append("description = ?")
         values.append(description)
     if kind is not None:
+        _validate_kind_change_containment(conn, node_id, kind)
         fields.append("kind = ?")
         values.append(kind.value)
+        if kind != NodeKind.TASK:
+            if flavor is not None:
+                raise ValueError(
+                    f"flavor must be None for kind={kind.value} nodes; "
+                    "cannot set a non-None flavor on a non-task node"
+                )
+            # Changing to non-task: clear flavor to preserve the invariant
+            fields.append("flavor = ?")
+            values.append(None)
+    if flavor is not None:
+        fields.append("flavor = ?")
+        values.append(flavor.value)
     if not fields:
         raise ValueError("nothing to update")
     values.append(node_id)
@@ -130,11 +172,19 @@ def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) 
     node given multiple parents via add_edge collapses to the one new parent.
     Multi-parent re-parenting is out of scope.
     """
-    if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+    node_row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    if node_row is None:
         raise ValueError(f"Node {node_id} not found")
     if new_parent_id is not None:
-        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (new_parent_id,)).fetchone() is None:
+        parent_row = conn.execute(
+            "SELECT kind FROM nodes WHERE id = ?", (new_parent_id,)
+        ).fetchone()
+        if parent_row is None:
             raise ValueError(f"new_parent_id {new_parent_id} not found")
+        node_kind = NodeKind(node_row["kind"])
+        parent_kind = NodeKind(parent_row["kind"])
+        if node_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
+            raise InvalidContainment(parent_kind, node_kind)
         if new_parent_id == node_id or would_create_cycle(conn, new_parent_id, node_id):
             raise ValueError(f"re-parenting {node_id} under {new_parent_id} would create a cycle")
     with conn:

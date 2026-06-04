@@ -6,15 +6,17 @@ import logging
 import os
 
 from milknado._mcp_core import (
+    Flavor,
     Kind,
     TodoStatus,
+    _parse_flavor,
     _parse_kind,
     _parse_todo_status,
     mcp,
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
+from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeKind, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.dispatch import render_brief
@@ -23,12 +25,15 @@ _logger = logging.getLogger(__name__)
 
 
 def _node_to_summary(node: MikadoNode) -> dict:
-    return {
+    result: dict = {
         "id": node.id,
         "kind": node.kind.value,
         "status": node.status.value,
         "description": node.description,
     }
+    if node.flavor is not None:
+        result["flavor"] = node.flavor.value
+    return result
 
 
 def _build_subtree(
@@ -84,7 +89,7 @@ def _validate_todo_status(node: MikadoNode, target: NodeStatus) -> None:
         state = step
 
 
-def _apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:
+def _apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:  # noqa: ANN001
     """Move a node to one of the todo facade's statuses.
 
     Steps through PENDING/RUNNING as needed (see `_todo_status_steps`). Setting
@@ -133,17 +138,20 @@ def milknado_todo_add(
     parent_id: int | None = None,
     project_root: str = "",
     files: list[str] | None = None,
+    flavor: Flavor | None = None,
 ) -> dict:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
 
     files: optional list of paths this node will touch (relative to project root,
     or absolute under it).
+    flavor: task flavor (implement|spec|spike|prototype|research); only valid for kind=task.
     """
     node_kind = _parse_kind(kind)
+    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
+        node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return _node_to_summary(node)
@@ -231,14 +239,27 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
 
 
 @mcp.tool()
-def milknado_todo_next(kind: Kind = "task", project_root: str = "") -> dict | None:
-    """Return the next runnable node (leaf with no incomplete prereqs)."""
+def milknado_todo_next(
+    kind: Kind = "task",
+    flavor: Flavor | None = None,
+    project_root: str = "",
+) -> dict | None:
+    """Return the next runnable node (leaf with no incomplete prereqs).
+
+    flavor: if provided, only returns nodes with the matching flavor.
+    """
     node_kind = _parse_kind(kind)
+    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        node = graph.get_next_runnable(node_kind)
-        return _node_to_summary(node) if node else None
+        for node in graph.get_ready_nodes():
+            if node.kind != node_kind:
+                continue
+            if node_flavor is not None and node.flavor != node_flavor:
+                continue
+            return _node_to_summary(node)
+        return None
     finally:
         graph.close()
 
@@ -310,6 +331,7 @@ def milknado_track_follow_up(
     parent_id: int | None = None,
     project_root: str = "",
     files: list[str] | None = None,
+    flavor: Flavor | None = None,
 ) -> dict:
     """Register discovered follow-up work as a new node.
 
@@ -320,14 +342,16 @@ def milknado_track_follow_up(
 
     files: optional list of paths this follow-up will touch (relative to project
     root, or absolute under it).
+    flavor: task flavor (implement|spec|spike|prototype|research); only valid for kind=task.
     """
     node_kind = _parse_kind(kind)
+    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
         if parent_id is None:
             parent_id = _follow_up_parent_id(graph)
-        node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
+        node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return _node_to_summary(node)
@@ -375,24 +399,43 @@ def milknado_edit_node(
     node_id: int,
     description: str | None = None,
     kind: Kind | None = None,
+    flavor: Flavor | None = None,
     project_root: str = "",
     files: list[str] | None = None,
 ) -> dict:
-    """Edit a node's description and/or kind (coordinator-only). Status is not editable.
+    """Edit a node's description, kind, and/or flavor (coordinator-only). Status is not editable.
 
     files: None leaves hints untouched; [] clears all hints; a non-empty list replaces them.
+    flavor: only valid for task nodes; raises ValueError on non-task nodes.
     """
-    if description is None and kind is None and files is None:
-        raise ValueError("nothing to edit: provide description, kind, and/or files")
+    if description is None and kind is None and flavor is None and files is None:
+        raise ValueError("nothing to edit: provide description, kind, flavor, and/or files")
     node_kind = _parse_kind(kind) if kind is not None else None
+    node_flavor = _parse_flavor(flavor) if flavor is not None else None
+    if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
+        raise ValueError(
+            "flavor is only valid for task nodes; cannot set flavor with non-task kind"
+        )
     root = resolve_project_root(project_root or None)
     hint_paths = normalize_hint_paths(files, root) if files is not None else None
     graph, _cfg = open_graph(root)
     try:
-        if description is not None or node_kind is not None:
-            graph.update_node(node_id, description=description, kind=node_kind)
+        if node_flavor is not None and node_kind is None:
+            # Check existing node kind before setting flavor
+            existing = graph.get_node(node_id)
+            if existing is None:
+                raise ValueError(f"node {node_id} not found")
+            if existing.kind != NodeKind.TASK:
+                raise ValueError(
+                    f"flavor is only valid for task nodes; node {node_id} has kind"
+                    f" {existing.kind.value!r}"
+                )
+        if description is not None or node_kind is not None or node_flavor is not None:
+            graph.update_node(node_id, description=description, kind=node_kind, flavor=node_flavor)
         if hint_paths is not None:
-            if description is None and node_kind is None and graph.get_node(node_id) is None:
+            node_exists = graph.get_node(node_id) is not None
+            only_files = description is None and node_kind is None and node_flavor is None
+            if only_files and not node_exists:
                 raise ValueError(f"node {node_id} not found")
             graph.set_file_ownership(node_id, hint_paths)
         updated = graph.get_node(node_id)
