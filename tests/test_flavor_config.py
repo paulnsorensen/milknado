@@ -74,11 +74,13 @@ def test_load_config_single_list_worker_tools(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
+    # Raw list is stored — sentinel preserved, expansion deferred to resolution time
+    wt = cfg.worker_tools.get("claude", ())
+    assert wt == ("...", "Bash(just:*)")
+    assert "..." in wt
+    assert "Bash(just:*)" in wt
+    # execution_agent embeds the resolved (expanded) tool list at build time
     default = WORKER_ALLOWED_TOOLS["claude"]
-    assert "Bash(just:*)" in cfg.worker_tools.get("claude", ())
-    assert "mcp__tilth__*" in cfg.worker_tools.get("claude", ())
-    assert "..." not in cfg.worker_tools.get("claude", ())
-    # execution_agent should embed the resolved tools
     assert "Bash(just:*)" in cfg.execution_agent
     assert all(t in cfg.execution_agent for t in default[:3])
 
@@ -250,12 +252,12 @@ def test_save_load_roundtrip_with_flavors(tmp_path: Path) -> None:
     s = loaded.flavors[TaskFlavor.SPIKE]
     assert s.tools == ("...", "WebSearch")
 
-    # field-by-field: worker_tools (single-list)
+    # field-by-field: worker_tools (single-list — sentinel round-trips raw)
     wt = loaded.worker_tools.get("claude")
     assert wt is not None
+    assert wt == ("...", "Bash(just:*)")
+    assert "..." in wt  # sentinel preserved through save→load
     assert "Bash(just:*)" in wt
-    assert "mcp__tilth__*" in wt  # sentinel expanded
-    assert "..." not in wt
 
 
 def test_save_load_roundtrip_single_list_worker_tools(tmp_path: Path) -> None:

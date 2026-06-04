@@ -6,9 +6,12 @@ import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomli_w
+
+if TYPE_CHECKING:
+    from milknado.domains.common.types import TaskFlavor
 
 from milknado.domains.common.agent_argv import (
     _ALLOWED_WORKER_EXECUTABLES,
@@ -65,7 +68,7 @@ class MilknadoConfig:
     completion_timeout_seconds: float = 1800.0
     eta_sample_size: int = 10
     worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    flavors: dict = field(default_factory=dict)  # TaskFlavor -> FlavorOverride
+    flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
 
@@ -297,7 +300,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     planning_validation_hook_raw = raw.get("planning_validation_hook")
     execution_agent_raw = raw.get("execution_agent")
 
-    worker_tools = _parse_worker_tools(raw.get("worker"), family)
+    worker_tools = _parse_worker_tools(raw.get("worker"))
     flavors = _parse_flavor_tables(raw.get("flavor"), project_root)
     planning_prompt_prepend = _load_prompt_prepend(
         raw.get("prompts"),
@@ -357,12 +360,12 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     )
 
 
-def _parse_worker_tools(worker_raw: Any, family: str = "claude") -> dict[str, tuple[str, ...]]:
+def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
     """Parse [milknado.worker.tools] in single-list grammar.
 
     Each family key maps to a list (possibly containing one \"...\" sentinel).
-    The stored tuple is the raw list; sentinel expansion happens at resolution time
-    (in resolve_worker_tools / resolve_flavor_profile).
+    The stored tuple is the raw list; sentinel expansion happens at resolution
+    time (in resolve_worker_tools / resolve_execution_agent_command).
     """
     if worker_raw is None:
         return {}
@@ -377,16 +380,14 @@ def _parse_worker_tools(worker_raw: Any, family: str = "claude") -> dict[str, tu
     for fam, tool_list in tools_raw.items():
         if not isinstance(fam, str):
             raise ValueError(f"[milknado.worker.tools] family keys must be strings, got {fam!r}")
-        out[fam] = resolve_worker_tools(
-            fam, list(_coerce_single_tool_list(tool_list, f"[milknado.worker.tools.{fam}]"))
-        )
+        out[fam] = _coerce_single_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
     return out
 
 
 def _parse_flavor_tables(
     flavor_raw: Any,
     project_root: Path,
-) -> dict:
+) -> dict[TaskFlavor, FlavorOverride]:
     """Parse [milknado.flavor.*] tables into {TaskFlavor: FlavorOverride}."""
     from milknado.domains.common.types import TaskFlavor
 
@@ -418,7 +419,6 @@ def _parse_flavor_entry(
 ) -> FlavorOverride:
     """Parse one [milknado.flavor.<flavor>] table."""
     ctx = f"[milknado.flavor.{flavor_name}]"
-
     # execution_agent
     execution_agent_raw = entry.get("execution_agent")
     execution_agent: str | None = None
