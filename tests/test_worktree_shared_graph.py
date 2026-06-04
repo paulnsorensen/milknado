@@ -197,7 +197,7 @@ class TestDispatchRefusalUnderClaimedGoal:
     def test_todo_run_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
-        graph.set_goal_pid(goal_id, "run-coord-A", os.getpid())  # live owner
+        graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
         from milknado.mcp_run import milknado_todo_run
@@ -208,7 +208,7 @@ class TestDispatchRefusalUnderClaimedGoal:
     def test_todo_run_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
-        graph.set_goal_pid(goal_id, "run-coord-A", os.getpid())  # live owner
+        graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
         from milknado.mcp_run import milknado_todo_run_start
@@ -219,7 +219,7 @@ class TestDispatchRefusalUnderClaimedGoal:
     def test_ralph_run_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
-        graph.set_goal_pid(goal_id, "run-coord-A", os.getpid())  # live owner
+        graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
         from milknado.mcp_ralph import milknado_ralph_run_start
@@ -277,6 +277,60 @@ class TestDispatchRefusalUnderClaimedGoal:
         # Different run_id: blocked
         assert g2.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-coord-B") is not None
         g2.close()
+
+    def test_same_coordinator_run_dispatches_two_siblings(self, tmp_path: Path) -> None:
+        """Same coordinator process dispatches two sibling tasks under one goal.
+
+        The first dispatch auto-claims the goal under run_id_T1 with the current
+        pid. The second dispatch must recognise that the claim belongs to the same
+        process (same pid) and be allowed through — not refused as a foreign
+        coordinator. This is the core same-run exemption the spec requires.
+        """
+        db = tmp_path / ".milknado" / "milknado.db"
+        db.parent.mkdir()
+        g = MikadoGraph(db)
+        goal_id = g.add_node("goal", kind=NodeKind.GOAL).id
+        task1_id = g.add_node("task1", parent_id=goal_id, kind=NodeKind.TASK).id
+        task2_id = g.add_node("task2", parent_id=goal_id, kind=NodeKind.TASK).id
+        g.close()
+
+        from milknado._mcp_core import (
+            _check_ancestor_goal_not_claimed,
+            _claim_ancestor_goal_for_dispatch,
+        )
+
+        graph = MikadoGraph(db)
+        # First dispatch: claim the goal under task1's run_id.
+        _claim_ancestor_goal_for_dispatch(graph, task1_id, "run-T1")
+
+        # Second dispatch by the same process: must NOT raise.
+        # The goal is claimed by run-T1/current-pid; the same process dispatching
+        # task2 must be exempt — not refused as a foreign coordinator.
+        try:
+            _check_ancestor_goal_not_claimed(graph, task2_id)
+        except ValueError as exc:
+            raise AssertionError(
+                f"same coordinator process dispatching a sibling must not be refused; got: {exc}"
+            ) from exc
+        finally:
+            graph.close()
+
+    def test_cross_run_dispatch_still_refused_after_sibling_fix(self, tmp_path: Path) -> None:
+        """A different live coordinator is still refused after the sibling-exemption fix."""
+        root, graph, goal_id, task_id = self._seed(tmp_path)
+        graph.claim_goal(goal_id, "run-coord-X", now=now_iso())
+        graph.set_goal_pid(goal_id, "run-coord-X", os.getpid())  # live, same pid trick
+        graph.close()
+
+        # Open a fresh graph connection and attempt a cross-run check.
+        g2 = MikadoGraph(root / ".milknado" / "milknado.db")
+        # Different run_id AND the claim's run_id is the only live claimant:
+        # ancestor_goal_claimed_by_other with a different caller_run_id must block.
+        result = g2.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-coord-Y")
+        g2.close()
+        assert result is not None, (
+            "a claim by a different live run must block a foreign coordinator"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -570,15 +624,21 @@ class TestProductionClaimPath:
 
         This is the spec's core acceptance criterion: the fence must engage in
         production, not just in tests that manufacture the claim directly.
+        Simulate a different coordinator by overwriting the claim's pid with a
+        different live process pid after claiming.
         """
         from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
+        from milknado.domains.graph._persistence import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
-        # Run A claims via the production helper (same code path the dispatch tools use).
+        # Run A claims via the production helper.
         _claim_ancestor_goal_for_dispatch(graph, task_id, "run-A")
+        # Simulate run A running in a different (live) process so the fence blocks run B.
+        set_goal_claim_pid(graph._conn, goal_id, "run-A", os.getppid())
+        graph._conn.commit()
         graph.close()
 
-        # Run B (different run_id) tries to dispatch — must be refused by _check.
+        # Run B (different process pid) tries to dispatch — must be refused by _check.
         from milknado.mcp_run import milknado_todo_run_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
@@ -604,6 +664,27 @@ class TestProductionClaimPath:
             assert "claimed" not in str(exc).lower(), (
                 f"dead claimant must be reclaimed inline; dispatch must not be blocked: {exc}"
             )
+
+    def test_claim_writes_pid_atomically(self, tmp_path: Path) -> None:
+        """claim_goal_row must write the pid in the same INSERT, not via a separate UPDATE.
+
+        A NULL-pid window between INSERT and UPDATE allows a concurrent coordinator to
+        reclaim a live claim (the NULL-pid reclaim path is intentional for crash
+        recovery). After the fix, claim_goal_row accepts a pid and writes it atomically.
+        """
+        from milknado.domains.dispatch._runstate import now_iso
+        from milknado.domains.graph._persistence import claim_goal_row, get_goal_claim
+
+        _, graph, goal_id, _ = self._seed(tmp_path)
+        pid = os.getpid()
+        claim_goal_row(graph._conn, goal_id, "run-atomic", now_iso(), pid=pid)
+        claim = get_goal_claim(graph._conn, goal_id)
+        assert claim is not None
+        assert claim["pid"] == pid, (
+            "pid must be written by claim_goal_row in the same INSERT statement; "
+            "a NULL window between INSERT and a separate UPDATE is a reclaim race"
+        )
+        graph.close()
 
 
 class TestDeleteOneGoalClaimsCascade:

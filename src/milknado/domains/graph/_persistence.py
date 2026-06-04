@@ -497,16 +497,19 @@ def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str 
 # ---------------------------------------------------------------------------
 
 
-def claim_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str, now: str) -> bool:
+def claim_goal_row(
+    conn: sqlite3.Connection, goal_id: int, run_id: str, now: str, *, pid: int | None = None
+) -> bool:
     """INSERT a goal claim if none exists; returns True iff this caller won.
 
     INSERT OR IGNORE is the mutual-exclusion point: a single conditional write
     that either inserts (this caller wins) or finds the row already there (loses).
+    Pass pid to write it atomically in the same INSERT, eliminating the NULL-pid
+    window that would otherwise allow a concurrent reclaim before set_goal_claim_pid.
     """
     cur = conn.execute(
-        "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) "
-        "VALUES (?, ?, NULL, ?)",
-        (goal_id, run_id, now),
+        "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?)",
+        (goal_id, run_id, pid, now),
     )
     conn.commit()
     return cur.rowcount == 1

@@ -102,13 +102,21 @@ def resolve_project_root(explicit: str | None) -> Path:
 
 
 def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
-    """Raise ValueError if an ancestor goal is claimed by a different live run."""
+    """Raise ValueError if an ancestor goal is claimed by a different live coordinator.
+
+    Same-process dispatch (same pid) is exempt: the current process is the
+    coordinator that holds the claim, so sibling tasks may proceed.
+    """
     claim = graph.ancestor_goal_claimed_by_other(node_id)
-    if claim is not None:
-        raise ValueError(
-            f"node {node_id}'s ancestor goal is claimed by a different run "
-            f"({claim['run_id']!r}); dispatch refused"
-        )
+    if claim is None:
+        return
+    # Same coordinator process: the current pid owns the claim → siblings allowed.
+    if claim["pid"] == os.getpid():
+        return
+    raise ValueError(
+        f"node {node_id}'s ancestor goal is claimed by a different run "
+        f"({claim['run_id']!r}); dispatch refused"
+    )
 
 
 def _claim_ancestor_goal_for_dispatch(graph, node_id: int, run_id: str) -> None:  # noqa: ANN001
@@ -118,11 +126,9 @@ def _claim_ancestor_goal_for_dispatch(graph, node_id: int, run_id: str) -> None:
     _check_ancestor_goal_not_claimed so a live foreign claimant is already
     refused before this write.
     """
-    import os as _os
-
     from milknado.domains.dispatch._runstate import now_iso
 
-    graph.claim_ancestor_goal(node_id, run_id, _os.getpid(), now=now_iso())
+    graph.claim_ancestor_goal(node_id, run_id, os.getpid(), now=now_iso())
 
 
 def open_graph(root: Path):
