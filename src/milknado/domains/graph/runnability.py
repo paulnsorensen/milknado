@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from milknado.domains.common.types import NodeKind, NodeStatus, TaskFlavor
+from milknado.domains.common import NodeKind, NodeStatus, TaskFlavor
 
 if TYPE_CHECKING:
     from milknado.domains.graph.graph import MikadoGraph

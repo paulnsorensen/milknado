@@ -253,12 +253,13 @@ def milknado_todo_next(
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        node = graph.get_next_runnable(node_kind)
-        if node is None:
-            return None
-        if node_flavor is not None and node.flavor != node_flavor:
-            return None
-        return _node_to_summary(node)
+        for node in graph.get_ready_nodes():
+            if node.kind != node_kind:
+                continue
+            if node_flavor is not None and node.flavor != node_flavor:
+                continue
+            return _node_to_summary(node)
+        return None
     finally:
         graph.close()
 

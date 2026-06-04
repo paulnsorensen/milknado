@@ -124,6 +124,11 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
         flavor = TaskFlavor(flavor_raw) if flavor_raw is not None else None
+    elif flavor_raw is not None:
+        raise ValueError(
+            f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor_raw!r}; "
+            "only task nodes may carry a flavor"
+        )
     else:
         flavor = None
     return MikadoNode(

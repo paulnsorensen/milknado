@@ -102,6 +102,33 @@ class TestContainmentEnforcement:
         with pytest.raises(InvalidContainment):
             graph.move_node(goal.id, task.id)
 
+    def test_kind_edit_violating_parent_pair_raises(self, graph: MikadoGraph) -> None:
+        """Editing a node's kind into an illegal parent->child pair raises.
+
+        A TASK under a GOAL is legal; re-kinding the parent GOAL to ROADMAP
+        would make ROADMAP->TASK, which is not in VALID_CHILD_KINDS. The edit
+        path must enforce containment the same as add_node/move_node.
+        """
+        from milknado.domains.common.errors import InvalidContainment
+
+        goal = graph.add_node("g", kind=NodeKind.GOAL)
+        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
+        with pytest.raises(InvalidContainment):
+            graph.update_node(goal.id, kind=NodeKind.ROADMAP)
+
+    def test_kind_edit_violating_child_pair_raises(self, graph: MikadoGraph) -> None:
+        """Re-kinding a node so an existing child becomes illegal raises.
+
+        GOAL->GOAL is legal; re-kinding the parent GOAL to TASK would make
+        TASK->GOAL, which is illegal. Checked against the node's child edges.
+        """
+        from milknado.domains.common.errors import InvalidContainment
+
+        parent = graph.add_node("pg", kind=NodeKind.GOAL)
+        graph.add_node("sg", parent_id=parent.id, kind=NodeKind.GOAL)
+        with pytest.raises(InvalidContainment):
+            graph.update_node(parent.id, kind=NodeKind.TASK)
+
 
 # ── run-start refusal ──────────────────────────────────────────────────────────
 
@@ -700,13 +727,28 @@ class TestValidateGoalRunnableEdgeCases:
         goal = graph.add_node("g", kind=NodeKind.GOAL)
         task = graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
 
-        # Corrupt the task kind directly in the DB to roadmap
-        graph._conn.execute("UPDATE nodes SET kind = 'roadmap' WHERE id = ?", (task.id,))
+        # Corrupt the task kind directly in the DB to roadmap (clearing flavor to
+        # keep the row's flavor invariant: only task nodes may carry a flavor).
+        graph._conn.execute(
+            "UPDATE nodes SET kind = 'roadmap', flavor = NULL WHERE id = ?", (task.id,)
+        )
         graph._conn.commit()
 
         report = validate_goal_runnable(graph, goal.id)
         assert len(report.errors) >= 1
         assert any("task" in e.lower() or "leaf" in e.lower() for e in report.errors)
+
+    def test_non_task_row_with_flavor_fails_fast_on_read(self, graph: MikadoGraph) -> None:
+        """row_to_node refuses a non-task row carrying a non-NULL flavor.
+
+        Reading a corrupt row (kind!=task but flavor set) must fail loud rather
+        than silently coercing flavor to None and hiding the broken invariant.
+        """
+        task = graph.add_node("t", kind=NodeKind.TASK, flavor=TaskFlavor.IMPLEMENT)
+        graph._conn.execute("UPDATE nodes SET kind = 'roadmap' WHERE id = ?", (task.id,))
+        graph._conn.commit()
+        with pytest.raises(ValueError, match="flavor"):
+            graph.get_node(task.id)
 
     def test_deep_task_chain_passes(self, graph: MikadoGraph) -> None:
         """A goal → task → task (Mikado prereq chain) has no errors; leaf tasks are fine."""
@@ -715,7 +757,7 @@ class TestValidateGoalRunnableEdgeCases:
         goal = graph.add_node("g", kind=NodeKind.GOAL)
         parent_task = graph.add_node("pt", parent_id=goal.id, kind=NodeKind.TASK)
         # TASK → TASK is a Mikado prerequisite chain (legal by VALID_CHILD_KINDS)
-        _child_task = graph.add_node("ct", parent_id=parent_task.id, kind=NodeKind.TASK)
+        graph.add_node("ct", parent_id=parent_task.id, kind=NodeKind.TASK)
 
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []

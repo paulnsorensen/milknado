@@ -1582,13 +1582,12 @@ class TestRunRunnabilityGate:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        _mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         # Root GOAL with a sub-goal that has no children (undecomposed stub)
         root = graph.add_node("root goal", kind=NodeKind.GOAL)
-        _sub = graph.add_node("sub-goal", parent_id=root.id, kind=NodeKind.GOAL)
+        graph.add_node("sub-goal", parent_id=root.id, kind=NodeKind.GOAL)
         graph.close()
 
         result = runner.invoke(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from milknado.domains.batching import DUMB_ZONE_BUDGET, plan_batches
-from milknado.domains.common.types import VALID_CHILD_KINDS, NodeKind
+from milknado.domains.common import VALID_CHILD_KINDS, NodeKind
 
 if TYPE_CHECKING:
     from pathlib import Path

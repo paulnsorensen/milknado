@@ -75,6 +75,32 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
     return len(ordered)
 
 
+def _validate_kind_change_containment(
+    conn: sqlite3.Connection, node_id: int, new_kind: NodeKind
+) -> None:
+    """Reject a kind change that would create an illegal parent->child pair.
+
+    Mirrors the containment guard in ``reparent``/``add_node`` so editing a
+    node's kind cannot bypass ``VALID_CHILD_KINDS`` via its existing edges.
+    """
+    parent = conn.execute(
+        "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.parent_id WHERE e.child_id = ?",
+        (node_id,),
+    ).fetchone()
+    if parent is not None:
+        parent_kind = NodeKind(parent["kind"])
+        if new_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
+            raise InvalidContainment(parent_kind, new_kind)
+    children = conn.execute(
+        "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.child_id WHERE e.parent_id = ?",
+        (node_id,),
+    ).fetchall()
+    for child in children:
+        child_kind = NodeKind(child["kind"])
+        if child_kind not in VALID_CHILD_KINDS.get(new_kind, set()):
+            raise InvalidContainment(new_kind, child_kind)
+
+
 def update_node_fields(
     conn: sqlite3.Connection,
     node_id: int,
@@ -89,6 +115,7 @@ def update_node_fields(
         fields.append("description = ?")
         values.append(description)
     if kind is not None:
+        _validate_kind_change_containment(conn, node_id, kind)
         fields.append("kind = ?")
         values.append(kind.value)
         if kind != NodeKind.TASK:
