@@ -580,3 +580,92 @@ def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
     assert raw["flavor"]["spike"]["brief_prepend_path"] == str(
         (base_dir / "relative.md").resolve()
     )
+
+
+# ── Press hardening: boundaries + integration seams ─────────────────────────
+
+
+# AC2 boundary: empty tool list replaces default (no sentinel, no items)
+def test_resolve_worker_tools_empty_list_replaces_default() -> None:
+    result = resolve_worker_tools("claude", [])
+    assert result == ()
+
+
+# AC2 assertion strength: sentinel expansion produces exact expected tuple
+def test_resolve_worker_tools_sentinel_produces_exact_result() -> None:
+    base = WORKER_ALLOWED_TOOLS["claude"]
+    extra = "ExtraCustomTool"
+    result = resolve_worker_tools("claude", ["...", extra])
+    assert result == (*base, extra)
+
+
+# AC3 round-trip: flavor with all four fields populated survives save→load unchanged
+def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            TaskFlavor.PROTOTYPE: FlavorOverride(
+                execution_agent="claude -p --model haiku",
+                tools=("Read", "Edit"),
+                brief_prepend="Prototype: ship rough cut.",
+                quality_gates=("uv run pytest -x",),
+            ),
+        },
+    )
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+
+    fo = loaded.flavors[TaskFlavor.PROTOTYPE]
+    assert fo.execution_agent == "claude -p --model haiku"
+    assert fo.tools == ("Read", "Edit")
+    assert fo.brief_prepend == "Prototype: ship rough cut."
+    assert fo.quality_gates == ("uv run pytest -x",)
+
+
+# AC5 dispatch: explicit worker_cmd overrides flavor execution_agent in resolved profile
+def test_resolve_worker_cmd_explicit_beats_profile_default() -> None:
+    """_resolve_worker_cmd: explicit arg wins over the profile default."""
+    from milknado.domains.dispatch.runner import _resolve_worker_cmd
+
+    # Explicit wins; default is ignored.
+    result = _resolve_worker_cmd("claude -p", "claude --model opus")
+    assert result == ["claude", "-p"]
+
+
+def test_resolve_worker_cmd_empty_explicit_falls_back_to_profile() -> None:
+    """_resolve_worker_cmd: empty/None explicit falls back to the profile default."""
+    from milknado.domains.dispatch.runner import _resolve_worker_cmd
+
+    result = _resolve_worker_cmd(None, "claude -p")
+    assert result == ["claude", "-p"]
+
+    result = _resolve_worker_cmd("", "claude -p")
+    assert result == ["claude", "-p"]
+
+
+# AC7: milknado_todo_brief returns flavor brief_prepend when config has flavor entry
+def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
+    """milknado_todo_brief uses flavor brief_prepend when the task has a matching flavor."""
+    from milknado.mcp_todo import milknado_todo_add, milknado_todo_brief
+
+    def _call(tool, **kwargs):
+        fn = getattr(tool, "fn", tool)
+        return fn(**kwargs)
+
+    root = str(tmp_path)
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.research]\n"
+        'brief_prepend = "RESEARCH_MARKER: go deep."\n',
+        encoding="utf-8",
+    )
+
+    task = _call(
+        milknado_todo_add, description="investigate X", flavor="research", project_root=root
+    )
+    result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+    assert "RESEARCH_MARKER: go deep." in result["brief"]
