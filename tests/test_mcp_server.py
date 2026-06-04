@@ -1881,3 +1881,172 @@ class TestAdvertisedEnumSchema:
         kind = _advertised_param("milknado_graph_summary", "kind")
         assert _enum_values(status) == ["pending", "in_progress", "blocked", "done"]
         assert _enum_values(kind) == ["roadmap", "goal", "task"]
+
+
+class TestFileHintsMcp:
+    """Round-trip tests: files param on MCP tools writes hints that render in the brief."""
+
+    def test_todo_add_with_files_renders_in_brief(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="touch config",
+            files=["src/config.py"],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "src/config.py" in result["brief"]
+        assert "(no file hints registered)" not in result["brief"]
+
+    def test_todo_add_files_none_leaves_no_hints(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="no hints",
+            files=None,
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "(no file hints registered)" in result["brief"]
+
+    def test_edit_node_with_files_renders_in_brief(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="do work", project_root=root)
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="do work",
+            files=["src/work.py", "tests/test_work.py"],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "src/work.py" in result["brief"]
+        assert "tests/test_work.py" in result["brief"]
+        assert "(no file hints registered)" not in result["brief"]
+
+    def test_edit_node_files_none_leaves_hints_untouched(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="with hints", project_root=root)
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="with hints",
+            files=["src/initial.py"],
+            project_root=root,
+        )
+        # Now edit with files=None — hints must be preserved
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="updated desc",
+            files=None,
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "src/initial.py" in result["brief"]
+
+    def test_edit_node_files_empty_clears_hints(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="clearable", project_root=root)
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="clearable",
+            files=["src/temp.py"],
+            project_root=root,
+        )
+        # Clear with files=[]
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="clearable",
+            files=[],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "(no file hints registered)" in result["brief"]
+
+    def test_track_follow_up_with_files_renders_in_brief(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        follow_up = _call(
+            milknado_track_follow_up,
+            description="follow up work",
+            files=["src/followup.py"],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=follow_up["id"], project_root=root)
+        assert "src/followup.py" in result["brief"]
+        assert "(no file hints registered)" not in result["brief"]
+
+    def test_edit_node_files_only_no_description_or_kind(self, tmp_path: Path) -> None:
+        # Verify files-only edit doesn't crash: update_node must be skipped, not called
+        # with (None, None) which would raise "nothing to update" from _mutations.
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="original", project_root=root)
+        result = _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            files=["src/added.py"],
+            project_root=root,
+        )
+        # Description unchanged, file hint written
+        assert result["description"] == "original"
+        brief = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "src/added.py" in brief["brief"]
+
+    def test_edit_node_nothing_raises_mentions_files(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        with pytest.raises(ValueError, match="files"):
+            _call(milknado_edit_node, node_id=task["id"], project_root=root)
+
+    def test_edit_node_files_only_missing_node_raises_value_error(self, tmp_path: Path) -> None:
+        # When only files is provided for a missing node, must raise ValueError (not
+        # IntegrityError from the FK constraint on file_ownership).
+        root = str(tmp_path)
+        with pytest.raises(ValueError, match="not found"):
+            _call(
+                milknado_edit_node,
+                node_id=9999,
+                files=["src/ghost.py"],
+                project_root=root,
+            )
+
+    def test_todo_add_files_empty_list_leaves_no_hints(self, tmp_path: Path) -> None:
+        # files=[] is different from files=None: it explicitly passes an empty list.
+        # No hints should be registered (set_file_ownership with [] deletes any existing).
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="empty-files",
+            files=[],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "(no file hints registered)" in result["brief"]
+
+    def test_brief_renders_relevant_files_heading(self, tmp_path: Path) -> None:
+        # The section heading must be present so the worker brief is well-structured.
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="heading check",
+            files=["src/x.py"],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        assert "## Relevant files" in result["brief"]
+        assert "- src/x.py" in result["brief"]
+
+    def test_todo_add_multiple_files_order_preserved_in_brief(self, tmp_path: Path) -> None:
+        # Insertion order must be preserved end-to-end through the brief renderer.
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="ordered hints",
+            files=["alpha.py", "beta.py", "gamma.py"],
+            project_root=root,
+        )
+        result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
+        brief = result["brief"]
+        assert brief.index("alpha.py") < brief.index("beta.py") < brief.index("gamma.py")

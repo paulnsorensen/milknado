@@ -16,6 +16,7 @@ from milknado._mcp_core import (
 )
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
+from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.dispatch import render_brief
 
 _logger = logging.getLogger(__name__)
@@ -131,13 +132,19 @@ def milknado_todo_add(
     kind: Kind = "task",
     parent_id: int | None = None,
     project_root: str = "",
+    files: list[str] | None = None,
 ) -> dict:
-    """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id."""
+    """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
+
+    files: optional list of paths this node will touch (relative to project root).
+    """
     node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
         node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
+        if files is not None:
+            graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return _node_to_summary(node)
     finally:
         graph.close()
@@ -301,6 +308,7 @@ def milknado_track_follow_up(
     kind: Kind = "task",
     parent_id: int | None = None,
     project_root: str = "",
+    files: list[str] | None = None,
 ) -> dict:
     """Register discovered follow-up work as a new node.
 
@@ -308,6 +316,8 @@ def milknado_track_follow_up(
     worker's current node (under MILKNADO_NODE_ID's parent), so the node a
     worker is completing never gains an unmet prerequisite. If MILKNADO_NODE_ID
     is unset the node is created at root level.
+
+    files: optional list of paths this follow-up will touch (relative to project root).
     """
     node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
@@ -316,6 +326,8 @@ def milknado_track_follow_up(
         if parent_id is None:
             parent_id = _follow_up_parent_id(graph)
         node = graph.add_node(description, parent_id=parent_id, kind=node_kind)
+        if files is not None:
+            graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return _node_to_summary(node)
     finally:
         graph.close()
@@ -362,15 +374,24 @@ def milknado_edit_node(
     description: str | None = None,
     kind: Kind | None = None,
     project_root: str = "",
+    files: list[str] | None = None,
 ) -> dict:
-    """Edit a node's description and/or kind (coordinator-only). Status is not editable."""
-    if description is None and kind is None:
-        raise ValueError("nothing to edit: provide description and/or kind")
+    """Edit a node's description and/or kind (coordinator-only). Status is not editable.
+
+    files: None leaves hints untouched; [] clears all hints; a non-empty list replaces them.
+    """
+    if description is None and kind is None and files is None:
+        raise ValueError("nothing to edit: provide description, kind, and/or files")
     node_kind = _parse_kind(kind) if kind is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        graph.update_node(node_id, description=description, kind=node_kind)
+        if description is not None or node_kind is not None:
+            graph.update_node(node_id, description=description, kind=node_kind)
+        if files is not None:
+            if description is None and node_kind is None and graph.get_node(node_id) is None:
+                raise ValueError(f"node {node_id} not found")
+            graph.set_file_ownership(node_id, normalize_hint_paths(files, root))
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after edit")

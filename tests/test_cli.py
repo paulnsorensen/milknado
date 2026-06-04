@@ -357,6 +357,22 @@ class TestAddNode:
         graph.close()
         assert set(files) == {"src/auth.py", "src/login.py"}
 
+    def test_add_with_escaping_file_fails_fast(self, project_dir: Path) -> None:
+        runner.invoke(app, ["init", str(project_dir)])
+        result = runner.invoke(
+            app,
+            [
+                "add-node",
+                "bad paths",
+                "--files",
+                "../outside.py",
+                "--project-root",
+                str(project_dir),
+            ],
+        )
+        assert result.exit_code != 0
+        assert "escapes" in (result.output + str(result.exception))
+
     def test_blocks_running_parent(self, project_dir: Path) -> None:
         from milknado.domains.common import NodeStatus, default_config
         from milknado.domains.graph import MikadoGraph

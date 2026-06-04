@@ -33,6 +33,7 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph import render_tree
 
 # Public surface of this facade: the Typer app plus the `_derive_goal`
@@ -195,7 +196,7 @@ def add_node(
     try:
         node = graph.add_node(description, parent_id=parent)
         if files:
-            graph.set_file_ownership(node.id, files)
+            graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
 
         _maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
