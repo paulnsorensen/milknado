@@ -43,6 +43,60 @@ why-chain from `walk_ancestors`, owned files, and CRG impact radius — CRG
 failures degrade gracefully to a skipped section), writes `RALPH.md`, creates
 and starts the ralph run, returns its `run_id`.
 
+## Run identity — runs are per-task-dispatch; there is NO coordinator-run entity
+
+The single most important fact about the run model, because designs keep
+assuming otherwise: **a milknado "run" is one task dispatch, not a coordinator
+session.** `make_run_id(node_id)` embeds the *task node's* id
+(`node-<id>-<UTCstamp>-<8hex>`, `_runstate.py`), and every dispatch tool mints a
+fresh one per dispatched task. No identity in the system spans the sibling
+dispatches a coordinator makes while driving a goal. The only thing that does
+span them is the MCP server process itself (one per worktree) — i.e. the pid.
+
+Why this matters: the worktree-shared-graph spec (PR #131) said goal claims are
+"owned by that run/session". That entity doesn't exist, and the first
+implementation wired claims literally — fresh `make_run_id` per dispatch — so
+the first task dispatched under a goal fenced out its own siblings (review
+blocker). The shipped fix anchors the same-coordinator exemption on
+`claim["pid"] == os.getpid()` because the server process IS the coordinator
+under the current one-process-per-worktree model.
+
+**Rule for future specs:** any design that says "owned by the run/session" must
+name which concrete identity it means — task-dispatch run_id (per-task, never
+spans siblings), server pid (spans siblings, dies with the process), or a new
+coordinator-run entity (doesn't exist yet; would need creating). Don't let
+"run/session" pass spec review unexamined.
+
+## Goal-claim fencing (`goal_claims`, PR #131)
+
+Cross-worktree coordinator fencing, layered above per-node `claim_node`: all
+three dispatch tools claim the closest ancestor goal before dispatch and refuse
+when it's claimed by a different **live** process. Design decisions and their
+why:
+
+- **`INSERT OR IGNORE` with pid written atomically in the same statement** is
+  the whole mutex (`claim_goal_row`, `_persistence.py`). The pid must ride in
+  the INSERT: a two-step insert-then-set-pid left a window where a NULL-pid
+  claim from a healthy coordinator could be "reclaimed" by a racing one
+  (pass-2 review high).
+- **Same-pid exemption** (`_check_ancestor_goal_not_claimed`, `_mcp_core.py`):
+  a claim held by the current process doesn't fence sibling dispatches. See the
+  run-identity section above for why pid, not run_id.
+- **Release fires on goal-node terminalization only** (`mark_done` /
+  `mark_failed` / `mark_terminal` → `_release_goal_claim_on_terminal`). A
+  cancelled run that never terminalizes its goal leaves a claim row, but
+  pid-liveness reclaim clears it at the next dispatch attempt once the process
+  dies — soft leak, self-healing, no stale-timeout wait.
+- **Intentionally unwired seams**: `ancestor_goal_claimed_by_other`'s
+  `caller_run_id` parameter and the `release_goal` method have zero production
+  callers. They are the hooks for a future coordinator-run entity (multi-run
+  servers / respawning coordinators). If that entity ever becomes real, the
+  same-pid exemption stops being a faithful proxy and claim ownership must move
+  to the threaded run identity — do not delete these seams as dead code.
+- **pid reuse fails safe**: a recycled pid keeps a stale claim looking alive →
+  spurious refusal, never a false-allow. Same pre-existing exposure as the
+  node-claim path; accepted.
+
 ## Two claim paths (the RUNNING-RUNNING gotcha)
 
 `_dispatch_once` branches on `already_claimed = node.status == RUNNING and
@@ -246,7 +300,7 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
-- `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`).
+- `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`), `goal_claims` repo (`claim_goal_row`, `release_goal_row`).
 - `src/milknado/mcp_run.py` — `milknado_todo_run*`, `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
 - `src/milknado/mcp_ralph.py` — `milknado_ralph_run_start` / `_poll` (COORDINATOR-ONLY).
-- `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema.
+- `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema, `_check_ancestor_goal_not_claimed` / `_claim_ancestor_goal_for_dispatch` (goal-claim fencing).

@@ -65,13 +65,70 @@ mcp = FastMCP(
 )
 
 
+def _worktree_main_checkout(cwd: Path) -> Path | None:
+    """If cwd is a linked git worktree, return the main checkout root; else None."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+        return None
+    if result.returncode != 0:
+        return None
+    common_dir = result.stdout.strip()
+    # An absolute path means we're in a linked worktree: the common dir lives
+    # inside the main checkout's .git. The main checkout root is its parent
+    # (common_dir ends in .git, so parent is the main checkout).
+    if not os.path.isabs(common_dir):
+        return None  # relative == main checkout (e.g. ".git") — no hop needed
+    return Path(common_dir).parent.resolve()
+
+
 def resolve_project_root(explicit: str | None) -> Path:
     if explicit and explicit.strip():
         return Path(explicit).expanduser().resolve()
     env = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    return Path.cwd().resolve()
+    cwd = Path.cwd().resolve()
+    main = _worktree_main_checkout(cwd)
+    return main if main is not None else cwd
+
+
+def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
+    """Raise ValueError if an ancestor goal is claimed by a different live coordinator.
+
+    Same-process dispatch (same pid) is exempt: the current process is the
+    coordinator that holds the claim, so sibling tasks may proceed.
+    """
+    claim = graph.ancestor_goal_claimed_by_other(node_id)
+    if claim is None:
+        return
+    # Same coordinator process: the current pid owns the claim → siblings allowed.
+    if claim["pid"] == os.getpid():
+        return
+    raise ValueError(
+        f"node {node_id}'s ancestor goal is claimed by a different run "
+        f"({claim['run_id']!r}); dispatch refused"
+    )
+
+
+def _claim_ancestor_goal_for_dispatch(graph, node_id: int, run_id: str) -> None:  # noqa: ANN001
+    """Claim the closest ancestor goal for run_id+pid before dispatch.
+
+    No-op when the node has no ancestor goal.  Called after
+    _check_ancestor_goal_not_claimed so a live foreign claimant is already
+    refused before this write.
+    """
+    from milknado.domains.dispatch._runstate import now_iso
+
+    graph.claim_ancestor_goal(node_id, run_id, os.getpid(), now=now_iso())
 
 
 def open_graph(root: Path):

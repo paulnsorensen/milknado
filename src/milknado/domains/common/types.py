@@ -69,6 +69,7 @@ class MikadoNode:
     completion_duration_seconds: float | None = None
     kind: NodeKind = NodeKind.TASK
     flavor: TaskFlavor | None = None
+    goal_run_id: str | None = None  # coordinator run that claimed this goal (goal_claims table)
 
     def __post_init__(self) -> None:
         if self.kind == NodeKind.TASK:

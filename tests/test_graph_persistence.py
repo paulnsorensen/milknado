@@ -10,10 +10,12 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.common import NodeKind
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._persistence import (
     create_tables,
     ensure_schema,
+    get_goal_claim,
     get_spec_hash,
     row_to_node,
     set_dispatched_at,
@@ -104,6 +106,17 @@ class TestDropAll:
 
     def test_drop_all_on_empty_returns_zero(self, graph: MikadoGraph) -> None:
         assert graph.drop_all() == 0
+
+    def test_drop_all_clears_goal_claims(self, graph: MikadoGraph) -> None:
+        """goal_claims.goal_id REFERENCES nodes(id) with no ON DELETE CASCADE and
+        foreign_keys=ON, so drop_all must clear goal_claims before nodes or the
+        DELETE FROM nodes raises IntegrityError. Seed a claim, then prove reset works."""
+        goal = graph.add_node("goal", kind=NodeKind.GOAL)
+        graph.claim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
+        assert get_goal_claim(graph._conn, goal.id) is not None
+        # Must not raise sqlite3.IntegrityError, and must clear the claim row.
+        assert graph.drop_all() == 1
+        assert get_goal_claim(graph._conn, goal.id) is None
 
 
 class TestRunsRepo:

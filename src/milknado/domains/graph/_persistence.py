@@ -89,6 +89,12 @@ def create_tables(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             PRIMARY KEY (run_id, seq)
         );
+        CREATE TABLE IF NOT EXISTS goal_claims (
+            goal_id     INTEGER PRIMARY KEY REFERENCES nodes(id),
+            run_id      TEXT NOT NULL,
+            pid         INTEGER,
+            claimed_at  TEXT NOT NULL
+        );
     """)
 
 
@@ -255,6 +261,7 @@ def drop_all(conn: sqlite3.Connection) -> int:
     conn.execute("DELETE FROM runs")
     conn.execute("DELETE FROM file_ownership")
     conn.execute("DELETE FROM edges")
+    conn.execute("DELETE FROM goal_claims")
     conn.execute("DELETE FROM nodes")
     conn.execute("DELETE FROM plan_state")
     conn.execute("DELETE FROM batch_plans")
@@ -484,3 +491,111 @@ def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str 
         (run_id, role),
     ).fetchone()
     return row[0] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Goal-claim persistence (coordinator subtree fencing)
+# ---------------------------------------------------------------------------
+
+
+def claim_goal_row(
+    conn: sqlite3.Connection, goal_id: int, run_id: str, now: str, *, pid: int | None = None
+) -> bool:
+    """INSERT a goal claim if none exists; returns True iff this caller won.
+
+    INSERT OR IGNORE is the mutual-exclusion point: a single conditional write
+    that either inserts (this caller wins) or finds the row already there (loses).
+    Pass pid to write it atomically in the same INSERT, eliminating the NULL-pid
+    window that would otherwise allow a concurrent reclaim before set_goal_claim_pid.
+    """
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?)",
+        (goal_id, run_id, pid, now),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> bool:
+    """Delete a goal claim gated on the owning run_id. Returns True iff deleted."""
+    cur = conn.execute(
+        "DELETE FROM goal_claims WHERE goal_id = ? AND run_id = ?",
+        (goal_id, run_id),
+    )
+    conn.commit()
+    return cur.rowcount == 1
+
+
+def release_goal_row_unconditional(conn: sqlite3.Connection, goal_id: int) -> None:
+    """Delete any goal claim for goal_id without a run_id gate.
+
+    Used on terminal transitions (DONE/FAILED) for goal nodes: the goal is
+    complete so the fence owner is moot — the claim must be cleared regardless
+    of which run held it.
+    """
+    conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
+    conn.commit()
+
+
+def set_goal_claim_pid(conn: sqlite3.Connection, goal_id: int, run_id: str, pid: int) -> None:
+    """Record the coordinator pid on a goal claim, gated on the owning run_id."""
+    conn.execute(
+        "UPDATE goal_claims SET pid = ? WHERE goal_id = ? AND run_id = ?",
+        (pid, goal_id, run_id),
+    )
+    conn.commit()
+
+
+def get_goal_claim(conn: sqlite3.Connection, goal_id: int) -> dict | None:
+    """Return the goal claim row as a dict, or None if unclaimed."""
+    row = conn.execute(
+        "SELECT goal_id, run_id, pid, claimed_at FROM goal_claims WHERE goal_id = ?",
+        (goal_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"goal_id": row[0], "run_id": row[1], "pid": row[2], "claimed_at": row[3]}
+
+
+def ancestor_goal_claim(
+    conn: sqlite3.Connection, node_id: int, caller_run_id: str | None
+) -> dict | None:
+    """Walk node's ancestor chain; return the first goal_claim owned by a DIFFERENT run.
+
+    Returns None (allowed) when:
+    - no ancestor goal exists
+    - the ancestor goal is unclaimed
+    - the claim belongs to the same caller_run_id (own coordinator)
+    Returns the claim dict (blocked) when a live OR dead-but-not-yet-reclaimed foreign
+    claim is found; the caller is responsible for checking pid-liveness.
+    """
+    # Walk parent chain collecting each ancestor's kind + claim status.
+    current_id: int | None = node_id
+    while current_id is not None:
+        row = conn.execute(
+            "SELECT parent_id, kind FROM nodes WHERE id = ?", (current_id,)
+        ).fetchone()
+        if row is None:
+            break
+        parent_id, kind = row["parent_id"], row["kind"]
+        if kind == "goal":
+            claim = get_goal_claim(conn, current_id)
+            if claim is not None and claim["run_id"] != caller_run_id:
+                return claim
+        current_id = parent_id
+    return None
+
+
+def find_ancestor_goal_id(conn: sqlite3.Connection, node_id: int) -> int | None:
+    """Return the id of the closest ancestor (or self) with kind='goal', or None."""
+    current_id: int | None = node_id
+    while current_id is not None:
+        row = conn.execute(
+            "SELECT parent_id, kind FROM nodes WHERE id = ?", (current_id,)
+        ).fetchone()
+        if row is None:
+            break
+        if row["kind"] == "goal":
+            return current_id
+        current_id = row["parent_id"]
+    return None

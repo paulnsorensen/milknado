@@ -9,7 +9,13 @@ import signal
 import time
 from pathlib import Path
 
-from milknado._mcp_core import mcp, open_graph, resolve_project_root
+from milknado._mcp_core import (
+    _check_ancestor_goal_not_claimed,
+    _claim_ancestor_goal_for_dispatch,
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.dispatch import (
@@ -163,6 +169,8 @@ def milknado_todo_run(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        _check_ancestor_goal_not_claimed(graph, node_id)
+        _claim_ancestor_goal_for_dispatch(graph, node_id, make_run_id(node_id))
         return _run_and_update_status(
             graph,
             node_id,
@@ -199,6 +207,9 @@ def milknado_todo_run_start(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        run_id = make_run_id(node_id)
+        _check_ancestor_goal_not_claimed(graph, node_id)
+        _claim_ancestor_goal_for_dispatch(graph, node_id, run_id)
         if node.status == NodeStatus.RUNNING:
             # Before the claim can succeed, reconcile any orphaned terminal runs
             # for this node — a prior worker may have finished without anyone
@@ -229,7 +240,6 @@ def milknado_todo_run_start(
         # RUNNING transition and the run_id fence are written in one statement, so a
         # second concurrent caller sees RUNNING and loses. The same run_id keys the
         # run row, keeping the node row and the run row in agreement.
-        run_id = make_run_id(node_id)
         if not graph.claim_node(node_id, run_id, now=now_iso()):
             current = graph.get_node(node_id)
             status = current.status.value if current is not None else "gone"
