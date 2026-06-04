@@ -1,6 +1,6 @@
 from milknado.domains.common.config import (
+    FlavorOverride,
     MilknadoConfig,
-    WorkerToolsOverride,
     default_config,
     global_config_path,
     load_config,
@@ -39,7 +39,7 @@ __all__ = [
     "VALID_CHILD_KINDS",
     "VALID_TRANSITIONS",
     "pid_alive",
-    "WorkerToolsOverride",
+    "FlavorOverride",
     "default_config",
     "global_config_path",
     "load_config",

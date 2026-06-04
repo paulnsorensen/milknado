@@ -77,38 +77,41 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
+# Worker subprocesses may only invoke a known AI-agent CLI.
+_ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
+    {"claude", "codex", "cursor-agent", "gemini"}
+)
+
 
 def resolve_worker_tools(
     family: str,
-    *,
-    allow: Sequence[str] | None = None,
-    extend: Sequence[str] | None = None,
-    deny: Sequence[str] | None = None,
+    tools: Sequence[str] | None,
 ) -> tuple[str, ...]:
-    """Apply allow/extend/deny overlay to the family default tool list.
+    """Resolve a single-list tool spec (with optional \"...\" sentinel) to the final tool list.
 
-    - ``allow`` (if set) replaces the family default entirely; ``extend`` is
-      ignored in that case.
-    - Otherwise the family default is concatenated with ``extend``.
-    - ``deny`` removes matching entries from the final list (always last).
-    Order is preserved; duplicates from ``extend`` are deduped (first wins).
+    - ``None`` returns the built-in family default (``WORKER_ALLOWED_TOOLS[family]``).
+    - A list without ``\"...\"`` replaces the family default entirely.
+    - A list with ``\"...\"`` expands it in place to the built-in default, then dedupes
+      first-wins across the full list.
+    - At most one ``\"...\"`` is allowed; validated by the caller at config load.
     """
+    if tools is None:
+        return WORKER_ALLOWED_TOOLS.get(family, ())
     base = WORKER_ALLOWED_TOOLS.get(family, ())
-    if allow is not None:
-        result: tuple[str, ...] = tuple(allow)
-    else:
-        seen: set[str] = set()
-        items: list[str] = []
-        for tool in (*base, *(extend or ())):
-            if tool in seen:
-                continue
-            seen.add(tool)
-            items.append(tool)
-        result = tuple(items)
-    if deny:
-        denied = set(deny)
-        result = tuple(t for t in result if t not in denied)
-    return result
+    expanded: list[str] = []
+    for item in tools:
+        if item == "...":
+            expanded.extend(base)
+        else:
+            expanded.append(item)
+    # Dedupe: first occurrence wins.
+    seen: set[str] = set()
+    result: list[str] = []
+    for t in expanded:
+        if t not in seen:
+            seen.add(t)
+            result.append(t)
+    return tuple(result)
 
 
 def _default_execution_command(family: str, tools: Sequence[str]) -> str:

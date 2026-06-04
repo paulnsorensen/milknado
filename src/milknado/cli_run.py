@@ -109,7 +109,7 @@ def run(
         ralph = RalphifyAdapter()
         crg = CrgAdapter(project_root)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
         result = loop.run(
             config=_build_exec_config(config, project_root),

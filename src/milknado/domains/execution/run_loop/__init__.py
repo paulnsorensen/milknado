@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import time
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common.errors import CompletionTimeout
+from milknado.domains.common.flavor_profile import resolve_flavor_profile
 from milknado.domains.common.protocols import ProgressEvent
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution.executor import RebaseConflict, get_dispatchable_nodes
@@ -294,8 +296,16 @@ class RunLoop:
         for node_id in dispatchable[:available]:
             node = self._graph.get_node(node_id)
             desc = _summarize_description(node.description) if node else str(node_id)
+            node_config = config
+            if self._milknado_config is not None and node is not None:
+                profile = resolve_flavor_profile(self._milknado_config, node.flavor)
+                node_config = dataclasses.replace(
+                    config,
+                    execution_agent=profile.execution_agent,
+                    quality_gates=profile.quality_gates,
+                )
             try:
-                result = self._executor.dispatch(node_id, config)
+                result = self._executor.dispatch(node_id, node_config)
             except Exception as exc:
                 _logger.exception(
                     "Dispatch failed for node %d (%s): %s: %s",

@@ -1,0 +1,582 @@
+"""Tests for per-flavor agent config: AC1-7 from spec per-flavor-agent-config.md."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from milknado.domains.common.agent_argv import (
+    WORKER_ALLOWED_TOOLS,
+    resolve_worker_tools,
+)
+from milknado.domains.common.config import (
+    FlavorOverride,
+    MilknadoConfig,
+    load_config,
+    save_config,
+)
+from milknado.domains.common.flavor_profile import (
+    resolve_flavor_profile,
+)
+from milknado.domains.common.types import TaskFlavor
+
+# ── AC2: single-list grammar + sentinel ─────────────────────────────────────
+
+
+def test_resolve_worker_tools_none_returns_family_default() -> None:
+    assert resolve_worker_tools("claude", None) == WORKER_ALLOWED_TOOLS["claude"]
+
+
+def test_resolve_worker_tools_none_unknown_family_returns_empty() -> None:
+    assert resolve_worker_tools("unknownfam", None) == ()
+
+
+def test_resolve_worker_tools_sentinel_expands_to_default() -> None:
+    tools = resolve_worker_tools("claude", ["...", "WebSearch"])
+    default = WORKER_ALLOWED_TOOLS["claude"]
+    # "..." expands in place; WebSearch appended after
+    assert tools[: len(default)] == default
+    assert "WebSearch" in tools
+    assert "..." not in tools
+
+
+def test_resolve_worker_tools_no_sentinel_replaces_default() -> None:
+    tools = resolve_worker_tools("claude", ["Read", "Edit"])
+    assert tools == ("Read", "Edit")
+    assert "mcp__tilth__*" not in tools
+
+
+def test_resolve_worker_tools_sentinel_dedupes_first_wins() -> None:
+    # "Read" appears both in default and in explicit list; must appear only once
+    tools = resolve_worker_tools("claude", ["...", "Read"])
+    assert tools.count("Read") == 1
+
+
+def test_resolve_worker_tools_at_most_one_sentinel_validated_at_load(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.worker.tools]\n"
+        'claude = ["...", "Read", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="at most one"):
+        load_config(cfg_path)
+
+
+def test_load_config_single_list_worker_tools(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.worker.tools]\n"
+        'claude = ["...", "Bash(just:*)"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    default = WORKER_ALLOWED_TOOLS["claude"]
+    assert "Bash(just:*)" in cfg.worker_tools.get("claude", ())
+    assert "mcp__tilth__*" in cfg.worker_tools.get("claude", ())
+    assert "..." not in cfg.worker_tools.get("claude", ())
+    # execution_agent should embed the resolved tools
+    assert "Bash(just:*)" in cfg.execution_agent
+    assert all(t in cfg.execution_agent for t in default[:3])
+
+
+def test_load_config_single_list_bare_string_rejected(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "Read"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be a list"):
+        load_config(cfg_path)
+
+
+# ── AC1: FlavorOverride config parsing + validation ──────────────────────────
+
+
+def test_load_config_flavor_table_parses(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.research]\n"
+        "quality_gates = []\n"
+        'brief_prepend = "Research mode."\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert TaskFlavor.RESEARCH in cfg.flavors
+    fo = cfg.flavors[TaskFlavor.RESEARCH]
+    assert fo.quality_gates == ()
+    assert fo.brief_prepend == "Research mode."
+
+
+def test_load_config_flavor_invalid_key_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.badflavorkey]\n"
+        "quality_gates = []\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="badflavorkey"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'execution_agent = "evil-bin --flag"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="evil-bin"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_tools_malformed_bare_string_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\ntools = "Read"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be a list"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_tools_multiple_sentinels_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'tools = ["...", "Read", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="at most one"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_brief_prepend_path_conflict_raises(tmp_path: Path) -> None:
+    brief_file = tmp_path / "house.md"
+    brief_file.write_text("rules", encoding="utf-8")
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'brief_prepend = "inline"\n'
+        'brief_prepend_path = "house.md"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_brief_prepend_path_missing_file_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'brief_prepend_path = "nonexistent.md"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(FileNotFoundError):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_quality_gates_must_be_list(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'quality_gates = "uv run pytest"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="quality_gates"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_brief_prepend_path_list(tmp_path: Path) -> None:
+    f1 = tmp_path / "house.md"
+    f2 = tmp_path / "research.md"
+    f1.write_text("house rules", encoding="utf-8")
+    f2.write_text("research rules", encoding="utf-8")
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.research]\n"
+        'brief_prepend_path = ["house.md", "research.md"]\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    fo = cfg.flavors[TaskFlavor.RESEARCH]
+    assert fo.brief_prepend is not None
+    assert "house rules" in fo.brief_prepend
+    assert "research rules" in fo.brief_prepend
+
+
+# ── AC3: save_config round-trip ─────────────────────────────────────────────
+
+
+def test_save_load_roundtrip_with_flavors(tmp_path: Path) -> None:
+    brief_file = tmp_path / "house.md"
+    brief_file.write_text("house rules here", encoding="utf-8")
+    cfg_path = tmp_path / "milknado.toml"
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        worker_tools={"claude": ("...", "Bash(just:*)")},
+        flavors={
+            TaskFlavor.RESEARCH: FlavorOverride(
+                quality_gates=(),
+                brief_prepend="Research mode",
+            ),
+            TaskFlavor.SPIKE: FlavorOverride(
+                tools=("...", "WebSearch"),
+            ),
+        },
+    )
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+
+    # field-by-field: flavors
+    assert TaskFlavor.RESEARCH in loaded.flavors
+    assert TaskFlavor.SPIKE in loaded.flavors
+    r = loaded.flavors[TaskFlavor.RESEARCH]
+    assert r.quality_gates == ()
+    assert r.brief_prepend == "Research mode"
+    s = loaded.flavors[TaskFlavor.SPIKE]
+    assert s.tools == ("...", "WebSearch")
+
+    # field-by-field: worker_tools (single-list)
+    wt = loaded.worker_tools.get("claude")
+    assert wt is not None
+    assert "Bash(just:*)" in wt
+    assert "mcp__tilth__*" in wt  # sentinel expanded
+    assert "..." not in wt
+
+
+def test_save_load_roundtrip_single_list_worker_tools(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        worker_tools={"claude": ("Read", "Edit")},
+    )
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+    wt = loaded.worker_tools.get("claude")
+    assert wt is not None
+    assert wt == ("Read", "Edit")
+
+
+# ── AC4: resolve_flavor_profile unit tests ──────────────────────────────────
+
+
+def _base_cfg(tmp_path: Path) -> MilknadoConfig:
+    return MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+    )
+
+
+def test_resolve_flavor_profile_no_flavor_returns_defaults(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, None)
+    assert profile.execution_agent == cfg.execution_agent
+    assert profile.quality_gates == cfg.quality_gates
+    assert profile.brief_prepend == cfg.worker_brief_prepend
+
+
+def test_resolve_flavor_profile_flavor_no_entry_returns_defaults(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    assert profile.execution_agent == cfg.execution_agent
+    assert profile.quality_gates == cfg.quality_gates
+
+
+def test_resolve_flavor_profile_explicit_execution_agent_wins(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            TaskFlavor.RESEARCH: FlavorOverride(
+                execution_agent="claude -p --model opus",
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+    assert profile.execution_agent == "claude -p --model opus"
+
+
+def test_resolve_flavor_profile_tools_derive_command(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            TaskFlavor.SPIKE: FlavorOverride(
+                tools=("Read", "Edit"),
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    assert "Read,Edit" in profile.execution_agent
+
+
+def test_resolve_flavor_profile_quality_gates_empty_tuple(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            TaskFlavor.RESEARCH: FlavorOverride(
+                quality_gates=(),
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+    assert profile.quality_gates == ()
+
+
+def test_resolve_flavor_profile_quality_gates_none_inherits(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        quality_gates=("uv run pytest",),
+        flavors={
+            TaskFlavor.SPIKE: FlavorOverride(),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    assert profile.quality_gates == ("uv run pytest",)
+
+
+def test_resolve_flavor_profile_brief_replaces_global(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        worker_brief_prepend="global prepend",
+        flavors={
+            TaskFlavor.SPIKE: FlavorOverride(
+                brief_prepend="spike prepend",
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    assert profile.brief_prepend == "spike prepend"
+
+
+def test_resolve_flavor_profile_single_winner_tools_precedence(tmp_path: Path) -> None:
+    """Flavor tools win; family tools not merged in (single-winner rule)."""
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        worker_tools={"claude": ("mcp__tilth__*", "Bash(rtk:*)")},
+        flavors={
+            TaskFlavor.SPIKE: FlavorOverride(
+                tools=("Read", "Edit"),
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    # Flavor tools replace; family tools not merged
+    assert "Read,Edit" in profile.execution_agent
+    assert "Bash(rtk:*)" not in profile.execution_agent
+
+
+# ── AC5: todo-run dispatch unification ──────────────────────────────────────
+
+
+def test_runner_no_default_worker_cmd_constant() -> None:
+    """_DEFAULT_WORKER_CMD must be deleted from runner.py."""
+    import milknado.domains.dispatch.runner as runner
+
+    assert not hasattr(runner, "_DEFAULT_WORKER_CMD"), (
+        "_DEFAULT_WORKER_CMD still present; must be deleted per spec"
+    )
+
+
+def test_runner_no_milknado_worker_cmd_env_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """$MILKNADO_WORKER_CMD must no longer influence dispatch."""
+    import inspect
+
+    import milknado.domains.dispatch.runner as runner
+
+    src = inspect.getsource(runner._resolve_worker_cmd)
+    assert "MILKNADO_WORKER_CMD" not in src, (
+        "_resolve_worker_cmd still reads MILKNADO_WORKER_CMD env var"
+    )
+
+
+def test_validate_worker_argv_still_rejects_unknown_executable() -> None:
+    from milknado.domains.dispatch.runner import _validate_worker_argv
+
+    with pytest.raises(ValueError, match="worker_cmd must start with"):
+        _validate_worker_argv(["evil-bin", "--flag"])
+
+
+# ── AC7: brief semantics ─────────────────────────────────────────────────────
+
+
+def test_flavor_brief_replaces_global() -> None:
+    """resolve_flavor_profile returns flavor brief_prepend, not global."""
+    import tempfile
+    from pathlib import Path
+
+    from milknado.domains.common.flavor_profile import resolve_flavor_profile
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        cfg = MilknadoConfig(
+            agent_family="claude",
+            project_root=tmp,
+            db_path=tmp / ".milknado" / "milknado.db",
+            worker_brief_prepend="global prepend",
+            flavors={
+                TaskFlavor.RESEARCH: FlavorOverride(
+                    brief_prepend="research prepend",
+                ),
+            },
+        )
+        profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+        assert profile.brief_prepend == "research prepend"
+        assert profile.brief_prepend != cfg.worker_brief_prepend
+
+
+# ── Additional coverage for uncovered config paths ───────────────────────────
+
+
+def test_load_config_flavor_valid_execution_agent(tmp_path: Path) -> None:
+    """A valid execution_agent in a flavor entry parses and stores correctly."""
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'execution_agent = "claude -p --model opus"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    from milknado.domains.common.types import TaskFlavor
+
+    fo = cfg.flavors[TaskFlavor.SPIKE]
+    assert fo.execution_agent == "claude -p --model opus"
+
+
+def test_save_config_preserves_flavor_execution_agent(tmp_path: Path) -> None:
+    """save_config round-trips a flavor with execution_agent set."""
+    from milknado.domains.common.types import TaskFlavor
+
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            TaskFlavor.SPIKE: FlavorOverride(
+                execution_agent="claude -p --model opus",
+            ),
+        },
+    )
+    cfg_path = tmp_path / "milknado.toml"
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+    assert loaded.flavors[TaskFlavor.SPIKE].execution_agent == "claude -p --model opus"
+
+
+def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
+    """[milknado.flavor] being a scalar raises ValueError."""
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\nflavor = "oops"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="\\[milknado.flavor\\] must be a table"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_entry_not_a_table_raises(tmp_path: Path) -> None:
+    """A scalar flavor entry raises ValueError."""
+    # We simulate this via a raw dict in _parse_flavor_tables directly.
+    from milknado.domains.common.config import _parse_flavor_tables
+
+    with pytest.raises(ValueError, match="\\[milknado.flavor.spike\\] must be a table"):
+        _parse_flavor_tables({"spike": "oops"}, tmp_path)
+
+
+def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) -> None:
+    """Non-string execution_agent in a flavor entry raises ValueError."""
+    from milknado.domains.common.config import _parse_flavor_entry
+
+    with pytest.raises(ValueError, match="execution_agent must be a string"):
+        _parse_flavor_entry({"execution_agent": 42}, "spike", tmp_path)
+
+
+def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path) -> None:
+    """Non-string quality_gates item in a flavor entry raises ValueError."""
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nquality_gates = [42]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="quality_gates"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> None:
+    """Non-string brief_prepend in a flavor entry raises ValueError."""
+    from milknado.domains.common.config import _parse_flavor_entry
+
+    with pytest.raises(ValueError, match="brief_prepend must be a string"):
+        _parse_flavor_entry({"brief_prepend": 42}, "spike", tmp_path)
+
+
+def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises(tmp_path: Path) -> None:
+    """brief_prepend_path being a number raises ValueError."""
+    from milknado.domains.common.config import _parse_flavor_entry
+
+    with pytest.raises(ValueError, match="brief_prepend_path must be a string or list"):
+        _parse_flavor_entry({"brief_prepend_path": 42}, "spike", tmp_path)
+
+
+def test_load_config_flavor_brief_prepend_path_list_non_string_raises(tmp_path: Path) -> None:
+    """A list brief_prepend_path with a non-string entry raises ValueError."""
+    from milknado.domains.common.config import _parse_flavor_entry
+
+    with pytest.raises(ValueError, match="brief_prepend_path entries must be strings"):
+        _parse_flavor_entry({"brief_prepend_path": [42, "ok.md"]}, "spike", tmp_path)
+
+
+def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
+    """_absolutize_global_flavor_paths resolves relative path lists in flavor entries."""
+    from milknado.domains.common.config import _absolutize_global_flavor_paths
+
+    base_dir = tmp_path / "global"
+    base_dir.mkdir()
+    raw: dict = {
+        "flavor": {
+            "research": {
+                "brief_prepend_path": ["house.md", "/abs/path.md"],
+            },
+            "spike": {
+                "brief_prepend_path": "relative.md",
+            },
+        }
+    }
+    _absolutize_global_flavor_paths(raw, base_dir)
+    assert raw["flavor"]["research"]["brief_prepend_path"] == [
+        str((base_dir / "house.md").resolve()),
+        "/abs/path.md",
+    ]
+    assert raw["flavor"]["spike"]["brief_prepend_path"] == str(
+        (base_dir / "relative.md").resolve()
+    )

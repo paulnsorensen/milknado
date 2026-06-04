@@ -85,9 +85,10 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
-    monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
 
-    result = run_headless(tmp_path, node_id=7, brief="hi", timeout_seconds=10)
+    result = run_headless(
+        tmp_path, node_id=7, brief="hi", timeout_seconds=10, default_cmd="claude"
+    )
 
     assert result.exit_code == 0
     log_text = result.log_path.read_text(encoding="utf-8")

@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import (
-    WorkerToolsOverride,
     default_config,
     global_config_path,
     load_config,
@@ -108,14 +107,16 @@ def test_include_global_false_skips_global(xdg: Path, tmp_path: Path) -> None:
     assert cfg.concurrency_limit == 4  # MilknadoConfig default
 
 
-def test_global_worker_tools_merges_with_local_extend(xdg: Path, tmp_path: Path) -> None:
+def test_global_worker_tools_single_list_affects_execution_agent(
+    xdg: Path, tmp_path: Path
+) -> None:
     _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'extend = ["mcp__github__*"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["...", "mcp__github__*"]\n'
         ),
     )
     local = _write(
@@ -126,17 +127,16 @@ def test_global_worker_tools_merges_with_local_extend(xdg: Path, tmp_path: Path)
     assert "mcp__github__*" in cfg.execution_agent
 
 
-def test_global_extend_and_local_deny_compose(xdg: Path, tmp_path: Path) -> None:
-    """Global and local worker.tools.<family> tables deep-merge — global's
-    extend keys and local's deny keys end up in the same effective override.
-    Same-key conflicts still go to local (last write wins)."""
+def test_local_worker_tools_single_list_replaces_global(xdg: Path, tmp_path: Path) -> None:
+    """Local single-list replaces the global single-list entirely (last write wins
+    in deep-merge on the same key, with local winning)."""
     _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'extend = ["mcp__github__*"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["...", "mcp__github__*"]\n'
         ),
     )
     local = _write(
@@ -144,15 +144,14 @@ def test_global_extend_and_local_deny_compose(xdg: Path, tmp_path: Path) -> None
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'deny = ["Write"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["Read", "Edit"]\n'
         ),
     )
     cfg = load_config(local)
-    # Global's extend survives because deep-merge keeps it on the same table.
-    assert "mcp__github__*" in cfg.execution_agent
-    # Local's deny strips Write from the allowlist.
-    assert "Write" not in cfg.execution_agent.split("--allowedTools")[1]
+    # Local list wins; "..." expanded github tool from global should be absent.
+    assert "mcp__github__*" not in cfg.execution_agent
+    assert "Read,Edit" in cfg.execution_agent
 
 
 # ── prompt prepends ───────────────────────────────────────────────────────────
@@ -303,36 +302,25 @@ def test_local_inline_overrides_global_path(xdg: Path, tmp_path: Path) -> None:
     assert cfg.planning_prompt_prepend == "local inline wins"
 
 
-def test_worker_tools_allow_string_rejected(tmp_path: Path) -> None:
+def test_worker_tools_scalar_string_rejected(tmp_path: Path) -> None:
     """A scalar string is not a list; reject it instead of splatting it into chars."""
     local = _write(
         tmp_path / "milknado.toml",
-        (
-            "[milknado]\n"
-            'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'allow = "Read"\n'
-        ),
+        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "Read"\n'),
     )
     with pytest.raises(ValueError, match="must be a list of strings"):
         load_config(local)
 
 
-def test_worker_tools_extend_with_non_string_rejected(tmp_path: Path) -> None:
+def test_worker_tools_non_string_item_rejected(tmp_path: Path) -> None:
     local = _write(
         tmp_path / "milknado.toml",
-        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools.claude]\nextend = [42]\n'),
+        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = [42]\n'),
     )
-    with pytest.raises(ValueError, match=r"extend\[0\] must be a non-empty string"):
-        load_config(local)
-
-
-def test_worker_tools_deny_with_empty_string_rejected(tmp_path: Path) -> None:
-    local = _write(
-        tmp_path / "milknado.toml",
-        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools.claude]\ndeny = [""]\n'),
-    )
-    with pytest.raises(ValueError, match="must be a non-empty string"):
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado.worker.tools.claude\]\[0\] must be a non-empty string",
+    ):
         load_config(local)
 
 
@@ -376,20 +364,20 @@ def test_worker_table_without_tools_yields_no_overrides(tmp_path: Path) -> None:
     assert cfg.worker_tools == {}
 
 
-def test_worker_tools_family_not_table_rejected(tmp_path: Path) -> None:
-    """A scalar under [milknado.worker.tools] is not a per-family table; reject."""
+def test_worker_tools_family_not_list_rejected(tmp_path: Path) -> None:
+    """A table under [milknado.worker.tools] is not a single list; reject."""
     local = _write(
         tmp_path / "milknado.toml",
         '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "oops"\n',
     )
-    with pytest.raises(ValueError, match=r"\[milknado\.worker\.tools\.claude\] must be a table"):
+    with pytest.raises(ValueError, match=r"must be a list of strings"):
         load_config(local)
 
 
 def test_parse_worker_tools_non_string_family_rejected() -> None:
     """Non-string family keys (only reachable via a raw dict, not TOML) are rejected."""
     with pytest.raises(ValueError, match="family keys must be strings"):
-        _parse_worker_tools({"tools": {1: {"allow": ["Read"]}}})
+        _parse_worker_tools({"tools": {1: ["Read"]}})
 
 
 def test_top_level_milknado_not_table_rejected(tmp_path: Path) -> None:
@@ -399,51 +387,40 @@ def test_top_level_milknado_not_table_rejected(tmp_path: Path) -> None:
         load_config(local)
 
 
-def test_save_config_emits_allow_table_and_omits_derived_execution_agent(
-    tmp_path: Path,
-) -> None:
-    """A structured allow override is serialized; the derived execution_agent is
-    suppressed so it cannot shadow the override on reload."""
-    # Build the config the way load_config does: no explicit execution_agent, so
-    # the in-memory execution_agent IS the command derived from the override —
-    # a derived artifact that save_config should drop.
+def test_save_config_single_list_tools_round_trips(tmp_path: Path) -> None:
+    """A single-list tools override round-trips through save->load."""
     src = _write(
         tmp_path / "in.toml",
         '[milknado]\nagent_family = "claude"\n\n'
-        '[milknado.worker.tools.claude]\nallow = ["Read", "Edit"]\n',
+        '[milknado.worker.tools]\nclaude = ["Read", "Edit"]\n',
     )
     cfg = load_config(src, include_global=False)
     out = tmp_path / "milknado.toml"
     save_config(cfg, out)
     text = out.read_text(encoding="utf-8")
-    assert "[milknado.worker.tools.claude]" in text
     assert '"Read"' in text
     assert '"Edit"' in text
     assert "execution_agent" not in text
-    # Round-trips back to the same structured override.
-    assert load_config(out, include_global=False).worker_tools["claude"].allow == ("Read", "Edit")
+    # Round-trips back to the same list.
+    assert load_config(out, include_global=False).worker_tools["claude"] == ("Read", "Edit")
 
 
-def test_save_config_skips_empty_worker_override(tmp_path: Path) -> None:
-    """An override with no allow/extend/deny is derived noise; don't serialize it."""
-    cfg = replace(
-        default_config(tmp_path),
-        worker_tools={"claude": WorkerToolsOverride()},
-    )
+def test_save_config_skips_empty_worker_tools(tmp_path: Path) -> None:
+    """An empty worker_tools dict produces no [worker.tools] section."""
+    cfg = default_config(tmp_path)
     out = tmp_path / "milknado.toml"
     save_config(cfg, out)
     text = out.read_text(encoding="utf-8")
-    assert "[milknado.worker.tools.claude]" not in text
+    assert "worker.tools" not in text
 
 
-def test_save_config_preserves_explicit_execution_agent_with_override(tmp_path: Path) -> None:
+def test_save_config_preserves_explicit_execution_agent_alongside_tools(tmp_path: Path) -> None:
     """An explicit execution_agent that differs from the derived command is user
-    intent and must survive a save->load round trip, even alongside a structured
-    worker override (which would otherwise re-derive a different command)."""
+    intent and must survive a save->load round trip, even alongside a tools list."""
     cfg = replace(
         default_config(tmp_path),
         execution_agent="claude --my-custom-exec",
-        worker_tools={"claude": WorkerToolsOverride(extend=("mcp__github__*",))},
+        worker_tools={"claude": ("...", "mcp__github__*")},
     )
     out = tmp_path / "milknado.toml"
     save_config(cfg, out)

@@ -749,8 +749,10 @@ class TestAsyncCancel:
         node_id = task["id"]
         # A genuinely mid-run worker: sleeps far longer than the test, so any
         # "failed" terminal state can only come from cooperative cancellation.
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
-        started = _call(milknado_todo_run_start, node_id=node_id, project_root=root)
+        slow_cmd = worker_stub("sleep 30")
+        started = _call(
+            milknado_todo_run_start, node_id=node_id, worker_cmd=slow_cmd, project_root=root
+        )
         run_id = started["run_id"]
         assert started["status"] == "running"
 
@@ -797,9 +799,13 @@ class TestAsyncCancel:
         node_id = task["id"]
         # Worker sleeps far past its 1s timeout, so a terminal state can only come
         # from the poll loop's deadline enforcement, not from the worker exiting.
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
+        slow_cmd = worker_stub("sleep 30")
         started = _call(
-            milknado_todo_run_start, node_id=node_id, timeout_seconds=1, project_root=root
+            milknado_todo_run_start,
+            node_id=node_id,
+            worker_cmd=slow_cmd,
+            timeout_seconds=1,
+            project_root=root,
         )
         run_id = started["run_id"]
 

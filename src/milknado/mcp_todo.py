@@ -18,6 +18,7 @@ from milknado._mcp_core import (
 )
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeKind, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
+from milknado.domains.common.flavor_profile import resolve_flavor_profile
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.dispatch import render_brief
 
@@ -270,7 +271,10 @@ def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
+        node_for_brief = graph.get_node(node_id)
+        flavor = node_for_brief.flavor if node_for_brief is not None else None
+        profile = resolve_flavor_profile(cfg, flavor)
+        brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
         files = graph.get_file_ownership(node_id)
         return {"node_id": node_id, "brief": brief, "files": files}
     finally:

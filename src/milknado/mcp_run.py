@@ -18,6 +18,7 @@ from milknado._mcp_core import (
 )
 from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.flavor_profile import resolve_flavor_profile
 from milknado.domains.dispatch import (
     RUN_ID_RE,
     clear_cancel,
@@ -83,6 +84,7 @@ def _run_and_update_status(
     worker_cmd: str | None,
     timeout_seconds: int,
     *,
+    default_cmd: str,
     brief_prepend: str | None = None,
 ) -> dict:
     node = graph.get_node(node_id)
@@ -112,6 +114,7 @@ def _run_and_update_status(
         worker_cmd,
         timeout_seconds,
         run_id=run_id if running else None,
+        default_cmd=default_cmd,
     )
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
     if running:
@@ -152,7 +155,7 @@ def milknado_todo_run(
 ) -> dict:
     """Spawn a subprocess worker with the task brief on stdin; capture log and update status.
 
-    worker_cmd defaults to $MILKNADO_WORKER_CMD then `claude -p`.
+    worker_cmd defaults to profile.execution_agent (resolved from the node's flavor).
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
     use milknado_todo_run_start / milknado_todo_run_poll.
@@ -171,13 +174,15 @@ def milknado_todo_run(
             )
         _check_ancestor_goal_not_claimed(graph, node_id)
         _claim_ancestor_goal_for_dispatch(graph, node_id, make_run_id(node_id))
+        profile = resolve_flavor_profile(cfg, node.flavor)
         return _run_and_update_status(
             graph,
             node_id,
             root,
             worker_cmd,
             timeout_seconds,
-            brief_prepend=cfg.worker_brief_prepend,
+            default_cmd=profile.execution_agent,
+            brief_prepend=profile.brief_prepend,
         )
     finally:
         graph.close()
@@ -234,7 +239,8 @@ def milknado_todo_run_start(
                 reconcile_node_status(
                     graph, node_id, winner["status"], run_id=winner.get("run_id")
                 )
-        brief = render_brief(graph, node_id, prepend=cfg.worker_brief_prepend)
+        profile = resolve_flavor_profile(cfg, node.flavor)
+        brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
         # Atomic optimistic claim: the cross-process mutual-exclusion point that
         # replaces the in-process dispatch lock. The PENDING/FAILED/BLOCKED ->
         # RUNNING transition and the run_id fence are written in one statement, so a
@@ -248,7 +254,13 @@ def milknado_todo_run_start(
             )
         try:
             ref = start_headless_async(
-                root, node_id, brief, worker_cmd, timeout_seconds, run_id=run_id
+                root,
+                node_id,
+                brief,
+                worker_cmd,
+                timeout_seconds,
+                run_id=run_id,
+                default_cmd=profile.execution_agent,
             )
         except Exception:
             # Startup failed after the claim (bad worker cmd resolved in
