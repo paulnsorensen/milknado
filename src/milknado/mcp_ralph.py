@@ -20,7 +20,13 @@ import sys
 from contextlib import suppress
 from pathlib import Path
 
-from milknado._mcp_core import mcp, open_graph, resolve_project_root
+from milknado._mcp_core import (
+    _check_ancestor_goal_not_claimed,
+    _claim_ancestor_goal_for_dispatch,
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.dispatch import (
@@ -50,16 +56,6 @@ def _resolve_runner_cmd(explicit: str | None) -> list[str]:
     if env:
         return shlex.split(env)
     return list(_DEFAULT_RUNNER)
-
-
-def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
-    """Raise ValueError if an ancestor goal is claimed by a different live run."""
-    claim = graph.ancestor_goal_claimed_by_other(node_id)
-    if claim is not None:
-        raise ValueError(
-            f"node {node_id}'s ancestor goal is claimed by a different run "
-            f"({claim['run_id']!r}); dispatch refused"
-        )
 
 
 @mcp.tool()
@@ -92,7 +88,9 @@ def milknado_ralph_run_start(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        run_id = make_run_id(node_id)
         _check_ancestor_goal_not_claimed(graph, node_id)
+        _claim_ancestor_goal_for_dispatch(graph, node_id, run_id)
         now = now_iso()
         if node.status == NodeStatus.RUNNING:
             # Capture the worktree path BEFORE reconcile clears it from the node row,
@@ -131,7 +129,6 @@ def milknado_ralph_run_start(
                 except Exception as exc:
                     _logger.warning("Failed to remove orphan worktree %s: %s", orphan_wt, exc)
 
-        run_id = make_run_id(node_id)
         if not graph.claim_node(node_id, run_id, now=now):
             current = graph.get_node(node_id)
             status = current.status.value if current is not None else "gone"

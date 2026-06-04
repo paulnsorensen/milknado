@@ -580,3 +580,18 @@ def ancestor_goal_claim(
                 return claim
         current_id = parent_id
     return None
+
+
+def find_ancestor_goal_id(conn: sqlite3.Connection, node_id: int) -> int | None:
+    """Return the id of the closest ancestor (or self) with kind='goal', or None."""
+    current_id: int | None = node_id
+    while current_id is not None:
+        row = conn.execute(
+            "SELECT parent_id, kind FROM nodes WHERE id = ?", (current_id,)
+        ).fetchone()
+        if row is None:
+            break
+        if row["kind"] == "goal":
+            return current_id
+        current_id = row["parent_id"]
+    return None

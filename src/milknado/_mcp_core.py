@@ -77,13 +77,13 @@ def _worktree_main_checkout(cwd: Path) -> Path | None:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
         return None
     if result.returncode != 0:
         return None
     common_dir = result.stdout.strip()
     # An absolute path means we're in a linked worktree: the common dir lives
-    # inside the main checkout's .git. The main checkout root is its grandparent
+    # inside the main checkout's .git. The main checkout root is its parent
     # (common_dir ends in .git, so parent is the main checkout).
     if not os.path.isabs(common_dir):
         return None  # relative == main checkout (e.g. ".git") — no hop needed
@@ -99,6 +99,30 @@ def resolve_project_root(explicit: str | None) -> Path:
     cwd = Path.cwd().resolve()
     main = _worktree_main_checkout(cwd)
     return main if main is not None else cwd
+
+
+def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
+    """Raise ValueError if an ancestor goal is claimed by a different live run."""
+    claim = graph.ancestor_goal_claimed_by_other(node_id)
+    if claim is not None:
+        raise ValueError(
+            f"node {node_id}'s ancestor goal is claimed by a different run "
+            f"({claim['run_id']!r}); dispatch refused"
+        )
+
+
+def _claim_ancestor_goal_for_dispatch(graph, node_id: int, run_id: str) -> None:  # noqa: ANN001
+    """Claim the closest ancestor goal for run_id+pid before dispatch.
+
+    No-op when the node has no ancestor goal.  Called after
+    _check_ancestor_goal_not_claimed so a live foreign claimant is already
+    refused before this write.
+    """
+    import os as _os
+
+    from milknado.domains.dispatch._runstate import now_iso
+
+    graph.claim_ancestor_goal(node_id, run_id, _os.getpid(), now=now_iso())
 
 
 def open_graph(root: Path):

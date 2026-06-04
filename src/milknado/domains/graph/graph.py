@@ -34,6 +34,7 @@ from milknado.domains.graph._persistence import (
     deposit_run_message,
     drop_all,
     ensure_schema,
+    find_ancestor_goal_id,
     finish_run,
     get_file_ownership,
     get_goal_claim,
@@ -522,6 +523,20 @@ class MikadoGraph(_AnalyticsFacade):
         """Release a goal claim, fenced on run_id. Returns True iff released."""
         return release_goal_row(self._conn, goal_id, run_id)
 
+    def claim_ancestor_goal(self, node_id: int, run_id: str, pid: int, *, now: str) -> int | None:
+        """Find the closest ancestor goal and claim it with run_id + pid.
+
+        Returns the goal_id that was claimed (or already owned by this run_id),
+        or None when there is no ancestor goal node.
+        """
+        goal_id = find_ancestor_goal_id(self._conn, node_id)
+        if goal_id is None:
+            return None
+        claimed = claim_goal_row(self._conn, goal_id, run_id, now)
+        if claimed:
+            set_goal_claim_pid(self._conn, goal_id, run_id, pid)
+        return goal_id
+
     def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
         """Record the coordinator pid on a goal claim (CAS on run_id)."""
         set_goal_claim_pid(self._conn, goal_id, run_id, pid)
@@ -554,8 +569,8 @@ class MikadoGraph(_AnalyticsFacade):
         if claim is None:
             return None
         pid = claim["pid"]
-        if pid is not None and not pid_alive(pid):
-            # Dead claimant: reclaim and allow dispatch.
+        if pid is None or not pid_alive(pid):
+            # NULL or dead pid: reclaim and allow dispatch.
             release_goal_row(self._conn, claim["goal_id"], claim["run_id"])
             return None
         return claim

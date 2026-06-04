@@ -527,3 +527,150 @@ class TestWorktreeHopAdditionalEdgeCases:
         fake.stdout = "../.git"  # relative but non-standard
         monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
         assert _worktree_main_checkout(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Cure-phase regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestProductionClaimPath:
+    """Dispatch tools claim the ancestor goal when starting a task (spec:blocker).
+
+    The acceptance criterion: run A dispatches under goal G (auto-claiming G),
+    then run B's dispatch under the same goal is refused; after A's pid dies the
+    claim is reclaimed inline and run B proceeds.
+    """
+
+    def _seed(self, tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
+        db = tmp_path / ".milknado" / "milknado.db"
+        db.parent.mkdir()
+        g = MikadoGraph(db)
+        goal_id, task_id = _make_goal_with_task(g)
+        g.close()
+        return tmp_path, MikadoGraph(db), goal_id, task_id
+
+    def test_claim_ancestor_goal_for_dispatch_writes_claim(self, tmp_path: Path) -> None:
+        """_claim_ancestor_goal_for_dispatch claims the ancestor goal with the caller pid."""
+        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
+
+        _, graph, goal_id, task_id = self._seed(tmp_path)
+        run_id = "run-A"
+        _claim_ancestor_goal_for_dispatch(graph, task_id, run_id)
+        goal = graph.get_node(goal_id)
+        assert goal is not None
+        assert goal.goal_run_id == run_id, (
+            "dispatch must claim the ancestor goal with the run_id so a second "
+            "coordinator sees it and is refused"
+        )
+        graph.close()
+
+    def test_dispatch_via_production_path_blocks_second_run(self, tmp_path: Path) -> None:
+        """After run A claims via the production dispatch path, run B is refused.
+
+        This is the spec's core acceptance criterion: the fence must engage in
+        production, not just in tests that manufacture the claim directly.
+        """
+        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
+
+        root, graph, goal_id, task_id = self._seed(tmp_path)
+        # Run A claims via the production helper (same code path the dispatch tools use).
+        _claim_ancestor_goal_for_dispatch(graph, task_id, "run-A")
+        graph.close()
+
+        # Run B (different run_id) tries to dispatch — must be refused by _check.
+        from milknado.mcp_run import milknado_todo_run_start
+
+        with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
+            milknado_todo_run_start(task_id, project_root=str(root))
+
+    def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
+        """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
+        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
+        from milknado.domains.graph._persistence import set_goal_claim_pid
+
+        root, graph, goal_id, task_id = self._seed(tmp_path)
+        # Run A claims, then set a dead pid to simulate coordinator crash.
+        _claim_ancestor_goal_for_dispatch(graph, task_id, "run-dead")
+        set_goal_claim_pid(graph._conn, goal_id, "run-dead", _DEAD_PID)
+        graph.close()
+
+        # Run B's dispatch should no longer be blocked (dead pid → inline reclaim).
+        from milknado.mcp_run import milknado_todo_run_start
+
+        try:
+            milknado_todo_run_start(task_id, project_root=str(root))
+        except ValueError as exc:
+            assert "claimed" not in str(exc).lower(), (
+                f"dead claimant must be reclaimed inline; dispatch must not be blocked: {exc}"
+            )
+
+
+class TestDeleteOneGoalClaimsCascade:
+    """_delete_one must clear goal_claims to avoid FK IntegrityError."""
+
+    def test_delete_claimed_goal_node_does_not_raise_integrity_error(
+        self, graph: MikadoGraph
+    ) -> None:
+        """Deleting a claimed goal via delete_subtree must not raise IntegrityError.
+
+        Without the fix, the goal_claims FK prevents deletion and aborts the
+        delete_subtree transaction with sqlite3.IntegrityError.
+        """
+        goal_id, task_id = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-A", now=now_iso())
+        # This must not raise: _delete_one must clear goal_claims first.
+        deleted = graph.delete_node(goal_id, cascade=True)
+        assert deleted == 2, "goal + task must be deleted"
+        assert graph.get_node(goal_id) is None
+        assert graph.get_node(task_id) is None
+
+    def test_delete_unclaimed_goal_is_unchanged(self, graph: MikadoGraph) -> None:
+        goal_id, task_id = _make_goal_with_task(graph)
+        # No claim — must still work.
+        graph.delete_node(goal_id, cascade=True)
+        assert graph.get_node(goal_id) is None
+
+
+class TestNullPidClaimReclaimable:
+    """A goal claim with pid=NULL is treated as reclaimable (medium finding).
+
+    A coordinator that crashes between claim_goal and set_goal_pid leaves
+    pid=NULL. Without this fix that claim blocks all foreign dispatch forever.
+    """
+
+    def test_null_pid_claim_is_reclaimable_inline(self, graph: MikadoGraph) -> None:
+        """ancestor_goal_claimed_by_other reclaims NULL-pid claims inline."""
+        goal_id, task_id = _make_goal_with_task(graph)
+        # Claim without setting pid — simulates crash between claim and set_goal_pid.
+        graph.claim_goal(goal_id, "run-crashed", now=now_iso())
+        # pid is NULL; must be treated as reclaimable, not permanently live.
+        result = graph.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-new")
+        assert result is None, (
+            "a NULL-pid claim must be reclaimed inline so a crashed coordinator "
+            "does not wedge the subtree forever"
+        )
+        assert graph.get_node(goal_id).goal_run_id is None, (
+            "goal_claims row must be deleted after NULL-pid reclaim"
+        )
+
+
+class TestUnicodeDecodeErrorCaught:
+    """UnicodeDecodeError from subprocess stdout decode is caught (low finding)."""
+
+    def test_unicode_decode_error_falls_back_to_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A non-UTF8 byte in subprocess output raises UnicodeDecodeError, not a crash."""
+        import subprocess
+
+        from milknado._mcp_core import _worktree_main_checkout
+
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            ),
+        )
+        assert _worktree_main_checkout(tmp_path) is None
