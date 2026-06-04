@@ -27,10 +27,6 @@ _logger = logging.getLogger(__name__)
 # ignored with a warning rather than crashing.
 _LOCAL_ONLY_KEYS = ("project_root", "db_path", "plugins")
 
-# Valid TaskFlavor values (keep in sync with types.py without importing the Enum
-# to avoid a circular import at module level).
-_VALID_FLAVOR_KEYS = frozenset({"implement", "spec", "spike", "prototype", "research"})
-
 
 @dataclass(frozen=True)
 class FlavorOverride:
@@ -166,10 +162,11 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         milknado["prompts"] = prompts
 
     # Save worker.tools as single-list per family (raw, may contain "...").
-    tools: dict[str, list[str]] = {}
-    for fam, tool_list in sorted(config.worker_tools.items()):
-        if tool_list:  # skip empty
-            tools[fam] = list(tool_list)
+    # An explicit empty list is meaningful (no tools, replacing the family
+    # default), so it must survive the round trip.
+    tools: dict[str, list[str]] = {
+        fam: list(tool_list) for fam, tool_list in sorted(config.worker_tools.items())
+    }
     if tools:
         milknado["worker"] = {"tools": tools}
 
@@ -398,15 +395,15 @@ def _parse_flavor_tables(
 
     out: dict[TaskFlavor, FlavorOverride] = {}
     for flavor_name, entry in flavor_raw.items():
-        if flavor_name not in _VALID_FLAVOR_KEYS:
+        try:
+            flavor = TaskFlavor(flavor_name)
+        except ValueError:
             raise ValueError(
                 f"[milknado.flavor] unknown flavor key {flavor_name!r}; "
-                f"expected one of {sorted(_VALID_FLAVOR_KEYS)}"
-            )
+                f"expected one of {sorted(f.value for f in TaskFlavor)}"
+            ) from None
         if not isinstance(entry, dict):
             raise ValueError(f"[milknado.flavor.{flavor_name}] must be a table")
-
-        flavor = TaskFlavor(flavor_name)
         fo = _parse_flavor_entry(entry, flavor_name, project_root)
         out[flavor] = fo
     return out

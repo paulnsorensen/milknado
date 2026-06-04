@@ -208,6 +208,22 @@ class TestSaveConfig:
         # And the structured override itself survives the round trip.
         assert "mcp__github__*" in loaded.worker_tools.get("claude", ())
 
+    def test_roundtrip_preserves_explicit_empty_worker_tools(self, tmp_path: Path) -> None:
+        # An explicit empty list means "no tools" (replaces the family default
+        # entirely); dropping it on save would silently restore the default
+        # tool set on reload.
+        src = tmp_path / "in.toml"
+        src.write_text(
+            '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = []\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(src, include_global=False)
+        assert cfg.worker_tools.get("claude") == ()
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.worker_tools.get("claude") == ()
+
     def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)
         path = tmp_path / "milknado.toml"

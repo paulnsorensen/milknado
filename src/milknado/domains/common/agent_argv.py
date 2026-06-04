@@ -77,7 +77,9 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
-# Worker subprocesses may only invoke a known AI-agent CLI.
+# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
+# executable name (basename of argv[0]) so neither a prefix trick
+# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
 _ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
     {"claude", "codex", "cursor-agent", "gemini"}
 )

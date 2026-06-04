@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from milknado.domains.common import NodeStatus, pid_alive
+from milknado.domains.common.agent_argv import _ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import clear_cancel as _clear_cancel
@@ -53,14 +54,6 @@ def _open_worker_graph(project_root: Path):  # noqa: ANN202
 
     graph, _cfg = open_graph(project_root)
     return graph
-
-
-# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
-# executable name (basename of argv[0]) so neither a prefix trick
-# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
-_ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "cursor-agent", "gemini"}
-)
 
 
 def _validate_worker_argv(argv: list[str]) -> None:

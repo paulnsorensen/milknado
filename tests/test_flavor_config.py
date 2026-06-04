@@ -422,10 +422,10 @@ def test_runner_no_milknado_worker_cmd_env_fallback(
 
 
 def test_validate_worker_argv_still_rejects_unknown_executable() -> None:
-    from milknado.domains.dispatch.runner import _validate_worker_argv
+    import milknado.domains.dispatch.runner as runner
 
     with pytest.raises(ValueError, match="worker_cmd must start with"):
-        _validate_worker_argv(["evil-bin", "--flag"])
+        runner._validate_worker_argv(["evil-bin", "--flag"])
 
 
 # ── AC7: brief semantics ─────────────────────────────────────────────────────
@@ -630,21 +630,21 @@ def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
 # AC5 dispatch: explicit worker_cmd overrides flavor execution_agent in resolved profile
 def test_resolve_worker_cmd_explicit_beats_profile_default() -> None:
     """_resolve_worker_cmd: explicit arg wins over the profile default."""
-    from milknado.domains.dispatch.runner import _resolve_worker_cmd
+    import milknado.domains.dispatch.runner as runner
 
     # Explicit wins; default is ignored.
-    result = _resolve_worker_cmd("claude -p", "claude --model opus")
+    result = runner._resolve_worker_cmd("claude -p", "claude --model opus")
     assert result == ["claude", "-p"]
 
 
 def test_resolve_worker_cmd_empty_explicit_falls_back_to_profile() -> None:
     """_resolve_worker_cmd: empty/None explicit falls back to the profile default."""
-    from milknado.domains.dispatch.runner import _resolve_worker_cmd
+    import milknado.domains.dispatch.runner as runner
 
-    result = _resolve_worker_cmd(None, "claude -p")
+    result = runner._resolve_worker_cmd(None, "claude -p")
     assert result == ["claude", "-p"]
 
-    result = _resolve_worker_cmd("", "claude -p")
+    result = runner._resolve_worker_cmd("", "claude -p")
     assert result == ["claude", "-p"]
 
 
