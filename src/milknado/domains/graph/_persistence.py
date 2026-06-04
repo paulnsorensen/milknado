@@ -261,6 +261,7 @@ def drop_all(conn: sqlite3.Connection) -> int:
     conn.execute("DELETE FROM runs")
     conn.execute("DELETE FROM file_ownership")
     conn.execute("DELETE FROM edges")
+    conn.execute("DELETE FROM goal_claims")
     conn.execute("DELETE FROM nodes")
     conn.execute("DELETE FROM plan_state")
     conn.execute("DELETE FROM batch_plans")
