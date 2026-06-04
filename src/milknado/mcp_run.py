@@ -52,6 +52,16 @@ def _validate_worker_cmd(worker_cmd: str | None) -> None:
     _validate_worker_argv(shlex.split(worker_cmd))
 
 
+def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
+    """Raise ValueError if an ancestor goal is claimed by a different live run."""
+    claim = graph.ancestor_goal_claimed_by_other(node_id)
+    if claim is not None:
+        raise ValueError(
+            f"node {node_id}'s ancestor goal is claimed by a different run "
+            f"({claim['run_id']!r}); dispatch refused"
+        )
+
+
 def _ensure_running(graph, node_id: int) -> bool:
     """Move a node to RUNNING so a (re)run's terminal transition (RUNNING ->
     DONE/FAILED) is always valid. BLOCKED/FAILED are reset through PENDING
@@ -163,6 +173,7 @@ def milknado_todo_run(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        _check_ancestor_goal_not_claimed(graph, node_id)
         return _run_and_update_status(
             graph,
             node_id,
@@ -199,6 +210,7 @@ def milknado_todo_run_start(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        _check_ancestor_goal_not_claimed(graph, node_id)
         if node.status == NodeStatus.RUNNING:
             # Before the claim can succeed, reconcile any orphaned terminal runs
             # for this node — a prior worker may have finished without anyone

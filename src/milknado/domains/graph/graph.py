@@ -26,20 +26,25 @@ from milknado.domains.graph._mutations import (
     would_create_cycle,
 )
 from milknado.domains.graph._persistence import (
+    ancestor_goal_claim,
     check_parallel_safety,
     children_id_map,
+    claim_goal_row,
     create_tables,
     deposit_run_message,
     drop_all,
     ensure_schema,
     finish_run,
     get_file_ownership,
+    get_goal_claim,
     get_run,
     latest_run_message,
     recent_runs,
+    release_goal_row,
     row_to_node,
     runs_for_node,
     set_file_ownership,
+    set_goal_claim_pid,
     set_pid,
     set_run_pid,
     set_worktree,
@@ -190,8 +195,17 @@ class MikadoGraph(_AnalyticsFacade):
                 _logger.exception("Plugin %s raised in on_node_status_change", plugin.meta.name)
 
     def get_node(self, node_id: int) -> MikadoNode | None:
+        from dataclasses import replace
+
         row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-        return row_to_node(row) if row else None
+        if row is None:
+            return None
+        node = row_to_node(row)
+        if node.kind == NodeKind.GOAL:
+            claim = get_goal_claim(self._conn, node_id)
+            if claim is not None:
+                return replace(node, goal_run_id=claim["run_id"])
+        return node
 
     def get_all_nodes(self) -> list[MikadoNode]:
         return [row_to_node(r) for r in self._conn.execute("SELECT * FROM nodes").fetchall()]
@@ -472,6 +486,65 @@ class MikadoGraph(_AnalyticsFacade):
 
     def drop_all(self) -> int:
         return drop_all(self._conn)
+
+    # ── Goal-claim fencing (coordinator subtree lock) ────────────────────────
+
+    def claim_goal(self, goal_id: int, run_id: str, *, now: str) -> bool:
+        """Claim a goal node as owned by run_id. Returns True iff this caller won.
+
+        Uses INSERT OR IGNORE as the mutual-exclusion point across processes.
+        Only GOAL kind nodes may be claimed; raises ValueError otherwise.
+        """
+        node = self.get_node(goal_id)
+        if node is None:
+            raise ValueError(f"node {goal_id} not found")
+        if node.kind != NodeKind.GOAL:
+            raise ValueError(
+                f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
+            )
+        return claim_goal_row(self._conn, goal_id, run_id, now)
+
+    def release_goal(self, goal_id: int, run_id: str) -> bool:
+        """Release a goal claim, fenced on run_id. Returns True iff released."""
+        return release_goal_row(self._conn, goal_id, run_id)
+
+    def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
+        """Record the coordinator pid on a goal claim (CAS on run_id)."""
+        set_goal_claim_pid(self._conn, goal_id, run_id, pid)
+
+    def try_reclaim_goal(self, goal_id: int, *, now: str) -> bool:  # noqa: ARG002
+        """Free a goal claim whose owner pid is provably dead.
+
+        Returns True iff a dead owner was released so a new claimant can win.
+        A live or pid-unknown owner is left intact.
+        """
+        claim = get_goal_claim(self._conn, goal_id)
+        if claim is None:
+            return False
+        pid = claim["pid"]
+        if pid is None or pid_alive(pid):
+            return False
+        # Dead pid: delete the stale claim so a fresh claimant can win.
+        return release_goal_row(self._conn, goal_id, claim["run_id"])
+
+    def ancestor_goal_claimed_by_other(
+        self, node_id: int, *, caller_run_id: str | None = None
+    ) -> dict | None:
+        """Return a blocking goal claim dict if an ancestor goal is owned by a different run.
+
+        Performs pid-liveness reclaim in-line: a dead foreign claimant is freed
+        and the check returns None (allowed), mirroring claim_node's dead-owner reclaim.
+        Returns None when dispatch is allowed; returns the claim dict when blocked.
+        """
+        claim = ancestor_goal_claim(self._conn, node_id, caller_run_id)
+        if claim is None:
+            return None
+        pid = claim["pid"]
+        if pid is not None and not pid_alive(pid):
+            # Dead claimant: reclaim and allow dispatch.
+            release_goal_row(self._conn, claim["goal_id"], claim["run_id"])
+            return None
+        return claim
 
     def close(self) -> None:
         # Fold the WAL into the main .db file so the documented

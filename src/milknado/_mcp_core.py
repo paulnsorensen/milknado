@@ -65,13 +65,40 @@ mcp = FastMCP(
 )
 
 
+def _worktree_main_checkout(cwd: Path) -> Path | None:
+    """If cwd is a linked git worktree, return the main checkout root; else None."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    common_dir = result.stdout.strip()
+    # An absolute path means we're in a linked worktree: the common dir lives
+    # inside the main checkout's .git. The main checkout root is its grandparent
+    # (common_dir ends in .git, so parent is the main checkout).
+    if not os.path.isabs(common_dir):
+        return None  # relative == main checkout (e.g. ".git") — no hop needed
+    return Path(common_dir).parent.resolve()
+
+
 def resolve_project_root(explicit: str | None) -> Path:
     if explicit and explicit.strip():
         return Path(explicit).expanduser().resolve()
     env = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    return Path.cwd().resolve()
+    cwd = Path.cwd().resolve()
+    main = _worktree_main_checkout(cwd)
+    return main if main is not None else cwd
 
 
 def open_graph(root: Path):

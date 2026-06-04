@@ -52,6 +52,16 @@ def _resolve_runner_cmd(explicit: str | None) -> list[str]:
     return list(_DEFAULT_RUNNER)
 
 
+def _check_ancestor_goal_not_claimed(graph, node_id: int) -> None:  # noqa: ANN001
+    """Raise ValueError if an ancestor goal is claimed by a different live run."""
+    claim = graph.ancestor_goal_claimed_by_other(node_id)
+    if claim is not None:
+        raise ValueError(
+            f"node {node_id}'s ancestor goal is claimed by a different run "
+            f"({claim['run_id']!r}); dispatch refused"
+        )
+
+
 @mcp.tool()
 def milknado_ralph_run_start(
     node_id: int,
@@ -82,6 +92,7 @@ def milknado_ralph_run_start(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
+        _check_ancestor_goal_not_claimed(graph, node_id)
         now = now_iso()
         if node.status == NodeStatus.RUNNING:
             # Capture the worktree path BEFORE reconcile clears it from the node row,
