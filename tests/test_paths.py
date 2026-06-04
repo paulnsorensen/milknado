@@ -68,3 +68,8 @@ class TestNormalizeHintPaths:
     def test_whitespace_only_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="empty"):
             normalize_hint_paths(["  "], tmp_path)
+
+    def test_padded_path_trimmed_before_normalization(self, tmp_path: Path) -> None:
+        # Padding must not persist into the stored hint, or it never matches the real file.
+        result = normalize_hint_paths(["  src/foo.py  "], tmp_path)
+        assert result == ["src/foo.py"]

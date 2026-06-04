@@ -136,7 +136,8 @@ def milknado_todo_add(
 ) -> dict:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
 
-    files: optional list of paths this node will touch (relative to project root).
+    files: optional list of paths this node will touch (relative to project root,
+    or absolute under it).
     """
     node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
@@ -317,7 +318,8 @@ def milknado_track_follow_up(
     worker is completing never gains an unmet prerequisite. If MILKNADO_NODE_ID
     is unset the node is created at root level.
 
-    files: optional list of paths this follow-up will touch (relative to project root).
+    files: optional list of paths this follow-up will touch (relative to project
+    root, or absolute under it).
     """
     node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
@@ -384,14 +386,15 @@ def milknado_edit_node(
         raise ValueError("nothing to edit: provide description, kind, and/or files")
     node_kind = _parse_kind(kind) if kind is not None else None
     root = resolve_project_root(project_root or None)
+    hint_paths = normalize_hint_paths(files, root) if files is not None else None
     graph, _cfg = open_graph(root)
     try:
         if description is not None or node_kind is not None:
             graph.update_node(node_id, description=description, kind=node_kind)
-        if files is not None:
+        if hint_paths is not None:
             if description is None and node_kind is None and graph.get_node(node_id) is None:
                 raise ValueError(f"node {node_id} not found")
-            graph.set_file_ownership(node_id, normalize_hint_paths(files, root))
+            graph.set_file_ownership(node_id, hint_paths)
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after edit")

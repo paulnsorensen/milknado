@@ -2050,3 +2050,19 @@ class TestFileHintsMcp:
         result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
         brief = result["brief"]
         assert brief.index("alpha.py") < brief.index("beta.py") < brief.index("gamma.py")
+
+    def test_edit_node_rejected_files_leaves_description_unchanged(self, tmp_path: Path) -> None:
+        # Validation must run before any write: a rejected files hint must not
+        # half-apply the edit, or a retrying caller double-applies.
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="original", project_root=root)
+        with pytest.raises(ValueError, match="escapes"):
+            _call(
+                milknado_edit_node,
+                node_id=task["id"],
+                description="mutated",
+                files=["../outside.py"],
+                project_root=root,
+            )
+        node = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert node["description"] == "original"

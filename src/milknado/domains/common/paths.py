@@ -16,7 +16,7 @@ def normalize_hint_paths(files: list[str], project_root: Path) -> list[str]:
     for raw in files:
         if not raw.strip():
             raise ValueError(f"path {raw!r} is empty")
-        p = Path(raw)
+        p = Path(raw.strip())
         resolved = (root / p if not p.is_absolute() else p).resolve()
         try:
             rel = resolved.relative_to(root)
