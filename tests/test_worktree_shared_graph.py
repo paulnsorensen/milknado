@@ -277,3 +277,253 @@ class TestDispatchRefusalUnderClaimedGoal:
         # Different run_id: blocked
         assert g2.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-coord-B") is not None
         g2.close()
+
+
+# ---------------------------------------------------------------------------
+# Press hardening — edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestPidLivenessEdgeCases:
+    """Edge cases for the pid-liveness reclaim path."""
+
+    def test_try_reclaim_goal_when_pid_is_none_returns_false(self, graph: MikadoGraph) -> None:
+        """A claim with no pid recorded is not reclaimable — unknown liveness.
+
+        claim_goal inserts pid=NULL. Until set_goal_pid is called, try_reclaim_goal
+        must leave the claim intact so the coordinator can still record its pid.
+        """
+        goal_id, _ = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-A", now=now_iso())
+        # pid is NULL at this point — liveness unknown, must not reclaim
+        assert graph.try_reclaim_goal(goal_id, now=now_iso()) is False
+        # Claim still present
+        assert graph.get_node(goal_id).goal_run_id == "run-A"
+
+    def test_claim_goal_twice_same_run_id_returns_false(self, graph: MikadoGraph) -> None:
+        """INSERT OR IGNORE: second claim by the same run returns False.
+
+        The claim already exists — rowcount is 0. The current holder must NOT
+        be treated as 'new winner' when it polls claim_goal again. Callers that
+        own a goal and call claim_goal again should re-check via get_node instead.
+        """
+        goal_id, _ = _make_goal_with_task(graph)
+        first = graph.claim_goal(goal_id, "run-A", now=now_iso())
+        second = graph.claim_goal(goal_id, "run-A", now=now_iso())
+        assert first is True
+        assert second is False  # INSERT OR IGNORE: row exists, rowcount=0
+
+
+class TestAutoReleaseOnCompletion:
+    """Goal claims are released when the goal node transitions to a terminal state.
+
+    The spec promises: 'Release on goal completion/failure/cancel.'
+    Without auto-release a completed goal's claim lingers, permanently blocking
+    re-dispatch of any new task added under that goal after the run completes.
+    """
+
+    def test_goal_claim_released_when_goal_marked_done(self, graph: MikadoGraph) -> None:
+        """mark_done on a claimed goal auto-releases the claim."""
+        goal_id, _ = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-A", now=now_iso())
+        assert graph.get_node(goal_id).goal_run_id == "run-A"
+        graph.mark_running(goal_id)
+        graph.mark_done(goal_id)
+        # After completion the claim must be gone so a fresh run can claim the goal again.
+        assert graph.get_node(goal_id).goal_run_id is None
+
+    def test_goal_claim_released_when_goal_marked_failed(self, graph: MikadoGraph) -> None:
+        """mark_failed on a claimed goal auto-releases the claim."""
+        goal_id, _ = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-A", now=now_iso())
+        graph.mark_failed(goal_id)
+        assert graph.get_node(goal_id).goal_run_id is None
+
+
+class TestAncestorWalkDeepNesting:
+    """ancestor_goal_claimed_by_other walks the full parent chain."""
+
+    def test_three_level_tree_roadmap_goal_task(self, graph: MikadoGraph) -> None:
+        """roadmap → goal (claimed) → task: walk reaches the goal through the roadmap."""
+        from milknado.domains.common import NodeKind
+
+        roadmap = graph.add_node("roadmap", kind=NodeKind.ROADMAP)
+        goal = graph.add_node("goal", parent_id=roadmap.id, kind=NodeKind.GOAL)
+        task = graph.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+        graph.claim_goal(goal.id, "run-coord-A", now=now_iso())
+        graph.set_goal_pid(goal.id, "run-coord-A", os.getpid())
+
+        # Different run: blocked
+        blocked = graph.ancestor_goal_claimed_by_other(task.id, caller_run_id="run-coord-B")
+        assert blocked is not None
+        assert blocked["run_id"] == "run-coord-A"
+        # Same run: allowed
+        assert graph.ancestor_goal_claimed_by_other(task.id, caller_run_id="run-coord-A") is None
+
+    def test_task_with_no_ancestor_goal_is_allowed(self, graph: MikadoGraph) -> None:
+        """A task with no goal ancestor is never blocked."""
+        task = graph.add_node("orphan task", kind=NodeKind.TASK)
+        assert graph.ancestor_goal_claimed_by_other(task.id, caller_run_id="any") is None
+
+
+class TestWorktreeHopEdgeCases:
+    """Edge cases in _worktree_main_checkout."""
+
+    def test_oserror_from_git_falls_back_to_cwd(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """When git raises OSError (not installed), the cwd fallback applies unchanged."""
+        import subprocess
+
+        from milknado._mcp_core import _worktree_main_checkout
+
+        def _raise_oserror(*args, **kwargs):
+            raise OSError("git not found")
+
+        monkeypatch.setattr(subprocess, "run", _raise_oserror)
+        # _worktree_main_checkout returns None on OSError → resolve_project_root uses cwd
+        assert _worktree_main_checkout(tmp_path) is None
+
+    def test_empty_git_common_dir_output_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An empty string from --git-common-dir (unusual but possible) is not absolute.
+
+        os.path.isabs("") is False so it takes the relative path branch → None.
+        """
+        import subprocess
+        from unittest.mock import MagicMock
+
+        from milknado._mcp_core import _worktree_main_checkout
+
+        fake = MagicMock()
+        fake.returncode = 0
+        fake.stdout = ""  # empty output
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
+        assert _worktree_main_checkout(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# Press hardening
+# ---------------------------------------------------------------------------
+
+
+class TestCancelAutoRelease:
+    """Goal claim is released when a run is cancelled and the node is reconciled.
+
+    The spec promises: 'Release on goal completion/failure/cancel.'
+    _reconcile_cancel routes through reconcile_node_status → mark_terminal
+    → _release_goal_claim_on_terminal. Without this hook, a cancelled run's
+    goal claim would permanently block re-dispatch under that goal.
+    """
+
+    def test_goal_claim_released_when_node_reconciled_via_mark_terminal(
+        self, graph: MikadoGraph
+    ) -> None:
+        """mark_terminal (the cancel reconcile path) auto-releases a goal claim."""
+        from milknado.domains.common import NodeStatus
+        from milknado.domains.dispatch._runstate import make_run_id
+
+        goal_id, task_id = _make_goal_with_task(graph)
+        run_id = make_run_id(goal_id)
+        graph.claim_goal(goal_id, run_id, now=now_iso())
+        assert graph.get_node(goal_id).goal_run_id == run_id
+
+        # Simulate the cancel reconcile path: mark_terminal on the goal node itself
+        # (mark_running first to satisfy the RUNNING→terminal gate).
+        graph.mark_running(goal_id, run_id=run_id)
+        result = graph.mark_terminal(goal_id, run_id, NodeStatus.FAILED)
+
+        # mark_terminal returns True (wrote the terminal row) and must release the claim.
+        assert result is True
+        assert graph.get_node(goal_id).goal_run_id is None, (
+            "goal claim must be released after mark_terminal(FAILED) so a new run "
+            "can claim the goal after cancel"
+        )
+
+
+class TestAncestorGoalCallerRunIdNone:
+    """ancestor_goal_claimed_by_other blocks when caller_run_id is None.
+
+    A caller with no run_id (e.g. a task started outside a coordinator context)
+    cannot be identified as the same run as any claimant — any live foreign claim
+    must block dispatch. 'None != run-A' is True so the check returns the claim.
+    """
+
+    def test_none_caller_run_id_is_blocked_by_any_live_claim(self, graph: MikadoGraph) -> None:
+        goal_id, task_id = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-A", now=now_iso())
+        graph.set_goal_pid(goal_id, "run-A", os.getpid())  # live owner
+
+        blocked = graph.ancestor_goal_claimed_by_other(task_id, caller_run_id=None)
+        assert blocked is not None, (
+            "a caller with run_id=None must be blocked by any live claim; "
+            "None is not the same run as 'run-A'"
+        )
+        assert blocked["run_id"] == "run-A"
+
+
+class TestInlineDeadPidReclaim:
+    """ancestor_goal_claimed_by_other reclaims dead claimants inline.
+
+    When the method encounters a foreign claim whose pid is dead, it should
+    delete the claim and return None (allowed) — the same dead-owner reclaim
+    semantics as claim_node. The reclaim must actually free the row so a
+    subsequent claim by a new run succeeds.
+    """
+
+    def test_inline_dead_pid_reclaim_frees_row_and_returns_none(self, graph: MikadoGraph) -> None:
+        goal_id, task_id = _make_goal_with_task(graph)
+        graph.claim_goal(goal_id, "run-dead", now=now_iso())
+        graph.set_goal_pid(goal_id, "run-dead", _DEAD_PID)
+
+        # The call itself should reclaim and allow.
+        result = graph.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-new")
+        assert result is None, "dead claimant must be reclaimed inline; dispatch should be allowed"
+        # The claim row must be gone so a new run can claim the goal.
+        assert graph.get_node(goal_id).goal_run_id is None, (
+            "goal_claims row must be deleted after inline reclaim"
+        )
+        # New run can now win the claim.
+        assert graph.claim_goal(goal_id, "run-new", now=now_iso()) is True
+
+
+class TestWorktreeHopAdditionalEdgeCases:
+    """Additional boundary cases for _worktree_main_checkout."""
+
+    def test_timeout_expired_falls_back_to_cwd(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """subprocess.TimeoutExpired is caught and treated as 'no hop'."""
+        import subprocess
+
+        from milknado._mcp_core import _worktree_main_checkout
+
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                subprocess.TimeoutExpired(cmd="git", timeout=5)
+            ),
+        )
+        assert _worktree_main_checkout(tmp_path) is None
+
+    def test_relative_non_git_common_dir_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A relative path (e.g. '../.git') from --git-common-dir is not absolute.
+
+        os.path.isabs('../.git') is False → the relative branch → None.
+        This covers an unexpected git output shape that is neither the main-checkout
+        '.git' nor an absolute linked-worktree path.
+        """
+        import subprocess
+        from unittest.mock import MagicMock
+
+        from milknado._mcp_core import _worktree_main_checkout
+
+        fake = MagicMock()
+        fake.returncode = 0
+        fake.stdout = "../.git"  # relative but non-standard
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: fake)
+        assert _worktree_main_checkout(tmp_path) is None

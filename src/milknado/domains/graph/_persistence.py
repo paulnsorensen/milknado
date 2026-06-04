@@ -522,6 +522,17 @@ def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> boo
     return cur.rowcount == 1
 
 
+def release_goal_row_unconditional(conn: sqlite3.Connection, goal_id: int) -> None:
+    """Delete any goal claim for goal_id without a run_id gate.
+
+    Used on terminal transitions (DONE/FAILED) for goal nodes: the goal is
+    complete so the fence owner is moot — the claim must be cleared regardless
+    of which run held it.
+    """
+    conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
+    conn.commit()
+
+
 def set_goal_claim_pid(conn: sqlite3.Connection, goal_id: int, run_id: str, pid: int) -> None:
     """Record the coordinator pid on a goal claim, gated on the owning run_id."""
     conn.execute(

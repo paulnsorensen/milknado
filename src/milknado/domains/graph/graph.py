@@ -41,6 +41,7 @@ from milknado.domains.graph._persistence import (
     latest_run_message,
     recent_runs,
     release_goal_row,
+    release_goal_row_unconditional,
     row_to_node,
     runs_for_node,
     set_file_ownership,
@@ -281,6 +282,7 @@ class MikadoGraph(_AnalyticsFacade):
 
     def mark_done(self, node_id: int) -> None:
         self._transition_status(node_id, NodeStatus.DONE)
+        self._release_goal_claim_on_terminal(node_id)
 
     def complete_root(self) -> bool:
         """Auto-complete root when all non-root nodes are done.
@@ -303,6 +305,7 @@ class MikadoGraph(_AnalyticsFacade):
         _transitions.mark_failed(self._conn, node_id)
         if old is not None:
             self._notify_status_change(node_id, old, NodeStatus.FAILED)
+        self._release_goal_claim_on_terminal(node_id)
 
     def mark_running(
         self,
@@ -388,6 +391,7 @@ class MikadoGraph(_AnalyticsFacade):
             # source state is RUNNING by construction. Emit that instead of a
             # pre-read that could be stale under cross-process contention.
             self._notify_status_change(node_id, NodeStatus.RUNNING, status)
+            self._release_goal_claim_on_terminal(node_id)
         return ok
 
     def set_pid(self, node_id: int, run_id: str, pid: int) -> None:
@@ -488,6 +492,16 @@ class MikadoGraph(_AnalyticsFacade):
         return drop_all(self._conn)
 
     # ── Goal-claim fencing (coordinator subtree lock) ────────────────────────
+
+    def _release_goal_claim_on_terminal(self, node_id: int) -> None:
+        """If node_id is a GOAL, unconditionally delete its claim on terminal transition.
+
+        Called after mark_done / mark_failed / mark_terminal so the completed
+        goal's claim does not permanently block re-dispatch under that goal.
+        """
+        row = self._conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is not None and row["kind"] == NodeKind.GOAL.value:
+            release_goal_row_unconditional(self._conn, node_id)
 
     def claim_goal(self, goal_id: int, run_id: str, *, now: str) -> bool:
         """Claim a goal node as owned by run_id. Returns True iff this caller won.
