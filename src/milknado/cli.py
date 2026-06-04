@@ -28,6 +28,7 @@ from milknado.cli_tools import (
 )
 from milknado.domains.common import (
     MikadoNode,
+    NodeKind,
     NodeStatus,
     default_config,
     load_config,
@@ -180,6 +181,10 @@ def crg(
 def add_node(
     description: Annotated[str, typer.Argument(help="Node description")],
     parent: Annotated[int | None, typer.Option("--parent", "-p", help="Parent node ID")] = None,
+    kind: Annotated[
+        str,
+        typer.Option("--kind", "-k", help="Node kind: roadmap|goal|task"),
+    ] = "task",
     files: Annotated[
         list[str] | None,
         typer.Option("--files", "-f", help="Files this node will touch"),
@@ -189,12 +194,17 @@ def add_node(
     ] = Path("."),
 ) -> None:
     """Add a node to the Mikado graph."""
+    try:
+        node_kind = NodeKind(kind)
+    except ValueError:
+        valid = sorted(k.value for k in NodeKind)
+        raise typer.BadParameter(f"invalid kind {kind!r}; expected one of {valid}") from None
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
 
     try:
-        node = graph.add_node(description, parent_id=parent)
+        node = graph.add_node(description, parent_id=parent, kind=node_kind)
         if files:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
 

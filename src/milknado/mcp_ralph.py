@@ -22,7 +22,7 @@ from pathlib import Path
 
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters import GitAdapter
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.dispatch import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -78,6 +78,10 @@ def milknado_ralph_run_start(
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
+        if node.kind != NodeKind.TASK:
+            raise ValueError(
+                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
+            )
         now = now_iso()
         if node.status == NodeStatus.RUNNING:
             # Capture the worktree path BEFORE reconcile clears it from the node row,

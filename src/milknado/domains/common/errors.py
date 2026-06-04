@@ -106,3 +106,10 @@ class InsufficientTestCoverageError(MilknadoError):
             f"{count} impl change(s) lack corresponding test coverage: "
             + ", ".join(orphan_changes)
         )
+
+
+class InvalidContainment(MilknadoError, ValueError):
+    def __init__(self, parent_kind: object, child_kind: object) -> None:
+        self.parent_kind = parent_kind
+        self.child_kind = child_kind
+        super().__init__(f"kind={child_kind!r} is not a valid child of kind={parent_kind!r}")

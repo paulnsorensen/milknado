@@ -1681,7 +1681,7 @@ class TestMoveNode:
 
     def test_move_under_descendant_raises_cycle(self, tmp_path: Path) -> None:
         root = str(tmp_path)
-        parent = _call(milknado_todo_add, description="p", kind="goal", project_root=root)
+        parent = _call(milknado_todo_add, description="p", project_root=root)
         child = _call(
             milknado_todo_add, description="c", parent_id=parent["id"], project_root=root
         )

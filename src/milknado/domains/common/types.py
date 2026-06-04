@@ -21,6 +21,14 @@ class NodeKind(Enum):
     TASK = "task"
 
 
+class TaskFlavor(Enum):
+    IMPLEMENT = "implement"
+    SPEC = "spec"
+    SPIKE = "spike"
+    PROTOTYPE = "prototype"
+    RESEARCH = "research"
+
+
 VALID_TRANSITIONS: dict[NodeStatus, set[NodeStatus]] = {
     NodeStatus.PENDING: {NodeStatus.RUNNING, NodeStatus.BLOCKED, NodeStatus.FAILED},
     NodeStatus.RUNNING: {
@@ -32,6 +40,14 @@ VALID_TRANSITIONS: dict[NodeStatus, set[NodeStatus]] = {
     NodeStatus.BLOCKED: {NodeStatus.PENDING},
     NodeStatus.FAILED: {NodeStatus.PENDING},
     NodeStatus.DONE: set(),
+}
+
+# Containment hierarchy: which child kinds are legal under each parent kind.
+# Root nodes (parent_id=None) accept any kind — bare task lists stay legal.
+VALID_CHILD_KINDS: dict[NodeKind, set[NodeKind]] = {
+    NodeKind.ROADMAP: {NodeKind.GOAL},
+    NodeKind.GOAL: {NodeKind.GOAL, NodeKind.TASK},
+    NodeKind.TASK: {NodeKind.TASK},
 }
 
 
@@ -52,6 +68,18 @@ class MikadoNode:
     batch_index: int | None = None
     completion_duration_seconds: float | None = None
     kind: NodeKind = NodeKind.TASK
+    flavor: TaskFlavor | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind == NodeKind.TASK:
+            # Default to IMPLEMENT when None; any explicit value is valid.
+            if self.flavor is None:
+                object.__setattr__(self, "flavor", TaskFlavor.IMPLEMENT)
+        else:
+            if self.flavor is not None:  # pragma: no cover — graph.add_node enforces this first
+                raise ValueError(
+                    f"flavor must be None for kind={self.kind.value}; got {self.flavor!r}"
+                )
 
 
 @dataclass(frozen=True)

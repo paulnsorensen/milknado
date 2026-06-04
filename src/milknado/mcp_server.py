@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from milknado._mcp_core import (
+    Flavor,
     Kind,
     TodoStatus,
+    _parse_flavor,
     _parse_kind,
     _parse_todo_status,
     mcp,
@@ -36,14 +38,16 @@ def milknado_graph_summary(
     project_root: str = "",
     status: TodoStatus | None = None,
     kind: Kind | None = None,
+    flavor: Flavor | None = None,
 ) -> dict:
     """Return Mikado nodes (id, status, description), optionally filtered.
 
-    status and kind narrow the listing to matching nodes; an empty "nodes"
+    status, kind, and flavor narrow the listing to matching nodes; an empty "nodes"
     list is returned when no node matches (or the graph is empty).
     """
     want_status = _parse_todo_status(status) if status is not None else None
     want_kind = _parse_kind(kind) if kind is not None else None
+    want_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
@@ -52,6 +56,7 @@ def milknado_graph_summary(
             for n in graph.get_all_nodes()
             if (want_status is None or n.status == want_status)
             and (want_kind is None or n.kind == want_kind)
+            and (want_flavor is None or n.flavor == want_flavor)
         ]
         return {
             "nodes": [
