@@ -21,7 +21,7 @@ from milknado.domains.dispatch import render_brief
 _logger = logging.getLogger(__name__)
 
 
-def _node_to_summary(node: MikadoNode) -> dict:
+def node_to_summary(node: MikadoNode) -> dict:
     result: dict = {
         "id": node.id,
         "kind": node.kind.value,
@@ -38,7 +38,7 @@ def _build_subtree(
     children_map: dict[int, list[MikadoNode]],
     max_depth: int | None = None,
 ) -> dict:
-    payload = _node_to_summary(node)
+    payload = node_to_summary(node)
     if max_depth is not None and max_depth <= 0:
         payload["children"] = []
         return payload
@@ -94,7 +94,7 @@ def milknado_todo_next(
                 continue
             if node_flavor is not None and node.flavor != node_flavor:
                 continue
-            return _node_to_summary(node)
+            return node_to_summary(node)
         return None
     finally:
         graph.close()
@@ -130,7 +130,7 @@ def milknado_get_node(node_id: int, project_root: str = "") -> dict:
         if node is None:
             raise ValueError(f"node {node_id} not found")
         return {
-            **_node_to_summary(node),
+            **node_to_summary(node),
             "parent_id": node.parent_id,
             "prerequisite_ids": [c.id for c in graph.get_children(node_id)],
         }
@@ -144,7 +144,7 @@ def _worker_node_id() -> int | None:
     return int(raw) if raw else None
 
 
-def _follow_up_parent_id(graph) -> int | None:  # noqa: ANN001
+def follow_up_parent_id(graph) -> int | None:  # noqa: ANN001
     """Parent for an auto-parented follow-up: the worker node's own parent.
 
     The worker's exit-0 reconcile drives MILKNADO_NODE_ID's node to done, and

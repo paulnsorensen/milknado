@@ -109,7 +109,7 @@ def _cancel_pid_run(graph, root: Path, state: dict, run_id: str) -> dict:  # noq
     # propagate rather than reporting a run cancelled that we never signalled.
     final = _finalize_cancelled(graph, run_id)
     _reconcile_cancel(root, state.get("node_id"), run_id)
-    _logger.info("cancel(pid): run_id=%s node_id=%s", run_id, state.get("node_id"))
+    _logger.info("milknado_run_cancel(pid): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
 
 
@@ -134,7 +134,7 @@ def _cancel_async_run(graph, root: Path, state: dict, run_id: str) -> dict:  # n
     # Reconcile to the run's ACTUAL terminal status: a worker that finished `done`
     # inside the finalize window must not have its node force-failed.
     _reconcile_cancel(root, final.get("node_id"), run_id, final.get("status", "failed"))
-    _logger.info("cancel(async): run_id=%s node_id=%s", run_id, state.get("node_id"))
+    _logger.info("milknado_run_cancel(async): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
 
 

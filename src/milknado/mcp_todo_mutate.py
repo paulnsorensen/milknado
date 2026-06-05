@@ -22,7 +22,7 @@ from milknado.domains.graph.status_flow import (
     subtree_post_order,
     validate_todo_status,
 )
-from milknado.mcp_todo import _follow_up_parent_id, _node_to_summary
+from milknado.mcp_todo import follow_up_parent_id, node_to_summary
 
 _logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ def milknado_todo_add(
         node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
-        return _node_to_summary(node)
+        return node_to_summary(node)
     finally:
         graph.close()
 
@@ -72,7 +72,7 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
         _logger.info(
             "milknado_todo_set_status: node=%d %s->%s", node_id, node.status.value, status
         )
-        return _node_to_summary(updated)
+        return node_to_summary(updated)
     finally:
         graph.close()
 
@@ -141,11 +141,11 @@ def milknado_track_follow_up(
     graph, _cfg = open_graph(root)
     try:
         if parent_id is None:
-            parent_id = _follow_up_parent_id(graph)
+            parent_id = follow_up_parent_id(graph)
         node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
-        return _node_to_summary(node)
+        return node_to_summary(node)
     finally:
         graph.close()
 
@@ -180,7 +180,7 @@ def milknado_move_node(node_id: int, new_parent_id: int | None, project_root: st
         if moved is None:
             raise ValueError(f"node {node_id} not found")
         _logger.info("milknado_move_node: node=%d -> parent=%s", node_id, new_parent_id)
-        return _node_to_summary(moved)
+        return node_to_summary(moved)
     finally:
         graph.close()
 
@@ -232,6 +232,6 @@ def milknado_edit_node(
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after edit")
-        return _node_to_summary(updated)
+        return node_to_summary(updated)
     finally:
         graph.close()
