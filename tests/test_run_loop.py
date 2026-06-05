@@ -1503,3 +1503,52 @@ class TestRenderLiveFrameOverlayBranch:
         loop._render_live_frame(live_mock)
 
         live_mock.update.assert_called_once()
+
+
+class TestDispatchBatchFlavoredGates:
+    """AC6: a flavored node with quality_gates=() propagates empty gates to the executor."""
+
+    def test_research_node_dispatches_with_empty_quality_gates(
+        self,
+        graph: MikadoGraph,
+        fake_ralph: FakeRalph,
+        config: ExecutionConfig,
+        tmp_path: Path,
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from milknado.domains.common.config import FlavorOverride, MilknadoConfig
+        from milknado.domains.common.types import TaskFlavor
+        from milknado.domains.execution.run_loop import RunLoop
+
+        milknado_cfg = MilknadoConfig(
+            agent_family="claude",
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            flavors={
+                TaskFlavor.RESEARCH: FlavorOverride(quality_gates=()),
+            },
+        )
+
+        root = graph.add_node("root")
+        graph.add_node(
+            "research leaf",
+            parent_id=root.id,
+            flavor=TaskFlavor.RESEARCH,
+        )
+
+        captured: list = []
+
+        executor = MagicMock()
+        executor.dispatch.side_effect = lambda node_id, cfg: (
+            captured.append(cfg) or MagicMock(run_id="r1")
+        )
+
+        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
+        live = MagicMock()
+        loop._dispatch_batch(config, 4, live)
+
+        assert len(captured) == 1, "expected exactly one dispatch call"
+        assert captured[0].quality_gates == (), (
+            "flavored node with quality_gates=() must propagate empty gates to executor"
+        )

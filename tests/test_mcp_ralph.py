@@ -388,11 +388,17 @@ def test_runner_writes_done_on_successful_outcome(
         execution_agent = "claude"
         quality_gates = ()
         worktree_pattern = "wt-{node}"
+        flavors: dict = {}
+        worker_brief_prepend = None
+        agent_family = "claude"
 
     class _Graph:
         def __init__(self) -> None:
             self.closed = False
             self.finished: dict | None = None
+
+        def get_node(self, node_id: int) -> None:  # noqa: ARG002
+            return None
 
         def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
             self.finished = {"run_id": run_id, **fields}
@@ -455,11 +461,17 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         execution_agent = "claude"
         quality_gates = ()
         worktree_pattern = "wt-{node}"
+        flavors: dict = {}
+        worker_brief_prepend = None
+        agent_family = "claude"
 
     class _Graph:
         def __init__(self) -> None:
             self.closed = False
             self.finished: dict | None = None
+
+        def get_node(self, node_id: int) -> None:  # noqa: ARG002
+            return None
 
         def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
             self.finished = {"run_id": run_id, **fields}

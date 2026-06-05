@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomli_w
 
+if TYPE_CHECKING:
+    from milknado.domains.common.types import TaskFlavor
+
 from milknado.domains.common.agent_argv import (
+    _ALLOWED_WORKER_EXECUTABLES,
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
     resolve_execution_agent_command,
     resolve_planning_agent_command,
@@ -24,18 +29,18 @@ _LOCAL_ONLY_KEYS = ("project_root", "db_path", "plugins")
 
 
 @dataclass(frozen=True)
-class WorkerToolsOverride:
-    """Per-family worker tool overlay loaded from TOML.
+class FlavorOverride:
+    """Per-flavor config knobs loaded from [milknado.flavor.<flavor>] TOML tables.
 
-    Semantics, in order:
-      - if ``allow`` is set, it replaces the family default entirely
-      - else the family default is concatenated with ``extend``
-      - ``deny`` is removed from the final list (always last)
+    All fields are optional; absent = inherit from global config.
+    ``brief_prepend`` holds the resolved text (inline or loaded from path(s)).
+    ``quality_gates = ()`` means skip gates; ``None`` means inherit.
     """
 
-    allow: tuple[str, ...] | None = None
-    extend: tuple[str, ...] = ()
-    deny: tuple[str, ...] = ()
+    execution_agent: str | None = None
+    tools: tuple[str, ...] | None = None  # may contain one "..." sentinel
+    brief_prepend: str | None = None  # resolved text
+    quality_gates: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,7 +63,8 @@ class MilknadoConfig:
     protected_branches: tuple[str, ...] = ("main", "master")
     completion_timeout_seconds: float = 1800.0
     eta_sample_size: int = 10
-    worker_tools: dict[str, WorkerToolsOverride] = field(default_factory=dict)
+    worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
 
@@ -101,6 +107,7 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
             for k in _LOCAL_ONLY_KEYS:
                 global_raw.pop(k, None)
             _absolutize_global_prompt_paths(global_raw, g.parent)
+            _absolutize_global_flavor_paths(global_raw, g.parent)
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
     raw = _merge(raw, local_raw)
@@ -108,31 +115,21 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:
-    # When the family has a structured worker_tools override AND the in-memory
+    # When the family has a worker_tools single-list override AND the in-memory
     # execution_agent is exactly the command that override would derive, the
     # execution_agent is a derived artifact, not user intent — emitting it would
     # shadow worker_tools on reload. But an explicit execution_agent that
-    # differs from the derived command IS user intent and must be preserved
-    # (resolve_execution_agent_command lets the explicit string win), so only
-    # suppress the field when it matches the derived value.
-    family_override = config.worker_tools.get(config.agent_family)
-    has_structured_tools = family_override is not None and (
-        family_override.allow is not None
-        or bool(family_override.extend)
-        or bool(family_override.deny)
-    )
+    # differs from the derived command IS user intent and must be preserved,
+    # so only suppress the field when it matches the derived value.
+    family_tools = config.worker_tools.get(config.agent_family)
     suppress_execution_agent = False
-    if has_structured_tools:
+    if family_tools is not None:
         derived_execution_agent = resolve_execution_agent_command(
             config.agent_family,
-            tools=resolve_worker_tools(
-                config.agent_family,
-                allow=family_override.allow,
-                extend=family_override.extend,
-                deny=family_override.deny,
-            ),
+            tools=resolve_worker_tools(config.agent_family, list(family_tools)),
         )
         suppress_execution_agent = config.execution_agent == derived_execution_agent
+
     milknado: dict[str, Any] = {
         "agent_family": config.agent_family,
         "planning_agent": config.planning_agent,
@@ -164,20 +161,34 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
     if prompts:
         milknado["prompts"] = prompts
 
-    tools: dict[str, dict[str, list[str]]] = {}
-    for family, override in sorted(config.worker_tools.items()):
-        if override.allow is None and not override.extend and not override.deny:
-            continue
-        entry: dict[str, list[str]] = {}
-        if override.allow is not None:
-            entry["allow"] = list(override.allow)
-        if override.extend:
-            entry["extend"] = list(override.extend)
-        if override.deny:
-            entry["deny"] = list(override.deny)
-        tools[family] = entry
+    # Save worker.tools as single-list per family (raw, may contain "...").
+    # An explicit empty list is meaningful (no tools, replacing the family
+    # default), so it must survive the round trip.
+    tools: dict[str, list[str]] = {
+        fam: list(tool_list) for fam, tool_list in sorted(config.worker_tools.items())
+    }
     if tools:
         milknado["worker"] = {"tools": tools}
+
+    # Save [flavor.*] tables.
+    flavor_tables: dict[str, dict[str, Any]] = {}
+    for flavor_key, fo in config.flavors.items():
+        from milknado.domains.common.types import TaskFlavor
+
+        flavor_name = flavor_key.value if isinstance(flavor_key, TaskFlavor) else str(flavor_key)
+        entry: dict[str, Any] = {}
+        if fo.execution_agent is not None:
+            entry["execution_agent"] = fo.execution_agent
+        if fo.tools is not None:
+            entry["tools"] = list(fo.tools)
+        if fo.brief_prepend is not None:
+            entry["brief_prepend"] = fo.brief_prepend
+        if fo.quality_gates is not None:
+            entry["quality_gates"] = list(fo.quality_gates)
+        if entry:
+            flavor_tables[flavor_name] = entry
+    if flavor_tables:
+        milknado["flavor"] = flavor_tables
 
     path.write_bytes(tomli_w.dumps({"milknado": milknado}).encode())
 
@@ -226,6 +237,26 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
             prompts[key] = str((base_dir / value).resolve())
 
 
+def _absolutize_global_flavor_paths(global_raw: dict[str, Any], base_dir: Path) -> None:
+    """Resolve relative flavor brief_prepend_path values in the global config."""
+    flavor = global_raw.get("flavor")
+    if not isinstance(flavor, dict):
+        return
+    for _flavor_name, flavor_raw in flavor.items():
+        if not isinstance(flavor_raw, dict):
+            continue
+        value = flavor_raw.get("brief_prepend_path")
+        if isinstance(value, str) and not Path(value).is_absolute():
+            flavor_raw["brief_prepend_path"] = str((base_dir / value).resolve())
+        elif isinstance(value, list):
+            flavor_raw["brief_prepend_path"] = [
+                str((base_dir / v).resolve())
+                if isinstance(v, str) and not Path(v).is_absolute()
+                else v
+                for v in value
+            ]
+
+
 def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
     """Treat `<key>` and `<key>_path` as one logical slot during layered merge.
 
@@ -267,6 +298,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     execution_agent_raw = raw.get("execution_agent")
 
     worker_tools = _parse_worker_tools(raw.get("worker"))
+    flavors = _parse_flavor_tables(raw.get("flavor"), project_root)
     planning_prompt_prepend = _load_prompt_prepend(
         raw.get("prompts"),
         "planning_prepend",
@@ -283,22 +315,15 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         planning_agent=(str(planning_agent_raw) if planning_agent_raw is not None else None),
     )
     # Default execution_agent is built from the family default + the worker-tool
-    # overlay. An explicit `execution_agent` in TOML wins outright — it's the
+    # override. An explicit `execution_agent` in TOML wins outright — it's the
     # opt-out for users who want full control of the worker invocation.
-    family_override = worker_tools.get(family)
-    if family_override is not None:
-        tools_for_family: tuple[str, ...] | None = resolve_worker_tools(
-            family,
-            allow=family_override.allow,
-            extend=family_override.extend,
-            deny=family_override.deny,
-        )
-    else:
-        tools_for_family = None
+    family_tools = worker_tools.get(family)
     execution_agent = resolve_execution_agent_command(
         family,
         execution_agent=(str(execution_agent_raw) if execution_agent_raw is not None else None),
-        tools=tools_for_family,
+        tools=(
+            resolve_worker_tools(family, list(family_tools)) if family_tools is not None else None
+        ),
     )
 
     return MilknadoConfig(
@@ -326,12 +351,19 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         completion_timeout_seconds=float(raw.get("completion_timeout_seconds", 1800.0)),
         eta_sample_size=int(raw.get("eta_sample_size", 10)),
         worker_tools=worker_tools,
+        flavors=flavors,
         planning_prompt_prepend=planning_prompt_prepend,
         worker_brief_prepend=worker_brief_prepend,
     )
 
 
-def _parse_worker_tools(worker_raw: Any) -> dict[str, WorkerToolsOverride]:
+def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
+    """Parse [milknado.worker.tools] in single-list grammar.
+
+    Each family key maps to a list (possibly containing one \"...\" sentinel).
+    The stored tuple is the raw list; sentinel expansion happens at resolution
+    time (in resolve_worker_tools / resolve_execution_agent_command).
+    """
     if worker_raw is None:
         return {}
     if not isinstance(worker_raw, dict):
@@ -341,26 +373,147 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, WorkerToolsOverride]:
         return {}
     if not isinstance(tools_raw, dict):
         raise ValueError("[milknado.worker.tools] must be a table")
-    out: dict[str, WorkerToolsOverride] = {}
-    for family, override in tools_raw.items():
-        if not isinstance(family, str):
-            raise ValueError(
-                f"[milknado.worker.tools] family keys must be strings, got {family!r}"
-            )
-        if not isinstance(override, dict):
-            raise ValueError(
-                f"[milknado.worker.tools.{family}] must be a table with allow/extend/deny"
-            )
-        unknown = set(override) - {"allow", "extend", "deny"}
-        if unknown:
-            raise ValueError(f"[milknado.worker.tools.{family}] unknown keys: {sorted(unknown)}")
-        allow = override.get("allow")
-        out[family] = WorkerToolsOverride(
-            allow=(_coerce_tool_list(allow, family, "allow") if allow is not None else None),
-            extend=_coerce_tool_list(override.get("extend"), family, "extend"),
-            deny=_coerce_tool_list(override.get("deny"), family, "deny"),
-        )
+    out: dict[str, tuple[str, ...]] = {}
+    for fam, tool_list in tools_raw.items():
+        if not isinstance(fam, str):
+            raise ValueError(f"[milknado.worker.tools] family keys must be strings, got {fam!r}")
+        out[fam] = _coerce_single_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
     return out
+
+
+def _parse_flavor_tables(
+    flavor_raw: Any,
+    project_root: Path,
+) -> dict[TaskFlavor, FlavorOverride]:
+    """Parse [milknado.flavor.*] tables into {TaskFlavor: FlavorOverride}."""
+    from milknado.domains.common.types import TaskFlavor
+
+    if flavor_raw is None:
+        return {}
+    if not isinstance(flavor_raw, dict):
+        raise ValueError("[milknado.flavor] must be a table")
+
+    out: dict[TaskFlavor, FlavorOverride] = {}
+    for flavor_name, entry in flavor_raw.items():
+        try:
+            flavor = TaskFlavor(flavor_name)
+        except ValueError:
+            raise ValueError(
+                f"[milknado.flavor] unknown flavor key {flavor_name!r}; "
+                f"expected one of {sorted(f.value for f in TaskFlavor)}"
+            ) from None
+        if not isinstance(entry, dict):
+            raise ValueError(f"[milknado.flavor.{flavor_name}] must be a table")
+        fo = _parse_flavor_entry(entry, flavor_name, project_root)
+        out[flavor] = fo
+    return out
+
+
+def _parse_flavor_entry(
+    entry: dict[str, Any],
+    flavor_name: str,
+    project_root: Path,
+) -> FlavorOverride:
+    """Parse one [milknado.flavor.<flavor>] table."""
+    ctx = f"[milknado.flavor.{flavor_name}]"
+    # execution_agent
+    execution_agent_raw = entry.get("execution_agent")
+    execution_agent: str | None = None
+    if execution_agent_raw is not None:
+        if not isinstance(execution_agent_raw, str):
+            raise ValueError(f"{ctx} execution_agent must be a string")
+        argv = shlex.split(execution_agent_raw)
+        if argv:
+            exe = Path(argv[0]).name
+            if exe not in _ALLOWED_WORKER_EXECUTABLES:
+                raise ValueError(
+                    f"{ctx} execution_agent must start with one of "
+                    f"{sorted(_ALLOWED_WORKER_EXECUTABLES)!r}; got {exe!r}"
+                )
+        execution_agent = execution_agent_raw
+
+    # tools
+    tools_raw = entry.get("tools")
+    tools: tuple[str, ...] | None = None
+    if tools_raw is not None:
+        tools = _coerce_single_tool_list(tools_raw, f"{ctx} tools")
+
+    # brief_prepend / brief_prepend_path
+    brief_prepend = _load_flavor_brief(entry, flavor_name, project_root)
+
+    # quality_gates
+    quality_gates_raw = entry.get("quality_gates")
+    quality_gates: tuple[str, ...] | None = None
+    if quality_gates_raw is not None:
+        if not isinstance(quality_gates_raw, list):
+            raise ValueError(f"{ctx} quality_gates must be a list of strings (use [] to skip)")
+        for i, g in enumerate(quality_gates_raw):
+            if not isinstance(g, str) or not g:
+                raise ValueError(f"{ctx} quality_gates[{i}] must be a non-empty string")
+        quality_gates = tuple(quality_gates_raw)
+
+    return FlavorOverride(
+        execution_agent=execution_agent,
+        tools=tools,
+        brief_prepend=brief_prepend,
+        quality_gates=quality_gates,
+    )
+
+
+def _load_flavor_brief(
+    entry: dict[str, Any],
+    flavor_name: str,
+    project_root: Path,
+) -> str | None:
+    """Resolve brief_prepend or brief_prepend_path for a flavor entry."""
+    ctx = f"[milknado.flavor.{flavor_name}]"
+    inline = entry.get("brief_prepend")
+    path_value = entry.get("brief_prepend_path")
+    if inline is not None and not isinstance(inline, str):
+        raise ValueError(f"{ctx} brief_prepend must be a string")
+    if inline is not None and path_value is not None:
+        raise ValueError(f"{ctx} brief_prepend and brief_prepend_path are mutually exclusive")
+    if inline is not None:
+        text = str(inline).strip()
+        return text or None
+    if path_value is not None:
+        # path_value may be a string or a list of strings.
+        if isinstance(path_value, str):
+            paths = [path_value]
+        elif isinstance(path_value, list):
+            paths = path_value
+        else:
+            raise ValueError(f"{ctx} brief_prepend_path must be a string or list of strings")
+        parts: list[str] = []
+        for p in paths:
+            if not isinstance(p, str):
+                raise ValueError(f"{ctx} brief_prepend_path entries must be strings")
+            resolved = Path(p)
+            if not resolved.is_absolute():
+                resolved = project_root / resolved
+            if not resolved.exists():
+                raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {resolved}")
+            parts.append(resolved.read_text(encoding="utf-8").strip())
+        text = "\n\n".join(p for p in parts if p)
+        return text or None
+    return None
+
+
+def _coerce_single_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
+    """Validate a single-list tool entry (list of non-empty strings, at most one \"...\")."""
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError(f"{ctx} must be a list of strings, got {type(value).__name__}")
+    items: list[str] = []
+    sentinel_count = 0
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item:
+            raise ValueError(f"{ctx}[{i}] must be a non-empty string, got {item!r}")
+        if item == "...":
+            sentinel_count += 1
+            if sentinel_count > 1:
+                raise ValueError(f'{ctx} may contain at most one "..." sentinel, found multiple')
+        items.append(item)
+    return tuple(items)
 
 
 def _coerce_tool_list(value: Any, family: str, key: str) -> tuple[str, ...]:

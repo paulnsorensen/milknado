@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from milknado.domains.common import MilknadoConfig, default_config
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
@@ -181,40 +183,41 @@ def test_load_config_rejects_unknown_family(tmp_path: Path) -> None:
 
 
 def test_resolve_worker_tools_default_returns_family_baseline() -> None:
-    tools = resolve_worker_tools("claude")
+    tools = resolve_worker_tools("claude", None)
     assert tools == WORKER_ALLOWED_TOOLS["claude"]
 
 
-def test_resolve_worker_tools_allow_replaces_default() -> None:
-    tools = resolve_worker_tools("claude", allow=["Read", "Edit"])
+def test_resolve_worker_tools_explicit_list_replaces_default() -> None:
+    tools = resolve_worker_tools("claude", ["Read", "Edit"])
     assert tools == ("Read", "Edit")
     # And the family default really is dropped.
     assert "mcp__tilth__*" not in tools
 
 
-def test_resolve_worker_tools_extend_appends_dedups() -> None:
+def test_resolve_worker_tools_sentinel_expands_family_default() -> None:
     tools = resolve_worker_tools(
         "claude",
-        extend=["mcp__github__*", "Read"],  # Read already in default
+        ["...", "mcp__github__*", "Read"],  # Read already in default
     )
     assert tools[: len(WORKER_ALLOWED_TOOLS["claude"])] == WORKER_ALLOWED_TOOLS["claude"]
     assert "mcp__github__*" in tools
     assert tools.count("Read") == 1
 
 
-def test_resolve_worker_tools_deny_removes_entries() -> None:
-    tools = resolve_worker_tools("claude", deny=["Write"])
-    assert "Write" not in tools
-    assert "Read" in tools  # untouched
+def test_resolve_worker_tools_list_without_sentinel_replaces() -> None:
+    tools = resolve_worker_tools("claude", ["Read", "Write"])
+    assert "Write" in tools
+    assert "mcp__tilth__*" not in tools  # default dropped
 
 
-def test_resolve_worker_tools_allow_then_deny() -> None:
+def test_resolve_worker_tools_sentinel_at_end() -> None:
     tools = resolve_worker_tools(
         "claude",
-        allow=["Read", "Write", "Edit"],
-        deny=["Write"],
+        ["Read", "Write", "Edit", "..."],
     )
-    assert tools == ("Read", "Edit")
+    # Read/Write/Edit come first (first-wins dedup), then expanded defaults without dups.
+    assert tools[:3] == ("Read", "Write", "Edit")
+    assert "mcp__tilth__*" in tools
 
 
 def test_resolve_execution_agent_uses_tools_kwarg() -> None:
@@ -261,56 +264,46 @@ def test_resolve_execution_agent_codex_ignores_tools() -> None:
     assert "--sandbox workspace-write" in cmd
 
 
-def test_load_config_structured_worker_tools_extend(tmp_path: Path) -> None:
+def test_load_config_structured_worker_tools_single_list(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg_path.write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'extend = ["mcp__github__*"]\n'
-            'deny = ["Write"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["...", "mcp__github__*"]\n'
         ),
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
     assert "mcp__github__*" in cfg.execution_agent
-    assert "Write" not in cfg.execution_agent.split("--allowedTools")[1]
 
 
-def test_load_config_structured_worker_tools_allow_replaces(tmp_path: Path) -> None:
+def test_load_config_structured_worker_tools_replace(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg_path.write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'allow = ["Read", "Edit"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["Read", "Edit"]\n'
         ),
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
     assert "Read,Edit" in cfg.execution_agent
-    # Default tool dropped because allow=replace semantics.
+    # Default tool dropped because single-list without sentinel replaces.
     assert "mcp__tilth__*" not in cfg.execution_agent
 
 
-def test_load_config_structured_worker_tools_rejects_unknown_key(tmp_path: Path) -> None:
+def test_load_config_structured_worker_tools_rejects_non_string_item(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg_path.write_text(
-        (
-            "[milknado]\n"
-            'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'banana = ["x"]\n'
-        ),
+        ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = [42]\n'),
         encoding="utf-8",
     )
-    try:
+    with pytest.raises(ValueError, match="must be a non-empty string"):
         load_config(cfg_path)
-        assert False, "Expected ValueError for unknown worker.tools key"
-    except ValueError as exc:
-        assert "unknown keys" in str(exc)
 
 
 def test_load_config_explicit_execution_agent_bypasses_worker_tools(tmp_path: Path) -> None:
@@ -320,8 +313,8 @@ def test_load_config_explicit_execution_agent_bypasses_worker_tools(tmp_path: Pa
             "[milknado]\n"
             'agent_family = "claude"\n'
             'execution_agent = "claude --custom"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'extend = ["mcp__github__*"]\n'
+            "[milknado.worker.tools]\n"
+            'claude = ["...", "mcp__github__*"]\n'
         ),
         encoding="utf-8",
     )

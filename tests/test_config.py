@@ -190,16 +190,13 @@ class TestSaveConfig:
     def test_roundtrip_preserves_worker_tools(self, tmp_path: Path) -> None:
         # Build via load_config (no explicit execution_agent) so execution_agent
         # is the command DERIVED from the override — the realistic shape that
-        # save_config suppresses and a reload re-derives. (A bare MilknadoConfig
-        # with the dataclass-default execution_agent is a state load_config never
-        # produces, and save_config now correctly preserves a non-derived value.)
+        # save_config suppresses and a reload re-derives.
         src = tmp_path / "in.toml"
         src.write_text(
             "[milknado]\n"
             'agent_family = "claude"\n\n'
-            "[milknado.worker.tools.claude]\n"
-            'extend = ["mcp__github__*"]\n'
-            'deny = ["Write"]\n',
+            "[milknado.worker.tools]\n"
+            'claude = ["...", "mcp__github__*"]\n',
             encoding="utf-8",
         )
         cfg = load_config(src, include_global=False)
@@ -208,10 +205,24 @@ class TestSaveConfig:
         loaded = load_config(path, include_global=False)
         # The execution_agent rebuild should reflect the round-tripped override.
         assert "mcp__github__*" in loaded.execution_agent
-        allow_csv = loaded.execution_agent.split("--allowedTools")[1]
-        assert "Write" not in allow_csv
         # And the structured override itself survives the round trip.
-        assert loaded.worker_tools["claude"].extend == ("mcp__github__*",)
+        assert "mcp__github__*" in loaded.worker_tools.get("claude", ())
+
+    def test_roundtrip_preserves_explicit_empty_worker_tools(self, tmp_path: Path) -> None:
+        # An explicit empty list means "no tools" (replaces the family default
+        # entirely); dropping it on save would silently restore the default
+        # tool set on reload.
+        src = tmp_path / "in.toml"
+        src.write_text(
+            '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = []\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(src, include_global=False)
+        assert cfg.worker_tools.get("claude") == ()
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.worker_tools.get("claude") == ()
 
     def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)

@@ -167,13 +167,15 @@ def _wait_for_terminal(run_id: str, root: str, tool, timeout: float = 5.0) -> di
 class TestUnifiedRunSchema:
     """Every run tool must return a dict that contains all superset keys."""
 
-    def test_todo_run_start_returns_superset_schema(
-        self, tmp_path: Path, monkeypatch, worker_stub
-    ) -> None:
+    def test_todo_run_start_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-start", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        result = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        result = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         missing = _SUPERSET_KEYS - result.keys()
         assert not missing, f"milknado_todo_run_start missing keys: {missing}"
         # start tools return None for fields only available post-completion
@@ -184,13 +186,15 @@ class TestUnifiedRunSchema:
         assert result["rebased"] is None
         assert result["summary"] is None
 
-    def test_todo_run_poll_returns_superset_schema(
-        self, tmp_path: Path, monkeypatch, worker_stub
-    ) -> None:
+    def test_todo_run_poll_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-poll", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         final = _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         missing = _SUPERSET_KEYS - final.keys()
         assert not missing, f"milknado_todo_run_poll missing keys: {missing}"
@@ -463,24 +467,30 @@ class TestRunList:
         result = _call(milknado_run_list, project_root=str(tmp_path))
         assert result == []
 
-    def test_lists_state_files_after_async_run(
-        self, tmp_path: Path, monkeypatch, worker_stub
-    ) -> None:
+    def test_lists_state_files_after_async_run(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-test", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         runs = _call(milknado_run_list, project_root=root)
         assert len(runs) >= 1
         run_ids = [r["run_id"] for r in runs]
         assert started["run_id"] in run_ids
 
-    def test_returns_superset_keys(self, tmp_path: Path, monkeypatch, worker_stub) -> None:
+    def test_returns_superset_keys(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-keys", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         runs = _call(milknado_run_list, project_root=root)
         assert len(runs) >= 1
@@ -749,8 +759,10 @@ class TestAsyncCancel:
         node_id = task["id"]
         # A genuinely mid-run worker: sleeps far longer than the test, so any
         # "failed" terminal state can only come from cooperative cancellation.
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
-        started = _call(milknado_todo_run_start, node_id=node_id, project_root=root)
+        slow_cmd = worker_stub("sleep 30")
+        started = _call(
+            milknado_todo_run_start, node_id=node_id, worker_cmd=slow_cmd, project_root=root
+        )
         run_id = started["run_id"]
         assert started["status"] == "running"
 
@@ -797,9 +809,13 @@ class TestAsyncCancel:
         node_id = task["id"]
         # Worker sleeps far past its 1s timeout, so a terminal state can only come
         # from the poll loop's deadline enforcement, not from the worker exiting.
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("sleep 30"))
+        slow_cmd = worker_stub("sleep 30")
         started = _call(
-            milknado_todo_run_start, node_id=node_id, timeout_seconds=1, project_root=root
+            milknado_todo_run_start,
+            node_id=node_id,
+            worker_cmd=slow_cmd,
+            timeout_seconds=1,
+            project_root=root,
         )
         run_id = started["run_id"]
 
@@ -1118,14 +1134,16 @@ class TestDepositResult:
         finally:
             graph.close()
 
-    def test_todo_run_poll_returns_deposited_result(
-        self, tmp_path: Path, monkeypatch, worker_stub
-    ) -> None:
+    def test_todo_run_poll_returns_deposited_result(self, tmp_path: Path, worker_stub) -> None:
         """The async-run poll must surface the deposited result under `result`."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="deposit-poll", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         _call(
             milknado_deposit_result,
@@ -1136,13 +1154,15 @@ class TestDepositResult:
         final = _call(milknado_todo_run_poll, run_id=started["run_id"], project_root=root)
         assert final["result"] == "the deliverable"
 
-    def test_poll_result_is_none_without_deposit(
-        self, tmp_path: Path, monkeypatch, worker_stub
-    ) -> None:
+    def test_poll_result_is_none_without_deposit(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="no-deposit", kind="task", project_root=root)
-        monkeypatch.setenv("MILKNADO_WORKER_CMD", worker_stub("cat"))
-        started = _call(milknado_todo_run_start, node_id=task["id"], project_root=root)
+        started = _call(
+            milknado_todo_run_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
         final = _wait_for_terminal(started["run_id"], root, milknado_todo_run_poll)
         assert final["result"] is None, "no deposit -> result is None, not a missing key"
 

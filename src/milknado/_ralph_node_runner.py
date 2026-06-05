@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from milknado._mcp_core import open_graph
     from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
+    from milknado.domains.common.flavor_profile import resolve_flavor_profile
     from milknado.domains.execution import (
         ExecutionConfig,
         Executor,
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.project_root)
     graph, cfg = open_graph(root)
+    node = graph.get_node(args.node_id)
+    profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
     try:
         try:
             git = GitAdapter(root)
@@ -44,8 +47,8 @@ def main(argv: list[str] | None = None) -> int:
             crg = CrgAdapter(root)
             executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
             exec_config = ExecutionConfig(
-                execution_agent=cfg.execution_agent,
-                quality_gates=cfg.quality_gates,
+                execution_agent=profile.execution_agent,
+                quality_gates=profile.quality_gates,
                 worktree_pattern=cfg.worktree_pattern,
                 project_root=root,
             )

@@ -55,12 +55,10 @@ def _write_worker_hooks(project_root: Path, config: MilknadoConfig) -> None:
         console.print("[dim]rtk not on PATH; skipping hook wiring.[/dim]")
         return
     family = config.agent_family
-    override = config.worker_tools.get(family)
+    family_tools = config.worker_tools.get(family)
     tools = resolve_worker_tools(
         family,
-        allow=override.allow if override else None,
-        extend=override.extend if override else None,
-        deny=override.deny if override else None,
+        list(family_tools) if family_tools is not None else None,
     )
     if family == "claude":
         _write_claude_worker_settings(project_root, tools)

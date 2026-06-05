@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from milknado.domains.common import NodeStatus, pid_alive
+from milknado.domains.common.agent_argv import _ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.dispatch._runstate import RUN_ID_RE as _RUN_ID_RE
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import clear_cancel as _clear_cancel
@@ -31,7 +32,6 @@ from milknado.domains.dispatch._runstate import tail as _tail
 
 _logger = logging.getLogger(__name__)
 
-_DEFAULT_WORKER_CMD = "claude -p"
 # Grace beyond a run's own timeout before a still-"running" state file is
 # treated as orphaned by a vanished worker thread (e.g. the server crashed).
 _STALE_GRACE_SECONDS = 30
@@ -56,20 +56,11 @@ def _open_worker_graph(project_root: Path):  # noqa: ANN202
     return graph
 
 
-# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
-# executable name (basename of argv[0]) so neither a prefix trick
-# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
-_ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "cursor-agent", "gemini"}
-)
-
-
 def _validate_worker_argv(argv: list[str]) -> None:
     """Reject a resolved worker argv whose executable isn't an allowed agent CLI.
 
-    Guards every worker_cmd source — the explicit MCP arg, the
-    $MILKNADO_WORKER_CMD env fallback, and the built-in default — by checking
-    the basename of argv[0] against the allowlist.
+    Guards every worker_cmd source — the explicit MCP arg and the resolved
+    profile default — by checking the basename of argv[0] against the allowlist.
     """
     executable = Path(argv[0]).name if argv else ""
     if executable not in _ALLOWED_WORKER_EXECUTABLES:
@@ -93,12 +84,16 @@ class AsyncStartRef:
     log_path: Path
 
 
-def _resolve_worker_cmd(explicit: str | None) -> list[str]:
+def _resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
+    """Resolve the final worker argv from an explicit override or the profile default.
+
+    explicit (MCP arg) → default (profile.execution_agent). Both are validated
+    against the allowlist before use.
+    """
     if explicit and explicit.strip():
         argv = shlex.split(explicit)
     else:
-        env = os.environ.get("MILKNADO_WORKER_CMD", "").strip()
-        argv = shlex.split(env) if env else shlex.split(_DEFAULT_WORKER_CMD)
+        argv = shlex.split(default)
     _validate_worker_argv(argv)
     return argv
 
@@ -294,8 +289,9 @@ def run_headless(
     timeout_seconds: int = 600,
     *,
     run_id: str | None = None,
+    default_cmd: str,
 ) -> RunResult:
-    argv = _resolve_worker_cmd(worker_cmd)
+    argv = _resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
         _runs_dir(project_root) / f"{run_id}.log"
         if run_id is not None
@@ -393,8 +389,10 @@ def start_headless_async(
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
     run_id: str | None = None,
+    *,
+    default_cmd: str,
 ) -> AsyncStartRef:
-    argv = _resolve_worker_cmd(worker_cmd)
+    argv = _resolve_worker_cmd(worker_cmd, default_cmd)
     # The caller (milknado_todo_run_start) claims the node under a run_id before
     # spawning, then hands that same id here so the node row and the run row agree
     # on the fence; standalone callers let us mint one.

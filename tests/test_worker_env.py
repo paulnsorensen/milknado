@@ -23,11 +23,11 @@ def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_milknado_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude -p")
     monkeypatch.setenv("MILKNADO_PROJECT_ROOT", "/tmp/proj")
+    monkeypatch.setenv("MILKNADO_NODE_ID", "99")
     env = _build_worker_env()
-    assert env["MILKNADO_WORKER_CMD"] == "claude -p"
     assert env["MILKNADO_PROJECT_ROOT"] == "/tmp/proj"
+    assert env["MILKNADO_NODE_ID"] == "99"
 
 
 def test_secrets_are_not_passed_to_workers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,12 +85,47 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
-    monkeypatch.setenv("MILKNADO_WORKER_CMD", "claude")
 
-    result = run_headless(tmp_path, node_id=7, brief="hi", timeout_seconds=10)
+    result = run_headless(
+        tmp_path, node_id=7, brief="hi", timeout_seconds=10, default_cmd="claude"
+    )
 
     assert result.exit_code == 0
     log_text = result.log_path.read_text(encoding="utf-8")
     assert "sk-ant-PLANTED-LEAK-CANARY" not in log_text
     assert "ANTHROPIC_API_KEY" not in log_text
     assert "MILKNADO_NODE_ID=7" in log_text
+
+
+def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Brief must reach the worker via stdin even when default_cmd has multiple flags.
+
+    Spec verification assumption: the todo-run path's default command becomes
+    cfg.execution_agent (e.g. 'claude -p --dangerously-skip-permissions --allowedTools ...')
+    after unification. The brief is piped to stdin; this test confirms that a
+    multi-flag command preserves stdin-brief delivery.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "claude"
+    # Stub echoes stdin to stdout (log), ignores flags.
+    stub.write_text("#!/bin/sh\ncat\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    brief_marker = "BRIEF_MARKER_XYZ_12345"
+    result = run_headless(
+        tmp_path,
+        node_id=1,
+        brief=brief_marker,
+        timeout_seconds=10,
+        default_cmd="claude -p --dangerously-skip-permissions --allowedTools 'Read,Edit'",
+    )
+
+    assert result.exit_code == 0
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert brief_marker in log_text, (
+        "brief must reach worker stdin under a multi-flag execution_agent command"
+    )
