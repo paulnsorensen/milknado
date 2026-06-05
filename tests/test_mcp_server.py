@@ -126,7 +126,7 @@ def worker_stub(tmp_path_factory, monkeypatch):
     """Install a `claude` passthrough executable on PATH so run-mechanics tests
     can drive the dispatcher with the worker-cmd allowlist enforced.
 
-    The worker_cmd allowlist (`runner._validate_worker_argv`) only admits real
+    The worker_cmd allowlist (`dispatch.validate_worker_argv`) only admits real
     agent CLIs (claude/codex/...). These tests exercise dispatch plumbing, not a
     live agent, so they route their throwaway commands (`cat`, `false`, `sleep`)
     through a stub named `claude` that just `exec "$@"` — stdin, exit code, and
