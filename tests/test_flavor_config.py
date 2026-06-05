@@ -425,7 +425,7 @@ def test_validate_worker_argv_still_rejects_unknown_executable() -> None:
     import milknado.domains.dispatch.runner as runner
 
     with pytest.raises(ValueError, match="worker_cmd must start with"):
-        runner._validate_worker_argv(["evil-bin", "--flag"])
+        runner.validate_worker_argv(["evil-bin", "--flag"])
 
 
 # ── AC7: brief semantics ─────────────────────────────────────────────────────
