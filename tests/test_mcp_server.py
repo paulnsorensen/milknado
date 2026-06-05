@@ -2030,15 +2030,28 @@ class TestFileHintsMcp:
         assert node["description"] == "original"
 
 
-def test_main_imports_all_tool_modules(monkeypatch: pytest.MonkeyPatch) -> None:
-    """main() must import mcp_todo_mutate so its tools register on mcp startup."""
+def test_main_imports_all_tool_modules() -> None:
+    """main() must import every tool module — registration is an @mcp.tool() import side effect.
+
+    Checks main()'s source for each module name (word-bounded, so mcp_todo does
+    not match inside mcp_todo_mutate): the suite imports the tool modules itself,
+    so registration-based checks cannot detect a module dropped from main().
+    """
+    import inspect
+    import re
     from unittest.mock import patch
 
-    from milknado.mcp_server import main
+    from milknado import mcp_server
+
+    src = inspect.getsource(mcp_server.main)
+    for module in ("mcp_ralph", "mcp_run", "mcp_todo", "mcp_todo_mutate"):
+        assert re.search(rf"\b{module}\b", src), (
+            f"main() no longer imports {module}; its tools won't register on server startup"
+        )
 
     with patch("milknado.mcp_server.mcp") as mock_mcp:
         mock_mcp.run.return_value = None
-        main()
+        mcp_server.main()
 
     mock_mcp.run.assert_called_once()
 
@@ -2055,8 +2068,6 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    import asyncio
-
     from milknado import mcp_ralph, mcp_run, mcp_todo, mcp_todo_mutate  # noqa: F401
     from milknado._mcp_core import mcp
 
@@ -2095,7 +2106,7 @@ def test_dispatch_crust_exports_new_public_names() -> None:
     into the dispatch domain and added to the crust; dropping any of them from
     __all__ would silently break callers that use the public API.
     """
-    import milknado.domains.dispatch as dispatch
+    from milknado.domains import dispatch
 
     for name in ("cancel_run", "dispatch_node_sync", "reclaim_stale_node"):
         assert name in dispatch.__all__, (
