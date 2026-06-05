@@ -33,7 +33,7 @@ _CANCEL_POLL_SECS = 0.5
 _CANCEL_GRACE_SECS = 5
 
 
-def _validate_worker_argv(argv: list[str]) -> None:
+def validate_worker_argv(argv: list[str]) -> None:
     """Reject a resolved worker argv whose executable isn't an allowed agent CLI.
 
     Guards every worker_cmd source — the explicit MCP arg and the resolved
@@ -71,7 +71,7 @@ def _resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
         argv = shlex.split(explicit)
     else:
         argv = shlex.split(default)
-    _validate_worker_argv(argv)
+    validate_worker_argv(argv)
     return argv
 
 

@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.dispatch import run_headless
 from milknado.domains.dispatch.runner import (
     _WORKER_ENV_ALLOWLIST,
     _build_worker_env,
-    run_headless,
 )
 
 

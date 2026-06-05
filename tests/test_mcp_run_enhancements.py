@@ -375,7 +375,7 @@ class TestSyncRunOrphanRescue:
                 (aged.isoformat(), state["run_id"]),
             )
             graph._conn.commit()
-            from milknado.domains.dispatch.reconcile import fail_stale_running_runs
+            from milknado.domains.dispatch import fail_stale_running_runs
 
             flipped = fail_stale_running_runs(graph, task["id"])
         finally:

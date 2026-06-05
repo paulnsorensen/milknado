@@ -126,7 +126,7 @@ def _claim_ancestor_goal_for_dispatch(graph, node_id: int, run_id: str) -> None:
     _check_ancestor_goal_not_claimed so a live foreign claimant is already
     refused before this write.
     """
-    from milknado.domains.dispatch._runstate import now_iso
+    from milknado.domains.dispatch import now_iso
 
     graph.claim_ancestor_goal(node_id, run_id, os.getpid(), now=now_iso())
 

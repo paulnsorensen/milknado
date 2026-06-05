@@ -25,8 +25,8 @@ from milknado.domains.dispatch import (
     reconcile_node_status,
     render_brief,
     start_headless_async,
+    validate_worker_argv,
 )
-from milknado.domains.dispatch.runner import _validate_worker_argv
 
 _logger = logging.getLogger(__name__)
 
@@ -36,11 +36,11 @@ def _validate_worker_cmd(worker_cmd: str | None) -> None:
 
     Eager pre-check on the MCP arg; the env fallback and built-in default are
     validated again where they're resolved (`runner._resolve_worker_cmd`). Both
-    routes share `_validate_worker_argv`, so the allowlist lives in one place.
+    routes share `validate_worker_argv`, so the allowlist lives in one place.
     """
     if not worker_cmd or not worker_cmd.strip():
         return
-    _validate_worker_argv(shlex.split(worker_cmd))
+    validate_worker_argv(shlex.split(worker_cmd))
 
 
 @mcp.tool()

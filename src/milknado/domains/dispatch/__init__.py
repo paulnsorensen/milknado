@@ -19,7 +19,12 @@ from milknado.domains.dispatch.reconcile import (
     reconcile_node_status,
     reconcile_orphan_node,
 )
-from milknado.domains.dispatch.runner import AsyncStartRef, RunResult, run_headless
+from milknado.domains.dispatch.runner import (
+    AsyncStartRef,
+    RunResult,
+    run_headless,
+    validate_worker_argv,
+)
 
 __all__ = [
     "AsyncStartRef",
@@ -44,4 +49,5 @@ __all__ = [
     "run_headless",
     "runs_dir",
     "start_headless_async",
+    "validate_worker_argv",
 ]
