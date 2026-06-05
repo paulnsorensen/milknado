@@ -516,32 +516,6 @@ def _coerce_single_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def _coerce_tool_list(value: Any, family: str, key: str) -> tuple[str, ...]:
-    """Validate a worker.tools.<family>.<key> entry is a list of non-empty strings.
-
-    TOML lets a user write ``allow = "Read"`` — a bare string — which would
-    silently splat into ``('R', 'e', 'a', 'd')`` if we passed it through
-    ``tuple(...)``. Reject anything that isn't a list/tuple of strings so the
-    config error surfaces at load time instead of via a mangled CLI flag.
-    """
-    if value is None:
-        return ()
-    if isinstance(value, str) or not isinstance(value, (list, tuple)):
-        raise ValueError(
-            f"[milknado.worker.tools.{family}] {key} must be a list of strings, "
-            f"got {type(value).__name__}"
-        )
-    items: list[str] = []
-    for i, item in enumerate(value):
-        if not isinstance(item, str) or not item:
-            raise ValueError(
-                f"[milknado.worker.tools.{family}] {key}[{i}] must be a non-empty string, "
-                f"got {item!r}"
-            )
-        items.append(item)
-    return tuple(items)
-
-
 def _load_prompt_prepend(
     prompts_raw: Any,
     base_key: str,
