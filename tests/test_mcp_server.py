@@ -2041,3 +2041,66 @@ def test_main_imports_all_tool_modules(monkeypatch: pytest.MonkeyPatch) -> None:
         main()
 
     mock_mcp.run.assert_called_once()
+
+
+# ── mcp-dispatch-consolidation hardening ────────────────────────────────────
+
+
+def test_mcp_tool_modules_register_expected_tool_names() -> None:
+    """The four main()-imported tool modules plus mcp_server must register the expected tool set.
+
+    Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
+    module from main()) is caught: the count and the names both fail.
+    The mcp instance is a test-session singleton; mcp_server's two module-level
+    tools (milknado_graph_summary, milknado_plan_batches) are registered at import
+    time of mcp_server which the test suite itself imports, so they appear here too.
+    """
+    import asyncio
+
+    from milknado import mcp_ralph, mcp_run, mcp_todo, mcp_todo_mutate  # noqa: F401
+    from milknado._mcp_core import mcp
+
+    tools = asyncio.run(mcp.list_tools())
+    names = sorted(t.name for t in tools)
+    expected = [
+        "milknado_delete_node",
+        "milknado_deposit_result",
+        "milknado_edit_node",
+        "milknado_get_node",
+        "milknado_graph_summary",
+        "milknado_move_node",
+        "milknado_plan_batches",
+        "milknado_ralph_run_poll",
+        "milknado_ralph_run_start",
+        "milknado_run_cancel",
+        "milknado_run_list",
+        "milknado_set_subtree_status",
+        "milknado_todo_add",
+        "milknado_todo_brief",
+        "milknado_todo_next",
+        "milknado_todo_run",
+        "milknado_todo_run_poll",
+        "milknado_todo_run_start",
+        "milknado_todo_set_status",
+        "milknado_todo_tree",
+        "milknado_track_follow_up",
+    ]
+    assert names == expected, f"registered tool names changed; got {names}, expected {expected}"
+
+
+def test_dispatch_crust_exports_new_public_names() -> None:
+    """domains.dispatch.__all__ must export the three names added by the consolidation.
+
+    cancel_run, dispatch_node_sync, reclaim_stale_node were moved from mcp_run.py
+    into the dispatch domain and added to the crust; dropping any of them from
+    __all__ would silently break callers that use the public API.
+    """
+    import milknado.domains.dispatch as dispatch
+
+    for name in ("cancel_run", "dispatch_node_sync", "reclaim_stale_node"):
+        assert name in dispatch.__all__, (
+            f"{name!r} missing from domains.dispatch.__all__; must be exported by the crust"
+        )
+        assert hasattr(dispatch, name), (
+            f"{name!r} in __all__ but not importable from milknado.domains.dispatch"
+        )
