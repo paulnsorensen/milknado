@@ -22,16 +22,18 @@ from milknado.mcp_server import (
     resolve_project_root,
 )
 from milknado.mcp_todo import (
+    milknado_get_node,
+    milknado_todo_brief,
+    milknado_todo_next,
+    milknado_todo_tree,
+)
+from milknado.mcp_todo_mutate import (
     milknado_delete_node,
     milknado_edit_node,
-    milknado_get_node,
     milknado_move_node,
     milknado_set_subtree_status,
     milknado_todo_add,
-    milknado_todo_brief,
-    milknado_todo_next,
     milknado_todo_set_status,
-    milknado_todo_tree,
     milknado_track_follow_up,
 )
 
@@ -771,7 +773,7 @@ class TestTodoAsyncRun:
         a terminal state) is flipped to failed."""
         from datetime import UTC, datetime, timedelta
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-7-20200101T000000Z-abcd"
@@ -793,7 +795,7 @@ class TestTodoAsyncRun:
         _seed_run(root, run_id=run_id, node_id=8, timeout_seconds=600)
         graph, _cfg = open_graph(root)
         try:
-            from milknado.domains.dispatch.runner import fail_stale_running_runs
+            from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
             assert fail_stale_running_runs(graph, 8) == []
             assert _run_status(graph, run_id) == "running"
@@ -824,7 +826,7 @@ class TestTodoAsyncRun:
         force-failed — that thrashes a run about to write 'done'."""
         import os
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-9-20200101T000000Z-aaaa"
@@ -840,7 +842,7 @@ class TestTodoAsyncRun:
     def test_fail_stale_flips_dead_detached_run(self, tmp_path: Path) -> None:
         """#54: a detached run whose recorded pid is DEAD is genuinely orphaned and
         must still be flipped to failed (the liveness guard cleans up, not hides)."""
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-10-20200101T000000Z-bbbb"
@@ -859,7 +861,7 @@ class TestTodoAsyncRun:
         """#54 regression guard: the async-worker path records NO pid; its orphan
         sweep (server crash → daemon thread vanished) must stay unchanged — a
         pid-less stale run still flips to failed."""
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-11-20200101T000000Z-cccc"
@@ -880,7 +882,7 @@ class TestTodoAsyncRun:
         cross-failed."""
         import os
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 
         root = Path(tmp_path)
         live = "node-12-20200101T000000Z-1111"
@@ -1003,7 +1005,7 @@ class TestTodoAsyncRun:
         one with the highest ended_at timestamp. The older 'done' must not beat the
         newer 'failed' — the most recent outcome is authoritative for reconcile."""
         from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch.reconcile import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         node_id = 42
@@ -1034,7 +1036,7 @@ class TestTodoAsyncRun:
         a later ended_at must not mask the current owner's terminal run. Filtering
         by run_id first leaves only the owner's run for latest_terminal_run."""
         from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch.reconcile import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         node_id = 7
@@ -1070,7 +1072,7 @@ class TestTodoAsyncRun:
         """Node scoping is the runs query's `WHERE node_id = ?`: node 1's runs must
         not pick up node 12's terminal run. Replaces the old glob-prefix isolation
         — the db keys runs on the integer node_id directly."""
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch.reconcile import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         for run_id, node_id in [
@@ -1098,7 +1100,7 @@ class TestTodoAsyncRun:
         """The status filter is the terminality gate: a still-'running' run for the
         node must be excluded, only done/failed runs returned. Guards against the
         terminal-status filter regressing into letting a live run reconcile."""
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch.reconcile import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         _seed_run(
@@ -2026,3 +2028,16 @@ class TestFileHintsMcp:
             )
         node = _call(milknado_get_node, node_id=task["id"], project_root=root)
         assert node["description"] == "original"
+
+
+def test_main_imports_all_tool_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() must import mcp_todo_mutate so its tools register on mcp startup."""
+    from unittest.mock import patch
+
+    from milknado.mcp_server import main
+
+    with patch("milknado.mcp_server.mcp") as mock_mcp:
+        mock_mcp.run.return_value = None
+        main()
+
+    mock_mcp.run.assert_called_once()

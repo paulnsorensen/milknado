@@ -8,7 +8,8 @@ import pytest
 
 from milknado.mcp_ralph import milknado_ralph_run_poll, milknado_ralph_run_start
 from milknado.mcp_server import open_graph
-from milknado.mcp_todo import milknado_todo_add, milknado_todo_tree
+from milknado.mcp_todo import milknado_todo_tree
+from milknado.mcp_todo_mutate import milknado_todo_add
 
 # A stub runner standing in for `python -m milknado._ralph_node_runner`: it honors
 # the same argv the MCP tool appends and writes the requested terminal state,
