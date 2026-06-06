@@ -12,6 +12,8 @@ import json
 import tomllib
 from pathlib import Path
 
+import yaml
+
 REPO = Path(__file__).parent.parent
 
 # All four JSON artifacts that must stay in sync
@@ -147,3 +149,109 @@ class TestMcpJsonShape:
         assert "milknado-mcp" in server["args"], (
             f"mcpServers.milknado.args must include 'milknado-mcp'; got {server['args']}"
         )
+
+
+class TestSkillFilesExist:
+    """Auto-discovery requires the skill files to be present in the payload."""
+
+    SKILL_DIR = REPO / "plugins" / "milknado" / "skills" / "milknado-config"
+
+    def test_skill_md_exists(self) -> None:
+        skill_md = self.SKILL_DIR / "SKILL.md"
+        assert skill_md.exists(), f"Missing skill file: {skill_md}"
+
+    def test_flavor_presets_exists(self) -> None:
+        preset = self.SKILL_DIR / "references" / "flavor-presets.md"
+        assert preset.exists(), f"Missing skill reference: {preset}"
+
+
+class TestPluginJsonNoSkillsField:
+    """plugin.json must NOT have a 'skills' field.
+
+    The spec locked this: default skills/ auto-discovery is used.  A 'skills'
+    field with a '..' path would fail validation; locking absence prevents a
+    future accidental addition from silently breaking install.
+    """
+
+    def test_claude_plugin_no_skills_field(self) -> None:
+        data = json.loads(CLAUDE_PLUGIN.read_text())
+        assert "skills" not in data, (
+            "Claude plugin.json must not have a 'skills' field; "
+            "default skills/ auto-discovery is used (spec decision)"
+        )
+
+    def test_codex_plugin_no_skills_field(self) -> None:
+        data = json.loads(CODEX_PLUGIN.read_text())
+        assert "skills" not in data, (
+            "Codex plugin.json must not have a 'skills' field; "
+            "default skills/ auto-discovery is used (spec decision)"
+        )
+
+
+class TestCodexMarketplaceSchema:
+    """Lock the Codex-native marketplace shape: source.source, policy, interface.displayName."""
+
+    def _entry(self) -> dict:
+        data = json.loads(CODEX_MARKETPLACE.read_text())
+        return data["plugins"][0]
+
+    def test_codex_source_type_is_local(self) -> None:
+        entry = self._entry()
+        assert entry["source"]["source"] == "local", (
+            f"Codex marketplace source.source must be 'local'; got {entry['source']['source']!r}"
+        )
+
+    def test_codex_policy_installation(self) -> None:
+        entry = self._entry()
+        assert entry["policy"]["installation"] == "AVAILABLE", (
+            f"Codex marketplace policy.installation must be 'AVAILABLE'; "
+            f"got {entry['policy']['installation']!r}"
+        )
+
+    def test_codex_policy_authentication(self) -> None:
+        entry = self._entry()
+        assert entry["policy"]["authentication"] == "ON_INSTALL", (
+            f"Codex marketplace policy.authentication must be 'ON_INSTALL'; "
+            f"got {entry['policy']['authentication']!r}"
+        )
+
+    def test_codex_interface_display_name(self) -> None:
+        data = json.loads(CODEX_MARKETPLACE.read_text())
+        assert data["interface"]["displayName"] == "milknado", (
+            f"Codex marketplace interface.displayName must be 'milknado'; "
+            f"got {data['interface']['displayName']!r}"
+        )
+
+
+class TestReleaseWorkflow:
+    """Lock the release.yml shape: valid YAML, v* tag trigger, OIDC (no token secrets)."""
+
+    RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
+
+    def _workflow(self) -> dict:
+        return yaml.safe_load(self.RELEASE_YML.read_text())
+
+    def test_release_yml_exists(self) -> None:
+        assert self.RELEASE_YML.exists(), f"Missing: {self.RELEASE_YML}"
+
+    def test_release_yml_valid_yaml(self) -> None:
+        wf = self._workflow()
+        assert isinstance(wf, dict)
+
+    def test_release_yml_triggers_on_version_tags(self) -> None:
+        wf = self._workflow()
+        # PyYAML parses the 'on' YAML key as boolean True
+        tags = wf[True]["push"]["tags"]
+        assert "v*" in tags, f"release.yml must trigger on 'v*' tags; got {tags}"
+
+    def test_release_yml_uses_oidc_not_token_secret(self) -> None:
+        """Trusted publishing uses id-token: write; no PASSWORD or API_TOKEN env var."""
+        raw = self.RELEASE_YML.read_text()
+        assert "id-token: write" in raw, (
+            "release.yml must grant id-token: write for OIDC trusted publishing"
+        )
+        for forbidden in ("PASSWORD", "API_TOKEN", "PYPI_TOKEN", "TWINE_PASSWORD"):
+            assert forbidden not in raw, (
+                f"release.yml must not contain secret token '{forbidden}'; "
+                "use OIDC trusted publishing instead"
+            )
