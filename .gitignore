@@ -211,8 +211,9 @@ ralphs/
 *.db
 *.db-journal
 
-# Local agent/editor state
-.claude/
+# Local agent/editor state — but ship the project skills under .claude/skills/
+.claude/*
+!.claude/skills/
 .context/
 
 # Local Milknado runtime state
