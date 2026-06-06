@@ -8,18 +8,21 @@ from milknado.domains.dispatch._runstate import (
     request_cancel,
     runs_dir,
 )
+from milknado.domains.dispatch.async_run import poll_async_run, start_headless_async
 from milknado.domains.dispatch.brief import render_brief
-from milknado.domains.dispatch.runner import (
-    AsyncStartRef,
-    RunResult,
+from milknado.domains.dispatch.cancel import cancel_run
+from milknado.domains.dispatch.lifecycle import dispatch_node_sync, reclaim_stale_node
+from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     latest_terminal_run,
-    poll_async_run,
     reconcile_node_status,
-    reconcile_orphan_node,
+)
+from milknado.domains.dispatch.runner import (
+    AsyncStartRef,
+    RunResult,
     run_headless,
-    start_headless_async,
+    validate_worker_argv,
 )
 
 __all__ = [
@@ -27,7 +30,9 @@ __all__ = [
     "RUN_ID_RE",
     "RunResult",
     "cancel_path",
+    "cancel_run",
     "clear_cancel",
+    "dispatch_node_sync",
     "fail_stale_running_runs",
     "find_terminal_runs_for_node",
     "is_cancel_requested",
@@ -35,11 +40,12 @@ __all__ = [
     "make_run_id",
     "now_iso",
     "poll_async_run",
+    "reclaim_stale_node",
     "reconcile_node_status",
-    "reconcile_orphan_node",
     "render_brief",
     "request_cancel",
     "run_headless",
     "runs_dir",
     "start_headless_async",
+    "validate_worker_argv",
 ]

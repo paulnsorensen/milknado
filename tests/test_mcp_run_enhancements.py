@@ -21,7 +21,7 @@ from milknado.mcp_run import (
     milknado_todo_run_start,
 )
 from milknado.mcp_server import open_graph
-from milknado.mcp_todo import milknado_todo_add
+from milknado.mcp_todo_mutate import milknado_todo_add
 
 _SUPERSET_KEYS = frozenset(
     {
@@ -375,7 +375,9 @@ class TestSyncRunOrphanRescue:
                 (aged.isoformat(), state["run_id"]),
             )
             graph._conn.commit()
-            flipped = runner_mod.fail_stale_running_runs(graph, task["id"])
+            from milknado.domains.dispatch import fail_stale_running_runs
+
+            flipped = fail_stale_running_runs(graph, task["id"])
         finally:
             graph.close()
         assert len(flipped) == 1
@@ -529,7 +531,7 @@ class TestRunCancel:
     def _fast_cancel_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No-pid states hand-written here have no live worker, so cancel falls
         back after the finalize bound. Shorten it so these tests stay fast."""
-        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
+        monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
 
     def test_cancel_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
@@ -854,7 +856,9 @@ class TestAsyncCancel:
             )
             return graph.get_run(rid)
 
-        monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", fake_finalize)
+        monkeypatch.setattr(
+            "milknado.domains.dispatch.cancel._await_cancel_finalize", fake_finalize
+        )
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
@@ -996,10 +1000,10 @@ class TestCancelFinalizeAndRace:
         """If the run row stays 'running' for the whole finalize window (the worker
         is wedged or dead), the bound elapses to None so the caller takes over the
         terminal write itself."""
-        from milknado.mcp_run import _await_cancel_finalize
+        from milknado.domains.dispatch.cancel import _await_cancel_finalize
 
-        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
-        monkeypatch.setattr("milknado.mcp_run._CANCEL_FINALIZE_POLL_SECS", 0.01)
+        monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
+        monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_POLL_SECS", 0.01)
 
         run_id = "node-1-20260101T000000Z-wedg"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
@@ -1035,7 +1039,9 @@ class TestCancelFinalizeAndRace:
             )
             return None
 
-        monkeypatch.setattr("milknado.mcp_run._await_cancel_finalize", elapsed_after_done)
+        monkeypatch.setattr(
+            "milknado.domains.dispatch.cancel._await_cancel_finalize", elapsed_after_done
+        )
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 

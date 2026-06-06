@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado.domains.dispatch.brief import render_brief
+from milknado.domains.dispatch import render_brief
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 

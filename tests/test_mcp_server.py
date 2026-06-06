@@ -22,16 +22,18 @@ from milknado.mcp_server import (
     resolve_project_root,
 )
 from milknado.mcp_todo import (
+    milknado_get_node,
+    milknado_todo_brief,
+    milknado_todo_next,
+    milknado_todo_tree,
+)
+from milknado.mcp_todo_mutate import (
     milknado_delete_node,
     milknado_edit_node,
-    milknado_get_node,
     milknado_move_node,
     milknado_set_subtree_status,
     milknado_todo_add,
-    milknado_todo_brief,
-    milknado_todo_next,
     milknado_todo_set_status,
-    milknado_todo_tree,
     milknado_track_follow_up,
 )
 
@@ -124,7 +126,7 @@ def worker_stub(tmp_path_factory, monkeypatch):
     """Install a `claude` passthrough executable on PATH so run-mechanics tests
     can drive the dispatcher with the worker-cmd allowlist enforced.
 
-    The worker_cmd allowlist (`runner._validate_worker_argv`) only admits real
+    The worker_cmd allowlist (`dispatch.validate_worker_argv`) only admits real
     agent CLIs (claude/codex/...). These tests exercise dispatch plumbing, not a
     live agent, so they route their throwaway commands (`cat`, `false`, `sleep`)
     through a stub named `claude` that just `exec "$@"` — stdin, exit code, and
@@ -771,7 +773,7 @@ class TestTodoAsyncRun:
         a terminal state) is flipped to failed."""
         from datetime import UTC, datetime, timedelta
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-7-20200101T000000Z-abcd"
@@ -793,7 +795,7 @@ class TestTodoAsyncRun:
         _seed_run(root, run_id=run_id, node_id=8, timeout_seconds=600)
         graph, _cfg = open_graph(root)
         try:
-            from milknado.domains.dispatch.runner import fail_stale_running_runs
+            from milknado.domains.dispatch import fail_stale_running_runs
 
             assert fail_stale_running_runs(graph, 8) == []
             assert _run_status(graph, run_id) == "running"
@@ -824,7 +826,7 @@ class TestTodoAsyncRun:
         force-failed — that thrashes a run about to write 'done'."""
         import os
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-9-20200101T000000Z-aaaa"
@@ -840,7 +842,7 @@ class TestTodoAsyncRun:
     def test_fail_stale_flips_dead_detached_run(self, tmp_path: Path) -> None:
         """#54: a detached run whose recorded pid is DEAD is genuinely orphaned and
         must still be flipped to failed (the liveness guard cleans up, not hides)."""
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-10-20200101T000000Z-bbbb"
@@ -859,7 +861,7 @@ class TestTodoAsyncRun:
         """#54 regression guard: the async-worker path records NO pid; its orphan
         sweep (server crash → daemon thread vanished) must stay unchanged — a
         pid-less stale run still flips to failed."""
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch import fail_stale_running_runs
 
         root = Path(tmp_path)
         run_id = "node-11-20200101T000000Z-cccc"
@@ -880,7 +882,7 @@ class TestTodoAsyncRun:
         cross-failed."""
         import os
 
-        from milknado.domains.dispatch.runner import fail_stale_running_runs
+        from milknado.domains.dispatch import fail_stale_running_runs
 
         root = Path(tmp_path)
         live = "node-12-20200101T000000Z-1111"
@@ -1002,8 +1004,7 @@ class TestTodoAsyncRun:
         """When a node has multiple terminal runs, latest_terminal_run returns the
         one with the highest ended_at timestamp. The older 'done' must not beat the
         newer 'failed' — the most recent outcome is authoritative for reconcile."""
-        from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch import find_terminal_runs_for_node, latest_terminal_run
 
         root = Path(tmp_path)
         node_id = 42
@@ -1033,8 +1034,7 @@ class TestTodoAsyncRun:
         """The fence must be applied BEFORE picking the latest run: a stale run with
         a later ended_at must not mask the current owner's terminal run. Filtering
         by run_id first leaves only the owner's run for latest_terminal_run."""
-        from milknado.domains.dispatch import latest_terminal_run
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch import find_terminal_runs_for_node, latest_terminal_run
 
         root = Path(tmp_path)
         node_id = 7
@@ -1070,7 +1070,7 @@ class TestTodoAsyncRun:
         """Node scoping is the runs query's `WHERE node_id = ?`: node 1's runs must
         not pick up node 12's terminal run. Replaces the old glob-prefix isolation
         — the db keys runs on the integer node_id directly."""
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         for run_id, node_id in [
@@ -1098,7 +1098,7 @@ class TestTodoAsyncRun:
         """The status filter is the terminality gate: a still-'running' run for the
         node must be excluded, only done/failed runs returned. Guards against the
         terminal-status filter regressing into letting a live run reconcile."""
-        from milknado.domains.dispatch.runner import find_terminal_runs_for_node
+        from milknado.domains.dispatch import find_terminal_runs_for_node
 
         root = Path(tmp_path)
         _seed_run(
@@ -2026,3 +2026,90 @@ class TestFileHintsMcp:
             )
         node = _call(milknado_get_node, node_id=task["id"], project_root=root)
         assert node["description"] == "original"
+
+
+def test_main_imports_all_tool_modules() -> None:
+    """main() must import every tool module — registration is an @mcp.tool() import side effect.
+
+    Checks main()'s source for each module name (word-bounded, so mcp_todo does
+    not match inside mcp_todo_mutate): the suite imports the tool modules itself,
+    so registration-based checks cannot detect a module dropped from main().
+    """
+    import inspect
+    import re
+    from unittest.mock import patch
+
+    from milknado import mcp_server
+
+    src = inspect.getsource(mcp_server.main)
+    for module in ("mcp_ralph", "mcp_run", "mcp_todo", "mcp_todo_mutate"):
+        assert re.search(rf"\b{module}\b", src), (
+            f"main() no longer imports {module}; its tools won't register on server startup"
+        )
+
+    with patch("milknado.mcp_server.mcp") as mock_mcp:
+        mock_mcp.run.return_value = None
+        mcp_server.main()
+
+    mock_mcp.run.assert_called_once()
+
+
+# ── mcp-dispatch-consolidation hardening ────────────────────────────────────
+
+
+def test_mcp_tool_modules_register_expected_tool_names() -> None:
+    """The four main()-imported tool modules plus mcp_server must register the expected tool set.
+
+    Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
+    module from main()) is caught: the count and the names both fail.
+    The mcp instance is a test-session singleton; mcp_server's two module-level
+    tools (milknado_graph_summary, milknado_plan_batches) are registered at import
+    time of mcp_server which the test suite itself imports, so they appear here too.
+    """
+    from milknado import mcp_ralph, mcp_run, mcp_todo, mcp_todo_mutate  # noqa: F401
+    from milknado._mcp_core import mcp
+
+    tools = asyncio.run(mcp.list_tools())
+    names = sorted(t.name for t in tools)
+    expected = [
+        "milknado_delete_node",
+        "milknado_deposit_result",
+        "milknado_edit_node",
+        "milknado_get_node",
+        "milknado_graph_summary",
+        "milknado_move_node",
+        "milknado_plan_batches",
+        "milknado_ralph_run_poll",
+        "milknado_ralph_run_start",
+        "milknado_run_cancel",
+        "milknado_run_list",
+        "milknado_set_subtree_status",
+        "milknado_todo_add",
+        "milknado_todo_brief",
+        "milknado_todo_next",
+        "milknado_todo_run",
+        "milknado_todo_run_poll",
+        "milknado_todo_run_start",
+        "milknado_todo_set_status",
+        "milknado_todo_tree",
+        "milknado_track_follow_up",
+    ]
+    assert names == expected, f"registered tool names changed; got {names}, expected {expected}"
+
+
+def test_dispatch_crust_exports_new_public_names() -> None:
+    """domains.dispatch.__all__ must export the three names added by the consolidation.
+
+    cancel_run, dispatch_node_sync, reclaim_stale_node were moved from mcp_run.py
+    into the dispatch domain and added to the crust; dropping any of them from
+    __all__ would silently break callers that use the public API.
+    """
+    from milknado.domains import dispatch
+
+    for name in ("cancel_run", "dispatch_node_sync", "reclaim_stale_node"):
+        assert name in dispatch.__all__, (
+            f"{name!r} missing from domains.dispatch.__all__; must be exported by the crust"
+        )
+        assert hasattr(dispatch, name), (
+            f"{name!r} in __all__ but not importable from milknado.domains.dispatch"
+        )

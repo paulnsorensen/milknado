@@ -8,7 +8,8 @@ import pytest
 
 from milknado.mcp_ralph import milknado_ralph_run_poll, milknado_ralph_run_start
 from milknado.mcp_server import open_graph
-from milknado.mcp_todo import milknado_todo_add, milknado_todo_tree
+from milknado.mcp_todo import milknado_todo_tree
+from milknado.mcp_todo_mutate import milknado_todo_add
 
 # A stub runner standing in for `python -m milknado._ralph_node_runner`: it honors
 # the same argv the MCP tool appends and writes the requested terminal state,
@@ -594,7 +595,7 @@ def test_start_refuses_when_node_running_with_live_pid(tmp_path: Path) -> None:
     no second worker. (This process's own pid stands in for a live owner.)"""
     import os
 
-    from milknado.domains.dispatch._runstate import now_iso
+    from milknado.domains.dispatch import now_iso
 
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="live", kind="task", project_root=root)
@@ -618,7 +619,7 @@ def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
     """A node left RUNNING by a DEAD pid is reclaimed on the next start and a fresh
     worker dispatched immediately — no 1800s timeout wait. The dead owner is
     detected by process-liveness (os.kill(pid, 0)), not by the stale-timeout sweep."""
-    from milknado.domains.dispatch._runstate import now_iso
+    from milknado.domains.dispatch import now_iso
 
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="deadpid", kind="task", project_root=root)
