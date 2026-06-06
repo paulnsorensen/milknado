@@ -40,7 +40,7 @@ def agents_check(
     config, _ = _load_or_default(project_root)
     console.print(f"[bold]agent_family[/bold]: {config.agent_family}")
     console.print(f"[bold]planning[/bold]: {config.planning_agent}")
-    console.print(f"[bold]execution (ralphify)[/bold]: {config.execution_agent}")
+    console.print(f"[bold]execution (loop)[/bold]: {config.execution_agent}")
 
     sample = project_root / ".milknado" / ".agent-check-sample.md"
     sample.parent.mkdir(parents=True, exist_ok=True)

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from rich.panel import Panel
     from rich.table import Table
 
-    from milknado.domains.common.protocols import ProgressEvent, RalphPort
+    from milknado.domains.common.protocols import LoopPort, ProgressEvent
     from milknado.domains.graph import MikadoGraph
 
 _SPINNER_FRAMES = ("◜", "◝", "◞", "◟")
@@ -156,7 +156,7 @@ def _build_layout(state: TuiState, graph: MikadoGraph) -> Layout:
     return layout
 
 
-def _render_overlay(run_id: str, state: TuiState, graph: MikadoGraph, ralph: RalphPort) -> Panel:
+def _render_overlay(run_id: str, state: TuiState, graph: MikadoGraph, ralph: LoopPort) -> Panel:
     from rich.panel import Panel
 
     node_id = state.active.get(run_id)

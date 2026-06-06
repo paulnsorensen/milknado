@@ -76,7 +76,7 @@ class CrgPort(Protocol):
     def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]: ...
 
 
-class RalphPort(Protocol):
+class LoopPort(Protocol):
     def create_run(
         self,
         agent: str,

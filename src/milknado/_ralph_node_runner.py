@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     from milknado._mcp_core import open_graph
-    from milknado.adapters import CrgAdapter, GitAdapter, RalphifyAdapter
+    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.common.flavor_profile import resolve_flavor_profile
     from milknado.domains.execution import (
         ExecutionConfig,
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             git = GitAdapter(root)
-            ralph = RalphifyAdapter()
+            ralph = LoopAdapter()
             crg = CrgAdapter(root)
             executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
             exec_config = ExecutionConfig(

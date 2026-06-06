@@ -24,7 +24,7 @@ from milknado.domains.common.types import (
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
+    from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
@@ -175,7 +175,7 @@ class Executor:
         self,
         graph: MikadoGraph,
         git: GitPort,
-        ralph: RalphPort,
+        ralph: LoopPort,
         crg: CrgPort,
     ) -> None:
         self._graph = graph
