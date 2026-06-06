@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,10 +12,6 @@ runner = CliRunner()
 _CLI_VERSION_OUTPUTS = {
     "git": "git version 2.40.0",
     "code-review-graph": "code-review-graph 0.5.0",
-}
-
-_PKG_VERSIONS = {
-    "ralphify": "1.0.0",
 }
 
 
@@ -32,15 +27,7 @@ def _fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
 
 
 def _fake_pkg_version(name: str) -> str:
-    if name in _PKG_VERSIONS:
-        return _PKG_VERSIONS[name]
-    raise PackageNotFoundError(name)
-
-
-def _pkg_version_missing_ralphify(name: str) -> str:
-    if name == "ralphify":
-        raise PackageNotFoundError(name)
-    return _PKG_VERSIONS.get(name, "unknown")
+    return "1.0.0"
 
 
 class TestDoctorHappyPath:
@@ -72,26 +59,25 @@ class TestDoctorHappyPath:
         result = runner.invoke(app, ["doctor", str(tmp_path)])
 
         assert "git version 2.40.0" in result.output
-        assert "ralphify: (python package)  1.0.0" in result.output
         assert "code-review-graph 0.5.0" in result.output
 
-
-class TestDoctorMissingTool:
-    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_pkg_version_missing_ralphify)
+    @patch("milknado.domains.common.doctor.pkg_version", side_effect=_fake_pkg_version)
     @patch("milknado.domains.common.doctor.subprocess.run", side_effect=_fake_run)
     @patch("milknado.domains.common.doctor.shutil.which", side_effect=_fake_which)
-    def test_exit_1_when_ralphify_package_missing(
+    def test_no_ralphify_probe_in_output(
         self, _mock_which: MagicMock, _mock_run: MagicMock, _mock_ver: MagicMock, tmp_path: Path
     ) -> None:
+        """WHY: the ralphify dep is vendored; its absence is not an issue."""
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir(parents=True)
         db.touch()
 
         result = runner.invoke(app, ["doctor", str(tmp_path)])
 
-        assert result.exit_code == 1
-        assert "ralphify: not found" in result.output
-        assert "doctor: 1 issue(s)" in result.output
+        # Confirm no "ralphify: ..." probe line — the format is "name: ..."
+        assert not any(
+            line.lstrip().startswith("ralphify:") for line in result.output.splitlines()
+        )
 
 
 class TestDoctorDbMissing:

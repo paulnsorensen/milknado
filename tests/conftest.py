@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
+from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.graph import MikadoGraph
 
 
@@ -42,4 +42,4 @@ def mock_crg() -> MagicMock:
 
 @pytest.fixture()
 def mock_ralph() -> MagicMock:
-    return MagicMock(spec=RalphPort)
+    return MagicMock(spec=LoopPort)
