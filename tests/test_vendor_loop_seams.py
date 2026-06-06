@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -207,7 +208,7 @@ class TestRalphifyNotImportable:
 
 
 class TestCliAgentsLoopLabel:
-    def test_agents_check_prints_loop_label(self, tmp_path: pytest.Path) -> None:
+    def test_agents_check_prints_loop_label(self, tmp_path: Path) -> None:
         """WHY: cli_agents.py line 43 was changed from 'ralphify' to 'loop';
         this test locks the output label so a rename rollback is caught."""
         from milknado.cli import app
@@ -217,7 +218,7 @@ class TestCliAgentsLoopLabel:
         assert result.exit_code == 0, result.output
         assert "execution (loop)" in result.output
 
-    def test_agents_check_does_not_print_ralphify_label(self, tmp_path: pytest.Path) -> None:
+    def test_agents_check_does_not_print_ralphify_label(self, tmp_path: Path) -> None:
         """WHY: if 'ralphify' appears as the execution label, the rename
         regressed — this assertion catches it even if 'loop' is also present."""
         from milknado.cli import app
