@@ -49,3 +49,7 @@ If `uvx milknado-mcp` is unavailable (before the first PyPI release), use:
 ```
 uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp
 ```
+
+The PyPI release is currently blocked by a git direct-reference dependency on a
+`ralphify` fork (fork-only features not yet available on PyPI). The git fallback
+above is the working install path until that dependency is resolved.
