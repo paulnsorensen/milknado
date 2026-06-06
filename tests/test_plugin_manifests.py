@@ -240,8 +240,11 @@ class TestReleaseWorkflow:
 
     def test_release_yml_triggers_on_version_tags(self) -> None:
         wf = self._workflow()
-        # PyYAML parses the 'on' YAML key as boolean True
-        tags = wf[True]["push"]["tags"]
+        # YAML-1.1 loaders (PyYAML) parse the 'on' key as boolean True;
+        # YAML-1.2 loaders keep it as the string 'on'. Accept both.
+        trigger = wf.get(True) or wf.get("on")
+        assert trigger is not None, f"release.yml has no 'on' trigger block; keys: {list(wf)}"
+        tags = trigger["push"]["tags"]
         assert "v*" in tags, f"release.yml must trigger on 'v*' tags; got {tags}"
 
     def test_release_yml_uses_oidc_not_token_secret(self) -> None:
