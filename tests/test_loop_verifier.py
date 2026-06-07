@@ -17,6 +17,9 @@ import pytest
 
 from milknado.adapters.git import GitAdapter
 from milknado.adapters.loop import (
+    _GATE_TIMEOUT_SECONDS,
+    _GIT_QUERY_TIMEOUT_SECONDS,
+    _UNRESOLVABLE_BASE_FEEDBACK,
     LoopAdapter,
     _build_completion_verifier,
     _has_committed_change,
@@ -24,6 +27,7 @@ from milknado.adapters.loop import (
     _resolve_feature_branch,
 )
 from milknado.loop import CompletionVerdict
+from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
 
 def _git(*args: str, cwd: Path) -> None:
@@ -105,6 +109,39 @@ class TestFailingGate:
         assert verdict.ok is False
         assert "timed out" in verdict.feedback
         assert "sleep 5" in verdict.feedback
+
+    def test_failing_gate_logged_at_warning(
+        self, worktree: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A gate failure must reach the operator's logs at warning level, not
+        only the agent's rejection feedback — a budget-burning reject loop on a
+        non-interactive server run is otherwise invisible."""
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, ["sh -c 'exit 2'"])
+
+        with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
+            verifier()
+
+        assert any(
+            r.levelname == "WARNING" and "quality gate" in r.message and "failed" in r.message
+            for r in caplog.records
+        )
+
+    def test_timed_out_gate_logged_at_warning(
+        self, worktree: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A gate timeout — the exact failure mode the high finding predicts for
+        an undersized cap — must also be diagnosable from the operator's logs."""
+        import milknado.adapters.loop as loop_mod
+
+        monkeypatch.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, ["sh -c 'sleep 5'"])
+
+        with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
+            verifier()
+
+        assert any(r.levelname == "WARNING" and "timed out" in r.message for r in caplog.records)
 
     def test_failing_gate_beats_empty_diff_in_feedback(self, worktree: Path) -> None:
         """Gates run before the diff check: a failing gate on an empty worktree
@@ -226,7 +263,12 @@ class TestGitFailureFailsClosed:
 
     def test_clean_tree_unresolvable_base_is_rejected(self, feature_repo: Path) -> None:
         """Detached main worktree + clean tree: no fork point, so the verifier
-        cannot prove produced change and rejects rather than falsely accepting."""
+        cannot prove produced change and rejects rather than falsely accepting.
+
+        The rejection must name the *resolution* failure, not the empty-diff
+        message — an operator (and the agent) must be able to tell a degraded
+        verifier apart from a worker that genuinely idled. Conflating the two
+        sends an honest-but-committed worker chasing a phantom empty diff."""
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=feature_repo,
@@ -237,7 +279,53 @@ class TestGitFailureFailsClosed:
         _git("checkout", "--detach", head, cwd=feature_repo)
         verifier = _build_completion_verifier(feature_repo, ["true"])
 
-        assert verifier().ok is False
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert verdict.feedback == _UNRESOLVABLE_BASE_FEEDBACK
+        assert "no committed/stageable change" not in verdict.feedback
+
+
+class TestGateCapSizing:
+    """The high-severity defect this guards: the per-gate cap was a 60s borrow
+    from DEFAULT_COMMAND_TIMEOUT (sized for short RALPH.md frontmatter snippets),
+    but the gates are the repo's real quality suite — `uv run pytest` over the
+    full test set runs for minutes. A 60s cap times out every honest completion,
+    retries to budget, and fails loud. These tests encode WHY the cap is large:
+    it must clear the run-dispatch scale a whole node loop is allotted, not the
+    per-command default; only the near-instant git probes keep the short cap."""
+
+    def test_gate_cap_clears_full_suite_scale_not_per_command_default(self) -> None:
+        # A real `uv run pytest` gate runs for minutes; the cap must exceed the
+        # 60s per-command default by a wide margin or every honest node fails.
+        assert _GATE_TIMEOUT_SECONDS > DEFAULT_COMMAND_TIMEOUT
+        # Sized at the run-dispatch ceiling (1800s default a node loop is given).
+        assert _GATE_TIMEOUT_SECONDS >= 1800.0
+
+    def test_git_probes_keep_the_short_cap(self) -> None:
+        # The verifier's git queries are near-instant; a hung one is a degraded
+        # environment, not slow honest work, so it keeps the short ceiling.
+        assert _GIT_QUERY_TIMEOUT_SECONDS == DEFAULT_COMMAND_TIMEOUT
+
+    def test_gate_exceeding_old_60s_default_still_passes(self, worktree: Path) -> None:
+        """Behavioural proof of the fix: a gate that runs longer than the old 60s
+        cap completes within the new one. Run at a compressed scale (cap shrunk,
+        gate sleeps past the *old* default-equivalent) so CI stays fast while the
+        relationship under test — gate duration > per-command default < gate cap —
+        is the same one a full pytest suite hits in production."""
+        import milknado.adapters.loop as loop_mod
+
+        # Compressed mirror: gate runs ~1.5s, "old default" 1s, new cap 10s. A
+        # 1.5s gate would have timed out at a 1s cap (the bug) but passes at 10s.
+        loop_mod_gate_cap = 10.0
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", loop_mod_gate_cap)
+            _commit_change(worktree)
+            verifier = _build_completion_verifier(worktree, ["sh -c 'sleep 1.5'"])
+
+            verdict = verifier()
+
+        assert verdict.ok is True, "a gate longer than the per-command default must not time out"
 
 
 class TestCreateRunAttachesVerifier:
