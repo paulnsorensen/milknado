@@ -23,6 +23,15 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
 
+      - name: Assert tag matches pyproject.toml version
+        run: |
+          pkg_version=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "Version mismatch: tag is v$tag_version but pyproject.toml has $pkg_version"
+            exit 1
+          fi
+
       - name: Build sdist and wheel
         run: uv build
 
