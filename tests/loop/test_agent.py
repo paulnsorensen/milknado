@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -454,6 +455,7 @@ class TestExecuteAgentDispatch:
             max_turns=None,
             on_tool_use=None,
             env=None,
+            cwd=None,
         )
 
     def test_execute_agent_passes_capture_result_text_to_blocking_helper(self, monkeypatch):
@@ -490,6 +492,7 @@ class TestExecuteAgentDispatch:
             max_turns=None,
             on_tool_use=None,
             env=None,
+            cwd=None,
         )
 
 
@@ -1140,6 +1143,94 @@ class TestRunAgentBlockingLineStreaming:
         assert result.returncode is None
         # Must complete well before the child's 30-second sleep finishes.
         assert elapsed < 15.0
+
+
+class TestExecuteAgentCwd:
+    """Real-subprocess tests proving ``cwd`` lands the spawned agent process
+    in the requested working directory.
+
+    The forensic defect this guards: worker agents inherited the
+    orchestrator's cwd and edited the wrong repo.  ``RunConfig.project_root``
+    must be honoured at the spawn layer so a worker edits its own worktree.
+    """
+
+    @staticmethod
+    def _pwd_probe_cmd(out_file):
+        # A fake agent that records its own working directory and exits.
+        script = "import os, sys; open(sys.argv[1], 'w').write(os.getcwd())"
+        return [sys.executable, "-c", script, str(out_file)]
+
+    def test_execute_agent_spawns_in_requested_cwd(self, tmp_path):
+        """execute_agent(..., cwd=dir) runs the agent process inside *dir*."""
+        work_dir = tmp_path / "worker-worktree"
+        work_dir.mkdir()
+        out_file = tmp_path / "pwd.txt"
+
+        result = execute_agent(
+            self._pwd_probe_cmd(out_file),
+            "prompt",
+            timeout=10,
+            log_dir=None,
+            iteration=1,
+            cwd=work_dir,
+        )
+
+        assert result.returncode == 0
+        # The child reported its real cwd; resolve both sides so macOS
+        # /var → /private/var symlinking can't produce a spurious mismatch.
+        recorded = Path(out_file.read_text())
+        assert recorded.resolve() == work_dir.resolve()
+
+    def test_execute_agent_cwd_none_inherits_parent_cwd(self, tmp_path):
+        """cwd=None preserves the inherit-cwd behaviour for direct engine
+        callers — the child must NOT run in some unrelated directory."""
+        out_file = tmp_path / "pwd.txt"
+
+        result = execute_agent(
+            self._pwd_probe_cmd(out_file),
+            "prompt",
+            timeout=10,
+            log_dir=None,
+            iteration=1,
+        )
+
+        assert result.returncode == 0
+        recorded = Path(out_file.read_text())
+        assert recorded.resolve() == Path(os.getcwd()).resolve()
+
+    def test_blocking_helper_honours_cwd(self, tmp_path):
+        """The blocking helper passes cwd straight through to Popen."""
+        work_dir = tmp_path / "blocking-cwd"
+        work_dir.mkdir()
+        out_file = tmp_path / "pwd.txt"
+
+        _run_agent_blocking(
+            self._pwd_probe_cmd(out_file),
+            stdin_text="",
+            timeout=10,
+            log_dir=None,
+            iteration=1,
+            cwd=work_dir,
+        )
+
+        assert Path(out_file.read_text()).resolve() == work_dir.resolve()
+
+    def test_streaming_helper_honours_cwd(self, tmp_path):
+        """The streaming helper passes cwd straight through to Popen."""
+        work_dir = tmp_path / "streaming-cwd"
+        work_dir.mkdir()
+        out_file = tmp_path / "pwd.txt"
+
+        _run_agent_streaming(
+            self._pwd_probe_cmd(out_file),
+            stdin_text="",
+            timeout=10,
+            log_dir=None,
+            iteration=1,
+            cwd=work_dir,
+        )
+
+        assert Path(out_file.read_text()).resolve() == work_dir.resolve()
 
 
 class TestStreamingDeadlineAndBuffering:
