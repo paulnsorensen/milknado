@@ -1,8 +1,3 @@
-# NOTE: The first publish from this workflow will fail. PyPI rejects packages
-# with PEP 508 direct-reference deps (git+https://), and pyproject.toml pins
-# ralphify via a git direct reference (fork-only features not yet on PyPI).
-# Replace that dep with a publishable version constraint before tagging a
-# release. Until then, installs use the git fallback documented in the README.
 name: Release
 
 on:

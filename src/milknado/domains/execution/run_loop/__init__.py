@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from rich.panel import Panel
 
     from milknado.domains.common.config import MilknadoConfig
-    from milknado.domains.common.protocols import RalphPort
+    from milknado.domains.common.protocols import LoopPort
     from milknado.domains.execution.executor import ExecutionConfig, Executor
     from milknado.domains.graph import MikadoGraph
     from milknado.domains.planning.planner import Planner
@@ -50,7 +50,7 @@ class RunLoop:
         self,
         executor: Executor,
         graph: MikadoGraph,
-        ralph: RalphPort,
+        ralph: LoopPort,
         config: MilknadoConfig | None = None,
         planner: Planner | None = None,
     ) -> None:

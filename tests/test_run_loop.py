@@ -1085,11 +1085,11 @@ class TestRootCompletionViaVerifySpec:
 
 
 # ---------------------------------------------------------------------------
-# RalphifyAdapter.create_run passes log_dir
+# LoopAdapter.create_run passes log_dir
 # ---------------------------------------------------------------------------
 
 
-class TestRalphifyAdapterLogDir:
+class TestLoopAdapterLogDir:
     def test_create_run_passes_log_dir_under_worktree(
         self,
         tmp_path: Path,
@@ -1109,9 +1109,9 @@ class TestRalphifyAdapterLogDir:
             fake_run.state.run_id = "run-test"
             return fake_run
 
-        from milknado.adapters.ralphify import RalphifyAdapter
+        from milknado.adapters.loop import LoopAdapter
 
-        adapter = RalphifyAdapter(agent="claude")
+        adapter = LoopAdapter(agent="claude")
 
         with patch.object(adapter._manager, "create_run", side_effect=fake_create_run):
             adapter.create_run(

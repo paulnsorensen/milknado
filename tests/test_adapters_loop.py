@@ -4,11 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from ralphify import EventType
 
-from milknado.adapters.ralphify import (
+from milknado.adapters.loop import (
     MILKNADO_COMPLETION_SIGNAL,
-    RalphifyAdapter,
+    LoopAdapter,
     _build_ralph_content,
     _build_verify_prompt,
     _parse_verify_output,
@@ -16,6 +15,7 @@ from milknado.adapters.ralphify import (
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
+from milknado.loop import EventType
 
 
 @pytest.fixture()
@@ -24,8 +24,8 @@ def mock_manager() -> MagicMock:
 
 
 @pytest.fixture()
-def adapter(mock_manager: MagicMock) -> RalphifyAdapter:
-    a = RalphifyAdapter.__new__(RalphifyAdapter)
+def adapter(mock_manager: MagicMock) -> LoopAdapter:
+    a = LoopAdapter.__new__(LoopAdapter)
     a._manager = mock_manager
     a._queue = queue.Queue()
     a._emitter = MagicMock()
@@ -36,11 +36,11 @@ def adapter(mock_manager: MagicMock) -> RalphifyAdapter:
 
 
 class TestCreateRun:
-    @patch("milknado.adapters.ralphify.RunConfig")
+    @patch("milknado.adapters.loop.RunConfig")
     def test_creates_config_and_delegates(
         self,
         mock_config_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
         mock_config = MagicMock()
@@ -71,26 +71,26 @@ class TestCreateRun:
 
 
 class TestStartStopRun:
-    def test_start_delegates(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
+    def test_start_delegates(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         adapter.start_run("run-1")
         mock_manager.start_run.assert_called_once_with("run-1")
 
-    def test_stop_delegates(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
+    def test_stop_delegates(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         adapter.stop_run("run-1")
         mock_manager.stop_run.assert_called_once_with("run-1")
 
 
 class TestListAndGetRuns:
-    def test_list_runs(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
+    def test_list_runs(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         mock_manager.list_runs.return_value = []
         assert adapter.list_runs() == []
 
-    def test_get_run_found(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
+    def test_get_run_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         run = MagicMock(id="run-1")
         mock_manager.get_run.return_value = run
         assert adapter.get_run("run-1") == run
 
-    def test_get_run_not_found(self, adapter: RalphifyAdapter, mock_manager: MagicMock) -> None:
+    def test_get_run_not_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         mock_manager.get_run.return_value = None
         assert adapter.get_run("missing") is None
 
@@ -98,10 +98,10 @@ class TestListAndGetRuns:
 class TestWaitForNextCompletion:
     def test_returns_on_run_stopped_event(
         self,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from ralphify import EventType, RunStatus
+        from milknado.loop import EventType, RunStatus
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -117,10 +117,10 @@ class TestWaitForNextCompletion:
 
     def test_returns_false_on_failed_run(
         self,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from ralphify import EventType, RunStatus
+        from milknado.loop import EventType, RunStatus
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -136,10 +136,10 @@ class TestWaitForNextCompletion:
 
     def test_skips_non_stop_events(
         self,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from ralphify import EventType, RunStatus
+        from milknado.loop import EventType, RunStatus
 
         noise = MagicMock()
         noise.type = EventType.ITERATION_COMPLETED
@@ -161,10 +161,10 @@ class TestWaitForNextCompletion:
 
     def test_skips_events_for_inactive_runs(
         self,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from ralphify import EventType, RunStatus
+        from milknado.loop import EventType, RunStatus
 
         event1 = MagicMock()
         event1.type = EventType.RUN_STOPPED
@@ -187,10 +187,10 @@ class TestWaitForNextCompletion:
 
     def test_returns_false_when_run_missing(
         self,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from ralphify import EventType
+        from milknado.loop import EventType
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -204,7 +204,7 @@ class TestWaitForNextCompletion:
 
 
 class TestGenerateRalphMd:
-    def test_writes_file(self, adapter: RalphifyAdapter, tmp_path: Path) -> None:
+    def test_writes_file(self, adapter: LoopAdapter, tmp_path: Path) -> None:
         node = MikadoNode(id=1, description="Extract interface")
         output = tmp_path / "RALPH.md"
         result = adapter.generate_ralph_md(
@@ -309,16 +309,16 @@ class TestParseVerifyOutput:
 
 
 class TestVerifySpec:
-    def test_no_agent_returns_done(self, adapter: RalphifyAdapter) -> None:
+    def test_no_agent_returns_done(self, adapter: LoopAdapter) -> None:
         adapter._agent = ""  # type: ignore[attr-defined]
         result = adapter.verify_spec("spec text", "state")
         assert result == VerifySpecResult(outcome="done")
 
-    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.loop.RunManager")
     def test_done_signal(
         self,
         mock_manager_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -330,11 +330,11 @@ class TestVerifySpec:
         result = adapter.verify_spec("spec", "graph")
         assert result == VerifySpecResult(outcome="done")
 
-    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.loop.RunManager")
     def test_gaps_signal_with_delta(
         self,
         mock_manager_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -347,17 +347,17 @@ class TestVerifySpec:
         result = adapter.verify_spec("spec", "graph")
         assert result == VerifySpecResult(outcome="gaps", goal_delta="missing auth")
 
-    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.loop.RunManager")
     def test_timeout_returns_gaps(
         self,
         mock_manager_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
-        with patch("milknado.adapters.ralphify.time") as mock_time:
+        with patch("milknado.adapters.loop.time") as mock_time:
             # deadline = monotonic() + 120; the next reading is past it, so
             # remaining <= 0 trips before any blocking queue.get().
             mock_time.monotonic.side_effect = [0.0, 200.0]
@@ -399,34 +399,34 @@ def _put_stopped(q: queue.Queue[MagicMock]) -> None:
     q.put(event)
 
 
-class TestRalphifyAdapterInit:
-    @patch("milknado.adapters.ralphify.RunManager")
-    @patch("milknado.adapters.ralphify.QueueEmitter")
+class TestLoopAdapterInit:
+    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.adapters.loop.QueueEmitter")
     def test_init_creates_manager_emitter(
         self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
     ) -> None:
         mock_manager_cls.return_value = MagicMock()
         mock_emitter_cls.return_value = MagicMock()
-        adapter = RalphifyAdapter(agent="claude")
+        adapter = LoopAdapter(agent="claude")
         assert adapter._agent == "claude"
         assert adapter._progress_buffer == []
         assert adapter._progress_lock is not None
 
-    @patch("milknado.adapters.ralphify.RunManager")
-    @patch("milknado.adapters.ralphify.QueueEmitter")
+    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.adapters.loop.QueueEmitter")
     def test_init_default_agent_empty(
         self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
     ) -> None:
         mock_manager_cls.return_value = MagicMock()
         mock_emitter_cls.return_value = MagicMock()
-        adapter = RalphifyAdapter()
+        adapter = LoopAdapter()
         assert adapter._agent == ""
 
 
 class TestDrainVerifyRunExceptionHandler:
-    @patch("milknado.adapters.ralphify.RunManager")
+    @patch("milknado.adapters.loop.RunManager")
     def test_exception_in_drain_returns_done(
-        self, mock_manager_cls: MagicMock, adapter: RalphifyAdapter
+        self, mock_manager_cls: MagicMock, adapter: LoopAdapter
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -449,7 +449,7 @@ class TestDrainVerifyRunExceptionHandler:
 
 
 class TestPollProgressEvents:
-    def test_returns_buffered_events_and_clears(self, adapter: RalphifyAdapter) -> None:
+    def test_returns_buffered_events_and_clears(self, adapter: LoopAdapter) -> None:
         ev = ProgressEvent(run_id="run-1", work=5, total=10, message="doing stuff")
         adapter._progress_buffer.append(ev)  # type: ignore[attr-defined]
         result = adapter.poll_progress_events()
@@ -457,13 +457,13 @@ class TestPollProgressEvents:
         # Buffer cleared after drain
         assert adapter.poll_progress_events() == []
 
-    def test_returns_empty_when_no_events(self, adapter: RalphifyAdapter) -> None:
+    def test_returns_empty_when_no_events(self, adapter: LoopAdapter) -> None:
         assert adapter.poll_progress_events() == []
 
     def test_progress_events_collected_from_queue(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+        self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        from ralphify import EventType, RunStatus
+        from milknado.loop import EventType, RunStatus
 
         _PROGRESS = getattr(EventType, "PROGRESS", None)
         if _PROGRESS is None:
@@ -496,13 +496,13 @@ class TestPollProgressEvents:
 
 class TestGetRunStdout:
     def test_returns_empty_when_run_not_found(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+        self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         mock_manager.get_run.return_value = None
         assert adapter.get_run_stdout("missing-run") == []
 
     def test_returns_list_stdout_directly(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+        self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
         run.stdout = ["line 1", "line 2"]
@@ -510,7 +510,7 @@ class TestGetRunStdout:
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2"]
 
     def test_splits_string_stdout_into_lines(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+        self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
         run.stdout = "line 1\nline 2\nline 3"
@@ -518,7 +518,7 @@ class TestGetRunStdout:
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2", "line 3"]
 
     def test_returns_empty_when_stdout_is_none(
-        self, adapter: RalphifyAdapter, mock_manager: MagicMock
+        self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
         run.stdout = None
@@ -527,15 +527,15 @@ class TestGetRunStdout:
 
 
 class TestWaitForNextCompletionTimeout:
-    def test_raises_on_timeout(self, adapter: RalphifyAdapter) -> None:
+    def test_raises_on_timeout(self, adapter: LoopAdapter) -> None:
         with pytest.raises(CompletionTimeout) as exc_info:
             adapter.wait_for_next_completion({"run-1"}, timeout=0.01)
         assert "run-1" in exc_info.value.active_run_ids
 
-    def test_raises_when_deadline_already_passed(self, adapter: RalphifyAdapter) -> None:
+    def test_raises_when_deadline_already_passed(self, adapter: LoopAdapter) -> None:
         """Covers line 91: remaining <= 0 branch in wait_for_next_completion."""
 
-        with patch("milknado.adapters.ralphify.time") as mock_time:
+        with patch("milknado.adapters.loop.time") as mock_time:
             # start, deadline=start+timeout, remaining<=0 check
             mock_time.monotonic.side_effect = [0.0, 100.0, 100.0, 100.0]
             with pytest.raises(CompletionTimeout):
@@ -543,11 +543,11 @@ class TestWaitForNextCompletionTimeout:
 
 
 class TestCreateRunWithProjectRoot:
-    @patch("milknado.adapters.ralphify.RunConfig")
+    @patch("milknado.adapters.loop.RunConfig")
     def test_mcp_config_injected_when_exists(
         self,
         mock_config_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -568,11 +568,11 @@ class TestCreateRunWithProjectRoot:
         call_kwargs = mock_config_cls.call_args[1]
         assert "--mcp-config" in call_kwargs["agent"]
 
-    @patch("milknado.adapters.ralphify.RunConfig")
+    @patch("milknado.adapters.loop.RunConfig")
     def test_no_mcp_config_when_file_missing(
         self,
         mock_config_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -591,11 +591,11 @@ class TestCreateRunWithProjectRoot:
         call_kwargs = mock_config_cls.call_args[1]
         assert "--mcp-config" not in call_kwargs["agent"]
 
-    @patch("milknado.adapters.ralphify.RunConfig")
+    @patch("milknado.adapters.loop.RunConfig")
     def test_log_dir_routed_to_ralph_logs(
         self,
         mock_config_cls: MagicMock,
-        adapter: RalphifyAdapter,
+        adapter: LoopAdapter,
         mock_manager: MagicMock,
         tmp_path: Path,
     ) -> None:
@@ -615,13 +615,13 @@ class TestCreateRunWithProjectRoot:
 
 
 class TestGenerateRalphMdWriteError:
-    def test_raises_on_write_failure(self, adapter: RalphifyAdapter, tmp_path: Path) -> None:
+    def test_raises_on_write_failure(self, adapter: LoopAdapter, tmp_path: Path) -> None:
         from milknado.domains.common.errors import RalphMarkdownWriteError
 
         node = MikadoNode(id=1, description="Task")
         bad_path = tmp_path / "nonexistent_dir" / "RALPH.md"
         # Make the parent non-writable to force OSError
-        with patch("milknado.adapters.ralphify.Path.write_text") as mock_write:
+        with patch("milknado.adapters.loop.Path.write_text") as mock_write:
             mock_write.side_effect = OSError("disk full")
             with pytest.raises(RalphMarkdownWriteError) as exc_info:
                 adapter.generate_ralph_md(

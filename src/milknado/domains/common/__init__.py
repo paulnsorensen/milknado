@@ -9,7 +9,7 @@ from milknado.domains.common.config import (
 from milknado.domains.common.errors import InvalidContainment, InvalidTransition
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
-from milknado.domains.common.protocols import CrgPort, GitPort, RalphPort
+from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.common.types import (
     VALID_CHILD_KINDS,
     VALID_TRANSITIONS,
@@ -35,7 +35,7 @@ __all__ = [
     "TaskFlavor",
     "PluginHook",
     "PluginMeta",
-    "RalphPort",
+    "LoopPort",
     "VALID_CHILD_KINDS",
     "VALID_TRANSITIONS",
     "pid_alive",
