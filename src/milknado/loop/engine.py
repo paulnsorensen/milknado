@@ -67,6 +67,12 @@ _CREDIT_INSTRUCTION = (
     "Co-authored-by: Ralphify <noreply@ralphify.co>"
 )
 
+_VERIFIER_FEEDBACK_HEADER = (
+    "\n\n---\n\n"
+    "The previous iteration reported completion, but the completion check "
+    "rejected it. Address this feedback before reporting completion again:\n\n"
+)
+
 
 def _wait_for_resume(state: RunState, emit: BoundEmitter) -> bool:
     """Block until the run is resumed or a stop is requested."""
@@ -152,12 +158,17 @@ def _assemble_prompt(
     config: RunConfig,
     state: RunState,
     command_outputs: dict[str, str],
+    verifier_feedback: str | None = None,
 ) -> str:
     """Build the full prompt for one iteration.
 
     Uses ``config.prompt`` as the body when set (no file read, no
     frontmatter parse); otherwise reads the RALPH.md body.  Either way it
     resolves user args, command output, and context placeholders.
+
+    ``verifier_feedback`` carries a rejecting ``completion_verifier``'s
+    message from the prior iteration; when present it is appended verbatim
+    so the agent can act on it this iteration.
     """
     if config.prompt is not None:
         prompt = config.prompt
@@ -167,6 +178,8 @@ def _assemble_prompt(
         _, prompt = parse_frontmatter(raw)
     ralph_context = _build_ralph_context(config, state)
     prompt = resolve_all(prompt, command_outputs, config.args, ralph_context)
+    if verifier_feedback:
+        prompt += _VERIFIER_FEEDBACK_HEADER + verifier_feedback
     if config.credit:
         prompt += _CREDIT_INSTRUCTION
     return prompt
@@ -410,12 +423,14 @@ def _run_iteration(
     state: RunState,
     emit: BoundEmitter,
     hooks: CombinedAgentHook | None,
+    verifier_feedback: str | None = None,
 ) -> tuple[bool, bool]:
     """Execute one iteration of the agent loop.
 
-    Returns (should_continue, stop_for_completion_signal):
+    Returns (should_continue, promise_would_complete):
       - should_continue: True if the loop should continue, False to break
-      - stop_for_completion_signal: True if a completion signal ended the run early
+      - promise_would_complete: True if an exit-0 + promise tag would
+        complete the run (subject to the loop's completion verifier)
     """
     iteration = state.iteration
 
@@ -445,7 +460,7 @@ def _run_iteration(
         if hooks is not None:
             hooks.on_commands_completed(iteration=iteration, outputs=command_outputs)
 
-    prompt = _assemble_prompt(config, state, command_outputs)
+    prompt = _assemble_prompt(config, state, command_outputs, verifier_feedback)
     emit(
         EventType.PROMPT_ASSEMBLED,
         PromptAssembledData(iteration=iteration, prompt_length=len(prompt)),
@@ -453,16 +468,14 @@ def _run_iteration(
     if hooks is not None:
         hooks.on_prompt_assembled(iteration=iteration, prompt=prompt)
 
-    agent_succeeded, stop_for_completion_signal = _run_agent_phase(
-        prompt, config, state, emit, hooks
-    )
+    agent_succeeded, promise_would_complete = _run_agent_phase(prompt, config, state, emit, hooks)
 
     if not agent_succeeded and config.stop_on_error:
         state.status = RunStatus.FAILED
         emit.log_error("Stopping due to --stop-on-error.")
-        return False, stop_for_completion_signal
+        return False, promise_would_complete
 
-    return True, stop_for_completion_signal
+    return True, promise_would_complete
 
 
 def _delay_if_needed(config: RunConfig, state: RunState, emit: BoundEmitter) -> None:
@@ -511,21 +524,36 @@ def run_loop(
         ),
     )
 
+    pending_feedback: str | None = None
+    verifier_rejected = False
+
     try:
         while True:
             if not _handle_control_signals(state, emit):
                 break
 
             if config.max_iterations is not None and state.iteration >= config.max_iterations:
+                if verifier_rejected:
+                    state.status = RunStatus.FAILED
+                    emit.log_error(
+                        "Completion verifier never accepted within the "
+                        f"{config.max_iterations}-iteration budget."
+                    )
                 break
             state.iteration += 1
 
-            should_continue, stop_for_completion_signal = _run_iteration(
-                config, state, emit, hooks
+            should_continue, promise_would_complete = _run_iteration(
+                config, state, emit, hooks, pending_feedback
             )
-            if stop_for_completion_signal:
-                state.status = RunStatus.COMPLETED
-                break
+            pending_feedback = None
+            if promise_would_complete:
+                verdict = config.completion_verifier() if config.completion_verifier else None
+                if verdict is None or verdict.ok:
+                    state.status = RunStatus.COMPLETED
+                    break
+                verifier_rejected = True
+                pending_feedback = verdict.feedback
+                emit.log_info(f"Completion verifier rejected: {verdict.feedback}")
             if not should_continue:
                 break
 
