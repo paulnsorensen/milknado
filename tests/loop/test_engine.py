@@ -909,6 +909,15 @@ class TestCommandExecution:
         assert passed_cwd == config.project_root
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
+    def test_agent_spawned_in_project_root(self, mock_run, tmp_path):
+        """The agent subprocess runs in the run's project root, not the orchestrator cwd."""
+        config = make_config(tmp_path, max_iterations=1)
+        state = make_state()
+        run_loop(config, state, NullEmitter())
+
+        assert mock_run.call_args.kwargs["cwd"] == config.project_root
+
+    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)
     def test_command_timeout_passed_through(self, mock_run_cmd, mock_agent, tmp_path):
         """Command timeout from frontmatter is forwarded to run_command."""

@@ -255,6 +255,7 @@ def _run_agent_phase(
             max_turns=config.max_turns,
             max_turns_grace=config.max_turns_grace,
             on_tool_use=on_tool_use,
+            cwd=config.project_root,
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(
