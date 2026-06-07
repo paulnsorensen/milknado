@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from milknado.loop.hooks import AgentHook
 
 
@@ -83,6 +85,18 @@ class Command:
     timeout: float = DEFAULT_COMMAND_TIMEOUT
 
 
+@dataclass(frozen=True, slots=True)
+class CompletionVerdict:
+    """Tier-2 completion check result returned by a ``completion_verifier``.
+
+    ``ok=True`` accepts the completion; ``ok=False`` rejects it and
+    ``feedback`` is injected into the next iteration's context.
+    """
+
+    ok: bool
+    feedback: str
+
+
 @dataclass(slots=True)
 class RunConfig:
     """All settings for a single run.
@@ -117,6 +131,9 @@ class RunConfig:
     max_turns_grace: int = 2
     # User-supplied lifecycle hooks from ``RALPH.md`` frontmatter.
     hooks: list[AgentHook] = field(default_factory=list)
+    # Tier-2 completion check consulted when exit-0 + promise would
+    # complete the run; ``None`` accepts on the promise alone.
+    completion_verifier: Callable[[], CompletionVerdict] | None = None
 
     def __post_init__(self) -> None:
         if (self.prompt is None) == (self.ralph_file is None):

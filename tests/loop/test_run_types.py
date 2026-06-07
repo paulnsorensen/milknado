@@ -10,6 +10,7 @@ from milknado.loop._run_types import (
     DEFAULT_COMMAND_TIMEOUT,
     RUN_ID_LENGTH,
     Command,
+    CompletionVerdict,
     RunConfig,
     RunResult,
     RunState,
@@ -88,6 +89,31 @@ class TestRunConfig:
                 ralph_file=tmp_path / RALPH_MARKER,
                 prompt="do work",
             )
+
+
+class TestCompletionVerdict:
+    def test_holds_ok_and_feedback(self):
+        verdict = CompletionVerdict(ok=False, feedback="gate failed: just check-llm")
+        assert verdict.ok is False
+        assert verdict.feedback == "gate failed: just check-llm"
+
+    def test_is_frozen(self):
+        verdict = CompletionVerdict(ok=True, feedback="")
+        with pytest.raises(AttributeError):
+            verdict.ok = False  # type: ignore[misc]
+
+    def test_is_public_loop_api(self):
+        import milknado.loop
+
+        assert milknado.loop.CompletionVerdict is CompletionVerdict
+
+    def test_run_config_defaults_completion_verifier_to_none(self, tmp_path):
+        config = RunConfig(
+            agent="echo",
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / RALPH_MARKER,
+        )
+        assert config.completion_verifier is None
 
 
 class TestRunResult:
