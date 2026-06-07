@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from milknado.adapters.git import GitAdapter
 from milknado.adapters.loop import (
     LoopAdapter,
     _build_completion_verifier,
@@ -182,6 +183,35 @@ class TestFeatureBranchResolution:
     def test_non_git_dir_yields_none(self, tmp_path: Path) -> None:
         """Outside a git repo, resolution fails closed rather than raising."""
         assert _resolve_feature_branch(tmp_path) is None
+
+    def test_resolved_base_matches_executor_rebase_target(self, tmp_path: Path) -> None:
+        """Integration seam (Curd 6 verifier <-> Curd 4 merge-back): the branch the
+        verifier diffs against must be the SAME ref the executor rebases/ff onto.
+
+        The executor receives ``feature_branch`` from ``GitAdapter.current_branch()``
+        at the orchestrator root (cli_run.run: ``feature_branch = git.current_branch()``),
+        while the verifier independently re-derives it from ``git worktree list`` inside
+        the node worktree. If those two derivations drift, the empty-diff check measures
+        against the wrong base — accepting work that never lands, or rejecting work that
+        would. A non-default branch name proves the equality is structural, not a
+        coincidence of the literal 'feature' both sides happen to use elsewhere.
+        """
+        repo = tmp_path / "orch"
+        repo.mkdir()
+        _git("init", "-b", "release/v2", cwd=repo)
+        _git("config", "user.email", "t@t.t", cwd=repo)
+        _git("config", "user.name", "t", cwd=repo)
+        (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+        _git("add", "-A", cwd=repo)
+        _git("commit", "-m", "seed", cwd=repo)
+        wt = tmp_path / "node-wt"
+        _git("worktree", "add", "-b", "milknado/9-x", str(wt), cwd=repo)
+
+        executor_target = GitAdapter(repo).current_branch()
+        verifier_base = _resolve_feature_branch(wt)
+
+        assert executor_target == "release/v2"
+        assert verifier_base == executor_target
 
 
 class TestGitFailureFailsClosed:
