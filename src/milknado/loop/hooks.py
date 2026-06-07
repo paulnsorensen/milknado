@@ -23,6 +23,9 @@ from typing import Any, Protocol, runtime_checkable
 
 _log = logging.getLogger(__name__)
 
+_SHELL_HOOK_TIMEOUT_SECONDS = 60.0
+"""Hard cap on shell hook runtime — a hanging hook must not stall the run loop."""
+
 
 HOOK_EVENT_NAMES: frozenset[str] = frozenset(
     {
@@ -167,8 +170,10 @@ class ShellAgentHook(NoOpAgentHook):
 
     The event payload is serialized to JSON and written to the command's
     stdin.  Stdout is captured to the log; a non-zero exit is logged but
-    does NOT abort the run (per FR-9).  The command is parsed with
-    :func:`shlex.split` — no shell metacharacter expansion.
+    does NOT abort the run (per FR-9).  Commands are killed after
+    ``_SHELL_HOOK_TIMEOUT_SECONDS`` so a hanging hook cannot stall the
+    run loop.  The command is parsed with :func:`shlex.split` — no shell
+    metacharacter expansion.
     """
 
     def __init__(self, event: str, command: str) -> None:
@@ -193,7 +198,16 @@ class ShellAgentHook(NoOpAgentHook):
                 capture_output=True,
                 text=True,
                 check=False,
+                timeout=_SHELL_HOOK_TIMEOUT_SECONDS,
             )
+        except subprocess.TimeoutExpired:
+            _log.warning(
+                "hook %r: command %r timed out after %.0fs",
+                self._event,
+                self._command,
+                _SHELL_HOOK_TIMEOUT_SECONDS,
+            )
+            return
         except (OSError, subprocess.SubprocessError) as exc:
             _log.warning(
                 "hook %r: command %r failed to start: %s",

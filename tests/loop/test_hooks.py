@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any
 
 import pytest
@@ -92,6 +93,19 @@ def test_shell_hook_swallows_nonzero_exit(caplog: pytest.LogCaptureFixture) -> N
     with caplog.at_level("WARNING", logger="milknado.loop.hooks"):
         hook.on_iteration_started(iteration=1)
     assert any("exited 1" in record.message for record in caplog.records)
+
+
+def test_shell_hook_swallows_timeout(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def raise_timeout(*args: Any, **kwargs: Any) -> None:
+        raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=60.0)
+
+    monkeypatch.setattr("milknado.loop.hooks.subprocess.run", raise_timeout)
+    hook = ShellAgentHook("on_iteration_started", "sleep 999")
+    with caplog.at_level("WARNING", logger="milknado.loop.hooks"):
+        hook.on_iteration_started(iteration=1)
+    assert any("timed out" in record.message for record in caplog.records)
 
 
 def test_shell_hook_swallows_missing_binary(caplog: pytest.LogCaptureFixture) -> None:

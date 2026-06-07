@@ -1,6 +1,6 @@
-"""Shared constants and helpers for ralphify tests.
+"""Shared constants and helpers for the vendored loop engine tests.
 
-Import these directly: ``from helpers import MOCK_SUBPROCESS, ok_result``
+Import these via ``from tests.loop.helpers import MOCK_SUBPROCESS, ok_result``.
 Fixtures stay in conftest.py — pytest discovers them automatically.
 """
 
