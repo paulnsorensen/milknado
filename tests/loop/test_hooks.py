@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -124,6 +125,54 @@ def test_shell_hook_pipes_payload_to_stdin(tmp_path: Any) -> None:
     hook.on_iteration_started(iteration=7)
     assert out.exists()
     assert '"iteration": 7' in out.read_text()
+
+
+def test_shell_hook_runs_in_configured_worktree(tmp_path: Any) -> None:
+    worktree = tmp_path / "node-worktree"
+    worktree.mkdir()
+    out = tmp_path / "observed_cwd.txt"
+    hook = ShellAgentHook(
+        "on_iteration_started",
+        f"sh -c 'pwd > {out}'",
+        cwd=worktree,
+    )
+    hook.on_iteration_started(iteration=1)
+    observed = out.read_text().strip()
+    # Resolve both sides: macOS /tmp symlinks to /private/tmp.
+    assert Path(observed).resolve() == worktree.resolve()
+
+
+def test_shell_hook_none_cwd_inherits_parent(tmp_path: Any, monkeypatch: Any) -> None:
+    work = tmp_path / "orchestrator-cwd"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    out = work / "observed_cwd.txt"
+    hook = ShellAgentHook("on_iteration_started", "sh -c 'pwd > observed_cwd.txt'")
+    hook.on_iteration_started(iteration=1)
+    observed = out.read_text().strip()
+    assert Path(observed).resolve() == work.resolve()
+
+
+def test_shell_hook_passes_cwd_to_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return _Proc()
+
+    monkeypatch.setattr("milknado.loop.hooks.subprocess.run", fake_run)
+    worktree = Path("/some/node/worktree")
+    hook = ShellAgentHook("on_iteration_started", "true", cwd=worktree)
+    hook.on_iteration_started(iteration=1)
+    assert captured["cwd"] == worktree
+    # The 60s timeout cap is unchanged alongside the new cwd wiring.
+    assert captured["timeout"] == 60.0
 
 
 def test_hook_event_names_cover_protocol_methods() -> None:
