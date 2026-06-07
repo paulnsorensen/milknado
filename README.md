@@ -19,6 +19,8 @@ codex plugin marketplace add paulnsorensen/milknado
 
 Then restart Codex and install from the `/plugins` directory. Note: repo-level marketplace entries do not auto-prompt on start — you must select and install after restart.
 
+> **Pre-release note:** the plugin's MCP server (`milknado-mcp`) resolves from PyPI. Until the first release is published, substitute `uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp` wherever `uvx milknado-mcp` is used.
+
 ### opencode
 
 Add the MCP server to `opencode.json` in your project or home directory:

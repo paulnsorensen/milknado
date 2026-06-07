@@ -1,7 +1,7 @@
 """
 Manifest-drift tests for the portable plugin packaging.
 
-Asserts that all four JSON artifacts are valid, consistent with each other,
+Asserts that all five JSON artifacts are valid, consistent with each other,
 and pinned to the version declared in pyproject.toml.  Runs under the normal
 pytest suite so `just check-llm` gates drift.
 """
@@ -16,7 +16,7 @@ import yaml
 
 REPO = Path(__file__).parent.parent
 
-# All four JSON artifacts that must stay in sync
+# All five JSON artifacts that must stay in sync
 CLAUDE_MARKETPLACE = REPO / ".claude-plugin" / "marketplace.json"
 CODEX_MARKETPLACE = REPO / ".agents" / "plugins" / "marketplace.json"
 CLAUDE_PLUGIN = REPO / "plugins" / "milknado" / ".claude-plugin" / "plugin.json"
@@ -258,3 +258,15 @@ class TestReleaseWorkflow:
                 f"release.yml must not contain secret token '{forbidden}'; "
                 "use OIDC trusted publishing instead"
             )
+
+    def test_release_yml_publishes_via_pypa_action_in_pypi_environment(self) -> None:
+        """Publish step uses pypa/gh-action-pypi-publish; job sets environment: pypi."""
+        wf = self._workflow()
+        job = wf["jobs"]["build-and-publish"]
+        assert job.get("environment") == "pypi", (
+            f"build-and-publish job must set 'environment: pypi'; got {job.get('environment')!r}"
+        )
+        uses_values = [step["uses"] for step in job["steps"] if "uses" in step]
+        assert any("pypa/gh-action-pypi-publish" in u for u in uses_values), (
+            f"No publish step uses pypa/gh-action-pypi-publish; found: {uses_values}"
+        )

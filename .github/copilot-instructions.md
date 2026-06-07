@@ -59,7 +59,7 @@ Follow vertical slice architecture:
 - **Test framework**: pytest (with `pytest-cov`)
 - **Lint + format**: Ruff (`--preview`)
 - **Task runner**: `just`
-- **Key libraries**: fastmcp, ortools (CP-SAT), typer, tiktoken, pyyaml, rich, code-review-graph, ralphify
+- **Key libraries**: fastmcp, ortools (CP-SAT), typer, tiktoken, pyyaml, rich, code-review-graph
 - **Shape**: MCP server (`src/milknado/mcp_server.py`) over domain slices under `src/milknado/domains/`
 
 ## Build, Test, and Lint Commands
