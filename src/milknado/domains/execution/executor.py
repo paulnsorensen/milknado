@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
@@ -79,6 +80,60 @@ def _slugify(text: str) -> str:
     return slug[:30]
 
 
+_LOOP_SCAFFOLDING = ("RALPH.md", ".ralph-logs/")
+
+
+def _exclude_loop_scaffolding(worktree: Path) -> None:
+    """Mark the loop's own scaffolding (RALPH.md, .ralph-logs/) git-ignored so the
+    worker's `git add -A` never stages it into the squashed commit.
+
+    Git consults `info/exclude` only in the common git dir (a linked worktree's
+    `.git` is a gitlink file, not a dir), so we resolve it with `rev-parse` and
+    append idempotently. Best-effort: a worktree that is not a real git checkout —
+    e.g. a test double's bare path — has no exclude file to write, and a failure to
+    exclude scaffolding must not abort dispatch, so failures are logged, not raised.
+    """
+    try:
+        common = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _logger.debug("Skipping scaffolding-exclude for %s: %s", worktree, exc)
+        return
+    exclude = Path(common) / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    existing = exclude.read_text() if exclude.exists() else ""
+    present = set(existing.splitlines())
+    missing = [p for p in _LOOP_SCAFFOLDING if p not in present]
+    if not missing:
+        return
+    prefix = "" if existing == "" or existing.endswith("\n") else "\n"
+    exclude.write_text(existing + prefix + "\n".join(missing) + "\n")
+
+
+def _preserve_run_logs(worktree: Path, node_id: int) -> None:
+    """Copy the worktree's `.ralph-logs/` to `.milknado/logs/<node_id>/` in the
+    project root before the worktree is destroyed, so a run's post-mortem evidence
+    survives worktree removal. `.milknado/` is already local, untracked state.
+
+    Best-effort: a worktree with no logs (or a test double's bare path whose parent
+    is not the project root) leaves nothing to preserve, and a copy failure must not
+    block worktree cleanup, so failures are logged, not raised.
+    """
+    logs = worktree / ".ralph-logs"
+    if not logs.is_dir():
+        return
+    dest = worktree.parent / ".milknado" / "logs" / str(node_id)
+    try:
+        shutil.copytree(logs, dest, dirs_exist_ok=True)
+    except OSError as exc:
+        _logger.warning("Failed to preserve run logs for node %d: %s", node_id, exc)
+
+
 def _is_transient(exc: BaseException) -> bool:
     if isinstance(exc, (OSError, subprocess.TimeoutExpired, TransientDispatchError)):
         return True
@@ -117,6 +172,7 @@ class WorktreeManager:
     def create(self, node_id: int, wt_path: Path, branch: str) -> None:
         self._git.create_worktree(wt_path, branch)
         self._worktrees[node_id] = wt_path
+        _exclude_loop_scaffolding(wt_path)
 
     def ensure_clean(self, node_id: int) -> None:
         """Remove any tracked worktree for node_id, logging failures."""
@@ -158,15 +214,33 @@ class WorktreeManager:
         feature_branch: str,
         node_id: int,
         description: str,
+        worker_branch: str | None = None,
     ) -> RebaseResult:
-        """Squash-commit, rebase onto feature_branch, then remove the worktree."""
+        """Squash-commit, rebase onto feature_branch, fast-forward the feature
+        branch onto the rebased worker branch, then preserve logs and remove the
+        worktree.
+
+        The fast-forward is what actually lands the worker's commit on the feature
+        branch — without it the rebased work is stranded on the worker branch. It
+        runs only when the squash produced a commit (a no-commit squash has nothing
+        to merge) and the rebase succeeded. A fast-forward failure raises: a dirty
+        or diverged project root overlapping the merge is a loud failure, not a
+        silent skip.
+        """
         if not worktree or not worktree.exists():
             return RebaseResult(success=True)
         try:
             msg = _build_commit_message(node_id, description)
-            self._git.squash_and_commit(worktree, feature_branch, msg)
-            return self._git.rebase(worktree, feature_branch)
+            committed = self._git.squash_and_commit(worktree, feature_branch, msg)
+            rebase_result = self._git.rebase(worktree, feature_branch)
+            if rebase_result.success and committed and worker_branch:
+                try:
+                    self._git.fast_forward(worker_branch)
+                except subprocess.CalledProcessError as exc:
+                    raise RebaseAbortError(worktree, stderr=exc.stderr or "") from exc
+            return rebase_result
         finally:
+            _preserve_run_logs(worktree, node_id)
             self.remove(node_id, worktree)
 
 
@@ -369,6 +443,7 @@ class Executor:
                 feature_branch,
                 node.id,
                 node.description,
+                worker_branch=node.branch_name,
             )
         except RebaseAbortError:
             raise  # repo-corruption state: do not swallow
