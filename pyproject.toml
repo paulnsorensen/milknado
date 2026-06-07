@@ -9,7 +9,6 @@ description = "Mikado execution engine — decomposes goals into dependency grap
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
-    "ralphify @ git+https://github.com/paulnsorensen/ralphify@main",
     "code-review-graph>=2.3.3",
     "fastmcp>=3.3.1",
     "typer>=0.25.1",
@@ -24,8 +23,6 @@ dependencies = [
 milknado = "milknado.cli:app"
 milknado-mcp = "milknado.mcp_server:main"
 
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/milknado"]

@@ -3,7 +3,7 @@
 The TUI-free twin of one `RunLoop` iteration. `RunLoop.run()` drives a
 `rich.live.Live` display and a keyboard-input thread, so it cannot run inside a
 headless server process or a detached subprocess. This function reuses the same
-`Executor` + `RalphPort` primitives and mirrors the success/failure branching of
+`Executor` + `LoopPort` primitives and mirrors the success/failure branching of
 `run_loop._completion.handle_completion`, but with no terminal dependency.
 """
 

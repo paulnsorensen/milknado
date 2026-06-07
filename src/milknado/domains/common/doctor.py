@@ -64,7 +64,7 @@ def run_doctor(config_path: Path, config: MilknadoConfig) -> DoctorReport:
 
     db_path = config.db_path.resolve()
     db_status = "OK" if db_path.exists() else "MISSING"
-    tools = tuple(_probe(t) for t in PROBED_TOOLS) + (_probe_python_package("ralphify"),)
+    tools = tuple(_probe(t) for t in PROBED_TOOLS)
 
     return DoctorReport(
         milknado_version=milknado_version,

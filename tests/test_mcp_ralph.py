@@ -424,7 +424,7 @@ def test_runner_writes_done_on_successful_outcome(
         def poll_progress_events(self) -> list:
             return []
 
-    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: _StubRalph())
+    monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: _StubRalph())
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
     monkeypatch.setattr(execution, "Executor", lambda **k: object())
     monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
@@ -515,7 +515,7 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     graph = _Graph()
     monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
-    monkeypatch.setattr(adapters, "RalphifyAdapter", lambda *a, **k: stub_ralph)
+    monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: stub_ralph)
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
     monkeypatch.setattr(execution, "Executor", lambda **k: _StubExecutor())
     monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())

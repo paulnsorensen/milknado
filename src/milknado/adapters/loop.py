@@ -7,18 +7,17 @@ import time
 from pathlib import Path
 from typing import Any, Final
 
-from ralphify import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
-
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
+from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
 _logger = logging.getLogger(__name__)
 
 
-class RalphifyAdapter:
+class LoopAdapter:
     def __init__(self, agent: str = "") -> None:
         self._manager = RunManager()
         self._queue: queue.Queue[Any] = queue.Queue()

@@ -67,7 +67,7 @@ def project_dir(tmp_path: Path) -> Path:
 @pytest.fixture()
 def mock_adapters():
     with (
-        patch("milknado.adapters.RalphifyAdapter") as ralph,
+        patch("milknado.adapters.LoopAdapter") as ralph,
         patch("milknado.adapters.GitAdapter") as git,
         patch("milknado.adapters.CrgAdapter") as crg,
     ):
@@ -255,7 +255,7 @@ class TestStatus:
         assert result.exit_code == 0
         assert "/tmp/milknado-wt" in result.output
 
-    @patch("milknado.adapters.ralphify.RalphifyAdapter")
+    @patch("milknado.adapters.loop.LoopAdapter")
     def test_enriches_running_node_with_run_state(
         self, mock_ralph_cls: MagicMock, project_dir: Path
     ) -> None:
@@ -278,7 +278,7 @@ class TestStatus:
         assert result.exit_code == 0
         mock_ralph_cls.return_value.get_run.assert_called_once_with("run-42")
 
-    @patch("milknado.adapters.ralphify.RalphifyAdapter")
+    @patch("milknado.adapters.loop.LoopAdapter")
     def test_run_state_enrichment_is_best_effort(
         self, mock_ralph_cls: MagicMock, project_dir: Path
     ) -> None:

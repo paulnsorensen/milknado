@@ -122,9 +122,9 @@ def _fetch_run_states(nodes: list[MikadoNode]) -> dict[str, str] | None:
     if not run_ids:
         return None
     try:
-        from milknado.adapters.ralphify import RalphifyAdapter
+        from milknado.adapters.loop import LoopAdapter
 
-        ralph = RalphifyAdapter()
+        ralph = LoopAdapter()
         states: dict[str, str] = {}
         for run_id in run_ids:
             run = ralph.get_run(run_id)

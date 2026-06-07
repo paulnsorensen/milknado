@@ -1,0 +1,9 @@
+{
+  "name": "milknado",
+  "owner": "paulnsorensen",
+  "plugins": [
+    {
+      "source": "./plugins/milknado"
+    }
+  ]
+}

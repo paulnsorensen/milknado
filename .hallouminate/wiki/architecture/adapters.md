@@ -11,7 +11,7 @@ The four ports and their adapters:
 | Port (protocols.py) | Adapter | External system |
 |---|---|---|
 | `GitPort` | `git.GitAdapter` | `git` CLI + `mergiraf` |
-| `RalphPort` | `ralphify.RalphifyAdapter` | `ralphify` library (subprocess agent loops) |
+| `LoopPort` | `loop.LoopAdapter` | `milknado.loop` (vendored engine, subprocess agent loops) |
 | `TilthPort` | `tilth.TilthAdapter` | `tilth` CLI (code intelligence) |
 | `CrgPort` | `crg.CrgAdapter` | `code-review-graph` library + CLI |
 
@@ -32,11 +32,11 @@ abort that *itself* fails raises `RebaseAbortError` — fail-loud, since the wor
 is now in an unknown state. `squash_and_commit` swallows a `merge-base` failure
 (soft-reset is best-effort) and only commits when there are staged changes.
 
-## ralphify.py — RalphPort
+## loop.py — LoopPort
 
-The largest adapter (~272 lines). Wraps the `ralphify` library, which spawns coding-
-agent subprocesses ("ralph loops") that iterate until a completion signal. This is
-where Milknado's parallel execution actually happens.
+The largest adapter (~272 lines). Wraps the vendored `milknado.loop` engine, which
+spawns coding-agent subprocesses ("ralph loops") that iterate until a completion
+signal. This is where Milknado's parallel execution actually happens.
 
 - **Run lifecycle**: `create_run` builds a `RunConfig` keyed on the constant
   completion signal `MILKNADO_NODE_COMPLETE`; `stop_on_completion_signal=True` makes
@@ -95,9 +95,9 @@ operations shell out to the `code-review-graph` CLI via `_run_crg`.
 ## Gotchas
 
 - Every adapter calls external processes; all timed/error paths matter. Note the
-  split: git/crg/ralphify **fail loud** on operations the engine depends on (raise),
+  split: git/crg/loop **fail loud** on operations the engine depends on (raise),
   while tilth **degrades** because it's advisory. Match this when extending.
-- `RalphPort.create_run` / `get_run` / `list_runs` return `Any` — the `ralphify`
+- `LoopPort.create_run` / `get_run` / `list_runs` return `Any` — the loop
   run object is not typed at the port boundary.
 - `verify_spec` builds its own `RunManager` rather than reusing the adapter's, so its
   events never reach the shared completion queue.
