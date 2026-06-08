@@ -1,8 +1,11 @@
 {
   "name": "milknado",
-  "owner": "paulnsorensen",
+  "owner": {
+    "name": "paulnsorensen"
+  },
   "plugins": [
     {
+      "name": "milknado",
       "source": "./plugins/milknado"
     }
   ]
