@@ -512,6 +512,7 @@ def _run_agent_streaming(
     max_turns: int | None = None,
     on_tool_use: ToolUseCallback | None = None,
     env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> AgentResult:
     """Run the agent subprocess with line-by-line streaming of JSON output.
 
@@ -553,6 +554,7 @@ def _run_agent_streaming(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE if pipe_stderr else None,
         env=spawn_env,
+        cwd=cwd,
         **SUBPROCESS_TEXT_KWARGS,
         **SESSION_KWARGS,
     )
@@ -742,6 +744,7 @@ def _run_agent_blocking(
     max_turns: int | None = None,
     on_tool_use: ToolUseCallback | None = None,
     env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> AgentResult:
     """Run the agent subprocess and return the result.
 
@@ -816,6 +819,7 @@ def _run_agent_blocking(
         stdout=subprocess.PIPE if pipe_stdout else None,
         stderr=subprocess.PIPE if pipe_stderr else None,
         env=spawn_env,
+        cwd=cwd,
         **SUBPROCESS_TEXT_KWARGS,
         **SESSION_KWARGS,
     )
@@ -883,6 +887,7 @@ def execute_agent(
     max_turns: int | None = None,
     max_turns_grace: int = 0,
     on_tool_use: ToolUseCallback | None = None,
+    cwd: Path | None = None,
 ) -> AgentResult:
     """Run the agent subprocess, auto-selecting streaming or blocking mode.
 
@@ -904,6 +909,11 @@ def execute_agent(
 
     This is the single entry point the engine should use — callers don't need
     to know which execution mode is selected.
+
+    *cwd* is the working directory the spawned agent process runs in. When
+    ``None`` (the default), the child inherits the parent's cwd — preserving
+    behaviour for direct engine callers. Pass the worktree path so a worker
+    agent edits its own node's repo rather than the orchestrator's.
     """
     if adapter is None:
         adapter = select_adapter(cmd)
@@ -948,6 +958,7 @@ def execute_agent(
                 max_turns=max_turns,
                 on_tool_use=wrapped_on_tool_use,
                 env=env,
+                cwd=cwd,
             )
         return _run_agent_blocking(
             inv.argv,
@@ -962,6 +973,7 @@ def execute_agent(
             max_turns=max_turns,
             on_tool_use=wrapped_on_tool_use,
             env=env,
+            cwd=cwd,
         )
     finally:
         if wind_down is not None:

@@ -34,6 +34,7 @@ class TestLoopCrustContract:
         import milknado.loop as loop_pkg
 
         assert set(loop_pkg.__all__) == {
+            "CompletionVerdict",
             "EventType",
             "QueueEmitter",
             "RunConfig",

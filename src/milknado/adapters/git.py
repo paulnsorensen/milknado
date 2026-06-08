@@ -124,7 +124,13 @@ class GitAdapter:
         self._run(["add", "-A"], cwd=worktree)
         self._run(["commit", "-m", message], cwd=worktree)
 
-    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
+        """Squash the worktree's work into one commit on top of `onto`'s merge-base.
+
+        Returns True when a commit was created, False when there was nothing to
+        commit. The caller uses this to decide whether to fast-forward the feature
+        branch — a no-commit squash has nothing to merge back.
+        """
         self._run(["add", "-A"], cwd=worktree)
         try:
             base_result = subprocess.run(
@@ -147,3 +153,15 @@ class GitAdapter:
         )
         if has_staged:
             self._run(["commit", "-m", msg], cwd=worktree)
+        return has_staged
+
+    def fast_forward(self, branch: str) -> None:
+        """Fast-forward the feature branch (checked out in the project root) to the
+        rebased worker `branch` via `git merge --ff-only`.
+
+        Run from the project root with the feature branch checked out, this advances
+        it to the squashed-then-rebased worker commit. A non-ff merge — e.g. the
+        project root's tree is dirty or the feature branch has diverged — fails loud:
+        `git merge --ff-only` exits non-zero and `check=True` raises.
+        """
+        self._run(["merge", "--ff-only", branch])

@@ -8,5 +8,5 @@ concurrency_limit = 4
 db_path = ".milknado/milknado.db"
 plugins = []
 
-[milknado.worker.tools.claude]
-extend = ["Bash(just:*)"]
+[milknado.worker.tools]
+claude = ["...", "Bash(just:*)"]

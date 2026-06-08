@@ -19,6 +19,7 @@ import json
 import logging
 import shlex
 import subprocess
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 _log = logging.getLogger(__name__)
@@ -174,15 +175,20 @@ class ShellAgentHook(NoOpAgentHook):
     ``_SHELL_HOOK_TIMEOUT_SECONDS`` so a hanging hook cannot stall the
     run loop.  The command is parsed with :func:`shlex.split` — no shell
     metacharacter expansion.
+
+    ``cwd`` is the run's working directory (the engine's ``project_root``);
+    the command executes there so a hook sees the node worktree rather than
+    the orchestrator's cwd.  ``None`` inherits the parent process cwd.
     """
 
-    def __init__(self, event: str, command: str) -> None:
+    def __init__(self, event: str, command: str, cwd: Path | None = None) -> None:
         if event not in HOOK_EVENT_NAMES:
             raise ValueError(
                 f"unknown hook event {event!r}; expected one of {sorted(HOOK_EVENT_NAMES)}"
             )
         self._event = event
         self._command = command
+        self._cwd = cwd
         setattr(self, event, self._invoke)
 
     def _invoke(self, **payload: Any) -> None:
@@ -199,6 +205,7 @@ class ShellAgentHook(NoOpAgentHook):
                 text=True,
                 check=False,
                 timeout=_SHELL_HOOK_TIMEOUT_SECONDS,
+                cwd=self._cwd,
             )
         except subprocess.TimeoutExpired:
             _log.warning(
