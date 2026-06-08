@@ -363,8 +363,20 @@ def _has_committed_change(worktree: Path, feature_branch: str) -> bool:
             exc,
         )
         return False
-    # `git diff --quiet` exits 1 when the diff is non-empty, 0 when identical.
-    return diff.returncode != 0
+    # `git diff --quiet` exits 0 (identical), 1 (diff present), or >=2 (typically
+    # 128) on error. Only exit 1 is a committed change; an errored diff must fail
+    # closed -- treating it as change would accept completion on a broken git call.
+    if diff.returncode == 1:
+        return True
+    if diff.returncode != 0:
+        _logger.warning(
+            "completion verifier: `git diff` against %s in %s exited %d; "
+            "treating as no committed change",
+            feature_branch,
+            worktree,
+            diff.returncode,
+        )
+    return False
 
 
 def _build_verify_prompt(spec_text: str, graph_state: Any) -> str:
