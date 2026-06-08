@@ -6,11 +6,13 @@ from the wiki, export harvests execution state back into it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.domains.wiki import export_roadmap, import_roadmap, resolve_roadmap_node
 
 
-def _wiki_root_for(project_root: str):
+def _wiki_root_for(project_root: str) -> tuple[Path, Path]:
     root = resolve_project_root(project_root or None)
     return root, root / ".hallouminate" / "wiki"
 

@@ -211,7 +211,7 @@ class TestOrphanGoal:
         assert r.files_created == 2
         roadmap_dir = wiki_root / "roadmaps" / ROADMAP_SLUG
         same_name_files = sorted(p.name for p in roadmap_dir.glob("same-name*.md"))
-        assert len(same_name_files) == 2  # base + id-disambiguated
+        assert len(same_name_files) == 2  # base + numeric-suffix-disambiguated
 
     def test_orphan_file_has_membrane_structure(self, wiki_root: Path, graph: MikadoGraph) -> None:
         # crit 6: a created orphan file is a valid round-trip unit — goal

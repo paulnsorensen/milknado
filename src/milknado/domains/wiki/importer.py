@@ -115,6 +115,8 @@ def _ingest_file(
     frontmatter = load_frontmatter(text)
     created = frontmatter.get("created")
     prereqs = frontmatter.get("prereqs") or []
+    if not isinstance(prereqs, list) or not all(isinstance(p, str) for p in prereqs):
+        raise ValueError(f"{path.name}: `prereqs` must be a list of goal slugs, got {prereqs!r}")
     if created is None:
         text = set_frontmatter_field(text, "created", stamp)
         path.write_text(text)

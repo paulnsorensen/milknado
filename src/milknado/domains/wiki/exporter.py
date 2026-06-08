@@ -8,6 +8,7 @@ discovered mid-run (no matching file) gets a fresh goal file created for it.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from milknado.domains.wiki._serialize import (
     slugify,
     validate_slug,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -179,9 +182,14 @@ def _create_orphan_goal_file(
 ) -> None:
     base = slugify(goal.description) or "untitled-goal"
     # Two discovered goals with the same description slugify alike; disambiguate
-    # with the node id so the second neither overwrites the first's file nor
-    # collides on the UNIQUE(wiki_ref) index.
-    slug = base if not (roadmap_dir / f"{base}.md").exists() else f"{base}-{goal.id}"
+    # with a numeric suffix (never the internal node id, which must not leak into
+    # the wiki) so the second neither overwrites the first's file nor collides on
+    # the UNIQUE(wiki_ref) index.
+    slug = base
+    suffix = 2
+    while (roadmap_dir / f"{slug}.md").exists():
+        slug = f"{base}-{suffix}"
+        suffix += 1
     created = now_iso[:10]
     text = (
         f"---\nkind: goal\nslug: {slug}\nroadmap: {roadmap_slug}\n"
@@ -211,6 +219,7 @@ def _refresh_index(wiki_root: Path) -> bool:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as exc:
+        _logger.debug("hallouminate index failed: %s", exc)
         return False
     return True

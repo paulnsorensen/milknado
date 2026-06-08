@@ -74,7 +74,7 @@ def set_frontmatter_field(text: str, key: str, value: str) -> str:
     new_line = f"{key}: {value}"
     key_re = re.compile(rf"^{re.escape(key)}:.*$", re.MULTILINE)
     if key_re.search(block):
-        new_block = key_re.sub(new_line, block, count=1)
+        new_block = key_re.sub(lambda _m: new_line, block, count=1)
     else:
         new_block = f"{block}\n{new_line}"
     return text[: m.start(1)] + new_block + text[m.end(1) :]
