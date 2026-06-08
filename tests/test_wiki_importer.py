@@ -115,6 +115,22 @@ class TestImportStructure:
         assert schema is not None
         assert schema.description == "Define the schema"
 
+    def test_empty_roadmap_creates_only_roadmap_node(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        # crit 1 boundary: a roadmap dir with index.md and zero goal files
+        # seeds exactly one roadmap node and no goals — not an error.
+        root = tmp_path / ".hallouminate" / "wiki"
+        d = root / "roadmaps" / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(INDEX_MD)
+        result = import_roadmap(root, ROADMAP_SLUG, graph)
+        assert result.created_count == 1
+        assert result.goal_node_ids == {}
+        kinds = [n.kind for n in graph.get_all_nodes()]
+        assert kinds.count(NodeKind.ROADMAP) == 1
+        assert kinds.count(NodeKind.GOAL) == 0
+
 
 class TestDeterminism:
     def test_same_ref_across_separate_dbs(self, wiki_root: Path, tmp_path: Path) -> None:
@@ -128,6 +144,24 @@ class TestDeterminism:
             assert n1 is not None and n2 is not None
             assert n1.wiki_ref is not None
             assert n1.wiki_ref == n2.wiki_ref
+        finally:
+            g1.close()
+            g2.close()
+
+    def test_roadmap_ref_deterministic_across_dbs(self, wiki_root: Path, tmp_path: Path) -> None:
+        # crit 2: the roadmap node's key is content-addressed too, so the same
+        # roadmap resolves to the identical wiki_ref in independent dbs — this is
+        # what lets export find the milknado roadmap from the wiki slug alone.
+        g1 = MikadoGraph(tmp_path / "rdb1.db")
+        g2 = MikadoGraph(tmp_path / "rdb2.db")
+        try:
+            r1 = import_roadmap(wiki_root, ROADMAP_SLUG, g1)
+            r2 = import_roadmap(wiki_root, ROADMAP_SLUG, g2)
+            rm1 = g1.get_node(r1.roadmap_node_id)
+            rm2 = g2.get_node(r2.roadmap_node_id)
+            assert rm1 is not None and rm2 is not None
+            assert rm1.wiki_ref is not None
+            assert rm1.wiki_ref == rm2.wiki_ref
         finally:
             g1.close()
             g2.close()
@@ -173,10 +207,16 @@ class TestCreatedStamping:
             "---\nkind: goal\nslug: no-date\nroadmap: demo-roadmap\nstatus: pending\n"
             "prereqs: []\n---\n# No date\n\n## Intent\nx\n"
         )
+        before = (gdir / "no-date.md").read_text()
         result = import_roadmap(root, ROADMAP_SLUG, graph, today="2026-06-09")
         assert "no-date" in result.stamped
-        text = (gdir / "no-date.md").read_text()
-        assert "created: 2026-06-09" in text
+        after = (gdir / "no-date.md").read_text()
+        assert "created: 2026-06-09" in after
+        # crit 4: stamping is the only write-back path, and the autoincrement
+        # node id must not leak through it. The ONLY line added is the `created`
+        # stamp — nothing else (least of all a node id) is written to the file.
+        added = set(after.splitlines()) - set(before.splitlines())
+        assert added == {"created: 2026-06-09"}
 
 
 class TestFailFast:

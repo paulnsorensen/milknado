@@ -13,7 +13,12 @@ import pytest
 
 from milknado.domains.common import NodeKind
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.wiki._serialize import extract_section
+from milknado.domains.wiki._serialize import (
+    HARVEST_END,
+    HARVEST_START,
+    extract_section,
+    load_frontmatter,
+)
 from milknado.domains.wiki.exporter import export_roadmap
 from milknado.domains.wiki.importer import import_roadmap
 
@@ -70,6 +75,15 @@ def _goal_path(wiki_root: Path) -> Path:
     return wiki_root / "roadmaps" / ROADMAP_SLUG / "wire-export.md"
 
 
+def _human_region(text: str) -> str:
+    """The raw bytes a human owns: everything after the frontmatter fence up to
+    the harvest-start marker (title + Intent + Acceptance + the `## Outcome`
+    heading). Unlike extract_section, this preserves whitespace and blank lines,
+    so it catches any byte the exporter reflows."""
+    body = text.split("\n---\n", 1)[1]
+    return body.split(HARVEST_START, 1)[0]
+
+
 class TestExportMembrane:
     def test_intent_and_acceptance_byte_identical(
         self, wiki_root: Path, graph: MikadoGraph
@@ -95,6 +109,31 @@ class TestExportMembrane:
         assert "result: pending" not in text
         assert r.files_written == 1
         assert r.files_created == 0
+
+    def test_human_region_and_tail_byte_identical(
+        self, wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        # crit 5, hardened: a raw-byte check (not whitespace-stripped sections).
+        # Everything outside the harvest block — the human-owned body and the
+        # post-marker tail — must be verbatim-identical across an export cycle.
+        before = _goal_path(wiki_root).read_text()
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        graph.mark_running(result.goal_node_ids["wire-export"])
+        graph.mark_done(result.goal_node_ids["wire-export"])
+        export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        after = _goal_path(wiki_root).read_text()
+        assert _human_region(after) == _human_region(before)
+        assert after.split(HARVEST_END, 1)[1] == before.split(HARVEST_END, 1)[1]
+        # Only status/last_synced frontmatter may change; the rest is untouched.
+        for line in (
+            "kind: goal",
+            "slug: wire-export",
+            "roadmap: demo-roadmap",
+            "created: 2026-06-03",
+            "flavor: implement",
+            "prereqs: []",
+        ):
+            assert line in after
 
 
 class TestTaskRollup:
@@ -160,6 +199,24 @@ class TestOrphanGoal:
         # second export rewrites the now-existing file, does not create again.
         assert second.files_created == 0
 
+    def test_orphan_file_has_membrane_structure(self, wiki_root: Path, graph: MikadoGraph) -> None:
+        # crit 6: a created orphan file is a valid round-trip unit — goal
+        # frontmatter, the human-owned Intent/Acceptance scaffold, and the
+        # harvest markers must all be present or the next import/export breaks.
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        graph.add_node("Discovered goal", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        text = (wiki_root / "roadmaps" / ROADMAP_SLUG / "discovered-goal.md").read_text()
+        fm = load_frontmatter(text)
+        assert fm["kind"] == "goal"
+        assert fm["slug"] == "discovered-goal"
+        assert fm["roadmap"] == ROADMAP_SLUG
+        assert "created" in fm
+        assert "## Intent" in text
+        assert "## Acceptance" in text
+        assert HARVEST_START in text
+        assert HARVEST_END in text
+
 
 class TestBestEffortIndex:
     def test_export_succeeds_without_hallouminate_cli(
@@ -172,6 +229,49 @@ class TestBestEffortIndex:
         r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         assert r.index_refreshed is False
         assert r.files_written == 1
+
+    def test_export_succeeds_when_index_subprocess_raises(
+        self, wiki_root: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # crit 7: the CLI is on PATH but the call blows up — export must still
+        # write every file and report index_refreshed=False (non-fatal).
+        import shutil
+        import subprocess
+
+        monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hallouminate")
+
+        def _boom(*_args: object, **_kwargs: object) -> object:
+            raise OSError("hallouminate exploded")
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        graph.mark_running(result.goal_node_ids["wire-export"])
+        graph.mark_done(result.goal_node_ids["wire-export"])
+        r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        assert r.index_refreshed is False
+        assert r.files_written == 1
+        assert "status: done" in _goal_path(wiki_root).read_text()
+
+    def test_index_refresh_invokes_cli_in_wiki_root(
+        self, wiki_root: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # crit 7, positive path: when the CLI is present and the call succeeds,
+        # export reports index_refreshed=True and runs `hallouminate index` with
+        # the wiki root as cwd.
+        import shutil
+        import subprocess
+
+        calls: list[tuple[list[str], str]] = []
+        monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hallouminate")
+
+        def _capture(cmd: list[str], **kwargs: object) -> None:
+            calls.append((cmd, str(kwargs.get("cwd"))))
+
+        monkeypatch.setattr(subprocess, "run", _capture)
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        assert r.index_refreshed is True
+        assert calls == [(["hallouminate", "index"], str(wiki_root))]
 
 
 class TestExportGuards:
