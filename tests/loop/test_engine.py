@@ -10,7 +10,7 @@ import pytest
 
 from milknado.loop._agent import AgentResult
 from milknado.loop._events import BoundEmitter, EventType, NullEmitter, QueueEmitter
-from milknado.loop._run_types import Command, RunConfig, RunStatus
+from milknado.loop._run_types import Command, CompletionVerdict, RunConfig, RunStatus
 from milknado.loop._runner import RunResult
 from milknado.loop.adapters import select_adapter
 from milknado.loop.engine import (
@@ -435,6 +435,209 @@ class TestPromiseCompletionSignals:
         assert completed_event.data["echo_stdout"] == "plain blocking output\n"
 
 
+class TestCompletionVerifier:
+    """Tier-2 completion verifier gating the exit-0 + promise stop path.
+
+    Three branches: absent verifier (back-compat accept), verifier passes
+    (accept), verifier rejects (inject feedback + keep looping, fail loud at
+    the iteration budget).
+    """
+
+    @staticmethod
+    def _promise_result() -> AgentResult:
+        return AgentResult(
+            returncode=0,
+            elapsed=0.01,
+            captured_stdout="<promise>RALPH_PROMISE_COMPLETE</promise>\n",
+        )
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_absent_verifier_accepts_promise(self, mock_execute_agent, tmp_path):
+        """``completion_verifier=None`` keeps the legacy promise-only accept."""
+        config = make_config(tmp_path, max_iterations=5, stop_on_completion_signal=True)
+        assert config.completion_verifier is None
+        state = make_state()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 1
+        assert state.iteration == 1
+        assert state.status == RunStatus.COMPLETED
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_verifier_pass_completes_run(self, mock_execute_agent, tmp_path):
+        """``ok=True`` accepts the promise and stops the run."""
+        calls: list[int] = []
+
+        def verifier() -> CompletionVerdict:
+            calls.append(1)
+            return CompletionVerdict(ok=True, feedback="")
+
+        config = make_config(
+            tmp_path,
+            max_iterations=5,
+            stop_on_completion_signal=True,
+            completion_verifier=verifier,
+        )
+        state = make_state()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, NullEmitter())
+
+        assert len(calls) == 1
+        assert mock_execute_agent.call_count == 1
+        assert state.iteration == 1
+        assert state.status == RunStatus.COMPLETED
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_verifier_reject_then_retry_injects_feedback(self, mock_execute_agent, tmp_path):
+        """``ok=False`` keeps looping; the feedback lands in the next prompt.
+
+        First promise is rejected with a concrete message; the run must not
+        stop, the rejection feedback must appear verbatim in the *second*
+        iteration's assembled prompt, and a subsequent ``ok=True`` then
+        completes the run.
+        """
+        feedback = "gate failed: just check-llm reported 2 lint errors"
+        verdicts = iter(
+            [
+                CompletionVerdict(ok=False, feedback=feedback),
+                CompletionVerdict(ok=True, feedback=""),
+            ]
+        )
+
+        config = make_config(
+            tmp_path,
+            "do the work",
+            max_iterations=5,
+            stop_on_completion_signal=True,
+            credit=False,
+            completion_verifier=lambda: next(verdicts),
+        )
+        state = make_state()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        first_prompt = mock_execute_agent.call_args_list[0].args[1]
+        second_prompt = mock_execute_agent.call_args_list[1].args[1]
+        assert feedback not in first_prompt
+        assert feedback in second_prompt
+        assert state.iteration == 2
+        assert state.status == RunStatus.COMPLETED
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_feedback_cleared_after_one_retry(self, mock_execute_agent, tmp_path):
+        """A single rejection must not leak feedback into every later prompt.
+
+        Reject once, then accept on iteration 2: iteration 2 carries the
+        feedback, but had a third iteration run it would not — proven here by
+        asserting the run stopped at 2 and only the second prompt carried it.
+        """
+        feedback = "fix the empty diff"
+        verdicts = iter(
+            [
+                CompletionVerdict(ok=False, feedback=feedback),
+                CompletionVerdict(ok=True, feedback=""),
+            ]
+        )
+        config = make_config(
+            tmp_path,
+            "do the work",
+            max_iterations=5,
+            stop_on_completion_signal=True,
+            credit=False,
+            completion_verifier=lambda: next(verdicts),
+        )
+        state = make_state()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, NullEmitter())
+
+        prompts = [c.args[1] for c in mock_execute_agent.call_args_list]
+        assert [feedback in p for p in prompts] == [False, True]
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_verifier_reject_exhausts_budget_fails_loud(self, mock_execute_agent, tmp_path):
+        """Persistent rejection to the iteration budget fails the run loudly.
+
+        Every promise is rejected, so the run never accepts.  At the
+        ``max_iterations`` budget the run must end FAILED (not COMPLETED) and
+        emit an error message — not silently report success.
+        """
+        config = make_config(
+            tmp_path,
+            "do the work",
+            max_iterations=3,
+            stop_on_completion_signal=True,
+            credit=False,
+            completion_verifier=lambda: CompletionVerdict(ok=False, feedback="still failing"),
+        )
+        state = make_state()
+        emitter = QueueEmitter()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, emitter)
+
+        assert mock_execute_agent.call_count == 3
+        assert state.iteration == 3
+        assert state.status == RunStatus.FAILED
+
+        events = drain_events(emitter)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
+        error_logs = [
+            e
+            for e in events_of_type(events, EventType.LOG_MESSAGE)
+            if "verifier never accepted" in e.data["message"]
+        ]
+        assert len(error_logs) == 1
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_verifier_not_consulted_without_promise(self, mock_execute_agent, tmp_path):
+        """No promise → no completion to gate → verifier is never called."""
+        calls: list[int] = []
+        config = make_config(
+            tmp_path,
+            max_iterations=2,
+            stop_on_completion_signal=True,
+            completion_verifier=lambda: calls.append(1) or CompletionVerdict(ok=True, feedback=""),
+        )
+        state = make_state()
+        mock_execute_agent.return_value = AgentResult(
+            returncode=0,
+            elapsed=0.01,
+            captured_stdout="no promise here\n",
+        )
+
+        run_loop(config, state, NullEmitter())
+
+        assert calls == []
+        assert mock_execute_agent.call_count == 2
+        assert state.status == RunStatus.COMPLETED
+
+    def test_assemble_prompt_appends_verifier_feedback(self, tmp_path):
+        """``_assemble_prompt`` appends feedback verbatim when supplied."""
+        config = make_config(tmp_path, "base prompt", max_iterations=1, credit=False)
+        state = make_state()
+        state.iteration = 2
+
+        result = _assemble_prompt(config, state, {}, "address: empty diff")
+
+        assert result.startswith("base prompt")
+        assert "address: empty diff" in result
+
+    def test_assemble_prompt_omits_feedback_when_none(self, tmp_path):
+        """No feedback → prompt is unchanged from the no-feedback path."""
+        config = make_config(tmp_path, "base prompt", max_iterations=1, credit=False)
+        state = make_state()
+        state.iteration = 1
+
+        assert _assemble_prompt(config, state, {}, None) == "base prompt"
+
+
 class TestRunLoopDefaults:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_runs_without_emitter(self, mock_run, tmp_path):
@@ -704,6 +907,15 @@ class TestCommandExecution:
 
         passed_cwd = mock_run_cmd.call_args.kwargs["cwd"]
         assert passed_cwd == config.project_root
+
+    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
+    def test_agent_spawned_in_project_root(self, mock_run, tmp_path):
+        """The agent subprocess runs in the run's project root, not the orchestrator cwd."""
+        config = make_config(tmp_path, max_iterations=1)
+        state = make_state()
+        run_loop(config, state, NullEmitter())
+
+        assert mock_run.call_args.kwargs["cwd"] == config.project_root
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)

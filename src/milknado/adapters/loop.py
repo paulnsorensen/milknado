@@ -2,17 +2,50 @@ from __future__ import annotations
 
 import logging
 import queue
+import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
-from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+from milknado.loop import (
+    CompletionVerdict,
+    EventType,
+    QueueEmitter,
+    RunConfig,
+    RunManager,
+    RunStatus,
+)
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
+
+# Per-gate wall-clock cap. The gates are the harness-side re-run of the repo's
+# real quality suite (e.g. `uv run pytest` over the full test set), which runs
+# for minutes — not the short RALPH.md frontmatter snippets DEFAULT_COMMAND_TIMEOUT
+# (60s) sizes for. The cap is set at the run-dispatch scale (the 1800s default a
+# whole node loop is allotted, milknado_ralph_run_start) so an honest full-suite
+# gate completes within it, while a genuinely wedged gate still cannot stall the
+# verdict forever.
+_GATE_TIMEOUT_SECONDS: Final[float] = 1800.0
+# Per-git-query cap. The verifier's git probes (worktree list, status, merge-base,
+# diff) are near-instant, so they keep the short DEFAULT_COMMAND_TIMEOUT ceiling —
+# a hung git invocation is a degraded-environment signal, not slow honest work.
+_GIT_QUERY_TIMEOUT_SECONDS: Final[float] = 60.0
+# Tail of a failing gate's combined output folded into the rejection feedback.
+_FEEDBACK_TAIL_CHARS: Final[int] = 2000
+
+_NO_CHANGE_FEEDBACK: Final[str] = (
+    "you emitted the completion promise but produced no committed/stageable change"
+)
+_UNRESOLVABLE_BASE_FEEDBACK: Final[str] = (
+    "the completion verifier could not resolve a base branch to diff against "
+    "(detached main worktree or git unqueryable), so it cannot confirm your "
+    "committed work landed; ensure the node worktree forks a named branch"
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -48,6 +81,7 @@ class LoopAdapter:
             stop_on_completion_signal=True,
             log_dir=ralph_dir / ".ralph-logs",
         )
+        config.completion_verifier = _build_completion_verifier(ralph_dir, quality_gates)
         run = self._manager.create_run(config)
         run.add_listener(self._emitter)
         return run
@@ -168,6 +202,169 @@ class LoopAdapter:
 
             raise RalphMarkdownWriteError(path=output_path, cause=exc) from exc
         return output_path
+
+
+def _build_completion_verifier(
+    worktree: Path,
+    quality_gates: list[str],
+) -> Callable[[], CompletionVerdict]:
+    """Build the tier-2 completion verifier for a node's worktree.
+
+    The returned closure is the authoritative harness-side check the engine
+    consults when exit-0 + the completion promise would otherwise mark the
+    node done. It re-runs every configured quality gate in *worktree* (the
+    RALPH.md copy is only fast agent-side feedback) and confirms the branch
+    actually produced a committed or stageable change. A failing gate, an empty
+    diff, or an unresolvable base rejects the completion with feedback for the
+    next iteration.
+    """
+    gates = list(quality_gates)
+
+    def verify() -> CompletionVerdict:
+        gate_failure = _run_quality_gates(worktree, gates)
+        if gate_failure is not None:
+            return CompletionVerdict(ok=False, feedback=gate_failure)
+        change_rejection = _change_rejection(worktree)
+        if change_rejection is not None:
+            return CompletionVerdict(ok=False, feedback=change_rejection)
+        return CompletionVerdict(ok=True, feedback="")
+
+    return verify
+
+
+def _run_quality_gates(worktree: Path, gates: list[str]) -> str | None:
+    """Re-run each gate in *worktree*, stopping at the first non-zero exit.
+
+    Returns rejection feedback (failing command + output tail) on the first
+    failure or timeout, or ``None`` when every gate passes.
+    """
+    for command in gates:
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                timeout=_GATE_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            _logger.warning(
+                "completion verifier: quality gate `%s` timed out after %.0fs in %s",
+                command,
+                _GATE_TIMEOUT_SECONDS,
+                worktree,
+            )
+            return f"quality gate `{command}` timed out after {_GATE_TIMEOUT_SECONDS:.0f}s"
+        if result.returncode != 0:
+            tail = (result.stdout + result.stderr)[-_FEEDBACK_TAIL_CHARS:].strip()
+            _logger.warning(
+                "completion verifier: quality gate `%s` failed (exit %d) in %s",
+                command,
+                result.returncode,
+                worktree,
+            )
+            return f"quality gate `{command}` failed (exit {result.returncode}):\n{tail}"
+    return None
+
+
+def _resolve_feature_branch(worktree: Path) -> str | None:
+    """Return the branch the *worktree* forked from — the main worktree's branch.
+
+    `git worktree list --porcelain` lists the main worktree first; its
+    ``branch refs/heads/<name>`` line names the feature branch this worktree
+    was created from, the same ref the executor later rebases onto. Returns
+    ``None`` when the main worktree is detached or git cannot be queried.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
+        ).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        _logger.warning("completion verifier: could not list worktrees in %s: %s", worktree, exc)
+        return None
+    # The first record (up to the first blank line) is the main worktree.
+    first_record = listing.split("\n\n", 1)[0]
+    for line in first_record.splitlines():
+        if line.startswith("branch refs/heads/"):
+            return line[len("branch refs/heads/") :].strip()
+    return None
+
+
+def _change_rejection(worktree: Path) -> str | None:
+    """Rejection feedback when the branch produced no provable change, else None.
+
+    Committed work is measured against the merge-base with the feature branch
+    (the fork point); stageable work is any dirty or untracked file in the
+    worktree. Either one present means the worker produced change (returns None).
+
+    Two distinct fail-closed cases are kept apart so the agent gets honest
+    feedback: a clean tree with a resolvable base and no committed change is a
+    true empty diff (``_NO_CHANGE_FEEDBACK``); a clean tree whose base cannot be
+    resolved (detached main worktree, git unqueryable) is a degraded verifier,
+    not idle work, and says so (``_UNRESOLVABLE_BASE_FEEDBACK``).
+    """
+    if _has_working_tree_change(worktree):
+        return None
+    feature_branch = _resolve_feature_branch(worktree)
+    if feature_branch is None:
+        _logger.warning(
+            "completion verifier: clean tree but no resolvable base branch in %s; "
+            "rejecting as unverifiable rather than empty",
+            worktree,
+        )
+        return _UNRESOLVABLE_BASE_FEEDBACK
+    if _has_committed_change(worktree, feature_branch):
+        return None
+    return _NO_CHANGE_FEEDBACK
+
+
+def _has_working_tree_change(worktree: Path) -> bool:
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
+        ).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        _logger.warning("completion verifier: git status failed in %s: %s", worktree, exc)
+        return False
+    return bool(status.strip())
+
+
+def _has_committed_change(worktree: Path, feature_branch: str) -> bool:
+    try:
+        base = subprocess.run(
+            ["git", "merge-base", "HEAD", feature_branch],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
+        ).stdout.strip()
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", base, "HEAD"],
+            cwd=worktree,
+            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        _logger.warning(
+            "completion verifier: could not diff against %s in %s: %s",
+            feature_branch,
+            worktree,
+            exc,
+        )
+        return False
+    # `git diff --quiet` exits 1 when the diff is non-empty, 0 when identical.
+    return diff.returncode != 0
 
 
 def _build_verify_prompt(spec_text: str, graph_state: Any) -> str:
