@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
     HARVEST_START,
@@ -20,6 +22,7 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
     slugify,
+    validate_slug,
 )
 
 GOAL_FILE = """---
@@ -149,3 +152,13 @@ class TestSlugify:
 
     def test_slugify_collapses_separators(self) -> None:
         assert slugify("  foo / bar __baz  ") == "foo-bar-baz"
+
+
+class TestValidateSlug:
+    def test_accepts_normal_slug(self) -> None:
+        assert validate_slug("demo-roadmap") == "demo-roadmap"
+
+    @pytest.mark.parametrize("bad", ["", "../escape", "a/b", "a\\b", ".."])
+    def test_rejects_unsafe(self, bad: str) -> None:
+        with pytest.raises(ValueError, match="unsafe roadmap slug"):
+            validate_slug(bad)

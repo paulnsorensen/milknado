@@ -30,7 +30,7 @@ def import_roadmap_cmd(
     graph = _ensure_db(config, plugins)
     try:
         result = import_roadmap(_wiki_root(project_root), slug, graph)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
     finally:

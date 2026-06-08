@@ -97,3 +97,14 @@ def slugify(text: str) -> str:
     """Lowercase, hyphenate non-alphanumerics, trim — for orphan goal filenames."""
     s = re.sub(r"[^a-z0-9]+", "-", text.strip().lower())
     return s.strip("-")
+
+
+def validate_slug(slug: str) -> str:
+    """Reject a roadmap slug that would escape the roadmaps dir once path-joined.
+
+    The slug names a directory under `roadmaps/`; a `..` or path separator in it
+    (CLI argument or MCP parameter) would walk outside the wiki. Fail fast.
+    """
+    if not slug or "/" in slug or "\\" in slug or ".." in slug:
+        raise ValueError(f"unsafe roadmap slug: {slug!r}")
+    return slug

@@ -19,7 +19,7 @@ from milknado.domains.wiki._serialize import (
     extract_section,
     load_frontmatter,
 )
-from milknado.domains.wiki.exporter import export_roadmap
+from milknado.domains.wiki.exporter import export_roadmap, resolve_roadmap_node
 from milknado.domains.wiki.importer import import_roadmap
 
 ROADMAP_SLUG = "demo-roadmap"
@@ -199,6 +199,20 @@ class TestOrphanGoal:
         # second export rewrites the now-existing file, does not create again.
         assert second.files_created == 0
 
+    def test_duplicate_description_orphans_get_distinct_files(
+        self, wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        # L1: two discovered goals with the SAME description must not overwrite
+        # each other's file or collide on the UNIQUE(wiki_ref) index.
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        graph.add_node("Same name", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        graph.add_node("Same name", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        assert r.files_created == 2
+        roadmap_dir = wiki_root / "roadmaps" / ROADMAP_SLUG
+        same_name_files = sorted(p.name for p in roadmap_dir.glob("same-name*.md"))
+        assert len(same_name_files) == 2  # base + id-disambiguated
+
     def test_orphan_file_has_membrane_structure(self, wiki_root: Path, graph: MikadoGraph) -> None:
         # crit 6: a created orphan file is a valid round-trip unit — goal
         # frontmatter, the human-owned Intent/Acceptance scaffold, and the
@@ -284,3 +298,8 @@ class TestExportGuards:
         node = graph.add_node("rm", kind=NodeKind.ROADMAP)
         with pytest.raises(ValueError, match="wiki_ref"):
             export_roadmap(graph, node.id, wiki_root, now=NOW)
+
+    def test_resolve_rejects_unsafe_slug(self, wiki_root: Path, graph: MikadoGraph) -> None:
+        # L2: the export resolve path validates the slug before joining it too.
+        with pytest.raises(ValueError, match="unsafe roadmap slug"):
+            resolve_roadmap_node(graph, wiki_root, "../escape")

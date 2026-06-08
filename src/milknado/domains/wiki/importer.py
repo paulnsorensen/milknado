@@ -21,6 +21,7 @@ from milknado.domains.wiki._serialize import (
     extract_title,
     load_frontmatter,
     set_frontmatter_field,
+    validate_slug,
 )
 
 
@@ -52,6 +53,7 @@ def import_roadmap(
     today: str | None = None,
 ) -> ImportResult:
     """Parse `roadmaps/<roadmap_slug>/` into nodes; fail fast if it is absent."""
+    validate_slug(roadmap_slug)
     roadmap_dir = wiki_root / "roadmaps" / roadmap_slug
     index_path = roadmap_dir / "index.md"
     if not index_path.exists():
@@ -60,7 +62,7 @@ def import_roadmap(
         )
     stamp = today or _today_iso()
     counters = _Counters()
-    roadmap_id = _ingest_file(
+    roadmap_id, _ = _ingest_file(
         graph,
         index_path,
         kind=NodeKind.ROADMAP,
@@ -75,7 +77,7 @@ def import_roadmap(
         if path.name == "index.md":
             continue
         goal_slug = path.stem
-        goal_ids[goal_slug] = _ingest_file(
+        goal_ids[goal_slug], prereqs[goal_slug] = _ingest_file(
             graph,
             path,
             kind=NodeKind.GOAL,
@@ -84,7 +86,6 @@ def import_roadmap(
             stamp=stamp,
             counters=counters,
         )
-        prereqs[goal_slug] = load_frontmatter(path.read_text()).get("prereqs") or []
     _wire_prereqs(graph, roadmap_slug, goal_ids, prereqs)
     return ImportResult(
         roadmap_node_id=roadmap_id,
@@ -104,10 +105,16 @@ def _ingest_file(
     ref_for: Callable[[str], str],
     stamp: str,
     counters: _Counters,
-) -> int:
-    """Find-or-create the node for one roadmap/goal file; stamp `created` if absent."""
+) -> tuple[int, list[str]]:
+    """Find-or-create the node for one roadmap/goal file; stamp `created` if absent.
+
+    Returns the node id and the file's declared prereq slugs, parsed from the
+    single frontmatter read so the caller need not re-read the file.
+    """
     text = path.read_text()
-    created = load_frontmatter(text).get("created")
+    frontmatter = load_frontmatter(text)
+    created = frontmatter.get("created")
+    prereqs = frontmatter.get("prereqs") or []
     if created is None:
         text = set_frontmatter_field(text, "created", stamp)
         path.write_text(text)
@@ -117,11 +124,11 @@ def _ingest_file(
     existing = graph.find_node_by_wiki_ref(ref)
     if existing is not None:
         counters.reused += 1
-        return existing.id
+        return existing.id, prereqs
     description = extract_title(text) or path.stem
     node = graph.add_node(description, parent_id=parent_id, kind=kind, wiki_ref=ref)
     counters.created += 1
-    return node.id
+    return node.id, prereqs
 
 
 def _wire_prereqs(

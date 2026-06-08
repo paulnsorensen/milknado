@@ -229,3 +229,13 @@ class TestFailFast:
     def test_missing_wiki_root_raises(self, tmp_path: Path, graph: MikadoGraph) -> None:
         with pytest.raises(FileNotFoundError):
             import_roadmap(tmp_path / "nope", ROADMAP_SLUG, graph)
+
+    def test_unsafe_slug_rejected_before_path_join(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        # L2: a slug with `..` would escape roadmaps/ once joined — reject it up
+        # front with ValueError, before any filesystem access.
+        root = tmp_path / ".hallouminate" / "wiki"
+        root.mkdir(parents=True)
+        with pytest.raises(ValueError, match="unsafe roadmap slug"):
+            import_roadmap(root, "../../etc", graph)

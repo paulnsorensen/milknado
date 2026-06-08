@@ -70,3 +70,18 @@ def test_export_before_import_exits_nonzero(tmp_path: Path) -> None:
     result = runner.invoke(app, ["roadmap", "export", "demo", "--project-root", str(tmp_path)])
     assert result.exit_code == 1
     assert "not imported" in result.output
+
+
+def test_import_unknown_prereq_exits_nonzero(tmp_path: Path) -> None:
+    # An unknown prereq raises ValueError from import_roadmap; the CLI must map it
+    # to a clean exit-1 message, not a raw traceback (M1).
+    d = tmp_path / ".hallouminate" / "wiki" / "roadmaps" / "demo"
+    d.mkdir(parents=True)
+    (d / "index.md").write_text(INDEX_MD)
+    (d / "g1.md").write_text(
+        "---\nkind: goal\nslug: g1\nroadmap: demo\ncreated: 2026-06-02\n"
+        "status: pending\nprereqs: [ghost-goal]\n---\n# Goal one\n"
+    )
+    result = runner.invoke(app, ["roadmap", "import", "demo", "--project-root", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "ghost-goal" in result.output

@@ -25,6 +25,7 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
     slugify,
+    validate_slug,
 )
 
 
@@ -84,6 +85,7 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
     or LookupError (roadmap not yet imported) — the CLI/MCP veneer maps these to
     clean errors.
     """
+    validate_slug(roadmap_slug)
     index_path = wiki_root / "roadmaps" / roadmap_slug / "index.md"
     if not index_path.exists():
         raise FileNotFoundError(f"roadmap not found: {index_path}")
@@ -143,6 +145,9 @@ def _collect_summaries(graph: MikadoGraph, tasks: list[MikadoNode]) -> list[str]
 
 
 def _render_harvest_inner(graph: MikadoGraph, goal: MikadoNode) -> str:
+    # No separate `follow-ups:` line (despite the spec's illustrated schema):
+    # milknado tracks follow-ups as new graph nodes, not a queryable field, so
+    # they already fold into the task done/failed rollup below.
     tasks = _task_descendants(graph, goal.id)
     done = sum(1 for t in tasks if t.status == NodeStatus.DONE)
     failed = sum(1 for t in tasks if t.status == NodeStatus.FAILED)
@@ -172,7 +177,11 @@ def _create_orphan_goal_file(
     inner: str,
     now_iso: str,
 ) -> None:
-    slug = slugify(goal.description) or "untitled-goal"
+    base = slugify(goal.description) or "untitled-goal"
+    # Two discovered goals with the same description slugify alike; disambiguate
+    # with the node id so the second neither overwrites the first's file nor
+    # collides on the UNIQUE(wiki_ref) index.
+    slug = base if not (roadmap_dir / f"{base}.md").exists() else f"{base}-{goal.id}"
     created = now_iso[:10]
     text = (
         f"---\nkind: goal\nslug: {slug}\nroadmap: {roadmap_slug}\n"
