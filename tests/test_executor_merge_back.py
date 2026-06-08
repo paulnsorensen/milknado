@@ -272,6 +272,26 @@ class TestExcludeLoopScaffolding:
         bogus.mkdir()
         _exclude_loop_scaffolding(bogus)  # no exception
 
+    def test_exclude_file_io_error_is_logged_not_raised(self, project: Path) -> None:
+        """A real git checkout whose `info/exclude` cannot be written (here: it is a
+        directory, so read_text/write_text raise OSError) must log and return, not
+        abort dispatch — the function's documented best-effort contract."""
+        git = GitAdapter(project)
+        wt = project / "milknado-1-x"
+        git.create_worktree(wt, "milknado/1-x")
+        common = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=str(wt),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        exclude = Path(common) / "info" / "exclude"
+        if exclude.exists():
+            exclude.unlink()
+        exclude.mkdir()  # now read_text/write_text on a dir path raise OSError
+        _exclude_loop_scaffolding(wt)  # must not raise
+
 
 class TestPreserveRunLogs:
     def test_no_logs_is_noop(self, tmp_path: Path) -> None:
@@ -289,6 +309,25 @@ class TestPreserveRunLogs:
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert (dest / "a.log").read_text() == "a\n"
         assert (dest / "sub" / "b.log").read_text() == "b\n"
+
+    def test_nested_worktree_preserves_under_checkout_root(self, project: Path) -> None:
+        """When the worktree is nested in a subdirectory under the project root
+        (a legal `worktree_pattern`), logs must land under the main checkout root,
+        not `worktree.parent`. Resolving via the common git dir is what makes this
+        hold — `worktree.parent` here is `project/sub`, the wrong place."""
+        git = GitAdapter(project)
+        sub = project / "sub"
+        sub.mkdir()
+        wt = sub / "wt-1"
+        git.create_worktree(wt, "milknado/1-x")
+        (wt / ".ralph-logs").mkdir()
+        (wt / ".ralph-logs" / "run.log").write_text("nested log\n")
+        _preserve_run_logs(wt, 1)
+        # Correct: under the main checkout root.
+        preserved = project / ".milknado" / "logs" / "1" / "run.log"
+        assert preserved.read_text() == "nested log\n"
+        # And NOT under worktree.parent (the old buggy location).
+        assert not (sub / ".milknado").exists()
 
 
 class TestRebaseAndMergeSkipsFastForwardWithoutCommit:

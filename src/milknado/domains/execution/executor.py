@@ -83,15 +83,12 @@ def _slugify(text: str) -> str:
 _LOOP_SCAFFOLDING = ("RALPH.md", ".ralph-logs/")
 
 
-def _exclude_loop_scaffolding(worktree: Path) -> None:
-    """Mark the loop's own scaffolding (RALPH.md, .ralph-logs/) git-ignored so the
-    worker's `git add -A` never stages it into the squashed commit.
+def _git_common_dir(worktree: Path) -> Path | None:
+    """Resolve a linked worktree's common git dir (the main checkout's `.git`).
 
-    Git consults `info/exclude` only in the common git dir (a linked worktree's
-    `.git` is a gitlink file, not a dir), so we resolve it with `rev-parse` and
-    append idempotently. Best-effort: a worktree that is not a real git checkout —
-    e.g. a test double's bare path — has no exclude file to write, and a failure to
-    exclude scaffolding must not abort dispatch, so failures are logged, not raised.
+    A linked worktree's `.git` is a gitlink file, not a dir, so the common dir is
+    where shared state lives. Returns ``None`` when `worktree` is not a real git
+    checkout (e.g. a test double's bare path) so callers can degrade best-effort.
     """
     try:
         common = subprocess.run(
@@ -101,33 +98,58 @@ def _exclude_loop_scaffolding(worktree: Path) -> None:
             text=True,
             check=True,
         ).stdout.strip()
-    except (subprocess.CalledProcessError, OSError) as exc:
-        _logger.debug("Skipping scaffolding-exclude for %s: %s", worktree, exc)
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return Path(common)
+
+
+def _exclude_loop_scaffolding(worktree: Path) -> None:
+    """Mark the loop's own scaffolding (RALPH.md, .ralph-logs/) git-ignored so the
+    worker's `git add -A` never stages it into the squashed commit.
+
+    Git consults `info/exclude` only in the common git dir, resolved via
+    `_git_common_dir`, and we append idempotently. Best-effort: a worktree that is
+    not a real git checkout — e.g. a test double's bare path — has no exclude file
+    to write, and an exclude-file I/O error (permissions, a non-UTF8 file) must not
+    abort dispatch, so failures are logged, not raised.
+    """
+    common = _git_common_dir(worktree)
+    if common is None:
+        _logger.debug("Skipping scaffolding-exclude for %s: not a git checkout", worktree)
         return
-    exclude = Path(common) / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    existing = exclude.read_text() if exclude.exists() else ""
-    present = set(existing.splitlines())
-    missing = [p for p in _LOOP_SCAFFOLDING if p not in present]
-    if not missing:
-        return
-    prefix = "" if existing == "" or existing.endswith("\n") else "\n"
-    exclude.write_text(existing + prefix + "\n".join(missing) + "\n")
+    exclude = common / "info" / "exclude"
+    try:
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text() if exclude.exists() else ""
+        present = set(existing.splitlines())
+        missing = [p for p in _LOOP_SCAFFOLDING if p not in present]
+        if not missing:
+            return
+        prefix = "" if existing == "" or existing.endswith("\n") else "\n"
+        exclude.write_text(existing + prefix + "\n".join(missing) + "\n")
+    except (OSError, UnicodeDecodeError) as exc:
+        _logger.warning("Failed to exclude loop scaffolding under %s: %s", exclude, exc)
 
 
 def _preserve_run_logs(worktree: Path, node_id: int) -> None:
     """Copy the worktree's `.ralph-logs/` to `.milknado/logs/<node_id>/` in the
-    project root before the worktree is destroyed, so a run's post-mortem evidence
-    survives worktree removal. `.milknado/` is already local, untracked state.
+    main checkout root before the worktree is destroyed, so a run's post-mortem
+    evidence survives worktree removal. `.milknado/` is already local, untracked
+    state.
 
-    Best-effort: a worktree with no logs (or a test double's bare path whose parent
-    is not the project root) leaves nothing to preserve, and a copy failure must not
-    block worktree cleanup, so failures are logged, not raised.
+    The dest root is the main checkout, resolved from the worktree's common git
+    dir rather than `worktree.parent` — `worktree_pattern` can legally nest the
+    worktree in a subdirectory under the project root, so the parent is not always
+    the root. Best-effort: a worktree with no logs (or a test double's bare path
+    that is not a git checkout) leaves nothing to preserve, and a copy failure must
+    not block worktree cleanup, so failures are logged, not raised.
     """
     logs = worktree / ".ralph-logs"
     if not logs.is_dir():
         return
-    dest = worktree.parent / ".milknado" / "logs" / str(node_id)
+    common = _git_common_dir(worktree)
+    root = common.parent if common is not None else worktree.parent
+    dest = root / ".milknado" / "logs" / str(node_id)
     try:
         shutil.copytree(logs, dest, dirs_exist_ok=True)
     except OSError as exc:
