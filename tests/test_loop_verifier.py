@@ -261,6 +261,26 @@ class TestGitFailureFailsClosed:
     def test_committed_check_on_non_git_dir_is_false(self, tmp_path: Path) -> None:
         assert _has_committed_change(tmp_path, "feature") is False
 
+    def test_committed_check_fails_closed_on_diff_error(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An errored `git diff --quiet` (exit >=2, e.g. 128) must read as 'no
+        committed change', not be mistaken for a non-empty diff (exit 1). Only
+        exit 1 signals real change; treating a broken git call as change would
+        let a worker that produced nothing slip through completion."""
+        import milknado.adapters.loop as loop_mod
+
+        def fake_run(cmd: list[str], *args: object, **kwargs: object) -> object:
+            if "merge-base" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="base\n", stderr="")
+            if "diff" in cmd:
+                return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: bad object")
+            raise AssertionError(f"unexpected git call: {cmd}")
+
+        monkeypatch.setattr(loop_mod.subprocess, "run", fake_run)
+
+        assert _has_committed_change(tmp_path, "feature") is False
+
     def test_clean_tree_unresolvable_base_is_rejected(self, feature_repo: Path) -> None:
         """Detached main worktree + clean tree: no fork point, so the verifier
         cannot prove produced change and rejects rather than falsely accepting.
