@@ -70,6 +70,8 @@ class MikadoNode:
     kind: NodeKind = NodeKind.TASK
     flavor: TaskFlavor | None = None
     goal_run_id: str | None = None  # coordinator run that claimed this goal (goal_claims table)
+    # deterministic wiki key (uuid5); set for imported roadmap/goal nodes
+    wiki_ref: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind == NodeKind.TASK:

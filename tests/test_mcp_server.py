@@ -2058,7 +2058,7 @@ def test_main_imports_all_tool_modules() -> None:
 
 
 def test_mcp_tool_modules_register_expected_tool_names() -> None:
-    """The four main()-imported tool modules plus mcp_server must register the expected tool set.
+    """The five main()-imported tool modules plus mcp_server must register the expected tool set.
 
     Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
     module from main()) is caught: the count and the names both fail.
@@ -2066,7 +2066,13 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    from milknado import mcp_ralph, mcp_run, mcp_todo, mcp_todo_mutate  # noqa: F401
+    from milknado import (  # noqa: F401
+        mcp_ralph,
+        mcp_run,
+        mcp_todo,
+        mcp_todo_mutate,
+        mcp_wiki,
+    )
     from milknado._mcp_core import mcp
 
     tools = asyncio.run(mcp.list_tools())
@@ -2081,6 +2087,8 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_plan_batches",
         "milknado_ralph_run_poll",
         "milknado_ralph_run_start",
+        "milknado_roadmap_export",
+        "milknado_roadmap_import",
         "milknado_run_cancel",
         "milknado_run_list",
         "milknado_set_subtree_status",
