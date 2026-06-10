@@ -278,14 +278,35 @@ class TestBestEffortIndex:
         calls: list[tuple[list[str], str]] = []
         monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hallouminate")
 
-        def _capture(cmd: list[str], **kwargs: object) -> None:
+        def _capture(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
             calls.append((cmd, str(kwargs.get("cwd"))))
+            return subprocess.CompletedProcess(cmd, returncode=0)
 
         monkeypatch.setattr(subprocess, "run", _capture)
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         assert r.index_refreshed is True
         assert calls == [(["hallouminate", "index"], str(wiki_root))]
+
+    def test_index_refresh_reports_false_on_nonzero_exit(
+        self, wiki_root: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Regression: check=False means a non-zero exit does NOT raise, so the
+        # function must check returncode explicitly rather than returning True
+        # unconditionally after the subprocess.run call.
+        import shutil
+        import subprocess
+
+        monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hallouminate")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, **_kwargs: subprocess.CompletedProcess(cmd, returncode=1),
+        )
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        assert r.index_refreshed is False
+        assert r.files_written == 1
 
 
 class TestExportGuards:

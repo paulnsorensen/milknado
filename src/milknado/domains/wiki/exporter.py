@@ -212,7 +212,7 @@ def _refresh_index(wiki_root: Path) -> bool:
     if shutil.which("hallouminate") is None:
         return False
     try:
-        subprocess.run(
+        completed = subprocess.run(
             ["hallouminate", "index"],
             cwd=str(wiki_root),
             capture_output=True,
@@ -222,4 +222,4 @@ def _refresh_index(wiki_root: Path) -> bool:
     except (OSError, subprocess.SubprocessError) as exc:
         _logger.debug("hallouminate index failed: %s", exc)
         return False
-    return True
+    return completed.returncode == 0

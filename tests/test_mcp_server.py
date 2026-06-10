@@ -2042,7 +2042,7 @@ def test_main_imports_all_tool_modules() -> None:
     from milknado import mcp_server
 
     src = inspect.getsource(mcp_server.main)
-    for module in ("mcp_ralph", "mcp_run", "mcp_todo", "mcp_todo_mutate"):
+    for module in ("mcp_ralph", "mcp_run", "mcp_todo", "mcp_todo_mutate", "mcp_wiki"):
         assert re.search(rf"\b{module}\b", src), (
             f"main() no longer imports {module}; its tools won't register on server startup"
         )
