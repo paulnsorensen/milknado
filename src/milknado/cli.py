@@ -19,6 +19,7 @@ from milknado._cli_helpers import (
 from milknado.cli_agents import agents_app
 from milknado.cli_plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
 from milknado.cli_plan import plan
+from milknado.cli_roadmap import roadmap_app
 from milknado.cli_run import run
 from milknado.cli_tools import (
     _install_rust_tools_or_exit,
@@ -47,6 +48,7 @@ app = typer.Typer(name="milknado", help="Mikado execution engine")
 app.add_typer(agents_app)
 app.add_typer(plugin_app)
 app.add_typer(tools_app)
+app.add_typer(roadmap_app)
 app.command()(plan)
 app.command()(run)
 

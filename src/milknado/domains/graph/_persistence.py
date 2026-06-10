@@ -36,7 +36,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             oversized INTEGER NOT NULL DEFAULT 0,
             batch_index INTEGER,
             kind TEXT NOT NULL DEFAULT 'task',
-            flavor TEXT
+            flavor TEXT,
+            wiki_ref TEXT
         );
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
@@ -110,10 +111,19 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ("kind", "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'"),
         ("pid", "ALTER TABLE nodes ADD COLUMN pid INTEGER"),
         ("flavor", "ALTER TABLE nodes ADD COLUMN flavor TEXT"),
+        ("wiki_ref", "ALTER TABLE nodes ADD COLUMN wiki_ref TEXT"),
     ]:
         if col not in columns:
             conn.execute(ddl)
             conn.commit()
+    # Partial UNIQUE index: deterministic wiki_ref keys must not collide, but the
+    # many NULL refs (every non-imported node) must stay unrestricted. Created
+    # here, after the column is guaranteed present on both fresh and legacy dbs.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref "
+        "ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL"
+    )
+    conn.commit()
 
 
 def row_to_node(row: sqlite3.Row) -> MikadoNode:
@@ -127,6 +137,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     duration = row[col] if col in keys else None
     completed_at_raw = row["completed_at"]
     kind = NodeKind(row["kind"]) if "kind" in keys else NodeKind.TASK
+    wiki_ref = row["wiki_ref"] if "wiki_ref" in keys else None
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
         flavor = TaskFlavor(flavor_raw) if flavor_raw is not None else None
@@ -154,6 +165,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         completion_duration_seconds=duration,
         kind=kind,
         flavor=flavor,
+        wiki_ref=wiki_ref,
     )
 
 

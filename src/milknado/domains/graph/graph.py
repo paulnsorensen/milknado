@@ -81,6 +81,7 @@ class MikadoGraph(_AnalyticsFacade):
         batch_index: int | None = None,
         kind: NodeKind = NodeKind.TASK,
         flavor: TaskFlavor | None = None,
+        wiki_ref: str | None = None,
     ) -> MikadoNode:
         # Validate parent_id before inserting: the node row commits before the
         # edge is added, so a nonexistent parent would otherwise leave a
@@ -99,8 +100,9 @@ class MikadoGraph(_AnalyticsFacade):
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
-            "(description, status, parent_id, created_at, oversized, batch_index, kind, flavor) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(description, status, parent_id, created_at, oversized, batch_index, "
+            "kind, flavor, wiki_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 description,
                 NodeStatus.PENDING.value,
@@ -110,6 +112,7 @@ class MikadoGraph(_AnalyticsFacade):
                 batch_index,
                 kind.value,
                 flavor_value,
+                wiki_ref,
             ),
         )
         self._conn.commit()
@@ -208,6 +211,16 @@ class MikadoGraph(_AnalyticsFacade):
             if claim is not None:
                 return replace(node, goal_run_id=claim["run_id"])
         return node
+
+    def find_node_by_wiki_ref(self, wiki_ref: str) -> MikadoNode | None:
+        """Return the node carrying this deterministic wiki key, or None.
+
+        The round-trip lookup the importer/exporter use: wiki_ref is computed
+        from git-resident frontmatter, identical across dbs, so it is the stable
+        join between a wiki goal file and its milknado node.
+        """
+        row = self._conn.execute("SELECT * FROM nodes WHERE wiki_ref = ?", (wiki_ref,)).fetchone()
+        return row_to_node(row) if row else None
 
     def get_all_nodes(self) -> list[MikadoNode]:
         return [row_to_node(r) for r in self._conn.execute("SELECT * FROM nodes").fetchall()]
@@ -319,6 +332,17 @@ class MikadoGraph(_AnalyticsFacade):
         _transitions.mark_running(self._conn, node_id, worktree_path, branch_name, run_id)
         if old is not None:
             self._notify_status_change(node_id, old, NodeStatus.RUNNING)
+
+    def set_wiki_ref(self, node_id: int, wiki_ref: str) -> None:
+        """Attach a deterministic wiki key to a node (used when export files an
+        orphan goal node discovered mid-run, so later round-trips locate it)."""
+        cur = self._conn.execute(
+            "UPDATE nodes SET wiki_ref = ? WHERE id = ?",
+            (wiki_ref, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
 
     def set_run_id(self, node_id: int, run_id: str) -> None:
         cur = self._conn.execute(
