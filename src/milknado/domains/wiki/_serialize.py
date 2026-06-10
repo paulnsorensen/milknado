@@ -88,7 +88,7 @@ def replace_harvest_block(text: str, inner: str) -> str:
     """
     if HARVEST_START in text and HARVEST_END in text:
         pattern = re.compile(re.escape(HARVEST_START) + r".*?" + re.escape(HARVEST_END), re.DOTALL)
-        return pattern.sub(f"{HARVEST_START}\n{inner}\n{HARVEST_END}", text, count=1)
+        return pattern.sub(lambda _m: f"{HARVEST_START}\n{inner}\n{HARVEST_END}", text, count=1)
     suffix = "" if text.endswith("\n") else "\n"
     return f"{text}{suffix}## Outcome\n{HARVEST_START}\n{inner}\n{HARVEST_END}\n"
 

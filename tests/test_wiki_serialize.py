@@ -145,6 +145,24 @@ class TestHarvestBlock:
         # original content preserved verbatim at the head
         assert out.startswith(text)
 
+    def test_replace_harvest_block_literal_backslash_escape(self) -> None:
+        """re.sub replacement-string metacharacters in inner must not be interpreted.
+
+        A Windows path or agent output containing \\n / \\t / \g<...> / \1 would
+        previously be silently mangled or raise re.error.  The bytes must round-trip
+        verbatim.
+        """
+        dangerous = r"summary: C:\new\g<x> and \1 and \t"
+        out = replace_harvest_block(GOAL_FILE, dangerous)
+        assert dangerous in out, f"inner was mangled; got:\n{out}"
+
+    def test_replace_harvest_block_backreference_does_not_raise(self) -> None:
+        """\g<name> in inner must not raise re.error (unmatched group reference)."""
+        inner = r"path: C:\new\test and \g<bad_group>"
+        # Must not raise — previously blew up with re.error
+        out = replace_harvest_block(GOAL_FILE, inner)
+        assert inner in out
+
 
 class TestSlugify:
     def test_slugify_basic(self) -> None:
