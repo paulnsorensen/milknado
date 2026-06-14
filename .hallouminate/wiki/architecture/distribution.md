@@ -41,10 +41,36 @@ Exposure model is pull-only on both: the git repo *is* the marketplace (`/plugin
 
 ## opencode: no marketplace, no Python plugin runtime — two install paths
 
-opencode has no marketplace format (open requests: [#23800](https://github.com/anomalyco/opencode/issues/23800), [#7467](https://github.com/anomalyco/opencode/issues/7467)) and its plugin loader globs `*.{ts,js}` only (Bun runtime). Python runs fine as the MCP *server* — only the plugin *glue* must be JS. The local-MCP spawn passes `command` straight to `StdioClientTransport` with full `process.env` inherited, so `uvx milknado-mcp` resolves from the user's PATH (CLI launch; the Desktop app may not inherit shell profiles).
+opencode has no marketplace format (open requests: [#23800](https://github.com/anomalyco/opencode/issues/23800), [#7467](https://github.com/anomalyco/opencode/issues/7467)) and its plugin loader globs `*.{ts,js}` only (Bun runtime). Python runs fine as the MCP *server* — only the plugin *glue* must be JS. The local-MCP spawn passes `command` straight to `StdioClientTransport` with full `process.env` inherited, so `uvx --from milknado milknado-mcp` resolves from the user's PATH (CLI launch; the Desktop app may not inherit shell profiles).
 
-- **Path A — npm shim** (one-line install, `"plugin": ["milknado-opencode"]`): the `config` hook mutates the Config object — `c.mcp.milknado = { type: "local", command: ["uvx", "milknado-mcp"] }` and `c.skills.paths.push(<skills dir inside the npm pkg>)`. Precedent: [@sveltejs/opencode](https://www.npmjs.com/package/@sveltejs/opencode) ships MCP + skills + a subagent this way. Known fragility in the Desktop app ([#30130](https://github.com/anomalyco/opencode/issues/30130)); CLI is reliable.
+- **Path A — npm shim** (one-line install, `"plugin": ["milknado-opencode"]`): the `config` hook mutates the Config object — `c.mcp.milknado = { type: "local", command: ["uvx", "--from", "milknado", "milknado-mcp"] }` and `c.skills.paths.push(<skills dir inside the npm pkg>)`. Precedent: [@sveltejs/opencode](https://www.npmjs.com/package/@sveltejs/opencode) ships MCP + skills + a subagent this way. Known fragility in the Desktop app ([#30130](https://github.com/anomalyco/opencode/issues/30130)); CLI is reliable.
 - **Path B — no shim** (zero JS, most reliable): documented `opencode.json` mcp block + skills copied into `.agents/skills/` or `~/.config/opencode/skills/`. opencode natively scans `.opencode/skills/`, `.agents/skills/`, **and** `.claude/skills/` (project + global).
+
+## Releasing the MCP to PyPI — trusted publishing makes the uvx launch resolve
+
+The plugin is pull-from-git and needs no registry release, but every harness's config launches the server through `uvx`. **The invocation must be `uvx --from milknado milknado-mcp`, not the bare `uvx milknado-mcp`.** This is the one easy-to-get-wrong gotcha: `uvx <name>` resolves `<name>` as a *package*, and there is no `milknado-mcp` package — `milknado-mcp` is a console script *inside* the `milknado` package ([[entry-points]]), so `--from milknado` is required to name the distribution. The bare form fails with `milknado-mcp was not found in the package registry` (verified against the live 0.1.0 release, 2026-06-14). The earlier machine-local `--from /home/paul/Dev/milknado` arg worked *because* `--from <path>` also names a distribution; the portable fix had to keep a `--from`, swapping the path for the package name — dropping `--from` entirely (an intermediate `fix/mcp-portable-uvx` attempt) broke resolution. Until `milknado` is on PyPI, a freshly-installed plugin's launch fails to resolve. **Publishing the package — not re-releasing the plugin — is the release step.**
+
+Release is automated by `.github/workflows/release.yml` via PyPI **trusted publishing** (OIDC — no stored token anywhere):
+
+- **Trigger:** pushing a `v*` tag.
+- The job asserts the tag matches `pyproject.toml` `[project].version` (a `vX.Y.Z` tag against a mismatched manifest fails fast), runs `uv build` (sdist + wheel), then `pypa/gh-action-pypi-publish`.
+- `id-token: write` + `environment: pypi` let the action mint a short-lived PyPI token at run time — nothing secret lives in the repo or in CI secrets.
+
+**One-time manual step that cannot be automated — register the pending publisher on PyPI.** Because `milknado` did not yet exist on PyPI, the first publish needed a *pending publisher* created at pypi.org → Account → Publishing → "Add a pending publisher", with fields that must match the workflow exactly:
+
+| Field | Value |
+|---|---|
+| PyPI Project Name | `milknado` |
+| Owner | `paulnsorensen` |
+| Repository name | `milknado` |
+| Workflow filename | `release.yml` |
+| Environment name | `pypi` |
+
+Once registered, cutting a release is: bump `version` in `pyproject.toml` → commit → tag `vX.Y.Z` → push the tag. `v0.1.0` was the first release (published 2026-06-14). There is **no `just publish` recipe by design** — releases go through the tag-triggered CI path, never a local `uv publish`, so a PyPI token never touches a dev machine.
+
+**Pinning the publish action is a trap worth recording.** `pypa/gh-action-pypi-publish` is a Docker container action whose image is tagged by *commit* SHA at `ghcr.io/pypa/gh-action-pypi-publish:<sha>`. Two distinct ways the first release broke: (1) a *corrupted* SHA in the pin (correct 10-char prefix, garbage tail) → "unable to resolve action" at setup; (2) pinning to the *annotated-tag object* SHA instead of the commit SHA → action resolves but the Docker pull fails with `manifest unknown`. Resolve the real commit SHA with `gh api repos/pypa/gh-action-pypi-publish/commits/<tag> --jq .sha` (the `/commits/<tag>` endpoint dereferences to the commit; `/git/ref/tags/<tag>` returns the tag object for annotated tags — the wrong one). v1.12.4 = `76f52bc884231f62b9a034ebfe128415bbaabdfc`.
+
+PyPI versions are immutable and cannot be reused — a botched `0.1.0` burns that version (not the name). Run `uv build` locally and sanity-check the wheel before tagging. (A failed *publish* does not consume the version, so a re-pointed tag can retry the same version — only a successful upload locks it.)
 
 ## Open questions (verify before locking the layout)
 
