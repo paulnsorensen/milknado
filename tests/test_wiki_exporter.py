@@ -320,7 +320,114 @@ class TestExportGuards:
         with pytest.raises(ValueError, match="wiki_ref"):
             export_roadmap(graph, node.id, wiki_root, now=NOW)
 
+    def test_export_raises_when_wiki_files_deleted_after_import(
+        self, wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        # remove the entire roadmap dir to simulate files deleted post-import
+        import shutil as _shutil
+
+        _shutil.rmtree(wiki_root / "roadmaps" / ROADMAP_SLUG)
+        with pytest.raises(FileNotFoundError):
+            export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+
     def test_resolve_rejects_unsafe_slug(self, wiki_root: Path, graph: MikadoGraph) -> None:
         # L2: the export resolve path validates the slug before joining it too.
         with pytest.raises(ValueError, match="unsafe roadmap slug"):
             resolve_roadmap_node(graph, wiki_root, "../escape")
+
+
+class TestFlatLayoutExport:
+    """Export round-trips the flat `wiki_root/<slug>/` layout."""
+
+    @pytest.fixture()
+    def flat_wiki_root(self, tmp_path: Path) -> Path:
+        root = tmp_path / ".hallouminate" / "wiki"
+        d = root / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\nslug: demo-roadmap\ncreated: 2026-06-01\nstatus: pending\n"
+            "---\n# Demo Roadmap\n\nVision prose.\n"
+        )
+        (d / "wire-export.md").write_text(GOAL_MD)
+        return root
+
+    def test_flat_layout_import_then_export(
+        self, flat_wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        result = import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
+        goal_id = result.goal_node_ids["wire-export"]
+        graph.mark_running(goal_id)
+        graph.mark_done(goal_id)
+        r = export_roadmap(graph, result.roadmap_node_id, flat_wiki_root, now=NOW)
+        assert r.files_written == 1
+        goal_path = flat_wiki_root / ROADMAP_SLUG / "wire-export.md"
+        text = goal_path.read_text()
+        assert "status: done" in text
+
+    def test_flat_layout_export_prose_byte_identical(
+        self, flat_wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        goal_path = flat_wiki_root / ROADMAP_SLUG / "wire-export.md"
+        before = goal_path.read_text()
+        result = import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
+        graph.mark_running(result.goal_node_ids["wire-export"])
+        graph.mark_done(result.goal_node_ids["wire-export"])
+        export_roadmap(graph, result.roadmap_node_id, flat_wiki_root, now=NOW)
+        after = goal_path.read_text()
+        assert _human_region(after) == _human_region(before)
+        assert after.split(HARVEST_END, 1)[1] == before.split(HARVEST_END, 1)[1]
+
+    def test_resolve_roadmap_node_flat_layout(
+        self, flat_wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
+        node = resolve_roadmap_node(graph, flat_wiki_root, ROADMAP_SLUG)
+        from milknado.domains.common import NodeKind
+
+        assert node.kind == NodeKind.ROADMAP
+
+    def test_nested_layout_export_regression(self, wiki_root: Path, graph: MikadoGraph) -> None:
+        # regression: nested layout export must be unaffected
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        goal_id = result.goal_node_ids["wire-export"]
+        graph.mark_running(goal_id)
+        graph.mark_done(goal_id)
+        r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        assert r.files_written == 1
+        text = _goal_path(wiki_root).read_text()
+        assert "status: done" in text
+
+    def test_export_uses_nested_when_both_layouts_exist(
+        self, wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        # When both roadmaps/<slug>/ and <slug>/ have an index.md, import picks
+        # the nested layout.  Export's _locate_roadmap_dir must resolve the same
+        # nested dir so the harvest block lands in the right file.
+        # Create a flat dir with a DIFFERENT goal file to prove export wrote
+        # to the nested dir, not the flat one.
+        flat_dir = wiki_root / ROADMAP_SLUG
+        flat_dir.mkdir(parents=True)
+        (flat_dir / "index.md").write_text(
+            "---\nkind: roadmap\nslug: demo-roadmap\ncreated: 2026-06-01\nstatus: pending\n"
+            "---\n# Demo Roadmap (flat copy)\n\nShould not be touched.\n"
+        )
+        (flat_dir / "flat-only-goal.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-04\nstatus: pending\n---\n# Flat Goal\n"
+        )
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        goal_id = result.goal_node_ids["wire-export"]
+        graph.mark_running(goal_id)
+        graph.mark_done(goal_id)
+        export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
+        # The nested goal file is updated
+        nested_text = _goal_path(wiki_root).read_text()
+        assert "status: done" in nested_text
+        # The flat dir's index is byte-identical — export never touched it
+        assert (
+            (flat_dir / "index.md")
+            .read_text()
+            .startswith(
+                "---\nkind: roadmap\nslug: demo-roadmap\ncreated: 2026-06-01\nstatus: pending\n"
+            )
+        )

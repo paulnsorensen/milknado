@@ -239,3 +239,142 @@ class TestFailFast:
         root.mkdir(parents=True)
         with pytest.raises(ValueError, match="unsafe roadmap slug"):
             import_roadmap(root, "../../etc", graph)
+
+    def test_invalid_prereqs_field_raises_with_filename(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(INDEX_MD)
+        # prereqs as a bare string (not a list) — must raise ValueError naming the file
+        (d / "bad-goal.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n"
+            "prereqs: not-a-list\n---\n# Bad\n"
+        )
+        with pytest.raises(ValueError, match="bad-goal.md"):
+            import_roadmap(root, ROADMAP_SLUG, graph)
+
+
+class TestDownEdges:
+    """Prereq edges derived from Breadcrumbs `down:` wikilinks."""
+
+    def test_down_only_wires_prereqs(self, tmp_path: Path, graph: MikadoGraph) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / "my-roadmap"
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+        )
+        (d / "a.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+        )
+        (d / "b.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
+            "down:\n- '[[a]]'\n---\n# Goal B\n"
+        )
+        result = import_roadmap(root, "my-roadmap", graph)
+        b_id = result.goal_node_ids["b"]
+        a_id = result.goal_node_ids["a"]
+        prereq_ids = {c.id for c in graph.get_children(b_id)}
+        assert a_id in prereq_ids
+
+    def test_down_with_alias_resolves_to_target(self, tmp_path: Path, graph: MikadoGraph) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / "my-roadmap"
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+        )
+        (d / "a.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+        )
+        (d / "b.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
+            "down:\n- '[[a|alias for a]]'\n---\n# Goal B\n"
+        )
+        result = import_roadmap(root, "my-roadmap", graph)
+        b_id = result.goal_node_ids["b"]
+        a_id = result.goal_node_ids["a"]
+        prereq_ids = {c.id for c in graph.get_children(b_id)}
+        assert a_id in prereq_ids
+
+    def test_union_of_prereqs_and_down_no_silent_drop(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / "my-roadmap"
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+        )
+        (d / "a.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+        )
+        (d / "c.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-04\nstatus: pending\n---\n# Goal C\n"
+        )
+        # b lists a via prereqs: and c via down: — both must be wired
+        (d / "b.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
+            "prereqs:\n- a\ndown:\n- '[[c]]'\n---\n# Goal B\n"
+        )
+        result = import_roadmap(root, "my-roadmap", graph)
+        b_id = result.goal_node_ids["b"]
+        a_id = result.goal_node_ids["a"]
+        c_id = result.goal_node_ids["c"]
+        prereq_ids = {c.id for c in graph.get_children(b_id)}
+        assert a_id in prereq_ids
+        assert c_id in prereq_ids
+
+
+class TestFlatLayout:
+    """Flat `wiki_root/<slug>/` layout (no `roadmaps/` parent)."""
+
+    def test_flat_dir_imports_as_roadmap(self, tmp_path: Path, graph: MikadoGraph) -> None:
+        root = tmp_path / "wiki"
+        d = root / "my-roadmap"
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+        )
+        (d / "goal-x.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal X\n"
+        )
+        result = import_roadmap(root, "my-roadmap", graph)
+        from milknado.domains.common import NodeKind
+
+        kinds = [n.kind for n in graph.get_all_nodes()]
+        assert kinds.count(NodeKind.ROADMAP) == 1
+        assert kinds.count(NodeKind.GOAL) == 1
+        assert "goal-x" in result.goal_node_ids
+
+    def test_nested_layout_still_works(self, wiki_root: Path, graph: MikadoGraph) -> None:
+        # regression: existing nested layout must be unaffected
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        assert result.created_count == 3
+        assert "define-schema" in result.goal_node_ids
+        assert "wire-export" in result.goal_node_ids
+
+    def test_flat_layout_with_down_edges(self, tmp_path: Path, graph: MikadoGraph) -> None:
+        # Integration: flat dir + down: edges both active at once.
+        # Both cooked changes must work together — not just independently.
+        root = tmp_path / "wiki"
+        d = root / "my-roadmap"
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(
+            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+        )
+        (d / "a.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+        )
+        (d / "b.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
+            "down:\n- '[[a]]'\n---\n# Goal B\n"
+        )
+        result = import_roadmap(root, "my-roadmap", graph)
+        b_id = result.goal_node_ids["b"]
+        a_id = result.goal_node_ids["a"]
+        prereq_ids = {c.id for c in graph.get_children(b_id)}
+        assert a_id in prereq_ids, "down: edge not wired in flat layout"
+        assert len(prereq_ids) == 1, "unexpected extra prereq edges"

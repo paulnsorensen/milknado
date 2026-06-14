@@ -15,13 +15,14 @@ from pathlib import Path
 
 from milknado.domains.common import NodeKind
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.wiki._locate import resolve_roadmap_dir
 from milknado.domains.wiki._serialize import (
     compute_goal_ref,
     compute_roadmap_ref,
     extract_title,
     load_frontmatter,
+    read_prereqs,
     set_frontmatter_field,
-    validate_slug,
 )
 
 
@@ -52,14 +53,9 @@ def import_roadmap(
     *,
     today: str | None = None,
 ) -> ImportResult:
-    """Parse `roadmaps/<roadmap_slug>/` into nodes; fail fast if it is absent."""
-    validate_slug(roadmap_slug)
-    roadmap_dir = wiki_root / "roadmaps" / roadmap_slug
+    """Parse `roadmaps/<roadmap_slug>/` or `<roadmap_slug>/` into nodes; fail fast if absent."""
+    roadmap_dir = resolve_roadmap_dir(wiki_root, roadmap_slug)
     index_path = roadmap_dir / "index.md"
-    if not index_path.exists():
-        raise FileNotFoundError(
-            f"roadmap not found: {index_path} (expected <wiki_root>/roadmaps/<slug>/index.md)"
-        )
     stamp = today or _today_iso()
     counters = _Counters()
     roadmap_id, _ = _ingest_file(
@@ -114,9 +110,10 @@ def _ingest_file(
     text = path.read_text()
     frontmatter = load_frontmatter(text)
     created = frontmatter.get("created")
-    prereqs = frontmatter.get("prereqs") or []
-    if not isinstance(prereqs, list) or not all(isinstance(p, str) for p in prereqs):
-        raise ValueError(f"{path.name}: `prereqs` must be a list of goal slugs, got {prereqs!r}")
+    try:
+        prereqs = read_prereqs(frontmatter)
+    except ValueError as exc:
+        raise ValueError(f"{path.name}: {exc}") from exc
     if created is None:
         text = set_frontmatter_field(text, "created", stamp)
         path.write_text(text)
