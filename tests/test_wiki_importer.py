@@ -255,6 +255,20 @@ class TestFailFast:
         with pytest.raises(ValueError, match="bad-goal.md"):
             import_roadmap(root, ROADMAP_SLUG, graph)
 
+    def test_invalid_down_field_raises_with_filename(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(INDEX_MD)
+        # down: as a bare string (not a list) — must raise ValueError naming the file
+        (d / "bad-goal.md").write_text(
+            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\ndown: not-a-list\n---\n# Bad\n"
+        )
+        with pytest.raises(ValueError, match="bad-goal.md"):
+            import_roadmap(root, ROADMAP_SLUG, graph)
+
 
 class TestDownEdges:
     """Prereq edges derived from Breadcrumbs `down:` wikilinks."""

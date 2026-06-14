@@ -216,6 +216,14 @@ class TestParseWikilink:
         # The target must be "a", not "b|c" or a raised error.
         assert parse_wikilink("[[a|b|c]]") == "a"
 
+    def test_padded_target_is_stripped(self) -> None:
+        # Obsidian/Breadcrumbs treat "[[ a ]]" and "[[a]]" as the same link.
+        # The importer looks up by exact goal stem, so inner whitespace must be stripped.
+        assert parse_wikilink("[[ a ]]") == "a"
+
+    def test_padded_aliased_target_is_stripped(self) -> None:
+        assert parse_wikilink("[[ a | alias ]]") == "a"
+
 
 class TestReadPrereqs:
     def test_down_only_parses_wikilinks(self) -> None:
@@ -262,3 +270,17 @@ class TestReadPrereqs:
         # An explicit `down: []` is falsy, so `or []` triggers the same path as
         # missing `down:`.  Both must return []; this pins the coercion contract.
         assert read_prereqs({"down": []}) == []
+
+    def test_empty_string_prereqs_raises(self) -> None:
+        # "" is falsy but not None — must not be silently coerced to [].
+        # The isinstance check must catch it and raise.
+        with pytest.raises(ValueError, match="prereqs"):
+            read_prereqs({"prereqs": ""})
+
+    def test_zero_down_raises(self) -> None:
+        # 0 is falsy but not None — must not be silently coerced to [].
+        with pytest.raises(ValueError, match="down"):
+            read_prereqs({"down": 0})
+
+    def test_absent_keys_return_empty(self) -> None:
+        assert read_prereqs({}) == []

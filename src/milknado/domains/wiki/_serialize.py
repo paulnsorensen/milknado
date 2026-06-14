@@ -119,7 +119,7 @@ def parse_wikilink(value: str) -> str:
     "[[target]]" -> "target"; "[[target|alias]]" -> "target"; bare string passes through.
     """
     m = _WIKILINK_RE.match(value)
-    return m.group(1) if m else value
+    return m.group(1).strip() if m else value
 
 
 def read_prereqs(frontmatter: dict) -> list[str]:
@@ -127,8 +127,10 @@ def read_prereqs(frontmatter: dict) -> list[str]:
 
     Raises ValueError on non-list or non-str entries (same message shape as importer).
     """
-    raw_prereqs = frontmatter.get("prereqs") or []
-    raw_down = frontmatter.get("down") or []
+    raw_prereqs = frontmatter.get("prereqs")
+    raw_prereqs = [] if raw_prereqs is None else raw_prereqs
+    raw_down = frontmatter.get("down")
+    raw_down = [] if raw_down is None else raw_down
     if not isinstance(raw_prereqs, list) or not all(isinstance(p, str) for p in raw_prereqs):
         raise ValueError(f"`prereqs` must be a list of goal slugs, got {raw_prereqs!r}")
     if not isinstance(raw_down, list) or not all(isinstance(p, str) for p in raw_down):
