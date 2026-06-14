@@ -17,6 +17,7 @@ from pathlib import Path
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.wiki._locate import resolve_roadmap_dir
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
     HARVEST_START,
@@ -26,7 +27,6 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
     slugify,
-    validate_slug,
 )
 
 _logger = logging.getLogger(__name__)
@@ -88,10 +88,8 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
     or LookupError (roadmap not yet imported) — the CLI/MCP veneer maps these to
     clean errors.
     """
-    validate_slug(roadmap_slug)
-    index_path = wiki_root / "roadmaps" / roadmap_slug / "index.md"
-    if not index_path.exists():
-        raise FileNotFoundError(f"roadmap not found: {index_path}")
+    roadmap_dir = resolve_roadmap_dir(wiki_root, roadmap_slug)
+    index_path = roadmap_dir / "index.md"
     created = load_frontmatter(index_path.read_text()).get("created")
     if created is None:
         raise ValueError(f"roadmap {roadmap_slug!r} index.md has no `created`; import it first")
@@ -102,15 +100,25 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
 
 
 def _locate_roadmap_dir(wiki_root: Path, roadmap_ref: str) -> tuple[Path, str]:
-    """Recover (dir, slug) by matching each roadmap index.md's computed key."""
+    """Recover (dir, slug) by matching each roadmap index.md's computed key.
+
+    Searches nested `roadmaps/*/index.md` first, then flat `wiki_root/*/index.md`
+    siblings (for roadmaps imported from a flat layout).
+    """
+    candidates: list[Path] = []
     roadmaps = wiki_root / "roadmaps"
     if roadmaps.is_dir():
-        for index_path in sorted(roadmaps.glob("*/index.md")):
-            slug = index_path.parent.name
-            created = load_frontmatter(index_path.read_text()).get("created")
-            if created is not None and compute_roadmap_ref(slug, str(created)) == roadmap_ref:
-                return index_path.parent, slug
-    raise FileNotFoundError(f"no roadmap dir under {roadmaps} matches wiki_ref {roadmap_ref}")
+        candidates.extend(sorted(roadmaps.glob("*/index.md")))
+    # flat siblings: wiki_root/*/index.md, skipping the roadmaps/ subdir itself
+    candidates.extend(
+        p for p in sorted(wiki_root.glob("*/index.md")) if p.parent.name != "roadmaps"
+    )
+    for index_path in candidates:
+        slug = index_path.parent.name
+        created = load_frontmatter(index_path.read_text()).get("created")
+        if created is not None and compute_roadmap_ref(slug, str(created)) == roadmap_ref:
+            return index_path.parent, slug
+    raise FileNotFoundError(f"no roadmap dir under {wiki_root} matches wiki_ref {roadmap_ref}")
 
 
 def _goal_file_map(roadmap_dir: Path, roadmap_slug: str) -> dict[str, Path]:

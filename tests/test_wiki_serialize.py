@@ -19,6 +19,8 @@ from milknado.domains.wiki._serialize import (
     extract_section,
     extract_title,
     load_frontmatter,
+    parse_wikilink,
+    read_prereqs,
     replace_harvest_block,
     set_frontmatter_field,
     slugify,
@@ -180,3 +182,105 @@ class TestValidateSlug:
     def test_rejects_unsafe(self, bad: str) -> None:
         with pytest.raises(ValueError, match="unsafe roadmap slug"):
             validate_slug(bad)
+
+
+class TestParseWikilink:
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("[[target]]", "target"),
+            ("[[target|alias]]", "target"),
+            ("bare-slug", "bare-slug"),
+            ("[[multi-word-target]]", "multi-word-target"),
+            ("[[t|long alias text]]", "t"),
+        ],
+    )
+    def test_parses_wikilink_forms(self, value: str, expected: str) -> None:
+        assert parse_wikilink(value) == expected
+
+    def test_bare_string_passes_through(self) -> None:
+        assert parse_wikilink("define-schema") == "define-schema"
+
+    def test_unclosed_bracket_passes_through(self) -> None:
+        # Malformed "[[" has no closing "]]" — must pass through verbatim,
+        # not raise or silently drop the string.
+        assert parse_wikilink("[[") == "[["
+
+    def test_empty_target_passes_through(self) -> None:
+        # "[[]]" matches the wikilink shape but has an empty target segment —
+        # the [^|\]]+ group requires 1+ chars, so the regex won't match.
+        assert parse_wikilink("[[]]") == "[[]]"
+
+    def test_double_pipe_uses_first_segment_as_target(self) -> None:
+        # "[[a|b|c]]" — the first "|" is the alias separator; "b|c" is the alias.
+        # The target must be "a", not "b|c" or a raised error.
+        assert parse_wikilink("[[a|b|c]]") == "a"
+
+    def test_padded_target_is_stripped(self) -> None:
+        # Obsidian/Breadcrumbs treat "[[ a ]]" and "[[a]]" as the same link.
+        # The importer looks up by exact goal stem, so inner whitespace must be stripped.
+        assert parse_wikilink("[[ a ]]") == "a"
+
+    def test_padded_aliased_target_is_stripped(self) -> None:
+        assert parse_wikilink("[[ a | alias ]]") == "a"
+
+
+class TestReadPrereqs:
+    def test_down_only_parses_wikilinks(self) -> None:
+        fm = {"down": ["[[a]]", "[[b|alias]]"]}
+        assert read_prereqs(fm) == ["a", "b"]
+
+    def test_prereqs_only_passes_through(self) -> None:
+        fm = {"prereqs": ["a", "b"]}
+        assert read_prereqs(fm) == ["a", "b"]
+
+    def test_union_of_prereqs_and_down(self) -> None:
+        fm = {"prereqs": ["a"], "down": ["[[b]]", "[[a]]"]}
+        result = read_prereqs(fm)
+        # union: a from prereqs, b from down, a deduplicated
+        assert result == ["a", "b"]
+
+    def test_order_preserving_dedup(self) -> None:
+        fm = {"prereqs": ["x", "y"], "down": ["[[y]]", "[[z]]"]}
+        assert read_prereqs(fm) == ["x", "y", "z"]
+
+    def test_empty_frontmatter_returns_empty(self) -> None:
+        assert read_prereqs({}) == []
+
+    def test_neither_field_returns_empty(self) -> None:
+        assert read_prereqs({"kind": "goal"}) == []
+
+    def test_non_list_prereqs_raises(self) -> None:
+        with pytest.raises(ValueError, match="prereqs"):
+            read_prereqs({"prereqs": "not-a-list"})
+
+    def test_non_str_entry_in_prereqs_raises(self) -> None:
+        with pytest.raises(ValueError, match="prereqs"):
+            read_prereqs({"prereqs": [1, 2]})
+
+    def test_non_list_down_raises(self) -> None:
+        with pytest.raises(ValueError, match="`down`"):
+            read_prereqs({"down": "not-a-list"})
+
+    def test_non_str_entry_in_down_raises(self) -> None:
+        with pytest.raises(ValueError, match="`down`"):
+            read_prereqs({"down": [1]})
+
+    def test_explicit_empty_down_list_returns_empty(self) -> None:
+        # An explicit `down: []` is falsy, so `or []` triggers the same path as
+        # missing `down:`.  Both must return []; this pins the coercion contract.
+        assert read_prereqs({"down": []}) == []
+
+    def test_empty_string_prereqs_raises(self) -> None:
+        # "" is falsy but not None — must not be silently coerced to [].
+        # The isinstance check must catch it and raise.
+        with pytest.raises(ValueError, match="prereqs"):
+            read_prereqs({"prereqs": ""})
+
+    def test_zero_down_raises(self) -> None:
+        # 0 is falsy but not None — must not be silently coerced to [].
+        with pytest.raises(ValueError, match="down"):
+            read_prereqs({"down": 0})
+
+    def test_absent_keys_return_empty(self) -> None:
+        assert read_prereqs({}) == []
