@@ -146,8 +146,10 @@ class TestMcpJsonShape:
         assert server["command"] == "uvx", (
             f"mcpServers.milknado.command must be 'uvx'; got {server['command']!r}"
         )
-        assert "milknado-mcp" in server["args"], (
-            f"mcpServers.milknado.args must include 'milknado-mcp'; got {server['args']}"
+        assert server["args"] == ["--from", "milknado", "milknado-mcp"], (
+            "mcpServers.milknado.args must name the package via `--from milknado` so "
+            "`uvx` resolves it from PyPI; a bare `uvx milknado-mcp` looks up a "
+            f"nonexistent package and fails. Got {server['args']}"
         )
 
 

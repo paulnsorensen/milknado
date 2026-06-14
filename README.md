@@ -19,7 +19,7 @@ codex plugin marketplace add paulnsorensen/milknado
 
 Then restart Codex and install from the `/plugins` directory. Note: repo-level marketplace entries do not auto-prompt on start — you must select and install after restart.
 
-> **Pre-release note:** the plugin's MCP server (`milknado-mcp`) resolves from PyPI. Until the first release is published, substitute `uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp` wherever `uvx milknado-mcp` is used.
+> **Note:** the plugin launches its MCP server with `uvx --from milknado milknado-mcp`. The `milknado-mcp` command ships *inside* the `milknado` PyPI package, so the `--from milknado` is required — a bare `uvx milknado-mcp` resolves the argument as a package name and fails.
 
 ### opencode
 
@@ -30,7 +30,7 @@ Add the MCP server to `opencode.json` in your project or home directory:
   "mcp": {
     "milknado": {
       "type": "local",
-      "command": ["uvx", "milknado-mcp"]
+      "command": ["uvx", "--from", "milknado", "milknado-mcp"]
     }
   }
 }
@@ -44,9 +44,9 @@ cp -r plugins/milknado/skills/ .agents/skills/
 cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 ```
 
-### Pre-release fallback
+### Run from an unreleased git ref
 
-If `uvx milknado-mcp` is unavailable (before the first PyPI release), use:
+To run `main` (or any branch) instead of the published PyPI release:
 
 ```
 uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp
