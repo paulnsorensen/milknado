@@ -30,7 +30,7 @@ from milknado._mcp_core import (
 )
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.agent_argv import resolve_worker_tools
-from milknado.domains.common.flavor_profile import resolve_flavor_profile
+from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso
 
 _logger = logging.getLogger(__name__)
@@ -58,6 +58,38 @@ def _resolve_model(execution_agent: str) -> str:
 def _slugify(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug[:30]
+
+
+# Family-specific tool name the worker uses to self-verify in loop_mode="single".
+# claude allowlists use the mcp__server__ prefix; gemini uses bare MCP tool names.
+_NODE_VERIFY_TOOL_BY_FAMILY: dict[str, str] = {
+    "claude": "mcp__milknado__milknado_node_verify",
+    "gemini": "milknado_node_verify",
+}
+
+
+def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...]:  # noqa: ANN001
+    """Resolve the worker tool allowlist for a native-backend node.
+
+    Mirrors the subprocess execution_agent precedence (resolve_flavor_profile):
+    a per-flavor ``override.tools`` (built from the family default) wins, else the
+    GLOBAL ``[milknado.worker.tools]`` for the family, else the family default. An
+    ``override.tools`` of ``[]`` is intentional (empty allowlist) and is honored —
+    only ``None`` inherits. In loop_mode="single" the worker self-verifies, so
+    ``milknado_node_verify`` is appended when the family exposes it.
+    """
+    if override is not None and override.tools is not None:
+        tools = resolve_worker_tools(cfg.agent_family, list(override.tools))
+    else:
+        family_tools = cfg.worker_tools.get(cfg.agent_family)
+        tools = resolve_worker_tools(
+            cfg.agent_family, list(family_tools) if family_tools is not None else None
+        )
+    if profile.loop_mode == "single":
+        verify_tool = _NODE_VERIFY_TOOL_BY_FAMILY.get(cfg.agent_family)
+        if verify_tool is not None and verify_tool not in tools:
+            tools = (*tools, verify_tool)
+    return tools
 
 
 @mcp.tool()
@@ -102,7 +134,7 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
 
         try:
             wt_path, branch = _create_node_worktree(
-                GitAdapter(root), root, node_id, node.description
+                GitAdapter(root), root, node_id, node.description, cfg.worktree_pattern
             )
             graph.set_worktree(node_id, run_id, str(wt_path), branch)
             graph.start_run(run_id, node_id, str(wt_path), now_iso(), None)
@@ -117,9 +149,7 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
             raise
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None
-        tools = resolve_worker_tools(
-            cfg.agent_family, list(override.tools) if override and override.tools else None
-        )
+        tools = _resolve_node_tools(cfg, profile, override)
         _logger.info("milknado_todo_claim: node=%d run_id=%s (native, no spawn)", node_id, run_id)
         return {
             "run_id": run_id,
@@ -138,14 +168,17 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
         graph.close()
 
 
-def _create_node_worktree(git, root, node_id: int, description: str):  # noqa: ANN001
+def _create_node_worktree(  # noqa: ANN001
+    git, root, node_id: int, description: str, worktree_pattern: str
+):
     """Create the node's durable worktree under project_root, mirroring the executor.
 
-    Reuses GitAdapter.create_worktree and the executor's path/branch convention
-    (worktree_pattern + milknado/<id>-<slug>), with the same path-traversal guard.
+    Formats ``worktree_pattern`` ({node_id}, {slug}) for the directory name and
+    uses the executor's branch convention (milknado/<id>-<slug>), reusing
+    GitAdapter.create_worktree with the same path-traversal guard.
     """
     slug = _slugify(description)
-    wt_path = root / f"milknado-{node_id}-{slug}"
+    wt_path = root / worktree_pattern.format(node_id=node_id, slug=slug)
     resolved_root = root.resolve()
     if not wt_path.resolve().is_relative_to(resolved_root):
         raise ValueError(f"worktree path resolves outside project_root: {wt_path!r}")

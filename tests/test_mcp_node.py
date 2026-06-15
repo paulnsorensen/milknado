@@ -115,6 +115,56 @@ def test_claim_returns_full_structured_payload(repo: Path) -> None:
     assert payload["brief"].startswith("# Task:")
 
 
+def test_claim_honors_global_worker_tools(repo: Path) -> None:
+    """The native tools list consults GLOBAL [milknado.worker.tools], like the subprocess path."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        '\n[milknado.worker.tools]\nclaude = ["Read", "Write"]\n',
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    # No "..." sentinel -> the override replaces the family default outright.
+    assert payload["tools"] == ["Read", "Write"]
+
+
+def test_claim_preserves_empty_flavor_tools_override(repo: Path) -> None:
+    """A per-flavor `tools = []` is an intentional empty allowlist, not inherit."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        "\n[milknado.flavor.implement]\ntools = []\n",
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)  # tasks default to the implement flavor
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert payload["tools"] == []
+
+
+def test_claim_single_mode_includes_node_verify(repo: Path) -> None:
+    """In loop_mode="single" the worker self-verifies, so node_verify must be allowlisted."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        '\n[milknado.flavor.implement]\nloop_mode = "single"\n',
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert payload["loop_mode"] == "single"
+    assert "mcp__milknado__milknado_node_verify" in payload["tools"]
+
+
+def test_claim_honors_custom_worktree_pattern(repo: Path) -> None:
+    """_create_node_worktree threads cfg.worktree_pattern instead of a hardcoded name."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        'worktree_pattern = "wt-{node_id}-{slug}"\n',
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert Path(payload["worktree_path"]).name.startswith(f"wt-{node_id}-")
+
+
 def test_claim_is_atomic_second_claim_loses(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
@@ -313,23 +363,19 @@ def test_claim_unknown_node_raises(repo: Path) -> None:
         _call(milknado_todo_claim, node_id=999, project_root=str(repo))
 
 
-def test_claim_rolls_back_claim_when_worktree_creation_fails(repo: Path) -> None:
+def test_claim_rolls_back_claim_when_worktree_creation_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If worktree/run setup fails after the CAS claim, the node is released FAILED."""
-    import milknado.mcp_node as mcp_node
-
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
 
     def _boom(*_a, **_k):
         raise RuntimeError("worktree boom")
 
-    original = mcp_node._create_node_worktree
-    mcp_node._create_node_worktree = _boom
-    try:
-        with pytest.raises(RuntimeError, match="worktree boom"):
-            _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
-    finally:
-        mcp_node._create_node_worktree = original
+    monkeypatch.setattr("milknado.mcp_node._create_node_worktree", _boom)
+    with pytest.raises(RuntimeError, match="worktree boom"):
+        _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
     graph, _cfg = open_graph(repo)
     try:

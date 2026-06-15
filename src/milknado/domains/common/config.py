@@ -385,7 +385,9 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         flavors=flavors,
         planning_prompt_prepend=planning_prompt_prepend,
         worker_brief_prepend=worker_brief_prepend,
-        worker_agent_type=str(raw.get("worker_agent_type", DEFAULT_WORKER_AGENT_TYPE)),
+        worker_agent_type=_validated_str(
+            raw.get("worker_agent_type"), DEFAULT_WORKER_AGENT_TYPE, "[milknado] worker_agent_type"
+        ),
         loop_mode=_validated_loop_mode(raw.get("loop_mode", DEFAULT_LOOP_MODE), "[milknado]"),
         max_iterations=_validated_positive_int(
             raw.get("max_iterations", DEFAULT_MAX_ITERATIONS), "[milknado] max_iterations"
@@ -402,6 +404,15 @@ def _validated_loop_mode(value: Any, ctx: str) -> str:
     if mode not in _LOOP_MODES:
         raise ValueError(f"{ctx} loop_mode must be one of {list(_LOOP_MODES)}; got {mode!r}")
     return mode
+
+
+def _validated_str(value: Any, default: str, ctx: str) -> str:
+    """Return a string config value, rejecting non-string types instead of coercing."""
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
+    return value
 
 
 def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:

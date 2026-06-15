@@ -152,6 +152,14 @@ def test_invalid_max_iterations_rejected(tmp_path: Path) -> None:
         load_config(path, include_global=False)
 
 
+def test_non_string_worker_agent_type_rejected(tmp_path: Path) -> None:
+    """A non-string worker_agent_type is rejected, not silently str()-coerced."""
+    path = tmp_path / "milknado.toml"
+    path.write_text('[milknado]\nagent_family = "claude"\nworker_agent_type = 7\n')
+    with pytest.raises(ValueError, match="worker_agent_type must be a string"):
+        load_config(path, include_global=False)
+
+
 # ── save/load round-trip ─────────────────────────────────────────────────────
 
 
