@@ -392,6 +392,10 @@ def test_runner_writes_done_on_successful_outcome(
         flavors: dict = {}
         worker_brief_prepend = None
         agent_family = "claude"
+        worker_agent_type = "milknado:milknado-worker"
+        loop_mode = "redispatch"
+        max_iterations = 8
+        max_turns = 60
 
     class _Graph:
         def __init__(self) -> None:
@@ -465,6 +469,10 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         flavors: dict = {}
         worker_brief_prepend = None
         agent_family = "claude"
+        worker_agent_type = "milknado:milknado-worker"
+        loop_mode = "redispatch"
+        max_iterations = 8
+        max_turns = 60
 
     class _Graph:
         def __init__(self) -> None:

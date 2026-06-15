@@ -2067,6 +2067,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
     from milknado import (  # noqa: F401
+        mcp_node,
         mcp_ralph,
         mcp_run,
         mcp_todo,
@@ -2084,6 +2085,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_get_node",
         "milknado_graph_summary",
         "milknado_move_node",
+        "milknado_node_verify",
         "milknado_plan_batches",
         "milknado_ralph_run_poll",
         "milknado_ralph_run_start",
@@ -2094,6 +2096,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_set_subtree_status",
         "milknado_todo_add",
         "milknado_todo_brief",
+        "milknado_todo_claim",
         "milknado_todo_next",
         "milknado_todo_run",
         "milknado_todo_run_poll",

@@ -243,6 +243,13 @@ def milknado_plan_batches(
 
 def main() -> None:
     # Importing each tool module registers its @mcp.tool()s on the shared instance.
-    from milknado import mcp_ralph, mcp_run, mcp_todo, mcp_todo_mutate, mcp_wiki  # noqa: F401
+    from milknado import (  # noqa: F401
+        mcp_node,
+        mcp_ralph,
+        mcp_run,
+        mcp_todo,
+        mcp_todo_mutate,
+        mcp_wiki,
+    )
 
     mcp.run()

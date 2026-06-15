@@ -12,11 +12,19 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class FlavorProfile:
-    """Resolved, ready-to-use per-flavor configuration. No identity."""
+    """Resolved, ready-to-use per-flavor configuration. No identity.
+
+    ``worker_agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns``
+    drive the native Workflow backend; the subprocess dispatcher ignores them.
+    """
 
     execution_agent: str
     quality_gates: tuple[str, ...]
     brief_prepend: str | None
+    worker_agent_type: str
+    loop_mode: str
+    max_iterations: int
+    max_turns: int
 
 
 def resolve_flavor_profile(
@@ -32,6 +40,8 @@ def resolve_flavor_profile(
       - quality_gates: flavor value if not None, else cfg.quality_gates.
       - brief_prepend: flavor value if not None, else cfg.worker_brief_prepend
         (replace, not concat).
+      - worker_agent_type / loop_mode / max_iterations / max_turns: flavor value
+        if not None, else the cfg global default (native Workflow backend).
     """
     from milknado.domains.common.agent_argv import (
         resolve_execution_agent_command,
@@ -45,6 +55,10 @@ def resolve_flavor_profile(
             execution_agent=cfg.execution_agent,
             quality_gates=cfg.quality_gates,
             brief_prepend=cfg.worker_brief_prepend,
+            worker_agent_type=cfg.worker_agent_type,
+            loop_mode=cfg.loop_mode,
+            max_iterations=cfg.max_iterations,
+            max_turns=cfg.max_turns,
         )
 
     # Resolve execution_agent.
@@ -64,9 +78,19 @@ def resolve_flavor_profile(
     brief_prepend = (
         override.brief_prepend if override.brief_prepend is not None else cfg.worker_brief_prepend
     )
+    agent_type = override.agent_type if override.agent_type is not None else cfg.worker_agent_type
+    loop_mode = override.loop_mode if override.loop_mode is not None else cfg.loop_mode
+    max_iterations = (
+        override.max_iterations if override.max_iterations is not None else cfg.max_iterations
+    )
+    max_turns = override.max_turns if override.max_turns is not None else cfg.max_turns
 
     return FlavorProfile(
         execution_agent=execution_agent,
         quality_gates=quality_gates,
         brief_prepend=brief_prepend,
+        worker_agent_type=agent_type,
+        loop_mode=loop_mode,
+        max_iterations=max_iterations,
+        max_turns=max_turns,
     )
