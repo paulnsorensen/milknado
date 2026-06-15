@@ -1,0 +1,28 @@
+# Decision — Native Dynamic-Workflow ("ultracode") Execution Backend
+
+Date: 2026-06-15 · Status: shipped in PR #145 (branch `feat/workflow-executor`); the executor **concept is verified end-to-end live** (2026-06-15), but the shipped **`node-runner.js` is broken as written** and needs a rewrite (see Gotchas + Verification).
+
+**Canonical reference — read this first:** [Dynamic workflows](https://code.claude.com/docs/en/workflows) is the authoritative doc for Claude Code's Workflow tool and its script model (`agent()` / `parallel()` / `pipeline()` / `phase()`). The entire native backend is built on it. Subscription/auth context: [Authentication](https://code.claude.com/docs/en/authentication) (effective 2026-06-15).
+
+## Why
+
+The goal was to let milknado run its workers **in a single Claude Code session via a dynamic workflow** — subscription-native, with explicit orchestration control — instead of shelling out a fresh `claude -p` process per worker (the [[execution]] subprocess model). Dynamic workflows were chosen deliberately because they are the **only** option that rides the Claude subscription natively: an empirical metering spike (2026-06-15) showed Workflow `agent()` sub-agents bill to the interactive Session pool (`/status` moved 22%→23%), with no API key and no separate Agent-SDK credit. Alternatives — a TypeScript Agent-SDK RPC bridge (separate Agent-SDK credit, Node sidecar) and opencode `serve` (portable but not Claude-native) — were researched and rejected for this backend.
+
+## What shipped (dual-backend, additive)
+
+The subprocess CLI dispatcher ([[execution]], [[adapters]]) is left **byte-identical** — it stays for Codex/opencode/gemini portability (ultracode is Claude-Code-only). Added alongside it: `milknado_todo_claim` (atomic CAS claim + worktree-at-claim + runs row + goal_claims fencing, spawns nothing, returns structured config), `milknado_node_verify` (runs quality_gates in the worktree → `CompletionVerdict{ok,feedback}`), a server-side completion gate (terminal `done` on a native-claimed node requires a passing verify; subprocess/manual nodes exempt via a native `claim` marker), per-flavor config (`worker_agent_type`/`loop_mode`/`max_iterations`/`max_turns`), the `milknado:milknado-worker` plugin agent type, and the `node-runner.js` Workflow script. Design: the **worktree is the carry-forward state**; loop **mode B (cold re-dispatch, bounded context)** default, **mode A (single-agent loop)** per-flavor; worktree is node-owned, created at claim.
+
+## Gotchas / open
+
+- **CRITICAL — `node-runner.js` is broken as shipped.** The Workflow SCRIPT scope exposes only `agent()` / `parallel()` (and `log`/`phase`/`args`/`budget`); **MCP tools are `undefined` in the script** — reachable only from inside AGENTS. `node-runner.js` calls `milknado_todo_claim` / `node_verify` / `deposit_result` / `set_status` at script level, so it crashes on the first call. Verified by a `typeof` probe Workflow (all four → `"undefined"`; `agent`/`parallel` → `"function"`). **Corrected model (the rewrite):** the orchestrator (the live session) does `plan_batches` / `claim` / `node_verify` / `set_status` *inline*; the Workflow script does ONLY `agent()` fan-out; the worker agent does the task + `deposit_result` (+ `node_verify` itself in `single` mode); in `redispatch` mode the verify→re-dispatch loop lives orchestrator-side. The `milknado:milknado-worker` agent type is correctly scoped for this (it has `node_verify`+`deposit_result`, not `claim`).
+- **`workflows/` is NOT a recognized plugin component** (verified vs the workflows doc + [[distribution]]). A Workflow script is Claude-only and conflicts with milknado's portable Skills+MCP distribution. Ship `node-runner.js` (once rewritten) as a milknado **skill** or under `.claude/workflows/`; drop the `plugins/milknado/workflows/` dir.
+- **New tools need a `/mcp` reconnect** to appear: a server started via `uv run milknado-mcp` before commit `22e0849` won't expose `milknado_todo_claim`/`node_verify` until reconnected.
+- **`node-runner.js` defers change-id→node-id resolution** to the orchestrator (`milknado_plan_batches` returns change-id-keyed batches; node-id arrays must be resolved before fan-out).
+
+## Verification
+
+- **Session-log audit (2026-06-15):** before today the native path had never run — `milknado_todo_claim`/`node_verify` had zero invocations across all ingested sessions (not a logging gap). The dynamic-workflows that had run were *meta* (metering probes, seam-grounding); all real graph execution to date used the subprocess path.
+- **Python logic-level test (2026-06-15): PASS** — claim → (simulate agent) → verify → deposit → gated mark-done, both happy and fail-closed paths, zero bugs; `worktree_pattern` honored, `_resolve_model` and the gate discriminator correct. (Called the functions directly, so it could NOT catch the script-scope defect below.)
+- **Live end-to-end test (2026-06-15): PASS, with the CORRECTED model.** After a `/mcp` reconnect made the tools live, a real `Workflow → agent() → MCP` run drove scratch node 3: `claim` (inline) → Workflow `milknado:milknado-worker` agent created the gate file + called `milknado_deposit_result` → `milknado_node_verify` (inline) `ok=true` → `milknado_todo_set_status(done)` (inline, gated) → node `done`. The concept is proven. The SAME run is what exposed `node-runner.js` being broken (script-level MCP) — the shipped script was NOT what ran; the corrected orchestrator/script/agent split was.
+
+Related: [[execution]] (the subprocess model this extends), [[distribution]] (why `workflows/` is off-model), [[adapters]] (LoopPort), [[loop-vendor-in-decision]] (the prior execution-engine decision).

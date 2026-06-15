@@ -1,121 +1,105 @@
 // Milknado native Workflow node-runner (harness-side, "ultracode").
 //
-// Runs INSIDE a Claude Code dynamic-Workflow session. It is the DRIVER of the
-// native execution backend: milknado is the graph/state backend (SQLite + MCP
-// tools), and this script fans out one agent() per ready node, batch by batch,
-// against milknado's dependency graph.
+// Runs INSIDE a Claude Code dynamic-Workflow session. It fans out ONE worker
+// agent() per already-claimed milknado node. It runs ALONGSIDE — never replaces
+// — the subprocess CLI dispatcher (Codex/opencode have no ultracode primitive).
 //
-// It runs ALONGSIDE — never replaces — the subprocess CLI dispatcher. Use this
-// only in a Claude Code session in Workflow mode; Codex/opencode have no
-// ultracode primitive, so they keep using the subprocess path.
+// ── WHY THIS IS FAN-OUT ONLY (hard runtime constraint) ───────────────────────
+// A Workflow SCRIPT body can call only agent()/parallel()/pipeline()/log()/
+// phase(); MCP tools are `undefined` in script scope — they are reachable ONLY
+// from inside agents. (Verified 2026-06-15: a `typeof` probe returned "undefined"
+// for milknado_todo_claim/node_verify/deposit_result/set_status, "function" for
+// agent/parallel.) So this script does NOT call milknado MCP tools. All MCP
+// claim/verify/mark-done work is the ORCHESTRATOR's job (the live session driving
+// this Workflow), and the per-worker deposit is the WORKER AGENT's job.
 //
-// End-to-end verification REQUIRES a live ultracode session and cannot run in an
-// autonomous/CI harness. See the spec's acceptance note: drive a 3–5 node graph
-// through plan_batches -> claim -> agent loop -> node_verify -> deposit ->
-// markTerminal and confirm terminal node status in SQLite.
+// ── ORCHESTRATOR CONTRACT (the live session / driver runs these INLINE) ───────
+// The orchestrator owns every milknado MCP call. Around each invocation of this
+// script it runs, in order:
+//   1. const plan = milknado_plan_batches(changes, budget)
+//   2. resolve plan.batches' change_ids -> owning graph node IDs (the orchestrator
+//      built the change-id -> node map when it fed `changes` into plan_batches;
+//      there is no MCP tool to resolve it from here).
+//   3. for each batch, in dependency order:
+//        a. claims = batch.map(nodeId => milknado_todo_claim(nodeId, project_root))
+//           Attach project_root to each claim payload before passing it in.
+//        b. let pending = claims
+//        c. for (iter = 0; iter < max_iterations && pending.length; iter++):
+//             // run THIS script to fan out one worker per pending node:
+//             Workflow({ scriptPath: <this file>, args: { claims: pending } })
+//             verdicts = pending.map(c => milknado_node_verify(c.run_id, project_root))
+//             ok      = verdicts.filter(v => v.ok)      // -> milknado_todo_set_status(node_id,'done')  (gated)
+//             pending = verdicts.filter(v => !v.ok)     // attach v.feedback, re-dispatch (mode B redispatch)
+//        // loop_mode "single" workers self-verify (below), so they pass on iter 0.
+//   4. nodes still unverified after max_iterations stay RUNNING and are reclaimed
+//      by milknado's existing fail_stale_running_runs / reconcile path.
 //
-// MCP tools used (all on the `milknado` server):
-//   milknado_plan_batches   -> { batches: [{ index, change_ids, depends_on, oversized }, ...] }
-//     NOTE: change-id-keyed, NOT node IDs. main() requires batches PRE-RESOLVED to
-//     node-id arrays ([[nodeId, ...], ...]); see the resolution note in main().
-//   milknado_todo_claim(nodeId) -> structured claim payload:
-//     { run_id, node_id, brief, flavor, model, tools, worktree_path,
-//       agent_type, loop_mode, max_iterations, max_turns }
-//   milknado_node_verify(run_id) -> { ok, feedback }
-//   milknado_deposit_result(run_id, payload)
-//   milknado_todo_set_status(nodeId, "done")  -> terminal transition (verify-gated)
-//
-// Default loop is mode B ("redispatch"): a COLD agent() per iteration against the
-// node's durable worktree, carrying forward ONLY the verify feedback string —
-// never a transcript. Per-flavor "single" (mode A) runs one agent() that loops
-// internally, calling milknado_node_verify as a tool until it passes.
+// ── ARGS ─────────────────────────────────────────────────────────────────────
+// The Workflow runtime delivers `args` as a JSON STRING (verified 2026-06-15),
+// so this script JSON.parses it. Shape:
+//   { claims: [ { run_id, node_id, brief, worktree_path, agent_type, model,
+//                 max_turns, loop_mode, project_root, feedback? }, ... ] }
 
-async function runWorkerBrief(claim, feedback) {
-  // Build the per-iteration brief: the claim's brief plus the prior verify
-  // feedback (empty on the first iteration). The worktree carries forward all
-  // prior on-disk work; only this feedback string crosses the iteration boundary.
-  const fb = feedback ? `\n\n## Verify feedback from the previous attempt\n${feedback}\n` : "";
-  return `${claim.brief}${fb}\n\nYour run_id is ${claim.run_id}. Work in ${claim.worktree_path}.`;
+export const meta = {
+  name: 'milknado-node-runner',
+  description:
+    'Fan out one milknado:milknado-worker agent per claimed node. The orchestrator does claim/verify/set_status inline around this (see header); the worker does the task + milknado_deposit_result itself.',
+  phases: [{ title: 'Execute' }],
 }
 
-async function runNodeRedispatch(claim) {
-  // Mode B: cold re-dispatch per iteration, bounded per-iteration context.
-  let feedback = "";
-  for (let i = 0; i < claim.max_iterations; i++) {
-    await agent(await runWorkerBrief(claim, feedback), {
-      agentType: claim.agent_type,
-      model: claim.model,
-      tools: claim.tools,
-      maxTurns: claim.max_turns,
-    });
-    const verdict = await milknado_node_verify({ run_id: claim.run_id });
-    if (verdict.ok) return true;
-    feedback = verdict.feedback;
-  }
-  return false;
+phase('Execute')
+
+// `args` arrives as a JSON string; tolerate an already-parsed object defensively.
+const input = typeof args === 'string' ? JSON.parse(args) : args || {}
+const claims = Array.isArray(input.claims) ? input.claims : []
+if (!claims.length) {
+  throw new Error(
+    'node-runner: args.claims must be a non-empty array of claim payloads. The ' +
+      'orchestrator calls milknado_todo_claim INLINE (the script cannot — MCP is ' +
+      'agent-only) and passes the payloads in as args.claims. Got: ' +
+      JSON.stringify(input).slice(0, 200),
+  )
 }
 
-async function runNodeSingle(claim) {
-  // Mode A: one agent() loops internally, calling milknado_node_verify itself
-  // until it passes. Context grows monotonically — opt-in for short flavors only.
-  await agent(await runWorkerBrief(claim, ""), {
-    agentType: claim.agent_type,
-    model: claim.model,
-    tools: claim.tools,
-    maxTurns: claim.max_turns,
-  });
-  // The single agent is responsible for reaching ok=True via its own verify
-  // calls; re-confirm server-side before declaring the node done.
-  const verdict = await milknado_node_verify({ run_id: claim.run_id });
-  return verdict.ok;
+function workerBrief(c) {
+  const fb = c.feedback
+    ? `\n\n## Verify feedback from the previous attempt — address this\n${c.feedback}\n`
+    : ''
+  const single =
+    c.loop_mode === 'single'
+      ? `\nThis node is loop_mode="single": after you believe the task is done, call ` +
+        `milknado_node_verify(run_id="${c.run_id}", project_root="${c.project_root || ''}") ` +
+        `yourself and keep working until it returns ok:true BEFORE you deposit.`
+      : ''
+  return (
+    `${c.brief}${fb}\n\n` +
+    `Work ONLY inside your worktree: ${c.worktree_path}\n` +
+    `Your run_id is ${c.run_id}.${single}\n` +
+    `As your final step, call milknado_deposit_result with run_id="${c.run_id}", ` +
+    `project_root="${c.project_root || ''}", and payload set to your COMPLETE deliverable ` +
+    `(the full text, not a reference). The deposited payload is what the coordinator reads back.`
+  )
 }
 
-async function runNode(nodeId) {
-  const claim = await milknado_todo_claim({ node_id: nodeId }); // creates worktree, no spawn
-  const ok =
-    claim.loop_mode === "single" ? await runNodeSingle(claim) : await runNodeRedispatch(claim);
-  // milknado_deposit_result is the durable result sink; markTerminal is the
-  // verify-gated "done" transition — it is REJECTED unless the latest
-  // milknado_node_verify(run_id) returned ok=True, so a node that never passed
-  // its gates cannot be marked done even if this driver mis-sequences.
-  await milknado_deposit_result({
-    run_id: claim.run_id,
-    payload: ok ? "node completed; gates passed" : "node FAILED to pass gates within max_iterations",
-  });
-  if (ok) await milknado_todo_set_status({ node_id: nodeId, status: "done" });
-  return ok;
-}
+// One worker agent per claimed node, fanned out concurrently. The worker agent
+// type (milknado:milknado-worker) carries the scoped tool allowlist; model is
+// passed per-call (the structured field from the claim) so it routes correctly.
+const results = await parallel(
+  claims.map((c) => () =>
+    agent(workerBrief(c), {
+      agentType: c.agent_type || 'milknado:milknado-worker',
+      model: c.model,
+      maxTurns: c.max_turns,
+      label: `worker-node-${c.node_id ?? c.run_id}`,
+    }),
+  ),
+)
 
-async function main(args) {
-  // args.batchPlan.batches must be PRE-RESOLVED to node-id arrays: each entry an
-  // array of ready task node IDs, run in sequence (later batches depend on
-  // earlier ones) with the nodes WITHIN a batch run in parallel.
-  //
-  // milknado_plan_batches does NOT return this shape — it returns change-id-keyed
-  // batch objects ({ index, change_ids, depends_on, oversized }), and change_ids
-  // are planning-domain identifiers with no server-side mapping to graph node
-  // IDs. Resolving them requires the live session's own change-id -> owning-node
-  // map (the same one the orchestrator built when it fed `changes` into
-  // milknado_plan_batches); there is no MCP tool to do it from inside this runner.
-  //
-  // DEFERRED to live-session wiring: the orchestrator must produce args.batchPlan
-  // by resolving change_ids -> owning node IDs (or a future MCP tool must return
-  // node-id batches directly). This runner therefore REQUIRES the pre-resolved
-  // node-id shape and fails loud below if handed the raw plan_batches output,
-  // rather than crashing obscurely at batch.map on a change-id object.
-  const plan = args.batchPlan;
-  if (!plan || !Array.isArray(plan.batches)) {
-    throw new Error("node-runner: args.batchPlan.batches must be an array of node-id batches");
-  }
-  for (const batch of plan.batches) {
-    if (!Array.isArray(batch) || !batch.every((id) => typeof id === "number")) {
-      throw new Error(
-        "node-runner: each batch must be an array of numeric node IDs. Got " +
-          JSON.stringify(batch) +
-          " — this looks like raw milknado_plan_batches output (change-id objects). " +
-          "Resolve change_ids -> owning node IDs before passing the plan in (see main() note).",
-      );
-    }
-    await parallel(batch.map((nodeId) => async () => runNode(nodeId)));
-  }
+// Dispatch receipt only — NOT a completion verdict. The orchestrator calls
+// milknado_node_verify per run_id next and decides done / re-dispatch.
+log(`node-runner: dispatched ${claims.length} worker(s), ${results.filter(Boolean).length} returned`)
+return {
+  dispatched: claims.length,
+  returned: results.filter(Boolean).length,
+  run_ids: claims.map((c) => c.run_id),
 }
