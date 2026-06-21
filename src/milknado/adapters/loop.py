@@ -29,7 +29,7 @@ MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 # real quality suite (e.g. `uv run pytest` over the full test set), which runs
 # for minutes — not the short RALPH.md frontmatter snippets DEFAULT_COMMAND_TIMEOUT
 # (60s) sizes for. The cap is set at the run-dispatch scale (the 1800s default a
-# whole node loop is allotted, milknado_ralph_run_start) so an honest full-suite
+# whole node loop is allotted, milknado_run_loop_start) so an honest full-suite
 # gate completes within it, while a genuinely wedged gate still cannot stall the
 # verdict forever.
 _GATE_TIMEOUT_SECONDS: Final[float] = 1800.0

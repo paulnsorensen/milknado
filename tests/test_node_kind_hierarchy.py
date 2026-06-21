@@ -134,11 +134,11 @@ class TestContainmentEnforcement:
 
 
 class TestRunStartRefusal:
-    def test_todo_run_start_refuses_goal(self, tmp_path: Path) -> None:
-        """milknado_todo_run_start on a goal node refuses with ValueError."""
+    def test_run_once_start_refuses_goal(self, tmp_path: Path) -> None:
+        """milknado_run_once_start on a goal node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -155,13 +155,13 @@ class TestRunStartRefusal:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="kind"):
-                milknado_todo_run_start(goal.id)
+                milknado_run_once_start(goal.id)
 
-    def test_ralph_run_start_refuses_roadmap(self, tmp_path: Path) -> None:
-        """milknado_ralph_run_start on a roadmap node refuses with ValueError."""
+    def test_run_loop_start_refuses_roadmap(self, tmp_path: Path) -> None:
+        """milknado_run_loop_start on a roadmap node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_ralph import milknado_ralph_run_start
+        from milknado.mcp_ralph import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -178,7 +178,7 @@ class TestRunStartRefusal:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="kind"):
-                milknado_ralph_run_start(roadmap.id)
+                milknado_run_loop_start(roadmap.id)
 
 
 # ── validate_goal_runnable ────────────────────────────────────────────────────
@@ -397,11 +397,11 @@ class TestCoverageBranches:
                 project_root=tmp_path,
             )
 
-    def test_todo_run_refuses_goal(self, tmp_path: Path) -> None:
-        """milknado_todo_run on a goal node raises ValueError."""
+    def test_run_once_refuses_goal(self, tmp_path: Path) -> None:
+        """milknado_run_once on a goal node raises ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_run import milknado_todo_run
+        from milknado.mcp_run import milknado_run_once
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -418,7 +418,7 @@ class TestCoverageBranches:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="kind"):
-                milknado_todo_run(goal.id)
+                milknado_run_once(goal.id)
 
     def test_todo_next_flavor_filter_no_match(self, tmp_path: Path) -> None:
         """milknado_todo_next returns None when the next node doesn't match the flavor filter."""
@@ -687,11 +687,11 @@ class TestKindEditClearsFlavor:
 
 
 class TestRalphRunStartRefusesGoal:
-    def test_ralph_run_start_refuses_goal(self, tmp_path: Path) -> None:
-        """milknado_ralph_run_start on a GOAL node refuses with ValueError."""
+    def test_run_loop_start_refuses_goal(self, tmp_path: Path) -> None:
+        """milknado_run_loop_start on a GOAL node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_ralph import milknado_ralph_run_start
+        from milknado.mcp_ralph import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -709,7 +709,7 @@ class TestRalphRunStartRefusesGoal:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="kind"):
-                milknado_ralph_run_start(goal_id)
+                milknado_run_loop_start(goal_id)
 
 
 # ── hardening: validate_goal_runnable edge cases ───────────────────────────────

@@ -135,7 +135,7 @@ def start_headless_async(
     default_cmd: str,
 ) -> AsyncStartRef:
     argv = _resolve_worker_cmd(worker_cmd, default_cmd)
-    # The caller (milknado_todo_run_start) claims the node under a run_id before
+    # The caller (milknado_run_once_start) claims the node under a run_id before
     # spawning, then hands that same id here so the node row and the run row agree
     # on the fence; standalone callers let us mint one.
     run_id = run_id or _make_run_id(node_id)

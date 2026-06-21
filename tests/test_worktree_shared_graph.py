@@ -194,49 +194,49 @@ class TestDispatchRefusalUnderClaimedGoal:
         g.close()
         return tmp_path, MikadoGraph(db), goal_id, task_id
 
-    def test_todo_run_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
+    def test_run_once_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_run import milknado_todo_run
+        from milknado.mcp_run import milknado_run_once
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
-            milknado_todo_run(task_id, project_root=str(root))
+            milknado_run_once(task_id, project_root=str(root))
 
-    def test_todo_run_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
+    def test_run_once_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
-            milknado_todo_run_start(task_id, project_root=str(root))
+            milknado_run_once_start(task_id, project_root=str(root))
 
-    def test_ralph_run_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
+    def test_run_loop_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.claim_goal(goal_id, "run-coord-A", now=now_iso())
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_ralph import milknado_ralph_run_start
+        from milknado.mcp_ralph import milknado_run_loop_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
-            milknado_ralph_run_start(task_id, project_root=str(root))
+            milknado_run_loop_start(task_id, project_root=str(root))
 
     def test_dispatch_allowed_when_goal_not_claimed(self, tmp_path: Path) -> None:
         """No claimed goal → dispatch proceeds normally (kind check error, not goal error)."""
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.close()
 
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         # Should NOT raise a goal-claimed error; may raise other validation errors
         try:
-            milknado_todo_run_start(task_id, project_root=str(root))
+            milknado_run_once_start(task_id, project_root=str(root))
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (
                 f"unexpected goal-claim refusal with no goal claimed: {exc}"
@@ -249,11 +249,11 @@ class TestDispatchRefusalUnderClaimedGoal:
         graph.set_goal_pid(goal_id, "run-coord-A", _DEAD_PID)
         graph.close()
 
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         # Should NOT raise a goal-claimed error; dead claimant is reclaimed on dispatch
         try:
-            milknado_todo_run_start(task_id, project_root=str(root))
+            milknado_run_once_start(task_id, project_root=str(root))
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (
                 f"unexpected goal-claim refusal after dead claimant: {exc}"
@@ -639,10 +639,10 @@ class TestProductionClaimPath:
         graph.close()
 
         # Run B (different process pid) tries to dispatch — must be refused by _check.
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
-            milknado_todo_run_start(task_id, project_root=str(root))
+            milknado_run_once_start(task_id, project_root=str(root))
 
     def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
         """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
@@ -656,10 +656,10 @@ class TestProductionClaimPath:
         graph.close()
 
         # Run B's dispatch should no longer be blocked (dead pid → inline reclaim).
-        from milknado.mcp_run import milknado_todo_run_start
+        from milknado.mcp_run import milknado_run_once_start
 
         try:
-            milknado_todo_run_start(task_id, project_root=str(root))
+            milknado_run_once_start(task_id, project_root=str(root))
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (
                 f"dead claimant must be reclaimed inline; dispatch must not be blocked: {exc}"

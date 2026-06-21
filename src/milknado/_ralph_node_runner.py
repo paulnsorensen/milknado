@@ -1,6 +1,6 @@
 """Detached headless single-node ralph runner.
 
-Spawned as its own process by `milknado_ralph_run_start` so a worktree-isolated
+Spawned as its own process by `milknado_run_loop_start` so a worktree-isolated
 ralph loop survives the MCP server restarting (hot-reload). Node status, worktree
 path, and run state all persist in SQLite so a retried run can reconcile state
 from an earlier process. The MCP tool inserted the `running` run row before

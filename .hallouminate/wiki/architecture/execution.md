@@ -25,6 +25,7 @@ re-raise immediately; transient failures (OSError, timeout, 429/rate-limit,
 exit 124/137/143 — see `_is_transient`) retry.
 
 `_dispatch_once`:
+
 1. `WorktreeManager.ensure_clean` removes any stale worktree tracked for the node.
 2. Slugify description → worktree path from `config.worktree_pattern`; **reject
    paths that resolve outside `project_root`** (path-escape guard).
@@ -131,7 +132,7 @@ checking status.
   rebases onto `feature_branch`, and removes the worktree in a `finally`.
   `RebaseAbortError` re-raises (repo corruption — never swallowed); other
   exceptions become a failed `RebaseResult`. On success → `_mark_terminal(DONE)`
-  + record completion duration; on failure → `_mark_terminal(FAILED)` + build a
+  and records completion duration; on failure → `_mark_terminal(FAILED)` + build a
   `RebaseConflict`. Newly dispatchable nodes are recomputed only on success.
 
 `_mark_terminal` is fenced: with a `run_id` it calls `graph.mark_terminal(id,
@@ -211,7 +212,7 @@ a 2 KB tail. PR #127 adds a durable return channel — `run_messages`, an
 append-only per-run message table (seq assigned atomically in a single
 `INSERT … SELECT MAX(seq)+1 … RETURNING` statement, so concurrent depositors
 cannot collide). The MCP tool `milknado_deposit_result(run_id, payload)` writes
-`role='result'` rows; `milknado_todo_run_poll` returns the latest one under
+`role='result'` rows; `milknado_run_once_poll` returns the latest one under
 `result` alongside the log-tail `summary`.
 
 **The brief contract is the root fix, not the storage**: the worker brief
@@ -228,9 +229,9 @@ the `run_messages` shape permits them later (YAGNI — spec non-goal).
 
 ## MCP run surface — five tools, one schema (#82, #83, #107)
 
-Five coordinator-facing MCP tools drive runs: `milknado_todo_run` (blocking),
-`milknado_todo_run_start` / `milknado_todo_run_poll` (async in-process worker),
-and `milknado_ralph_run_start` / `milknado_ralph_run_poll` (detached
+Five coordinator-facing MCP tools drive runs: `milknado_run_once` (blocking),
+`milknado_run_once_start` / `milknado_run_once_poll` (async in-process worker),
+and `milknado_run_loop_start` / `milknado_run_loop_poll` (detached
 worktree-isolated ralph loop). All five return the **unified superset schema**
 `RunDict` (`_mcp_core.py`): `run_id, node_id, status, exit_code, timed_out,
 rebased, log_path, summary`, every field nullable where it doesn't apply
@@ -263,6 +264,78 @@ bugs #38/#39/#50 pointed at):
   `reconcile_node_status` orphan recovery uses) and prune the worktree
   (`remove_worktree` + `git worktree prune`). No-ops cleanly when the run is
   already terminal.
+
+## Worker-dispatch families — single-shot (3) vs ralph (4), and why both exist
+
+> **Terminology caution.** "Family 3 / Family 4" is *our shorthand for the two
+> dispatch mechanisms*, not a code symbol. In the code, `family` means the
+> **agent vendor** — `claude` / `codex` / `gemini` / `cursor`
+> (`DEFAULT_PLANNING_AGENT_BY_FAMILY`, the `WORKER_ALLOWED_TOOLS` keys;
+> `domains/common/agent_argv.py`). Don't conflate the two.
+
+- **Family 3 = single-shot headless worker** — `milknado_run_once` (blocking,
+  `mcp_run.py:47`) plus `milknado_run_once_start` / `_poll` (async in-process,
+  `mcp_run.py:89` / `:176`). One worker pass, brief piped on stdin, runs in the
+  **shared working tree**, no quality gates. Chain: `milknado_run_once` →
+  `dispatch_node_sync` (`dispatch/lifecycle.py:37`) → `run_headless`
+  (`dispatch/runner.py:261`) → `_execute` → `_spawn_worker` →
+  `subprocess.Popen(stdin=PIPE)` + `proc.communicate(brief, timeout)` (blocks).
+  The async variant swaps the blocking call for a daemon
+  `threading.Thread(_async_worker)` (`dispatch/async_run.py:119`) that dies with
+  the server. Mechanics detailed above in *Subprocess workers & run-state*.
+- **Family 4 = ralph iterate-until-gates loop** — `milknado_run_loop_start` /
+  `_poll` (`mcp_ralph.py:62` / `:214`). Detached
+  `Popen([... _ralph_node_runner ...], start_new_session=True)`, no stdin, runs
+  in its **own git worktree+branch**, loops until `quality_gates` pass
+  (`run_node_to_completion`, `execution/headless.py:49`), then rebase-merges
+  back. Refuses to start if `profile.quality_gates is None`. Survives a server
+  restart (detached, pid in SQLite); poll is read-only. Mechanics in
+  *Headless single-node loop* above.
+
+**Why Family 3 exists (rationale the code doesn't state):** to dispatch a node
+to a **different harness than the one orchestrating** and **block on the
+single-shot result without polling**. The coordinator (say Claude Code)
+overrides `worker_cmd` to point at another agent — e.g. a local-model-backed CLI
+for cheap or offline nodes — and `milknado_run_once` blocks until that foreign
+worker exits, returning the result inline. No worktree, no gate loop, no poll
+cycle: it is the "shell out to another model and wait" path. `worker_cmd` is the
+cross-harness lever — it defaults to `profile.execution_agent` but the caller
+overrides it per dispatch (`mcp_run.py:47`, docstring). **Constraint:** the
+override's executable *basename* must be one of `{claude, codex, cursor-agent,
+gemini}` (`validate_worker_argv` / `_ALLOWED_WORKER_EXECUTABLES`,
+`agent_argv.py`) — a "local LLM" is reachable only when fronted by one of those
+four agent CLIs (a family CLI pointed at a local endpoint/model), not as an
+arbitrary command.
+
+**Why Family 4 is the other shape:** when the coordinator wants to hand off the
+*whole* task — "iterate until your gates pass, merge it back, tell me when
+done" — and not babysit it. The caller drives no loop and owns no retries; the
+detached runner does. Worktree isolation lets many ralphs run in parallel
+without trampling each other; detachment lets the loop outlive the MCP server.
+
+**Coordinator vs worker — who may call these (verified against the allowlist):**
+both run-dispatch families are **coordinator-facing**; *neither* is granted to
+spawned workers. `WORKER_ALLOWED_TOOLS["claude"]` (`agent_argv.py`) gives a
+worker only two milknado MCP tools — `milknado_track_follow_up` and
+`milknado_deposit_result` — never the run-dispatch tools. Family 4 additionally
+carries a **hard, permanent prohibition**: *"COORDINATOR-ONLY: never add these
+to WORKER_ALLOWED_TOOLS"* (`mcp_ralph.py:1-12`), because a worker that could
+start sub-ralph-loops would recursively fork worktrees. (A casual read of the
+code can mis-state Family 3 as worker-allowed — it is not; re-check
+`WORKER_ALLOWED_TOOLS` before asserting otherwise.)
+
+| | Family 3 — single-shot | Family 4 — ralph |
+|---|---|---|
+| Tools | `milknado_run_once` / `_start` / `_poll` | `milknado_run_loop_start` / `_poll` |
+| Process | blocking caller, or in-process daemon thread | detached subprocess (`start_new_session=True`) |
+| Brief delivery | piped on stdin | node/run id via env + CLI args (no stdin) |
+| Iterations | one pass | loop until quality_gates pass / timeout |
+| Working tree | shared | own worktree+branch, rebase-merge on success |
+| Quality gates | none | required (refuses if unset) |
+| Survives server restart | no | yes (pid in SQLite) |
+| Loop / retries owned by | caller | detached runner |
+| Granted to workers? | no (coordinator-facing) | no — explicit permanent prohibition |
+| Reach for it when | block on a (possibly foreign-harness) single shot, no poll | hand off the whole gated loop, walk away |
 
 ## Orphan recovery & reconciliation
 
@@ -300,7 +373,8 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
+- `src/milknado/domains/common/agent_argv.py` — `WORKER_ALLOWED_TOOLS` (per-vendor worker tool allowlist), `_ALLOWED_WORKER_EXECUTABLES` / `validate_worker_argv` (worker-cmd basename gate), `resolve_*_agent_command`.
 - `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`), `goal_claims` repo (`claim_goal_row`, `release_goal_row`).
-- `src/milknado/mcp_run.py` — `milknado_todo_run*`, `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
-- `src/milknado/mcp_ralph.py` — `milknado_ralph_run_start` / `_poll` (COORDINATOR-ONLY).
+- `src/milknado/mcp_run.py` — `milknado_run_once*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
+- `src/milknado/mcp_ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
 - `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema, `_check_ancestor_goal_not_claimed` / `_claim_ancestor_goal_for_dispatch` (goal-claim fencing).
