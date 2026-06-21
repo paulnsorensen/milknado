@@ -115,20 +115,6 @@ def _batching_section() -> str:
     )
 
 
-def _mcp_targeting_note() -> str:
-    return (
-        "**Required MCP inspection before you emit changes:**\n"
-        "- Use `tilth` to inspect the target area and capture exact edit boundaries.\n"
-        "- Use `tilth` or `code-review-graph` to discover impacted dependencies around that "
-        "area.\n"
-        "- For every change, include the target file, symbols, and `hash_anchors` with "
-        '`"before"` / `"after"` values that bound the intended edit span.\n'
-        "- Add dependency entries in the same `file + symbols + hash_anchors` format for any "
-        "adjacent code that constrains the change.\n"
-        "- Do not invent anchors or dependencies: only emit data you observed via MCP queries."
-    )
-
-
 def _graph_section(graph: MikadoGraph) -> str:
     nodes = graph.get_all_nodes()
     if not nodes:
@@ -275,7 +261,7 @@ def _instructions_section(resuming: bool) -> str:
         " The solver batches them optimally."
     )
 
-    mcp_targeting_note = _mcp_targeting_note()
+    preview_commit_note = _preview_commit_note()
 
     goal_summary_note = (
         "`goal_summary` is 2-4 sentences structured as **what / why / success criteria**."
@@ -288,11 +274,11 @@ def _instructions_section(resuming: bool) -> str:
             "# Instructions\n\n"
             "Decompose the goal into a v2 change manifest.\n\n"
             f"{granularity_note}\n\n"
-            f"{mcp_targeting_note}\n\n"
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
             f"{enum_note}\n\n"
+            f"{preview_commit_note}\n\n"
             "Emit only a fenced ```json block (valid JSON, not YAML). "
             "Do not include prose before or after the block.\n\n"
             f"{schema}"
@@ -303,12 +289,25 @@ def _instructions_section(resuming: bool) -> str:
         "The graph above shows prior progress. Do NOT recreate existing nodes.\n\n"
         "Review the current state and add change manifest entries for any remaining work.\n\n"
         f"{granularity_note}\n\n"
-        f"{mcp_targeting_note}\n\n"
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"
         f"{enum_note}\n\n"
+        f"{preview_commit_note}\n\n"
         "Emit only a fenced ```json block (valid JSON, not YAML). "
         "Do not include prose before or after the block.\n\n"
         f"{schema}"
+    )
+
+
+def _preview_commit_note() -> str:
+    return (
+        "**Two-phase rhythm — preview, then commit:**\n"
+        "- `milknado_plan_batches` is the **preview**: it solves only and writes nothing,"
+        " returning `{batches, spread_report, solver_status}`. Run it first to inspect the"
+        " batch count, token spread, solver status, and the mega-batch guard.\n"
+        "- Refine `changes[]` / `depends_on` until the preview looks right.\n"
+        "- `milknado_plan_apply` is the **commit**: same solver, but it lands the batches as"
+        " GOAL/TASK nodes in the graph. Preview is cheap and reversible (nothing written);"
+        " commit persists."
     )

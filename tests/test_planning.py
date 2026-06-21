@@ -13,6 +13,7 @@ from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
     MANIFEST_VERSION,
     PlanChangeManifest,
+    parse_manifest_from_dict,
     parse_manifest_from_output,
 )
 from milknado.domains.planning.planner import Planner, PlanResult
@@ -132,6 +133,25 @@ class TestBuildPlanningContext:
         assert "Instructions (resuming)" in ctx
         assert "Do NOT recreate" in ctx
 
+    def test_instructions_document_preview_then_commit_rhythm(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        """Fresh instructions teach plan_batches (preview) -> plan_apply (commit)."""
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "milknado_plan_batches" in ctx
+        assert "milknado_plan_apply" in ctx
+        assert "preview" in ctx.lower()
+        assert "commit" in ctx.lower()
+
+    def test_resume_instructions_carry_rhythm(
+        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+    ) -> None:
+        """The resuming branch carries the same preview/commit guidance."""
+        tmp_graph.add_node("root goal")
+        ctx = build_planning_context("goal", mock_crg, tmp_graph)
+        assert "milknado_plan_batches" in ctx
+        assert "milknado_plan_apply" in ctx
+
     def test_progress_summary(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         tmp_graph.add_node("root")
         tmp_graph.add_node("done child", parent_id=1)
@@ -241,12 +261,10 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "goal_summary" in ctx
 
-    def test_v2_instructions_require_mcp_hash_anchor_targeting(
+    def test_v2_instructions_contain_hash_anchor_schema(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert "tilth" in ctx
-        assert "code-review-graph" in ctx
         assert "hash_anchors" in ctx
         assert "dependencies" in ctx
 
@@ -699,6 +717,148 @@ def _wrap(payload: dict) -> str:
     import json as _json
 
     return "preamble\n```json\n" + _json.dumps(payload) + "\n```\ntrailer"
+
+
+class TestParseManifestFromDict:
+    """parse_manifest_from_dict validates a raw dict, returning None on failure."""
+
+    def _valid_dict(self) -> dict:
+        return {
+            "manifest_version": "milknado.plan.v2",
+            "goal": "Refactor foo",
+            "goal_summary": "Move foo into its own module",
+            "changes": [
+                {"id": "c1", "path": "src/foo.py", "description": "Add Foo"},
+            ],
+        }
+
+    def test_valid_dict_returns_manifest(self) -> None:
+        manifest = parse_manifest_from_dict(self._valid_dict())
+        assert manifest is not None
+        assert manifest.manifest_version == MANIFEST_VERSION
+        assert manifest.goal == "Refactor foo"
+        assert manifest.goal_summary == "Move foo into its own module"
+        assert len(manifest.changes) == 1
+        assert manifest.changes[0].id == "c1"
+
+    def test_non_dict_returns_none(self) -> None:
+        assert parse_manifest_from_dict(["not", "a", "dict"]) is None
+
+    def test_wrong_version_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["manifest_version"] = "milknado.plan.v1"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_missing_goal_returns_none(self) -> None:
+        bad = self._valid_dict()
+        del bad["goal"]
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_invalid_edit_kind_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["edit_kind"] = "frobnicate"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_text_path_delegates_to_dict_path(self) -> None:
+        """The text parser yields the same manifest the dict parser does for the same payload."""
+        payload = self._valid_dict()
+        from_text = parse_manifest_from_output(_wrap(payload))
+        from_dict = parse_manifest_from_dict(payload)
+        assert from_text == from_dict
+        assert from_text is not None
+
+    def test_missing_goal_summary_returns_none(self) -> None:
+        bad = self._valid_dict()
+        del bad["goal_summary"]
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_blank_goal_summary_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["goal_summary"] = "   "
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_goal_and_summary_are_stripped(self) -> None:
+        """The moved validation strips surrounding whitespace from goal/goal_summary."""
+        payload = self._valid_dict()
+        payload["goal"] = "  Refactor foo  "
+        payload["goal_summary"] = "\tMove foo into its own module\n"
+        manifest = parse_manifest_from_dict(payload)
+        assert manifest is not None
+        assert manifest.goal == "Refactor foo"
+        assert manifest.goal_summary == "Move foo into its own module"
+
+    def test_non_string_spec_path_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["spec_path"] = 42
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_valid_spec_path_round_trips(self) -> None:
+        payload = self._valid_dict()
+        payload["spec_path"] = "specs/foo.md"
+        manifest = parse_manifest_from_dict(payload)
+        assert manifest is not None
+        assert manifest.spec_path == "specs/foo.md"
+
+    def test_valid_new_relationship_round_trips(self) -> None:
+        payload = self._valid_dict()
+        payload["changes"].append(
+            {"id": "c2", "path": "src/bar.py", "description": "Add Bar", "depends_on": ["c1"]}
+        )
+        payload["new_relationships"] = [
+            {"source_change_id": "c1", "dependant_change_id": "c2", "reason": "new_import"}
+        ]
+        manifest = parse_manifest_from_dict(payload)
+        assert manifest is not None
+        assert len(manifest.new_relationships) == 1
+        rel = manifest.new_relationships[0]
+        assert rel.source_change_id == "c1"
+        assert rel.dependant_change_id == "c2"
+        assert rel.reason == "new_import"
+
+    def test_invalid_relationship_reason_returns_none(self) -> None:
+        payload = self._valid_dict()
+        payload["changes"].append({"id": "c2", "path": "src/bar.py", "description": "Add Bar"})
+        payload["new_relationships"] = [
+            {"source_change_id": "c1", "dependant_change_id": "c2", "reason": "telepathy"}
+        ]
+        assert parse_manifest_from_dict(payload) is None
+
+    def test_relationship_with_unknown_change_id_returns_none(self) -> None:
+        payload = self._valid_dict()
+        payload["new_relationships"] = [
+            {"source_change_id": "c1", "dependant_change_id": "ghost", "reason": "new_import"}
+        ]
+        assert parse_manifest_from_dict(payload) is None
+
+    def test_duplicate_change_id_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"].append({"id": "c1", "path": "src/dup.py", "description": "Dup"})
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_depends_on_unknown_id_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["depends_on"] = ["nonexistent"]
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_absolute_change_path_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["path"] = "/etc/passwd"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_traversal_change_path_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["path"] = "../escape.py"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_absolute_symbol_file_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "/etc/passwd"}]
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_traversal_symbol_file_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "../secret.py"}]
+        assert parse_manifest_from_dict(bad) is None
 
 
 class TestPlanChangeManifest:

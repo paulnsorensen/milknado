@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from milknado.domains.common.protocols import CrgPort
 
 from milknado._mcp_core import (
     Flavor,
@@ -184,6 +187,19 @@ def _plan_to_dict(plan: BatchPlan) -> dict:
     }
 
 
+def _try_crg(project_root: Path) -> CrgPort | None:
+    # #71: log CRG failures instead of swallowing them silently
+    from milknado.adapters.crg import CrgAdapter
+
+    try:
+        crg = CrgAdapter(project_root)
+        crg.ensure_graph(project_root)
+    except Exception as exc:
+        _logger.warning("CRG unavailable for MCP planning, proceeding without graph: %s", exc)
+        return None
+    return crg
+
+
 def _plan_batches_impl(
     changes: list[dict],
     budget: int,
@@ -192,7 +208,6 @@ def _plan_batches_impl(
     *,
     force_single_batch: bool = False,
 ) -> dict:
-    from milknado.adapters.crg import CrgAdapter
     from milknado.domains.batching import MEGA_BATCH_THRESHOLD, plan_batches
     from milknado.domains.common.errors import MegaBatchAborted
     from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
@@ -200,14 +215,7 @@ def _plan_batches_impl(
 
     file_changes = [_dict_to_file_change(c) for c in changes]
     rels = tuple(_dict_to_new_relationship(r) for r in (new_relationships or []))
-    # #71: log CRG failures instead of swallowing them silently
-    crg = None
-    try:
-        crg = CrgAdapter(project_root)
-        crg.ensure_graph(project_root)
-    except Exception as exc:
-        _logger.warning("CRG unavailable for MCP planning, proceeding without graph: %s", exc)
-        crg = None
+    crg = _try_crg(project_root)
     plan = plan_batches(file_changes, budget, crg=crg, new_relationships=rels, root=project_root)
     # #68: abort oversized single batches (MCP-only guard; CLI reports oversized_count instead)
     n = plan.mega_batch_change_count
@@ -239,6 +247,56 @@ def milknado_plan_batches(
     return _plan_batches_impl(
         changes, budget, root, new_relationships, force_single_batch=force_single_batch
     )
+
+
+@mcp.tool()
+def milknado_plan_apply(
+    manifest: dict,
+    project_root: str = "",
+    parent_id: int | None = None,
+    budget: int = DUMB_ZONE_BUDGET,
+    force_single_batch: bool = False,
+) -> dict:
+    """Apply a caller-produced milknado.plan.v2 manifest to the graph as Mikado nodes.
+
+    Solves the manifest into precedence-respecting batches and writes them as nodes:
+    parent_id=None creates a GOAL root from goal_summary with TASK children; a valid
+    parent_id attaches TASK children under it. Returns {nodes_created, graph_summary}.
+    """
+    from milknado.domains.batching import MEGA_BATCH_THRESHOLD, plan_batches
+    from milknado.domains.common.errors import MegaBatchAborted
+    from milknado.domains.planning.batching_bridge import apply_batches_to_graph
+    from milknado.domains.planning.manifest import parse_manifest_from_dict
+    from milknado.domains.planning.telemetry import record_batch_snapshot
+
+    root = resolve_project_root(project_root or None)
+    parsed = parse_manifest_from_dict(manifest)
+    if parsed is None:
+        raise ValueError("manifest is not a valid milknado.plan.v2 object")  # fail loud
+    crg = _try_crg(root)
+    plan = plan_batches(
+        parsed.changes,
+        budget,
+        crg=crg,
+        new_relationships=parsed.new_relationships,
+        root=root,
+    )
+    n = plan.mega_batch_change_count
+    if n is not None and not force_single_batch:
+        raise MegaBatchAborted(change_count=n, threshold=MEGA_BATCH_THRESHOLD)
+    record_batch_snapshot(root, parsed, plan)
+    graph, _cfg = open_graph(root)
+    try:
+        created = apply_batches_to_graph(graph, plan, parsed, parent_id=parent_id)
+        summary = {
+            "nodes": [
+                {"id": node.id, "status": node.status.value, "description": node.description}
+                for node in graph.get_all_nodes()
+            ]
+        }
+    finally:
+        graph.close()
+    return {"nodes_created": created, "graph_summary": summary}
 
 
 def main() -> None:

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from milknado.domains.batching import (
@@ -75,6 +76,10 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
     except json.JSONDecodeError as exc:
         _logger.warning("manifest json decode failed: %s", exc)
         return None
+    return parse_manifest_from_dict(raw)
+
+
+def parse_manifest_from_dict(raw: object) -> PlanChangeManifest | None:
     if not isinstance(raw, dict):
         _logger.warning("manifest root is not an object")
         return None
@@ -164,6 +169,11 @@ def _parse_single_change(entry: object) -> FileChange | None:
     if not isinstance(path, str) or not path:
         _logger.warning("change %r: path must be a non-empty string", cid)
         return None
+    if Path(path).is_absolute() or ".." in Path(path).parts:
+        _logger.warning(
+            "change %r: path must be repo-relative without traversal, got %r", cid, path
+        )
+        return None
     edit_kind = raw.get("edit_kind", "modify")
     if edit_kind not in _VALID_EDIT_KINDS:
         _logger.warning("change %r: invalid edit_kind %r", cid, edit_kind)
@@ -214,6 +224,13 @@ def _parse_symbols(raw: object, cid: str) -> tuple[SymbolRef, ...] | None:
             _logger.warning(
                 "change %r: symbol requires string name and file",
                 cid,
+            )
+            return None
+        if Path(file).is_absolute() or ".." in Path(file).parts:
+            _logger.warning(
+                "change %r: symbol file must be repo-relative without traversal, got %r",
+                cid,
+                file,
             )
             return None
         out.append(SymbolRef(name=name, file=file))
