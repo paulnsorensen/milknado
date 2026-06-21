@@ -4,26 +4,44 @@ Mikado execution engine — decomposes goals into dependency graphs and executes
 
 ## Installation
 
+milknado ships as a plugin — skills plus an MCP server launcher — on three channels.
+Each channel's skills **and** server come from the same ref, so the two never drift:
+
+| Channel | Skills | Server | Use when |
+|---|---|---|---|
+| `@stable` (recommended) | latest release tag | PyPI, pinned to that release | you want vetted releases that auto-follow the newest |
+| `@vX.Y.Z` | that tag | PyPI `==X.Y.Z` | you need a reproducible pin |
+| `@main` | `main` HEAD | git `@main` | you want unreleased / bleeding-edge work |
+
 ### Claude Code
 
 ```
-/plugin marketplace add paulnsorensen/milknado
+/plugin marketplace add paulnsorensen/milknado@stable   # or @v0.2.0, or @main
 /plugin install milknado
 ```
+
+`@stable` auto-advances: when a release moves the `stable` branch, `/plugin
+marketplace update` pulls the new HEAD and `/plugin update` installs it — no re-add
+needed. (Releases force-repoint `stable`; in the rare case `update` reports a
+conflict instead of fast-forwarding, re-run the `marketplace add …@stable` line to
+reset it.)
 
 ### Codex
 
 ```
-codex plugin marketplace add paulnsorensen/milknado
+codex plugin marketplace add paulnsorensen/milknado@stable   # or @v0.2.0, or @main
 ```
 
-Then restart Codex and install from the `/plugins` directory. Note: repo-level marketplace entries do not auto-prompt on start — you must select and install after restart.
-
-> **Note:** the plugin launches its MCP server with `uvx --from milknado milknado-mcp`. The `milknado-mcp` command ships *inside* the `milknado` PyPI package, so the `--from milknado` is required — a bare `uvx milknado-mcp` resolves the argument as a package name and fails.
+Restart Codex, then install from the `/plugins` directory. Repo-level marketplace
+entries do not auto-prompt on start — select and install after restart. To pick up a
+new `@stable` HEAD, run `codex plugin marketplace upgrade`; whether that advances an
+explicit branch ref is undocumented for Codex, so if it does not move, re-run the
+`marketplace add …@stable` line.
 
 ### opencode
 
-Add the MCP server to `opencode.json` in your project or home directory:
+opencode has no plugin marketplace — wire the server into `opencode.json` and copy
+the skills from a checkout at the ref you want. Set `--from` to match your channel:
 
 ```json
 {
@@ -36,7 +54,10 @@ Add the MCP server to `opencode.json` in your project or home directory:
 }
 ```
 
-Then copy the skill into your skills directory:
+- a release: `"--from", "milknado==0.2.0"` (exact pin) or `"--from", "milknado"` (latest).
+- `@main`: `"--from", "git+https://github.com/paulnsorensen/milknado@main"`.
+
+Then copy the skills:
 
 ```sh
 cp -r plugins/milknado/skills/ .agents/skills/
@@ -44,13 +65,12 @@ cp -r plugins/milknado/skills/ .agents/skills/
 cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 ```
 
-### Run from an unreleased git ref
-
-To run `main` (or any branch) instead of the published PyPI release:
-
-```
-uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp
-```
+> **uvx caching caveat:** the `milknado-mcp` command ships *inside* the `milknado`
+> PyPI package, so a `--from` target (pin, latest, or git ref) is required — a bare
+> `uvx milknado-mcp` looks up a nonexistent package and fails. uvx caches the
+> resolved server: PyPI pins (`==X.Y.Z`) carry a fresh version string so each
+> release busts the cache, but the `@main` git ref caches by commit SHA — pull a
+> newer `main` server with `uvx --refresh` / `uv tool upgrade milknado`.
 
 ## Configuration
 

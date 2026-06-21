@@ -1,9 +1,11 @@
 name: Release
 
+# Dispatched by hand (not by a pushed tag): the workflow creates the off-main
+# pinned tag itself, so a push: tags trigger would re-fire it. Version is read
+# from pyproject.toml. The tag commit rewrites plugins/milknado/.mcp.json to pin
+# the server (`--from milknado==X.Y.Z`); main keeps its git-ref `@main` launcher.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,23 +16,59 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      contents: read
+      contents: write  # create the vX.Y.Z tag and repoint the stable branch
       id-token: write  # required for OIDC trusted publishing
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Assert dispatched from main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release must be dispatched from main; got $GITHUB_REF"
+            exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Assert tag matches pyproject.toml version
+      - name: Read version and assert it is not already on PyPI
+        id: version
         run: |
-          pkg_version=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$pkg_version" != "$tag_version" ]; then
-            echo "Version mismatch: tag is v$tag_version but pyproject.toml has $pkg_version"
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if curl -sfL "https://pypi.org/pypi/milknado/$version/json" >/dev/null; then
+            echo "milknado $version is already on PyPI; bump pyproject.toml before releasing"
             exit 1
           fi
+          echo "Releasing milknado $version"
+
+      - name: Build off-main pinned commit (.mcp.json -> milknado==<version>)
+        id: pin
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tmp=$(mktemp)
+          jq -c --arg v "$VERSION" \
+            '.mcpServers.milknado.args = ["--from", "milknado==\($v)", "milknado-mcp"]' \
+            plugins/milknado/.mcp.json > "$tmp"
+          mv "$tmp" plugins/milknado/.mcp.json
+          git add plugins/milknado/.mcp.json
+          git commit -m "release: pin server to milknado==$VERSION (off-main tag commit)"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Tag vX.Y.Z and repoint stable at the pinned commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          git tag "v$VERSION" "$SHA"
+          git push origin "v$VERSION"
+          git push --force origin "$SHA:refs/heads/stable"
 
       - name: Build sdist and wheel
         run: uv build
