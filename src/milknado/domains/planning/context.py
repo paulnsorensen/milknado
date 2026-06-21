@@ -115,20 +115,6 @@ def _batching_section() -> str:
     )
 
 
-def _mcp_targeting_note() -> str:
-    return (
-        "**Required MCP inspection before you emit changes:**\n"
-        "- Use `tilth` to inspect the target area and capture exact edit boundaries.\n"
-        "- Use `tilth` or `code-review-graph` to discover impacted dependencies around that "
-        "area.\n"
-        "- For every change, include the target file, symbols, and `hash_anchors` with "
-        '`"before"` / `"after"` values that bound the intended edit span.\n'
-        "- Add dependency entries in the same `file + symbols + hash_anchors` format for any "
-        "adjacent code that constrains the change.\n"
-        "- Do not invent anchors or dependencies: only emit data you observed via MCP queries."
-    )
-
-
 def _graph_section(graph: MikadoGraph) -> str:
     nodes = graph.get_all_nodes()
     if not nodes:
@@ -275,10 +261,6 @@ def _instructions_section(resuming: bool) -> str:
         " The solver batches them optimally."
     )
 
-    mcp_targeting_note = _mcp_targeting_note()
-
-    grounding_discipline_note = _grounding_discipline_note()
-
     preview_commit_note = _preview_commit_note()
 
     goal_summary_note = (
@@ -292,8 +274,6 @@ def _instructions_section(resuming: bool) -> str:
             "# Instructions\n\n"
             "Decompose the goal into a v2 change manifest.\n\n"
             f"{granularity_note}\n\n"
-            f"{mcp_targeting_note}\n\n"
-            f"{grounding_discipline_note}\n\n"
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
@@ -309,8 +289,6 @@ def _instructions_section(resuming: bool) -> str:
         "The graph above shows prior progress. Do NOT recreate existing nodes.\n\n"
         "Review the current state and add change manifest entries for any remaining work.\n\n"
         f"{granularity_note}\n\n"
-        f"{mcp_targeting_note}\n\n"
-        f"{grounding_discipline_note}\n\n"
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"
@@ -319,20 +297,6 @@ def _instructions_section(resuming: bool) -> str:
         "Emit only a fenced ```json block (valid JSON, not YAML). "
         "Do not include prose before or after the block.\n\n"
         f"{schema}"
-    )
-
-
-def _grounding_discipline_note() -> str:
-    return (
-        "**Grounding discipline (serena + code-review-graph):**\n"
-        "- Ground every `changes[]` entry in real symbols: use `serena` (symbol-level —"
-        " `find_symbol`, `get_symbols_overview`) to fill `path`, `symbols`, and"
-        " `hash_anchors` from the actual code, not from guesses.\n"
-        "- Infer `depends_on` edges from blast radius: query `code-review-graph`"
-        " `get_impact_radius` on each changed file and add a `depends_on` to any change"
-        " whose target lands inside that radius, so the solver receives true precedence.\n"
-        "- A manifest built this way carries real edges; one built from guesses produces"
-        " wrong batch boundaries."
     )
 
 

@@ -133,15 +133,6 @@ class TestBuildPlanningContext:
         assert "Instructions (resuming)" in ctx
         assert "Do NOT recreate" in ctx
 
-    def test_instructions_document_serena_crg_grounding(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        """Fresh instructions teach grounding changes[] in serena symbols + CRG impact radius."""
-        ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert "serena" in ctx
-        assert "get_impact_radius" in ctx
-        assert "depends_on" in ctx
-
     def test_instructions_document_preview_then_commit_rhythm(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
@@ -152,13 +143,12 @@ class TestBuildPlanningContext:
         assert "preview" in ctx.lower()
         assert "commit" in ctx.lower()
 
-    def test_resume_instructions_carry_grounding_and_rhythm(
+    def test_resume_instructions_carry_rhythm(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        """The resuming branch carries the same grounding + preview/commit guidance."""
+        """The resuming branch carries the same preview/commit guidance."""
         tmp_graph.add_node("root goal")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert "get_impact_radius" in ctx
         assert "milknado_plan_batches" in ctx
         assert "milknado_plan_apply" in ctx
 
@@ -271,12 +261,10 @@ class TestBuildPlanningContext:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "goal_summary" in ctx
 
-    def test_v2_instructions_require_mcp_hash_anchor_targeting(
+    def test_v2_instructions_contain_hash_anchor_schema(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
-        assert "tilth" in ctx
-        assert "code-review-graph" in ctx
         assert "hash_anchors" in ctx
         assert "dependencies" in ctx
 
