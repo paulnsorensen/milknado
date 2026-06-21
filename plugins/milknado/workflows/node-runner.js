@@ -4,6 +4,13 @@
 // agent() per already-claimed milknado node. It runs ALONGSIDE — never replaces
 // — the subprocess CLI dispatcher (Codex/opencode have no ultracode primitive).
 //
+// ── INSTALL / DISCOVERY (this is NOT auto-loaded) ────────────────────────────
+// `workflows/` is not a recognized plugin component, so installing the milknado
+// plugin or registering its MCP server does NOT make this script discoverable.
+// To run it, copy it into `.claude/workflows/` (project-local or ~/.claude) or
+// invoke it by explicit path: Workflow({ scriptPath: "<path>/node-runner.js",
+// args: { claims: [...] } }). It lives here as the in-repo source-of-truth.
+//
 // ── WHY THIS IS FAN-OUT ONLY (hard runtime constraint) ───────────────────────
 // A Workflow SCRIPT body can call only agent()/parallel()/pipeline()/log()/
 // phase(); MCP tools are `undefined` in script scope — they are reachable ONLY
