@@ -246,11 +246,12 @@ class TestCodexMarketplaceSchema:
 
 
 class TestReleaseWorkflow:
-    """Lock the release.yml shape: workflow_dispatch trigger, contents: write (to
-    create the off-main pinned tag + repoint stable), the .mcp.json pin rewrite, and
-    OIDC publish (no token secrets). The tag must carry the pin and stay off main, so
-    CI — not a hand-pushed `v*` tag — creates it; the trigger is therefore
-    workflow_dispatch, not push: tags."""
+    """Lock the release.yml shape: fires on every push to main plus workflow_dispatch,
+    but publishes only when the version in pyproject.toml is not yet on PyPI.  A
+    non-bump push runs a fast detect job that no-ops (build-and-publish is skipped).
+    workflow_dispatch is retained as a manual escape hatch.  contents: write lives on
+    build-and-publish only (least-privilege split); the detect job runs with
+    contents: read."""
 
     RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
 
@@ -264,9 +265,10 @@ class TestReleaseWorkflow:
         wf = self._workflow()
         assert isinstance(wf, dict)
 
-    def test_release_yml_triggers_on_workflow_dispatch(self) -> None:
-        """Release is dispatched by hand, not by a pushed tag — the workflow creates
-        the off-main pinned tag itself, so a push: tags trigger would re-fire it."""
+    def test_release_yml_triggers_on_main_push_and_dispatch(self) -> None:
+        """Release fires on every push to main (version-gate in detect skips non-bumps)
+        plus workflow_dispatch as a manual escape hatch.  No push: tags trigger — the
+        vX.Y.Z tag is an output of the job (off-main commit), not an input."""
         wf = self._workflow()
         # YAML-1.1 loaders (PyYAML) parse the 'on' key as boolean True;
         # YAML-1.2 loaders keep it as the string 'on'. Accept both.
@@ -275,9 +277,73 @@ class TestReleaseWorkflow:
         assert "workflow_dispatch" in trigger, (
             f"release.yml must trigger on workflow_dispatch; got {list(trigger)}"
         )
-        assert "push" not in trigger, (
-            "release.yml must NOT trigger on push: tags — the workflow creates and "
-            "pushes the vX.Y.Z tag itself, which would re-fire a push: tags trigger"
+        assert "push" in trigger, f"release.yml must trigger on push to main; got {list(trigger)}"
+        assert trigger["push"]["branches"] == ["main"], (
+            f"release.yml push trigger must be branches: [main]; got {trigger['push']}"
+        )
+        assert "tags" not in trigger["push"], (
+            "release.yml must NOT trigger on push: tags — the vX.Y.Z tag is an output "
+            "of the job (off-main commit), not an input trigger"
+        )
+
+    def test_release_yml_version_gate_jobs(self) -> None:
+        """detect job outputs release=true/false; build-and-publish gates on it.
+
+        Locks the two-job version-gate shape so a future refactor can't silently
+        publish on every push to main.
+        """
+        wf = self._workflow()
+        jobs = wf["jobs"]
+        assert "detect" in jobs, f"release.yml must have a 'detect' job; got {list(jobs)}"
+        detect_outputs = jobs["detect"].get("outputs", {})
+        assert "release" in detect_outputs, (
+            f"detect job must declare a 'release' output; got {list(detect_outputs)}"
+        )
+        pub = jobs["build-and-publish"]
+        needs = pub.get("needs", [])
+        needs_list = [needs] if isinstance(needs, str) else needs
+        assert "detect" in needs_list, f"build-and-publish must need 'detect'; got needs={needs!r}"
+        if_cond = pub.get("if", "")
+        assert "needs.detect.outputs.release == 'true'" in if_cond, (
+            f"build-and-publish 'if' must gate on needs.detect.outputs.release == 'true'; "
+            f"got {if_cond!r}"
+        )
+
+    def test_release_yml_detect_job_is_read_only(self) -> None:
+        """Top-level permissions floor is contents:read; detect grants no write.
+
+        Locks the least-privilege split: detect only reads pyproject.toml and curls
+        PyPI, so it must never hold contents:write.  Guards against a future edit
+        adding write grants to detect OR deleting the top-level read floor.
+        """
+        wf = self._workflow()
+        assert wf.get("permissions", {}).get("contents") == "read", (
+            "top-level permissions.contents must be 'read' so jobs inherit least privilege"
+        )
+        jobs = wf["jobs"]
+        detect_contents = jobs["detect"].get("permissions", {}).get("contents")
+        assert detect_contents != "write", (
+            "detect must stay read-only — it only reads pyproject.toml and curls PyPI; "
+            "a contents:write grant would be a silent privilege over-grant"
+        )
+
+    def test_release_yml_detect_gate_has_both_release_branches(self) -> None:
+        """detect job emits release=false for already-published versions (no-op, not exit 1)
+        and release=true for new versions.
+
+        Locks the dual-branch no-op design: an already-published version sets release=false
+        so build-and-publish is skipped and the run is green — this is what makes
+        push-on-main safe on non-release pushes.
+        """
+        raw = self.RELEASE_YML.read_text()
+        assert "release=false" in raw, (
+            "detect step must write release=false to GITHUB_OUTPUT for already-published versions"
+        )
+        assert "release=true" in raw, (
+            "detect step must write release=true to GITHUB_OUTPUT for new versions"
+        )
+        assert "pypi.org/pypi/milknado" in raw, (
+            "detect step must curl PyPI to gate on version existence"
         )
 
     def test_release_yml_grants_contents_write(self) -> None:
