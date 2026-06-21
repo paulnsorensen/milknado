@@ -1,7 +1,7 @@
 """Milknado MCP ralph-loop tools — detached, worktree-isolated ralph runs.
 
 COORDINATOR-ONLY: never add these to WORKER_ALLOWED_TOOLS — a worker must not be
-able to spawn sub-ralph-loops. Unlike milknado_todo_run* (a single-shot worker
+able to spawn sub-ralph-loops. Unlike milknado_run_once* (a single-shot worker
 piped a brief on stdin, run in the shared working tree), these dispatch a node
 into its own git worktree + branch, iterate the ralph loop until the node's
 quality gates pass, then rebase-merge the branch back. The loop runs in its own
@@ -59,7 +59,7 @@ def _resolve_runner_cmd(explicit: str | None) -> list[str]:
 
 
 @mcp.tool()
-def milknado_ralph_run_start(
+def milknado_run_loop_start(
     node_id: int,
     runner_cmd: str | None = None,
     timeout_seconds: int = 1800,
@@ -74,7 +74,7 @@ def milknado_ralph_run_start(
     refused. Creates a worktree + branch, iterates the ralph loop until the node's
     quality gates pass, then rebase-merges the branch back (the detached runner
     marks the node done/failed itself). The loop survives this server restarting.
-    Poll with milknado_ralph_run_poll(run_id). A node left RUNNING by a dead runner
+    Poll with milknado_run_loop_poll(run_id). A node left RUNNING by a dead runner
     is reclaimed by process-liveness check before the claim (no stale-timeout wait);
     orphaned runs that finished or vanished without a poll are reconciled first.
     """
@@ -118,7 +118,7 @@ def milknado_ralph_run_start(
             # runner does not lock the node for the full timeout (default 1800s).
             if graph.try_reclaim(node_id, now=now):
                 _logger.info(
-                    "milknado_ralph_run_start: reclaimed node=%d from a dead runner "
+                    "milknado_run_loop_start: reclaimed node=%d from a dead runner "
                     "(pid-liveness); re-dispatching without the stale-timeout wait",
                     node_id,
                 )
@@ -191,7 +191,7 @@ def milknado_ralph_run_start(
         graph.set_run_pid(run_id, proc.pid)
         graph.set_pid(node_id, run_id, proc.pid)
         _logger.info(
-            "milknado_ralph_run_start: node=%d run_id=%s timeout=%ds pid=%d",
+            "milknado_run_loop_start: node=%d run_id=%s timeout=%ds pid=%d",
             node_id,
             run_id,
             timeout_seconds,
@@ -213,12 +213,12 @@ def milknado_ralph_run_start(
 
 
 @mcp.tool()
-def milknado_ralph_run_poll(run_id: str, project_root: str = "") -> dict:
-    """Poll a ralph run started by milknado_ralph_run_start.
+def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
+    """Poll a ralph run started by milknado_run_loop_start.
 
     Returns the run state (status running|done|failed, rebased, detail) plus a
     log tail. The detached runner reconciles node status itself via the executor,
-    so unlike milknado_todo_run_poll this only reads the run row — it never
+    so unlike milknado_run_once_poll this only reads the run row — it never
     transitions the node.
     """
     root = resolve_project_root(project_root or None)

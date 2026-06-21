@@ -44,7 +44,7 @@ def _validate_worker_cmd(worker_cmd: str | None) -> None:
 
 
 @mcp.tool()
-def milknado_todo_run(
+def milknado_run_once(
     node_id: int,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
@@ -55,12 +55,12 @@ def milknado_todo_run(
     worker_cmd defaults to profile.execution_agent (resolved from the node's flavor).
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
-    use milknado_todo_run_start / milknado_todo_run_poll.
+    use milknado_run_once_start / milknado_run_once_poll.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
-    _logger.info("milknado_todo_run: node=%d timeout=%ds", node_id, timeout_seconds)
+    _logger.info("milknado_run_once: node=%d timeout=%ds", node_id, timeout_seconds)
     try:
         node = graph.get_node(node_id)
         if node is None:
@@ -86,7 +86,7 @@ def milknado_todo_run(
 
 
 @mcp.tool()
-def milknado_todo_run_start(
+def milknado_run_once_start(
     node_id: int,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
@@ -94,7 +94,7 @@ def milknado_todo_run_start(
 ) -> dict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
 
-    Refuses if the node is already running. Use milknado_todo_run_poll(run_id) to
+    Refuses if the node is already running. Use milknado_run_once_poll(run_id) to
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits.
     """
@@ -153,7 +153,7 @@ def milknado_todo_run_start(
             graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise
         _logger.info(
-            "milknado_todo_run_start: node=%d run_id=%s timeout=%ds",
+            "milknado_run_once_start: node=%d run_id=%s timeout=%ds",
             node_id,
             ref.run_id,
             timeout_seconds,
@@ -173,7 +173,7 @@ def milknado_todo_run_start(
 
 
 @mcp.tool()
-def milknado_todo_run_poll(run_id: str, project_root: str = "") -> dict:
+def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
     """Poll an async run; reconciles node status to done/failed once the worker exits.
 
     Returns the deposited result payload (latest role='result' run message) under
@@ -201,7 +201,7 @@ def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
     """List active and recent runs from the db, sorted newest first.
 
     Returns superset-schema dicts. summary is always None — use
-    milknado_todo_run_poll or milknado_ralph_run_poll for log tails. Bounded to
+    milknado_run_once_poll or milknado_run_loop_poll for log tails. Bounded to
     the `limit` most-recently-started runs so read cost stays flat as run history
     grows; raise `limit` to widen the window.
     """
@@ -257,7 +257,7 @@ def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -
     Called by a worker as its final step with its *complete* deliverable in
     `payload` (the full text, not a reference to content that lives only in the
     worker's own context). Stored as a role='result' run message so it survives the
-    process boundary; milknado_todo_run_poll returns it under `result`. Returns the
+    process boundary; milknado_run_once_poll returns it under `result`. Returns the
     run_id and the assigned message seq.
     """
     if not RUN_ID_RE.match(run_id):
