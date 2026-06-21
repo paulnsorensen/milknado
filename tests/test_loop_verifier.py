@@ -6,6 +6,11 @@ otherwise complete a node. These tests pin the three-branch verdict contract:
 a failing gate yields ok=False naming the command, an empty diff yields ok=False
 with the no-change feedback, and passing gates plus a non-empty diff yield ok=True.
 They also pin that create_run attaches exactly this closure to the RunConfig.
+
+New in this version:
+- None gates → fail-closed with actionable message (no gates configured).
+- ()   gates → explicit skip → passes (spec/research flavors).
+- fail_on_stdout: a gate that exits 0 but matches the pattern → fails.
 """
 
 from __future__ import annotations
@@ -20,12 +25,14 @@ from milknado.adapters.loop import (
     _GATE_TIMEOUT_SECONDS,
     _GIT_QUERY_TIMEOUT_SECONDS,
     _UNRESOLVABLE_BASE_FEEDBACK,
+    NO_GATES_CONFIGURED_MESSAGE,
     LoopAdapter,
     _build_completion_verifier,
     _has_committed_change,
     _has_working_tree_change,
     _resolve_feature_branch,
 )
+from milknado.domains.common.config import Gate
 from milknado.loop import CompletionVerdict
 from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
@@ -66,7 +73,7 @@ class TestFailingGate:
     def test_failing_gate_yields_not_ok_naming_command(self, worktree: Path) -> None:
         _commit_change(worktree)
         cmd = "sh -c 'echo boom-marker >&2; exit 1'"
-        verifier = _build_completion_verifier(worktree, [cmd])
+        verifier = _build_completion_verifier(worktree, (Gate(cmd),))
 
         verdict = verifier()
 
@@ -75,7 +82,9 @@ class TestFailingGate:
 
     def test_failing_gate_includes_output_tail(self, worktree: Path) -> None:
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, ["sh -c 'echo unique-tail-token; exit 3'"])
+        verifier = _build_completion_verifier(
+            worktree, (Gate("sh -c 'echo unique-tail-token; exit 3'"),)
+        )
 
         verdict = verifier()
 
@@ -86,7 +95,7 @@ class TestFailingGate:
         _commit_change(worktree)
         verifier = _build_completion_verifier(
             worktree,
-            ["sh -c 'exit 1'", "sh -c 'echo second-gate-ran; exit 0'"],
+            (Gate("sh -c 'exit 1'"), Gate("sh -c 'echo second-gate-ran; exit 0'")),
         )
 
         verdict = verifier()
@@ -102,7 +111,7 @@ class TestFailingGate:
 
         monkeypatch.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, ["sh -c 'sleep 5'"])
+        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
 
         verdict = verifier()
 
@@ -117,7 +126,7 @@ class TestFailingGate:
         only the agent's rejection feedback — a budget-burning reject loop on a
         non-interactive server run is otherwise invisible."""
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, ["sh -c 'exit 2'"])
+        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'exit 2'"),))
 
         with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
             verifier()
@@ -136,7 +145,7 @@ class TestFailingGate:
 
         monkeypatch.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, ["sh -c 'sleep 5'"])
+        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
 
         with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
             verifier()
@@ -147,7 +156,7 @@ class TestFailingGate:
         """Gates run before the diff check: a failing gate on an empty worktree
         reports the gate failure, not the no-change message — the agent must see
         the harness reason it actually hit first."""
-        verifier = _build_completion_verifier(worktree, ["sh -c 'exit 1'"])
+        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'exit 1'"),))
 
         verdict = verifier()
 
@@ -158,7 +167,7 @@ class TestFailingGate:
 
 class TestEmptyDiff:
     def test_empty_diff_yields_no_change_feedback(self, worktree: Path) -> None:
-        verifier = _build_completion_verifier(worktree, ["true"])
+        verifier = _build_completion_verifier(worktree, (Gate("true"),))
 
         verdict = verifier()
 
@@ -169,7 +178,7 @@ class TestEmptyDiff:
 
     def test_gates_pass_but_no_change_still_rejected(self, worktree: Path) -> None:
         """A green harness with zero produced change must not be accepted."""
-        verifier = _build_completion_verifier(worktree, ["true", "true"])
+        verifier = _build_completion_verifier(worktree, (Gate("true"), Gate("true")))
 
         assert verifier().ok is False
 
@@ -177,7 +186,7 @@ class TestEmptyDiff:
 class TestAllGreen:
     def test_passing_gates_and_committed_change_ok(self, worktree: Path) -> None:
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, ["true"])
+        verifier = _build_completion_verifier(worktree, (Gate("true"),))
 
         verdict = verifier()
 
@@ -187,16 +196,126 @@ class TestAllGreen:
     def test_passing_gates_and_uncommitted_change_ok(self, worktree: Path) -> None:
         """A stageable-but-uncommitted change counts as produced work."""
         (worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
-        verifier = _build_completion_verifier(worktree, ["true"])
+        verifier = _build_completion_verifier(worktree, (Gate("true"),))
 
         assert verifier().ok is True
 
     def test_no_gates_with_change_ok(self, worktree: Path) -> None:
-        """No configured gates plus a real change is the all-pass path."""
+        """Empty tuple (explicit skip) plus a real change is the all-pass path."""
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, [])
+        verifier = _build_completion_verifier(worktree, ())
 
         assert verifier().ok is True
+
+
+class TestNoneGatesFailClosed:
+    """quality_gates = None means unconfigured — verifier must fail closed immediately."""
+
+    def test_none_gates_yields_not_ok(self, worktree: Path) -> None:
+        """None gates never pass, even with a real committed change."""
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, None)
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+
+    def test_none_gates_feedback_names_the_fix(self, worktree: Path) -> None:
+        """The fail-closed message must tell the user exactly how to fix it."""
+        verifier = _build_completion_verifier(worktree, None)
+
+        verdict = verifier()
+
+        assert verdict.feedback == NO_GATES_CONFIGURED_MESSAGE
+        assert "milknado.toml" in verdict.feedback
+        assert "quality_gates" in verdict.feedback
+
+    def test_empty_tuple_is_not_fail_closed(self, worktree: Path) -> None:
+        """() (explicit skip) is distinct from None — it must not trigger fail-closed."""
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, ())
+
+        verdict = verifier()
+
+        assert verdict.ok is True
+        assert NO_GATES_CONFIGURED_MESSAGE not in verdict.feedback
+
+    def test_empty_tuple_logs_explicit_skip(
+        self, worktree: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """() gates must emit an info log so the skip is auditable."""
+        import logging
+
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, ())
+
+        with caplog.at_level(logging.INFO, logger="milknado.adapters.loop"):
+            verifier()
+
+        assert any("explicitly skipped" in r.message for r in caplog.records)
+
+
+class TestFailOnStdout:
+    """Gates with fail_on_stdout: exit 0 + matching output → failure."""
+
+    def test_matching_stdout_on_exit_0_fails(self, worktree: Path) -> None:
+        """A gate that exits 0 but prints a pattern match should be a failure.
+        This covers Godot headless and similar harnesses that exit 0 on errors."""
+        _commit_change(worktree)
+        gate = Gate("sh -c 'echo SCRIPT ERROR: oops; exit 0'", fail_on_stdout="SCRIPT ERROR")
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "SCRIPT ERROR" in verdict.feedback
+
+    def test_non_matching_stdout_on_exit_0_passes(self, worktree: Path) -> None:
+        """Output that does not match the pattern should not trip the gate."""
+        _commit_change(worktree)
+        gate = Gate("sh -c 'echo all good; exit 0'", fail_on_stdout="SCRIPT ERROR|FAILED")
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert verdict.ok is True
+
+    def test_fail_on_stdout_with_nonzero_exit_also_fails(self, worktree: Path) -> None:
+        """Non-zero exit still fails even if fail_on_stdout would also match."""
+        _commit_change(worktree)
+        gate = Gate("sh -c 'echo FAILED; exit 1'", fail_on_stdout="FAILED")
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "failed (exit 1)" in verdict.feedback
+
+    def test_fail_on_stdout_names_command_in_feedback(self, worktree: Path) -> None:
+        _commit_change(worktree)
+        cmd = "sh -c 'echo SCRIPT ERROR; exit 0'"
+        gate = Gate(cmd, fail_on_stdout="SCRIPT ERROR")
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert cmd in verdict.feedback
+
+    def test_fail_on_stdout_pattern_does_not_match_across_stream_boundary(
+        self, worktree: Path
+    ) -> None:
+        """Pattern split across stdout/stderr boundary must not match (newline separator)."""
+        _commit_change(worktree)
+        # stdout ends with "SCRIPT ", stderr starts with "ERROR" — would join without separator
+        gate = Gate(
+            'sh -c \'printf "SCRIPT " >&1; printf "ERROR" >&2; exit 0\'',
+            fail_on_stdout="SCRIPT ERROR",
+        )
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert verdict.ok is True
 
 
 class TestFeatureBranchResolution:
@@ -297,7 +416,7 @@ class TestGitFailureFailsClosed:
             text=True,
         ).stdout.strip()
         _git("checkout", "--detach", head, cwd=feature_repo)
-        verifier = _build_completion_verifier(feature_repo, ["true"])
+        verifier = _build_completion_verifier(feature_repo, (Gate("true"),))
 
         verdict = verifier()
 
@@ -341,7 +460,7 @@ class TestGateCapSizing:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", loop_mod_gate_cap)
             _commit_change(worktree)
-            verifier = _build_completion_verifier(worktree, ["sh -c 'sleep 1.5'"])
+            verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 1.5'"),))
 
             verdict = verifier()
 
@@ -357,10 +476,28 @@ class TestCreateRunAttachesVerifier:
             ralph_dir=worktree,
             ralph_file=worktree / "RALPH.md",
             commands=[],
-            quality_gates=["true"],
+            quality_gates=(Gate("true"),),
         )
 
         verifier = run.config.completion_verifier
         assert callable(verifier)
         assert isinstance(verifier(), CompletionVerdict)
         assert verifier().ok is True
+
+    def test_create_run_with_none_gates_verifier_fails_closed(self, worktree: Path) -> None:
+        """When quality_gates=None, the attached verifier must fail-closed."""
+        _commit_change(worktree)
+        adapter = LoopAdapter()
+        run = adapter.create_run(
+            agent="claude",
+            ralph_dir=worktree,
+            ralph_file=worktree / "RALPH.md",
+            commands=[],
+            quality_gates=None,
+        )
+
+        verifier = run.config.completion_verifier
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "quality_gates" in verdict.feedback

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.domains.common.config import MilknadoConfig
+    from milknado.domains.common.config import Gate, MilknadoConfig
     from milknado.domains.common.types import TaskFlavor
 
 
@@ -15,7 +15,7 @@ class FlavorProfile:
     """Resolved, ready-to-use per-flavor configuration. No identity."""
 
     execution_agent: str
-    quality_gates: tuple[str, ...]
+    quality_gates: tuple[Gate, ...] | None
     brief_prepend: str | None
 
 

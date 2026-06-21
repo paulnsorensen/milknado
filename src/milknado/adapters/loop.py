@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -9,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
+from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
@@ -41,6 +43,10 @@ _FEEDBACK_TAIL_CHARS: Final[int] = 2000
 _NO_CHANGE_FEEDBACK: Final[str] = (
     "you emitted the completion promise but produced no committed/stageable change"
 )
+NO_GATES_CONFIGURED_MESSAGE: Final[str] = (
+    "no quality_gates configured — set [milknado] quality_gates in milknado.toml "
+    "(or a per-flavor [milknado.flavor.<flavor>] table; use [] to intentionally skip)"
+)
 _UNRESOLVABLE_BASE_FEEDBACK: Final[str] = (
     "the completion verifier could not resolve a base branch to diff against "
     "(detached main worktree or git unqueryable), so it cannot confirm your "
@@ -65,7 +71,7 @@ class LoopAdapter:
         ralph_dir: Path,
         ralph_file: Path,
         commands: list[str],
-        quality_gates: list[str],
+        quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
@@ -190,7 +196,7 @@ class LoopAdapter:
         self,
         node: MikadoNode,
         context: str,
-        quality_gates: list[str],
+        quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
     ) -> Path:
         try:
@@ -206,7 +212,7 @@ class LoopAdapter:
 
 def _build_completion_verifier(
     worktree: Path,
-    quality_gates: list[str],
+    quality_gates: tuple[Gate, ...] | None,
 ) -> Callable[[], CompletionVerdict]:
     """Build the tier-2 completion verifier for a node's worktree.
 
@@ -217,11 +223,18 @@ def _build_completion_verifier(
     actually produced a committed or stageable change. A failing gate, an empty
     diff, or an unresolvable base rejects the completion with feedback for the
     next iteration.
+
+    When ``quality_gates`` is None (unconfigured), the verifier fails closed
+    immediately with an actionable message — no gates run.
     """
-    gates = list(quality_gates)
+    gates = quality_gates
 
     def verify() -> CompletionVerdict:
-        gate_failure = _run_quality_gates(worktree, gates)
+        if gates is None:
+            return CompletionVerdict(ok=False, feedback=NO_GATES_CONFIGURED_MESSAGE)
+        if not gates:
+            _logger.info("quality gates explicitly skipped for %s", worktree)
+        gate_failure = _run_quality_gates(worktree, list(gates))
         if gate_failure is not None:
             return CompletionVerdict(ok=False, feedback=gate_failure)
         change_rejection = _change_rejection(worktree)
@@ -232,13 +245,17 @@ def _build_completion_verifier(
     return verify
 
 
-def _run_quality_gates(worktree: Path, gates: list[str]) -> str | None:
-    """Re-run each gate in *worktree*, stopping at the first non-zero exit.
+def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
+    """Re-run each gate in *worktree*, stopping at the first failure.
 
-    Returns rejection feedback (failing command + output tail) on the first
-    failure or timeout, or ``None`` when every gate passes.
+    A gate fails on non-zero exit OR when ``gate.fail_on_stdout`` (a regex)
+    matches combined stdout+stderr even on exit 0.
+
+    Returns rejection feedback on the first failure or timeout, or ``None``
+    when every gate passes.
     """
-    for command in gates:
+    for gate in gates:
+        command = gate.command
         try:
             result = subprocess.run(
                 command,
@@ -256,8 +273,9 @@ def _run_quality_gates(worktree: Path, gates: list[str]) -> str | None:
                 worktree,
             )
             return f"quality gate `{command}` timed out after {_GATE_TIMEOUT_SECONDS:.0f}s"
+        combined = result.stdout + "\n" + result.stderr
         if result.returncode != 0:
-            tail = (result.stdout + result.stderr)[-_FEEDBACK_TAIL_CHARS:].strip()
+            tail = combined[-_FEEDBACK_TAIL_CHARS:].strip()
             _logger.warning(
                 "completion verifier: quality gate `%s` failed (exit %d) in %s",
                 command,
@@ -265,6 +283,20 @@ def _run_quality_gates(worktree: Path, gates: list[str]) -> str | None:
                 worktree,
             )
             return f"quality gate `{command}` failed (exit {result.returncode}):\n{tail}"
+        if gate.fail_on_stdout is not None and re.search(gate.fail_on_stdout, combined):
+            matched_line = next(
+                (ln for ln in combined.splitlines() if re.search(gate.fail_on_stdout, ln)),
+                combined[-_FEEDBACK_TAIL_CHARS:].strip(),
+            )
+            _logger.warning(
+                "completion verifier: quality gate `%s` stdout matched failure pattern in %s",
+                command,
+                worktree,
+            )
+            return (
+                f"quality gate `{command}` exited 0 but output matched failure pattern "
+                f"{gate.fail_on_stdout!r}:\n{matched_line}"
+            )
     return None
 
 
@@ -455,13 +487,23 @@ def _parse_verify_output(output: str) -> VerifySpecResult:
 def _build_ralph_content(
     node: MikadoNode,
     context: str,
-    quality_gates: list[str],
+    quality_gates: tuple[Gate, ...] | None,
 ) -> str:
-    gates = "\n".join(f"- `{g}`" for g in quality_gates)
+    if quality_gates is None:
+        gates_section = (
+            "## Quality Gates\n\n"
+            "_(no gates configured — node cannot complete; "
+            "add quality_gates to milknado.toml)_"
+        )
+    elif not quality_gates:
+        gates_section = "## Quality Gates\n\n_(gates explicitly skipped for this flavor)_"
+    else:
+        gate_lines = "\n".join(f"- `{g.command}`" for g in quality_gates)
+        gates_section = f"## Quality Gates\n\n{gate_lines}"
     return (
         f"# {node.description}\n\n"
         f"## Context\n\n{context}\n\n"
-        f"## Quality Gates\n\n{gates}\n\n"
+        f"{gates_section}\n\n"
         "## Proposing follow-up work\n\n"
         "If this node cannot be finished without other work landing first "
         "(a missing prerequisite, or a refactor that must precede this "

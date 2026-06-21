@@ -37,9 +37,28 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     root = Path(args.project_root)
+    from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+
     graph, cfg = open_graph(root)
     node = graph.get_node(args.node_id)
     profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
+
+    if profile.quality_gates is None:
+        _logger.error(
+            "preflight failed for node %s: %s", args.node_id, NO_GATES_CONFIGURED_MESSAGE
+        )
+        graph.finish_run(
+            args.run_id,
+            status="failed",
+            exit_code=1,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=NO_GATES_CONFIGURED_MESSAGE,
+        )
+        graph.close()
+        return 1
+
     try:
         try:
             git = GitAdapter(root)
