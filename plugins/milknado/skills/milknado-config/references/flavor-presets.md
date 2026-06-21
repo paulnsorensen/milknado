@@ -1,9 +1,14 @@
 # Flavor presets & worked config
 
 Recommended starting points for each `TaskFlavor`. These are defaults to offer,
-not law — tailor models, tools, and gates to the user's project. Quality-gate
-commands shown are milknado's own (`uv` + `ruff` + `ty`); swap in the consuming
-project's real gate commands.
+not law — tailor models, tools, and gates to the user's project.
+
+`[milknado] quality_gates` is **required** — if absent, every node run fails
+closed with a message telling you to add it. Run `milknado init` to auto-detect
+gates from the project type (pyproject.toml → uv/ruff/ty; Cargo.toml → cargo
+test + clippy; etc.), then tune from there. Quality-gate commands in the examples
+below are from the milknado project itself; swap in the consuming project's real
+commands.
 
 ## What each flavor is for
 
@@ -113,6 +118,8 @@ substitutes their own gate commands and brief text.
 agent_family = "claude"
 concurrency_limit = 4
 protected_branches = ["main", "master"]
+# Required — absent = fail-closed. Use `milknado init` to auto-detect.
+quality_gates = ["uv run pytest", "uv run ruff check", "uv run ty check"]
 
 # Every worker also gets the project's just recipes.
 [milknado.worker.tools]

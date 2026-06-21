@@ -30,6 +30,24 @@ def _pyproject_version() -> str:
     return data["project"]["version"]
 
 
+def _accepted_launcher_args(version: str) -> tuple[list[str], list[str]]:
+    """The two coherent .mcp.json launcher forms, by channel.
+
+    main carries the git-ref form (server resolved from git @main); tag / stable
+    commits carry the PyPI pin `--from milknado==<version>` (version
+    from pyproject.toml). Any other args list is channel drift. Shared by the live
+    manifest assertion and the acceptance-discrimination tests so the contract has
+    exactly one source of truth.
+    """
+    main_form = [
+        "--from",
+        "git+https://github.com/paulnsorensen/milknado@main",
+        "milknado-mcp",
+    ]
+    pinned_form = ["--from", f"milknado=={version}", "milknado-mcp"]
+    return main_form, pinned_form
+
+
 class TestManifestsExist:
     def test_claude_marketplace_exists(self) -> None:
         assert CLAUDE_MARKETPLACE.exists(), f"Missing: {CLAUDE_MARKETPLACE}"
@@ -146,10 +164,12 @@ class TestMcpJsonShape:
         assert server["command"] == "uvx", (
             f"mcpServers.milknado.command must be 'uvx'; got {server['command']!r}"
         )
-        assert server["args"] == ["--from", "milknado", "milknado-mcp"], (
-            "mcpServers.milknado.args must name the package via `--from milknado` so "
-            "`uvx` resolves it from PyPI; a bare `uvx milknado-mcp` looks up a "
-            f"nonexistent package and fails. Got {server['args']}"
+        main_form, pinned_form = _accepted_launcher_args(_pyproject_version())
+        assert server["args"] in (main_form, pinned_form), (
+            "mcpServers.milknado.args must launch the server from the SAME ref as the "
+            f"checkout: the git-ref form {main_form} on main, or the "
+            f"PyPI pin {pinned_form} on a tag / stable commit (version read from "
+            f"pyproject.toml, never hard-coded). Got {server['args']}"
         )
 
 
@@ -226,7 +246,12 @@ class TestCodexMarketplaceSchema:
 
 
 class TestReleaseWorkflow:
-    """Lock the release.yml shape: valid YAML, v* tag trigger, OIDC (no token secrets)."""
+    """Lock the release.yml shape: fires on every push to main plus workflow_dispatch,
+    but publishes only when the version in pyproject.toml is not yet on PyPI.  A
+    non-bump push runs a fast detect job that no-ops (build-and-publish is skipped).
+    workflow_dispatch is retained as a manual escape hatch.  contents: write lives on
+    build-and-publish only (least-privilege split); the detect job runs with
+    contents: read."""
 
     RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
 
@@ -240,14 +265,130 @@ class TestReleaseWorkflow:
         wf = self._workflow()
         assert isinstance(wf, dict)
 
-    def test_release_yml_triggers_on_version_tags(self) -> None:
+    def test_release_yml_triggers_on_main_push_and_dispatch(self) -> None:
+        """Release fires on every push to main (version-gate in detect skips non-bumps)
+        plus workflow_dispatch as a manual escape hatch.  No push: tags trigger — the
+        vX.Y.Z tag is an output of the job (off-main commit), not an input."""
         wf = self._workflow()
         # YAML-1.1 loaders (PyYAML) parse the 'on' key as boolean True;
         # YAML-1.2 loaders keep it as the string 'on'. Accept both.
         trigger = wf.get(True) or wf.get("on")
         assert trigger is not None, f"release.yml has no 'on' trigger block; keys: {list(wf)}"
-        tags = trigger["push"]["tags"]
-        assert "v*" in tags, f"release.yml must trigger on 'v*' tags; got {tags}"
+        assert "workflow_dispatch" in trigger, (
+            f"release.yml must trigger on workflow_dispatch; got {list(trigger)}"
+        )
+        assert "push" in trigger, f"release.yml must trigger on push to main; got {list(trigger)}"
+        assert trigger["push"]["branches"] == ["main"], (
+            f"release.yml push trigger must be branches: [main]; got {trigger['push']}"
+        )
+        assert "tags" not in trigger["push"], (
+            "release.yml must NOT trigger on push: tags — the vX.Y.Z tag is an output "
+            "of the job (off-main commit), not an input trigger"
+        )
+
+    def test_release_yml_version_gate_jobs(self) -> None:
+        """detect job outputs release=true/false; build-and-publish gates on it.
+
+        Locks the two-job version-gate shape so a future refactor can't silently
+        publish on every push to main.
+        """
+        wf = self._workflow()
+        jobs = wf["jobs"]
+        assert "detect" in jobs, f"release.yml must have a 'detect' job; got {list(jobs)}"
+        detect_outputs = jobs["detect"].get("outputs", {})
+        assert "release" in detect_outputs, (
+            f"detect job must declare a 'release' output; got {list(detect_outputs)}"
+        )
+        pub = jobs["build-and-publish"]
+        needs = pub.get("needs", [])
+        needs_list = [needs] if isinstance(needs, str) else needs
+        assert "detect" in needs_list, f"build-and-publish must need 'detect'; got needs={needs!r}"
+        if_cond = pub.get("if", "")
+        assert "needs.detect.outputs.release == 'true'" in if_cond, (
+            f"build-and-publish 'if' must gate on needs.detect.outputs.release == 'true'; "
+            f"got {if_cond!r}"
+        )
+
+    def test_release_yml_detect_job_is_read_only(self) -> None:
+        """Top-level permissions floor is contents:read; detect grants no write.
+
+        Locks the least-privilege split: detect only reads pyproject.toml and curls
+        PyPI, so it must never hold contents:write.  Guards against a future edit
+        adding write grants to detect OR deleting the top-level read floor.
+        """
+        wf = self._workflow()
+        assert wf.get("permissions", {}).get("contents") == "read", (
+            "top-level permissions.contents must be 'read' so jobs inherit least privilege"
+        )
+        jobs = wf["jobs"]
+        detect_contents = jobs["detect"].get("permissions", {}).get("contents")
+        assert detect_contents != "write", (
+            "detect must stay read-only — it only reads pyproject.toml and curls PyPI; "
+            "a contents:write grant would be a silent privilege over-grant"
+        )
+
+    def test_release_yml_detect_gate_has_both_release_branches(self) -> None:
+        """detect job emits release=false for already-published versions (no-op, not exit 1)
+        and release=true for new versions.
+
+        Locks the dual-branch no-op design: an already-published version sets release=false
+        so build-and-publish is skipped and the run is green — this is what makes
+        push-on-main safe on non-release pushes.
+        """
+        raw = self.RELEASE_YML.read_text()
+        assert "release=false" in raw, (
+            "detect step must write release=false to GITHUB_OUTPUT for already-published versions"
+        )
+        assert "release=true" in raw, (
+            "detect step must write release=true to GITHUB_OUTPUT for new versions"
+        )
+        assert "pypi.org/pypi/milknado" in raw, (
+            "detect step must curl PyPI to gate on version existence"
+        )
+
+    def test_release_yml_detect_fails_closed_on_unexpected_status(self) -> None:
+        """detect reads the explicit PyPI HTTP status and only publishes on a definite 404.
+
+        Fail-closed: a 200 means already-published (skip), a 404 means new (publish), and
+        any other response (5xx, or a network error rendered as '000') fails the job loudly
+        via the catch-all rather than guessing release=true. Locks the gate against a
+        regression to the old `curl -sfL` boolean that treated every non-200 as 'publish'.
+        """
+        raw = self.RELEASE_YML.read_text()
+        assert "%{http_code}" in raw, (
+            "detect must read the explicit PyPI HTTP status code, not a boolean curl exit, "
+            "so a transient failure can't masquerade as a 404"
+        )
+        assert 'case "$status" in' in raw, (
+            "detect must branch on the explicit status (200 skip / 404 publish / other fail)"
+        )
+        assert "refusing to guess" in raw, (
+            "an unexpected PyPI status (5xx / network error) must fail the job loudly "
+            "(fail-closed), not silently set release=true"
+        )
+
+    def test_release_yml_grants_contents_write(self) -> None:
+        """Pushing the tag and force-pushing stable both need contents: write."""
+        wf = self._workflow()
+        job = wf["jobs"]["build-and-publish"]
+        assert job["permissions"]["contents"] == "write", (
+            "build-and-publish must grant contents: write to push the vX.Y.Z tag and "
+            f"repoint stable; got {job['permissions'].get('contents')!r}"
+        )
+
+    def test_release_yml_creates_pinned_tag_and_repoints_stable(self) -> None:
+        """The release writes the PyPI pin into .mcp.json on an off-main commit, tags
+        it vX.Y.Z, and force-points stable at that same commit."""
+        raw = self.RELEASE_YML.read_text()
+        assert "milknado==" in raw, (
+            "release.yml must rewrite plugins/milknado/.mcp.json to the pinned "
+            "`--from milknado==<version>` launcher on the tag commit"
+        )
+        assert "git tag" in raw, "release.yml must create the vX.Y.Z tag"
+        assert "refs/heads/stable" in raw, (
+            "release.yml must repoint the stable branch (refs/heads/stable) at the "
+            "pinned tag commit"
+        )
 
     def test_release_yml_uses_oidc_not_token_secret(self) -> None:
         """Trusted publishing uses id-token: write; no PASSWORD or API_TOKEN env var."""
@@ -271,4 +412,79 @@ class TestReleaseWorkflow:
         uses_values = [step["uses"] for step in job["steps"] if "uses" in step]
         assert any("pypa/gh-action-pypi-publish" in u for u in uses_values), (
             f"No publish step uses pypa/gh-action-pypi-publish; found: {uses_values}"
+        )
+
+
+class TestWheelExcludesPluginPayload:
+    """The pinned .mcp.json rewrite must not leak into the PyPI wheel.
+
+    Structurally guaranteed: hatchling packages only src/milknado, so the plugin
+    payload (plugins/milknado/.mcp.json) is never in the wheel. A wheel built from
+    the pinned tag commit is therefore byte-identical in package contents to one
+    built from main's bump commit. Lock the build target so a future include of
+    plugins/ can't silently break that property.
+    """
+
+    def test_wheel_packages_only_src_milknado(self) -> None:
+        with open(REPO / "pyproject.toml", "rb") as f:
+            data = tomllib.load(f)
+        packages = data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+        assert packages == ["src/milknado"], (
+            "Wheel must package only src/milknado so the plugin payload "
+            f"(plugins/milknado/.mcp.json) never leaks into the wheel; got {packages}"
+        )
+
+
+class TestLauncherFormAcceptance:
+    """The both-forms acceptance must discriminate, not rubber-stamp: accept the two
+    coherent channel launchers, reject channel drift. The rewrite-consistency test
+    exercises the tag / stable pinned-form branch a live `main` checkout never reaches."""
+
+    def test_unpinned_legacy_form_is_rejected(self) -> None:
+        # the pre-channels launcher floated the server independently of the ref;
+        # it must no longer satisfy acceptance, or the channels coherence is a no-op
+        legacy = ["--from", "milknado", "milknado-mcp"]
+        assert legacy not in _accepted_launcher_args(_pyproject_version())
+
+    def test_version_mismatched_pin_is_rejected(self) -> None:
+        # proves the pin is keyed to pyproject, not a hard-coded constant
+        wrong = ["--from", "milknado==0.0.0", "milknado-mcp"]
+        assert wrong not in _accepted_launcher_args(_pyproject_version())
+
+    def test_release_rewrite_yields_an_accepted_pinned_form(self) -> None:
+        """Mirror the release workflow's `.mcp.json` rewrite and prove a tag / stable
+        checkout is self-consistent: the rewritten launcher passes the same manifest
+        acceptance. Locks workflow-output ↔ test-acceptance against drift (e.g. a pin
+        target change on one side only). Mirrors, does not exec, release.yml's jq."""
+        version = _pyproject_version()
+        data = json.loads(MCP_JSON.read_text())
+        data["mcpServers"]["milknado"]["args"] = [
+            "--from",
+            f"milknado=={version}",
+            "milknado-mcp",
+        ]
+        assert data["mcpServers"]["milknado"]["args"] in _accepted_launcher_args(version)
+
+
+class TestReadmeDocumentsChannels:
+    """Spec acceptance: README documents the three channels + the uvx refresh caveat.
+    Substring locks (version-independent) so a revert to single-channel install fails."""
+
+    README = REPO / "README.md"
+
+    def test_readme_names_all_three_channels(self) -> None:
+        text = self.README.read_text()
+        for ref in ("@stable", "@vX.Y.Z", "@main"):
+            assert ref in text, f"README must document the {ref} channel"
+
+    def test_readme_documents_main_git_launcher(self) -> None:
+        text = self.README.read_text()
+        assert "git+https://github.com/paulnsorensen/milknado@main" in text, (
+            "README must show the @main git-ref server launcher"
+        )
+
+    def test_readme_documents_uvx_refresh_caveat(self) -> None:
+        text = self.README.read_text()
+        assert "--refresh" in text, (
+            "README must document the uvx --refresh caveat for the @main git-ref server"
         )

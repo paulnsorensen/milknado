@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     InvalidTransition,
     RebaseAbortError,
@@ -74,7 +75,7 @@ class FakeRalph:
         ralph_dir: Path,
         ralph_file: Path,
         commands: list[str],
-        quality_gates: list[str],
+        quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
     ) -> FakeRun:
         self.runs_created.append({"agent": agent, "dir": ralph_dir})
@@ -114,7 +115,7 @@ class FakeRalph:
         self,
         node: MikadoNode,
         context: str,
-        quality_gates: list[str],
+        quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
     ) -> Path:
         self.generated.append(output_path)
@@ -148,7 +149,7 @@ class FakeCrg:
 def config(tmp_path: Path) -> ExecutionConfig:
     return ExecutionConfig(
         execution_agent="claude",
-        quality_gates=("uv run pytest",),
+        quality_gates=(Gate("uv run pytest"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,
     )
@@ -1060,7 +1061,7 @@ class TestGetAttemptCount:
                 ralph_dir: Path,
                 ralph_file: Path,
                 commands: list[str],
-                quality_gates: list[str],
+                quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
             ) -> FakeRun:  # noqa: E501
                 nonlocal call_count
@@ -1071,7 +1072,7 @@ class TestGetAttemptCount:
 
         config_retry = ExecutionConfig(
             execution_agent="claude",
-            quality_gates=("uv run pytest",),
+            quality_gates=(Gate("uv run pytest"),),
             worktree_pattern="milknado-{node_id}-{slug}",
             project_root=config.project_root,
             dispatch_max_retries=2,
@@ -1094,7 +1095,7 @@ class TestGetAttemptCount:
                 ralph_dir: Path,
                 ralph_file: Path,
                 commands: list[str],
-                quality_gates: list[str],
+                quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
             ) -> FakeRun:  # noqa: E501
                 raise ValueError("bad config")
@@ -1117,7 +1118,7 @@ class TestGetAttemptCount:
                 ralph_dir: Path,
                 ralph_file: Path,
                 commands: list[str],
-                quality_gates: list[str],
+                quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
             ) -> FakeRun:  # noqa: E501
                 raise TransientDispatchError("always fails")

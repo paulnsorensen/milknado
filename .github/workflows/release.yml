@@ -1,39 +1,97 @@
 name: Release
 
+# Fires on every push to main; the detect job gates publishing on whether the
+# version in pyproject.toml is already on PyPI.  A version-bump merge releases;
+# every other push no-ops (build-and-publish is skipped).  workflow_dispatch is
+# retained as a manual escape hatch (re-run a failed release without a dummy
+# commit).  The vX.Y.Z tag is an OUTPUT of the job (off-main commit that pins
+# .mcp.json to milknado==X.Y.Z), so the workflow never pushes to main and
+# recursion is not possible.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  detect:
+    name: Detect release-worthy version bump
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        # shallow; only reads pyproject.toml and curls PyPI
+
+      - name: Assert on main
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "Release must come from main; got $GITHUB_REF"; exit 1
+          fi
+
+      - id: v
+        name: Read version; release only if not already on PyPI
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          status=$(curl -sL -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/milknado/$version/json" || true)
+          case "$status" in
+            200) echo "milknado $version already on PyPI — no release"; echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "milknado $version not on PyPI — releasing";      echo "release=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "Unexpected response from PyPI (HTTP $status) for milknado $version — refusing to guess"; exit 1 ;;
+          esac
+
   build-and-publish:
     name: Build and publish to PyPI
+    needs: detect
+    if: needs.detect.outputs.release == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
-      contents: read
+      contents: write  # create the vX.Y.Z tag and repoint the stable branch
       id-token: write  # required for OIDC trusted publishing
+    env:
+      VERSION: ${{ needs.detect.outputs.version }}
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0  # fetch-depth:0 lets --force-with-lease compare against origin/stable
+                          # on subsequent releases; the first release creates stable from nothing.
 
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
 
-      - name: Assert tag matches pyproject.toml version
+      - name: Build off-main pinned commit (.mcp.json -> milknado==<version>)
+        id: pin
         run: |
-          pkg_version=$(python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(d['project']['version'])")
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$pkg_version" != "$tag_version" ]; then
-            echo "Version mismatch: tag is v$tag_version but pyproject.toml has $pkg_version"
-            exit 1
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tmp=$(mktemp)
+          jq -c --arg v "$VERSION" \
+            '.mcpServers.milknado.args = ["--from", "milknado==\($v)", "milknado-mcp"]' \
+            plugins/milknado/.mcp.json > "$tmp"
+          mv "$tmp" plugins/milknado/.mcp.json
+          git add plugins/milknado/.mcp.json
+          git commit -m "release: pin server to milknado==$VERSION (off-main tag commit)"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build sdist and wheel
         run: uv build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc # v1.12.4
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+
+      - name: Tag vX.Y.Z and repoint stable at the pinned commit
+        # Last step: only tag and repoint stable after build+publish succeed, so a
+        # failed release never leaves a dangling tag or a stable pin to an unpublished
+        # version. force-with-lease guards against clobbering an unexpected stable move.
+        env:
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
+          git tag "v$VERSION" "$SHA"
+          git push origin "v$VERSION"
+          git push --force-with-lease origin "$SHA:refs/heads/stable"

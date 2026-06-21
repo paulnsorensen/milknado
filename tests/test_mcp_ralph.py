@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_ralph import milknado_ralph_run_poll, milknado_ralph_run_start
+from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp_server import open_graph
 from milknado.mcp_todo import milknado_todo_tree
 from milknado.mcp_todo_mutate import milknado_todo_add
@@ -144,7 +144,7 @@ def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> dict:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        last = _call(milknado_ralph_run_poll, run_id=run_id, project_root=root)
+        last = _call(milknado_run_loop_poll, run_id=run_id, project_root=root)
         if last["status"] in ("done", "failed"):
             return last
         time.sleep(0.05)
@@ -157,7 +157,7 @@ def test_start_returns_run_id_and_writes_running_state(tmp_path: Path) -> None:
     # A do-nothing runner so the state stays "running" right after start.
     noop = f"{sys.executable} -c pass"
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=noop,
         project_root=root,
@@ -174,7 +174,7 @@ def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
     task = _call(milknado_todo_add, description="pid", kind="task", project_root=root)
     noop = f"{sys.executable} -c pass"
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=noop,
         project_root=root,
@@ -196,7 +196,7 @@ def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
     script = tmp_path / "env_capture_runner.py"
     script.write_text(_ENV_CAPTURE_RUNNER)
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=f"{sys.executable} {script}",
         project_root=root,
@@ -210,7 +210,7 @@ def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="ralph-done", kind="task", project_root=root)
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=_stub_runner_cmd(tmp_path, status="done", rebased=True),
         project_root=root,
@@ -224,7 +224,7 @@ def test_poll_reads_failed_with_detail(tmp_path: Path) -> None:
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="ralph-fail", kind="task", project_root=root)
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=_stub_runner_cmd(tmp_path, status="failed", rebased=False, detail="'boom'"),
         project_root=root,
@@ -245,7 +245,7 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
         graph.close()
     with pytest.raises(ValueError, match="already running"):
         _call(
-            milknado_ralph_run_start,
+            milknado_run_loop_start,
             node_id=task["id"],
             runner_cmd=f"{sys.executable} -c pass",
             project_root=root,
@@ -254,13 +254,13 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
 
 def test_start_unknown_node_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not found"):
-        _call(milknado_ralph_run_start, node_id=99, project_root=str(tmp_path))
+        _call(milknado_run_loop_start, node_id=99, project_root=str(tmp_path))
 
 
 def test_poll_unknown_run_id_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not found"):
         _call(
-            milknado_ralph_run_poll,
+            milknado_run_loop_poll,
             run_id="node-1-20260101T000000Z-abcd",
             project_root=str(tmp_path),
         )
@@ -268,7 +268,7 @@ def test_poll_unknown_run_id_raises(tmp_path: Path) -> None:
 
 def test_poll_rejects_malformed_run_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid run_id"):
-        _call(milknado_ralph_run_poll, run_id="../etc/passwd", project_root=str(tmp_path))
+        _call(milknado_run_loop_poll, run_id="../etc/passwd", project_root=str(tmp_path))
 
 
 def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
@@ -279,7 +279,7 @@ def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="pend", kind="task", project_root=root)
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=task["id"],
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
@@ -306,7 +306,7 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     bad_cmd = str(tmp_path / "no-such-runner-binary")
     with pytest.raises(OSError):
         _call(
-            milknado_ralph_run_start,
+            milknado_run_loop_start,
             node_id=task["id"],
             runner_cmd=bad_cmd,
             project_root=root,
@@ -340,7 +340,7 @@ def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
     root = str(tmp_path)
     run_id = "node-1-20260101T000000Z-abcd"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
-    state = _call(milknado_ralph_run_poll, run_id=run_id, project_root=root)
+    state = _call(milknado_run_loop_poll, run_id=run_id, project_root=root)
     assert state["status"] == "running"
     assert state["summary"] == ""  # derived log file absent -> empty tail, never KeyError
 
@@ -358,6 +358,11 @@ def test_runner_crash_writes_detail_and_keeps_schema(
 
     # GitAdapter is the first adapter the runner builds; raising there exercises
     # the runner's terminal failed-write path after open_graph succeeded.
+    # Write quality_gates so the preflight passes and GitAdapter is reached.
+    (tmp_path / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(adapters, "GitAdapter", _boom)
     run_id = "node-1-20260101T000000Z-abcd"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
@@ -371,6 +376,24 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     assert state["detail"] == "RuntimeError: boom"
     assert state["log_path"].endswith(f"{run_id}.log")
     assert state["timeout_seconds"] == 10
+
+
+def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
+    """When quality_gates is absent from config, the runner fails closed immediately
+    before building adapters — the run row records the fail-closed message."""
+    from milknado import _ralph_node_runner
+    from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+
+    # No milknado.toml → quality_gates=None (fail-closed)
+    run_id = "node-1-20260101T000000Z-pref"
+    _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+    rc = _ralph_node_runner.main(
+        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id]
+    )
+    assert rc == 1
+    state = _read_run(tmp_path, run_id)
+    assert state["status"] == "failed"
+    assert state["detail"] == NO_GATES_CONFIGURED_MESSAGE
 
 
 def test_runner_writes_done_on_successful_outcome(
@@ -582,7 +605,7 @@ def test_start_reconciles_orphaned_terminal_run_then_proceeds(tmp_path: Path) ->
         exit_code=1,
     )
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=node_id,
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
@@ -616,7 +639,7 @@ def test_start_refuses_when_node_running_with_live_pid(tmp_path: Path) -> None:
         graph.close()
     with pytest.raises(ValueError, match="already running"):
         _call(
-            milknado_ralph_run_start,
+            milknado_run_loop_start,
             node_id=node_id,
             runner_cmd=f"{sys.executable} -c pass",
             project_root=root,
@@ -644,7 +667,7 @@ def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
     finally:
         graph.close()
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=node_id,
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
@@ -661,7 +684,7 @@ def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
 
 
 def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) -> None:
-    """Two concurrent milknado_ralph_run_start calls on the same PENDING node must
+    """Two concurrent milknado_run_loop_start calls on the same PENDING node must
     spawn exactly one detached worker; the loser raises 'already running'. The
     atomic claim_node UPDATE — not an in-process lock — is the cross-process gate."""
     import threading
@@ -682,7 +705,7 @@ def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) ->
         barrier.wait()
         try:
             r = _call(
-                milknado_ralph_run_start,
+                milknado_run_loop_start,
                 node_id=node_id,
                 runner_cmd=noop,
                 project_root=root,
@@ -707,7 +730,7 @@ def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) ->
 def test_orphan_worktree_removed_before_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#50: milknado_ralph_run_start must prune an orphaned worktree left by a
+    """#50: milknado_run_loop_start must prune an orphaned worktree left by a
     killed runner before spawning a new run so git-worktree-add does not fail."""
     import milknado.adapters as adapters
 
@@ -748,7 +771,7 @@ def test_orphan_worktree_removed_before_retry(
     )
 
     started = _call(
-        milknado_ralph_run_start,
+        milknado_run_loop_start,
         node_id=node_id,
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,

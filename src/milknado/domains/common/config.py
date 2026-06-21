@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import tomllib
 from dataclasses import dataclass, field
@@ -37,6 +38,20 @@ _LOOP_MODES = ("redispatch", "single")
 
 
 @dataclass(frozen=True)
+class Gate:
+    """A single quality gate command, with an optional stdout failure pattern.
+
+    ``command`` is run in the worktree. On non-zero exit the gate fails.
+    When ``fail_on_stdout`` is set, a regex match against stdout+stderr on exit 0
+    also causes a failure — use this for harnesses that exit 0 even on failure
+    (e.g. Godot headless).
+    """
+
+    command: str
+    fail_on_stdout: str | None = None
+
+
+@dataclass(frozen=True)
 class FlavorOverride:
     """Per-flavor config knobs loaded from [milknado.flavor.<flavor>] TOML tables.
 
@@ -50,7 +65,7 @@ class FlavorOverride:
     execution_agent: str | None = None
     tools: tuple[str, ...] | None = None  # may contain one "..." sentinel
     brief_prepend: str | None = None  # resolved text
-    quality_gates: tuple[str, ...] | None = None
+    quality_gates: tuple[Gate, ...] | None = None
     agent_type: str | None = None
     loop_mode: str | None = None
     max_iterations: int | None = None
@@ -65,7 +80,7 @@ class MilknadoConfig:
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
     planning_validation_hook: str | None = None
     execution_agent: str = resolve_execution_agent_command("claude")
-    quality_gates: tuple[str, ...] = ("uv run pytest", "uv run ruff check", "uv run ty check")
+    quality_gates: tuple[Gate, ...] | None = None
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
     project_root: Path = Path(".")
@@ -156,9 +171,10 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
     }
     if not suppress_execution_agent:
         milknado["execution_agent"] = config.execution_agent
+    if config.quality_gates is not None:
+        milknado["quality_gates"] = _serialize_gates(config.quality_gates)
     milknado.update(
         {
-            "quality_gates": list(config.quality_gates),
             "worktree_pattern": config.worktree_pattern,
             "concurrency_limit": config.concurrency_limit,
             "db_path": os.path.relpath(config.db_path, config.project_root),
@@ -207,7 +223,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         if fo.brief_prepend is not None:
             entry["brief_prepend"] = fo.brief_prepend
         if fo.quality_gates is not None:
-            entry["quality_gates"] = list(fo.quality_gates)
+            entry["quality_gates"] = _serialize_gates(fo.quality_gates)
         if fo.agent_type is not None:
             entry["agent_type"] = fo.agent_type
         if fo.loop_mode is not None:
@@ -222,6 +238,50 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
         milknado["flavor"] = flavor_tables
 
     path.write_bytes(tomli_w.dumps({"milknado": milknado}).encode())
+
+
+def _serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
+    """Serialize Gate objects to TOML-compatible form.
+
+    A gate with no ``fail_on_stdout`` serializes as a bare string.
+    A gate with ``fail_on_stdout`` serializes as an inline table.
+    """
+    out: list[Any] = []
+    for gate in gates:
+        if gate.fail_on_stdout is None:
+            out.append(gate.command)
+        else:
+            out.append({"command": gate.command, "fail_on_stdout": gate.fail_on_stdout})
+    return out
+
+
+def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
+    """Probe for language markers and return sane gates, else None.
+
+    First match wins (checked in order). Returns None when no marker is found
+    — the caller should inform the user that gates are unconfigured (fail-closed).
+    """
+    if (project_root / "pyproject.toml").exists():
+        return (
+            Gate("uv run pytest"),
+            Gate("uv run ruff check"),
+            Gate("uv run ty check"),
+        )
+    if (project_root / "Cargo.toml").exists():
+        return (
+            Gate("cargo test"),
+            Gate("cargo clippy -- -D warnings"),
+        )
+    if (project_root / "package.json").exists():
+        return (Gate("npm test"),)
+    if (project_root / "go.mod").exists():
+        return (
+            Gate("go test ./..."),
+            Gate("go vet ./..."),
+        )
+    if (project_root / "project.godot").exists():
+        return (Gate("godot --headless --quit", fail_on_stdout="SCRIPT ERROR|^ERROR:"),)
+    return None
 
 
 def _read_milknado_section(path: Path) -> dict[str, Any]:
@@ -364,12 +424,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
             str(planning_validation_hook_raw).strip() if planning_validation_hook_raw else None
         ),
         execution_agent=execution_agent,
-        quality_gates=tuple(
-            raw.get(
-                "quality_gates",
-                ["uv run pytest", "uv run ruff check", "uv run ty check"],
-            )
-        ),
+        quality_gates=_parse_gates(raw.get("quality_gates"), "[milknado] quality_gates"),
         worktree_pattern=raw.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         concurrency_limit=raw.get("concurrency_limit", 4),
         project_root=project_root,
@@ -413,6 +468,54 @@ def _validated_str(value: Any, default: str, ctx: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
     return value
+
+
+def _parse_gates(raw: Any, ctx: str) -> tuple[Gate, ...] | None:
+    """Parse a raw ``quality_gates`` value into a tuple of Gate objects (or None).
+
+    - None input  → None (key absent; fail-closed at runtime)
+    - []          → ()  (explicit skip)
+    - [entries]   → tuple of Gate objects
+
+    Each entry may be:
+    - a non-empty string → Gate(command=s)
+    - a table with required ``command`` (non-empty str) and optional
+      ``fail_on_stdout`` (str, must be a valid regex) → Gate(...)
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError(f"{ctx} must be a list (use [] to explicitly skip gates)")
+    gates: list[Gate] = []
+    for i, entry in enumerate(raw):
+        if isinstance(entry, str):
+            if not entry.strip():
+                raise ValueError(f"{ctx}[{i}] must be a non-empty string")
+            gates.append(Gate(command=entry))
+        elif isinstance(entry, dict):
+            command = entry.get("command")
+            if not isinstance(command, str) or not command.strip():
+                raise ValueError(f"{ctx}[{i}].command must be a non-empty string")
+            fail_on_stdout = entry.get("fail_on_stdout")
+            if fail_on_stdout is not None:
+                if not isinstance(fail_on_stdout, str):
+                    raise ValueError(f"{ctx}[{i}].fail_on_stdout must be a string")
+                if not fail_on_stdout.strip():
+                    fail_on_stdout = None
+                else:
+                    try:
+                        re.compile(fail_on_stdout)
+                    except re.error as exc:
+                        raise ValueError(
+                            f"{ctx}[{i}].fail_on_stdout is not a valid regex: {exc}"
+                        ) from exc
+            gates.append(Gate(command=command, fail_on_stdout=fail_on_stdout))
+        else:
+            raise ValueError(
+                f"{ctx}[{i}] must be a string or a table with 'command',"
+                f" got {type(entry).__name__}"
+            )
+    return tuple(gates)
 
 
 def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
@@ -500,15 +603,7 @@ def _parse_flavor_entry(
     brief_prepend = _load_flavor_brief(entry, flavor_name, project_root)
 
     # quality_gates
-    quality_gates_raw = entry.get("quality_gates")
-    quality_gates: tuple[str, ...] | None = None
-    if quality_gates_raw is not None:
-        if not isinstance(quality_gates_raw, list):
-            raise ValueError(f"{ctx} quality_gates must be a list of strings (use [] to skip)")
-        for i, g in enumerate(quality_gates_raw):
-            if not isinstance(g, str) or not g:
-                raise ValueError(f"{ctx} quality_gates[{i}] must be a non-empty string")
-        quality_gates = tuple(quality_gates_raw)
+    quality_gates = _parse_gates(entry.get("quality_gates"), f"{ctx} quality_gates")
 
     # Native Workflow backend knobs (None = inherit global).
     agent_type_raw = entry.get("agent_type")

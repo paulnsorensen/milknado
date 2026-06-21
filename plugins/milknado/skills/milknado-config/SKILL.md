@@ -177,6 +177,11 @@ the offending table, re-run.
   `codex` have no CLI tool-allowlist flag, so a `tools` list is inert for them.
 - **`quality_gates = []` skips gates; omitting the key inherits.** They're
   different — be explicit about which the user wants.
+- **No `quality_gates` at the config level means fail-closed.** If `[milknado]
+  quality_gates` is absent from `milknado.toml`, every node run is rejected with
+  a message explaining what to add. `milknado init` auto-detects the project type
+  and writes explicit gates (see "Auto-detection table" below). Use `quality_gates
+  = []` to intentionally skip; never leave the key absent expecting a skip.
 - **`brief_prepend` replaces**, it does not append to the config-level
   `worker_brief_prepend`.
 - **At most one `"..."` sentinel** per tool list.
@@ -185,5 +190,41 @@ the offending table, re-run.
   family-wide and a flavor re-specifies `tools = ["...", "WebSearch"]`, that
   flavor does **not** inherit `Bash(just:*)` — re-add it in the flavor's list if
   it's needed there.
-- The default `quality_gates` shown in docs (`uv run pytest` / `ruff check` /
-  `ty check`) are milknado's own; a consuming project sets its own gate commands.
+
+## Gate grammar
+
+Each entry in `quality_gates` is either a bare string (command only) or a
+`{command, fail_on_stdout}` inline table. The inline-table form fails the gate
+even on exit 0 when combined stdout+stderr matches the regex — for tools like
+Godot headless that always exit 0:
+
+```toml
+[milknado]
+quality_gates = [
+  "uv run pytest",                                    # bare string — fails on non-zero exit
+  "uv run ruff check",
+  {command = "godot --headless --quit", fail_on_stdout = "SCRIPT ERROR|FAILED"},
+]
+```
+
+`fail_on_stdout` is a Python `re.search` pattern matched against the combined
+stdout+stderr output. The gate fails when it matches.
+
+## Auto-detection table
+
+`milknado init` probes for project-type markers (first match wins) and writes
+explicit gates into `milknado.toml`. The interview step should confirm or tune
+what detection chose:
+
+| Marker file | Detected gates |
+|---|---|
+| `pyproject.toml` | `uv run pytest`, `uv run ruff check`, `uv run ty check` |
+| `Cargo.toml` | `cargo test`, `cargo clippy -- -D warnings` |
+| `package.json` | `npm test` |
+| `go.mod` | `go test ./...`, `go vet ./...` |
+| `project.godot` | `godot --headless --quit` with `fail_on_stdout = "SCRIPT ERROR\|FAILED"` |
+| (none matched) | No gates written — runs fail-closed until you add them |
+
+For mixed-stack repos (e.g. Rust backend + JS frontend), check which markers
+exist and propose combining rows — the detection takes the first match, so the
+skill may need to add the second language's gates manually.

@@ -304,6 +304,22 @@ class RunLoop:
                     execution_agent=profile.execution_agent,
                     quality_gates=profile.quality_gates,
                 )
+            if node_config.quality_gates is None:
+                from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+
+                _logger.error(
+                    "preflight: node %d (%s): %s", node_id, desc, NO_GATES_CONFIGURED_MESSAGE
+                )
+                live.console.print(
+                    f"[red]✗[/red] [{node_id}] {desc}: {NO_GATES_CONFIGURED_MESSAGE}"
+                )
+                self._executor.fail(node_id)
+                self._logs.append(f"[{ts()}] ✗ node {node_id}: no quality_gates configured")
+                failed += 1
+                if self._strict:
+                    self._failure_triggered = True
+                    break
+                continue
             try:
                 result = self._executor.dispatch(node_id, node_config)
             except Exception as exc:

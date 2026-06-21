@@ -1,6 +1,6 @@
 """Detached headless single-node ralph runner.
 
-Spawned as its own process by `milknado_ralph_run_start` so a worktree-isolated
+Spawned as its own process by `milknado_run_loop_start` so a worktree-isolated
 ralph loop survives the MCP server restarting (hot-reload). Node status, worktree
 path, and run state all persist in SQLite so a retried run can reconcile state
 from an earlier process. The MCP tool inserted the `running` run row before
@@ -37,9 +37,28 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     root = Path(args.project_root)
+    from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+
     graph, cfg = open_graph(root)
     node = graph.get_node(args.node_id)
     profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
+
+    if profile.quality_gates is None:
+        _logger.error(
+            "preflight failed for node %s: %s", args.node_id, NO_GATES_CONFIGURED_MESSAGE
+        )
+        graph.finish_run(
+            args.run_id,
+            status="failed",
+            exit_code=1,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=NO_GATES_CONFIGURED_MESSAGE,
+        )
+        graph.close()
+        return 1
+
     try:
         try:
             git = GitAdapter(root)

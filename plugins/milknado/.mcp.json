@@ -1,1 +1,1 @@
-{"mcpServers": {"milknado": {"command": "uvx", "args": ["--from", "milknado", "milknado-mcp"]}}}
+{"mcpServers": {"milknado": {"command": "uvx", "args": ["--from", "git+https://github.com/paulnsorensen/milknado@main", "milknado-mcp"]}}}
