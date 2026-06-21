@@ -37,11 +37,12 @@ jobs:
         run: |
           version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if curl -sfL "https://pypi.org/pypi/milknado/$version/json" >/dev/null; then
-            echo "milknado $version already on PyPI — no release"; echo "release=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "milknado $version not on PyPI — releasing";      echo "release=true"  >> "$GITHUB_OUTPUT"
-          fi
+          status=$(curl -sL -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/milknado/$version/json" || true)
+          case "$status" in
+            200) echo "milknado $version already on PyPI — no release"; echo "release=false" >> "$GITHUB_OUTPUT" ;;
+            404) echo "milknado $version not on PyPI — releasing";      echo "release=true"  >> "$GITHUB_OUTPUT" ;;
+            *)   echo "Unexpected response from PyPI (HTTP $status) for milknado $version — refusing to guess"; exit 1 ;;
+          esac
 
   build-and-publish:
     name: Build and publish to PyPI

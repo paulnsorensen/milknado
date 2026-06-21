@@ -346,6 +346,27 @@ class TestReleaseWorkflow:
             "detect step must curl PyPI to gate on version existence"
         )
 
+    def test_release_yml_detect_fails_closed_on_unexpected_status(self) -> None:
+        """detect reads the explicit PyPI HTTP status and only publishes on a definite 404.
+
+        Fail-closed: a 200 means already-published (skip), a 404 means new (publish), and
+        any other response (5xx, or a network error rendered as '000') fails the job loudly
+        via the catch-all rather than guessing release=true. Locks the gate against a
+        regression to the old `curl -sfL` boolean that treated every non-200 as 'publish'.
+        """
+        raw = self.RELEASE_YML.read_text()
+        assert "%{http_code}" in raw, (
+            "detect must read the explicit PyPI HTTP status code, not a boolean curl exit, "
+            "so a transient failure can't masquerade as a 404"
+        )
+        assert 'case "$status" in' in raw, (
+            "detect must branch on the explicit status (200 skip / 404 publish / other fail)"
+        )
+        assert "refusing to guess" in raw, (
+            "an unexpected PyPI status (5xx / network error) must fail the job loudly "
+            "(fail-closed), not silently set release=true"
+        )
+
     def test_release_yml_grants_contents_write(self) -> None:
         """Pushing the tag and force-pushing stable both need contents: write."""
         wf = self._workflow()
