@@ -132,7 +132,7 @@ checking status.
   rebases onto `feature_branch`, and removes the worktree in a `finally`.
   `RebaseAbortError` re-raises (repo corruption — never swallowed); other
   exceptions become a failed `RebaseResult`. On success → `_mark_terminal(DONE)`
-  - record completion duration; on failure → `_mark_terminal(FAILED)` + build a
+  and records completion duration; on failure → `_mark_terminal(FAILED)` + build a
   `RebaseConflict`. Newly dispatchable nodes are recomputed only on success.
 
 `_mark_terminal` is fenced: with a `run_id` it calls `graph.mark_terminal(id,
