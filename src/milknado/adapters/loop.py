@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -251,8 +252,6 @@ def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
     Returns rejection feedback on the first failure or timeout, or ``None``
     when every gate passes.
     """
-    import re
-
     for gate in gates:
         command = gate.command
         try:

@@ -51,3 +51,37 @@ To run `main` (or any branch) instead of the published PyPI release:
 ```
 uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp
 ```
+
+## Configuration
+
+### quality_gates (required — fail-closed if absent)
+
+`[milknado] quality_gates` must be set in `milknado.toml`. If the key is absent,
+every node run is rejected with a message telling you to add it. Run `milknado
+init` to auto-detect gates from your project type:
+
+| Project marker | Auto-detected gates |
+|---|---|
+| `pyproject.toml` | `uv run pytest`, `uv run ruff check`, `uv run ty check` |
+| `Cargo.toml` | `cargo test`, `cargo clippy -- -D warnings` |
+| `package.json` | `npm test` |
+| `go.mod` | `go test ./...`, `go vet ./...` |
+| `project.godot` | `godot --headless --quit` (with `fail_on_stdout`) |
+
+To skip gates for a flavor (e.g. spec tasks), use `quality_gates = []` in the
+flavor table — the empty list is an explicit skip, not the same as omitting the
+key.
+
+### fail_on_stdout
+
+Each gate entry is either a bare string or a `{command, fail_on_stdout}` inline
+table. The second form fails the gate even on exit 0 when the combined
+stdout+stderr matches the regex:
+
+```toml
+[milknado]
+quality_gates = [
+  "uv run pytest",
+  {command = "godot --headless --quit", fail_on_stdout = "SCRIPT ERROR|FAILED"},
+]
+```
