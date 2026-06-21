@@ -298,6 +298,18 @@ class TestParseGates:
         with pytest.raises(ValueError, match="fail_on_stdout must be a string"):
             _parse_gates([{"command": "godot", "fail_on_stdout": 42}], "ctx")
 
+    def test_whitespace_only_string_entry_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty string"):
+            _parse_gates(["   "], "ctx")
+
+    def test_whitespace_only_command_raises(self) -> None:
+        with pytest.raises(ValueError, match="non-empty string"):
+            _parse_gates([{"command": "   "}], "ctx")
+
+    def test_whitespace_only_fail_on_stdout_treated_as_absent(self) -> None:
+        result = _parse_gates([{"command": "godot", "fail_on_stdout": "   "}], "ctx")
+        assert result == (Gate("godot", fail_on_stdout=None),)
+
 
 class TestDetectProjectGates:
     def test_python_project_returns_python_triple(self, tmp_path: Path) -> None:
@@ -333,7 +345,12 @@ class TestDetectProjectGates:
         (tmp_path / "project.godot").write_text("[gd_resource]\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
-        assert any(g.fail_on_stdout is not None for g in result)
+        patterns = [g.fail_on_stdout for g in result if g.fail_on_stdout is not None]
+        assert patterns, "expected at least one gate with fail_on_stdout"
+        combined = "|".join(patterns)
+        assert "SCRIPT ERROR" in combined
+        assert "^ERROR:" in combined
+        assert "FAILED" not in combined
 
     def test_empty_dir_returns_none(self, tmp_path: Path) -> None:
         result = detect_project_gates(tmp_path)

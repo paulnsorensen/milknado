@@ -232,6 +232,8 @@ def _build_completion_verifier(
     def verify() -> CompletionVerdict:
         if gates is None:
             return CompletionVerdict(ok=False, feedback=NO_GATES_CONFIGURED_MESSAGE)
+        if not gates:
+            _logger.info("quality gates explicitly skipped for %s", worktree)
         gate_failure = _run_quality_gates(worktree, list(gates))
         if gate_failure is not None:
             return CompletionVerdict(ok=False, feedback=gate_failure)
@@ -271,7 +273,7 @@ def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
                 worktree,
             )
             return f"quality gate `{command}` timed out after {_GATE_TIMEOUT_SECONDS:.0f}s"
-        combined = result.stdout + result.stderr
+        combined = result.stdout + "\n" + result.stderr
         if result.returncode != 0:
             tail = combined[-_FEEDBACK_TAIL_CHARS:].strip()
             _logger.warning(

@@ -249,7 +249,7 @@ def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
             Gate("go vet ./..."),
         )
     if (project_root / "project.godot").exists():
-        return (Gate("godot --headless --quit", fail_on_stdout="SCRIPT ERROR|FAILED"),)
+        return (Gate("godot --headless --quit", fail_on_stdout="SCRIPT ERROR|^ERROR:"),)
     return None
 
 
@@ -431,23 +431,26 @@ def _parse_gates(raw: Any, ctx: str) -> tuple[Gate, ...] | None:
     gates: list[Gate] = []
     for i, entry in enumerate(raw):
         if isinstance(entry, str):
-            if not entry:
+            if not entry.strip():
                 raise ValueError(f"{ctx}[{i}] must be a non-empty string")
             gates.append(Gate(command=entry))
         elif isinstance(entry, dict):
             command = entry.get("command")
-            if not isinstance(command, str) or not command:
+            if not isinstance(command, str) or not command.strip():
                 raise ValueError(f"{ctx}[{i}].command must be a non-empty string")
             fail_on_stdout = entry.get("fail_on_stdout")
             if fail_on_stdout is not None:
                 if not isinstance(fail_on_stdout, str):
                     raise ValueError(f"{ctx}[{i}].fail_on_stdout must be a string")
-                try:
-                    re.compile(fail_on_stdout)
-                except re.error as exc:
-                    raise ValueError(
-                        f"{ctx}[{i}].fail_on_stdout is not a valid regex: {exc}"
-                    ) from exc
+                if not fail_on_stdout.strip():
+                    fail_on_stdout = None
+                else:
+                    try:
+                        re.compile(fail_on_stdout)
+                    except re.error as exc:
+                        raise ValueError(
+                            f"{ctx}[{i}].fail_on_stdout is not a valid regex: {exc}"
+                        ) from exc
             gates.append(Gate(command=command, fail_on_stdout=fail_on_stdout))
         else:
             raise ValueError(
@@ -542,7 +545,7 @@ def _parse_flavor_entry(
     brief_prepend = _load_flavor_brief(entry, flavor_name, project_root)
 
     # quality_gates
-    quality_gates = _parse_gates(entry.get("quality_gates"), ctx)
+    quality_gates = _parse_gates(entry.get("quality_gates"), f"{ctx} quality_gates")
 
     return FlavorOverride(
         execution_agent=execution_agent,

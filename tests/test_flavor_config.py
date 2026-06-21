@@ -535,6 +535,14 @@ def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path)
         load_config(cfg_path)
 
 
+def test_load_config_flavor_quality_gates_error_names_quality_gates_key(tmp_path: Path) -> None:
+    """Parse errors in a flavor's quality_gates mention 'quality_gates' in the message."""
+    from milknado.domains.common.config import _parse_flavor_entry
+
+    with pytest.raises(ValueError, match="quality_gates"):
+        _parse_flavor_entry({"quality_gates": [42]}, "spike", tmp_path)
+
+
 def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> None:
     """Non-string brief_prepend in a flavor entry raises ValueError."""
     from milknado.domains.common.config import _parse_flavor_entry

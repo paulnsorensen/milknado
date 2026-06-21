@@ -240,6 +240,20 @@ class TestNoneGatesFailClosed:
         assert verdict.ok is True
         assert NO_GATES_CONFIGURED_MESSAGE not in verdict.feedback
 
+    def test_empty_tuple_logs_explicit_skip(
+        self, worktree: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """() gates must emit an info log so the skip is auditable."""
+        import logging
+
+        _commit_change(worktree)
+        verifier = _build_completion_verifier(worktree, ())
+
+        with caplog.at_level(logging.INFO, logger="milknado.adapters.loop"):
+            verifier()
+
+        assert any("explicitly skipped" in r.message for r in caplog.records)
+
 
 class TestFailOnStdout:
     """Gates with fail_on_stdout: exit 0 + matching output → failure."""
@@ -286,6 +300,22 @@ class TestFailOnStdout:
         verdict = verifier()
 
         assert cmd in verdict.feedback
+
+    def test_fail_on_stdout_pattern_does_not_match_across_stream_boundary(
+        self, worktree: Path
+    ) -> None:
+        """Pattern split across stdout/stderr boundary must not match (newline separator)."""
+        _commit_change(worktree)
+        # stdout ends with "SCRIPT ", stderr starts with "ERROR" — would join without separator
+        gate = Gate(
+            'sh -c \'printf "SCRIPT " >&1; printf "ERROR" >&2; exit 0\'',
+            fail_on_stdout="SCRIPT ERROR",
+        )
+        verifier = _build_completion_verifier(worktree, (gate,))
+
+        verdict = verifier()
+
+        assert verdict.ok is True
 
 
 class TestFeatureBranchResolution:
