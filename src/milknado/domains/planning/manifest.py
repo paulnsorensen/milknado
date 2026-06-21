@@ -75,6 +75,10 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
     except json.JSONDecodeError as exc:
         _logger.warning("manifest json decode failed: %s", exc)
         return None
+    return parse_manifest_from_dict(raw)
+
+
+def parse_manifest_from_dict(raw: object) -> PlanChangeManifest | None:
     if not isinstance(raw, dict):
         _logger.warning("manifest root is not an object")
         return None

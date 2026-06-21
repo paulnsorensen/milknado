@@ -2084,6 +2084,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_get_node",
         "milknado_graph_summary",
         "milknado_move_node",
+        "milknado_plan_apply",
         "milknado_plan_batches",
         "milknado_ralph_run_poll",
         "milknado_ralph_run_start",

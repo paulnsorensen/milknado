@@ -277,6 +277,10 @@ def _instructions_section(resuming: bool) -> str:
 
     mcp_targeting_note = _mcp_targeting_note()
 
+    grounding_discipline_note = _grounding_discipline_note()
+
+    preview_commit_note = _preview_commit_note()
+
     goal_summary_note = (
         "`goal_summary` is 2-4 sentences structured as **what / why / success criteria**."
         " It becomes the root Mikado node description that every executor reads."
@@ -289,10 +293,12 @@ def _instructions_section(resuming: bool) -> str:
             "Decompose the goal into a v2 change manifest.\n\n"
             f"{granularity_note}\n\n"
             f"{mcp_targeting_note}\n\n"
+            f"{grounding_discipline_note}\n\n"
             f"{description_rules}\n\n"
             f"{goal_summary_note}\n\n"
             f"{edge_note}\n\n"
             f"{enum_note}\n\n"
+            f"{preview_commit_note}\n\n"
             "Emit only a fenced ```json block (valid JSON, not YAML). "
             "Do not include prose before or after the block.\n\n"
             f"{schema}"
@@ -304,11 +310,40 @@ def _instructions_section(resuming: bool) -> str:
         "Review the current state and add change manifest entries for any remaining work.\n\n"
         f"{granularity_note}\n\n"
         f"{mcp_targeting_note}\n\n"
+        f"{grounding_discipline_note}\n\n"
         f"{description_rules}\n\n"
         f"{goal_summary_note}\n\n"
         f"{edge_note}\n\n"
         f"{enum_note}\n\n"
+        f"{preview_commit_note}\n\n"
         "Emit only a fenced ```json block (valid JSON, not YAML). "
         "Do not include prose before or after the block.\n\n"
         f"{schema}"
+    )
+
+
+def _grounding_discipline_note() -> str:
+    return (
+        "**Grounding discipline (serena + code-review-graph):**\n"
+        "- Ground every `changes[]` entry in real symbols: use `serena` (symbol-level —"
+        " `find_symbol`, `get_symbols_overview`) to fill `path`, `symbols`, and"
+        " `hash_anchors` from the actual code, not from guesses.\n"
+        "- Infer `depends_on` edges from blast radius: query `code-review-graph`"
+        " `get_impact_radius` on each changed file and add a `depends_on` to any change"
+        " whose target lands inside that radius, so the solver receives true precedence.\n"
+        "- A manifest built this way carries real edges; one built from guesses produces"
+        " wrong batch boundaries."
+    )
+
+
+def _preview_commit_note() -> str:
+    return (
+        "**Two-phase rhythm — preview, then commit:**\n"
+        "- `milknado_plan_batches` is the **preview**: it solves only and writes nothing,"
+        " returning `{batches, spread_report, solver_status}`. Run it first to inspect the"
+        " batch count, token spread, solver status, and the mega-batch guard.\n"
+        "- Refine `changes[]` / `depends_on` until the preview looks right.\n"
+        "- `milknado_plan_apply` is the **commit**: same solver, but it lands the batches as"
+        " GOAL/TASK nodes in the graph. Preview is cheap and reversible (nothing written);"
+        " commit persists."
     )
