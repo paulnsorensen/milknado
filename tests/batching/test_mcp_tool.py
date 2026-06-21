@@ -550,3 +550,18 @@ def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch
     finally:
         graph.close()
     assert set(created) <= persisted
+
+
+def test_plan_apply_traversal_path_raises_value_error(tmp_path, monkeypatch) -> None:
+    """A manifest with a traversal path in changes[].path is rejected at the tool boundary."""
+    _stub_crg(monkeypatch)
+    manifest = {
+        "manifest_version": "milknado.plan.v2",
+        "goal": "Escape",
+        "goal_summary": "Try to escape",
+        "changes": [
+            {"id": "c1", "path": "../escape.py", "description": "Traversal attempt"},
+        ],
+    }
+    with pytest.raises(ValueError):
+        _apply(manifest=manifest, project_root=str(tmp_path))

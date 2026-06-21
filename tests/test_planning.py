@@ -852,6 +852,26 @@ class TestParseManifestFromDict:
         bad["changes"][0]["depends_on"] = ["nonexistent"]
         assert parse_manifest_from_dict(bad) is None
 
+    def test_absolute_change_path_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["path"] = "/etc/passwd"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_traversal_change_path_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["path"] = "../escape.py"
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_absolute_symbol_file_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "/etc/passwd"}]
+        assert parse_manifest_from_dict(bad) is None
+
+    def test_traversal_symbol_file_returns_none(self) -> None:
+        bad = self._valid_dict()
+        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "../secret.py"}]
+        assert parse_manifest_from_dict(bad) is None
+
 
 class TestPlanChangeManifest:
     def test_happy_path_parses_full_manifest(self) -> None:
