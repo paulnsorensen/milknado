@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     InvalidTransition,
     RebaseAbortError,
@@ -40,7 +41,7 @@ _TRANSIENT_MSG_RE = re.compile(
 @dataclass(frozen=True)
 class ExecutionConfig:
     execution_agent: str
-    quality_gates: tuple[str, ...]
+    quality_gates: tuple[Gate, ...] | None
     worktree_pattern: str
     project_root: Path
     dispatch_max_retries: int = 2
@@ -390,7 +391,7 @@ class Executor:
         ralph_path = self._ralph.generate_ralph_md(
             node,
             context,
-            list(config.quality_gates),
+            config.quality_gates,
             wt_path / "RALPH.md",
         )
         run = self._ralph.create_run(
@@ -398,7 +399,7 @@ class Executor:
             ralph_dir=wt_path,
             ralph_file=ralph_path,
             commands=[],
-            quality_gates=list(config.quality_gates),
+            quality_gates=config.quality_gates,
             project_root=wt_path,
         )
         run_id = run.state.run_id

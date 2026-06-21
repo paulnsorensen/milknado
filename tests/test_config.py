@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 
 import pytest
 
 from milknado.domains.common.config import (
+    Gate,
     MilknadoConfig,
+    _parse_gates,
     default_config,
+    detect_project_gates,
     load_config,
     save_config,
 )
@@ -53,7 +57,8 @@ class TestLoadConfig:
         )
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
-        assert "uv run pytest" in cfg.quality_gates
+        assert cfg.quality_gates is not None
+        assert Gate("uv run pytest") in cfg.quality_gates
 
     def test_loads_concurrency_limit(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\nconcurrency_limit = 8\n'
@@ -245,3 +250,157 @@ class TestSaveConfig:
         save_config(cfg, path)
         content = path.read_text()
         assert "milknado.db" in content
+
+
+class TestParseGates:
+    def test_none_returns_none(self) -> None:
+        assert _parse_gates(None, "ctx") is None
+
+    def test_empty_list_returns_empty_tuple(self) -> None:
+        assert _parse_gates([], "ctx") == ()
+
+    def test_string_entries_become_gate_objects(self) -> None:
+        result = _parse_gates(["uv run pytest", "uv run ruff check"], "ctx")
+        assert result == (Gate("uv run pytest"), Gate("uv run ruff check"))
+
+    def test_table_entry_with_fail_on_stdout(self) -> None:
+        raw = [{"command": "godot --headless", "fail_on_stdout": "SCRIPT ERROR"}]
+        result = _parse_gates(raw, "ctx")
+        assert result == (Gate("godot --headless", fail_on_stdout="SCRIPT ERROR"),)
+
+    def test_table_entry_without_fail_on_stdout(self) -> None:
+        raw = [{"command": "cargo test"}]
+        result = _parse_gates(raw, "ctx")
+        assert result == (Gate("cargo test"),)
+
+    def test_non_list_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="must be a list"):
+            _parse_gates("uv run pytest", "ctx")
+
+    def test_empty_string_entry_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="non-empty string"):
+            _parse_gates([""], "ctx")
+
+    def test_bad_regex_fail_on_stdout_raises(self) -> None:
+        raw = [{"command": "godot", "fail_on_stdout": "[invalid"}]
+        with pytest.raises(ValueError, match="not a valid regex"):
+            _parse_gates(raw, "ctx")
+
+    def test_dict_missing_command_raises(self) -> None:
+        with pytest.raises(ValueError, match="command"):
+            _parse_gates([{"fail_on_stdout": "ERROR"}], "ctx")
+
+    def test_wrong_type_entry_raises(self) -> None:
+        with pytest.raises(ValueError, match="string or a table"):
+            _parse_gates([42], "ctx")
+
+    def test_non_string_fail_on_stdout_raises(self) -> None:
+        with pytest.raises(ValueError, match="fail_on_stdout must be a string"):
+            _parse_gates([{"command": "godot", "fail_on_stdout": 42}], "ctx")
+
+
+class TestDetectProjectGates:
+    def test_python_project_returns_python_triple(self, tmp_path: Path) -> None:
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        commands = [g.command for g in result]
+        assert "uv run pytest" in commands
+        assert "uv run ruff check" in commands
+
+    def test_rust_project_returns_cargo_gates(self, tmp_path: Path) -> None:
+        (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        commands = [g.command for g in result]
+        assert any("cargo" in c for c in commands)
+
+    def test_node_project_returns_npm_test(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text('{"name":"x"}', encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        commands = [g.command for g in result]
+        assert any("npm" in c for c in commands)
+
+    def test_go_project_returns_go_gates(self, tmp_path: Path) -> None:
+        (tmp_path / "go.mod").write_text("module x\ngo 1.21\n", encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        commands = [g.command for g in result]
+        assert any("go" in c for c in commands)
+
+    def test_godot_project_returns_gate_with_fail_on_stdout(self, tmp_path: Path) -> None:
+        (tmp_path / "project.godot").write_text("[gd_resource]\n", encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        assert any(g.fail_on_stdout is not None for g in result)
+
+    def test_empty_dir_returns_none(self, tmp_path: Path) -> None:
+        result = detect_project_gates(tmp_path)
+        assert result is None
+
+    def test_pyproject_wins_over_cargo(self, tmp_path: Path) -> None:
+        """First match wins: pyproject.toml before Cargo.toml."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
+        result = detect_project_gates(tmp_path)
+        assert result is not None
+        # Python triple includes uv run pytest
+        assert any("uv" in g.command for g in result)
+
+
+class TestSaveConfigGates:
+    def test_string_gate_serialized_as_bare_string(self, tmp_path: Path) -> None:
+        cfg = dataclasses.replace(
+            default_config(tmp_path),
+            quality_gates=(Gate("uv run pytest"),),
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert '"uv run pytest"' in content
+
+    def test_gate_with_fail_on_stdout_serialized_as_inline_table(self, tmp_path: Path) -> None:
+        cfg = dataclasses.replace(
+            default_config(tmp_path),
+            quality_gates=(Gate("godot --headless", fail_on_stdout="SCRIPT ERROR"),),
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert "SCRIPT ERROR" in content
+        assert "fail_on_stdout" in content
+
+    def test_roundtrip_string_gate(self, tmp_path: Path) -> None:
+        cfg = dataclasses.replace(
+            default_config(tmp_path),
+            quality_gates=(Gate("uv run pytest"), Gate("uv run ruff check")),
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.quality_gates == (Gate("uv run pytest"), Gate("uv run ruff check"))
+
+    def test_roundtrip_gate_with_fail_on_stdout(self, tmp_path: Path) -> None:
+        gate = Gate("godot --headless --run-tests", fail_on_stdout="SCRIPT ERROR|FAILED")
+        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=(gate,))
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.quality_gates == (gate,)
+
+    def test_none_gates_not_written_to_toml(self, tmp_path: Path) -> None:
+        """quality_gates=None (unconfigured) must not emit a key — absence is the signal."""
+        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=None)
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.quality_gates is None
+
+    def test_empty_tuple_gates_written_as_empty_list(self, tmp_path: Path) -> None:
+        """quality_gates=() (explicit skip) round-trips back as empty tuple."""
+        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=())
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.quality_gates == ()

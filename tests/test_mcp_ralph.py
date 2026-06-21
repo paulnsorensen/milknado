@@ -358,6 +358,11 @@ def test_runner_crash_writes_detail_and_keeps_schema(
 
     # GitAdapter is the first adapter the runner builds; raising there exercises
     # the runner's terminal failed-write path after open_graph succeeded.
+    # Write quality_gates so the preflight passes and GitAdapter is reached.
+    (tmp_path / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(adapters, "GitAdapter", _boom)
     run_id = "node-1-20260101T000000Z-abcd"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
@@ -371,6 +376,24 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     assert state["detail"] == "RuntimeError: boom"
     assert state["log_path"].endswith(f"{run_id}.log")
     assert state["timeout_seconds"] == 10
+
+
+def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
+    """When quality_gates is absent from config, the runner fails closed immediately
+    before building adapters — the run row records the fail-closed message."""
+    from milknado import _ralph_node_runner
+    from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+
+    # No milknado.toml → quality_gates=None (fail-closed)
+    run_id = "node-1-20260101T000000Z-pref"
+    _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+    rc = _ralph_node_runner.main(
+        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id]
+    )
+    assert rc == 1
+    state = _read_run(tmp_path, run_id)
+    assert state["status"] == "failed"
+    assert state["detail"] == NO_GATES_CONFIGURED_MESSAGE
 
 
 def test_runner_writes_done_on_successful_outcome(

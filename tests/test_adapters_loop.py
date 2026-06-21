@@ -7,11 +7,13 @@ import pytest
 
 from milknado.adapters.loop import (
     MILKNADO_COMPLETION_SIGNAL,
+    NO_GATES_CONFIGURED_MESSAGE,
     LoopAdapter,
     _build_ralph_content,
     _build_verify_prompt,
     _parse_verify_output,
 )
+from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
@@ -53,7 +55,7 @@ class TestCreateRun:
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),
             commands=["uv run pytest"],
-            quality_gates=["uv run ruff check"],
+            quality_gates=(Gate("uv run ruff check"),),
         )
 
         mock_config_cls.assert_called_once_with(
@@ -210,7 +212,7 @@ class TestGenerateRalphMd:
         result = adapter.generate_ralph_md(
             node=node,
             context="Refactoring auth module",
-            quality_gates=["uv run pytest"],
+            quality_gates=(Gate("uv run pytest"),),
             output_path=output,
         )
         assert result == output
@@ -224,7 +226,7 @@ class TestGenerateRalphMd:
 class TestBuildRalphContent:
     def test_includes_all_sections(self) -> None:
         node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "some context", ["gate1", "gate2"])
+        content = _build_ralph_content(node, "some context", (Gate("gate1"), Gate("gate2")))
         assert content.startswith("# Do thing")
         assert "## Context" in content
         assert "some context" in content
@@ -233,9 +235,23 @@ class TestBuildRalphContent:
 
     def test_includes_completion_promise_instruction(self) -> None:
         node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "ctx", ["gate1"])
+        content = _build_ralph_content(node, "ctx", (Gate("gate1"),))
         assert "## Completion" in content
         assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
+
+    def test_none_gates_renders_no_gates_notice(self) -> None:
+        """None gates → prominent notice in RALPH.md so the agent sees the issue."""
+        node = MikadoNode(id=1, description="Task")
+        content = _build_ralph_content(node, "ctx", None)
+        assert "no gates configured" in content
+        assert "## Completion" in content
+
+    def test_empty_gates_renders_skip_notice(self) -> None:
+        """Empty tuple → explicit-skip notice, not the fail-closed notice."""
+        node = MikadoNode(id=1, description="Spec task")
+        content = _build_ralph_content(node, "ctx", ())
+        assert "explicitly skipped" in content
+        assert "no gates configured" not in content
 
     def test_longer_context_injected_and_completion_preserved(self) -> None:
         """Longer context with Goal/Why chain/Your task — template passes it
@@ -249,7 +265,7 @@ class TestBuildRalphContent:
             "## Files\n\n- `src/main.py`\n\n"
             "## Impact Radius\n\n_(CRG unavailable — impact radius skipped)_"
         )
-        content = _build_ralph_content(node, longer_ctx, ["uv run pytest"])
+        content = _build_ralph_content(node, longer_ctx, (Gate("uv run pytest"),))
         assert "## Goal" in content
         assert "## Why chain" in content
         assert "## Your task" in content
@@ -561,7 +577,7 @@ class TestCreateRunWithProjectRoot:
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
             commands=[],
-            quality_gates=[],
+            quality_gates=(),
             project_root=tmp_path,
         )
 
@@ -584,7 +600,7 @@ class TestCreateRunWithProjectRoot:
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
             commands=[],
-            quality_gates=[],
+            quality_gates=(),
             project_root=tmp_path,  # .mcp.json does not exist
         )
 
@@ -607,7 +623,7 @@ class TestCreateRunWithProjectRoot:
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
             commands=[],
-            quality_gates=[],
+            quality_gates=(),
         )
 
         call_kwargs = mock_config_cls.call_args[1]
@@ -627,7 +643,14 @@ class TestGenerateRalphMdWriteError:
                 adapter.generate_ralph_md(
                     node=node,
                     context="ctx",
-                    quality_gates=[],
+                    quality_gates=(),
                     output_path=bad_path,
                 )
             assert exc_info.value.path == bad_path
+
+
+class TestNoGatesConfiguredMessage:
+    def test_message_mentions_milknado_toml(self) -> None:
+        """The fail-closed message must tell the user exactly where to add gates."""
+        assert "milknado.toml" in NO_GATES_CONFIGURED_MESSAGE
+        assert "quality_gates" in NO_GATES_CONFIGURED_MESSAGE

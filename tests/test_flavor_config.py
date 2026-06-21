@@ -12,6 +12,7 @@ from milknado.domains.common.agent_argv import (
 )
 from milknado.domains.common.config import (
     FlavorOverride,
+    Gate,
     MilknadoConfig,
     load_config,
     save_config,
@@ -195,7 +196,7 @@ def test_load_config_flavor_quality_gates_must_be_list(tmp_path: Path) -> None:
         'quality_gates = "uv run pytest"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="quality_gates"):
+    with pytest.raises(ValueError, match="must be a list"):
         load_config(cfg_path)
 
 
@@ -351,13 +352,13 @@ def test_resolve_flavor_profile_quality_gates_none_inherits(tmp_path: Path) -> N
         agent_family="claude",
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
-        quality_gates=("uv run pytest",),
+        quality_gates=(Gate("uv run pytest"),),
         flavors={
             TaskFlavor.SPIKE: FlavorOverride(),
         },
     )
     profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
-    assert profile.quality_gates == ("uv run pytest",)
+    assert profile.quality_gates == (Gate("uv run pytest"),)
 
 
 def test_resolve_flavor_profile_brief_replaces_global(tmp_path: Path) -> None:
@@ -530,7 +531,7 @@ def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path)
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nquality_gates = [42]\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="quality_gates"):
+    with pytest.raises(ValueError, match="string or a table"):
         load_config(cfg_path)
 
 
@@ -613,7 +614,7 @@ def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
                 execution_agent="claude -p --model haiku",
                 tools=("Read", "Edit"),
                 brief_prepend="Prototype: ship rough cut.",
-                quality_gates=("uv run pytest -x",),
+                quality_gates=(Gate("uv run pytest -x"),),
             ),
         },
     )
@@ -624,7 +625,7 @@ def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
     assert fo.execution_agent == "claude -p --model haiku"
     assert fo.tools == ("Read", "Edit")
     assert fo.brief_prepend == "Prototype: ship rough cut."
-    assert fo.quality_gates == ("uv run pytest -x",)
+    assert fo.quality_gates == (Gate("uv run pytest -x"),)
 
 
 # AC5 dispatch: explicit worker_cmd overrides flavor execution_agent in resolved profile

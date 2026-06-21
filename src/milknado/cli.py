@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -35,6 +36,7 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
+from milknado.domains.common.config import detect_project_gates
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph import render_tree
 
@@ -75,6 +77,18 @@ def init(
         config = load_config(config_path)
     else:
         config = default_config(project_root)
+        detected_gates = detect_project_gates(project_root)
+        if detected_gates is not None:
+            config = dataclasses.replace(config, quality_gates=detected_gates)
+            gate_cmds = ", ".join(f"`{g.command}`" for g in detected_gates)
+            console.print(f"Detected project type → gates: {gate_cmds}")
+        else:
+            console.print(
+                "[yellow]No project type detected — quality_gates not set.[/yellow]\n"
+                "[yellow]milknado fails closed until quality_gates is configured.[/yellow]\n"
+                "[yellow]Add [milknado] quality_gates to milknado.toml, "
+                "or run /milknado-config to set up per-flavor gates.[/yellow]"
+            )
         save_config(config, config_path)
         console.print(f"Created config: {config_path}")
 

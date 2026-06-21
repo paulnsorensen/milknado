@@ -97,8 +97,27 @@ class TestInit:
         assert "agent_family" in content
         assert "planning_agent" in content
         assert "execution_agent" in content
-        assert "quality_gates" in content
         assert "concurrency_limit" in content
+        # No project type detected in empty dir → quality_gates not written (fail-closed)
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_init_detects_python_project_gates(self, _mock_crg: MagicMock, tmp_path: Path) -> None:
+        """init writes quality_gates when pyproject.toml is present."""
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        result = runner.invoke(app, ["init", str(tmp_path)])
+        assert result.exit_code == 0
+        content = (tmp_path / "milknado.toml").read_text()
+        assert "quality_gates" in content
+        assert "uv run pytest" in content
+
+    @patch("milknado.adapters.crg.CrgAdapter")
+    def test_init_no_detection_prints_fail_closed_notice(
+        self, _mock_crg: MagicMock, project_dir: Path
+    ) -> None:
+        """Empty dir → no gates detected → output warns about fail-closed."""
+        result = runner.invoke(app, ["init", str(project_dir)])
+        assert result.exit_code == 0
+        assert "quality_gates" in result.output
 
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_calls_ensure_graph(self, mock_crg_cls: MagicMock, project_dir: Path) -> None:
@@ -1347,6 +1366,7 @@ class TestRunCommand:
         from milknado.domains.graph import MikadoGraph
 
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1373,6 +1393,7 @@ class TestRunCommand:
         from milknado.domains.graph import MikadoGraph
 
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1399,6 +1420,7 @@ class TestRunCommand:
         from milknado.domains.graph import MikadoGraph
 
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)

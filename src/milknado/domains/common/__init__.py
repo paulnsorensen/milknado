@@ -1,7 +1,9 @@
 from milknado.domains.common.config import (
     FlavorOverride,
+    Gate,
     MilknadoConfig,
     default_config,
+    detect_project_gates,
     global_config_path,
     load_config,
     save_config,
@@ -24,6 +26,7 @@ from milknado.domains.common.types import (
 __all__ = [
     "CrgPort",
     "GitPort",
+    "Gate",
     "InvalidContainment",
     "InvalidTransition",
     "MikadoEdge",
@@ -41,6 +44,7 @@ __all__ = [
     "pid_alive",
     "FlavorOverride",
     "default_config",
+    "detect_project_gates",
     "global_config_path",
     "load_config",
     "save_config",

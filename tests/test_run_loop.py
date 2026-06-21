@@ -168,9 +168,11 @@ class FakeRalph:
 
 @pytest.fixture()
 def config(tmp_path: Path) -> ExecutionConfig:
+    from milknado.domains.common.config import Gate
+
     return ExecutionConfig(
         execution_agent="claude",
-        quality_gates=("uv run pytest",),
+        quality_gates=(Gate("uv run pytest"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,
     )
@@ -807,6 +809,36 @@ class TestStrictDrain:
         assert result.completed_total == 1
         assert result.strict_exit is True
         assert result.root_done is False
+
+    def test_none_gates_preflight_strict_halts_after_first_fail(
+        self,
+        graph: MikadoGraph,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+        tmp_path: Path,
+    ) -> None:
+        """Strict mode + None quality_gates: preflight fails the first node and
+        sets failure_triggered=True, halting dispatch of the second node."""
+        none_gates_config = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=None,  # fail-closed
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=tmp_path,
+        )
+
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root")
+        graph.add_node("leaf-a", parent_id=root.id)
+        graph.add_node("leaf-b", parent_id=root.id)
+
+        result = loop.run(none_gates_config, "main", strict=True)
+
+        # Preflight on leaf-a fails → strict stops after 1 failure; leaf-b never dispatched
+        assert result.failed_total >= 1
+        assert result.strict_exit is True
 
 
 class TestProtectedBranchGuard:
