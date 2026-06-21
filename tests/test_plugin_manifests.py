@@ -33,8 +33,8 @@ def _pyproject_version() -> str:
 def _accepted_launcher_args(version: str) -> tuple[list[str], list[str]]:
     """The two coherent .mcp.json launcher forms, by channel.
 
-    main / dev branches carry the git-ref form (server resolved from git @main);
-    tag / stable commits carry the PyPI pin `--from milknado==<version>` (version
+    main carries the git-ref form (server resolved from git @main); tag / stable
+    commits carry the PyPI pin `--from milknado==<version>` (version
     from pyproject.toml). Any other args list is channel drift. Shared by the live
     manifest assertion and the acceptance-discrimination tests so the contract has
     exactly one source of truth.
@@ -167,7 +167,7 @@ class TestMcpJsonShape:
         main_form, pinned_form = _accepted_launcher_args(_pyproject_version())
         assert server["args"] in (main_form, pinned_form), (
             "mcpServers.milknado.args must launch the server from the SAME ref as the "
-            f"checkout: the git-ref form {main_form} on main / dev branches, or the "
+            f"checkout: the git-ref form {main_form} on main, or the "
             f"PyPI pin {pinned_form} on a tag / stable commit (version read from "
             f"pyproject.toml, never hard-coded). Got {server['args']}"
         )

@@ -48,7 +48,7 @@ the skills from a checkout at the ref you want. Set `--from` to match your chann
   "mcp": {
     "milknado": {
       "type": "local",
-      "command": ["uvx", "--from", "milknado", "milknado-mcp"]
+      "command": ["uvx", "--from", "milknado==0.2.0", "milknado-mcp"]
     }
   }
 }

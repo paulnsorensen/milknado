@@ -61,17 +61,20 @@ jobs:
           git commit -m "release: pin server to milknado==$VERSION (off-main tag commit)"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+
       - name: Tag vX.Y.Z and repoint stable at the pinned commit
+        # Last step: only tag and repoint stable after build+publish succeed, so a
+        # failed release never leaves a dangling tag or a stable pin to an unpublished
+        # version. force-with-lease guards against clobbering an unexpected stable move.
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SHA: ${{ steps.pin.outputs.sha }}
         run: |
           git tag "v$VERSION" "$SHA"
           git push origin "v$VERSION"
-          git push --force origin "$SHA:refs/heads/stable"
-
-      - name: Build sdist and wheel
-        run: uv build
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+          git push --force-with-lease origin "$SHA:refs/heads/stable"
