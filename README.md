@@ -59,8 +59,9 @@ uvx --from git+https://github.com/paulnsorensen/milknado milknado-mcp
 >
 > - **Released MCP + skills:** install the plugin (`/plugin install milknado`),
 >   which runs the published-release MCP.
-> - **Git-ref MCP + skills:** keep the git-ref MCP command above and copy the
->   skills in manually, as the opencode section does:
+> - **Git-ref MCP + skills:** keep the git-ref MCP command above, clone/check out
+>   this repo so `plugins/milknado/skills/` exists locally, then copy the
+>   skills in manually from the checkout root, as the opencode section does:
 >
 >   ```sh
 >   cp -r plugins/milknado/skills/ ~/.claude/skills/   # personal
