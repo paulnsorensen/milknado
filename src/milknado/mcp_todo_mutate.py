@@ -15,13 +15,14 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph.status_flow import (
     apply_todo_status,
     subtree_post_order,
     validate_todo_status,
 )
+from milknado.mcp_node import assert_done_verified
 from milknado.mcp_todo import follow_up_parent_id, node_to_summary
 
 _logger = logging.getLogger(__name__)
@@ -65,6 +66,8 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
+        if target == NodeStatus.DONE:
+            assert_done_verified(graph, node)
         apply_todo_status(graph, node, target)
         updated = graph.get_node(node_id)
         if updated is None:
@@ -102,6 +105,8 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
         ordered = subtree_post_order(children_map, node)
         for n in ordered:
             validate_todo_status(n, target)
+            if target == NodeStatus.DONE:
+                assert_done_verified(graph, n)
         updated = 0
         for n in ordered:
             if n.status != target:

@@ -6,4 +6,5 @@
 - [pr137-loop-vendor-in](./pr137-loop-vendor-in.md) — PR #137 — Loop Vendor-In Execution Record
 - [pr94-refactor-split](./pr94-refactor-split.md) — Decision — PR94 Refactor Split
 - [review-lessons](./review-lessons.md) — Review Lessons — Recurring Findings & Gotchas
+- [workflow-executor-decision](./workflow-executor-decision.md) — Decision — Native Dynamic-Workflow ("ultracode") Execution Backend
 <!-- HALLOUMINATE:INDEX-END -->

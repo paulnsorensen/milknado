@@ -28,6 +28,14 @@ _logger = logging.getLogger(__name__)
 # ignored with a warning rather than crashing.
 _LOCAL_ONLY_KEYS = ("project_root", "db_path", "plugins")
 
+# Native Workflow ("ultracode") backend defaults. Coordinator-side knobs that the
+# subprocess dispatcher never reads; resolved per-flavor by resolve_flavor_profile.
+DEFAULT_WORKER_AGENT_TYPE = "milknado:milknado-worker"
+DEFAULT_LOOP_MODE = "redispatch"
+DEFAULT_MAX_ITERATIONS = 8
+DEFAULT_MAX_TURNS = 60
+_LOOP_MODES = ("redispatch", "single")
+
 
 @dataclass(frozen=True)
 class Gate:
@@ -50,12 +58,18 @@ class FlavorOverride:
     All fields are optional; absent = inherit from global config.
     ``brief_prepend`` holds the resolved text (inline or loaded from path(s)).
     ``quality_gates = ()`` means skip gates; ``None`` means inherit.
+    ``agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns`` drive the
+    native Workflow backend; ``None`` inherits the global default.
     """
 
     execution_agent: str | None = None
     tools: tuple[str, ...] | None = None  # may contain one "..." sentinel
     brief_prepend: str | None = None  # resolved text
     quality_gates: tuple[Gate, ...] | None = None
+    agent_type: str | None = None
+    loop_mode: str | None = None
+    max_iterations: int | None = None
+    max_turns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +96,11 @@ class MilknadoConfig:
     flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
+    # Native Workflow ("ultracode") backend defaults — coordinator-side only.
+    worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
+    loop_mode: str = DEFAULT_LOOP_MODE
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
+    max_turns: int = DEFAULT_MAX_TURNS
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -166,6 +185,10 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "protected_branches": list(config.protected_branches),
             "completion_timeout_seconds": config.completion_timeout_seconds,
             "eta_sample_size": config.eta_sample_size,
+            "worker_agent_type": config.worker_agent_type,
+            "loop_mode": config.loop_mode,
+            "max_iterations": config.max_iterations,
+            "max_turns": config.max_turns,
         }
     )
 
@@ -201,6 +224,14 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             entry["brief_prepend"] = fo.brief_prepend
         if fo.quality_gates is not None:
             entry["quality_gates"] = _serialize_gates(fo.quality_gates)
+        if fo.agent_type is not None:
+            entry["agent_type"] = fo.agent_type
+        if fo.loop_mode is not None:
+            entry["loop_mode"] = fo.loop_mode
+        if fo.max_iterations is not None:
+            entry["max_iterations"] = fo.max_iterations
+        if fo.max_turns is not None:
+            entry["max_turns"] = fo.max_turns
         if entry:
             flavor_tables[flavor_name] = entry
     if flavor_tables:
@@ -409,7 +440,34 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         flavors=flavors,
         planning_prompt_prepend=planning_prompt_prepend,
         worker_brief_prepend=worker_brief_prepend,
+        worker_agent_type=_validated_str(
+            raw.get("worker_agent_type"), DEFAULT_WORKER_AGENT_TYPE, "[milknado] worker_agent_type"
+        ),
+        loop_mode=_validated_loop_mode(raw.get("loop_mode", DEFAULT_LOOP_MODE), "[milknado]"),
+        max_iterations=_validated_positive_int(
+            raw.get("max_iterations", DEFAULT_MAX_ITERATIONS), "[milknado] max_iterations"
+        ),
+        max_turns=_validated_positive_int(
+            raw.get("max_turns", DEFAULT_MAX_TURNS), "[milknado] max_turns"
+        ),
     )
+
+
+def _validated_loop_mode(value: Any, ctx: str) -> str:
+    """Coerce a loop_mode value to one of the allowed modes, else raise."""
+    mode = str(value)
+    if mode not in _LOOP_MODES:
+        raise ValueError(f"{ctx} loop_mode must be one of {list(_LOOP_MODES)}; got {mode!r}")
+    return mode
+
+
+def _validated_str(value: Any, default: str, ctx: str) -> str:
+    """Return a string config value, rejecting non-string types instead of coercing."""
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
+    return value
 
 
 def _parse_gates(raw: Any, ctx: str) -> tuple[Gate, ...] | None:
@@ -547,12 +605,36 @@ def _parse_flavor_entry(
     # quality_gates
     quality_gates = _parse_gates(entry.get("quality_gates"), f"{ctx} quality_gates")
 
+    # Native Workflow backend knobs (None = inherit global).
+    agent_type_raw = entry.get("agent_type")
+    if agent_type_raw is not None and not isinstance(agent_type_raw, str):
+        raise ValueError(f"{ctx} agent_type must be a string")
+    loop_mode_raw = entry.get("loop_mode")
+    loop_mode = _validated_loop_mode(loop_mode_raw, ctx) if loop_mode_raw is not None else None
+    max_iterations = _validated_positive_int(entry.get("max_iterations"), f"{ctx} max_iterations")
+    max_turns = _validated_positive_int(entry.get("max_turns"), f"{ctx} max_turns")
+
     return FlavorOverride(
         execution_agent=execution_agent,
         tools=tools,
         brief_prepend=brief_prepend,
         quality_gates=quality_gates,
+        agent_type=agent_type_raw,
+        loop_mode=loop_mode,
+        max_iterations=max_iterations,
+        max_turns=max_turns,
     )
+
+
+def _validated_positive_int(value: Any, ctx: str) -> int | None:
+    """Coerce an optional positive-int config value; None passes through."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{ctx} must be an integer")
+    if value < 1:
+        raise ValueError(f"{ctx} must be >= 1; got {value}")
+    return value
 
 
 def _load_flavor_brief(
