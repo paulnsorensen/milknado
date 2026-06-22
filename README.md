@@ -72,6 +72,22 @@ cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 > release busts the cache, but the `@main` git ref caches by commit SHA — pull a
 > newer `main` server with `uvx --refresh` / `uv tool upgrade milknado`.
 
+> **Note — this wires the MCP server only; the plugin skills do not load.** The
+> skills (`milknado-config`, `harvest`, `load-roadmap`) ship through the plugin
+> install path, not raw MCP registration, so a bare git-ref MCP gives you the
+> tools without the skills. To get the skills too:
+>
+> - **Released MCP + skills:** install the plugin (`/plugin install milknado`),
+>   which runs the published-release MCP.
+> - **Git-ref MCP + skills:** keep the git-ref MCP command above, clone/check out
+>   this repo so `plugins/milknado/skills/` exists locally, then copy the
+>   skills in manually from the checkout root, as the opencode section does:
+>
+>   ```sh
+>   cp -r plugins/milknado/skills/ ~/.claude/skills/   # personal
+>   # or project-scoped: cp -r plugins/milknado/skills/ .claude/skills/
+>   ```
+
 ## Configuration
 
 ### quality_gates (required — fail-closed if absent)
