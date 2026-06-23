@@ -53,7 +53,9 @@ def test_shipped_config_worker_tools_extend_family_baseline() -> None:
 
     claude_tools = cfg.worker_tools["claude"]
     # Stored tuple is the raw list (sentinel un-expanded); resolution happens later.
-    assert claude_tools == ("...", "Bash(just:*)")
+    # The sentinel must be present and the just-runner included; other entries may vary.
+    assert "..." in claude_tools
+    assert "Bash(just:*)" in claude_tools
 
     # And the family baseline is genuinely non-empty, so the sentinel carries weight.
     assert WORKER_ALLOWED_TOOLS["claude"], "family baseline must be non-empty"

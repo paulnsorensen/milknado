@@ -8,5 +8,84 @@ concurrency_limit = 4
 db_path = ".milknado/milknado.db"
 plugins = []
 
+[milknado.prompts]
+worker_brief_prepend = """
+Use tilth — the cheez-search / cheez-read / cheez-write skills, or mcp__tilth__* —
+for every file read, search, and edit. Never raw cat/grep/sed/Edit. Hold the
+easy-cheese quality bar: run de-slop and self-eval before declaring done; for
+substantial changes you may use the pipeline skills (/cook, /press, /age, /cure).
+"""
+
 [milknado.worker.tools]
-claude = ["...", "Bash(just:*)"]
+claude = [
+  "...",
+  "Bash(just:*)",
+  "Skill(cheez-search)", "Skill(cheez-read)", "Skill(cheez-write)",
+  "Skill(de-slop)", "Skill(self-eval)", "Skill(tdd-assertions)",
+  "Skill(cook)", "Skill(press)", "Skill(age)", "Skill(cure)",
+]
+
+[milknado.flavor.spec]
+quality_gates = []
+tools = [
+  "...",
+  "Bash(just:*)",
+  "Skill(cheez-search)", "Skill(cheez-read)", "Skill(cheez-write)",
+  "Skill(briesearch)",
+]
+brief_prepend = """
+You are writing a SPEC, not production code. Produce a clear, testable design
+document (problem, approach, public seams, acceptance criteria); do not modify
+application code beyond the spec file. Use the tilth/cheez-* skills for all file
+ops — never raw cat/grep/sed.
+"""
+
+[milknado.flavor.spike]
+quality_gates = []
+tools = [
+  "...",
+  "Bash(just:*)",
+  "WebSearch",
+  "Skill(cheez-search)", "Skill(cheez-read)", "Skill(cheez-write)",
+  "Skill(de-slop)", "Skill(self-eval)", "Skill(tdd-assertions)",
+  "Skill(cook)", "Skill(press)", "Skill(age)", "Skill(cure)",
+]
+brief_prepend = """
+This is a time-boxed SPIKE. Optimize for learning, not polish. Answer the
+question, leave a short note on what you found, and flag anything that should
+become a real task. Use the tilth/cheez-* skills for file ops — never raw
+cat/grep/sed.
+"""
+
+[milknado.flavor.prototype]
+quality_gates = ["uv run ruff check"]
+tools = [
+  "...",
+  "Bash(just:*)",
+  "WebSearch",
+  "Skill(cheez-search)", "Skill(cheez-read)", "Skill(cheez-write)",
+  "Skill(de-slop)", "Skill(self-eval)", "Skill(tdd-assertions)",
+  "Skill(cook)", "Skill(press)", "Skill(age)", "Skill(cure)",
+]
+brief_prepend = """
+Prototype quality: make it work end-to-end. Skip exhaustive edge cases and
+polish. Use the tilth/cheez-* skills for file ops — never raw cat/grep/sed.
+"""
+
+[milknado.flavor.research]
+quality_gates = []
+tools = [
+  "mcp__tilth__tilth_read",
+  "mcp__tilth__tilth_search",
+  "mcp__serena__get_symbols_overview",
+  "mcp__serena__find_symbol",
+  "mcp__serena__find_referencing_symbols",
+  "Read", "Grep", "Glob", "WebSearch",
+  "Skill(cheez-search)", "Skill(cheez-read)", "Skill(briesearch)",
+  "mcp__milknado__milknado_deposit_result",
+]
+brief_prepend = """
+RESEARCH ONLY. Investigate and report — do not modify code. Deposit your findings
+(sources, options, recommendation with a confidence level) as the result. Use
+cheez-search / cheez-read (tilth) for code reads — never raw cat/grep.
+"""
