@@ -45,7 +45,8 @@ class RunDict(TypedDict):
 mcp = FastMCP(
     "Milknado",
     instructions=(
-        "Mikado graph tools: list nodes and add prerequisite nodes. "
+        "Mikado graph tools: graph CRUD, batch planning, worker dispatch "
+        "(run-once), and detached ralph/loop runs. "
         "Set MILKNADO_PROJECT_ROOT or pass project_root to target a repo.\n\n"
         "Ephemeral cloud environments: if you are running in a container that "
         "may be reclaimed on timeout (e.g. Claude Code on the web), persist "
@@ -55,12 +56,11 @@ mcp = FastMCP(
         "(commit the sidecars too so a detached run reclaimed mid-write, before "
         "its WAL is checkpointed into the main file, isn't lost). The db "
         "auto-migrates on load and stores only relative paths, so it spins up "
-        "cleanly in a fresh container — and "
-        "push to the working branch immediately. Before opening the final PR, "
-        "strip those force-added ignored files back out in a cleanup commit "
-        "(or interactive rebase): the merged diff must not contain "
-        "`.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, `.venv/`, "
-        "or anything else listed in `.gitignore`."
+        "cleanly in a fresh container — push to the working branch immediately. "
+        "Before opening the final PR, strip those force-added ignored files back "
+        "out in a cleanup commit (or interactive rebase): the merged diff must "
+        "not contain `.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, "
+        "`.venv/`, or anything else listed in `.gitignore`."
     ),
 )
 
