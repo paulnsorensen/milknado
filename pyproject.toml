@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "milknado"
-version = "0.2.0"
+version = "0.2.1"
 description = "Mikado execution engine — decomposes goals into dependency graphs, executes as parallel ralph loops"
 requires-python = ">=3.11"
 license = "MIT"
