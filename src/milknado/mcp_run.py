@@ -228,7 +228,7 @@ def _state_to_run_dict(state: dict) -> dict:
 
 @mcp.tool()
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
-    """Cancel a running run, reconcile node status, and prune any worktree.
+    """Cancel a run, reconcile node status, and prune any worktree.
 
     Detached-ralph runs are signalled; async-headless runs receive a cancel
     sentinel and are given a bounded window to finalize cooperatively. No-ops
