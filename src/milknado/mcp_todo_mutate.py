@@ -87,12 +87,8 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
     Children reach the target before their parents, so marking a goal done sees
     its prerequisites already completed. Returns {"updated": <count>} of nodes
     whose status actually changed; re-running on an unchanged subtree is a no-op.
-    Reopening a DONE node still raises (the bulk path reuses the same transition
-    rules as milknado_todo_set_status).
-
-    The whole subtree is validated before any write, so an illegal transition
-    (e.g. reopening a DONE node) raises with the graph left untouched — the bulk
-    update is all-or-nothing.
+    The whole subtree is validated before any write — illegal transitions (e.g.
+    reopening a DONE node) raise with the graph left untouched.
     """
     target = _parse_todo_status(status)
     root = resolve_project_root(project_root or None)

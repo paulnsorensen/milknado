@@ -228,16 +228,11 @@ def _state_to_run_dict(state: dict) -> dict:
 
 @mcp.tool()
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
-    """Cancel a run, reconcile node status, and prune any worktree.
+    """Cancel a running run, reconcile node status, and prune any worktree.
 
-    A detached-ralph run (has a recorded process-group pid) is signalled with
-    SIGTERM and finalized immediately. An async-headless run shares the MCP
-    server's process group, so it cannot be signalled — instead a cancel sentinel
-    is written and the worker cooperatively terminates its own subprocess and
-    writes the terminal state, which closes the state-clobber race. Cancel waits a
-    bounded window for that finalize, then takes over the terminal write only if
-    the worker never responds (wedged or crashed). No-ops cleanly if the run is
-    already terminal. Returns the final run state in the unified superset schema.
+    Detached-ralph runs are signalled; async-headless runs receive a cancel
+    sentinel and are given a bounded window to finalize cooperatively. No-ops
+    if the run is already terminal. Returns the final run state.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
