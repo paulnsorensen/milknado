@@ -40,12 +40,6 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
         "mcp__milknado__milknado_track_follow_up",
         "mcp__milknado__milknado_deposit_result",
         "Bash(rtk:*)",
-        "Read",
-        "Edit",
-        "Write",
-        "Glob",
-        "Grep",
-        "MultiEdit",
     ),
     # Gemini uses raw MCP tool names (no mcp__server__ prefix) + ShellTool(pattern) for shell.
     "gemini": (

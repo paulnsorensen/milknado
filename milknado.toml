@@ -80,7 +80,7 @@ tools = [
   "mcp__serena__get_symbols_overview",
   "mcp__serena__find_symbol",
   "mcp__serena__find_referencing_symbols",
-  "Read", "Grep", "Glob", "WebSearch",
+  "WebSearch",
   "Skill(cheez-search)", "Skill(cheez-read)", "Skill(briesearch)",
   "mcp__milknado__milknado_deposit_result",
 ]
