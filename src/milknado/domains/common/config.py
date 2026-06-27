@@ -685,6 +685,8 @@ def _coerce_single_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
     for i, item in enumerate(value):
         if not isinstance(item, str) or not item:
             raise ValueError(f"{ctx}[{i}] must be a non-empty string, got {item!r}")
+        if "\n" in item or "\r" in item:
+            raise ValueError(f"{ctx}[{i}] must not contain newline characters, got {item!r}")
         if item == "...":
             sentinel_count += 1
             if sentinel_count > 1:
