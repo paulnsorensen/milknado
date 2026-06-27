@@ -23,13 +23,13 @@ from milknado.domains.common.config import (
 from milknado.domains.common.types import TaskFlavor
 from milknado.domains.config_sync import (
     FlavorIdentity,
+    SyncFilter,
     render_claude,
     render_codex,
     render_opencode,
     resolve_flavor_identity,
     sync,
 )
-from milknado.domains.config_sync._render import _SyncFilter
 
 runner = CliRunner()
 
@@ -277,7 +277,7 @@ def test_render_codex_read_only_flavor(tmp_path: Path) -> None:
 def test_sync_project_scope_writes_all_harnesses(tmp_path: Path) -> None:
     cfg = default_config(tmp_path)
     results = sync(
-        cfg, "project", _SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.IMPLEMENT]), False
+        cfg, "project", SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.IMPLEMENT]), False
     )
     assert len(results) == 3
     assert {r.harness for r in results} == {"claude", "opencode", "codex"}
@@ -288,7 +288,7 @@ def test_sync_project_scope_writes_all_harnesses(tmp_path: Path) -> None:
 
 def test_sync_dry_run_writes_nothing(tmp_path: Path) -> None:
     cfg = default_config(tmp_path)
-    results = sync(cfg, "project", _SyncFilter(["claude"], [TaskFlavor.IMPLEMENT]), dry_run=True)
+    results = sync(cfg, "project", SyncFilter(["claude"], [TaskFlavor.IMPLEMENT]), dry_run=True)
     assert len(results) == 1
     assert not (tmp_path / ".claude" / "agents" / "milknado-worker-implement.md").exists()
 
@@ -298,7 +298,7 @@ def test_sync_harness_filter_emits_only_requested(tmp_path: Path) -> None:
     results = sync(
         cfg,
         "project",
-        _SyncFilter(["claude"], [TaskFlavor.IMPLEMENT, TaskFlavor.RESEARCH]),
+        SyncFilter(["claude"], [TaskFlavor.IMPLEMENT, TaskFlavor.RESEARCH]),
         dry_run=True,
     )
     assert all(r.harness == "claude" for r in results)
@@ -310,7 +310,7 @@ def test_sync_flavor_filter_emits_only_requested(tmp_path: Path) -> None:
     results = sync(
         cfg,
         "project",
-        _SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.RESEARCH]),
+        SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.RESEARCH]),
         dry_run=True,
     )
     assert all("research" in r.path.name for r in results)
@@ -325,7 +325,7 @@ def test_sync_global_scope_uses_home_paths(
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     cfg = default_config(tmp_path)
     results = sync(
-        cfg, "global", _SyncFilter(["claude", "codex"], [TaskFlavor.IMPLEMENT]), dry_run=True
+        cfg, "global", SyncFilter(["claude", "codex"], [TaskFlavor.IMPLEMENT]), dry_run=True
     )
     cc = next(r for r in results if r.harness == "claude")
     codex = next(r for r in results if r.harness == "codex")
@@ -338,7 +338,7 @@ def test_generated_header_present_in_all_harnesses(tmp_path: Path) -> None:
     results = sync(
         cfg,
         "project",
-        _SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.IMPLEMENT]),
+        SyncFilter(["claude", "opencode", "codex"], [TaskFlavor.IMPLEMENT]),
         dry_run=True,
     )
     for rd in results:
@@ -351,7 +351,7 @@ def test_file_names_match_milknado_worker_prefix(tmp_path: Path) -> None:
     results = sync(
         cfg,
         "project",
-        _SyncFilter(["claude", "opencode", "codex"], list(TaskFlavor)),
+        SyncFilter(["claude", "opencode", "codex"], list(TaskFlavor)),
         dry_run=True,
     )
     for rd in results:

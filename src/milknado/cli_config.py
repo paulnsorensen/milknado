@@ -83,9 +83,9 @@ def config_sync(
 
     project_root = project_root.resolve()
     cfg = _load_cfg(scope, project_root)
-    from milknado.domains.config_sync._render import _SyncFilter
+    from milknado.domains.config_sync import SyncFilter
 
-    results = sync(cfg, scope, _SyncFilter(harnesses, flavor_list), dry_run)
+    results = sync(cfg, scope, SyncFilter(harnesses, flavor_list), dry_run)
 
     action = "Would write" if dry_run else "Wrote"
     for rd in results:
