@@ -2109,6 +2109,44 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     assert names == expected, f"registered tool names changed; got {names}, expected {expected}"
 
 
+def test_mcp_metadata_stays_succinct_and_accurate() -> None:
+    """MCP listings should advertise tool families without implementation mechanics."""
+    from milknado import (  # noqa: F401
+        mcp_node,
+        mcp_ralph,
+        mcp_run,
+        mcp_todo,
+        mcp_todo_mutate,
+        mcp_wiki,
+    )
+
+    families = (
+        "graph CRUD",
+        "batch planning",
+        "worker dispatch",
+        "detached ralph runs",
+        "run polling/cancel",
+        "roadmap import/export",
+    )
+    assert mcp.instructions is not None
+    missing_families = [family for family in families if family not in mcp.instructions]
+    assert missing_families == []
+    assert len(mcp.instructions.split()) <= 90
+
+    tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+    verbose_terms = ("SQLite", "sentinel", "state-clobber", "stale-timeout")
+    for name in (
+        "milknado_run_loop_start",
+        "milknado_run_cancel",
+        "milknado_set_subtree_status",
+    ):
+        description = tools[name].description
+        assert description is not None, name
+        assert len(description.split()) <= 45, name
+        forbidden_terms = [term for term in verbose_terms if term in description]
+        assert forbidden_terms == [], name
+
+
 def test_dispatch_crust_exports_new_public_names() -> None:
     """domains.dispatch.__all__ must export the three names added by the consolidation.
 

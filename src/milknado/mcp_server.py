@@ -43,10 +43,10 @@ def milknado_graph_summary(
     kind: Kind | None = None,
     flavor: Flavor | None = None,
 ) -> dict:
-    """Return Mikado nodes (id, status, description), optionally filtered.
+    """Return Mikado nodes, optionally filtered by status, kind, or flavor.
 
-    status, kind, and flavor narrow the listing to matching nodes; an empty "nodes"
-    list is returned when no node matches (or the graph is empty).
+    Each node includes id, status, and description; no matches returns an empty
+    nodes list.
     """
     want_status = _parse_todo_status(status) if status is not None else None
     want_kind = _parse_kind(kind) if kind is not None else None

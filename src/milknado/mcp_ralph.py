@@ -65,18 +65,11 @@ def milknado_run_loop_start(
     timeout_seconds: int = 1800,
     project_root: str = "",
 ) -> dict:
-    """Dispatch a node into its own git worktree and run a full ralph loop to
-    completion in a detached process; returns immediately with a run_id.
+    """Dispatch a task node in a detached worktree-backed ralph loop.
 
-    Atomically claims the node RUNNING in this parent process BEFORE spawning the
-    detached runner — the SQLite conditional UPDATE is the cross-process
-    mutual-exclusion point, so a second concurrent caller loses the claim and is
-    refused. Creates a worktree + branch, iterates the ralph loop until the node's
-    quality gates pass, then rebase-merges the branch back (the detached runner
-    marks the node done/failed itself). The loop survives this server restarting.
-    Poll with milknado_run_loop_poll(run_id). A node left RUNNING by a dead runner
-    is reclaimed by process-liveness check before the claim (no stale-timeout wait);
-    orphaned runs that finished or vanished without a poll are reconciled first.
+    Returns immediately with a run_id. Poll with milknado_run_loop_poll(run_id)
+    for status, log tail, and final done/failed state. The loop survives MCP
+    server restarts and refuses concurrent dispatch of the same node.
     """
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
@@ -216,10 +209,8 @@ def milknado_run_loop_start(
 def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
     """Poll a ralph run started by milknado_run_loop_start.
 
-    Returns the run state (status running|done|failed, rebased, detail) plus a
-    log tail. The detached runner reconciles node status itself via the executor,
-    so unlike milknado_run_once_poll this only reads the run row — it never
-    transitions the node.
+    Returns the run state, rebase result, log tail, and summary fields without
+    changing node status.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):

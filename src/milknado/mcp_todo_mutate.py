@@ -82,17 +82,10 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
 
 @mcp.tool()
 def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: str = "") -> dict:
-    """Set status on every node in root_id's subtree (post-order, root last).
+    """Set status on every node in root_id's subtree, children before parents.
 
-    Children reach the target before their parents, so marking a goal done sees
-    its prerequisites already completed. Returns {"updated": <count>} of nodes
-    whose status actually changed; re-running on an unchanged subtree is a no-op.
-    Reopening a DONE node still raises (the bulk path reuses the same transition
-    rules as milknado_todo_set_status).
-
-    The whole subtree is validated before any write, so an illegal transition
-    (e.g. reopening a DONE node) raises with the graph left untouched — the bulk
-    update is all-or-nothing.
+    Returns {"updated": <count>}. Validates the whole subtree before writing, so
+    illegal transitions leave the graph unchanged.
     """
     target = _parse_todo_status(status)
     root = resolve_project_root(project_root or None)
@@ -131,14 +124,9 @@ def milknado_track_follow_up(
 ) -> dict:
     """Register discovered follow-up work as a new node.
 
-    When parent_id is omitted, the follow-up is attached as a sibling of the
-    worker's current node (under MILKNADO_NODE_ID's parent), so the node a
-    worker is completing never gains an unmet prerequisite. If MILKNADO_NODE_ID
-    is unset the node is created at root level.
-
-    files: optional list of paths this follow-up will touch (relative to project
-    root, or absolute under it).
-    flavor: task flavor (implement|spec|spike|prototype|research); only valid for kind=task.
+    Without parent_id, attaches beside the worker's current node; without worker
+    context, creates a root node. Optional files record ownership hints. flavor is
+    valid only for task nodes.
     """
     node_kind = _parse_kind(kind)
     node_flavor = _parse_flavor(flavor) if flavor is not None else None
