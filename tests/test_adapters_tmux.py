@@ -289,6 +289,24 @@ def test_real_tmux_window_lifecycle(tmp_path: Path) -> None:
         adapter.kill_window(bad)
         assert not adapter.window_exists(bad)
         adapter.kill_window(bad)
+
+        # Killing a LIVE window kills the run's process group — a kill-window
+        # never orphans the run's process handling (pid-liveness sees the death).
+        from milknado.domains.common import pid_alive
+
+        live = "node-4-20260101T000000Z-0000dddd"
+        live_pid = adapter.open_run_window(
+            RunWindow(
+                run_id=live,
+                argv=("sh", "-c", "sleep 30"),
+                cwd=tmp_path,
+                log_path=rdir / f"{live}.log",
+                exit_code_path=rdir / f"{live}.rc",
+            )
+        )
+        _wait_until(lambda: pid_alive(live_pid))
+        adapter.kill_window(live)
+        _wait_until(lambda: not pid_alive(live_pid))
     finally:
         subprocess.run(
             ["tmux", "-S", str(socket), "kill-server"], capture_output=True, check=False
