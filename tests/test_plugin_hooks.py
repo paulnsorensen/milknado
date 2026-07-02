@@ -17,17 +17,25 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_HOOKS_DIR = _REPO_ROOT / "plugins" / "milknado" / "hooks"
+_REAL_PLUGIN_ROOT = _REPO_ROOT / "plugins" / "milknado"
+_HOOKS_DIR = _REAL_PLUGIN_ROOT / "hooks"
 _HOOKS_JSON = _HOOKS_DIR / "hooks.json"
 _INSTALL_SCRIPT = _HOOKS_DIR / "install-workflow.sh"
 _RUNNER = "node-runner.js"
 
 
-def _run_hook(plugin_root: Path | None, project_dir: Path) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PLUGIN_ROOT"}
+def _run_hook(
+    plugin_root: Path | None, project_dir: Path, *, project_dir_env: bool = True
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("CLAUDE_PLUGIN_ROOT", "CLAUDE_PROJECT_DIR")
+    }
     if plugin_root is not None:
         env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
-    env["CLAUDE_PROJECT_DIR"] = str(project_dir)
+    if project_dir_env:
+        env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     return subprocess.run(
         ["bash", str(_INSTALL_SCRIPT)],
         env=env,
@@ -117,3 +125,47 @@ def test_missing_source_never_deletes_existing_copy(plugin_root: Path, project_d
 
     assert result.returncode == 0, result.stderr
     assert dest.read_text(encoding="utf-8") == "// keep me\n"
+
+
+def test_copies_the_real_bundled_runner(project_dir: Path) -> None:
+    """Pins the hook's source path to the actual shipped payload layout.
+
+    The fake-plugin-root tests stay green if `workflows/` moves inside the
+    payload; this one fails, catching a layout change the hook didn't follow.
+    """
+    result = _run_hook(_REAL_PLUGIN_ROOT, project_dir)
+    assert result.returncode == 0, result.stderr
+    dest = project_dir / ".claude" / "workflows" / _RUNNER
+    expected = (_REAL_PLUGIN_ROOT / "workflows" / _RUNNER).read_text(encoding="utf-8")
+    assert dest.read_text(encoding="utf-8") == expected
+
+
+def test_copy_path_is_silent(plugin_root: Path, project_dir: Path) -> None:
+    """SessionStart hook stdout is injected into session context — stay quiet."""
+    result = _run_hook(plugin_root, project_dir)
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_falls_back_to_cwd_when_project_dir_env_unset(
+    plugin_root: Path, project_dir: Path
+) -> None:
+    result = _run_hook(plugin_root, project_dir, project_dir_env=False)
+    assert result.returncode == 0, result.stderr
+    dest = project_dir / ".claude" / "workflows" / _RUNNER
+    assert dest.read_text(encoding="utf-8") == "// v1\n"
+
+
+def test_change_id_convention_documented_in_header_and_wiki() -> None:
+    """Locks the change-id→node-id convention docs (spec acceptance 2 + 3)."""
+    header = (_REAL_PLUGIN_ROOT / "workflows" / _RUNNER).read_text(encoding="utf-8")
+    assert "id = str(node.id)" in header
+    assert ".map(Number)" in header
+
+    wiki = (
+        _REPO_ROOT / ".hallouminate" / "wiki" / "history" / "workflow-executor-decision.md"
+    ).read_text(encoding="utf-8")
+    assert "install-workflow.sh" in wiki, "wiki must describe the hook-based install path"
+    assert "str(node.id)" in wiki
+    assert "map(Number)" in wiki
