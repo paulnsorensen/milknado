@@ -129,6 +129,23 @@ class TestRemoveWorktreeFailClosed:
         GitAdapter(repo).remove_worktree(wt, "feature")
         assert not wt.exists()
 
+    def test_synthetic_rebase_merge_recognized_as_landed(self, repo: Path) -> None:
+        """External rebase-merge shape: the worktree's commit lands on the
+        feature branch as a new SHA (cherry-pick, like GitHub rebase-and-merge).
+        Ancestor containment fails on the rewritten SHA; the merge-tree
+        fallback must recognize the identical content — no false refusal."""
+        wt = _worktree_with_commit(repo, "wt-rebase")
+        wt_head = _git(wt, "rev-parse", "HEAD").strip()
+        # The feature branch moves on first, so the replayed commit gets a new
+        # parent — guaranteeing a rewritten SHA, the rebase-merge signature.
+        (repo / "unrelated.py").write_text("y = 2\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-qm", "feature moves on")
+        _git(repo, "cherry-pick", wt_head)
+        assert _git(repo, "rev-parse", "HEAD").strip() != wt_head, "landed under a new SHA"
+        GitAdapter(repo).remove_worktree(wt, "feature")
+        assert not wt.exists()
+
     def test_conflicting_target_refuses_not_guesses(self, repo: Path) -> None:
         """When the merge-tree probe conflicts (target diverged incompatibly),
         the check is inconclusive — refuse, never destroy on a guess."""

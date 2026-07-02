@@ -393,7 +393,63 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         assert git.remove_targets == ["feature"]
 
 
+class TestDispatchRelocationIntegration:
+    """Relocation against real git: the preserved orphan still has the node's
+    canonical branch checked out, so reusing the branch name (not just the
+    path) would make `git worktree add -b` fail — the suffix must cover both."""
+
+    def test_dirty_orphan_relocates_dispatch_with_real_git(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        from milknado.domains.common.config import Gate
+        from milknado.domains.execution.executor import ExecutionConfig
+
+        git = GitAdapter(project)
+        # The refused orphan: canonical path, canonical branch checked out, dirty.
+        orphan = project / "milknado-1-add-the-added-helper"
+        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        (orphan / "wip.py").write_text("at-risk work\n")
+
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            graph.add_node("Add the added() helper")
+            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            config = ExecutionConfig(
+                execution_agent="claude",
+                quality_gates=(Gate("true"),),
+                worktree_pattern="milknado-{node_id}-{slug}",
+                project_root=project,
+            )
+            result = ex.dispatch(1, config)
+        finally:
+            graph.close()
+
+        assert result.worktree == project / "milknado-1-add-the-added-helper-2"
+        assert result.worktree.is_dir(), "relocated worktree must really exist"
+        branches = _git(project, "branch", "--list", "milknado/1-add-the-added-helper-2")
+        assert "milknado/1-add-the-added-helper-2" in branches
+        assert (orphan / "wip.py").read_text() == "at-risk work\n", "orphan preserved"
+
+
 # --- minimal duck-typed doubles (the integration tests use a real GitAdapter) ---
+
+
+class _DispatchRalph:
+    """Just enough LoopPort for Executor.dispatch to run against real git."""
+
+    def generate_ralph_md(self, node, context, quality_gates, output_path):  # noqa: ANN001, ANN201
+        output_path.write_text("# ralph\n")
+        return output_path
+
+    def create_run(self, **_kw):  # noqa: ANN003, ANN201
+        class _Run:
+            class state:  # noqa: N801
+                run_id = "run-1"
+
+        return _Run()
+
+    def start_run(self, run_id: str) -> None:
+        pass
 
 
 class _RecordingGit:

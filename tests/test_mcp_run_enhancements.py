@@ -824,6 +824,16 @@ class TestRunCancel:
         assert "unlanded work" in str(exc_info.value), "diagnostic must name the commits"
         assert wt.exists(), "refusal must preserve the worktree"
         assert (wt / "work.py").read_text() == "x = 1\n"
+        # The node is preserved too: the refusal fires before reconcile, so the
+        # RUNNING claim (and its worktree_path pointer) survives for inspection.
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "running"
+            assert node.worktree_path == str(wt)
+        finally:
+            graph.close()
 
 
 class TestAsyncCancel:
