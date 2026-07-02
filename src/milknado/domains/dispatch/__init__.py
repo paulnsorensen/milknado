@@ -24,6 +24,11 @@ from milknado.domains.dispatch.runner import (
     run_headless,
     validate_worker_argv,
 )
+from milknado.domains.dispatch.tmux_run import (
+    ensure_tmux_ready,
+    reconcile_run_window,
+    resolve_attach_target,
+)
 
 __all__ = [
     "AsyncStartRef",
@@ -33,6 +38,7 @@ __all__ = [
     "cancel_run",
     "clear_cancel",
     "dispatch_node_sync",
+    "ensure_tmux_ready",
     "fail_stale_running_runs",
     "find_terminal_runs_for_node",
     "is_cancel_requested",
@@ -42,7 +48,9 @@ __all__ = [
     "poll_async_run",
     "reclaim_stale_node",
     "reconcile_node_status",
+    "reconcile_run_window",
     "render_brief",
+    "resolve_attach_target",
     "request_cancel",
     "run_headless",
     "runs_dir",

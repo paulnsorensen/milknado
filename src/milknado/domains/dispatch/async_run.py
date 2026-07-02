@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from contextlib import suppress
 from pathlib import Path
 
+from milknado.adapters.tmux import RunWindow, TmuxAdapter
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -13,7 +15,13 @@ from milknado.domains.dispatch._runstate import (
     SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES,
 )
 from milknado.domains.dispatch._runstate import (
+    brief_path as _brief_path,
+)
+from milknado.domains.dispatch._runstate import (
     clear_cancel as _clear_cancel,
+)
+from milknado.domains.dispatch._runstate import (
+    exit_code_path as _exit_code_path,
 )
 from milknado.domains.dispatch._runstate import (
     make_run_id as _make_run_id,
@@ -29,9 +37,11 @@ from milknado.domains.dispatch._runstate import (
 )
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
+    _build_worker_env,
     _execute_cancellable,
     _resolve_worker_cmd,
 )
+from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
 
 _logger = logging.getLogger(__name__)
 
@@ -50,21 +60,26 @@ def _open_worker_graph(project_root: Path):  # noqa: ANN202
     return graph
 
 
-def _async_worker(
+def _run_worker_process(
     project_root: Path,
     log_path: Path,
     brief: str,
     argv: list[str],
+    *,
     timeout: int,
     base_state: dict,
-) -> None:
-    rdir = _runs_dir(project_root)
+    rdir: Path,
+    tmux: TmuxAdapter | None,
+) -> tuple[int, bool, bool]:
+    """Execute the worker on the requested substrate: tmux window or subprocess.
+
+    Both paths honour the same contract — brief on stdin, combined output in
+    the run log, cancel-sentinel + timeout enforcement — and return
+    ``(exit_code, timed_out, cancelled)``.
+    """
     run_id = base_state["run_id"]
-    # sqlite connections are not cross-thread: open a fresh in-thread graph for
-    # the terminal write rather than reusing the dispatching tool's connection.
-    graph = _open_worker_graph(project_root)
-    try:
-        exit_code, timed_out, cancelled = _execute_cancellable(
+    if tmux is None:
+        return _execute_cancellable(
             project_root,
             base_state["node_id"],
             log_path,
@@ -73,6 +88,50 @@ def _async_worker(
             timeout,
             runs_dir=rdir,
             run_id=run_id,
+        )
+    # No stdin pipe into a tmux pane: stage the brief to a file the window
+    # wrapper redirects into the worker.
+    staged_brief = _brief_path(rdir, run_id)
+    staged_brief.write_text(brief, encoding="utf-8")
+    log_path.touch()
+    window = RunWindow(
+        run_id=run_id,
+        argv=tuple(argv),
+        cwd=project_root,
+        log_path=log_path,
+        exit_code_path=_exit_code_path(rdir, run_id),
+        env=_build_worker_env(
+            {"MILKNADO_NODE_ID": str(base_state["node_id"]), "MILKNADO_RUN_ID": run_id}
+        ),
+        brief_path=staged_brief,
+    )
+    return _execute_in_window(tmux, window, timeout, rdir)
+
+
+def _async_worker(
+    project_root: Path,
+    log_path: Path,
+    brief: str,
+    argv: list[str],
+    timeout: int,
+    base_state: dict,
+    tmux: TmuxAdapter | None = None,
+) -> None:
+    rdir = _runs_dir(project_root)
+    run_id = base_state["run_id"]
+    # sqlite connections are not cross-thread: open a fresh in-thread graph for
+    # the terminal write rather than reusing the dispatching tool's connection.
+    graph = _open_worker_graph(project_root)
+    try:
+        exit_code, timed_out, cancelled = _run_worker_process(
+            project_root,
+            log_path,
+            brief,
+            argv,
+            timeout=timeout,
+            base_state=base_state,
+            rdir=rdir,
+            tmux=tmux,
         )
         # The worker owns the terminal write for a cancelled run: run_cancel only
         # requests cancellation, so finalizing here (not there) is what closes the
@@ -120,8 +179,13 @@ def _async_worker(
     finally:
         graph.close()
         # Clear the sentinel after the terminal write (both branches) so a reused
-        # run dir never carries a stale cancel request into the next run.
+        # run dir never carries a stale cancel request into the next run. The
+        # tmux path's staged brief and rc file are equally transient — the log
+        # (and a failed run's preserved window) carry the diagnostics.
         _clear_cancel(rdir, run_id)
+        for staged in (_brief_path(rdir, run_id), _exit_code_path(rdir, run_id)):
+            with suppress(FileNotFoundError):
+                staged.unlink()
 
 
 def start_headless_async(
@@ -133,6 +197,7 @@ def start_headless_async(
     run_id: str | None = None,
     *,
     default_cmd: str,
+    tmux: TmuxAdapter | None = None,
 ) -> AsyncStartRef:
     argv = _resolve_worker_cmd(worker_cmd, default_cmd)
     # The caller (milknado_run_once_start) claims the node under a run_id before
@@ -152,7 +217,7 @@ def start_headless_async(
         graph.close()
     threading.Thread(
         target=_async_worker,
-        args=(project_root, log_path, brief, argv, timeout_seconds, base_state),
+        args=(project_root, log_path, brief, argv, timeout_seconds, base_state, tmux),
         daemon=True,
     ).start()
     return AsyncStartRef(run_id=run_id, log_path=log_path)
