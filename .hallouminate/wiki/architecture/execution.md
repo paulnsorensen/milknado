@@ -355,6 +355,57 @@ node. `reconcile_orphan_node` is the shared three-call recovery:
    pass a Python-level run_id check but only the matching UPDATE lands); with no
    run_id it falls back to the unconditional transition, touching only a still-RUNNING node.
 
+## Tmux run substrate — opt-in, per dispatch (`adapters/tmux.py`, `dispatch/tmux_run.py`)
+
+Both long-lived dispatch families accept `use_tmux: bool = False`
+(`milknado_run_loop_start`, `milknado_run_once_start`). The default detached /
+in-process paths are unchanged when it is not passed; a dispatch parameter (not
+a `milknado.toml` key) was chosen as the smallest opt-in surface. With
+`use_tmux=True` the run executes inside a named tmux window and
+`milknado attach <run_id>` drops you into it.
+
+**Topology & naming contract.** One tmux session per project
+(`milknado-<sanitized root dirname>`, `session_name_for`), one window per run,
+window name = the full `run_id`. The target is **derived from the run_id at
+read time** — no `runs`-table column. All targeting uses tmux's `=` exact-match
+prefix (`=session:=run_id`); bare names fall back to prefix/glob matching (man
+tmux, TARGET SPECIFICATIONS). A window-name collision at dispatch is a hard
+error, never reuse.
+
+**Fail-closed.** `ensure_tmux_ready` runs *before* the node claim: if tmux was
+requested but the binary is missing or the server can't start, the dispatch
+raises with a clear message — no silent fallback to the detached path. When
+tmux is not requested, nothing tmux-related runs at dispatch.
+
+**Pane = process group.** The window wrapper (POSIX sh; the milknado session's
+`default-shell` is pinned to `/bin/sh` because a zsh default-shell breaks the
+wrapper via `=word` expansion) runs the same runner argv the detached path
+would spawn, tees output to both the pane and the run log the poll tools tail,
+and records the runner's exit code in `.milknado/runs/<run_id>.rc`. The pane
+pid is recorded as the run's pid, so **pid-liveness stays the sole authority
+for graph-state transitions** (`try_reclaim`, stale sweeps) and
+`milknado_run_cancel`'s `killpg` keeps working; pane liveness is additive only
+(attach precondition + diagnostics). Killing the window kills the pane's
+process group — a run is never orphaned by `kill-window`. The run-once path
+stages the brief at `.milknado/runs/<run_id>.brief` (stdin redirect; a tmux
+pane has no stdin pipe) and waits on the pane pid with the same
+cancel-sentinel + timeout contract as `_execute_cancellable`
+(`execute_in_window`).
+
+**Window lifecycle.** `remain-on-exit on` is set from inside the pane before
+the runner starts. A run that exits 0 kills its own window; a failed run's
+window is preserved as a dead pane for inspection. Reconciliation is per-row
+and lazy, matching the reclaim model above: when a poll observes a `done` run,
+`reconcile_run_window` kills a straggler window via one exact-match query per
+run row (`cleanup_run_window`) — never a pattern sweep of the session's
+windows. The runs table is the expected set; tmux is consulted per row.
+
+**Attach.** `milknado attach <run_id>` (`cli_run.py`) resolves preconditions
+via `resolve_attach_target` — unknown run, finished run, missing tmux binary,
+and non-tmux run each fail with a distinct message — then execs
+`tmux select-window -t =sess:=run \; attach-session` (or `switch-client` when
+already inside tmux).
+
 ## Brief vs context — two artifacts
 
 Don't confuse them. `brief.render_brief` (dispatch) is the markdown piped to a
@@ -373,6 +424,8 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
+- `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.
+- `src/milknado/domains/dispatch/tmux_run.py` — `ensure_tmux_ready` (fail-closed), `execute_in_window` (run-once pane waiter), `cleanup_run_window` / `reconcile_run_window` (per-row lifecycle), `resolve_attach_target`.
 - `src/milknado/domains/common/agent_argv.py` — `WORKER_ALLOWED_TOOLS` (per-vendor worker tool allowlist), `_ALLOWED_WORKER_EXECUTABLES` / `validate_worker_argv` (worker-cmd basename gate), `resolve_*_agent_command`.
 - `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`), `goal_claims` repo (`claim_goal_row`, `release_goal_row`).
 - `src/milknado/mcp_run.py` — `milknado_run_once*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
