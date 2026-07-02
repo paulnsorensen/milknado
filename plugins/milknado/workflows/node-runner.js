@@ -4,12 +4,19 @@
 // agent() per already-claimed milknado node. It runs ALONGSIDE — never replaces
 // — the subprocess CLI dispatcher (Codex/opencode have no ultracode primitive).
 //
-// ── INSTALL / DISCOVERY (this is NOT auto-loaded) ────────────────────────────
-// `workflows/` is not a recognized plugin component, so installing the milknado
-// plugin or registering its MCP server does NOT make this script discoverable.
-// To run it, copy it into `.claude/workflows/` (project-local or ~/.claude) or
-// invoke it by explicit path: Workflow({ scriptPath: "<path>/node-runner.js",
-// args: { claims: [...] } }). It lives here as the in-repo source-of-truth.
+// ── INSTALL / DISCOVERY ──────────────────────────────────────────────────────
+// `workflows/` is not a recognized plugin component, so this file is NOT
+// auto-loaded from the plugin payload. The plugin's SessionStart hook
+// (hooks/hooks.json -> hooks/install-workflow.sh) closes that gap: it
+// idempotently copies this file into the project's `.claude/workflows/`
+// (copy when absent, no-op when identical, refresh when this copy changes,
+// never delete) — installing the plugin IS the install step; the workflow is
+// runnable as of the next session start. This file is the in-repo
+// source-of-truth the hook copies from.
+// Power-user shortcut (UNVERIFIED against public docs — only milknado's
+// internal live test of 2026-06-15 corroborates it): skip the copy and invoke
+// by explicit path: Workflow({ scriptPath: "<path>/node-runner.js",
+// args: { claims: [...] } }). Do not rest tooling on it.
 //
 // ── WHY THIS IS FAN-OUT ONLY (hard runtime constraint) ───────────────────────
 // A Workflow SCRIPT body can call only agent()/parallel()/pipeline()/log()/
@@ -24,9 +31,16 @@
 // The orchestrator owns every milknado MCP call. Around each invocation of this
 // script it runs, in order:
 //   1. const plan = milknado_plan_batches(changes, budget)
-//   2. resolve plan.batches' change_ids -> owning graph node IDs (the orchestrator
-//      built the change-id -> node map when it fed `changes` into plan_batches;
-//      there is no MCP tool to resolve it from here).
+//   2. resolve plan.batches' change_ids -> owning graph node IDs. plan_batches
+//      never touches the graph: Batch.change_ids is a pure echo of the
+//      caller-supplied FileChange.id strings, and no MCP tool maps a change_id
+//      back to a node id after the fact.
+//      CONVENTION (MUST): when batching already-existing graph nodes, set
+//      id = str(node.id) on each change fed into plan_batches. Resolution is
+//      then one line at fan-out time. Worked example:
+//        changes = [{ id: "5", path: "src/a.py" }, { id: "9", path: "src/b.py" }]
+//        plan.batches[0].change_ids            // == ["5", "9"]
+//        nodeIds = plan.batches[0].change_ids.map(Number)   // -> [5, 9]
 //   3. for each batch, in dependency order:
 //        a. claims = batch.map(nodeId => milknado_todo_claim(nodeId, project_root))
 //           Attach project_root to each claim payload before passing it in.
