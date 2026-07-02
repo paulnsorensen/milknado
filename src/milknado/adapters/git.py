@@ -72,7 +72,14 @@ class GitAdapter:
         conflicting or inconclusive probe refuses (fail closed).
 
         Raises UnlandedWorkError naming the worktree and the at-risk work.
+        Raises ValueError when `path` is not itself a registered worktree —
+        git commands run from a stale plain directory resolve against the
+        PARENT repo, which would misreport the root's dirt as the worktree's;
+        callers treat that as a non-refusal failure (nothing to preserve).
         """
+        toplevel = self._run(["rev-parse", "--show-toplevel"], cwd=path).stdout.strip()
+        if Path(toplevel).resolve() != path.resolve():
+            raise ValueError(f"{path} is not a registered worktree (toplevel: {toplevel})")
         dirty = self._run(["status", "--porcelain"], cwd=path).stdout.strip()
         if dirty:
             raise UnlandedWorkError(path, f"dirty files:\n{dirty}")

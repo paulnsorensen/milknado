@@ -158,6 +158,20 @@ class TestRemoveWorktreeFailClosed:
             GitAdapter(repo).remove_worktree(wt, "feature")
         assert wt.exists()
 
+    def test_stale_non_worktree_dir_raises_non_refusal(self, repo: Path) -> None:
+        """A path that exists but is NOT a registered worktree (stale dir after
+        a prune / crashed create) resolves git commands against the PARENT
+        repo — without the toplevel guard, a dirty project root would produce a
+        FALSE UnlandedWorkError naming the root's files. It must raise a plain
+        ValueError (non-refusal: managers warn-and-swallow it, as the old
+        CalledProcessError path did) and never touch the stale dir."""
+        (repo / "root-dirt.py").write_text("uncommitted root work\n")
+        stale = repo / "milknado-stale"
+        stale.mkdir()
+        with pytest.raises(ValueError, match="not a registered worktree"):
+            GitAdapter(repo).remove_worktree(stale, "feature")
+        assert stale.exists()
+
     def test_ignored_scaffolding_does_not_block_removal(self, repo: Path) -> None:
         """RALPH.md / .ralph-logs are git-ignored in real worktrees — they must
         not count as dirt (verified against git 2.53: plain `worktree remove`
