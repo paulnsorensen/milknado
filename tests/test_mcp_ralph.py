@@ -736,7 +736,7 @@ def test_orphan_worktree_removed_before_retry(
 
     removed: list[Path] = []
 
-    def _stub_remove(self: object, wt: Path) -> None:  # noqa: ANN001
+    def _stub_remove(self: object, wt: Path, target: str = "HEAD") -> None:  # noqa: ANN001
         removed.append(wt)
 
     monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _stub_remove)
@@ -778,3 +778,62 @@ def test_orphan_worktree_removed_before_retry(
     )
     assert started["status"] == "running"
     assert removed == [orphan_wt], "orphaned worktree must be removed before retry"
+
+
+def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fail-closed orphan reclaim: a dirty/unlanded orphan refuses removal — the
+    refusal must never block the run loop. The orphan is kept (logged with what
+    is at risk) and the re-dispatch proceeds; the runner's dispatch relocates
+    to a suffixed worktree path instead of reusing the occupied one."""
+    import logging
+
+    import milknado.adapters as adapters
+    from milknado.domains.common.errors import UnlandedWorkError
+
+    def _refuse(self: object, wt: Path, target: str = "HEAD") -> None:  # noqa: ANN001
+        raise UnlandedWorkError(wt, "dirty files:\n M src/app.py")
+
+    monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _refuse)
+
+    root = str(tmp_path)
+    task = _call(milknado_todo_add, description="dirty-orphan", kind="task", project_root=root)
+    node_id = task["id"]
+
+    orphan_wt = tmp_path / "milknado-dirty-orphan"
+    orphan_wt.mkdir()
+    (orphan_wt / "wip.py").write_text("at-risk work\n")
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.mark_running(node_id, worktree_path=str(orphan_wt), branch_name="milknado/dirty")
+    finally:
+        graph.close()
+
+    orphan_id = f"node-{node_id}-20260101T000000Z-dead"
+    _seed_run(
+        tmp_path,
+        run_id=orphan_id,
+        node_id=node_id,
+        status="failed",
+        started_at="2026-01-01T00:00:00+00:00",
+        ended_at="2026-01-01T01:00:00+00:00",
+        timeout_seconds=1800,
+        exit_code=1,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        started = _call(
+            milknado_run_loop_start,
+            node_id=node_id,
+            runner_cmd=f"{sys.executable} -c pass",
+            project_root=root,
+        )
+
+    assert started["status"] == "running", "a refused orphan must never block the run loop"
+    assert (orphan_wt / "wip.py").read_text() == "at-risk work\n", "orphan must be preserved"
+    assert any(
+        "dirty files" in r.getMessage() and str(orphan_wt) in r.getMessage()
+        for r in caplog.records
+    ), "refusal must be logged with the worktree path and what is at risk"

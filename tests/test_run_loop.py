@@ -51,7 +51,10 @@ class FakeGit:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def remove_worktree(self, path: Path) -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        self.removed.append(path)
+
+    def force_remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:

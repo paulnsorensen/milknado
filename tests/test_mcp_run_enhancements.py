@@ -646,7 +646,9 @@ class TestRunCancel:
         pruned: list[bool] = []
 
         monkeypatch.setattr(
-            adapters.GitAdapter, "remove_worktree", lambda self, wt: removed.append(wt)
+            adapters.GitAdapter,
+            "remove_worktree",
+            lambda self, wt, target="HEAD": removed.append(wt),
         )
         monkeypatch.setattr(
             adapters.GitAdapter, "prune_worktrees", lambda self: pruned.append(True)
@@ -718,7 +720,7 @@ class TestRunCancel:
 
         pruned: list[bool] = []
 
-        def boom(self, wt):
+        def boom(self, wt, target="HEAD"):
             raise RuntimeError("worktree locked")
 
         monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", boom)
@@ -743,6 +745,85 @@ class TestRunCancel:
             assert node.status.value == "failed", "removal failure must not strand node RUNNING"
         finally:
             graph2.close()
+
+    def _cancel_repo_with_worktree(
+        self, tmp_path: Path, *, unlanded: bool
+    ) -> tuple[int, str, Path]:
+        """A real git repo at tmp_path with a RUNNING node whose worktree either
+        has all work landed (clean, no new commits) or one unlanded commit."""
+        import subprocess
+
+        def git(cwd: Path, *args: str) -> None:
+            subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True)
+
+        git(tmp_path, "init", "-q", "-b", "feature", str(tmp_path))
+        git(tmp_path, "config", "user.email", "t@t")
+        git(tmp_path, "config", "user.name", "t")
+        (tmp_path / "README.md").write_text("seed\n")
+        git(tmp_path, "add", ".")
+        git(tmp_path, "commit", "-qm", "seed")
+        wt = tmp_path / "milknado-cancel-wt"
+        git(tmp_path, "worktree", "add", "-q", "-b", "milknado/cancel", str(wt))
+        if unlanded:
+            (wt / "work.py").write_text("x = 1\n")
+            git(wt, "add", ".")
+            git(wt, "commit", "-qm", "unlanded work")
+
+        task = _call(
+            milknado_todo_add, description="cancel-git", kind="task", project_root=str(tmp_path)
+        )
+        node_id = task["id"]
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            graph.mark_running(node_id, worktree_path=str(wt), branch_name="milknado/cancel")
+        finally:
+            graph.close()
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
+        return node_id, run_id, wt
+
+    def test_cancel_removes_landed_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Acceptance 5 (landed): a cancelled run whose worktree holds nothing
+        unlanded is torn down through the fail-closed path and the node
+        reconciles to failed."""
+        node_id, run_id, wt = self._cancel_repo_with_worktree(tmp_path, unlanded=False)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+
+        assert result["status"] == "failed"
+        assert not wt.exists(), "a landed worktree must be removed on cancel"
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(node_id)
+            assert node is not None
+            assert node.status.value == "failed"
+        finally:
+            graph.close()
+
+    def test_cancel_refuses_unlanded_worktree_and_hard_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Acceptance 5 (unlanded): cancelling a run whose worktree holds a
+        commit the feature branch never received must hard-fail with a
+        diagnostic naming the worktree and the at-risk commits — never
+        silently destroy the only copy of that work."""
+        from milknado.domains.common.errors import UnlandedWorkError
+
+        node_id, run_id, wt = self._cancel_repo_with_worktree(tmp_path, unlanded=True)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+
+        with pytest.raises(UnlandedWorkError) as exc_info:
+            _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+
+        assert str(wt) in str(exc_info.value)
+        assert "unlanded work" in str(exc_info.value), "diagnostic must name the commits"
+        assert wt.exists(), "refusal must preserve the worktree"
+        assert (wt / "work.py").read_text() == "x = 1\n"
 
 
 class TestAsyncCancel:

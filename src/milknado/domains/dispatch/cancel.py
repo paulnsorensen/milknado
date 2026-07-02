@@ -59,7 +59,17 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
     to the unconditional RUNNING→terminal transition. `status` is the run's actual
     terminal status: a worker that finished `done` inside the cancel window must
     reconcile its node `done`, not be force-failed.
+
+    Worktree teardown goes through `WorktreeManager.remove` — the fail-closed
+    path — never the raw adapter: a cancelled run whose worktree still holds
+    dirty or unlanded work hard-fails the cancel with `UnlandedWorkError`
+    (the worktree and node are preserved for inspection); any other removal
+    failure is logged and the reconcile proceeds.
     """
+    # Imported lazily (like _open_graph_for_cancel) so importing the dispatch
+    # slice does not drag in the execution slice's TUI dependencies.
+    from milknado.domains.execution import WorktreeManager
+
     if node_id is None:
         return
     graph = _open_graph_for_cancel(root)
@@ -68,10 +78,7 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
         if node is not None and node.worktree_path:
             wt = Path(node.worktree_path)
             if wt.exists():
-                try:
-                    GitAdapter(root).remove_worktree(wt)
-                except Exception as exc:
-                    _logger.warning("Failed to remove worktree %s on cancel: %s", wt, exc)
+                WorktreeManager(GitAdapter(root)).remove(node_id, wt)
         reconcile_node_status(graph, node_id, status, run_id=run_id)
     finally:
         graph.close()

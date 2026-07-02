@@ -26,11 +26,17 @@ exit 124/137/143 — see `_is_transient`) retry.
 
 `_dispatch_once`:
 
-1. `WorktreeManager.ensure_clean` removes any stale worktree tracked for the node.
+1. `WorktreeManager.ensure_clean` removes any stale worktree tracked for the
+   node — fail-closed: a refusal (dirty/unlanded orphan) is logged with what is
+   at risk and the orphan is kept (see "Fail-closed worktree teardown" below).
 2. Slugify description → worktree path from `config.worktree_pattern`; **reject
    paths that resolve outside `project_root`** (path-escape guard).
-3. Create the worktree on branch `milknado/{id}-{slug}`.
-4. Two claim paths diverge here (see "Two claim paths" below): set the node
+3. If the canonical path is still occupied (a preserved orphan),
+   `_relocate_occupied` degrades: deterministic `-<n>` suffix on both path and
+   branch, first free slot wins — a refused orphan never blocks dispatch.
+4. Create the worktree on branch `milknado/{id}-{slug}` (or the relocated
+   `…-{n}` variant).
+5. Two claim paths diverge here (see "Two claim paths" below): set the node
    RUNNING (or attach worktree metadata to an already-claimed node), generate
    `RALPH.md` via `_create_ralph_run`, start the ralph run, record `dispatched_at`.
 
@@ -129,7 +135,9 @@ checking status.
   Failing loud here is deliberate: silently no-op'ing would hide a real
   state-machine bug and print a false completion in the run loop.
 - **RUNNING** — `WorktreeManager.rebase_and_merge` squash-commits the worktree,
-  rebases onto `feature_branch`, and removes the worktree in a `finally`.
+  rebases onto `feature_branch`, and tears down the worktree in a `finally` —
+  but only when the rebase reported success; a conflicting rebase or in-flight
+  exception keeps the worktree (that work is by definition unlanded).
   `RebaseAbortError` re-raises (repo corruption — never swallowed); other
   exceptions become a failed `RebaseResult`. On success → `_mark_terminal(DONE)`
   and records completion duration; on failure → `_mark_terminal(FAILED)` + build a
@@ -139,6 +147,43 @@ checking status.
 run_id, status)` (atomic `WHERE run_id=? AND status='running'`) and returns
 whether the write landed; with no `run_id` (legacy/test) it transitions
 unconditionally. Duration is recorded only when the write actually landed.
+
+## Fail-closed worktree teardown
+
+Teardown refuses to destroy work by default; destruction is an explicitly
+named act. `GitAdapter.remove_worktree(path, target="HEAD")` is fail-closed:
+
+- **Dirty guard** — `git status --porcelain` pre-check (plus git's own native
+  no-`--force` refusal as backstop); dirty files are named in the diagnostic.
+- **Landed check** — two layers, git-native, no `gh`/PR dependency:
+  `git merge-base --is-ancestor <worktree_head> <target>` primary (exact for
+  milknado's own squash → rebase → `merge --ff-only` land path, which makes the
+  landed HEAD literally equal the target tip), with a `git merge-tree
+  --write-tree` content-equality fallback so externally squash/rebase-landed
+  content (new SHAs, same tree) is recognized. A conflicting/inconclusive probe
+  **refuses** — never destroy on a guess.
+- Refusal raises `UnlandedWorkError` naming the worktree and the at-risk work
+  (dirty files and/or the unlanded commit range).
+- `GitAdapter.force_remove_worktree` is the only `--force` teardown, reachable
+  solely via `WorktreeManager.discard` (asserted by a source-audit test in
+  `test_adapters_git.py`).
+
+Refusal semantics per call site:
+
+| Site | On refusal |
+|---|---|
+| `WorktreeManager.remove` (from `rebase_and_merge` / `Executor.fail`) | **hard-fail** the caller — the old warn-and-swallow after a `--force` remove was silent destruction |
+| `cancel.py:_reconcile_cancel` (routes through `WorktreeManager.remove`, never the raw adapter) | **hard-fail** the cancel; worktree and node preserved |
+| `WorktreeManager.ensure_clean` (pre-dispatch cleanup) | **degrade** — log what is at risk, keep the orphan, dispatch relocates |
+| Orphan prune in `milknado_run_loop_start` (`mcp_ralph.py`) | **degrade** — same; the run loop is never blocked |
+| `WorktreeManager.discard` | unchanged — this IS the explicit destructive path |
+
+`rebase_and_merge`'s landed check runs against `feature_branch` and the
+worktree's HEAD *at removal time* — post-squash/rebase/ff — so the happy path
+removes cleanly while a squashed-but-never-fast-forwarded HEAD (the old
+silently-destroyed case) refuses. Non-refusal removal failures (nothing was
+destroyed; the worktree is still on disk) stay warn-and-swallow so the node
+lifecycle keeps moving.
 
 ## Headless single-node loop (headless.py)
 
@@ -261,9 +306,11 @@ bugs #38/#39/#50 pointed at):
   (`_CANCEL_FINALIZE_TIMEOUT_SECS`) for the worker to own the terminal write,
   taking over only if the worker never responds (`_cancel_async_run`). Both paths
   reconcile the node fenced on `run_id` (`_reconcile_cancel` → the same
-  `reconcile_node_status` orphan recovery uses) and prune the worktree
-  (`remove_worktree` + `git worktree prune`). No-ops cleanly when the run is
-  already terminal.
+  `reconcile_node_status` orphan recovery uses) and tear down the worktree
+  through `WorktreeManager.remove` — the fail-closed path (see *Fail-closed
+  worktree teardown*): dirty/unlanded work hard-fails the cancel with
+  `UnlandedWorkError` — then `git worktree prune`. No-ops cleanly when the run
+  is already terminal.
 
 ## Worker-dispatch families — single-shot (3) vs ralph (4), and why both exist
 

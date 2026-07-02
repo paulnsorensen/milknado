@@ -36,7 +36,10 @@ class _FakeGit:
     def create_worktree(self, path: Path, branch: str) -> Path:
         return path
 
-    def remove_worktree(self, path: Path) -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        pass
+
+    def force_remove_worktree(self, path: Path) -> None:
         pass
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:

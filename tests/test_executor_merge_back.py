@@ -178,6 +178,13 @@ class TestMergeBackIntegration:
         finally:
             graph.close()
 
+        # Fail-closed teardown: the squashed-but-never-fast-forwarded commit
+        # exists only in this worktree — it must survive the failed merge-back
+        # (it used to be force-removed here: the silent-destruction bug).
+        assert wt.exists(), "unlanded worktree must be preserved on ff failure"
+        subjects = _git(wt, "log", "--oneline", "feature..HEAD")
+        assert "feat(milknado-1)" in subjects, "the squashed commit is the preserved work"
+
 
 class TestGitAdapterContract:
     """The merge-back relies on two adapter contract changes: squash_and_commit must
@@ -360,16 +367,30 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch=None)
         assert git.fast_forwarded == []
 
-    def test_worktree_removed_even_when_fast_forward_raises(self, tmp_path: Path) -> None:
-        """The finally-block worktree cleanup must run even on a loud ff failure, so a
-        failed merge-back does not leak the worktree."""
+    def test_worktree_kept_when_fast_forward_raises(self, tmp_path: Path) -> None:
+        """A ff failure means the squashed commit never landed on the feature
+        branch — the worktree is the only copy of that work. Fail-closed
+        teardown keeps it (the old force-remove here was the exact
+        silent-destruction bug) while RebaseAbortError still propagates."""
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=True, ff_error=subprocess.CalledProcessError(1, "git"))
         wm = WorktreeManager(git)
         with pytest.raises(RebaseAbortError):
             wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
+        assert git.removed == [], "unlanded work must not be torn down"
+        assert wt.exists()
+
+    def test_success_path_removes_with_feature_branch_target(self, tmp_path: Path) -> None:
+        """On a landed merge-back the removal's landed check must target the
+        feature branch the work just fast-forwarded onto."""
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        git = _RecordingGit(committed=True)
+        wm = WorktreeManager(git)
+        wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.removed == [wt]
+        assert git.remove_targets == ["feature"]
 
 
 # --- minimal duck-typed doubles (the integration tests use a real GitAdapter) ---
@@ -385,6 +406,7 @@ class _RecordingGit:
         self._ff_error = ff_error
         self.fast_forwarded: list[str] = []
         self.removed: list[Path] = []
+        self.remove_targets: list[str] = []
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         return self._committed
@@ -399,7 +421,11 @@ class _RecordingGit:
             raise self._ff_error
         self.fast_forwarded.append(branch)
 
-    def remove_worktree(self, path: Path) -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        self.removed.append(path)
+        self.remove_targets.append(target)
+
+    def force_remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
 
