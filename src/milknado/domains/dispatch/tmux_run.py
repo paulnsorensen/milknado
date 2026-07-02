@@ -13,6 +13,7 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
@@ -73,15 +74,25 @@ def read_exit_code(path: Path) -> int:
 
 
 def execute_in_window(
-    tmux: TmuxAdapter, window: RunWindow, timeout: int, rdir: Path
+    tmux: TmuxAdapter,
+    window: RunWindow,
+    timeout: int,
+    rdir: Path,
+    *,
+    on_start: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
     """Run a run-once worker inside a tmux window; mirrors ``_execute_cancellable``.
 
     The waiter polls the pane pid (there is no Popen handle — the process is a
     child of the tmux server) and enforces the same cancel-sentinel and
-    timeout contract. Returns ``(exit_code, timed_out, cancelled)``.
+    timeout contract. ``on_start`` receives the pane pid as soon as the window
+    exists — callers persist it on the run row so pid-liveness (stale sweeps,
+    ``milknado_run_cancel``) can see a pane that outlives the MCP server.
+    Returns ``(exit_code, timed_out, cancelled)``.
     """
     pane_pid = tmux.open_run_window(window)
+    if on_start is not None:
+        on_start(pane_pid)
     timed_out = False
     cancelled = False
     deadline = time.monotonic() + timeout

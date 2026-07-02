@@ -70,6 +70,7 @@ def _run_worker_process(
     base_state: dict,
     rdir: Path,
     tmux: TmuxAdapter | None,
+    graph,  # noqa: ANN001
 ) -> tuple[int, bool, bool]:
     """Execute the worker on the requested substrate: tmux window or subprocess.
 
@@ -105,7 +106,17 @@ def _run_worker_process(
         ),
         brief_path=staged_brief,
     )
-    return _execute_in_window(tmux, window, timeout, rdir)
+    # Persist the pane pid on the run row (fenced on status='running'): a tmux
+    # pane outlives an MCP-server restart, so the stale sweep's pid-liveness
+    # skip and milknado_run_cancel's group-kill must be able to see it —
+    # unlike the in-process subprocess path, which dies with the server.
+    return _execute_in_window(
+        tmux,
+        window,
+        timeout,
+        rdir,
+        on_start=lambda pane_pid: graph.set_run_pid(run_id, pane_pid),
+    )
 
 
 def _async_worker(
@@ -132,6 +143,7 @@ def _async_worker(
             base_state=base_state,
             rdir=rdir,
             tmux=tmux,
+            graph=graph,
         )
         # The worker owns the terminal write for a cancelled run: run_cancel only
         # requests cancellation, so finalizing here (not there) is what closes the

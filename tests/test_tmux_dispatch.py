@@ -302,6 +302,58 @@ def test_run_once_use_tmux_failure_preserves_window(tmp_path, monkeypatch) -> No
     assert started["run_id"] in fake.windows
 
 
+def test_run_once_use_tmux_records_pane_pid_on_run_row(tmp_path, monkeypatch) -> None:
+    """A tmux pane outlives an MCP-server restart, so the pane pid must land
+    on the run row for the stale sweep's pid-liveness skip and cancel."""
+    fake = SpawningFakeTmux("cat {brief} > /dev/null; echo 0 > {rc}")
+    monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", lambda root: fake)
+    root = str(tmp_path)
+    started = _call(
+        milknado_run_once_start,
+        node_id=_add_task(root),
+        worker_cmd="claude",
+        use_tmux=True,
+        project_root=root,
+    )
+    final = _wait_for_terminal(root, started["run_id"])
+    assert final["pid"] == fake.procs[0].pid
+
+
+def test_run_cancel_of_tmux_run_once_kills_pane_group(tmp_path, monkeypatch) -> None:
+    """With the pane pid recorded, milknado_run_cancel takes the pid route:
+    the pane's process group is signalled and the run finalizes failed."""
+    from milknado.mcp_run import milknado_run_cancel
+
+    fake = SpawningFakeTmux("sleep 30")
+    monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
+    root = str(tmp_path)
+    node_id = _add_task(root)
+    started = _call(
+        milknado_run_once_start,
+        node_id=node_id,
+        worker_cmd="claude",
+        use_tmux=True,
+        project_root=root,
+    )
+    # Wait for the worker thread to persist the pane pid on the run row.
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        deadline = time.monotonic() + 5.0
+        while graph.get_run(started["run_id"]).get("pid") is None:
+            assert time.monotonic() < deadline, "pane pid never recorded"
+            time.sleep(0.05)
+    finally:
+        graph.close()
+    final = _call(milknado_run_cancel, run_id=started["run_id"], project_root=root)
+    assert final["status"] == "failed"
+    deadline = time.monotonic() + 5.0
+    while pid_alive(fake.procs[0].pid) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not pid_alive(fake.procs[0].pid)
+    assert _node_status(root, node_id) == NodeStatus.FAILED
+
+
 def test_run_once_use_tmux_timeout_kills_pane_group(tmp_path, monkeypatch) -> None:
     fake = SpawningFakeTmux("sleep 30")
     monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)

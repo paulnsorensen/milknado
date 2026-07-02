@@ -3,6 +3,7 @@ one integration test driving a real headless tmux server on a private socket."""
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import time
@@ -67,6 +68,29 @@ def test_wrapped_command_redirects_staged_brief_to_stdin(tmp_path: Path) -> None
     brief = tmp_path / f"{RUN_ID}.brief"
     cmd = adapter._wrapped_command(_window(tmp_path, brief_path=brief))
     assert f"< {brief} 2>&1" in cmd
+
+
+def test_wrapped_command_gives_runner_exactly_the_filtered_env(tmp_path: Path) -> None:
+    """`env -i` parity with the detached path's replacement env: the pane
+    inherits the tmux *server's* environment (which may carry user secrets),
+    so the runner must be started with only the allowlisted vars."""
+    adapter = TmuxAdapter(tmp_path)
+    cmd = adapter._wrapped_command(
+        _window(tmp_path, env={"MILKNADO_RUN_ID": RUN_ID, "PATH": "/usr/bin"})
+    )
+    assert f"env -i {shlex.quote(f'MILKNADO_RUN_ID={RUN_ID}')} PATH=/usr/bin sh -c true" in cmd
+
+
+def test_run_translates_a_wedged_tmux_into_dispatch_error(tmp_path: Path, monkeypatch) -> None:
+    """TimeoutExpired is not an OSError: untranslated it would escape the
+    dispatchers' claim-release guards and strand a node RUNNING."""
+
+    def _hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=["tmux"], timeout=30)
+
+    monkeypatch.setattr(subprocess, "run", _hang)
+    with pytest.raises(TmuxDispatchError, match="timed out after"):
+        TmuxAdapter(tmp_path)._run(["list-windows"])
 
 
 # --- availability and error branches (stubbed tmux binary) --------------------
@@ -209,10 +233,13 @@ def _wait_until(condition, timeout: float = 10.0) -> None:
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
-def test_real_tmux_window_lifecycle(tmp_path: Path) -> None:
+def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
     """Drives a real headless tmux server (private socket, no TTY) through the
-    full window contract: env injection, log tee, brief redirect, success
+    full window contract: env isolation, log tee, brief redirect, success
     self-clean, failure preservation, collision, and exact-match kill."""
+    # The tmux server this test starts inherits this sentinel; it must NOT
+    # leak into the worker (env -i isolation — the security invariant).
+    monkeypatch.setenv("LEAKY_SECRET", "should-not-reach-worker")
     socket = tmp_path / "tmux-test.sock"
     adapter = TmuxAdapter(tmp_path, socket_path=socket)
     rdir = tmp_path / "runs"
@@ -221,13 +248,13 @@ def test_real_tmux_window_lifecycle(tmp_path: Path) -> None:
         adapter.ensure_session()
         adapter.ensure_session()  # idempotent — reuses, never duplicates
 
-        # Success: output (with injected env) lands in the log, exit code in
-        # the rc file, and the window cleans itself up.
+        # Success: output (with ONLY the injected env) lands in the log, exit
+        # code in the rc file, and the window cleans itself up.
         ok = "node-1-20260101T000000Z-0000aaaa"
         pane_pid = adapter.open_run_window(
             RunWindow(
                 run_id=ok,
-                argv=("sh", "-c", 'echo "out $MILKNADO_RUN_ID"'),
+                argv=("sh", "-c", 'echo "out $MILKNADO_RUN_ID leak=[$LEAKY_SECRET]"'),
                 cwd=tmp_path,
                 log_path=rdir / f"{ok}.log",
                 exit_code_path=rdir / f"{ok}.rc",
@@ -236,7 +263,7 @@ def test_real_tmux_window_lifecycle(tmp_path: Path) -> None:
         )
         assert pane_pid > 0
         _wait_until(lambda: not adapter.window_exists(ok))
-        assert f"out {ok}" in (rdir / f"{ok}.log").read_text()
+        assert f"out {ok} leak=[]" in (rdir / f"{ok}.log").read_text()
         assert (rdir / f"{ok}.rc").read_text().strip() == "0"
 
         # Brief redirect: worker reads the staged brief on stdin.

@@ -69,13 +69,21 @@ class TmuxAdapter:
         cmd = ["tmux"]
         if self._socket is not None:
             cmd += ["-S", str(self._socket)]
-        return subprocess.run(
-            [*cmd, *args],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=_TMUX_TIMEOUT_SECS,
-        )
+        try:
+            return subprocess.run(
+                [*cmd, *args],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_TMUX_TIMEOUT_SECS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired is not an OSError: without this translation a
+            # wedged tmux server would escape the dispatchers' claim-release
+            # guards and strand a node RUNNING with no terminal run write.
+            raise TmuxDispatchError(
+                f"tmux {args[0]} timed out after {_TMUX_TIMEOUT_SECS}s"
+            ) from exc
 
     def available(self) -> bool:
         return shutil.which("tmux") is not None
@@ -135,10 +143,8 @@ class TmuxAdapter:
             window.run_id,
             "-c",
             str(window.cwd),
+            self._wrapped_command(window),
         ]
-        for key, value in window.env.items():
-            args += ["-e", f"{key}={value}"]
-        args.append(self._wrapped_command(window))
         result = self._run(args)
         if result.returncode != 0:
             raise TmuxDispatchError(
@@ -169,12 +175,17 @@ class TmuxAdapter:
           with no create/set race (in-pane ``set-option`` needs the explicit
           ``$TMUX_PANE`` target — without it the option lands on the session's
           current window, empirically verified on tmux 3.7).
+        - ``env -i`` gives the runner exactly ``window.env`` — parity with the
+          detached path's replacement ``env=`` — because a tmux pane otherwise
+          inherits the *server's* environment (which may carry user secrets the
+          worker-env allowlist exists to strip), and ``-e`` can only add vars.
         - ``tee`` keeps output live in the pane AND appended to the run log the
           poll tools tail; the runner's own exit code (not tee's) lands in the
           rc file.
         - A successful run kills its own window; a failed run leaves it behind.
         """
-        runner = shlex.join(window.argv)
+        assignments = (shlex.quote(f"{k}={v}") for k, v in window.env.items())
+        runner = " ".join(["env", "-i", *assignments, shlex.join(window.argv)])
         if window.brief_path is not None:
             runner += f" < {shlex.quote(str(window.brief_path))}"
         rc = shlex.quote(str(window.exit_code_path))
@@ -186,7 +197,7 @@ class TmuxAdapter:
         return (
             'tmux set-option -w -t "$TMUX_PANE" remain-on-exit on; '
             f"{{ {runner} 2>&1; echo $? > {rc}; }} | tee -a {log}; "
-            f"rc=$(cat {rc} 2>/dev/null || echo 1); "
+            f'rc=$(cat {rc} 2>/dev/null || echo 1); [ -n "$rc" ] || rc=1; '
             f'if [ "$rc" -eq 0 ]; then tmux kill-window -t {kill_target}; fi; '
             'exit "$rc"'
         )

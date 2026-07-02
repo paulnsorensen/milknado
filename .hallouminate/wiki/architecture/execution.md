@@ -380,10 +380,15 @@ tmux is not requested, nothing tmux-related runs at dispatch.
 **Pane = process group.** The window wrapper (POSIX sh; the milknado session's
 `default-shell` is pinned to `/bin/sh` because a zsh default-shell breaks the
 wrapper via `=word` expansion) runs the same runner argv the detached path
-would spawn, tees output to both the pane and the run log the poll tools tail,
-and records the runner's exit code in `.milknado/runs/<run_id>.rc`. The pane
-pid is recorded as the run's pid, so **pid-liveness stays the sole authority
-for graph-state transitions** (`try_reclaim`, stale sweeps) and
+would spawn — through `env -i <allowlisted vars>` for exact parity with
+Popen's replacement env, since a pane otherwise inherits the tmux *server's*
+environment and would leak user secrets the worker-env allowlist strips — tees
+output to both the pane and the run log the poll tools tail, and records the
+runner's exit code in `.milknado/runs/<run_id>.rc`. The pane pid is recorded
+as the run's pid (both families — the run-once waiter persists it via
+`set_run_pid` because a pane, unlike the in-process subprocess, survives an
+MCP-server restart), so **pid-liveness stays the sole authority for
+graph-state transitions** (`try_reclaim`, stale sweeps) and
 `milknado_run_cancel`'s `killpg` keeps working; pane liveness is additive only
 (attach precondition + diagnostics). Killing the window kills the pane's
 process group — a run is never orphaned by `kill-window`. The run-once path
