@@ -214,12 +214,10 @@ def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
 
 @mcp.tool()
 def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
-    """List active and recent runs from the db, sorted newest first.
+    """List active and recent runs, newest first.
 
-    Returns superset-schema dicts. summary is always None — use
-    milknado_run_once_poll or milknado_run_loop_poll for log tails. Bounded to
-    the `limit` most-recently-started runs so read cost stays flat as run history
-    grows; raise `limit` to widen the window.
+    Returns superset-schema dicts for up to `limit` runs. Use poll tools for log
+    tails; list results keep summary as None.
     """
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
@@ -244,11 +242,10 @@ def _state_to_run_dict(state: dict) -> dict:
 
 @mcp.tool()
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
-    """Cancel a run, reconcile node status, and prune any worktree.
+    """Cancel a run and return its final superset-schema state.
 
-    Detached-ralph runs are signalled; async-headless runs receive a cancel
-    sentinel and are given a bounded window to finalize cooperatively. No-ops
-    if the run is already terminal. Returns the final run state.
+    No-ops for terminal runs. Active runs are asked to stop, finalized when safe,
+    and cleaned up with any owned worktree.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):

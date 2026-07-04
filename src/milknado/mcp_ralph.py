@@ -69,11 +69,13 @@ def milknado_run_loop_start(
     use_tmux: bool = False,
     project_root: str = "",
 ) -> dict:
-    """Claim node_id and spawn a detached ralph loop; returns immediately with a run_id.
+    """Dispatch a task node in a detached worktree-backed ralph loop.
 
-    A second concurrent caller is refused (atomic claim). Poll with
-    milknado_run_loop_poll(run_id). use_tmux=True runs the loop inside a named
-    tmux window (`milknado attach <run_id>`); fails fast if tmux is unavailable.
+    Returns immediately with a run_id. Poll with milknado_run_loop_poll(run_id)
+    for status, log tail, and final done/failed state. The loop survives MCP
+    server restarts and refuses concurrent dispatch of the same node.
+    use_tmux=True runs the loop inside a named tmux window
+    (`milknado attach <run_id>`); fails fast if tmux is unavailable.
     """
     root = resolve_project_root(project_root or None)
     tmux: TmuxAdapter | None = None
@@ -238,7 +240,8 @@ def milknado_run_loop_start(
 def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
     """Poll a ralph run started by milknado_run_loop_start.
 
-    Returns run state (status running|done|failed, rebased, detail) plus a log tail.
+    Returns the run state, rebase result, log tail, and summary fields without
+    changing node status.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
