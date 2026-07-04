@@ -312,10 +312,10 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
                 )
             )
 
-        # Exact-match kill removes it; killing an absent window is a no-op.
-        adapter.kill_window(bad)
+        # Exact-match kill removes it; killing an absent window is a False no-op.
+        assert adapter.kill_window(bad) is True
         assert not adapter.window_exists(bad)
-        adapter.kill_window(bad)
+        assert adapter.kill_window(bad) is False
 
         # Killing a LIVE window kills the run's process group — a kill-window
         # never orphans the run's process handling (pid-liveness sees the death).

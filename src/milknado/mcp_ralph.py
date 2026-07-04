@@ -71,10 +71,9 @@ def milknado_run_loop_start(
 ) -> dict:
     """Dispatch a task node in a detached worktree-backed ralph loop.
 
-    Returns immediately with a run_id. Poll with milknado_run_loop_poll(run_id)
-    for status, log tail, and final done/failed state. The loop survives MCP
-    server restarts and refuses concurrent dispatch of the same node.
-    use_tmux=True runs the loop inside a named tmux window
+    Returns immediately with a run_id; poll with milknado_run_loop_poll(run_id).
+    Survives MCP-server restarts; refuses concurrent dispatch.
+    use_tmux=True runs the loop in a named tmux window
     (`milknado attach <run_id>`); fails fast if tmux is unavailable.
     """
     root = resolve_project_root(project_root or None)

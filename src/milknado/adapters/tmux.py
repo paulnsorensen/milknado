@@ -157,15 +157,20 @@ class TmuxAdapter:
                 f"tmux returned an unparseable pane pid: {result.stdout!r}"
             ) from exc
 
-    def kill_window(self, run_id: str) -> None:
-        """Kill the run's window; an absent window is a no-op."""
+    def kill_window(self, run_id: str) -> bool:
+        """Kill the run's window; an absent window is a no-op returning False.
+
+        The internal existence check is the caller's too — returning whether a
+        window was killed keeps reconcile at one exact-match query per run row.
+        """
         if not self.window_exists(run_id):
-            return
+            return False
         result = self._run(["kill-window", "-t", self.target_for(run_id)])
         if result.returncode != 0:
             raise TmuxDispatchError(
                 f"tmux could not kill window {run_id!r}: {result.stderr.strip()}"
             )
+        return True
 
     def _wrapped_command(self, window: RunWindow) -> str:
         """POSIX-sh wrapper enforcing the window lifecycle contract.

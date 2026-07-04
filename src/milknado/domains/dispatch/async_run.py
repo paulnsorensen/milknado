@@ -78,7 +78,6 @@ def _run_worker_process(
     the run log, cancel-sentinel + timeout enforcement — and return
     ``(exit_code, timed_out, cancelled)``.
     """
-    run_id = base_state["run_id"]
     if tmux is None:
         return _execute_cancellable(
             project_root,
@@ -88,10 +87,39 @@ def _run_worker_process(
             argv,
             timeout,
             runs_dir=rdir,
-            run_id=run_id,
+            run_id=base_state["run_id"],
         )
-    # No stdin pipe into a tmux pane: stage the brief to a file the window
-    # wrapper redirects into the worker.
+    return _run_in_tmux_window(
+        project_root,
+        log_path,
+        brief,
+        argv,
+        timeout=timeout,
+        base_state=base_state,
+        rdir=rdir,
+        tmux=tmux,
+        graph=graph,
+    )
+
+
+def _run_in_tmux_window(
+    project_root: Path,
+    log_path: Path,
+    brief: str,
+    argv: list[str],
+    *,
+    timeout: int,
+    base_state: dict,
+    rdir: Path,
+    tmux: TmuxAdapter,
+    graph,  # noqa: ANN001
+) -> tuple[int, bool, bool]:
+    """Stage the brief and run the worker inside its named tmux window.
+
+    No stdin pipe into a tmux pane: the brief is staged to a file the window
+    wrapper redirects into the worker.
+    """
+    run_id = base_state["run_id"]
     staged_brief = _brief_path(rdir, run_id)
     staged_brief.write_text(brief, encoding="utf-8")
     log_path.touch()

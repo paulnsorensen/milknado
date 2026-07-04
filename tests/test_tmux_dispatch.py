@@ -68,9 +68,12 @@ class FakeTmux:
     def target_for(self, run_id: str) -> str:
         return f"={self.session_name}:={run_id}"
 
-    def kill_window(self, run_id: str) -> None:
+    def kill_window(self, run_id: str) -> bool:
+        if run_id not in self.windows:
+            return False
         self.windows.discard(run_id)
         self.killed.append(run_id)
+        return True
 
     def open_run_window(self, window: RunWindow) -> int:
         if window.run_id in self.windows:

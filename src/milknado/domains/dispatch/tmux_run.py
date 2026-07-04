@@ -124,10 +124,9 @@ def cleanup_run_window(tmux: TmuxAdapter, run_state: dict) -> bool:
     if not tmux.available():
         return False
     run_id = run_state.get("run_id")
-    if not run_id or not tmux.window_exists(run_id):
+    if not run_id:
         return False
-    tmux.kill_window(run_id)
-    return True
+    return tmux.kill_window(run_id)
 
 
 def reconcile_run_window(project_root: Path, run_state: dict) -> None:
