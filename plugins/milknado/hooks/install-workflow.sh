@@ -18,4 +18,9 @@ dest="${dest_dir}/node-runner.js"
 [[ -f $src ]] || exit 0
 diff -q "$src" "$dest" >/dev/null 2>&1 && exit 0
 mkdir -p "$dest_dir"
-cp "$src" "$dest"
+# Copy via temp file + mv: rename replaces an existing dest symlink instead of
+# writing through it to a target outside the project.
+tmp="$(mktemp "${dest_dir}/.node-runner.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+cp "$src" "$tmp"
+mv -f "$tmp" "$dest"

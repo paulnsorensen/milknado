@@ -127,6 +127,25 @@ def test_missing_source_never_deletes_existing_copy(plugin_root: Path, project_d
     assert dest.read_text(encoding="utf-8") == "// keep me\n"
 
 
+def test_replaces_dest_symlink_instead_of_writing_through(
+    plugin_root: Path, project_dir: Path, tmp_path: Path
+) -> None:
+    """A checked-in dest symlink must not redirect the auto-run copy outside the project."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("precious\n", encoding="utf-8")
+    dest = project_dir / ".claude" / "workflows" / _RUNNER
+    dest.parent.mkdir(parents=True)
+    dest.symlink_to(outside)
+
+    result = _run_hook(plugin_root, project_dir)
+
+    assert result.returncode == 0, result.stderr
+    assert not dest.is_symlink(), "dest symlink must be replaced, not followed"
+    assert dest.read_text(encoding="utf-8") == "// v1\n"
+    assert outside.read_text(encoding="utf-8") == "precious\n", "symlink target must be untouched"
+    assert [p.name for p in dest.parent.iterdir()] == [_RUNNER], "no temp-file litter"
+
+
 def test_copies_the_real_bundled_runner(project_dir: Path) -> None:
     """Pins the hook's source path to the actual shipped payload layout.
 
