@@ -35,3 +35,4 @@ def test_worker_agent_uses_installed_plugin_mcp_namespace() -> None:
     joined = ",".join(tools)
     assert f"{PLUGIN_MCP_PREFIX}milknado_deposit_result" in joined
     assert f"{PLUGIN_MCP_PREFIX}milknado_node_verify" in joined
+    assert f"{PLUGIN_MCP_PREFIX}milknado_track_follow_up" in joined
