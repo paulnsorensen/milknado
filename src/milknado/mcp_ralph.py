@@ -27,19 +27,22 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.adapters import GitAdapter
+from milknado.adapters import GitAdapter, RunWindow, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
+    ensure_tmux_ready,
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     latest_terminal_run,
     now_iso,
     reconcile_node_status,
+    reconcile_run_window,
     runs_dir,
 )
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
+    exit_code_path,
     make_run_id,
     tail,
 )
@@ -64,14 +67,24 @@ def milknado_run_loop_start(
     node_id: int,
     runner_cmd: str | None = None,
     timeout_seconds: int = 1800,
+    use_tmux: bool = False,
     project_root: str = "",
 ) -> dict:
-    """Claim node_id and spawn a detached ralph loop; returns immediately with a run_id.
+    """Dispatch a task node in a detached worktree-backed ralph loop.
 
-    A second concurrent caller is refused (atomic claim). Poll with
-    milknado_run_loop_poll(run_id).
+    Returns immediately with a run_id; poll with milknado_run_loop_poll(run_id).
+    Survives MCP-server restarts; refuses concurrent dispatch.
+    use_tmux=True runs the loop in a named tmux window
+    (`milknado attach <run_id>`); fails fast if tmux is unavailable.
     """
     root = resolve_project_root(project_root or None)
+    tmux: TmuxAdapter | None = None
+    if use_tmux:
+        # Fail closed BEFORE any claim: tmux was explicitly requested, so a
+        # missing binary or unstartable server fails the dispatch loudly —
+        # never a silent fallback to the detached path.
+        tmux = TmuxAdapter(root)
+        ensure_tmux_ready(tmux)
     graph, _cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
@@ -155,18 +168,36 @@ def milknado_run_loop_start(
             # process) must release the claim, or the node is left stranded RUNNING
             # with no worker and no terminal run to reconcile.
             graph.start_run(run_id, node_id, str(log_path), now, timeout_seconds)
-            with log_path.open("wb") as log_fh:
-                proc = subprocess.Popen(  # noqa: S603 — COORDINATOR-ONLY module (see docstring); argv is coordinator-assembled, not external input
-                    argv,
-                    stdout=log_fh,
-                    stderr=subprocess.STDOUT,
-                    cwd=str(root),
-                    start_new_session=True,
-                    env=_build_worker_env(
-                        {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
-                    ),
+            if tmux is not None:
+                # The runner becomes the pane's child; the pane pid stands in
+                # for Popen's pid so pid-liveness and cancel keep working.
+                log_path.touch()
+                pid = tmux.open_run_window(
+                    RunWindow(
+                        run_id=run_id,
+                        argv=tuple(argv),
+                        cwd=root,
+                        log_path=log_path,
+                        exit_code_path=exit_code_path(rdir, run_id),
+                        env=_build_worker_env(
+                            {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
+                        ),
+                    )
                 )
-        except OSError as exc:
+            else:
+                with log_path.open("wb") as log_fh:
+                    proc = subprocess.Popen(  # noqa: S603 — COORDINATOR-ONLY module (see docstring); argv is coordinator-assembled, not external input
+                        argv,
+                        stdout=log_fh,
+                        stderr=subprocess.STDOUT,
+                        cwd=str(root),
+                        start_new_session=True,
+                        env=_build_worker_env(
+                            {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
+                        ),
+                    )
+                pid = proc.pid
+        except (OSError, TmuxDispatchError) as exc:
             # Mark the node terminal via the fenced write that releases our claim,
             # then re-raise so the caller sees a clean failure. The terminal run
             # write is best-effort — the run row exists only if start_run landed.
@@ -186,14 +217,14 @@ def milknado_run_loop_start(
         # row so the next dispatch can liveness-check this run and reclaim it
         # immediately if it dies. set_run_pid is gated on status='running', so the
         # pid write never clobbers a runner that already wrote its terminal state.
-        graph.set_run_pid(run_id, proc.pid)
-        graph.set_pid(node_id, run_id, proc.pid)
+        graph.set_run_pid(run_id, pid)
+        graph.set_pid(node_id, run_id, pid)
         _logger.info(
             "milknado_run_loop_start: node=%d run_id=%s timeout=%ds pid=%d",
             node_id,
             run_id,
             timeout_seconds,
-            proc.pid,
+            pid,
         )
         return {
             "run_id": run_id,
@@ -202,7 +233,7 @@ def milknado_run_loop_start(
             "exit_code": None,
             "timed_out": None,
             "rebased": None,
-            "pid": proc.pid,
+            "pid": pid,
             "log_path": str(log_path),
             "summary": None,
         }
@@ -214,7 +245,8 @@ def milknado_run_loop_start(
 def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
     """Poll a ralph run started by milknado_run_loop_start.
 
-    Returns run state (status running|done|failed, rebased, detail) plus a log tail.
+    Returns the run state, rebase result, log tail, and summary fields without
+    changing node status.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
@@ -227,6 +259,10 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
         graph.close()
     if state is None:
         raise ValueError(f"run {run_id!r} not found")
+    if state.get("status") == "done":
+        # Per-row window reconcile backstop: a completed run's window is
+        # normally self-cleaned; kill a straggler (e.g. after a restart).
+        reconcile_run_window(root, state)
     # Derive the log path from the validated run_id rather than trusting the
     # stored field: no arbitrary-file read via a tampered log_path.
     state["summary"] = tail(rdir / f"{run_id}.log")

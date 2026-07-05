@@ -46,6 +46,16 @@ def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def exit_code_path(runs_dir: Path, run_id: str) -> Path:
+    """Where a tmux window wrapper records the runner's exit code."""
+    return runs_dir / f"{run_id}.rc"
+
+
+def brief_path(runs_dir: Path, run_id: str) -> Path:
+    """Where the run-once tmux path stages the worker brief (stdin redirect)."""
+    return runs_dir / f"{run_id}.brief"
+
+
 def cancel_path(runs_dir: Path, run_id: str) -> Path:
     return runs_dir / f"{run_id}.cancel"
 

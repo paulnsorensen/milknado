@@ -36,10 +36,12 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install just
+      - name: Install just and tmux
+        # tmux: the real-tmux adapter integration test is skip-marked without
+        # the binary; installing it keeps the adapter's diff coverage honest.
         run: |
           sudo apt-get update
-          sudo apt-get install -y just
+          sudo apt-get install -y just tmux
 
       - name: Run full build (lint → test → coverage)
         run: just build-ci

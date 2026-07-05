@@ -12,17 +12,20 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
+from milknado.adapters import TmuxAdapter
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 from milknado.domains.dispatch import (
     RUN_ID_RE,
     cancel_run,
     dispatch_node_sync,
+    ensure_tmux_ready,
     make_run_id,
     now_iso,
     poll_async_run,
     reclaim_stale_node,
     reconcile_node_status,
+    reconcile_run_window,
     render_brief,
     start_headless_async,
     validate_worker_argv,
@@ -90,16 +93,25 @@ def milknado_run_once_start(
     node_id: int,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    use_tmux: bool = False,
     project_root: str = "",
 ) -> dict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
 
     Refuses if the node is already running. Use milknado_run_once_poll(run_id) to
     check progress; node status is reconciled to done/failed on the first poll
-    after the worker exits.
+    after the worker exits. use_tmux=True runs the worker inside a named tmux
+    window (`milknado attach <run_id>`); fails fast if tmux is unavailable.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
+    tmux: TmuxAdapter | None = None
+    if use_tmux:
+        # Fail closed BEFORE any claim: tmux was explicitly requested, so a
+        # missing binary or unstartable server fails the dispatch loudly —
+        # never a silent fallback to the in-process subprocess path.
+        tmux = TmuxAdapter(root)
+        ensure_tmux_ready(tmux)
     graph, cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
@@ -144,6 +156,7 @@ def milknado_run_once_start(
                 timeout_seconds,
                 run_id=run_id,
                 default_cmd=profile.execution_agent,
+                tmux=tmux,
             )
         except Exception:
             # Startup failed after the claim (bad worker cmd resolved in
@@ -189,6 +202,9 @@ def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
             reconcile_node_status(
                 graph, state["node_id"], state["status"], run_id=state.get("run_id")
             )
+            # Per-row window reconcile backstop: a completed run's window is
+            # normally self-cleaned; kill a straggler (e.g. after a restart).
+            reconcile_run_window(root, state)
         state["result"] = graph.latest_run_message(run_id, "result")
     finally:
         graph.close()
@@ -198,12 +214,10 @@ def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
 
 @mcp.tool()
 def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
-    """List active and recent runs from the db, sorted newest first.
+    """List active and recent runs, newest first.
 
-    Returns superset-schema dicts. summary is always None — use
-    milknado_run_once_poll or milknado_run_loop_poll for log tails. Bounded to
-    the `limit` most-recently-started runs so read cost stays flat as run history
-    grows; raise `limit` to widen the window.
+    Returns superset-schema dicts for up to `limit` runs. Use poll tools for log
+    tails; list results keep summary as None.
     """
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
@@ -228,13 +242,11 @@ def _state_to_run_dict(state: dict) -> dict:
 
 @mcp.tool()
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
-    """Cancel a run, reconcile node status, and prune any worktree.
+    """Cancel a run and return its final superset-schema state.
 
-    Detached-ralph runs are signalled; async-headless runs receive a cancel
-    sentinel and are given a bounded window to finalize cooperatively. No-ops
-    if the run is already terminal. Returns the final run state, plus a
-    `worktree_preserved` field holding the worktree path when fail-closed
-    teardown refused to remove a dirty/unlanded worktree (else None).
+    No-ops for terminal runs. Active runs stop and finalize when safe. An owned
+    worktree is removed unless fail-closed teardown preserves a dirty or unlanded
+    one; `worktree_preserved` then holds that path, else None.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):

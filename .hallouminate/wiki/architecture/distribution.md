@@ -21,8 +21,8 @@ So the "generic-looking" `.agents/plugins/marketplace.json` covers **Codex only*
 
 Claude's marketplace.json (`name`, `owner`, `plugins[]` with source types: relative path / github / url / git-subdir / npm) and Codex's native schema (`interface.displayName`, `source.source`/`source.path`, `policy.installation` ∈ NOT_AVAILABLE|AVAILABLE|INSTALLED_BY_DEFAULT, `policy.authentication` ∈ ON_INSTALL|ON_USE, `category`) are different formats. A considered-and-rejected idea: make `.claude-plugin` a symlink to `.agents/plugins` so one file serves both. Rejected because:
 
-1. **Schema collision** — with the symlink, Codex's *native* reader (expecting Codex schema) and its *legacy* reader (expecting Claude schema) both resolve to the same file; whether the native reader tolerates Claude schema is unverified.
-2. **Symlink survival is fetch-dependent** — git clone preserves symlinks on Unix, but GitHub zipball downloads convert them to text files containing the target path; whether Claude Code follows a symlinked `.claude-plugin/` is unverified.
+1. **Schema collision** — with the symlink, Codex's *native* reader (expecting Codex schema) and its *legacy* reader (expecting Claude schema) both resolve to the same file. Since verified (locked decision 1): there is only one reader and it does tolerate Claude schema — so this reason alone no longer rejects the symlink, but reasons 2–3 still do.
+2. **Symlink survival is fetch-dependent** — git clone preserves symlinks on Unix, but GitHub zipball downloads convert them to text files containing the target path; and Claude Code's plugin-install pipeline is confirmed to mishandle symlinks inconsistently across platforms (locked decision 2).
 3. **Windows** — committed symlinks need developer mode + `core.symlinks`.
 
 **Decision: two small real marketplace files, one shared plugin payload.** marketplace.json is ~20 lines; duplication is cheaper than the symlink's failure modes, and each file can be schema-correct (Codex's `policy.*` fields have no Claude equivalent).
@@ -74,10 +74,34 @@ Once registered, cutting a release is just: bump `version` in `pyproject.toml` �
 
 PyPI versions are immutable and cannot be reused — a botched `0.1.0` burns that version (not the name). Run `uv build` locally and sanity-check the wheel before bumping the version. (A failed *publish* does not consume the version, so re-running the workflow — push another commit to `main`, or use `workflow_dispatch` — can retry the same version; only a successful upload locks it.)
 
-## Open questions (verify before locking the layout)
+## Locked decisions — the layout is LOCKED (resolved 2026-07-02)
 
-- Does Codex's native `.agents/plugins` reader tolerate Claude-schema marketplace.json? (Determines whether the two-file split is strictly required.)
-- Does Claude Code follow a symlinked `.claude-plugin/` on git-clone installs? (Moot under the two-file decision, but cheap to test.)
-- Can Claude's `plugin.json` `skills` field reference paths outside the plugin dir (e.g. `../../.agents/skills/`), which would let skills live once at the repo's neutral path?
-- Is repo-level Codex marketplace pickup gated by `[projects."…"].trust_level`? Not documented either way.
-- HTTP-transport MCP inside a Claude Code plugin — all doc examples are stdio.
+The five open questions this section used to carry are resolved from primary sources (source read of `openai/codex` at commit [`129ea2a`](https://github.com/openai/codex/blob/129ea2aaf5fb426d8ba683ee53f290742f41dd31/codex-rs/core-plugins/src/marketplace.rs), live fetches of `code.claude.com/docs`, issue evidence on `anthropics/claude-code`). All five converge: **the shipped two-file, no-symlink, skills-inside-plugin-dir layout is correct as-is.** No marketplace or payload file changed when locking.
+
+### 1. Codex's native reader tolerates Claude-schema marketplace.json — YES (certain)
+
+There is no separate "native" vs "legacy" reader — one shared parser serves a priority-ordered path list (`.agents/plugins/marketplace.json`, then `.agents/plugins/api_marketplace.json`, then `.claude-plugin/marketplace.json`; **first match wins**, so when both files exist Codex reads only the `.agents` one). The per-plugin `source` deserializes as an untagged serde enum whose `Path(String)` variant is exactly Claude's `"source": "./plugins/milknado"`; `policy` is `#[serde(default)]` (defaults `AVAILABLE`/`ON_INSTALL`); there is no `deny_unknown_fields`, so Claude's top-level `owner` object is silently ignored.
+
+Citation: [`codex-rs/core-plugins/src/marketplace.rs`](https://github.com/openai/codex/blob/129ea2aaf5fb426d8ba683ee53f290742f41dd31/codex-rs/core-plugins/src/marketplace.rs) — lines 20–24 (path list), 961–1008 (schema), 991–999 (policy defaults).
+
+**Simplification declined — two files kept, each schema-correct.** Q1 makes a unified Claude-shape content possible (Codex would parse it at either path), but the priority order means `.agents/plugins/marketplace.json` is the file Codex actually reads when both exist — keeping it Codex-schema keeps `policy.*` explicit and preserves `category`/`interface.displayName`, which the Claude shape cannot carry. Unifying on the Claude shape would discard that information and save nothing: both discovery paths must exist regardless (path discovery is separate from schema tolerance — Claude Code still reads only `.claude-plugin/marketplace.json`). Recorded as: **confirmed required (two discovery paths), kept as-is.**
+
+### 2. Claude Code following a symlinked `.claude-plugin/` on git-clone installs — DO NOT RELY ON IT (speculating)
+
+No primary doc addresses symlinking the marketplace-root directory, and no direct test was run — but the same plugin-install pipeline is confirmed unreliable with symlinks across platforms. [anthropics/claude-code#41392](https://github.com/anthropics/claude-code/issues/41392) ("Plugin symlinks not dereferenced when copying to cache"; filed against 2.1.37, reproduced on 2.1.88, open) shows symlinks preserved as machine-specific absolute paths into the marketplace checkout; a follow-up on 2.1.117/Ubuntu 24.04 found Linux now *drops* symlinks entirely (macOS keeps them as absolute-path symlinks; Copilot CLI dereferences them). Moot under the two-file decision — recorded as a constraint, not a change: **no symlinks anywhere in the plugin layout.** The current layout uses none.
+
+### 3. `plugin.json` `skills` referencing paths outside the plugin dir — NO (certain)
+
+Directly documented at [code.claude.com/docs/en/plugins-reference](https://code.claude.com/docs/en/plugins-reference) § "Path traversal limitations": "Installed plugins cannot reference files outside their directory. Paths that traverse outside the plugin root (such as `../shared-utils`) will not work after installation because those external files are not copied to the cache." And on the `skills` manifest field: "All paths must be relative to the plugin root and start with `./`". The documented escape hatch — symlinks *inside* the plugin dir, dereferenced at cache-copy time — is the exact behavior [#41392](https://github.com/anthropics/claude-code/issues/41392) shows failing in practice; treat it as unavailable. Consequence: skills stay physically inside `plugins/milknado/skills/`; no repo-neutral shared skills path. The layout already complies.
+
+### 4. Repo-level Codex marketplace pickup gated by `trust_level` — NO (certain, scoped to discovery/listing)
+
+Scope checked: whether Codex reads/parses/surfaces `$REPO_ROOT/.agents/plugins/marketplace.json` when the project's `trust_level` is unset or untrusted. Ruled out per candidate: `codex-rs/core-plugins/src/marketplace.rs` (`discover_marketplace_paths_from_roots`), `loader.rs`, and the TUI plugin catalog (`tui/src/chatwidget/plugin_catalog.rs`) have zero `trust` references; `manager.rs`'s only hit is an unrelated product-restriction comment; a repo-wide `trust_level` search (21 hits) lands entirely in config/exec-policy/session code — the only user-facing gate is the session trust prompt in `app-server/src/request_processors/thread_processor.rs`, which never touches `core-plugins::marketplace`. Not ruled out (not checked): a UI-only confirmation before *installing* from an untrusted repo, distinct from discovery/listing. Citations: same [`openai/codex` permalink base](https://github.com/openai/codex/blob/129ea2aaf5fb426d8ba683ee53f290742f41dd31/codex-rs/core-plugins/src/marketplace.rs) as decision 1.
+
+### 5. HTTP-transport MCP inside a Claude Code plugin — YES at the schema level (certain); no shipped worked example found (speculating)
+
+[code.claude.com/docs/en/mcp](https://code.claude.com/docs/en/mcp) documents `type: "http"` (alias `streamable-http`) as a first-class `.mcp.json` transport, and [plugins-reference](https://code.claude.com/docs/en/plugins-reference) ties plugin-provided MCP config to the same schema family ("Plugin-provided MCP configurations substitute `${CLAUDE_PROJECT_DIR}` directly and don't need the default") with no stdio-only restriction stated anywhere. But every worked plugin example in the docs is stdio, and a GitHub code search found no confirmed in-plugin `"type": "http"` example — inconclusive, not a negative. Irrelevant to the current layout: milknado's server is stdio-only today.
+
+### Risk note — Cowork rejects stdio MCP in plugins (watch for spread)
+
+[anthropics/claude-code#69940](https://github.com/anthropics/claude-code/issues/69940) (open; labels `bug, regression, area:cowork, area:mcp, area:plugins`): Claude **Cowork** refuses plugins declaring local/stdio MCP servers — "Plugins may only declare remote (http/sse/ws) or MCPB servers." Scoped to Cowork, not the CLI milknado targets (`claude plugin install` / `--plugin-dir` still load stdio plugins, and a commenter confirms the `.mcpb` bundle workaround: interior `manifest.json` with `server.type: "binary"` — not `"uv"`, which silently fails schema validation). If the remote/MCPB-only restriction spreads from Cowork to the general plugin installer, milknado's stdio `uvx` launcher would need MCPB wrapping.
