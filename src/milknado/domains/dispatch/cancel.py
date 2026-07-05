@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from milknado.adapters import GitAdapter
+from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch._runstate import clear_cancel, now_iso, request_cancel, runs_dir
 from milknado.domains.dispatch.reconcile import reconcile_node_status
 
@@ -50,7 +51,7 @@ def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
     return graph.get_run(run_id)
 
 
-def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") -> None:  # noqa: ANN001
+def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") -> Path | None:  # noqa: ANN001
     """Prune the run's worktree and reconcile its node to `status`, fenced on run_id.
 
     Routes through the run_id-fenced `reconcile_node_status` (graph.mark_terminal)
@@ -59,9 +60,22 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
     to the unconditional RUNNING→terminal transition. `status` is the run's actual
     terminal status: a worker that finished `done` inside the cancel window must
     reconcile its node `done`, not be force-failed.
+
+    Worktree teardown goes through `WorktreeManager.remove` — the fail-closed
+    path — never the raw adapter: a cancelled run whose worktree still holds
+    dirty or unlanded work raises `UnlandedWorkError`. That refusal is caught and
+    logged, the worktree is preserved on disk for inspection, and its path is
+    returned so the caller can signal the preservation — the node still reconciles
+    to terminal (`status`) and the trailing prune still runs. Returns None when the
+    worktree was removed (or there was nothing to remove).
     """
+    # Imported lazily (like _open_graph_for_cancel) so importing the dispatch
+    # slice does not drag in the execution slice's TUI dependencies.
+    from milknado.domains.execution import WorktreeManager
+
     if node_id is None:
-        return
+        return None
+    preserved: Path | None = None
     graph = _open_graph_for_cancel(root)
     try:
         node = graph.get_node(node_id)
@@ -69,9 +83,15 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
             wt = Path(node.worktree_path)
             if wt.exists():
                 try:
-                    GitAdapter(root).remove_worktree(wt)
-                except Exception as exc:
-                    _logger.warning("Failed to remove worktree %s on cancel: %s", wt, exc)
+                    WorktreeManager(GitAdapter(root)).remove(node_id, wt)
+                except UnlandedWorkError as exc:
+                    _logger.warning(
+                        "cancel preserving worktree: run_id=%s worktree=%s: %s",
+                        run_id,
+                        wt,
+                        exc,
+                    )
+                    preserved = wt
         reconcile_node_status(graph, node_id, status, run_id=run_id)
     finally:
         graph.close()
@@ -79,6 +99,7 @@ def _reconcile_cancel(root: Path, node_id, run_id: str, status: str = "failed") 
         GitAdapter(root).prune_worktrees()
     except Exception as exc:
         _logger.warning("git worktree prune failed on cancel: %s", exc)
+    return preserved
 
 
 def _await_cancel_finalize(graph, run_id: str) -> dict | None:  # noqa: ANN001
@@ -108,7 +129,8 @@ def _cancel_pid_run(graph, root: Path, state: dict, run_id: str) -> dict:  # noq
     # Any other OSError (e.g. EPERM) means the process may still be alive: let it
     # propagate rather than reporting a run cancelled that we never signalled.
     final = _finalize_cancelled(graph, run_id)
-    _reconcile_cancel(root, state.get("node_id"), run_id)
+    preserved = _reconcile_cancel(root, state.get("node_id"), run_id)
+    final["worktree_preserved"] = str(preserved) if preserved is not None else None
     _logger.info("milknado_run_cancel(pid): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
 
@@ -133,7 +155,10 @@ def _cancel_async_run(graph, root: Path, state: dict, run_id: str) -> dict:  # n
 
     # Reconcile to the run's ACTUAL terminal status: a worker that finished `done`
     # inside the finalize window must not have its node force-failed.
-    _reconcile_cancel(root, final.get("node_id"), run_id, final.get("status", "failed"))
+    preserved = _reconcile_cancel(
+        root, final.get("node_id"), run_id, final.get("status", "failed")
+    )
+    final["worktree_preserved"] = str(preserved) if preserved is not None else None
     _logger.info("milknado_run_cancel(async): run_id=%s node_id=%s", run_id, state.get("node_id"))
     return final
 

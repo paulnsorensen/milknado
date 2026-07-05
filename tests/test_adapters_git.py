@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.adapters.git import GitAdapter, _try_mergiraf_resolve
-from milknado.domains.common.errors import RebaseAbortError
+from milknado.domains.common.errors import RebaseAbortError, UnlandedWorkError
 
 
 @pytest.fixture()
@@ -45,11 +45,134 @@ class TestCreateWorktree:
             adapter.create_worktree(Path("/tmp/wt"), "branch")
 
 
-class TestRemoveWorktree:
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+@pytest.fixture()
+def repo(tmp_path: Path) -> Path:
+    """A real git repo on branch `feature` with one seed commit."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "feature", str(root))
+    _git(root, "config", "user.email", "test@test.com")
+    _git(root, "config", "user.name", "Test")
+    (root / "README.md").write_text("seed\n")
+    _git(root, "add", ".")
+    _git(root, "commit", "-qm", "seed")
+    return root
+
+
+def _worktree_with_commit(repo: Path, name: str) -> Path:
+    """A worktree on its own branch with one committed (unlanded) change."""
+    wt = repo.parent / name
+    _git(repo, "worktree", "add", "-q", "-b", f"wb-{name}", str(wt))
+    (wt / f"{name}.py").write_text("x = 1\n")
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-qm", f"work in {name}")
+    return wt
+
+
+class TestRemoveWorktreeFailClosed:
+    """Fail-closed teardown against real git repos — the dirty guard, the
+    two-layer landed check, and one test per merge shape (acceptance 2)."""
+
+    def test_removes_clean_worktree_with_no_new_work(self, repo: Path) -> None:
+        wt = repo.parent / "wt-clean"
+        _git(repo, "worktree", "add", "-q", "-b", "wb-clean", str(wt))
+        GitAdapter(repo).remove_worktree(wt, "feature")
+        assert not wt.exists()
+
+    def test_refuses_dirty_worktree_naming_files(self, repo: Path) -> None:
+        wt = repo.parent / "wt-dirty"
+        _git(repo, "worktree", "add", "-q", "-b", "wb-dirty", str(wt))
+        (wt / "uncommitted.py").write_text("at risk\n")
+        with pytest.raises(UnlandedWorkError) as exc_info:
+            GitAdapter(repo).remove_worktree(wt, "feature")
+        assert str(wt) in str(exc_info.value)
+        assert "uncommitted.py" in str(exc_info.value)
+        assert wt.exists(), "refusal must preserve the worktree"
+
+    def test_refuses_unlanded_commits_naming_range(self, repo: Path) -> None:
+        wt = _worktree_with_commit(repo, "wt-unlanded")
+        with pytest.raises(UnlandedWorkError) as exc_info:
+            GitAdapter(repo).remove_worktree(wt, "feature")
+        assert str(wt) in str(exc_info.value)
+        assert "work in wt-unlanded" in str(exc_info.value), "diagnostic must name the commits"
+        assert wt.exists()
+
+    def test_milknado_land_path_squash_rebase_ff_removes(self, repo: Path) -> None:
+        """Milknado's own land shape: squash_and_commit + rebase + ff-only makes
+        the worktree HEAD literally equal the feature tip — no false refusal."""
+        adapter = GitAdapter(repo)
+        wt = _worktree_with_commit(repo, "wt-land")
+        assert adapter.squash_and_commit(wt, "feature", "feat: squashed") is True
+        assert adapter.rebase(wt, "feature").success is True
+        adapter.fast_forward("wb-wt-land")
+        adapter.remove_worktree(wt, "feature")
+        assert not wt.exists()
+
+    def test_conflicting_target_refuses_not_guesses(self, repo: Path) -> None:
+        """When the target diverged incompatibly, the worktree HEAD is not an
+        ancestor — refuse, never destroy on a guess."""
+        wt = _worktree_with_commit(repo, "wt-conflict")
+        # Diverge the feature branch with conflicting content in the same file.
+        (repo / "wt-conflict.py").write_text("x = 2  # conflicts\n")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-qm", "feature diverges")
+        with pytest.raises(UnlandedWorkError):
+            GitAdapter(repo).remove_worktree(wt, "feature")
+        assert wt.exists()
+
+    def test_stale_non_worktree_dir_raises_non_refusal(self, repo: Path) -> None:
+        """A path that exists but is NOT a registered worktree (stale dir after
+        a prune / crashed create) resolves git commands against the PARENT
+        repo — without the toplevel guard, a dirty project root would produce a
+        FALSE UnlandedWorkError naming the root's files. It must raise a plain
+        ValueError (non-refusal: managers warn-and-swallow it, as the old
+        CalledProcessError path did) and never touch the stale dir."""
+        (repo / "root-dirt.py").write_text("uncommitted root work\n")
+        stale = repo / "milknado-stale"
+        stale.mkdir()
+        with pytest.raises(ValueError, match="not a registered worktree"):
+            GitAdapter(repo).remove_worktree(stale, "feature")
+        assert stale.exists()
+
+    def test_ignored_scaffolding_does_not_block_removal(self, repo: Path) -> None:
+        """RALPH.md / .ralph-logs are git-ignored in real worktrees — they must
+        not count as dirt (verified against git 2.53: plain `worktree remove`
+        deletes ignored files without --force)."""
+        (repo / ".gitignore").write_text("RALPH.md\n.ralph-logs/\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-qm", "ignore scaffolding")
+        wt = repo.parent / "wt-scaffold"
+        _git(repo, "worktree", "add", "-q", "-b", "wb-scaffold", str(wt))
+        (wt / "RALPH.md").write_text("# scaffolding\n")
+        (wt / ".ralph-logs").mkdir()
+        (wt / ".ralph-logs" / "run.log").write_text("log\n")
+        GitAdapter(repo).remove_worktree(wt, "feature")
+        assert not wt.exists()
+
+
+class TestForceRemoveWorktree:
+    def test_destroys_dirty_and_unlanded_work(self, repo: Path) -> None:
+        """The explicitly-named destructive variant: discards what the
+        fail-closed path refuses."""
+        wt = _worktree_with_commit(repo, "wt-doomed")
+        (wt / "dirty.py").write_text("also at risk\n")
+        GitAdapter(repo).force_remove_worktree(wt)
+        assert not wt.exists()
+
     @patch("milknado.adapters.git.subprocess.run")
-    def test_calls_git_worktree_remove(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+    def test_passes_force_flag(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
-        adapter.remove_worktree(Path("/tmp/wt"))
+        adapter.force_remove_worktree(Path("/tmp/wt"))
         mock_run.assert_called_once_with(
             ["git", "worktree", "remove", "--force", "/tmp/wt"],
             cwd=adapter._root,
@@ -57,6 +180,42 @@ class TestRemoveWorktree:
             text=True,
             check=True,
         )
+
+
+class TestForceIsReachableOnlyViaDiscard:
+    """Acceptance 3: `--force` teardown must be reachable only through the
+    explicit discard path — a source-level audit of the production tree."""
+
+    SRC = Path(__file__).parent.parent / "src" / "milknado"
+
+    def _py_sources(self) -> list[Path]:
+        return [p for p in self.SRC.rglob("*.py") if "_vendor" not in p.parts]
+
+    def test_worktree_force_flag_lives_only_in_force_remove_worktree(self) -> None:
+        offenders = []
+        for path in self._py_sources():
+            text = path.read_text()
+            if "worktree" in text and '"remove", "--force"' in text:
+                offenders.append(path)
+        assert offenders == [self.SRC / "adapters" / "git.py"], (
+            f"worktree remove --force found outside GitAdapter: {offenders}"
+        )
+        # And inside git.py it appears exactly once — in force_remove_worktree.
+        text = (self.SRC / "adapters" / "git.py").read_text()
+        assert text.count('"remove", "--force"') == 1
+        body = text.split("def force_remove_worktree")[1]
+        assert '"remove", "--force"' in body
+
+    def test_force_remove_worktree_called_only_by_discard(self) -> None:
+        callers = []
+        for path in self._py_sources():
+            for line in path.read_text().splitlines():
+                stripped = line.strip()
+                if "force_remove_worktree(" in stripped and not stripped.startswith("def "):
+                    callers.append((str(path.relative_to(self.SRC)), stripped))
+        assert callers == [
+            ("domains/execution/executor.py", "self._git.force_remove_worktree(wt_path)")
+        ], f"force_remove_worktree must be called only by WorktreeManager.discard: {callers}"
 
 
 class TestPruneWorktrees:
@@ -273,3 +432,18 @@ class TestSquashAndCommit:
         # Should not raise; commit skipped because nothing staged
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert not any("commit" in c for c in calls if isinstance(c, list))
+
+
+class TestBranchExists:
+    """Real-git existence check used by dispatch relocation to keep path and
+    branch slots in lockstep."""
+
+    def test_true_for_live_branch_false_for_absent(self, repo: Path) -> None:
+        adapter = GitAdapter(repo)
+        assert adapter.branch_exists("feature") is True
+        assert adapter.branch_exists("no-such-branch") is False
+
+    def test_recognizes_namespaced_relocation_branch(self, repo: Path) -> None:
+        _git(repo, "branch", "milknado/1-slug-2")
+        adapter = GitAdapter(repo)
+        assert adapter.branch_exists("milknado/1-slug-2") is True

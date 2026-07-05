@@ -244,8 +244,9 @@ def _state_to_run_dict(state: dict) -> dict:
 def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
     """Cancel a run and return its final superset-schema state.
 
-    No-ops for terminal runs. Active runs are asked to stop, finalized when safe,
-    and cleaned up with any owned worktree.
+    No-ops for terminal runs. Active runs stop and finalize when safe. An owned
+    worktree is removed unless fail-closed teardown preserves a dirty or unlanded
+    one; `worktree_preserved` then holds that path, else None.
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
@@ -255,7 +256,9 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
         final = cancel_run(graph, root, run_id)
     finally:
         graph.close()
-    return _state_to_run_dict(final)
+    result = _state_to_run_dict(final)
+    result["worktree_preserved"] = final.get("worktree_preserved")
+    return result
 
 
 @mcp.tool()

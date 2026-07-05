@@ -18,6 +18,21 @@ class RebaseAbortError(MilknadoError):
         super().__init__(f"git rebase --abort failed in {worktree}")
 
 
+class UnlandedWorkError(MilknadoError):
+    """Refusal to remove a worktree that still holds dirty or unlanded work.
+
+    Teardown is fail-closed: destroying work must be an explicitly named act
+    (``GitAdapter.force_remove_worktree``, reachable only via
+    ``WorktreeManager.discard``), never a default. ``at_risk`` names exactly
+    what refusing preserved — dirty files and/or the unlanded commit range.
+    """
+
+    def __init__(self, worktree: Path, at_risk: str) -> None:
+        self.worktree = worktree
+        self.at_risk = at_risk
+        super().__init__(f"refusing to remove worktree {worktree}: {at_risk}")
+
+
 class RalphMarkdownWriteError(MilknadoError):
     def __init__(self, path: Path, cause: OSError | None = None) -> None:
         self.path = path

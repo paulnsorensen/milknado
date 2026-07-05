@@ -1,3 +1,4 @@
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,6 +11,7 @@ from milknado.domains.common.errors import (
     InvalidTransition,
     RebaseAbortError,
     TransientDispatchError,
+    UnlandedWorkError,
 )
 from milknado.domains.common.types import (
     MikadoNode,
@@ -40,14 +42,24 @@ class FakeGit:
     def __init__(self) -> None:
         self.created: list[tuple[Path, str]] = []
         self.removed: list[Path] = []
+        self.force_removed: list[Path] = []
+        self.remove_targets: list[str] = []
         self.commits: list[tuple[Path, str]] = []
         self.rebase_result: RebaseResult = RebaseResult(success=True)
+
+    def branch_exists(self, branch: str) -> bool:
+        return False
 
     def create_worktree(self, path: Path, branch: str) -> Path:
         self.created.append((path, branch))
         return path
 
-    def remove_worktree(self, path: Path) -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        self.removed.append(path)
+        self.remove_targets.append(target)
+
+    def force_remove_worktree(self, path: Path) -> None:
+        self.force_removed.append(path)
         self.removed.append(path)
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
@@ -703,11 +715,30 @@ class TestExecutorComplete:
         ex.complete(1, "main")
         assert wt in fake_git.removed
 
-    def test_removes_worktree_on_rebase_failure(
+    def test_removal_targets_feature_branch_on_success(
         self,
         graph: MikadoGraph,
         tmp_path: Path,
     ) -> None:
+        """The landed check must run against the branch work landed on, not a
+        default ref — a wrong target would refuse freshly-landed worktrees."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt))
+        ex.complete(1, "main")
+        assert fake_git.remove_targets == ["main"]
+
+    def test_keeps_worktree_on_rebase_failure(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """Fail-closed teardown: a conflicting rebase means the squashed commit
+        never landed — the worktree is the only copy of that work and must be
+        preserved, not force-removed as it was before."""
         fake_git = FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
         ex = Executor(
@@ -720,14 +751,18 @@ class TestExecutorComplete:
         wt = tmp_path / "worktree"
         wt.mkdir()
         graph.mark_running(1, worktree_path=str(wt))
-        ex.complete(1, "main")
-        assert wt in fake_git.removed
+        result = ex.complete(1, "main")
+        assert result.rebased is False
+        assert fake_git.removed == []
+        assert fake_git.force_removed == []
 
-    def test_removes_worktree_on_commit_failure(
+    def test_keeps_worktree_on_commit_failure(
         self,
         graph: MikadoGraph,
         tmp_path: Path,
     ) -> None:
+        """An exception mid-merge-back leaves work state unknown — fail closed
+        and keep the worktree rather than destroying the evidence."""
         fake_git = FakeGit()
         fake_git.squash_and_commit = lambda *_args: (_ for _ in ()).throw(  # type: ignore
             RuntimeError("nothing to commit"),
@@ -743,7 +778,7 @@ class TestExecutorComplete:
         wt.mkdir()
         graph.mark_running(1, worktree_path=str(wt))
         result = ex.complete(1, "main")
-        assert wt in fake_git.removed
+        assert fake_git.removed == []
         assert result.rebased is False
 
     def test_clears_metadata_on_rebase_failure(
@@ -888,6 +923,130 @@ class TestEnsureCleanWorktree:
         # Should not raise even though remove_worktree raises
         ex._wt.ensure_clean(1)
 
+    def test_refusal_degrades_and_keeps_worktree(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """ensure_clean is pre-dispatch cleanup, not teardown of finished work:
+        a fail-closed refusal must degrade (log what is at risk, keep the
+        worktree) so dispatch can relocate instead of blocking the run loop."""
+        wt = tmp_path / "milknado-1-task"
+        wt.mkdir()
+
+        class RefusingGit(FakeGit):
+            def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+                raise UnlandedWorkError(path, "dirty files:\n M src/app.py")
+
+        ex = Executor(graph=graph, git=RefusingGit(), ralph=FakeRalph(), crg=FakeCrg())
+        ex._wt._worktrees[1] = wt
+        with caplog.at_level(logging.WARNING):
+            ex._wt.ensure_clean(1)  # must not raise
+        assert wt.exists()
+        assert any(
+            "dirty files" in r.getMessage() and str(wt) in r.getMessage() for r in caplog.records
+        ), "refusal must be logged with the worktree path and what is at risk"
+
+
+class TestWorktreeRefusalSemantics:
+    def test_remove_propagates_refusal(self, tmp_path: Path) -> None:
+        """WorktreeManager.remove is teardown of finished work — a refusal
+        (dirty/unlanded) must hard-fail the caller, never warn-and-proceed:
+        that swallow was the silent-destruction bug."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        class RefusingGit(FakeGit):
+            def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+                raise UnlandedWorkError(path, "unlanded commits (not on main):\nabc123 wip")
+
+        wm = WorktreeManager(RefusingGit())
+        with pytest.raises(UnlandedWorkError, match="unlanded commits"):
+            wm.remove(1, tmp_path / "wt")
+
+    def test_remove_still_swallows_non_refusal_failures(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-refusal failure destroyed nothing (the worktree is still on
+        disk) — logged and swallowed so the node lifecycle keeps moving."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        class BrokenGit(FakeGit):
+            def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+                raise OSError("worktree locked")
+
+        wm = WorktreeManager(BrokenGit())
+        with caplog.at_level(logging.WARNING):
+            wm.remove(1, tmp_path / "wt")  # must not raise
+        assert any("Failed to remove worktree" in r.getMessage() for r in caplog.records)
+
+    def test_discard_uses_only_the_forced_variant(self, tmp_path: Path) -> None:
+        """discard IS the explicit destructive path: it must reach --force
+        (force_remove_worktree) and never the fail-closed removal — otherwise a
+        refused discard would resurrect the cleanup-blocks-dispatch bug."""
+        from milknado.domains.execution.executor import WorktreeManager
+
+        fake_git = FakeGit()
+        wm = WorktreeManager(fake_git)
+        wm.discard(1, tmp_path / "wt")
+        assert fake_git.force_removed == [tmp_path / "wt"]
+        assert fake_git.remove_targets == []  # fail-closed removal never invoked
+
+
+class TestDispatchRelocation:
+    def test_occupied_path_relocates_dispatch(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """A preserved (refused) orphan occupying the canonical worktree path
+        must not block dispatch: the new worktree gets a deterministic -2
+        suffix on both path and branch (the orphan still holds the original
+        branch checked out), and the orphan survives untouched."""
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        occupied = config.project_root / "milknado-1-task"
+        occupied.mkdir()
+        (occupied / "wip.py").write_text("at-risk work\n")
+
+        result = ex.dispatch(1, config)
+
+        assert result.worktree == config.project_root / "milknado-1-task-2"
+        assert fake_git.created == [(result.worktree, "milknado/1-task-2")]
+        assert (occupied / "wip.py").read_text() == "at-risk work\n"
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.worktree_path == str(result.worktree)
+        assert node.branch_name == "milknado/1-task-2"
+
+    def test_free_path_dispatches_without_suffix(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        result = ex.dispatch(1, config)
+        assert result.worktree == config.project_root / "milknado-1-task"
+        assert fake_git.created == [(result.worktree, "milknado/1-task")]
+
+    def test_two_preserved_orphans_take_the_next_slot(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_git = FakeGit()
+        ex = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        (config.project_root / "milknado-1-task").mkdir()
+        (config.project_root / "milknado-1-task-2").mkdir()
+        result = ex.dispatch(1, config)
+        assert result.worktree == config.project_root / "milknado-1-task-3"
+        assert fake_git.created == [(result.worktree, "milknado/1-task-3")]
+
 
 class TestExecutorFail:
     def test_marks_node_failed(
@@ -933,6 +1092,30 @@ class TestExecutorFail:
         graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
         ex.fail(1)
         assert wt in fake_git.removed
+
+    def test_refusal_propagates_and_aborts_the_transition(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """fail() tears down finished work through the fail-closed path: a
+        refusal hard-fails the operation before mark_failed, preserving both
+        the worktree and the node's RUNNING claim for later reconcile."""
+
+        class RefusingGit(FakeGit):
+            def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+                raise UnlandedWorkError(path, "unlanded commits (not on main):\nabc123 wip")
+
+        ex = Executor(graph=graph, git=RefusingGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        wt = tmp_path / "worktree"
+        wt.mkdir()
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        with pytest.raises(UnlandedWorkError, match="unlanded commits"):
+            ex.fail(1)
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING, "transition must not land on refusal"
 
 
 class TestBuildCommitMessage:

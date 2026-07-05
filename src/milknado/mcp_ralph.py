@@ -29,6 +29,7 @@ from milknado._mcp_core import (
 )
 from milknado.adapters import GitAdapter, RunWindow, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
     ensure_tmux_ready,
     fail_stale_running_runs,
@@ -128,9 +129,14 @@ def milknado_run_loop_start(
                     node_id,
                 )
             # Prune the orphaned worktree so git-worktree-add can reuse the path.
+            # Fail-closed: a dirty/unlanded orphan refuses removal and is kept —
+            # the dispatch relocates to a suffixed path instead of blocking the
+            # run loop (see WorktreeManager.relocate_occupied).
             if orphan_wt is not None and orphan_wt.exists():
                 try:
                     GitAdapter(root).remove_worktree(orphan_wt)
+                except UnlandedWorkError as exc:
+                    _logger.warning("Keeping orphan worktree (dispatch relocates): %s", exc)
                 except Exception as exc:
                     _logger.warning("Failed to remove orphan worktree %s: %s", orphan_wt, exc)
 

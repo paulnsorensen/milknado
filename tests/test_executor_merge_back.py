@@ -178,6 +178,13 @@ class TestMergeBackIntegration:
         finally:
             graph.close()
 
+        # Fail-closed teardown: the squashed-but-never-fast-forwarded commit
+        # exists only in this worktree — it must survive the failed merge-back
+        # (it used to be force-removed here: the silent-destruction bug).
+        assert wt.exists(), "unlanded worktree must be preserved on ff failure"
+        subjects = _git(wt, "log", "--oneline", "feature..HEAD")
+        assert "feat(milknado-1)" in subjects, "the squashed commit is the preserved work"
+
 
 class TestGitAdapterContract:
     """The merge-back relies on two adapter contract changes: squash_and_commit must
@@ -360,19 +367,127 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch=None)
         assert git.fast_forwarded == []
 
-    def test_worktree_removed_even_when_fast_forward_raises(self, tmp_path: Path) -> None:
-        """The finally-block worktree cleanup must run even on a loud ff failure, so a
-        failed merge-back does not leak the worktree."""
+    def test_worktree_kept_when_fast_forward_raises(self, tmp_path: Path) -> None:
+        """A ff failure means the squashed commit never landed on the feature
+        branch — the worktree is the only copy of that work. Fail-closed
+        teardown keeps it (the old force-remove here was the exact
+        silent-destruction bug) while RebaseAbortError still propagates."""
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=True, ff_error=subprocess.CalledProcessError(1, "git"))
         wm = WorktreeManager(git)
         with pytest.raises(RebaseAbortError):
             wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
+        assert git.removed == [], "unlanded work must not be torn down"
+        assert wt.exists()
+
+    def test_success_path_removes_with_feature_branch_target(self, tmp_path: Path) -> None:
+        """On a landed merge-back the removal's landed check must target the
+        feature branch the work just fast-forwarded onto."""
+        wt = tmp_path / "wt"
+        wt.mkdir()
+        git = _RecordingGit(committed=True)
+        wm = WorktreeManager(git)
+        wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.removed == [wt]
+        assert git.remove_targets == ["feature"]
+
+
+class TestDispatchRelocationIntegration:
+    """Relocation against real git: the preserved orphan still has the node's
+    canonical branch checked out, so reusing the branch name (not just the
+    path) would make `git worktree add -b` fail — the suffix must cover both."""
+
+    def test_dirty_orphan_relocates_dispatch_with_real_git(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        from milknado.domains.common.config import Gate
+        from milknado.domains.execution.executor import ExecutionConfig
+
+        git = GitAdapter(project)
+        # The refused orphan: canonical path, canonical branch checked out, dirty.
+        orphan = project / "milknado-1-add-the-added-helper"
+        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        (orphan / "wip.py").write_text("at-risk work\n")
+
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            graph.add_node("Add the added() helper")
+            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            config = ExecutionConfig(
+                execution_agent="claude",
+                quality_gates=(Gate("true"),),
+                worktree_pattern="milknado-{node_id}-{slug}",
+                project_root=project,
+            )
+            result = ex.dispatch(1, config)
+        finally:
+            graph.close()
+
+        assert result.worktree == project / "milknado-1-add-the-added-helper-2"
+        assert result.worktree.is_dir(), "relocated worktree must really exist"
+        branches = _git(project, "branch", "--list", "milknado/1-add-the-added-helper-2")
+        assert "milknado/1-add-the-added-helper-2" in branches
+        assert (orphan / "wip.py").read_text() == "at-risk work\n", "orphan preserved"
+
+    def test_relocation_skips_slot_whose_branch_survives(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        """`git worktree remove` never deletes the branch, so a relocation slot
+        whose PATH was cleaned off disk can still own a live branch. Advancing on
+        the path alone would return that taken branch and make `git worktree add
+        -b` fail; both path and branch must be free, so -2 (branch alive) is
+        skipped for -3."""
+        from milknado.domains.common.config import Gate
+        from milknado.domains.execution.executor import ExecutionConfig
+
+        git = GitAdapter(project)
+        # The refused orphan holds the canonical path + branch.
+        orphan = project / "milknado-1-add-the-added-helper"
+        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        (orphan / "wip.py").write_text("at-risk work\n")
+        # Slot -2's PATH is free, but its BRANCH survives a prior worktree removal.
+        _git(project, "branch", "milknado/1-add-the-added-helper-2")
+
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            graph.add_node("Add the added() helper")
+            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            config = ExecutionConfig(
+                execution_agent="claude",
+                quality_gates=(Gate("true"),),
+                worktree_pattern="milknado-{node_id}-{slug}",
+                project_root=project,
+            )
+            result = ex.dispatch(1, config)
+        finally:
+            graph.close()
+
+        assert result.worktree == project / "milknado-1-add-the-added-helper-3"
+        assert result.worktree.is_dir(), "relocated worktree must really exist"
+        head_branch = _git(result.worktree, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        assert head_branch == "milknado/1-add-the-added-helper-3"
 
 
 # --- minimal duck-typed doubles (the integration tests use a real GitAdapter) ---
+
+
+class _DispatchRalph:
+    """Just enough LoopPort for Executor.dispatch to run against real git."""
+
+    def generate_ralph_md(self, node, context, quality_gates, output_path):  # noqa: ANN001, ANN201
+        output_path.write_text("# ralph\n")
+        return output_path
+
+    def create_run(self, **_kw):  # noqa: ANN003, ANN201
+        class _Run:
+            class state:  # noqa: N801
+                run_id = "run-1"
+
+        return _Run()
+
+    def start_run(self, run_id: str) -> None:
+        pass
 
 
 class _RecordingGit:
@@ -385,6 +500,7 @@ class _RecordingGit:
         self._ff_error = ff_error
         self.fast_forwarded: list[str] = []
         self.removed: list[Path] = []
+        self.remove_targets: list[str] = []
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         return self._committed
@@ -399,7 +515,11 @@ class _RecordingGit:
             raise self._ff_error
         self.fast_forwarded.append(branch)
 
-    def remove_worktree(self, path: Path) -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        self.removed.append(path)
+        self.remove_targets.append(target)
+
+    def force_remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
 

@@ -16,6 +16,7 @@ from milknado.domains.common.errors import (
     InvalidTransition,
     RebaseAbortError,
     TransientDispatchError,
+    UnlandedWorkError,
 )
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
@@ -157,6 +158,9 @@ def _preserve_run_logs(worktree: Path, node_id: int) -> None:
         _logger.warning("Failed to preserve run logs for node %d: %s", node_id, exc)
 
 
+_MAX_RELOCATION_SLOTS = 100
+
+
 def _is_transient(exc: BaseException) -> bool:
     if isinstance(exc, (OSError, subprocess.TimeoutExpired, TransientDispatchError)):
         return True
@@ -197,13 +201,52 @@ class WorktreeManager:
         self._worktrees[node_id] = wt_path
         _exclude_loop_scaffolding(wt_path)
 
+    def relocate_occupied(self, wt_path: Path, branch: str) -> tuple[Path, str]:
+        """Relocate a dispatch whose canonical path or branch is still taken.
+
+        A refused (dirty/unlanded) orphan stays on disk at the node's canonical
+        worktree path with its branch checked out, so dispatch degrades by
+        relocating: a deterministic `-<n>` suffix on both path and branch, first
+        slot where BOTH are free wins. `git worktree remove` never deletes the
+        branch, so a slot whose path was cleaned off disk can still own a live
+        branch; advancing on the path alone would return that taken branch and
+        make `git worktree add -b` fail. The preserved orphan is left for a human
+        or an explicit discard; the run loop is never blocked by it.
+        """
+        if not wt_path.exists() and not self._git.branch_exists(branch):
+            return wt_path, branch
+        for n in range(2, _MAX_RELOCATION_SLOTS):
+            candidate = wt_path.with_name(f"{wt_path.name}-{n}")
+            candidate_branch = f"{branch}-{n}"
+            if not candidate.exists() and not self._git.branch_exists(candidate_branch):
+                _logger.warning(
+                    "Worktree path %s is occupied by a preserved orphan; "
+                    "relocating dispatch to %s",
+                    wt_path,
+                    candidate,
+                )
+                return candidate, candidate_branch
+        raise RuntimeError(
+            f"no free worktree slot for {wt_path} after {_MAX_RELOCATION_SLOTS - 2} relocations"
+        )
+
     def ensure_clean(self, node_id: int) -> None:
-        """Remove any tracked worktree for node_id, logging failures."""
+        """Remove any tracked worktree for node_id; degrade on refusal.
+
+        Pre-dispatch defensive cleanup, not teardown of finished work: a refusal
+        (dirty/unlanded work) keeps the worktree, logs what is at risk, and lets
+        dispatch proceed — `_dispatch_once` relocates to a fresh path rather
+        than blocking the run loop on preserved work.
+        """
         if node_id in self._worktrees:
             wt = self._worktrees.pop(node_id)
             if wt.exists():
                 try:
                     self._git.remove_worktree(wt)
+                except UnlandedWorkError as exc:
+                    _logger.warning(
+                        "Keeping worktree for node %d (dispatch relocates): %s", node_id, exc
+                    )
                 except Exception as exc:
                     _logger.warning(
                         "Failed to remove orphan worktree %s for node %d: %s",
@@ -212,11 +255,20 @@ class WorktreeManager:
                         exc,
                     )
 
-    def remove(self, node_id: int, wt_path: Path) -> None:
-        """Remove a specific worktree path and untrack it, logging failures."""
+    def remove(self, node_id: int, wt_path: Path, target: str = "HEAD") -> None:
+        """Remove a worktree and untrack it — fail-closed.
+
+        A refusal (dirty or unlanded work, `UnlandedWorkError`) propagates: the
+        caller's operation hard-fails rather than silently destroying or
+        silently skipping. Any other removal failure destroyed nothing — the
+        worktree is still on disk — so it is logged and swallowed to keep the
+        node lifecycle moving, as before.
+        """
         self._worktrees.pop(node_id, None)
         try:
-            self._git.remove_worktree(wt_path)
+            self._git.remove_worktree(wt_path, target)
+        except UnlandedWorkError:
+            raise
         except Exception as exc:
             _logger.warning(
                 "Failed to remove worktree %s for node %d: %s",
@@ -226,10 +278,11 @@ class WorktreeManager:
             )
 
     def discard(self, node_id: int, wt_path: Path) -> None:
-        """Best-effort worktree removal — all exceptions suppressed."""
+        """Explicitly destructive, best-effort removal — the ONLY path to
+        `--force` (`force_remove_worktree`); all exceptions suppressed."""
         self._worktrees.pop(node_id, None)
         with contextlib.suppress(Exception):
-            self._git.remove_worktree(wt_path)
+            self._git.force_remove_worktree(wt_path)
 
     def rebase_and_merge(
         self,
@@ -249,9 +302,19 @@ class WorktreeManager:
         to merge) and the rebase succeeded. A fast-forward failure raises: a dirty
         or diverged project root overlapping the merge is a loud failure, not a
         silent skip.
+
+        Teardown is fail-closed. Removal happens only when the rebase reported
+        success, and its landed check runs against `feature_branch` and the
+        worktree's HEAD *as it is then* — post-squash, post-rebase, post-ff —
+        so the happy path (ff-only made HEAD equal the feature tip) removes
+        cleanly while a merged-but-never-fast-forwarded HEAD refuses
+        (`UnlandedWorkError` hard-fails the caller). A conflicting rebase or an
+        in-flight exception (e.g. `RebaseAbortError`) skips removal outright:
+        that work is by definition unlanded, and the worktree is the evidence.
         """
         if not worktree or not worktree.exists():
             return RebaseResult(success=True)
+        landed = False
         try:
             msg = _build_commit_message(node_id, description)
             committed = self._git.squash_and_commit(worktree, feature_branch, msg)
@@ -261,10 +324,18 @@ class WorktreeManager:
                     self._git.fast_forward(worker_branch)
                 except subprocess.CalledProcessError as exc:
                     raise RebaseAbortError(worktree, stderr=exc.stderr or "") from exc
+            landed = rebase_result.success
             return rebase_result
         finally:
             _preserve_run_logs(worktree, node_id)
-            self.remove(node_id, worktree)
+            if landed:
+                self.remove(node_id, worktree, target=feature_branch)
+            else:
+                _logger.error(
+                    "Merge-back for node %d did not land; keeping worktree %s for inspection",
+                    node_id,
+                    worktree,
+                )
 
 
 class Executor:
@@ -339,6 +410,7 @@ class Executor:
             )
 
         branch = f"milknado/{node_id}-{slug}"
+        wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
 
         # The ralph MCP path claims the node RUNNING in the dispatching parent
         # (cross-process mutual exclusion) before this detached runner gets here;
