@@ -8,7 +8,7 @@ description: >
   milknado_node_verify before declaring done. Scoped to Edit/Write/Read/Bash plus
   milknado_node_verify and milknado_deposit_result; it has no coordinator tools
   and no Agent tool, which enforces the coordinator/worker boundary.
-tools: Read, Edit, Write, Bash, Glob, Grep, mcp__milknado__milknado_node_verify, mcp__milknado__milknado_deposit_result, mcp__milknado__milknado_track_follow_up
+tools: Read, Edit, Write, Bash, Glob, Grep, mcp__plugin_milknado_milknado__milknado_node_verify, mcp__plugin_milknado_milknado__milknado_deposit_result, mcp__plugin_milknado_milknado__milknado_track_follow_up
 ---
 
 # milknado-worker
