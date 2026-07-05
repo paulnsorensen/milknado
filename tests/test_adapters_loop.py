@@ -66,6 +66,7 @@ class TestCreateRun:
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             log_dir=Path("/project") / ".ralph-logs",
+            credit=False,
         )
         mock_manager.create_run.assert_called_once_with(mock_config)
         mock_run.add_listener.assert_called_once()
