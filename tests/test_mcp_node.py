@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from milknado._mcp_core import open_graph
+from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.mcp_node import milknado_node_verify, milknado_todo_claim
 from milknado.mcp_todo_mutate import milknado_set_subtree_status, milknado_todo_set_status
@@ -224,6 +225,19 @@ def test_node_verify_rejects_malformed_run_id(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     with pytest.raises(ValueError, match="invalid run_id format"):
         _call(milknado_node_verify, run_id="../etc/passwd", project_root=str(repo))
+
+
+def test_node_verify_unconfigured_gates_fails_closed(repo: Path) -> None:
+    """When the flavor resolves quality_gates=None (unconfigured, not the
+    explicit skip-gates `[]`), node_verify must fail closed with the
+    actionable message rather than raising a TypeError from list(None)."""
+    (repo / "milknado.toml").write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
+    node_id = _add_task(repo)
+    claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+
+    verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
+    assert verdict["ok"] is False
+    assert verdict["feedback"] == NO_GATES_CONFIGURED_MESSAGE
 
 
 # ── completion gate on terminal "done" ───────────────────────────────────────

@@ -216,9 +216,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
             raise ValueError(f"node {node.id} has no worktree_path; claim it before verifying")
 
         profile = resolve_flavor_profile(cfg, node.flavor)
-        verifier = _build_completion_verifier(
-            Path(node.worktree_path), list(profile.quality_gates)
-        )
+        verifier = _build_completion_verifier(Path(node.worktree_path), profile.quality_gates)
         verdict = verifier()
         graph.deposit_run_message(
             run_id,
