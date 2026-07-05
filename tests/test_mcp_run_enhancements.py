@@ -795,6 +795,9 @@ class TestRunCancel:
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
         assert result["status"] == "failed"
+        assert result["worktree_preserved"] is None, (
+            "a removed worktree must not report a preserved path"
+        )
         assert not wt.exists(), "a landed worktree must be removed on cancel"
         graph, _cfg = open_graph(tmp_path)
         try:
@@ -804,34 +807,33 @@ class TestRunCancel:
         finally:
             graph.close()
 
-    def test_cancel_refuses_unlanded_worktree_and_hard_fails(
+    def test_cancel_preserves_unlanded_worktree_and_reconciles_terminal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Acceptance 5 (unlanded): cancelling a run whose worktree holds a
-        commit the feature branch never received must hard-fail with a
-        diagnostic naming the worktree and the at-risk commits — never
-        silently destroy the only copy of that work."""
-        from milknado.domains.common.errors import UnlandedWorkError
-
+        """Cancelling a run whose worktree holds a commit the feature branch
+        never received must NOT strand the node RUNNING or raise out of the
+        tool: the fail-closed teardown refusal is caught, the worktree is
+        preserved on disk (the only copy of that work), the node reconciles to
+        terminal (failed), and the tool reports the preserved path."""
         node_id, run_id, wt = self._cancel_repo_with_worktree(tmp_path, unlanded=True)
         monkeypatch.setattr(os, "killpg", lambda *a: None)
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
-        with pytest.raises(UnlandedWorkError) as exc_info:
-            _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+        result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
-        assert str(wt) in str(exc_info.value)
-        assert "unlanded work" in str(exc_info.value), "diagnostic must name the commits"
-        assert wt.exists(), "refusal must preserve the worktree"
+        assert result["status"] == "failed"
+        assert result["worktree_preserved"] == str(wt), (
+            "the tool must report the preserved worktree path"
+        )
+        assert wt.exists(), "refusal must preserve the worktree on disk"
         assert (wt / "work.py").read_text() == "x = 1\n"
-        # The node is preserved too: the refusal fires before reconcile, so the
-        # RUNNING claim (and its worktree_path pointer) survives for inspection.
         graph, _cfg = open_graph(tmp_path)
         try:
             node = graph.get_node(node_id)
             assert node is not None
-            assert node.status.value == "running"
-            assert node.worktree_path == str(wt)
+            assert node.status.value == "failed", (
+                "the node must reach terminal even when its worktree is preserved"
+            )
         finally:
             graph.close()
 

@@ -82,9 +82,8 @@ class GitAdapter:
 
         Layer 1 (dirty): pre-check `git status --porcelain`, then remove without
         `--force` so git's native dirty guard stays as backstop. Layer 2
-        (unlanded): `merge-base --is-ancestor` primary, `merge-tree` content
-        equality fallback so squash/rebase-landed work is recognized; a
-        conflicting or inconclusive probe refuses (fail closed).
+        (unlanded): `merge-base --is-ancestor` ancestor containment; a
+        non-zero or inconclusive probe refuses (fail closed).
 
         Raises UnlandedWorkError naming the worktree and the at-risk work.
         Raises ValueError when `path` is not itself a registered worktree —
@@ -108,12 +107,12 @@ class GitAdapter:
         self._run(["worktree", "remove", str(path)])
 
     def _is_landed(self, worktree: Path, head: str, target_sha: str) -> bool:
-        """True when `head` introduces nothing `target_sha` doesn't already have.
+        """True when `target_sha` already contains `head` (ancestor containment).
 
-        Ancestor containment is exact for milknado's own land path (`git merge
-        --ff-only` makes the landed HEAD equal the target tip). The merge-tree
-        fallback recognizes externally squash/rebase-landed content (new SHAs,
-        same tree); a conflicting probe returns False — refuse, don't guess.
+        Milknado's only land path is squash → rebase → `git merge --ff-only`,
+        after which the landed HEAD equals the target tip, so `merge-base
+        --is-ancestor` is exact. A non-zero or inconclusive probe returns False
+        — refuse, don't guess.
         """
         ancestor = subprocess.run(
             ["git", "merge-base", "--is-ancestor", head, target_sha],
@@ -121,19 +120,7 @@ class GitAdapter:
             capture_output=True,
             text=True,
         )
-        if ancestor.returncode == 0:
-            return True
-        merged = subprocess.run(
-            ["git", "merge-tree", "--write-tree", target_sha, head],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-        )
-        if merged.returncode != 0:
-            return False
-        merged_tree = merged.stdout.strip().splitlines()[0] if merged.stdout.strip() else ""
-        target_tree = self._run(["rev-parse", f"{target_sha}^{{tree}}"]).stdout.strip()
-        return merged_tree == target_tree
+        return ancestor.returncode == 0
 
     def force_remove_worktree(self, path: Path) -> None:
         """Explicitly destructive removal: discards dirty AND unlanded work.

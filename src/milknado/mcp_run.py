@@ -232,7 +232,9 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
 
     Detached-ralph runs are signalled; async-headless runs receive a cancel
     sentinel and are given a bounded window to finalize cooperatively. No-ops
-    if the run is already terminal. Returns the final run state.
+    if the run is already terminal. Returns the final run state, plus a
+    `worktree_preserved` field holding the worktree path when fail-closed
+    teardown refused to remove a dirty/unlanded worktree (else None).
     """
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
@@ -242,7 +244,9 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
         final = cancel_run(graph, root, run_id)
     finally:
         graph.close()
-    return _state_to_run_dict(final)
+    result = _state_to_run_dict(final)
+    result["worktree_preserved"] = final.get("worktree_preserved")
+    return result
 
 
 @mcp.tool()
