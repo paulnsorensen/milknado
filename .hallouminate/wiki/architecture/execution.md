@@ -155,13 +155,11 @@ named act. `GitAdapter.remove_worktree(path, target="HEAD")` is fail-closed:
 
 - **Dirty guard** — `git status --porcelain` pre-check (plus git's own native
   no-`--force` refusal as backstop); dirty files are named in the diagnostic.
-- **Landed check** — two layers, git-native, no `gh`/PR dependency:
-  `git merge-base --is-ancestor <worktree_head> <target>` primary (exact for
-  milknado's own squash → rebase → `merge --ff-only` land path, which makes the
-  landed HEAD literally equal the target tip), with a `git merge-tree
-  --write-tree` content-equality fallback so externally squash/rebase-landed
-  content (new SHAs, same tree) is recognized. A conflicting/inconclusive probe
-  **refuses** — never destroy on a guess.
+- **Landed check** — a single git-native probe, no `gh`/PR dependency:
+  `git merge-base --is-ancestor <worktree_head> <target>`, exact for milknado's
+  own squash → rebase → `merge --ff-only` land path (the landed HEAD equals the
+  target tip). A non-ancestor or inconclusive probe **refuses** — never destroy
+  on a guess.
 - Refusal raises `UnlandedWorkError` naming the worktree and the at-risk work
   (dirty files and/or the unlanded commit range).
 - `GitAdapter.force_remove_worktree` is the only `--force` teardown, reachable
