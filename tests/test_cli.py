@@ -72,6 +72,7 @@ def mock_adapters():
         patch("milknado.adapters.CrgAdapter") as crg,
     ):
         crg.return_value.get_impact_radius.return_value = {}
+        git.return_value.branch_exists.return_value = False
         yield ralph, git, crg
 
 

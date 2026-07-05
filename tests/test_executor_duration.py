@@ -33,6 +33,9 @@ class _FakeGit:
     def __init__(self) -> None:
         self.rebase_result: RebaseResult = RebaseResult(success=True)
 
+    def branch_exists(self, branch: str) -> bool:
+        return False
+
     def create_worktree(self, path: Path, branch: str) -> Path:
         return path
 

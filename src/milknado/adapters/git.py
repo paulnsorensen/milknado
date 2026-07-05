@@ -54,6 +54,21 @@ class GitAdapter:
         self._run(["worktree", "add", "-b", branch, str(path)])
         return path
 
+    def branch_exists(self, branch: str) -> bool:
+        """True when a local branch named `branch` exists.
+
+        Plumbing check with no side effects. `--quiet` makes the exit code the
+        answer (0 = present, 1 = absent), so it must not go through `_run`,
+        whose `check=True` would raise on the absent case.
+        """
+        result = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         """Fail-closed worktree removal: refuse dirty or unlanded worktrees.
 

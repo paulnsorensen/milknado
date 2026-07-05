@@ -161,31 +161,6 @@ def _preserve_run_logs(worktree: Path, node_id: int) -> None:
 _MAX_RELOCATION_SLOTS = 100
 
 
-def _relocate_occupied(wt_path: Path, branch: str) -> tuple[Path, str]:
-    """Relocate a dispatch whose worktree path is still occupied.
-
-    A refused (dirty/unlanded) orphan stays on disk at the node's canonical
-    worktree path — with its branch still checked out — so dispatch degrades by
-    relocating: a deterministic `-<n>` suffix on both path and branch, first
-    free slot wins. The preserved orphan is left for a human or an explicit
-    discard; the run loop is never blocked by it.
-    """
-    if not wt_path.exists():
-        return wt_path, branch
-    for n in range(2, _MAX_RELOCATION_SLOTS):
-        candidate = wt_path.with_name(f"{wt_path.name}-{n}")
-        if not candidate.exists():
-            _logger.warning(
-                "Worktree path %s is occupied by a preserved orphan; relocating dispatch to %s",
-                wt_path,
-                candidate,
-            )
-            return candidate, f"{branch}-{n}"
-    raise RuntimeError(
-        f"no free worktree slot for {wt_path} after {_MAX_RELOCATION_SLOTS - 2} relocations"
-    )
-
-
 def _is_transient(exc: BaseException) -> bool:
     if isinstance(exc, (OSError, subprocess.TimeoutExpired, TransientDispatchError)):
         return True
@@ -225,6 +200,35 @@ class WorktreeManager:
         self._git.create_worktree(wt_path, branch)
         self._worktrees[node_id] = wt_path
         _exclude_loop_scaffolding(wt_path)
+
+    def relocate_occupied(self, wt_path: Path, branch: str) -> tuple[Path, str]:
+        """Relocate a dispatch whose canonical path or branch is still taken.
+
+        A refused (dirty/unlanded) orphan stays on disk at the node's canonical
+        worktree path with its branch checked out, so dispatch degrades by
+        relocating: a deterministic `-<n>` suffix on both path and branch, first
+        slot where BOTH are free wins. `git worktree remove` never deletes the
+        branch, so a slot whose path was cleaned off disk can still own a live
+        branch; advancing on the path alone would return that taken branch and
+        make `git worktree add -b` fail. The preserved orphan is left for a human
+        or an explicit discard; the run loop is never blocked by it.
+        """
+        if not wt_path.exists() and not self._git.branch_exists(branch):
+            return wt_path, branch
+        for n in range(2, _MAX_RELOCATION_SLOTS):
+            candidate = wt_path.with_name(f"{wt_path.name}-{n}")
+            candidate_branch = f"{branch}-{n}"
+            if not candidate.exists() and not self._git.branch_exists(candidate_branch):
+                _logger.warning(
+                    "Worktree path %s is occupied by a preserved orphan; "
+                    "relocating dispatch to %s",
+                    wt_path,
+                    candidate,
+                )
+                return candidate, candidate_branch
+        raise RuntimeError(
+            f"no free worktree slot for {wt_path} after {_MAX_RELOCATION_SLOTS - 2} relocations"
+        )
 
     def ensure_clean(self, node_id: int) -> None:
         """Remove any tracked worktree for node_id; degrade on refusal.
@@ -406,7 +410,7 @@ class Executor:
             )
 
         branch = f"milknado/{node_id}-{slug}"
-        wt_path, branch = _relocate_occupied(wt_path, branch)
+        wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
 
         # The ralph MCP path claims the node RUNNING in the dispatching parent
         # (cross-process mutual exclusion) before this detached runner gets here;

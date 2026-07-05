@@ -46,6 +46,9 @@ class FakeGit:
         self.removed: list[Path] = []
         self.rebase_result: RebaseResult = RebaseResult(success=True)
 
+    def branch_exists(self, branch: str) -> bool:
+        return False
+
     def create_worktree(self, path: Path, branch: str) -> Path:
         self.created.append((path, branch))
         path.mkdir(parents=True, exist_ok=True)

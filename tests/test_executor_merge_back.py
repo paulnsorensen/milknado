@@ -430,6 +430,44 @@ class TestDispatchRelocationIntegration:
         assert "milknado/1-add-the-added-helper-2" in branches
         assert (orphan / "wip.py").read_text() == "at-risk work\n", "orphan preserved"
 
+    def test_relocation_skips_slot_whose_branch_survives(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        """`git worktree remove` never deletes the branch, so a relocation slot
+        whose PATH was cleaned off disk can still own a live branch. Advancing on
+        the path alone would return that taken branch and make `git worktree add
+        -b` fail; both path and branch must be free, so -2 (branch alive) is
+        skipped for -3."""
+        from milknado.domains.common.config import Gate
+        from milknado.domains.execution.executor import ExecutionConfig
+
+        git = GitAdapter(project)
+        # The refused orphan holds the canonical path + branch.
+        orphan = project / "milknado-1-add-the-added-helper"
+        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        (orphan / "wip.py").write_text("at-risk work\n")
+        # Slot -2's PATH is free, but its BRANCH survives a prior worktree removal.
+        _git(project, "branch", "milknado/1-add-the-added-helper-2")
+
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            graph.add_node("Add the added() helper")
+            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            config = ExecutionConfig(
+                execution_agent="claude",
+                quality_gates=(Gate("true"),),
+                worktree_pattern="milknado-{node_id}-{slug}",
+                project_root=project,
+            )
+            result = ex.dispatch(1, config)
+        finally:
+            graph.close()
+
+        assert result.worktree == project / "milknado-1-add-the-added-helper-3"
+        assert result.worktree.is_dir(), "relocated worktree must really exist"
+        head_branch = _git(result.worktree, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        assert head_branch == "milknado/1-add-the-added-helper-3"
+
 
 # --- minimal duck-typed doubles (the integration tests use a real GitAdapter) ---
 

@@ -460,3 +460,18 @@ class TestSquashAndCommit:
         # Should not raise; commit skipped because nothing staged
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert not any("commit" in c for c in calls if isinstance(c, list))
+
+
+class TestBranchExists:
+    """Real-git existence check used by dispatch relocation to keep path and
+    branch slots in lockstep."""
+
+    def test_true_for_live_branch_false_for_absent(self, repo: Path) -> None:
+        adapter = GitAdapter(repo)
+        assert adapter.branch_exists("feature") is True
+        assert adapter.branch_exists("no-such-branch") is False
+
+    def test_recognizes_namespaced_relocation_branch(self, repo: Path) -> None:
+        _git(repo, "branch", "milknado/1-slug-2")
+        adapter = GitAdapter(repo)
+        assert adapter.branch_exists("milknado/1-slug-2") is True
