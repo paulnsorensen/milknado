@@ -1,7 +1,8 @@
-"""run command and execution helpers."""
+"""run and attach commands, plus execution helpers."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -66,6 +67,41 @@ def _print_run_result(result: RunLoopResult) -> None:
                 console.print(f"  [red]•[/red] {f}")
         if conflict.detail:
             console.print(f"  [dim]{conflict.detail}[/dim]")
+
+
+def _tmux_attach_argv(target: str) -> list[str]:
+    """The tmux client argv that focuses the run's window and attaches.
+
+    Inside an existing tmux client a nested attach is refused, so the current
+    client is switched instead.
+    """
+    session = target.split(":", 1)[0]
+    follow = "switch-client" if os.environ.get("TMUX") else "attach-session"
+    return ["tmux", "select-window", "-t", target, ";", follow, "-t", session]
+
+
+def attach(
+    run_id: Annotated[str, typer.Argument(help="Run id, as returned by the run-start tools")],
+    project_root: Annotated[
+        Path, typer.Option("--project-root", help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Attach to a running tmux-dispatched run's window."""
+    from milknado.adapters.tmux import TmuxAdapter
+    from milknado.domains.dispatch import resolve_attach_target
+
+    project_root = project_root.resolve()
+    config, plugins = _load_or_default(project_root)
+    graph = _ensure_db(config, plugins)
+    try:
+        target = resolve_attach_target(graph, TmuxAdapter(project_root), run_id)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    finally:
+        graph.close()
+    argv = _tmux_attach_argv(target)
+    os.execvp(argv[0], argv)
 
 
 def run(
