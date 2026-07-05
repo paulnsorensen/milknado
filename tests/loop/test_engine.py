@@ -106,7 +106,7 @@ class TestRunLoop:
     @patch(MOCK_SUBPROCESS)
     def test_prompt_read_from_ralph_file(self, mock_run, tmp_path):
         mock_run.return_value = ok_proc()
-        config = make_config(tmp_path, "my prompt text", max_iterations=1, credit=False)
+        config = make_config(tmp_path, "my prompt text", max_iterations=1)
         state = make_state()
 
         run_loop(config, state, NullEmitter())
@@ -512,7 +512,6 @@ class TestCompletionVerifier:
             "do the work",
             max_iterations=5,
             stop_on_completion_signal=True,
-            credit=False,
             completion_verifier=lambda: next(verdicts),
         )
         state = make_state()
@@ -548,7 +547,6 @@ class TestCompletionVerifier:
             "do the work",
             max_iterations=5,
             stop_on_completion_signal=True,
-            credit=False,
             completion_verifier=lambda: next(verdicts),
         )
         state = make_state()
@@ -572,7 +570,6 @@ class TestCompletionVerifier:
             "do the work",
             max_iterations=3,
             stop_on_completion_signal=True,
-            credit=False,
             completion_verifier=lambda: CompletionVerdict(ok=False, feedback="still failing"),
         )
         state = make_state()
@@ -620,7 +617,7 @@ class TestCompletionVerifier:
 
     def test_assemble_prompt_appends_verifier_feedback(self, tmp_path):
         """``_assemble_prompt`` appends feedback verbatim when supplied."""
-        config = make_config(tmp_path, "base prompt", max_iterations=1, credit=False)
+        config = make_config(tmp_path, "base prompt", max_iterations=1)
         state = make_state()
         state.iteration = 2
 
@@ -631,7 +628,7 @@ class TestCompletionVerifier:
 
     def test_assemble_prompt_omits_feedback_when_none(self, tmp_path):
         """No feedback → prompt is unchanged from the no-feedback path."""
-        config = make_config(tmp_path, "base prompt", max_iterations=1, credit=False)
+        config = make_config(tmp_path, "base prompt", max_iterations=1)
         state = make_state()
         state.iteration = 1
 
@@ -793,7 +790,6 @@ class TestRalphArgs:
             "---\nargs:\n  - dir\n  - focus\n---\nResearch {{ args.dir }} focus: {{ args.focus }}",
             max_iterations=1,
             args={"dir": "./src", "focus": "perf"},
-            credit=False,
         )
         state = make_state()
         run_loop(config, state, NullEmitter())
@@ -809,7 +805,6 @@ class TestRalphArgs:
             "Before {{ args.opt }} after",
             max_iterations=1,
             args={},
-            credit=False,
         )
         state = make_state()
         run_loop(config, state, NullEmitter())
@@ -1412,7 +1407,7 @@ class TestAssemblePrompt:
     """Unit tests for _assemble_prompt — reading and resolving the prompt template."""
 
     def test_reads_prompt_from_ralph_file(self, tmp_path):
-        config = make_config(tmp_path, "simple prompt", max_iterations=1, credit=False)
+        config = make_config(tmp_path, "simple prompt", max_iterations=1)
         state = make_state()
         state.iteration = 1
 
@@ -1426,7 +1421,6 @@ class TestAssemblePrompt:
             "---\nagent: echo\ncommands:\n  - name: tests\n    run: pytest\n---\n"
             "Results: {{ commands.tests }}",
             max_iterations=1,
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1441,7 +1435,6 @@ class TestAssemblePrompt:
             "---\nagent: echo\nargs:\n  - dir\n---\nSearch {{ args.dir }}",
             max_iterations=1,
             args={"dir": "./src"},
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1456,7 +1449,6 @@ class TestAssemblePrompt:
             "Before {{ args.missing }} after",
             max_iterations=1,
             args={},
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1466,9 +1458,7 @@ class TestAssemblePrompt:
         assert result == "Before  after"
 
     def test_strips_html_comments(self, tmp_path):
-        config = make_config(
-            tmp_path, "Before <!-- hidden --> after", max_iterations=1, credit=False
-        )
+        config = make_config(tmp_path, "Before <!-- hidden --> after", max_iterations=1)
         state = make_state()
         state.iteration = 1
 
@@ -1476,18 +1466,23 @@ class TestAssemblePrompt:
 
         assert result == "Before  after"
 
-    def test_credit_instruction_appended_by_default(self, tmp_path):
-        config = make_config(tmp_path, "simple prompt", max_iterations=1)
+    def test_commit_footer_appended_to_prompt(self, tmp_path):
+        config = make_config(
+            tmp_path,
+            "simple prompt",
+            max_iterations=1,
+            commit_footer="Co-authored-by: Team <team@example.com>",
+        )
         state = make_state()
         state.iteration = 1
 
         result = _assemble_prompt(config, state, {})
 
         assert result.startswith("simple prompt")
-        assert "Co-authored-by: Ralphify <noreply@ralphify.co>" in result
+        assert "Co-authored-by: Team <team@example.com>" in result
 
-    def test_credit_false_omits_instruction(self, tmp_path):
-        config = make_config(tmp_path, "simple prompt", max_iterations=1, credit=False)
+    def test_no_footer_when_unset(self, tmp_path):
+        config = make_config(tmp_path, "simple prompt", max_iterations=1)
         state = make_state()
         state.iteration = 1
 
@@ -1506,7 +1501,6 @@ class TestAssemblePrompt:
             max_iterations=1,
             args={"filter": "{{ commands.tests }}"},
             commands=[Command(name="tests", run="pytest")],
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1521,7 +1515,6 @@ class TestAssemblePrompt:
             tmp_path,
             "Name: {{ ralph.name }}, Iter: {{ ralph.iteration }}, Max: {{ ralph.max_iterations }}",
             max_iterations=5,
-            credit=False,
         )
         state = make_state()
         state.iteration = 3
@@ -1535,7 +1528,6 @@ class TestAssemblePrompt:
             tmp_path,
             "Max: {{ ralph.max_iterations }}",
             max_iterations=None,
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1549,7 +1541,6 @@ class TestAssemblePrompt:
             tmp_path,
             "Name: {{ ralph.name }}",
             max_iterations=1,
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1569,7 +1560,6 @@ class TestInMemoryPrompt:
             prompt="Search {{ args.dir }} now",
             args={"dir": "./src"},
             max_iterations=1,
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1588,7 +1578,6 @@ class TestInMemoryPrompt:
             ralph_dir=tmp_path,
             prompt=body,
             max_iterations=1,
-            credit=False,
         )
         state = make_state()
         state.iteration = 1
@@ -1614,21 +1603,26 @@ class TestInMemoryPrompt:
         assert state.completed == 1
 
 
-class TestCreditInLoop:
+class TestCommitFooterInLoop:
     @patch(MOCK_SUBPROCESS)
-    def test_credit_instruction_in_agent_input(self, mock_run, tmp_path):
+    def test_commit_footer_instruction_in_agent_input(self, mock_run, tmp_path):
         mock_run.return_value = ok_proc()
-        config = make_config(tmp_path, "do work", max_iterations=1)
+        config = make_config(
+            tmp_path,
+            "do work",
+            max_iterations=1,
+            commit_footer="Co-authored-by: Team <team@example.com>",
+        )
         state = make_state()
         run_loop(config, state, NullEmitter())
 
         call_input = mock_run.return_value.stdin.write.call_args.args[0]
-        assert "Co-authored-by: Ralphify <noreply@ralphify.co>" in call_input
+        assert "Co-authored-by: Team <team@example.com>" in call_input
 
     @patch(MOCK_SUBPROCESS)
-    def test_credit_false_no_trailer_in_agent_input(self, mock_run, tmp_path):
+    def test_no_footer_unset_no_trailer_in_agent_input(self, mock_run, tmp_path):
         mock_run.return_value = ok_proc()
-        config = make_config(tmp_path, "do work", max_iterations=1, credit=False)
+        config = make_config(tmp_path, "do work", max_iterations=1)
         state = make_state()
         run_loop(config, state, NullEmitter())
 

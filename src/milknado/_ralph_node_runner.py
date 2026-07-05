@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
                 quality_gates=profile.quality_gates,
                 worktree_pattern=cfg.worktree_pattern,
                 project_root=root,
+                commit_footer=cfg.commit_footer,
             )
             feature_branch = git.current_branch()
             outcome = run_node_to_completion(

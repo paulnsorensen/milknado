@@ -65,7 +65,7 @@ class TestRunConfig:
         assert config.timeout is None
         assert config.stop_on_error is False
         assert config.log_dir is None
-        assert config.credit is True
+        assert config.commit_footer is None
         assert config.prompt is None
 
     def test_prompt_body_instead_of_ralph_file(self, tmp_path):

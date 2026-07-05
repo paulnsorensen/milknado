@@ -229,6 +229,26 @@ class TestSaveConfig:
         loaded = load_config(path, include_global=False)
         assert loaded.worker_tools.get("claude") == ()
 
+    def test_config_roundtrips_commit_footer(self, tmp_path: Path) -> None:
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            commit_footer="Co-authored-by: Team <team@example.com>",
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.commit_footer == "Co-authored-by: Team <team@example.com>"
+
+    def test_commit_footer_omitted_stays_none(self, tmp_path: Path) -> None:
+        cfg = default_config(tmp_path)
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert "commit_footer" not in content
+        loaded = load_config(path, include_global=False)
+        assert loaded.commit_footer is None
+
     def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)
         path = tmp_path / "milknado.toml"

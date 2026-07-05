@@ -47,6 +47,7 @@ class ExecutionConfig:
     project_root: Path
     dispatch_max_retries: int = 2
     dispatch_backoff_seconds: float = 5.0
+    commit_footer: str | None = None
 
 
 @dataclass(frozen=True)
@@ -473,6 +474,7 @@ class Executor:
             commands=[],
             quality_gates=config.quality_gates,
             project_root=wt_path,
+            commit_footer=config.commit_footer,
         )
         run_id = run.state.run_id
         self._ralph.start_run(run_id)

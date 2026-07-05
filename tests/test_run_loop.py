@@ -118,6 +118,7 @@ class FakeRalph:
         commands: list[str],
         quality_gates: list[str],
         project_root: Path | None = None,
+        commit_footer: str | None = None,
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
