@@ -96,6 +96,7 @@ class MilknadoConfig:
     flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
+    commit_footer: str | None = None
     # Native Workflow ("ultracode") backend defaults — coordinator-side only.
     worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
     loop_mode: str = DEFAULT_LOOP_MODE
@@ -191,6 +192,9 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             "max_turns": config.max_turns,
         }
     )
+
+    if config.commit_footer is not None:
+        milknado["commit_footer"] = config.commit_footer
 
     prompts: dict[str, str] = {}
     if config.planning_prompt_prepend is not None:
@@ -450,6 +454,9 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         max_turns=_validated_positive_int(
             raw.get("max_turns", DEFAULT_MAX_TURNS), "[milknado] max_turns"
         ),
+        commit_footer=_validated_optional_str(
+            raw.get("commit_footer"), "[milknado] commit_footer"
+        ),
     )
 
 
@@ -465,6 +472,15 @@ def _validated_str(value: Any, default: str, ctx: str) -> str:
     """Return a string config value, rejecting non-string types instead of coercing."""
     if value is None:
         return default
+    if not isinstance(value, str):
+        raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
+    return value
+
+
+def _validated_optional_str(value: Any, ctx: str) -> str | None:
+    """Return a string config value or None, rejecting non-string types instead of coercing."""
+    if value is None:
+        return None
     if not isinstance(value, str):
         raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
     return value

@@ -89,8 +89,11 @@ class FakeRalph:
         commands: list[str],
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
+        commit_footer: str | None = None,
     ) -> FakeRun:
-        self.runs_created.append({"agent": agent, "dir": ralph_dir})
+        self.runs_created.append(
+            {"agent": agent, "dir": ralph_dir, "commit_footer": commit_footer}
+        )
         return FakeRun()
 
     def start_run(self, run_id: str) -> None:
@@ -277,6 +280,28 @@ class TestExecutorDispatch:
         assert node is not None
         assert node.branch_name is not None
         assert node.branch_name.startswith("milknado/1-")
+
+    def test_commit_footer_threaded_to_create_run(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        """A set commit_footer on ExecutionConfig reaches the ralph port's create_run call."""
+        footer_config = ExecutionConfig(
+            execution_agent="claude",
+            quality_gates=(Gate("uv run pytest"),),
+            worktree_pattern="milknado-{node_id}-{slug}",
+            project_root=tmp_path,
+            commit_footer="Co-authored-by: Team <team@example.com>",
+        )
+        fake_ralph = FakeRalph()
+        executor = Executor(graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg())
+        graph.add_node("task")
+
+        executor.dispatch(1, footer_config)
+
+        footer = "Co-authored-by: Team <team@example.com>"
+        assert fake_ralph.runs_created[0]["commit_footer"] == footer
 
     def test_generates_ralph_md(
         self,
@@ -1246,6 +1271,7 @@ class TestGetAttemptCount:
                 commands: list[str],
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
+                commit_footer: str | None = None,
             ) -> FakeRun:  # noqa: E501
                 nonlocal call_count
                 call_count += 1
@@ -1280,6 +1306,7 @@ class TestGetAttemptCount:
                 commands: list[str],
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
+                commit_footer: str | None = None,
             ) -> FakeRun:  # noqa: E501
                 raise ValueError("bad config")
 
@@ -1303,6 +1330,7 @@ class TestGetAttemptCount:
                 commands: list[str],
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
+                commit_footer: str | None = None,
             ) -> FakeRun:  # noqa: E501
                 raise TransientDispatchError("always fails")
 

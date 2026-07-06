@@ -67,6 +67,7 @@ class _FakeRalph:
         commands: list[str],
         quality_gates: list[str],
         project_root: Path | None = None,
+        commit_footer: str | None = None,
     ) -> _FakeRun:
         return _FakeRun()
 

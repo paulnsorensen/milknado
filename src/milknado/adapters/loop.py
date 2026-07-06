@@ -73,6 +73,7 @@ class LoopAdapter:
         commands: list[str],
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
+        commit_footer: str | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
@@ -86,7 +87,7 @@ class LoopAdapter:
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             log_dir=ralph_dir / ".ralph-logs",
-            credit=False,
+            commit_footer=commit_footer,
         )
         config.completion_verifier = _build_completion_verifier(ralph_dir, quality_gates)
         run = self._manager.create_run(config)
@@ -186,7 +187,6 @@ class LoopAdapter:
                 project_root=tmp_path,
                 completion_signal=MILKNADO_COMPLETION_SIGNAL,
                 stop_on_completion_signal=True,
-                credit=False,
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id

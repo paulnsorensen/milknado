@@ -23,7 +23,6 @@ RALPH_MARKER = "RALPH.md"
 FIELD_AGENT = "agent"
 FIELD_COMMANDS = "commands"
 FIELD_ARGS = "args"
-FIELD_CREDIT = "credit"
 FIELD_RALPH = "ralph"
 # Promise config keeps the legacy key names. ``completion_signal`` stores the
 # inner promise text, not the surrounding ``<promise>...</promise>`` markup.

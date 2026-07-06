@@ -160,6 +160,14 @@ def test_non_string_worker_agent_type_rejected(tmp_path: Path) -> None:
         load_config(path, include_global=False)
 
 
+def test_config_commit_footer_rejects_non_string(tmp_path: Path) -> None:
+    """A non-string commit_footer is rejected, not silently str()-coerced."""
+    path = tmp_path / "milknado.toml"
+    path.write_text('[milknado]\nagent_family = "claude"\ncommit_footer = 7\n')
+    with pytest.raises(ValueError, match="commit_footer must be a string"):
+        load_config(path, include_global=False)
+
+
 # ── save/load round-trip ─────────────────────────────────────────────────────
 
 

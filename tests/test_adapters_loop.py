@@ -56,6 +56,7 @@ class TestCreateRun:
             ralph_file=Path("/project/RALPH.md"),
             commands=["uv run pytest"],
             quality_gates=(Gate("uv run ruff check"),),
+            commit_footer="Co-authored-by: Team <team@example.com>",
         )
 
         mock_config_cls.assert_called_once_with(
@@ -66,7 +67,7 @@ class TestCreateRun:
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             log_dir=Path("/project") / ".ralph-logs",
-            credit=False,
+            commit_footer="Co-authored-by: Team <team@example.com>",
         )
         mock_manager.create_run.assert_called_once_with(mock_config)
         mock_run.add_listener.assert_called_once()

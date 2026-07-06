@@ -60,12 +60,13 @@ def _field_hint(field_name: str) -> str:
     return f"Check the '{field_name}' field in your {RALPH_MARKER} frontmatter."
 
 
-_CREDIT_INSTRUCTION = (
-    "\n\n---\n\n"
-    "IMPORTANT: When you make any git commits, include the following trailer "
-    "at the end of your commit message:\n\n"
-    "Co-authored-by: Ralphify <noreply@ralphify.co>"
-)
+def _footer_instruction(footer: str) -> str:
+    return (
+        "\n\n---\n\n"
+        "IMPORTANT: When you make any git commits, include the following trailer "
+        f"at the end of your commit message:\n\n{footer}"
+    )
+
 
 _VERIFIER_FEEDBACK_HEADER = (
     "\n\n---\n\n"
@@ -180,8 +181,8 @@ def _assemble_prompt(
     prompt = resolve_all(prompt, command_outputs, config.args, ralph_context)
     if verifier_feedback:
         prompt += _VERIFIER_FEEDBACK_HEADER + verifier_feedback
-    if config.credit:
-        prompt += _CREDIT_INSTRUCTION
+    if config.commit_footer:
+        prompt += _footer_instruction(config.commit_footer)
     return prompt
 
 

@@ -120,7 +120,7 @@ class RunConfig:
     stop_on_error: bool = False
     log_dir: Path | None = None
     project_root: Path = field(default=Path("."))
-    credit: bool = True
+    commit_footer: str | None = None
     # Inner text expected inside ``<promise>...</promise>``.
     completion_signal: str = DEFAULT_COMPLETION_SIGNAL
     # Stop the run when the configured promise payload is observed.

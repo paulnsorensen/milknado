@@ -419,6 +419,7 @@ def test_runner_writes_done_on_successful_outcome(
         loop_mode = "redispatch"
         max_iterations = 8
         max_turns = 60
+        commit_footer = None
 
     class _Graph:
         def __init__(self) -> None:
@@ -496,6 +497,7 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         loop_mode = "redispatch"
         max_iterations = 8
         max_turns = 60
+        commit_footer = None
 
     class _Graph:
         def __init__(self) -> None:
