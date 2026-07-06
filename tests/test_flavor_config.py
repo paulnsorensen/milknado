@@ -402,6 +402,51 @@ def test_resolve_flavor_profile_quality_gates_none_inherits(tmp_path: Path) -> N
     assert profile.quality_gates == (Gate("uv run pytest"),)
 
 
+def test_resolve_flavor_profile_no_flavor_worktree_defaults_true(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, None)
+    assert profile.worktree is True
+
+
+def test_resolve_flavor_profile_entry_without_worktree_defaults_true(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spike": FlavorOverride(),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spike")
+    assert profile.worktree is True
+
+
+def test_resolve_flavor_profile_worktree_false_override(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=False),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spec")
+    assert profile.worktree is False
+
+
+def test_resolve_flavor_profile_worktree_true_override(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=True),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spec")
+    assert profile.worktree is True
+
+
 def test_resolve_flavor_profile_brief_replaces_global(tmp_path: Path) -> None:
     cfg = MilknadoConfig(
         agent_family="claude",
