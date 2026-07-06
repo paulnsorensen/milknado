@@ -21,12 +21,13 @@ class NodeKind(Enum):
     TASK = "task"
 
 
-class TaskFlavor(Enum):
-    IMPLEMENT = "implement"
-    SPEC = "spec"
-    SPIKE = "spike"
-    PROTOTYPE = "prototype"
-    RESEARCH = "research"
+# Flavor is a free string validated against BUILTIN_FLAVORS ∪ TOML-declared
+# names at write paths (see config.MilknadoConfig.flavors); the registry
+# mechanism lives in milknado, the vocabulary lives in user space.
+BUILTIN_FLAVORS: frozenset[str] = frozenset(
+    {"implement", "spec", "spike", "prototype", "research"}
+)
+DEFAULT_FLAVOR = "implement"
 
 
 VALID_TRANSITIONS: dict[NodeStatus, set[NodeStatus]] = {
@@ -68,16 +69,18 @@ class MikadoNode:
     batch_index: int | None = None
     completion_duration_seconds: float | None = None
     kind: NodeKind = NodeKind.TASK
-    flavor: TaskFlavor | None = None
+    flavor: str | None = None
     goal_run_id: str | None = None  # coordinator run that claimed this goal (goal_claims table)
     # deterministic wiki key (uuid5); set for imported roadmap/goal nodes
     wiki_ref: str | None = None
+    # opaque repo-relative markdown reference (wiki_ref precedent); no existence enforcement
+    artifact_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind == NodeKind.TASK:
-            # Default to IMPLEMENT when None; any explicit value is valid.
+            # Default to "implement" when None; any explicit value is valid.
             if self.flavor is None:
-                object.__setattr__(self, "flavor", TaskFlavor.IMPLEMENT)
+                object.__setattr__(self, "flavor", DEFAULT_FLAVOR)
         else:
             if self.flavor is not None:  # pragma: no cover — graph.add_node enforces this first
                 raise ValueError(

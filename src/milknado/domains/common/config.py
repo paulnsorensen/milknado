@@ -7,12 +7,9 @@ import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import tomli_w
-
-if TYPE_CHECKING:
-    from milknado.domains.common.types import TaskFlavor
 
 from milknado.domains.common.agent_argv import (
     _ALLOWED_WORKER_EXECUTABLES,
@@ -93,7 +90,7 @@ class MilknadoConfig:
     completion_timeout_seconds: float = 1800.0
     eta_sample_size: int = 10
     worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
+    flavors: dict[str, FlavorOverride] = field(default_factory=dict)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
     commit_footer: str | None = None
@@ -215,10 +212,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
 
     # Save [flavor.*] tables.
     flavor_tables: dict[str, dict[str, Any]] = {}
-    for flavor_key, fo in config.flavors.items():
-        from milknado.domains.common.types import TaskFlavor
-
-        flavor_name = flavor_key.value if isinstance(flavor_key, TaskFlavor) else str(flavor_key)
+    for flavor_name, fo in config.flavors.items():
         entry: dict[str, Any] = {}
         if fo.execution_agent is not None:
             entry["execution_agent"] = fo.execution_agent
@@ -561,28 +555,27 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
 def _parse_flavor_tables(
     flavor_raw: Any,
     project_root: Path,
-) -> dict[TaskFlavor, FlavorOverride]:
-    """Parse [milknado.flavor.*] tables into {TaskFlavor: FlavorOverride}."""
-    from milknado.domains.common.types import TaskFlavor
+) -> dict[str, FlavorOverride]:
+    """Parse [milknado.flavor.*] tables into {flavor name: FlavorOverride}.
 
+    Any string key is accepted here: a TOML-declared table is itself the
+    registration of that flavor name (see ADR-004).
+    """
     if flavor_raw is None:
         return {}
     if not isinstance(flavor_raw, dict):
         raise ValueError("[milknado.flavor] must be a table")
 
-    out: dict[TaskFlavor, FlavorOverride] = {}
+    out: dict[str, FlavorOverride] = {}
     for flavor_name, entry in flavor_raw.items():
-        try:
-            flavor = TaskFlavor(flavor_name)
-        except ValueError:
+        if not isinstance(flavor_name, str) or not flavor_name:
             raise ValueError(
-                f"[milknado.flavor] unknown flavor key {flavor_name!r}; "
-                f"expected one of {sorted(f.value for f in TaskFlavor)}"
-            ) from None
+                f"[milknado.flavor] flavor keys must be non-empty strings, got {flavor_name!r}"
+            )
         if not isinstance(entry, dict):
             raise ValueError(f"[milknado.flavor.{flavor_name}] must be a table")
         fo = _parse_flavor_entry(entry, flavor_name, project_root)
-        out[flavor] = fo
+        out[flavor_name] = fo
     return out
 
 

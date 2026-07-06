@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeKind
-from milknado.domains.common.types import TaskFlavor
+from milknado.domains.common.types import BUILTIN_FLAVORS
 from milknado.domains.graph import MikadoGraph
 
 # ── helpers ────────────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ class TestValidateGoalRunnable:
 class TestFlavorRoundTrip:
     def test_default_flavor_for_task_is_implement(self, graph: MikadoGraph) -> None:
         task = graph.add_node("t")
-        assert task.flavor == TaskFlavor.IMPLEMENT
+        assert task.flavor == "implement"
 
     def test_non_task_nodes_have_no_flavor(self, graph: MikadoGraph) -> None:
         goal = graph.add_node("g", kind=NodeKind.GOAL)
@@ -251,7 +251,7 @@ class TestFlavorRoundTrip:
         g = MikadoGraph(db_path)
         goal = g.add_node("g", kind=NodeKind.GOAL)
         # Task under goal — must pass containment check
-        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
+        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
         task_id = task.id
         g.close()
 
@@ -259,18 +259,16 @@ class TestFlavorRoundTrip:
         reloaded = g2.get_node(task_id)
         g2.close()
         assert reloaded is not None
-        assert reloaded.flavor == TaskFlavor.SPIKE
+        assert reloaded.flavor == "spike"
 
     def test_all_flavor_values_survive_round_trip(self, tmp_path: Path) -> None:
-        """Every TaskFlavor value persists through close/reopen."""
+        """Every builtin flavor value persists through close/reopen."""
         db_path = tmp_path / "flavors.db"
         g = MikadoGraph(db_path)
         goal = g.add_node("g", kind=NodeKind.GOAL)
-        flavor_ids: dict[TaskFlavor, int] = {}
-        for flavor in TaskFlavor:
-            t = g.add_node(
-                f"t-{flavor.value}", parent_id=goal.id, kind=NodeKind.TASK, flavor=flavor
-            )
+        flavor_ids: dict[str, int] = {}
+        for flavor in BUILTIN_FLAVORS:
+            t = g.add_node(f"t-{flavor}", parent_id=goal.id, kind=NodeKind.TASK, flavor=flavor)
             flavor_ids[flavor] = t.id
         g.close()
 
@@ -284,12 +282,12 @@ class TestFlavorRoundTrip:
     def test_setting_flavor_on_goal_raises(self, graph: MikadoGraph) -> None:
         """Setting flavor on a kind=goal node raises ValueError."""
         with pytest.raises(ValueError, match="flavor"):
-            graph.add_node("g", kind=NodeKind.GOAL, flavor=TaskFlavor.SPIKE)
+            graph.add_node("g", kind=NodeKind.GOAL, flavor="spike")
 
     def test_setting_flavor_on_roadmap_raises(self, graph: MikadoGraph) -> None:
         """Setting flavor on a kind=roadmap node raises ValueError."""
         with pytest.raises(ValueError, match="flavor"):
-            graph.add_node("rm", kind=NodeKind.ROADMAP, flavor=TaskFlavor.RESEARCH)
+            graph.add_node("rm", kind=NodeKind.ROADMAP, flavor="research")
 
 
 # ── missing-column defaults (pre-migration db) ─────────────────────────────────
@@ -348,7 +346,7 @@ class TestMissingColumnDefaults:
         task_node = next(n for n in nodes if n.description == "legacy task")
         goal_node = next(n for n in nodes if n.description == "legacy goal")
 
-        assert task_node.flavor == TaskFlavor.IMPLEMENT
+        assert task_node.flavor == "implement"
         assert goal_node.flavor is None
 
 
@@ -506,7 +504,7 @@ class TestEditNodeFlavor:
         g = MikadoGraph(graph_path)
         root = g.add_node("root", kind=NodeKind.ROADMAP)
         goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
+        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
         g.close()
 
         with (
@@ -563,8 +561,8 @@ class TestGraphSummaryFlavorFilter:
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
         goal = g.add_node("goal", kind=NodeKind.GOAL)
-        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
-        g.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.IMPLEMENT)
+        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
+        g.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK, flavor="implement")
         g.close()
 
         with (
@@ -589,7 +587,7 @@ class TestGraphSummaryFlavorFilter:
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
         goal = g.add_node("goal", kind=NodeKind.GOAL)
-        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
+        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
         g.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK)
         g.close()
 
@@ -628,7 +626,7 @@ class TestKindEditClearsFlavor:
         root = g.add_node("root", kind=NodeKind.ROADMAP)
         goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
         # TASK→TASK under goal is legal; parent is goal so we can later edit to sub-goal
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
+        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
         task_id = task.id
         g.close()
 
@@ -664,11 +662,11 @@ class TestKindEditClearsFlavor:
         g = MikadoGraph(graph_path)
         root = g.add_node("root", kind=NodeKind.ROADMAP)
         goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
-        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.RESEARCH)
+        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="research")
         task_id = task.id
 
         # Confirm flavor is set before the edit
-        assert task.flavor == TaskFlavor.RESEARCH
+        assert task.flavor == "research"
 
         # Call update_node_fields directly to change kind to GOAL
         update_node_fields(g._conn, task_id, description=None, kind=NodeKind.GOAL)
@@ -744,7 +742,7 @@ class TestValidateGoalRunnableEdgeCases:
         Reading a corrupt row (kind!=task but flavor set) must fail loud rather
         than silently coercing flavor to None and hiding the broken invariant.
         """
-        task = graph.add_node("t", kind=NodeKind.TASK, flavor=TaskFlavor.IMPLEMENT)
+        task = graph.add_node("t", kind=NodeKind.TASK, flavor="implement")
         graph._conn.execute("UPDATE nodes SET kind = 'roadmap' WHERE id = ?", (task.id,))
         graph._conn.commit()
         with pytest.raises(ValueError, match="flavor"):
@@ -768,7 +766,7 @@ class TestValidateGoalRunnableEdgeCases:
         from milknado.domains.graph.runnability import validate_goal_runnable
 
         goal = graph.add_node("g", kind=NodeKind.GOAL)
-        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor=TaskFlavor.SPIKE)
+        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
 
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []
@@ -795,7 +793,7 @@ class TestEditNodeFlavorPersistence:
         task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
         task_id = task.id
         # Starts as IMPLEMENT (default)
-        assert task.flavor == TaskFlavor.IMPLEMENT
+        assert task.flavor == "implement"
         g.close()
 
         with (
@@ -815,7 +813,7 @@ class TestEditNodeFlavorPersistence:
         reloaded = g2.get_node(task_id)
         g2.close()
         assert reloaded is not None
-        assert reloaded.flavor == TaskFlavor.RESEARCH, (
+        assert reloaded.flavor == "research", (
             f"expected RESEARCH after edit+reload; got {reloaded.flavor!r}"
         )
 
@@ -877,7 +875,7 @@ class TestUpdateNodeFieldsConflictingFlavor:
         g2 = MikadoGraph(tmp_path / "mutations.db")
         with pytest.raises(ValueError, match="flavor"):
             update_node_fields(
-                g2._conn, task_id, description=None, kind=NodeKind.GOAL, flavor=TaskFlavor.RESEARCH
+                g2._conn, task_id, description=None, kind=NodeKind.GOAL, flavor="research"
             )
         g2.close()
 

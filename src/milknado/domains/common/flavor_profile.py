@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from milknado.domains.common.config import Gate, MilknadoConfig
-    from milknado.domains.common.types import TaskFlavor
 
 
 @dataclass(frozen=True)
@@ -29,9 +28,9 @@ class FlavorProfile:
 
 def resolve_flavor_profile(
     cfg: MilknadoConfig,
-    flavor: TaskFlavor | None,
+    flavor: str | None,
 ) -> FlavorProfile:
-    """Resolve a TaskFlavor to its execution profile against cfg.
+    """Resolve a flavor name to its execution profile against cfg.
 
     Precedence rules (all pure; no side effects):
       - No flavor / no entry in cfg.flavors -> cfg defaults.

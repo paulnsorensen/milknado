@@ -10,7 +10,7 @@ import sqlite3
 
 from milknado.domains.common import NodeKind
 from milknado.domains.common.errors import InvalidContainment
-from milknado.domains.common.types import VALID_CHILD_KINDS, TaskFlavor
+from milknado.domains.common.types import VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
 
 
@@ -114,7 +114,7 @@ def update_node_fields(
     node_id: int,
     description: str | None,
     kind: NodeKind | None,
-    flavor: TaskFlavor | None = None,
+    flavor: str | None = None,
 ) -> None:
     """Update description, kind, and/or flavor on a node; raise if it does not exist."""
     fields: list[str] = []
@@ -137,7 +137,7 @@ def update_node_fields(
             values.append(None)
     if flavor is not None:
         fields.append("flavor = ?")
-        values.append(flavor.value)
+        values.append(flavor)
     if not fields:
         raise ValueError("nothing to update")
     values.append(node_id)

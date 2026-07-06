@@ -1557,7 +1557,6 @@ class TestDispatchBatchFlavoredGates:
         from unittest.mock import MagicMock
 
         from milknado.domains.common.config import FlavorOverride, MilknadoConfig
-        from milknado.domains.common.types import TaskFlavor
         from milknado.domains.execution.run_loop import RunLoop
 
         milknado_cfg = MilknadoConfig(
@@ -1565,7 +1564,7 @@ class TestDispatchBatchFlavoredGates:
             project_root=tmp_path,
             db_path=tmp_path / ".milknado" / "milknado.db",
             flavors={
-                TaskFlavor.RESEARCH: FlavorOverride(quality_gates=()),
+                "research": FlavorOverride(quality_gates=()),
             },
         )
 
@@ -1573,7 +1572,7 @@ class TestDispatchBatchFlavoredGates:
         graph.add_node(
             "research leaf",
             parent_id=root.id,
-            flavor=TaskFlavor.RESEARCH,
+            flavor="research",
         )
 
         captured: list = []

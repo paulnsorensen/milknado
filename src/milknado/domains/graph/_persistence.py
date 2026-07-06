@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.common.types import TaskFlavor
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
@@ -140,7 +139,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     wiki_ref = row["wiki_ref"] if "wiki_ref" in keys else None
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
-        flavor = TaskFlavor(flavor_raw) if flavor_raw is not None else None
+        flavor = flavor_raw if flavor_raw is not None else None
     elif flavor_raw is not None:
         raise ValueError(
             f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor_raw!r}; "

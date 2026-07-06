@@ -22,7 +22,6 @@ from milknado.domains.common.config import (
     save_config,
 )
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
-from milknado.domains.common.types import TaskFlavor
 
 
 def _cfg(tmp_path: Path, **kwargs) -> MilknadoConfig:  # noqa: ANN003
@@ -58,7 +57,7 @@ def test_profile_no_flavor_inherits_global_defaults(tmp_path: Path) -> None:
 
 def test_global_worker_agent_type_override_honored(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path, worker_agent_type="acme:custom-worker", max_iterations=3, max_turns=20)
-    profile = resolve_flavor_profile(cfg, TaskFlavor.IMPLEMENT)
+    profile = resolve_flavor_profile(cfg, "implement")
     assert profile.worker_agent_type == "acme:custom-worker"
     assert profile.max_iterations == 3
     assert profile.max_turns == 20
@@ -71,12 +70,12 @@ def test_per_flavor_agent_type_wins_over_global(tmp_path: Path) -> None:
     cfg = _cfg(
         tmp_path,
         worker_agent_type="global:worker",
-        flavors={TaskFlavor.SPIKE: FlavorOverride(agent_type="milknado:spike-worker")},
+        flavors={"spike": FlavorOverride(agent_type="milknado:spike-worker")},
     )
-    spike = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    spike = resolve_flavor_profile(cfg, "spike")
     assert spike.worker_agent_type == "milknado:spike-worker"
     # A flavor with no override still inherits the global.
-    impl = resolve_flavor_profile(cfg, TaskFlavor.IMPLEMENT)
+    impl = resolve_flavor_profile(cfg, "implement")
     assert impl.worker_agent_type == "global:worker"
 
 
@@ -87,10 +86,10 @@ def test_per_flavor_loop_mode_and_caps_win(tmp_path: Path) -> None:
         max_iterations=8,
         max_turns=60,
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(loop_mode="single", max_turns=25),
+            "spike": FlavorOverride(loop_mode="single", max_turns=25),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     assert profile.loop_mode == "single"
     assert profile.max_turns == 25
     # max_iterations not overridden per-flavor -> inherits global.
@@ -98,8 +97,8 @@ def test_per_flavor_loop_mode_and_caps_win(tmp_path: Path) -> None:
 
 
 def test_per_flavor_none_fields_inherit_global(tmp_path: Path) -> None:
-    cfg = _cfg(tmp_path, max_iterations=12, flavors={TaskFlavor.RESEARCH: FlavorOverride()})
-    assert resolve_flavor_profile(cfg, TaskFlavor.RESEARCH).max_iterations == 12
+    cfg = _cfg(tmp_path, max_iterations=12, flavors={"research": FlavorOverride()})
+    assert resolve_flavor_profile(cfg, "research").max_iterations == 12
 
 
 # ── TOML parse + defaults ────────────────────────────────────────────────────
@@ -118,9 +117,9 @@ def test_toml_parse_per_flavor_workflow_fields(tmp_path: Path) -> None:
     )
     cfg = load_config(path, include_global=False)
     assert cfg.worker_agent_type == "team:worker"
-    impl = resolve_flavor_profile(cfg, TaskFlavor.IMPLEMENT)
+    impl = resolve_flavor_profile(cfg, "implement")
     assert (impl.loop_mode, impl.max_iterations, impl.max_turns) == ("redispatch", 5, 40)
-    spike = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    spike = resolve_flavor_profile(cfg, "spike")
     assert spike.loop_mode == "single"
     assert spike.max_turns == 25
     assert spike.worker_agent_type == "milknado:milknado-spike-worker"
@@ -133,7 +132,7 @@ def test_loop_mode_defaults_to_redispatch_when_absent(tmp_path: Path) -> None:
     )
     cfg = load_config(path, include_global=False)
     # Flavor entry present but no loop_mode -> profile falls back to the global default.
-    assert resolve_flavor_profile(cfg, TaskFlavor.SPIKE).loop_mode == "redispatch"
+    assert resolve_flavor_profile(cfg, "spike").loop_mode == "redispatch"
 
 
 def test_invalid_loop_mode_rejected(tmp_path: Path) -> None:
@@ -179,7 +178,7 @@ def test_save_load_round_trip_preserves_workflow_fields(tmp_path: Path) -> None:
         max_iterations=9,
         max_turns=70,
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 loop_mode="single",
                 max_iterations=4,
                 max_turns=25,
@@ -193,7 +192,7 @@ def test_save_load_round_trip_preserves_workflow_fields(tmp_path: Path) -> None:
     assert reloaded.worker_agent_type == "team:worker"
     assert reloaded.max_iterations == 9
     assert reloaded.max_turns == 70
-    spike = reloaded.flavors[TaskFlavor.SPIKE]
+    spike = reloaded.flavors["spike"]
     assert spike.loop_mode == "single"
     assert spike.max_iterations == 4
     assert spike.max_turns == 25

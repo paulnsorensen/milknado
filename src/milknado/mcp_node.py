@@ -155,7 +155,7 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
             "run_id": run_id,
             "node_id": node_id,
             "brief": brief,
-            "flavor": node.flavor.value if node.flavor is not None else None,
+            "flavor": node.flavor,
             "model": _resolve_model(profile.execution_agent),
             "tools": list(tools),
             "worktree_path": str(wt_path),
