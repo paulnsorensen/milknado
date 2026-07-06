@@ -101,9 +101,10 @@ def milknado_run_inline(
     fresh git worktree + branch, and on exit 0 (when merge_back, the default)
     rebase-merges the branch back into the caller's dispatch branch and tears the
     worktree down. merge_back=False leaves the branch/worktree for the caller to
-    review or PR (teardown only via milknado_run_cancel). THIS_BRANCH runs the
-    worker in the shared checkout — the diff lands in the current working tree —
-    and ignores merge_back.
+    review or PR (teardown while the run is active happens via milknado_run_cancel;
+    a completed merge_back=False worktree must be removed manually via
+    `git worktree remove`). THIS_BRANCH runs the worker in the shared checkout —
+    the diff lands in the current working tree — and ignores merge_back.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
@@ -163,8 +164,9 @@ def milknado_run_inline_start(
     fresh git worktree + branch; on exit 0 (when merge_back, the default) the
     branch is rebase-merged back into the caller's dispatch branch and the worktree
     torn down. merge_back=False leaves the branch/worktree for the caller (teardown
-    only via milknado_run_cancel). THIS_BRANCH runs in the shared checkout and
-    ignores merge_back.
+    while the run is active happens via milknado_run_cancel; a completed
+    merge_back=False worktree must be removed manually via `git worktree remove`).
+    THIS_BRANCH runs in the shared checkout and ignores merge_back.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)

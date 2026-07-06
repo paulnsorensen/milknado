@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from milknado.domains.common import NodeStatus, WorktreeMode
@@ -21,6 +22,8 @@ from milknado.domains.dispatch.reconcile import (
     reconcile_node_status,
 )
 from milknado.domains.dispatch.runner import run_headless
+
+_logger = logging.getLogger(__name__)
 
 
 def _ensure_running(graph, node_id: int) -> bool:  # noqa: ANN001
@@ -79,12 +82,17 @@ def dispatch_node_sync(
         raise ValueError(f"node {node_id} not found")
     brief = render_brief(graph, node_id, prepend=brief_prepend)
     running = _ensure_running(graph, node_id)
+    if not running:
+        # _ensure_running returns False only for a DONE node (node is None was
+        # excluded above): refuse re-dispatch, mirroring the async claim_node
+        # refusal, rather than running a worker whose terminal write cannot land.
+        raise ValueError(f"node {node_id} is already done; set status back to pending to retry")
     run_id = make_run_id(node_id)
     started_at = now_iso()
     log_path = runs_dir(project_root) / f"{run_id}.log"
     worker_cwd: Path = project_root
     worker_branch: str | None = None
-    if running:
+    try:
         # Fence the node on this run_id BEFORE set_worktree (which CAS-updates on
         # run_id), then insert a rescuable "running" run row BEFORE blocking in
         # run_headless: a client timeout + server kill mid-run would otherwise
@@ -94,24 +102,34 @@ def dispatch_node_sync(
             graph, project_root, node, run_id, worktree_mode, worktree_pattern
         )
         graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
-    # Only inject MILKNADO_RUN_ID when a 'running' run row exists. On a DONE-node
-    # re-run no row is inserted (start_run is gated on `running`), so passing the
-    # run_id would have the worker deposit into a row that doesn't exist —
-    # milknado_deposit_result raises "run not found". Pass None instead.
-    result = run_headless(
-        project_root,
-        node_id,
-        brief,
-        worker_cmd,
-        timeout_seconds,
-        run_id=run_id if running else None,
-        default_cmd=default_cmd,
-        cwd=worker_cwd,
-    )
-    worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
-    merge = _maybe_merge_back(
-        project_root, node, worker_branch, worker_cwd, merge_back, worker_terminal
-    )
+        result = run_headless(
+            project_root,
+            node_id,
+            brief,
+            worker_cmd,
+            timeout_seconds,
+            run_id=run_id,
+            default_cmd=default_cmd,
+            cwd=worker_cwd,
+        )
+        worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
+        merge = _maybe_merge_back(
+            project_root, node, worker_branch, worker_cwd, merge_back, worker_terminal
+        )
+    except Exception as exc:
+        # Worktree setup or the merge-back raising must not strand the node RUNNING —
+        # mirror the async worker's finalization (finish the run failed, mark the
+        # node failed) then re-raise the exception the sync caller expects.
+        graph.mark_failed(node_id)
+        graph.finish_run(
+            run_id,
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at=now_iso(),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
     if merge is not None and not merge.rebased:
         worker_terminal = "failed"
     if running:
@@ -169,7 +187,14 @@ def _maybe_merge_back(
         node_id=node.id,
         description=node.description,
     )
-    return merge_back_isolated(project_root, ctx)
+    result = merge_back_isolated(project_root, ctx)
+    if result.worktree_preserved is not None:
+        _logger.warning(
+            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
+            worker_branch,
+            result.worktree_preserved,
+        )
+    return result
 
 
 def reclaim_stale_node(graph, node_id: int, fence_run_id: str | None) -> None:  # noqa: ANN001

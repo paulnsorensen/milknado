@@ -12,6 +12,8 @@ lazy pattern ``cancel.py`` uses).
 
 from __future__ import annotations
 
+import fcntl
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +35,29 @@ class MergeBackResult:
     worktree_preserved: str | None
 
 
+def _create_node_worktree(  # noqa: ANN001, ANN202
+    git, root, node_id: int, description: str, worktree_pattern: str
+):
+    """Create the node's durable worktree under project_root, mirroring the executor.
+
+    Formats ``worktree_pattern`` ({node_id}, {slug}) for the directory name and
+    uses the executor's branch convention (milknado/<id>-<slug>), reusing
+    GitAdapter.create_worktree with the same path-traversal guard. Slug derivation
+    reuses the executor's ``_slugify`` (lazy-imported to keep the dispatch slice
+    free of the execution slice's import weight).
+    """
+    from milknado.domains.execution.executor import _slugify
+
+    slug = _slugify(description)
+    wt_path = root / worktree_pattern.format(node_id=node_id, slug=slug)
+    resolved_root = root.resolve()
+    if not wt_path.resolve().is_relative_to(resolved_root):
+        raise ValueError(f"worktree path resolves outside project_root: {wt_path!r}")
+    branch = f"milknado/{node_id}-{slug}"
+    git.create_worktree(wt_path, branch)
+    return wt_path, branch
+
+
 def create_isolated_worktree(root: Path, node_id: int, description: str, worktree_pattern: str):  # noqa: ANN201
     """Create the node's isolated worktree + branch; return ``(wt_path, branch)``.
 
@@ -40,9 +65,25 @@ def create_isolated_worktree(root: Path, node_id: int, description: str, worktre
     so the path/branch convention and the path-traversal guard live in one place.
     """
     from milknado.adapters import GitAdapter
-    from milknado.mcp_node import _create_node_worktree
 
     return _create_node_worktree(GitAdapter(root), root, node_id, description, worktree_pattern)
+
+
+@contextmanager
+def _merge_back_lock(root: Path):  # noqa: ANN202
+    """Serialize merge-backs across processes on a repo-scoped ``flock``.
+
+    Both the sync (``_maybe_merge_back``) and async (``_async_merge_back``) paths
+    funnel through ``merge_back_isolated``, so a single exclusive lock here is the
+    one choke point that stops two concurrent dispatches from rebase-merging onto
+    the same dispatch branch at once. Blocking acquire; the lock releases when the
+    file handle closes.
+    """
+    lock_dir = root / ".milknado"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with (lock_dir / "merge-back.lock").open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
 
 
 def setup_isolated_worktree(graph, root: Path, node, run_id: str, worktree_pattern: str):  # noqa: ANN001, ANN201
@@ -73,16 +114,23 @@ def merge_back_isolated(root: Path, ctx: IsolateContext) -> MergeBackResult:
     from milknado.domains.execution import WorktreeManager
 
     manager = WorktreeManager(GitAdapter(root))
-    try:
-        result = manager.rebase_and_merge(
-            ctx.worktree_path,
-            ctx.feature_branch,
-            ctx.node_id,
-            ctx.description,
-            worker_branch=ctx.worker_branch,
-        )
-    except UnlandedWorkError:
-        return MergeBackResult(rebased=True, worktree_preserved=str(ctx.worktree_path))
+    # Re-resolve the dispatch branch at merge time rather than trusting the branch
+    # captured when the context was built: fast_forward targets root's live current
+    # branch, so the rebase target must agree with it, not a stale snapshot.
+    feature_branch = resolve_feature_branch(root)
+    with _merge_back_lock(root):
+        try:
+            result = manager.rebase_and_merge(
+                ctx.worktree_path,
+                feature_branch,
+                ctx.node_id,
+                ctx.description,
+                worker_branch=ctx.worker_branch,
+            )
+        except UnlandedWorkError:
+            # The branch never landed on the dispatch branch, so this is not a
+            # successful rebase: report rebased=False and preserve the worktree.
+            return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
     preserved = None if result.success else str(ctx.worktree_path)
     return MergeBackResult(rebased=result.success, worktree_preserved=preserved)
 

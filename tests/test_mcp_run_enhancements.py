@@ -351,78 +351,50 @@ class TestSyncRunOrphanRescue:
         assert state["started_at"]
         assert state["timeout_seconds"] is not None
 
-    def test_orphaned_sync_run_is_rescuable(self, tmp_path: Path, monkeypatch) -> None:
-        from datetime import UTC, datetime, timedelta
-
+    def test_sync_dispatch_exception_finalizes_run_failed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """An in-process exception during sync dispatch (here a worker crash,
+        simulated by _execute raising) must finalize the run and node FAILED
+        before re-raising — never strand them RUNNING. The true-orphan path (an
+        uncatchable kill leaving the up-front 'running' row for the stale sweep)
+        stays covered by test_sync_run_writes_rescuable_running_state_before_worker
+        plus the fail_stale_running_runs unit tests in test_mcp_server.py."""
         import milknado.domains.dispatch.runner as runner_mod
 
         def _crash_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
-            raise RuntimeError("server killed mid-run before terminal write")
+            raise RuntimeError("worker crashed mid-run before terminal write")
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
 
         from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
-        task = _call(milknado_todo_add, description="orphan-stale", kind="task", project_root=root)
+        task = _call(milknado_todo_add, description="crash", kind="task", project_root=root)
         with pytest.raises(RuntimeError):
             _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
-        rows = _node_running_runs(tmp_path, task["id"])
-        assert rows, "orphaned sync run left no running run row to rescue"
-        state = rows[0]
-        assert state["status"] == "running"
-        # Age the run past its timeout and the stale sweep must release the node.
+        # High-1 contract: the caught exception finalizes the node and its run
+        # terminal — nothing is left RUNNING for the stale sweep to clean up.
         graph, _cfg = open_graph(tmp_path)
         try:
-            aged = datetime.now(UTC) - timedelta(seconds=state["timeout_seconds"] + 3600)
-            graph._conn.execute(
-                "UPDATE runs SET started_at = ? WHERE run_id = ?",
-                (aged.isoformat(), state["run_id"]),
-            )
-            graph._conn.commit()
-            from milknado.domains.dispatch import fail_stale_running_runs
-
-            flipped = fail_stale_running_runs(graph, task["id"])
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.status.value == "failed", "exception must fail the node, not strand it"
+            runs = graph.runs_for_node(task["id"])
+            assert runs, "dispatch must have created a run row before the worker ran"
+            assert all(r["status"] != "running" for r in runs), "no run may be left running"
+            assert any(r["status"] == "failed" for r in runs), "the crashed run must be failed"
         finally:
             graph.close()
-        assert len(flipped) == 1
-        assert flipped[0]["status"] == "failed"
 
-    def test_done_node_rerun_writes_no_running_state(self, tmp_path: Path, monkeypatch) -> None:
-        """The running-state write is gated on an actual PENDING/FAILED->RUNNING
-        transition. A DONE node re-run must NOT drop a 'running' run the stale
-        sweep could later force-fail, which would clobber the prior DONE result."""
-        import milknado.domains.dispatch.runner as runner_mod
-
-        observed: dict = {}
-
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
-            observed["running"] = _node_running_runs(Path(project_root), node_id)
-            log_path.write_bytes(b"ok")
-            return 0, False
-
-        monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
-
-        from milknado.mcp_run import milknado_run_inline
-
-        root = str(tmp_path)
-        task = _call(milknado_todo_add, description="done-rerun", kind="task", project_root=root)
-        _call(milknado_run_inline, node_id=task["id"], project_root=root)  # -> DONE
-        # Second run sees a DONE node: _ensure_running returns False, so the gate
-        # must skip the running-run write — no 'running' run exists mid-run.
-        _call(milknado_run_inline, node_id=task["id"], project_root=root)
-        assert observed["running"] == [], "DONE-node re-run must not write a 'running' run row"
-
-    def test_done_node_rerun_omits_run_id_from_worker_env(
+    def test_done_node_rerun_refused_first_run_injects_run_id(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """A DONE-node re-run inserts no 'running' run row, so it must NOT inject
-        MILKNADO_RUN_ID. If it did, the brief's mandated final step
-        (milknado_deposit_result(run_id=$MILKNADO_RUN_ID, ...)) would deposit into a
-        run row that doesn't exist and fail with "run not found" — the exact #122
-        channel this consolidation protects. The first (PENDING->RUNNING) run does
-        have a row, so it MUST inject MILKNADO_RUN_ID. This exercises the real
+        """The first (PENDING->RUNNING) run has a run row, so it MUST inject
+        MILKNADO_RUN_ID — the brief's deposit step keys on it (the #122 channel).
+        A DONE-node re-dispatch is refused up front (High-5), so it spawns no
+        second worker and captures no second env. Exercises the real
         _execute -> _spawn_worker env-build path instead of stubbing past it.
         """
         import milknado.domains.dispatch.runner as runner_mod
@@ -447,21 +419,16 @@ class TestSyncRunOrphanRescue:
         from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
-        desc = "done-rerun-env"
-        task = _call(milknado_todo_add, description=desc, kind="task", project_root=root)
+        task = _call(milknado_todo_add, description="rerun-env", kind="task", project_root=root)
         # First run: PENDING -> RUNNING -> DONE (a run row exists).
         _call(milknado_run_inline, node_id=task["id"], project_root=root)
-        # Second run sees a DONE node: no run row, so no MILKNADO_RUN_ID.
-        _call(milknado_run_inline, node_id=task["id"], project_root=root)
+        # Second run sees a DONE node and is refused before any worker spawns.
+        with pytest.raises(ValueError, match="already done"):
+            _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
-        assert len(envs) == 2
-        first_env, rerun_env = envs
-        assert "MILKNADO_RUN_ID" in first_env, (
+        assert len(envs) == 1, "the refused re-dispatch must not spawn a second worker"
+        assert "MILKNADO_RUN_ID" in envs[0], (
             "a real (running) run must inject MILKNADO_RUN_ID so the worker can deposit"
-        )
-        assert "MILKNADO_RUN_ID" not in rerun_env, (
-            "DONE-node re-run has no run row; injecting MILKNADO_RUN_ID would make the "
-            "brief's deposit step fail with 'run not found'"
         )
 
 

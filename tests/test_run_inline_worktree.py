@@ -207,6 +207,41 @@ class TestDoneTerminalization:
                 project_root=str(root),
             )
 
+    def test_sync_second_dispatch_refused_without_spawning(
+        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+    ) -> None:
+        """The sync path refuses a DONE node up front and never spawns a worker —
+        no run with a run_id it cannot finalize."""
+        root = tmp_path / "repo"
+        _init_repo(root)
+        task = _call(milknado_todo_add, description="sonce", kind="task", project_root=str(root))
+
+        first = _call(
+            milknado_run_inline,
+            node_id=task["id"],
+            worker_cmd=worker_writes_pwd,
+            project_root=str(root),
+        )
+        assert first["status"] == "done"
+
+        spawned: list = []
+        real = runner_mod._spawn_worker
+
+        def spy(*args, **kwargs):  # noqa: ANN002, ANN003
+            spawned.append(args)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(runner_mod, "_spawn_worker", spy)
+
+        with pytest.raises(ValueError, match="already done"):
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            )
+        assert spawned == []
+
 
 class TestMergeBackReuse:
     """Criterion 6: the ISOLATE merge-back reuses WorktreeManager.rebase_and_merge."""
@@ -304,6 +339,39 @@ class TestMergeBackFailure:
         assert Path(result["worktree_preserved"]).exists()
         assert node.worktree_path is None
 
+    def test_sync_merge_back_raise_terminalizes_node_and_run(
+        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+    ) -> None:
+        """A merge-back that RAISES (not just returns unlanded) must finalize the node
+        and run FAILED before re-raising — never strand them on RUNNING."""
+        import milknado.domains.dispatch.lifecycle as lifecycle_mod
+        from milknado.domains.common.errors import RebaseAbortError
+
+        root = tmp_path / "repo"
+        _init_repo(root)
+
+        def _boom(_root, ctx):  # noqa: ANN001, ANN202
+            raise RebaseAbortError(ctx.worktree_path, "rebase --abort failed")
+
+        monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _boom)
+        task = _call(milknado_todo_add, description="raise", kind="task", project_root=str(root))
+
+        with pytest.raises(RebaseAbortError):
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            )
+
+        assert _node(root, task["id"]).status.value == "failed"
+        graph, _cfg = open_graph(root)
+        try:
+            latest = graph.recent_runs(1)[0]
+        finally:
+            graph.close()
+        assert latest["status"] == "failed"
+
     def test_async_merge_failure_fails_node(
         self, tmp_path: Path, worker_writes_pwd, monkeypatch
     ) -> None:
@@ -357,8 +425,9 @@ class TestFailClosedPreservation:
         )
 
     def test_unlanded_work_error_preserves_worktree(self, tmp_path: Path, monkeypatch) -> None:
-        """A teardown refusal (UnlandedWorkError) preserves the worktree and still
-        reports rebased=True — the branch landed but the dirty tree can't be torn down."""
+        """A teardown refusal (UnlandedWorkError) preserves the worktree and reports
+        rebased=False — the branch never landed on the dispatch branch, so the merge
+        did not succeed even though the worker exited clean."""
         from milknado.domains.common.errors import UnlandedWorkError
         from milknado.domains.dispatch.isolate import merge_back_isolated
 
@@ -373,7 +442,7 @@ class TestFailClosedPreservation:
 
         result = merge_back_isolated(root, ctx)
 
-        assert result.rebased is True
+        assert result.rebased is False
         assert result.worktree_preserved == str(ctx.worktree_path)
 
     def test_unlanded_rebase_preserves_worktree(self, tmp_path: Path, monkeypatch) -> None:
@@ -424,3 +493,51 @@ class TestIsolateWorkerFailure:
         # The worker's diff never reached the caller's dispatch branch.
         assert not (root / "deliverable.txt").exists()
         assert _node(root, task["id"]).status.value == "failed"
+
+
+class TestMergeBackLock:
+    """merge_back_isolated serializes concurrent merge-backs on a cross-process
+    flock, so two dispatches never rebase onto the same dispatch branch at once."""
+
+    def test_concurrent_merge_backs_do_not_overlap(self, tmp_path: Path, monkeypatch) -> None:
+        import threading
+
+        from milknado.domains.common.types import RebaseResult
+        from milknado.domains.dispatch.isolate import IsolateContext, merge_back_isolated
+
+        root = tmp_path / "repo"
+        _init_repo(root)
+        intervals: list = []
+        record_lock = threading.Lock()
+
+        def _record(self, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+            start = time.monotonic()
+            time.sleep(0.05)
+            end = time.monotonic()
+            with record_lock:
+                intervals.append((start, end))
+            return RebaseResult(success=True)
+
+        monkeypatch.setattr(executor_mod.WorktreeManager, "rebase_and_merge", _record)
+
+        def _run(n: int) -> None:
+            ctx = IsolateContext(
+                worktree_path=root / f"milknado-{n}-x",
+                worker_branch=f"milknado/{n}-x",
+                feature_branch="main",
+                node_id=n,
+                description="x",
+            )
+            merge_back_isolated(root, ctx)
+
+        threads = [threading.Thread(target=_run, args=(n,)) for n in (1, 2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(intervals) == 2
+        intervals.sort()
+        # The flock forces the second critical section to start only after the
+        # first has released — the intervals must not overlap.
+        assert intervals[0][1] <= intervals[1][0]

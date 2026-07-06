@@ -5,11 +5,12 @@
 default**:
 
 - **`ISOLATE` (default)** — the dispatch creates a git worktree + branch
-  (`_create_node_worktree`, `mcp_node.py:171`, honoring `worktree_pattern`), runs
+  (`_create_node_worktree`, `isolate.py`, honoring `worktree_pattern`), runs
   the worker with `cwd = worktree_path`, and records `worktree_path` on the node.
   The diff lands on the isolated branch, not the caller's checkout.
 - **`THIS_BRANCH`** — the worker runs in the shared checkout (`cwd =
-  project_root`), recorded with `worktree_path=""`. The explicit opt-in for "the
+  project_root`), with `worktree_path` left unset (default) — `set_worktree` is
+  ISOLATE-only. The explicit opt-in for "the
   diff lands in my current working tree" — the old, pre-#171 behavior.
 
 ## merge_back (ISOLATE only)
@@ -26,8 +27,10 @@ branch's fate on a clean (exit 0) run:
   `worktree_preserved`. Net: "safely isolated during the run, result merged back
   to my branch on success" — the safe successor to old `run_once`'s
   diff-lands-here.
-- **`False`** — leave the isolated branch/worktree for the caller to review or PR;
-  teardown then happens only via `milknado_run_cancel`.
+- **`False`** — leave the isolated branch/worktree for the caller to review or PR.
+  Teardown while the run is active happens via `milknado_run_cancel`; once the run
+  is terminal, `milknado_run_cancel` no-ops, so a completed `merge_back=False`
+  worktree must be removed manually (`git worktree remove`).
 
 `THIS_BRANCH` ignores `merge_back` (there is nothing to merge). The dispatch
 branch a merge-back lands on is the caller's current branch
