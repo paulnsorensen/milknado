@@ -9,12 +9,13 @@ from pathlib import Path
 import pytest
 
 from milknado._mcp_core import mcp
+from milknado.domains.common import WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
 from milknado.mcp_run import (
-    milknado_run_once,
-    milknado_run_once_poll,
-    milknado_run_once_start,
+    milknado_run_inline,
+    milknado_run_inline_poll,
+    milknado_run_inline_start,
 )
 from milknado.mcp_server import (
     milknado_graph_summary,
@@ -42,7 +43,7 @@ def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> 
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
-        last = _call(milknado_run_once_poll, run_id=run_id, project_root=project_root)
+        last = _call(milknado_run_inline_poll, run_id=run_id, project_root=project_root)
         if last["status"] in ("done", "failed"):
             return last
         time.sleep(0.05)
@@ -52,6 +53,11 @@ def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> 
 def _call(tool, **kwargs):
     """Invoke a fastmcp-wrapped tool function with the underlying Python callable."""
     fn = getattr(tool, "fn", tool)
+    # run_inline{,_start} now default to ISOLATE (per-dispatch worktree). These
+    # legacy tests target the shared-checkout path, so pin THIS_BRANCH unless a
+    # test opts into ISOLATE explicitly.
+    if fn.__name__ in ("milknado_run_inline", "milknado_run_inline_start"):
+        kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
     return fn(**kwargs)
 
 
@@ -453,7 +459,7 @@ class TestTodoBriefAndRun:
     def test_run_rejects_disallowed_worker_cmd(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="worker_cmd must start with"):
             _call(
-                milknado_run_once,
+                milknado_run_inline,
                 node_id=1,
                 worker_cmd="cat",
                 timeout_seconds=5,
@@ -464,7 +470,7 @@ class TestTodoBriefAndRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="echo task", kind="task", project_root=root)
         result = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -480,7 +486,7 @@ class TestTodoBriefAndRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="env task", kind="task", project_root=root)
         result = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'echo NODE=$MILKNADO_NODE_ID'"),
             timeout_seconds=10,
@@ -492,7 +498,7 @@ class TestTodoBriefAndRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="bad task", kind="task", project_root=root)
         result = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("false"),
             timeout_seconds=10,
@@ -505,7 +511,7 @@ class TestTodoBriefAndRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="slow", kind="task", project_root=root)
         result = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("sleep 5"),
             timeout_seconds=1,
@@ -517,7 +523,7 @@ class TestTodoBriefAndRun:
     def test_run_unknown_node_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
             _call(
-                milknado_run_once,
+                milknado_run_inline,
                 node_id=99,
                 worker_cmd="claude",
                 timeout_seconds=5,
@@ -531,7 +537,7 @@ class TestTodoBriefAndRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="syncretry", kind="task", project_root=root)
         failed = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'exit 1'"),
             timeout_seconds=10,
@@ -539,7 +545,7 @@ class TestTodoBriefAndRun:
         )
         assert failed["status"] == "failed"
         done = _call(
-            milknado_run_once,
+            milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -552,7 +558,7 @@ class TestTodoAsyncRun:
     def test_start_rejects_disallowed_worker_cmd(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="worker_cmd must start with"):
             _call(
-                milknado_run_once_start,
+                milknado_run_inline_start,
                 node_id=1,
                 worker_cmd="false",
                 timeout_seconds=5,
@@ -563,7 +569,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-cat", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -580,7 +586,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-done", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -600,7 +606,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-env", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'echo NODE=$MILKNADO_NODE_ID'"),
             timeout_seconds=10,
@@ -614,7 +620,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-fail", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("false"),
             timeout_seconds=10,
@@ -630,7 +636,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-slow", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sleep 30"),
             timeout_seconds=1,
@@ -648,7 +654,7 @@ class TestTodoAsyncRun:
         )
         with pytest.raises(ValueError, match="already running"):
             _call(
-                milknado_run_once_start,
+                milknado_run_inline_start,
                 node_id=task["id"],
                 worker_cmd="claude",
                 timeout_seconds=10,
@@ -658,7 +664,7 @@ class TestTodoAsyncRun:
     def test_start_unknown_node_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
             _call(
-                milknado_run_once_start,
+                milknado_run_inline_start,
                 node_id=42,
                 worker_cmd="claude",
                 timeout_seconds=10,
@@ -668,7 +674,7 @@ class TestTodoAsyncRun:
     def test_poll_unknown_run_id_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
             _call(
-                milknado_run_once_poll,
+                milknado_run_inline_poll,
                 run_id="node-1-20260101T000000Z-abcd",
                 project_root=str(tmp_path),
             )
@@ -686,7 +692,7 @@ class TestTodoAsyncRun:
     def test_poll_rejects_malformed_run_id(self, tmp_path: Path, bad_run_id: str) -> None:
         with pytest.raises(ValueError, match="invalid run_id format"):
             _call(
-                milknado_run_once_poll,
+                milknado_run_inline_poll,
                 run_id=bad_run_id,
                 project_root=str(tmp_path),
             )
@@ -697,13 +703,13 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-sleep", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sleep 2"),
             timeout_seconds=10,
             project_root=root,
         )
-        immediate = _call(milknado_run_once_poll, run_id=started["run_id"], project_root=root)
+        immediate = _call(milknado_run_inline_poll, run_id=started["run_id"], project_root=root)
         assert immediate["status"] == "running"
         assert immediate["exit_code"] is None
         _wait_for_terminal(started["run_id"], root, timeout=5.0)
@@ -716,7 +722,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="bad-cmd", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=str(tmp_path / "nonexistent" / "claude"),
             timeout_seconds=10,
@@ -739,7 +745,7 @@ class TestTodoAsyncRun:
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
         # First run: finishes (failed), but we never poll → node stays RUNNING.
         first = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'exit 1'"),
             timeout_seconds=10,
@@ -759,7 +765,7 @@ class TestTodoAsyncRun:
         assert tree[0]["status"] == "running"
         # Second start: should reconcile the orphan, then start a fresh run.
         second = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'exit 1'"),
             timeout_seconds=10,
@@ -921,7 +927,7 @@ class TestTodoAsyncRun:
         )
         # Must NOT raise "already running" — the stale run is reconciled first.
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'exit 1'"),
             timeout_seconds=10,
@@ -938,7 +944,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="retry", kind="task", project_root=root)
         first = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("sh -c 'exit 1'"),
             timeout_seconds=10,
@@ -946,7 +952,7 @@ class TestTodoAsyncRun:
         )
         assert _wait_for_terminal(first["run_id"], root, timeout=3.0)["status"] == "failed"
         second = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -975,7 +981,7 @@ class TestTodoAsyncRun:
             barrier.wait()  # maximise overlap on the critical section
             try:
                 r = _call(
-                    milknado_run_once_start,
+                    milknado_run_inline_start,
                     node_id=task["id"],
                     worker_cmd=slow_cmd,
                     timeout_seconds=30,
@@ -1157,7 +1163,7 @@ class TestTodoAsyncRun:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="run-id-check", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             timeout_seconds=10,
@@ -2091,12 +2097,12 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_roadmap_export",
         "milknado_roadmap_import",
         "milknado_run_cancel",
+        "milknado_run_inline",
+        "milknado_run_inline_poll",
+        "milknado_run_inline_start",
         "milknado_run_list",
         "milknado_run_loop_poll",
         "milknado_run_loop_start",
-        "milknado_run_once",
-        "milknado_run_once_poll",
-        "milknado_run_once_start",
         "milknado_set_subtree_status",
         "milknado_todo_add",
         "milknado_todo_brief",

@@ -13,10 +13,11 @@ from milknado._mcp_core import (
     resolve_project_root,
 )
 from milknado.adapters import TmuxAdapter
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeStatus, WorktreeMode
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 from milknado.domains.dispatch import (
     RUN_ID_RE,
+    IsolateContext,
     cancel_run,
     dispatch_node_sync,
     ensure_tmux_ready,
@@ -27,6 +28,8 @@ from milknado.domains.dispatch import (
     reconcile_node_status,
     reconcile_run_window,
     render_brief,
+    resolve_feature_branch,
+    setup_isolated_worktree,
     start_headless_async,
     validate_worker_argv,
 )
@@ -46,11 +49,45 @@ def _validate_worker_cmd(worker_cmd: str | None) -> None:
     validate_worker_argv(shlex.split(worker_cmd))
 
 
+def _prepare_isolation(
+    graph,  # noqa: ANN001
+    root,  # noqa: ANN001
+    node,  # noqa: ANN001
+    run_id: str,
+    worktree: WorktreeMode,
+    merge_back: bool,
+    worktree_pattern: str,
+):  # noqa: ANN201
+    """Resolve the async worker's cwd + deferred merge-back context.
+
+    ISOLATE: create the node's worktree + branch, record it on the (already
+    run_id-claimed) node, run there, and — when merge_back — build the
+    IsolateContext the worker thread uses to rebase-merge the branch back after it
+    exits. THIS_BRANCH: run in the shared checkout with nothing to merge back.
+    Runs after claim_node so set_worktree's run_id fence matches.
+    """
+    if worktree != WorktreeMode.ISOLATE:
+        return root, None
+    wt_path, worker_branch = setup_isolated_worktree(graph, root, node, run_id, worktree_pattern)
+    merge_ctx = None
+    if merge_back:
+        merge_ctx = IsolateContext(
+            worktree_path=wt_path,
+            worker_branch=worker_branch,
+            feature_branch=resolve_feature_branch(root),
+            node_id=node.id,
+            description=node.description,
+        )
+    return wt_path, merge_ctx
+
+
 @mcp.tool()
-def milknado_run_once(
+def milknado_run_inline(
     node_id: int,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
+    worktree: WorktreeMode = WorktreeMode.ISOLATE,
+    merge_back: bool = True,
     project_root: str = "",
 ) -> dict:
     """Spawn a subprocess worker with the task brief on stdin; capture log and update status.
@@ -58,12 +95,26 @@ def milknado_run_once(
     worker_cmd defaults to profile.execution_agent (resolved from the node's flavor).
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
-    use milknado_run_once_start / milknado_run_once_poll.
+    use milknado_run_inline_start / milknado_run_inline_poll.
+
+    worktree controls isolation (safe by default): ISOLATE runs the worker in a
+    fresh git worktree + branch, and on exit 0 (when merge_back, the default)
+    rebase-merges the branch back into the caller's dispatch branch and tears the
+    worktree down. merge_back=False leaves the branch/worktree for the caller to
+    review or PR (teardown only via milknado_run_cancel). THIS_BRANCH runs the
+    worker in the shared checkout — the diff lands in the current working tree —
+    and ignores merge_back.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
-    _logger.info("milknado_run_once: node=%d timeout=%ds", node_id, timeout_seconds)
+    _logger.info(
+        "milknado_run_inline: node=%d timeout=%ds worktree=%s merge_back=%s",
+        node_id,
+        timeout_seconds,
+        worktree.value,
+        merge_back,
+    )
     try:
         node = graph.get_node(node_id)
         if node is None:
@@ -83,25 +134,37 @@ def milknado_run_once(
             timeout_seconds,
             default_cmd=profile.execution_agent,
             brief_prepend=profile.brief_prepend,
+            worktree_mode=worktree,
+            merge_back=merge_back,
+            worktree_pattern=cfg.worktree_pattern,
         )
     finally:
         graph.close()
 
 
 @mcp.tool()
-def milknado_run_once_start(
+def milknado_run_inline_start(
     node_id: int,
     worker_cmd: str | None = None,
     timeout_seconds: int = 600,
     use_tmux: bool = False,
+    worktree: WorktreeMode = WorktreeMode.ISOLATE,
+    merge_back: bool = True,
     project_root: str = "",
 ) -> dict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
 
-    Refuses if the node is already running. Use milknado_run_once_poll(run_id) to
+    Refuses if the node is already running. Use milknado_run_inline_poll(run_id) to
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits. use_tmux=True runs the worker inside a named tmux
     window (`milknado attach <run_id>`); fails fast if tmux is unavailable.
+
+    worktree controls isolation (safe by default): ISOLATE runs the worker in a
+    fresh git worktree + branch; on exit 0 (when merge_back, the default) the
+    branch is rebase-merged back into the caller's dispatch branch and the worktree
+    torn down. merge_back=False leaves the branch/worktree for the caller (teardown
+    only via milknado_run_cancel). THIS_BRANCH runs in the shared checkout and
+    ignores merge_back.
     """
     _validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
@@ -148,6 +211,9 @@ def milknado_run_once_start(
                 f"node {node_id} is already {status}; set status back to pending to retry"
             )
         try:
+            worker_cwd, merge_ctx = _prepare_isolation(
+                graph, root, node, run_id, worktree, merge_back, cfg.worktree_pattern
+            )
             ref = start_headless_async(
                 root,
                 node_id,
@@ -157,6 +223,8 @@ def milknado_run_once_start(
                 run_id=run_id,
                 default_cmd=profile.execution_agent,
                 tmux=tmux,
+                cwd=worker_cwd,
+                merge_ctx=merge_ctx,
             )
         except Exception:
             # Startup failed after the claim (bad worker cmd resolved in
@@ -166,7 +234,7 @@ def milknado_run_once_start(
             graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise
         _logger.info(
-            "milknado_run_once_start: node=%d run_id=%s timeout=%ds",
+            "milknado_run_inline_start: node=%d run_id=%s timeout=%ds",
             node_id,
             ref.run_id,
             timeout_seconds,
@@ -186,7 +254,7 @@ def milknado_run_once_start(
 
 
 @mcp.tool()
-def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
+def milknado_run_inline_poll(run_id: str, project_root: str = "") -> dict:
     """Poll an async run; reconciles node status to done/failed once the worker exits.
 
     Returns the deposited result payload (latest role='result' run message) under
@@ -209,6 +277,10 @@ def milknado_run_once_poll(run_id: str, project_root: str = "") -> dict:
     finally:
         graph.close()
     state.setdefault("rebased", None)
+    # An ISOLATE merge-back that could not tear its worktree down persists the path
+    # in the run row's `detail` column (async dispatch's only use of it); surface it
+    # under the same key the sync dispatch and milknado_run_cancel return.
+    state["worktree_preserved"] = state.get("detail")
     return state
 
 
@@ -268,7 +340,7 @@ def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -
     Called by a worker as its final step with its *complete* deliverable in
     `payload` (the full text, not a reference to content that lives only in the
     worker's own context). Stored as a role='result' run message so it survives the
-    process boundary; milknado_run_once_poll returns it under `result`. Returns the
+    process boundary; milknado_run_inline_poll returns it under `result`. Returns the
     run_id and the assigned message seq.
     """
     if not RUN_ID_RE.match(run_id):

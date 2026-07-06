@@ -21,6 +21,7 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
     TaskFlavor,
+    WorktreeMode,
 )
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "NodeStatus",
     "RebaseResult",
     "TaskFlavor",
+    "WorktreeMode",
     "PluginHook",
     "PluginMeta",
     "LoopPort",

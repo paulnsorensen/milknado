@@ -135,15 +135,17 @@ def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def _spawn_worker(  # noqa: ANN001
-    project_root: Path, node_id: int, log_fh, argv: list[str], run_id: str | None = None
+    cwd: Path, node_id: int, log_fh, argv: list[str], run_id: str | None = None
 ) -> subprocess.Popen:
     """Popen a worker with the filtered env, stdin piped and output to log_fh.
 
     Shared by the blocking `_execute` (sync path) and the polling
     `_execute_cancellable` (async path) so the spawn + env + redirection contract
-    lives in one place; only the wait strategy differs between the two. The worker
-    receives MILKNADO_NODE_ID and, when this is a tracked run, MILKNADO_RUN_ID so
-    it can deposit its result via milknado_deposit_result.
+    lives in one place; only the wait strategy differs between the two. `cwd` is
+    the working tree the worker runs in — the shared checkout under THIS_BRANCH,
+    or the isolated worktree under ISOLATE. The worker receives MILKNADO_NODE_ID
+    and, when this is a tracked run, MILKNADO_RUN_ID so it can deposit its result
+    via milknado_deposit_result.
     """
     extra = {"MILKNADO_NODE_ID": str(node_id)}
     if run_id is not None:
@@ -154,13 +156,13 @@ def _spawn_worker(  # noqa: ANN001
         stdin=subprocess.PIPE,
         stdout=log_fh,
         stderr=subprocess.STDOUT,
-        cwd=str(project_root),
+        cwd=str(cwd),
         env=env,
     )
 
 
 def _execute(
-    project_root: Path,
+    cwd: Path,
     node_id: int,
     log_path: Path,
     brief: str,
@@ -170,7 +172,7 @@ def _execute(
 ) -> tuple[int, bool]:
     timed_out = False
     with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(project_root, node_id, log_fh, argv, run_id)
+        proc = _spawn_worker(cwd, node_id, log_fh, argv, run_id)
         try:
             proc.communicate(input=brief.encode("utf-8"), timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -214,7 +216,7 @@ def _write_worker_stdin(stdin, brief: str) -> None:  # noqa: ANN001
 
 
 def _execute_cancellable(
-    project_root: Path,
+    cwd: Path,
     node_id: int,
     log_path: Path,
     brief: str,
@@ -236,7 +238,7 @@ def _execute_cancellable(
     cancelled = False
     deadline = time.monotonic() + timeout
     with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(project_root, node_id, log_fh, argv, run_id)
+        proc = _spawn_worker(cwd, node_id, log_fh, argv, run_id)
         # Write the brief from a daemon thread so a brief larger than the OS pipe
         # buffer can't block before the cancel/timeout poll loop starts — a
         # synchronous write would be unkillable until the worker drained stdin.
@@ -267,6 +269,7 @@ def run_headless(
     *,
     run_id: str | None = None,
     default_cmd: str,
+    cwd: Path | None = None,
 ) -> RunResult:
     argv = _resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
@@ -275,7 +278,7 @@ def run_headless(
         else _log_path(project_root, node_id)
     )
     exit_code, timed_out = _execute(
-        project_root, node_id, log_path, brief, argv, timeout_seconds, run_id
+        cwd or project_root, node_id, log_path, brief, argv, timeout_seconds, run_id
     )
     return RunResult(
         exit_code=exit_code,

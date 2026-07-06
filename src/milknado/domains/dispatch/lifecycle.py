@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import NodeStatus, WorktreeMode
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch.brief import render_brief
+from milknado.domains.dispatch.isolate import (
+    IsolateContext,
+    MergeBackResult,
+    merge_back_isolated,
+    resolve_feature_branch,
+    setup_isolated_worktree,
+)
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -34,6 +41,26 @@ def _ensure_running(graph, node_id: int) -> bool:  # noqa: ANN001
     return True
 
 
+def _setup_sync_worktree(
+    graph,  # noqa: ANN001
+    project_root: Path,
+    node,  # noqa: ANN001
+    run_id: str,
+    worktree_mode: WorktreeMode,
+    worktree_pattern: str,
+) -> tuple[Path, str | None]:
+    """Resolve the worker cwd for a running sync dispatch.
+
+    ISOLATE: create the node's worktree + branch, record it on the (already
+    run_id-fenced) node, and run there. THIS_BRANCH: run in the shared checkout.
+    Returns ``(worker_cwd, worker_branch)`` — ``worker_branch`` is None under
+    THIS_BRANCH (nothing to merge back).
+    """
+    if worktree_mode != WorktreeMode.ISOLATE:
+        return project_root, None
+    return setup_isolated_worktree(graph, project_root, node, run_id, worktree_pattern)
+
+
 def dispatch_node_sync(
     graph,  # noqa: ANN001
     node_id: int,
@@ -43,6 +70,9 @@ def dispatch_node_sync(
     *,
     default_cmd: str,
     brief_prepend: str | None = None,
+    worktree_mode: WorktreeMode = WorktreeMode.ISOLATE,
+    merge_back: bool = True,
+    worktree_pattern: str = "",
 ) -> dict:
     node = graph.get_node(node_id)
     if node is None:
@@ -51,14 +81,18 @@ def dispatch_node_sync(
     running = _ensure_running(graph, node_id)
     run_id = make_run_id(node_id)
     started_at = now_iso()
-    rdir = runs_dir(project_root)
-    log_path = rdir / f"{run_id}.log"
+    log_path = runs_dir(project_root) / f"{run_id}.log"
+    worker_cwd: Path = project_root
+    worker_branch: str | None = None
     if running:
-        # Insert a rescuable "running" run row BEFORE blocking in run_headless.
-        # The sync call blocks up to timeout_seconds; if the client times out and
-        # the server is killed mid-run, the post-run terminal write never lands,
-        # stranding the node RUNNING forever. With this row fail_stale_running_runs
-        # releases the node past timeout, matching start_headless_async.
+        # Fence the node on this run_id BEFORE set_worktree (which CAS-updates on
+        # run_id), then insert a rescuable "running" run row BEFORE blocking in
+        # run_headless: a client timeout + server kill mid-run would otherwise
+        # strand the node RUNNING until fail_stale_running_runs releases it.
+        graph.set_run_id(node_id, run_id)
+        worker_cwd, worker_branch = _setup_sync_worktree(
+            graph, project_root, node, run_id, worktree_mode, worktree_pattern
+        )
         graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
     # Only inject MILKNADO_RUN_ID when a 'running' run row exists. On a DONE-node
     # re-run no row is inserted (start_run is gated on `running`), so passing the
@@ -72,8 +106,14 @@ def dispatch_node_sync(
         timeout_seconds,
         run_id=run_id if running else None,
         default_cmd=default_cmd,
+        cwd=worker_cwd,
     )
     worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
+    merge = _maybe_merge_back(
+        project_root, node, worker_branch, worker_cwd, merge_back, worker_terminal
+    )
+    if merge is not None and not merge.rebased:
+        worker_terminal = "failed"
     if running:
         if worker_terminal == "done":
             graph.mark_done(node_id)
@@ -82,6 +122,7 @@ def dispatch_node_sync(
     final = graph.get_node(node_id)
     if final is None:
         raise RuntimeError(f"node {node_id} not found after run completed")
+    rebased = merge.rebased if merge is not None else None
     if running:
         graph.finish_run(
             run_id,
@@ -89,6 +130,7 @@ def dispatch_node_sync(
             exit_code=result.exit_code,
             timed_out=result.timed_out,
             ended_at=now_iso(),
+            rebased=rebased,
         )
     graph.set_run_id(node_id, run_id)
     return {
@@ -97,10 +139,37 @@ def dispatch_node_sync(
         "status": final.status.value,
         "exit_code": result.exit_code,
         "timed_out": result.timed_out,
-        "rebased": None,
+        "rebased": rebased,
         "log_path": str(result.log_path),
         "summary": result.summary,
+        "worktree_preserved": merge.worktree_preserved if merge is not None else None,
     }
+
+
+def _maybe_merge_back(
+    project_root: Path,
+    node,  # noqa: ANN001
+    worker_branch: str | None,
+    worktree_path: Path,
+    merge_back: bool,
+    worker_terminal: str,
+) -> MergeBackResult | None:
+    """Rebase-merge an ISOLATE worktree back on a clean exit, else no-op.
+
+    Returns None when there is nothing to merge (THIS_BRANCH, merge_back=False, or
+    a non-``done`` worker) so the caller leaves ``rebased`` at None — matching the
+    old shared-checkout dispatch that never rebased.
+    """
+    if worker_branch is None or not merge_back or worker_terminal != "done":
+        return None
+    ctx = IsolateContext(
+        worktree_path=worktree_path,
+        worker_branch=worker_branch,
+        feature_branch=resolve_feature_branch(project_root),
+        node_id=node.id,
+        description=node.description,
+    )
+    return merge_back_isolated(project_root, ctx)
 
 
 def reclaim_stale_node(graph, node_id: int, fence_run_id: str | None) -> None:  # noqa: ANN001

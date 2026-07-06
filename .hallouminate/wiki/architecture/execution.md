@@ -255,7 +255,7 @@ a 2 KB tail. PR #127 adds a durable return channel — `run_messages`, an
 append-only per-run message table (seq assigned atomically in a single
 `INSERT … SELECT MAX(seq)+1 … RETURNING` statement, so concurrent depositors
 cannot collide). The MCP tool `milknado_deposit_result(run_id, payload)` writes
-`role='result'` rows; `milknado_run_once_poll` returns the latest one under
+`role='result'` rows; `milknado_run_inline_poll` returns the latest one under
 `result` alongside the log-tail `summary`.
 
 **The brief contract is the root fix, not the storage**: the worker brief
@@ -272,8 +272,8 @@ the `run_messages` shape permits them later (YAGNI — spec non-goal).
 
 ## MCP run surface — five tools, one schema (#82, #83, #107)
 
-Five coordinator-facing MCP tools drive runs: `milknado_run_once` (blocking),
-`milknado_run_once_start` / `milknado_run_once_poll` (async in-process worker),
+Five coordinator-facing MCP tools drive runs: `milknado_run_inline` (blocking),
+`milknado_run_inline_start` / `milknado_run_inline_poll` (async in-process worker),
 and `milknado_run_loop_start` / `milknado_run_loop_poll` (detached
 worktree-isolated ralph loop). All five return the **unified superset schema**
 `RunDict` (`_mcp_core.py`): `run_id, node_id, status, exit_code, timed_out,
@@ -318,10 +318,13 @@ bugs #38/#39/#50 pointed at):
 > (`DEFAULT_PLANNING_AGENT_BY_FAMILY`, the `WORKER_ALLOWED_TOOLS` keys;
 > `domains/common/agent_argv.py`). Don't conflate the two.
 
-- **Family 3 = single-shot headless worker** — `milknado_run_once` (blocking,
-  `mcp_run.py:47`) plus `milknado_run_once_start` / `_poll` (async in-process,
-  `mcp_run.py:89` / `:176`). One worker pass, brief piped on stdin, runs in the
-  **shared working tree**, no quality gates. Chain: `milknado_run_once` →
+- **Family 3 = single-shot headless worker** — `milknado_run_inline` (blocking,
+  `mcp_run.py:47`) plus `milknado_run_inline_start` / `_poll` (async in-process,
+  `mcp_run.py:89` / `:176`). One worker pass, brief piped on stdin, no quality
+  gates. Isolation is **safe by default**: `worktree=ISOLATE` (the default) runs
+  the worker in a fresh worktree+branch and rebase-merges it back on exit 0;
+  `worktree=THIS_BRANCH` opts into the shared working tree (see
+  [run-inline-isolation](./run-inline-isolation.md)). Chain: `milknado_run_inline` →
   `dispatch_node_sync` (`dispatch/lifecycle.py:37`) → `run_headless`
   (`dispatch/runner.py:261`) → `_execute` → `_spawn_worker` →
   `subprocess.Popen(stdin=PIPE)` + `proc.communicate(brief, timeout)` (blocks).
@@ -341,7 +344,7 @@ bugs #38/#39/#50 pointed at):
 to a **different harness than the one orchestrating** and **block on the
 single-shot result without polling**. The coordinator (say Claude Code)
 overrides `worker_cmd` to point at another agent — e.g. a local-model-backed CLI
-for cheap or offline nodes — and `milknado_run_once` blocks until that foreign
+for cheap or offline nodes — and `milknado_run_inline` blocks until that foreign
 worker exits, returning the result inline. No worktree, no gate loop, no poll
 cycle: it is the "shell out to another model and wait" path. `worker_cmd` is the
 cross-harness lever — it defaults to `profile.execution_agent` but the caller
@@ -371,11 +374,11 @@ code can mis-state Family 3 as worker-allowed — it is not; re-check
 
 | | Family 3 — single-shot | Family 4 — ralph |
 |---|---|---|
-| Tools | `milknado_run_once` / `_start` / `_poll` | `milknado_run_loop_start` / `_poll` |
+| Tools | `milknado_run_inline` / `_start` / `_poll` | `milknado_run_loop_start` / `_poll` |
 | Process | blocking caller, or in-process daemon thread | detached subprocess (`start_new_session=True`) |
 | Brief delivery | piped on stdin | node/run id via env + CLI args (no stdin) |
 | Iterations | one pass | loop until quality_gates pass / timeout |
-| Working tree | shared | own worktree+branch, rebase-merge on success |
+| Working tree | own worktree+branch by default (`THIS_BRANCH` opts into shared) | own worktree+branch, rebase-merge on success |
 | Quality gates | none | required (refuses if unset) |
 | Survives server restart | no | yes (pid in SQLite) |
 | Loop / retries owned by | caller | detached runner |
@@ -403,7 +406,7 @@ node. `reconcile_orphan_node` is the shared three-call recovery:
 ## Tmux run substrate — opt-in, per dispatch (`adapters/tmux.py`, `dispatch/tmux_run.py`)
 
 Both long-lived dispatch families accept `use_tmux: bool = False`
-(`milknado_run_loop_start`, `milknado_run_once_start`). The default detached /
+(`milknado_run_loop_start`, `milknado_run_inline_start`). The default detached /
 in-process paths are unchanged when it is not passed; a dispatch parameter (not
 a `milknado.toml` key) was chosen as the smallest opt-in surface. With
 `use_tmux=True` the run executes inside a named tmux window and
@@ -430,13 +433,13 @@ Popen's replacement env, since a pane otherwise inherits the tmux *server's*
 environment and would leak user secrets the worker-env allowlist strips — tees
 output to both the pane and the run log the poll tools tail, and records the
 runner's exit code in `.milknado/runs/<run_id>.rc`. The pane pid is recorded
-as the run's pid (both families — the run-once waiter persists it via
+as the run's pid (both families — the run-inline waiter persists it via
 `set_run_pid` because a pane, unlike the in-process subprocess, survives an
 MCP-server restart), so **pid-liveness stays the sole authority for
 graph-state transitions** (`try_reclaim`, stale sweeps) and
 `milknado_run_cancel`'s `killpg` keeps working; pane liveness is additive only
 (attach precondition + diagnostics). Killing the window kills the pane's
-process group — a run is never orphaned by `kill-window`. The run-once path
+process group — a run is never orphaned by `kill-window`. The run-inline path
 stages the brief at `.milknado/runs/<run_id>.brief` (stdin redirect; a tmux
 pane has no stdin pipe) and waits on the pane pid with the same
 cancel-sentinel + timeout contract as `_execute_cancellable`
@@ -475,9 +478,9 @@ get a brief; ralph loops get RALPH.md.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
 - `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.
-- `src/milknado/domains/dispatch/tmux_run.py` — `ensure_tmux_ready` (fail-closed), `execute_in_window` (run-once pane waiter), `cleanup_run_window` / `reconcile_run_window` (per-row lifecycle), `resolve_attach_target`.
+- `src/milknado/domains/dispatch/tmux_run.py` — `ensure_tmux_ready` (fail-closed), `execute_in_window` (run-inline pane waiter), `cleanup_run_window` / `reconcile_run_window` (per-row lifecycle), `resolve_attach_target`.
 - `src/milknado/domains/common/agent_argv.py` — `WORKER_ALLOWED_TOOLS` (per-vendor worker tool allowlist), `_ALLOWED_WORKER_EXECUTABLES` / `validate_worker_argv` (worker-cmd basename gate), `resolve_*_agent_command`.
 - `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`), `goal_claims` repo (`claim_goal_row`, `release_goal_row`).
-- `src/milknado/mcp_run.py` — `milknado_run_once*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
+- `src/milknado/mcp_run.py` — `milknado_run_inline*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
 - `src/milknado/mcp_ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
 - `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema, `_check_ancestor_goal_not_claimed` / `_claim_ancestor_goal_for_dispatch` (goal-claim fencing).
