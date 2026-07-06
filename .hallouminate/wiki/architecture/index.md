@@ -8,4 +8,5 @@
 - [execution](./execution.md) — Execution & Dispatch — Parallel Ralph Loops
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [planning](./planning.md) — Planning Domain — Goal Decomposition & Manifest
+- [run-once-isolation](./run-once-isolation.md) — run_once dispatches in the shared checkout — no worktree
 <!-- HALLOUMINATE:INDEX-END -->
