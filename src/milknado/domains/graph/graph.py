@@ -16,7 +16,7 @@ from milknado.domains.common import (
     pid_alive,
 )
 from milknado.domains.common.errors import InvalidContainment
-from milknado.domains.common.types import DEFAULT_FLAVOR
+from milknado.domains.common.types import BUILTIN_FLAVORS, DEFAULT_FLAVOR
 from milknado.domains.graph import _transitions
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
 from milknado.domains.graph._mutations import (
@@ -82,6 +82,9 @@ class MikadoGraph(_AnalyticsFacade):
         kind: NodeKind = NodeKind.TASK,
         flavor: str | None = None,
         wiki_ref: str | None = None,
+        artifact_path: str | None = None,
+        prereqs: Sequence[int] = (),
+        flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
     ) -> MikadoNode:
         # Validate parent_id before inserting: the node row commits before the
         # edge is added, so a nonexistent parent would otherwise leave a
@@ -97,12 +100,16 @@ class MikadoGraph(_AnalyticsFacade):
         if kind != NodeKind.TASK and flavor is not None:
             raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
         flavor_value = (flavor or DEFAULT_FLAVOR) if kind == NodeKind.TASK else None
+        if flavor_value is not None and flavor_value not in flavor_registry:
+            raise ValueError(
+                f"unknown flavor {flavor_value!r}; valid flavors: {sorted(flavor_registry)}"
+            )
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
             "(description, status, parent_id, created_at, oversized, batch_index, "
-            "kind, flavor, wiki_ref) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "kind, flavor, wiki_ref, artifact_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 description,
                 NodeStatus.PENDING.value,
@@ -113,6 +120,7 @@ class MikadoGraph(_AnalyticsFacade):
                 kind.value,
                 flavor_value,
                 wiki_ref,
+                artifact_path,
             ),
         )
         self._conn.commit()
@@ -122,6 +130,8 @@ class MikadoGraph(_AnalyticsFacade):
         _logger.debug("node %d created: %r", node_id, description[:80])
         if parent_id is not None:
             self.add_edge(parent_id, node_id)
+        for prereq_id in prereqs:
+            self.add_edge(prereq_id, node_id)
         return row_to_node(
             self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         )
@@ -159,10 +169,11 @@ class MikadoGraph(_AnalyticsFacade):
         description: str | None = None,
         kind: NodeKind | None = None,
         flavor: str | None = None,
+        artifact_path: str | None = None,
     ) -> None:
-        """Update description, kind, and/or flavor on a node. Status stays governed by
-        the state machine and is not editable here."""
-        update_node_fields(self._conn, node_id, description, kind, flavor)
+        """Update description, kind, flavor, and/or artifact_path on a node. Status stays
+        governed by the state machine and is not editable here."""
+        update_node_fields(self._conn, node_id, description, kind, flavor, artifact_path)
 
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         """Re-parent a node, rewriting its edge and parent_id with cycle checks."""

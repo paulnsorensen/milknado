@@ -115,8 +115,9 @@ def update_node_fields(
     description: str | None,
     kind: NodeKind | None,
     flavor: str | None = None,
+    artifact_path: str | None = None,
 ) -> None:
-    """Update description, kind, and/or flavor on a node; raise if it does not exist."""
+    """Update description, kind, flavor, and/or artifact_path; raise if node absent."""
     fields: list[str] = []
     values: list[object] = []
     if description is not None:
@@ -138,6 +139,9 @@ def update_node_fields(
     if flavor is not None:
         fields.append("flavor = ?")
         values.append(flavor)
+    if artifact_path is not None:
+        fields.append("artifact_path = ?")
+        values.append(artifact_path)
     if not fields:
         raise ValueError("nothing to update")
     values.append(node_id)
