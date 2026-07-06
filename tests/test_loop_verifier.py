@@ -31,6 +31,7 @@ from milknado.adapters.loop import (
     _has_committed_change,
     _has_working_tree_change,
     _resolve_feature_branch,
+    _run_quality_gates,
 )
 from milknado.domains.common.config import Gate
 from milknado.loop import CompletionVerdict
@@ -67,6 +68,33 @@ def _commit_change(wt: Path) -> None:
     (wt / "work.txt").write_text("work\n", encoding="utf-8")
     _git("add", "-A", cwd=wt)
     _git("commit", "-m", "work", cwd=wt)
+
+
+class TestGateEnvHermeticity:
+    """The completion gate must run each quality command as CI would — free of
+    milknado's own injected orchestration context. A worker runs the gate as a
+    subprocess, so an ambient MILKNADO_RUN_ID / MILKNADO_NODE_ID would leak the
+    worker's node/run identity into the suite (#178) and flake any test that reads
+    the MILKNADO_* namespace (worker-env or follow-up-parent assertions).
+    """
+
+    def test_gate_env_strips_milknado_namespace(
+        self, worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MILKNADO_RUN_ID", "leak-run-123")
+        monkeypatch.setenv("MILKNADO_NODE_ID", "77")
+        # Fails (exit 1) if either injected var is visible to the gate command;
+        # uses shell builtins only so the check does not itself depend on PATH.
+        probe = Gate('test -z "$MILKNADO_RUN_ID" && test -z "$MILKNADO_NODE_ID"')
+        assert _run_quality_gates(worktree, [probe]) is None
+
+    def test_gate_env_preserves_non_milknado_vars(
+        self, worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Stripping MILKNADO_* must not nuke the rest of the env: PATH must survive
+        # so an external command still resolves (guards against passing env={}).
+        monkeypatch.setenv("MILKNADO_RUN_ID", "leak-run-123")
+        assert _run_quality_gates(worktree, [Gate("env >/dev/null")]) is None
 
 
 class TestFailingGate:

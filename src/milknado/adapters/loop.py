@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import subprocess
@@ -255,7 +256,14 @@ def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
 
     Returns rejection feedback on the first failure or timeout, or ``None``
     when every gate passes.
+
+    The gate command is the project's own quality suite (e.g. ``uv run pytest``),
+    run as CI would run it. milknado's injected orchestration namespace
+    (``MILKNADO_*``, e.g. the worker's MILKNADO_RUN_ID / MILKNADO_NODE_ID) is
+    stripped from its environment so the worker's own node/run identity cannot
+    leak into the suite and flake tests that read those vars (#178).
     """
+    gate_env = {k: v for k, v in os.environ.items() if not k.startswith("MILKNADO_")}
     for gate in gates:
         command = gate.command
         try:
@@ -266,6 +274,7 @@ def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
                 capture_output=True,
                 text=True,
                 timeout=_GATE_TIMEOUT_SECONDS,
+                env=gate_env,
             )
         except subprocess.TimeoutExpired:
             _logger.warning(
