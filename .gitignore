@@ -219,6 +219,9 @@ ralphs/
 # Local Milknado runtime state
 .milknado/
 
+# Local code-review-graph cache
+.code-review-graph/
+
 # Local worktree scratch areas
 .worktrees/
 worktrees/
