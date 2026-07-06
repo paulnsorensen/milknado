@@ -17,7 +17,7 @@ from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.types import BUILTIN_FLAVORS
 
 Kind = Literal["roadmap", "goal", "task"]
-Flavor = Literal["implement", "spec", "spike", "prototype", "research"]
+Flavor = str  # validated at runtime against BUILTIN_FLAVORS ∪ TOML-declared names (ADR-004)
 TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
 
 
