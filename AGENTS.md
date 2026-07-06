@@ -69,8 +69,8 @@ This project is pre-release. Do not add migration backfills, deprecation shims, 
 ## Code-Intelligence Routing
 
 Three MCP servers cover code intelligence; they layer rather than overlap. The
-worktree ships an `.mcp.json` wiring all of them — prefer them over raw
-`grep`/`cat`/`sed`/`Edit`.
+worktree's `.mcp.json` wires serena and code-review-graph; tilth is provided
+globally. Prefer them over raw `grep`/`cat`/`sed`/`Edit`.
 
 - **tilth** — file I/O floor. Default for read/search/edit; replaces host
   Grep/Read/Edit/Glob. Always search first (`tilth_search`), then read

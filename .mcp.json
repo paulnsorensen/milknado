@@ -4,10 +4,6 @@
       "command": "uv",
       "args": ["run", "milknado-mcp"]
     },
-    "tilth": {
-      "command": "tilth",
-      "args": ["--mcp"]
-    },
     "code-review-graph": {
       "command": "code-review-graph"
     },
