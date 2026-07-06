@@ -1866,3 +1866,59 @@ def test_plan_exit_code_default_fallthrough() -> None:
     # solver_status not in any special case, success True → final return 0.
     result = _make_plan_result(solver_status="UNKNOWN", batch_count=0, success=True)
     assert _plan_exit_code(result) == 0
+
+
+class TestEdgeAdd:
+    def test_adds_edge(self, project_dir: Path) -> None:
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        parent = graph.add_node("parent")
+        child = graph.add_node("child")
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["edge", "add", str(parent.id), str(child.id), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 0
+        assert f"Added edge {parent.id} -> {child.id}" in result.output
+
+        graph = MikadoGraph(config.db_path)
+        assert child.id in {n.id for n in graph.get_children(parent.id)}
+        graph.close()
+
+    def test_rejects_cycle(self, project_dir: Path) -> None:
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        child = graph.add_node("child", parent_id=root.id)
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["edge", "add", str(child.id), str(root.id), "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "cycle" in result.output
+
+    def test_rejects_missing_node(self, project_dir: Path) -> None:
+        from milknado.domains.graph import MikadoGraph
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root")
+        graph.close()
+
+        result = runner.invoke(
+            app,
+            ["edge", "add", str(root.id), "999", "--project-root", str(project_dir)],
+        )
+        assert result.exit_code == 1
+        assert "does not exist" in result.output
