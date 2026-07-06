@@ -236,6 +236,117 @@ class TestAllGreen:
         assert verifier().ok is True
 
 
+class TestArtifactEvidenceMode:
+    """ADR-006: in-place nodes with explicitly-empty gates and an artifact_path
+    are checked for artifact-exists-and-non-empty instead of stageable-change —
+    the current checkout may carry unrelated changes, so a diff check is the
+    wrong evidence for a prose deliverable."""
+
+    def test_present_non_empty_artifact_ok_with_no_change(self, worktree: Path) -> None:
+        """No git change at all, but the artifact exists and is non-empty: pass."""
+        (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is True
+        assert verdict.feedback == ""
+
+    def test_missing_artifact_rejected(self, worktree: Path) -> None:
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "NOTES.md" in verdict.feedback
+
+    def test_empty_artifact_rejected(self, worktree: Path) -> None:
+        (worktree / "NOTES.md").write_text("", encoding="utf-8")
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "NOTES.md" in verdict.feedback
+
+    def test_worktree_node_ignores_artifact_path(self, feature_repo: Path, tmp_path: Path) -> None:
+        """in_place=False (the default) keeps the stageable-change check even
+        when artifact_path is present — worktree nodes are unchanged by ADR-006.
+        NOTES.md is committed to the fork point itself (pre-existing, not new
+        work), so it exists and is non-empty in the worktree while the worktree
+        itself carries no new committed or stageable change."""
+        (feature_repo / "NOTES.md").write_text("done\n", encoding="utf-8")
+        _git("add", "-A", cwd=feature_repo)
+        _git("commit", "-m", "add notes", cwd=feature_repo)
+        wt = tmp_path / "wt-ignores-artifact"
+        _git("worktree", "add", "-b", "milknado/2-x", str(wt), cwd=feature_repo)
+        verifier = _build_completion_verifier(wt, (), artifact_path="NOTES.md")
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert verdict.feedback == (
+            "you emitted the completion promise but produced no committed/stageable change"
+        )
+
+    def test_non_empty_gates_ignore_artifact_path(self, worktree: Path) -> None:
+        """Non-empty gates keep the stageable-change check even for an in-place
+        node with an artifact_path — the artifact-evidence mode is scoped to
+        explicitly-empty gates only."""
+        verifier = _build_completion_verifier(
+            worktree, (Gate("true"),), in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert verdict.feedback == (
+            "you emitted the completion promise but produced no committed/stageable change"
+        )
+
+    def test_none_gates_still_fail_closed_with_artifact_path(self, worktree: Path) -> None:
+        """None gates fail closed regardless of in_place/artifact_path."""
+        (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
+        verifier = _build_completion_verifier(
+            worktree, None, in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert verdict.feedback == NO_GATES_CONFIGURED_MESSAGE
+
+    def test_stat_failure_on_artifact_fails_closed(
+        self, worktree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stat error while checking the artifact must reject, not raise or
+        silently pass."""
+        import milknado.adapters.loop as loop_mod
+
+        real_is_file = Path.is_file
+
+        def fake_is_file(self: Path) -> bool:
+            if self.name == "NOTES.md":
+                raise OSError("simulated stat failure")
+            return real_is_file(self)
+
+        monkeypatch.setattr(loop_mod.Path, "is_file", fake_is_file)
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path="NOTES.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "NOTES.md" in verdict.feedback
+
+
 class TestNoneGatesFailClosed:
     """quality_gates = None means unconfigured — verifier must fail closed immediately."""
 
