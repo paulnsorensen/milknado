@@ -36,19 +36,32 @@ def milknado_todo_add(
     project_root: str = "",
     files: list[str] | None = None,
     flavor: Flavor | None = None,
+    artifact: str | None = None,
+    prereqs: list[int] | None = None,
 ) -> dict:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
 
     files: optional list of paths this node will touch (relative to project root,
     or absolute under it).
     flavor: task flavor (implement|spec|spike|prototype|research); only valid for kind=task.
+    artifact: opaque repo-relative path to a markdown narrative for this node; persisted
+    verbatim, not checked for existence.
+    prereqs: node ids that must complete before this node is ready; rejected if any
+    would create a cycle.
     """
     node_kind = _parse_kind(kind)
     node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
+        node = graph.add_node(
+            description,
+            parent_id=parent_id,
+            kind=node_kind,
+            flavor=node_flavor,
+            artifact_path=artifact,
+            prereqs=prereqs or (),
+        )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return node_to_summary(node)
@@ -121,12 +134,15 @@ def milknado_track_follow_up(
     project_root: str = "",
     files: list[str] | None = None,
     flavor: Flavor | None = None,
+    artifact: str | None = None,
+    prereqs: list[int] | None = None,
 ) -> dict:
     """Register discovered follow-up work as a new node.
 
     Without parent_id, attaches beside the worker's current node; without worker
     context, creates a root node. Optional files record ownership hints. flavor is
-    valid only for task nodes.
+    valid only for task nodes. artifact: opaque repo-relative markdown narrative path,
+    persisted verbatim. prereqs: node ids that must complete first; rejected on cycle.
     """
     node_kind = _parse_kind(kind)
     node_flavor = _parse_flavor(flavor) if flavor is not None else None
@@ -135,7 +151,14 @@ def milknado_track_follow_up(
     try:
         if parent_id is None:
             parent_id = follow_up_parent_id(graph)
-        node = graph.add_node(description, parent_id=parent_id, kind=node_kind, flavor=node_flavor)
+        node = graph.add_node(
+            description,
+            parent_id=parent_id,
+            kind=node_kind,
+            flavor=node_flavor,
+            artifact_path=artifact,
+            prereqs=prereqs or (),
+        )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
         return node_to_summary(node)
@@ -186,14 +209,25 @@ def milknado_edit_node(
     flavor: Flavor | None = None,
     project_root: str = "",
     files: list[str] | None = None,
+    artifact: str | None = None,
 ) -> dict:
-    """Edit a node's description, kind, and/or flavor (coordinator-only). Status is not editable.
+    """Edit a node's description, kind, flavor, and/or artifact (coordinator-only).
 
-    files: None leaves hints untouched; [] clears all hints; a non-empty list replaces them.
-    flavor: only valid for task nodes; raises ValueError on non-task nodes.
+    Status is not editable. files: None leaves hints untouched; [] clears all hints;
+    a non-empty list replaces them. flavor: only valid for task nodes; raises ValueError
+    on non-task nodes. artifact: opaque repo-relative markdown narrative path, persisted
+    verbatim with no existence check.
     """
-    if description is None and kind is None and flavor is None and files is None:
-        raise ValueError("nothing to edit: provide description, kind, flavor, and/or files")
+    if (
+        description is None
+        and kind is None
+        and flavor is None
+        and files is None
+        and artifact is None
+    ):
+        raise ValueError(
+            "nothing to edit: provide description, kind, flavor, files, and/or artifact"
+        )
     node_kind = _parse_kind(kind) if kind is not None else None
     node_flavor = _parse_flavor(flavor) if flavor is not None else None
     if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
@@ -214,11 +248,27 @@ def milknado_edit_node(
                     f"flavor is only valid for task nodes; node {node_id} has kind"
                     f" {existing.kind.value!r}"
                 )
-        if description is not None or node_kind is not None or node_flavor is not None:
-            graph.update_node(node_id, description=description, kind=node_kind, flavor=node_flavor)
+        if (
+            description is not None
+            or node_kind is not None
+            or node_flavor is not None
+            or artifact is not None
+        ):
+            graph.update_node(
+                node_id,
+                description=description,
+                kind=node_kind,
+                flavor=node_flavor,
+                artifact_path=artifact,
+            )
         if hint_paths is not None:
             node_exists = graph.get_node(node_id) is not None
-            only_files = description is None and node_kind is None and node_flavor is None
+            only_files = (
+                description is None
+                and node_kind is None
+                and node_flavor is None
+                and artifact is None
+            )
             if only_files and not node_exists:
                 raise ValueError(f"node {node_id} not found")
             graph.set_file_ownership(node_id, hint_paths)

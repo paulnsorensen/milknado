@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -2032,6 +2033,157 @@ class TestFileHintsMcp:
             )
         node = _call(milknado_get_node, node_id=task["id"], project_root=root)
         assert node["description"] == "original"
+
+
+class TestArtifactAndPrereqsMcp:
+    """Round-trip tests: artifact + prereqs params on MCP tools."""
+
+    def test_todo_add_with_artifact_persists_verbatim(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="write narrative",
+            artifact="docs/notes/plan.md",
+            project_root=root,
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.artifact_path == "docs/notes/plan.md"
+        finally:
+            graph.close()
+
+    def test_todo_add_artifact_none_leaves_artifact_path_none(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="no artifact", project_root=root)
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.artifact_path is None
+        finally:
+            graph.close()
+
+    def test_track_follow_up_with_artifact_persists_verbatim(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        follow_up = _call(
+            milknado_track_follow_up,
+            description="follow up",
+            artifact="docs/notes/followup.md",
+            project_root=root,
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(follow_up["id"])
+            assert node is not None
+            assert node.artifact_path == "docs/notes/followup.md"
+        finally:
+            graph.close()
+
+    def test_edit_node_sets_artifact(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            artifact="docs/notes/t.md",
+            project_root=root,
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.artifact_path == "docs/notes/t.md"
+        finally:
+            graph.close()
+
+    def test_edit_node_description_only_leaves_artifact_untouched(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="original",
+            artifact="docs/keep.md",
+            project_root=root,
+        )
+        _call(
+            milknado_edit_node,
+            node_id=task["id"],
+            description="updated",
+            project_root=root,
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.artifact_path == "docs/keep.md"
+        finally:
+            graph.close()
+
+    def test_edit_node_artifact_only_no_description_or_kind(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="original", project_root=root)
+        result = _call(
+            milknado_edit_node, node_id=task["id"], artifact="docs/x.md", project_root=root
+        )
+        assert result["description"] == "original"
+
+    def test_edit_node_nothing_raises_mentions_artifact(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", project_root=root)
+        with pytest.raises(ValueError, match="artifact"):
+            _call(milknado_edit_node, node_id=task["id"], project_root=root)
+
+    def test_todo_add_with_prereqs_creates_edges(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="g", kind="goal", project_root=root)
+        p1 = _call(milknado_todo_add, description="p1", parent_id=goal["id"], project_root=root)
+        p2 = _call(milknado_todo_add, description="p2", parent_id=goal["id"], project_root=root)
+        task = _call(
+            milknado_todo_add,
+            description="t",
+            parent_id=goal["id"],
+            prereqs=[p1["id"], p2["id"]],
+            project_root=root,
+        )
+        for prereq in (p1, p2):
+            prereq_view = _call(milknado_get_node, node_id=prereq["id"], project_root=root)
+            assert task["id"] in prereq_view["prerequisite_ids"]
+
+    def test_track_follow_up_with_prereqs_creates_edges(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        p1 = _call(milknado_todo_add, description="p1", project_root=root)
+        follow_up = _call(
+            milknado_track_follow_up,
+            description="follow up",
+            prereqs=[p1["id"]],
+            project_root=root,
+        )
+        prereq_view = _call(milknado_get_node, node_id=p1["id"], project_root=root)
+        assert follow_up["id"] in prereq_view["prerequisite_ids"]
+
+    def test_todo_add_prereqs_none_creates_no_extra_edges(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="t", prereqs=None, project_root=root)
+        result = _call(milknado_get_node, node_id=task["id"], project_root=root)
+        assert result["prerequisite_ids"] == []
+
+    def test_todo_add_prereq_missing_node_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        with pytest.raises(sqlite3.IntegrityError):
+            _call(milknado_todo_add, description="t", prereqs=[9999], project_root=root)
+
+    def test_todo_add_prereq_duplicating_parent_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        parent = _call(milknado_todo_add, description="root", project_root=root)
+        with pytest.raises(sqlite3.IntegrityError):
+            _call(
+                milknado_todo_add,
+                description="t",
+                parent_id=parent["id"],
+                prereqs=[parent["id"]],
+                project_root=root,
+            )
 
 
 def test_main_imports_all_tool_modules() -> None:
