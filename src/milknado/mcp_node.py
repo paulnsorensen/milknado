@@ -1,25 +1,32 @@
 """Native Workflow ("ultracode") backend MCP tools — coordinator-only.
 
-These two tools back the in-session Claude Code dynamic-Workflow driver. They run
+These tools back the in-session Claude Code dynamic-Workflow driver. They run
 ALONGSIDE the subprocess dispatcher in `mcp_run.py` and never spawn a process:
 the harness-side Workflow is the driver, milknado is the graph/state backend.
 
-- `milknado_todo_claim`: atomically claim a node RUNNING, create its durable
-  worktree, write the `runs` row, and return the structured config the Workflow
-  needs to dispatch one `agent()` per ready node. Spawns nothing.
-- `milknado_node_verify`: run the node's resolved quality_gates in its worktree
-  and return the existing `CompletionVerdict` shape. The verdict is persisted as a
-  `run_messages` row (role="verify") so the server-side completion gate in
-  `mcp_todo_mutate` can reject a "done" transition that was never verified.
+- `milknado_goal_claim` / `milknado_goal_release`: claim/release a GOAL node's
+  subtree as a session's task list (ADR-003), wrapping the existing
+  goal_claims persistence with an env-inherited owner token and dead-pid reclaim.
+- `milknado_todo_claim`: atomically claim a node RUNNING, provision its
+  worktree per the resolved flavor policy (or an explicit override, ADR-005),
+  write the `runs` row, and return the structured config the Workflow needs to
+  dispatch one `agent()` per ready node. Spawns nothing.
+- `milknado_node_verify`: run the node's resolved quality_gates in its
+  worktree_path or the project_root (ADR-005/006) and return the existing
+  `CompletionVerdict` shape. The verdict is persisted as a `run_messages` row
+  (role="verify") so the server-side completion gate in `mcp_todo_mutate` can
+  reject a "done" transition that was never verified.
 
-Coordinator-only: neither tool belongs in WORKER_ALLOWED_TOOLS.
+Coordinator-only: none of these tools belong in WORKER_ALLOWED_TOOLS.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+from pathlib import Path
 
 from milknado._mcp_core import (
     _check_ancestor_goal_not_claimed,
@@ -43,6 +50,13 @@ VERIFY_ROLE = "verify"
 # subprocess run that merely shares the run_id + runs-row shape.
 CLAIM_ROLE = "claim"
 _MODEL_FLAG_RE = re.compile(r"--model[= ]+(\S+)")
+
+# Session owner-token env var (ADR-003): a coordinator claiming a GOAL passes an
+# explicit `owner`, but sub-agents it dispatches inherit process env (subprocess
+# semantics, MILKNADO_NODE_ID precedent) rather than being told the token
+# out-of-band. Reading it as a fallback lets a sub-agent call milknado_goal_release
+# (or re-claim) without the coordinator threading `owner` through every dispatch.
+GOAL_OWNER_ENV_VAR = "MILKNADO_GOAL_OWNER"
 
 
 def _resolve_model(execution_agent: str) -> str:
@@ -88,16 +102,87 @@ def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...
     return tools
 
 
+def _resolve_owner(owner: str) -> str:
+    """Resolve the session owner token: explicit `owner` wins, else GOAL_OWNER_ENV_VAR."""
+    explicit = owner.strip()
+    if explicit:
+        return explicit
+    return os.environ.get(GOAL_OWNER_ENV_VAR, "").strip()
+
+
 @mcp.tool()
-def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
+def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -> dict:
+    """Claim a GOAL node's subtree as this session's task list (ADR-003).
+
+    Wraps claim_goal_row/set_goal_claim_pid: `owner` fences the subtree the same
+    way a run_id fences a node claim, and the caller's pid is recorded so a
+    crashed coordinator's claim is reclaimable. `owner` falls back to
+    GOAL_OWNER_ENV_VAR when omitted, so a sub-agent that inherited the
+    coordinator's env can act under the same token without being told it
+    out-of-band. A dead-pid claim is reclaimed in place before retrying.
+    """
+    owner = _resolve_owner(owner)
+    if not owner:
+        raise ValueError(f"owner is required (or set {GOAL_OWNER_ENV_VAR})")
+
+    root = resolve_project_root(project_root or None)
+    graph, cfg = open_graph(root)
+    try:
+        now = now_iso()
+        won = graph.claim_goal(goal_id, owner, now=now)
+        if not won and graph.try_reclaim_goal(goal_id, now=now):
+            won = graph.claim_goal(goal_id, owner, now=now)
+        if not won:
+            node = graph.get_node(goal_id)
+            current_owner = node.goal_run_id if node is not None else None
+            raise ValueError(f"goal {goal_id} is already claimed by owner {current_owner!r}")
+        graph.set_goal_pid(goal_id, owner, os.getpid())
+        _logger.info("milknado_goal_claim: goal=%d owner=%s", goal_id, owner)
+        return {"goal_id": goal_id, "owner": owner}
+    finally:
+        graph.close()
+
+
+@mcp.tool()
+def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "") -> dict:
+    """Release a GOAL claim held by `owner` (ADR-003); wraps release_goal_row.
+
+    `owner` falls back to GOAL_OWNER_ENV_VAR when omitted. Fenced on the owning
+    token: releasing with a non-owning or already-released token is a no-op.
+    """
+    owner = _resolve_owner(owner)
+    if not owner:
+        raise ValueError(f"owner is required (or set {GOAL_OWNER_ENV_VAR})")
+
+    root = resolve_project_root(project_root or None)
+    graph, cfg = open_graph(root)
+    try:
+        released = graph.release_goal(goal_id, owner)
+        _logger.info(
+            "milknado_goal_release: goal=%d owner=%s released=%s", goal_id, owner, released
+        )
+        return {"goal_id": goal_id, "released": released}
+    finally:
+        graph.close()
+
+
+@mcp.tool()
+def milknado_todo_claim(
+    node_id: int, worktree: bool | None = None, project_root: str = ""
+) -> dict:
     """Claim a task node for native (in-session Workflow) execution; spawn nothing.
 
-    Atomically CAS-claims the node PENDING/FAILED/BLOCKED -> RUNNING, creates its
-    durable worktree (the carry-forward state), records worktree_path + branch,
-    writes a status='running' runs row, and honors goal_claims subtree fencing.
-    Returns the full structured config the Workflow node-runner needs to dispatch
-    one agent() per node: brief, flavor, model, tools, worktree_path, agent_type,
-    loop_mode, max_iterations, max_turns. NO process is spawned — the harness-side
+    Atomically CAS-claims the node PENDING/FAILED/BLOCKED -> RUNNING, writes a
+    status='running' runs row, and honors goal_claims subtree fencing. Worktree
+    provisioning is per-node policy (ADR-005): `worktree=None` (default) uses
+    the resolved flavor profile's `worktree` knob; `worktree=True`/`False`
+    overrides it for this call. When a worktree is provisioned, its durable
+    path + branch are recorded on the node (the carry-forward state); an
+    in-place claim (worktree=False) leaves worktree_path unset and runs the
+    node in the current checkout. Returns the full structured config the
+    Workflow node-runner needs to dispatch one agent() per node: brief,
+    flavor, model, tools, worktree_path, agent_type, loop_mode,
+    max_iterations, max_turns. NO process is spawned — the harness-side
     Workflow is the driver.
     """
     from milknado.adapters import GitAdapter
@@ -128,12 +213,17 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
                 f"node {node_id} is already {status}; set status back to pending to retry"
             )
 
+        use_worktree = profile.worktree if worktree is None else worktree
+        wt_path: Path | None = None
         try:
-            wt_path, branch = _create_node_worktree(
-                GitAdapter(root), root, node_id, node.description, cfg.worktree_pattern
-            )
-            graph.set_worktree(node_id, run_id, str(wt_path), branch)
-            graph.start_run(run_id, node_id, str(wt_path), now_iso(), None)
+            if use_worktree:
+                wt_path, branch = _create_node_worktree(
+                    GitAdapter(root), root, node_id, node.description, cfg.worktree_pattern
+                )
+                graph.set_worktree(node_id, run_id, str(wt_path), branch)
+                graph.start_run(run_id, node_id, str(wt_path), now_iso(), None)
+            else:
+                graph.start_run(run_id, node_id, str(root), now_iso(), None)
             # Stamp the native-backend marker so the done-transition gate fires
             # for this run even before its first verify (fail-closed), while
             # leaving subprocess runs — which never carry it — exempt.
@@ -154,7 +244,7 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
             "flavor": node.flavor,
             "model": _resolve_model(profile.execution_agent),
             "tools": list(tools),
-            "worktree_path": str(wt_path),
+            "worktree_path": str(wt_path) if wt_path is not None else None,
             "agent_type": profile.worker_agent_type,
             "loop_mode": profile.loop_mode,
             "max_iterations": profile.max_iterations,
@@ -166,16 +256,18 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
 
 @mcp.tool()
 def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
-    """Run the node's resolved quality_gates in its worktree; return the verdict.
+    """Run the node's resolved quality_gates in worktree_path or project_root; return the verdict.
 
     Exposes the tier-2 completion verifier as a callable: runs every resolved
-    quality gate in the node's worktree_path and returns the existing
-    CompletionVerdict shape {ok, feedback}. The verdict is persisted as a
-    role="verify" run message so the deposit/mark-terminal gate can confirm a
-    "done" transition was actually verified.
+    quality gate in the node's worktree (or, for an in-place claim with no
+    worktree, the project root — ADR-005/006) and returns the existing
+    CompletionVerdict shape {ok, feedback}. Completion evidence is
+    flavor-appropriate (ADR-006): a worktree node keeps the stageable-change
+    check; an in-place node with explicitly-empty gates and an artifact_path is
+    checked for that artifact existing and being non-empty instead. The verdict
+    is persisted as a role="verify" run message so the deposit/mark-terminal
+    gate can confirm a "done" transition was actually verified.
     """
-    from pathlib import Path
-
     from milknado.adapters.loop import _build_completion_verifier
 
     if not RUN_ID_RE.match(run_id):
@@ -189,11 +281,15 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
         node = graph.get_node(run["node_id"])
         if node is None:
             raise ValueError(f"node {run['node_id']} for run {run_id!r} not found")
-        if node.worktree_path is None:
-            raise ValueError(f"node {node.id} has no worktree_path; claim it before verifying")
 
+        cwd = Path(node.worktree_path) if node.worktree_path is not None else root
         profile = resolve_flavor_profile(cfg, node.flavor)
-        verifier = _build_completion_verifier(Path(node.worktree_path), profile.quality_gates)
+        verifier = _build_completion_verifier(
+            cwd,
+            profile.quality_gates,
+            in_place=node.worktree_path is None,
+            artifact_path=node.artifact_path,
+        )
         verdict = verifier()
         graph.deposit_run_message(
             run_id,

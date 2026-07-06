@@ -2089,6 +2089,8 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_deposit_result",
         "milknado_edit_node",
         "milknado_get_node",
+        "milknado_goal_claim",
+        "milknado_goal_release",
         "milknado_graph_summary",
         "milknado_move_node",
         "milknado_node_verify",
