@@ -64,8 +64,8 @@ instance at import time — then calls `mcp.run()`. Tools are grouped by capabil
   `milknado_todo_next`, `milknado_todo_tree`, `milknado_todo_set_status`,
   `milknado_track_follow_up` — node lifecycle enforced through `VALID_TRANSITIONS`; brief
   rendering delegates to `domains.dispatch.render_brief`.
-- **Run start / poll / cancel** (`mcp_run.py`, `mcp_ralph.py`): `milknado_run_once` (sync),
-  `milknado_run_once_start` / `milknado_run_once_poll`, `milknado_run_loop_start` /
+- **Run start / poll / cancel** (`mcp_run.py`, `mcp_ralph.py`): `milknado_run_inline` (sync),
+  `milknado_run_inline_start` / `milknado_run_inline_poll`, `milknado_run_loop_start` /
   `milknado_run_loop_poll` (detached worktree + full ralph loop), `milknado_run_list`,
   `milknado_run_cancel`. Detached runs claim the node RUNNING via a SQLite conditional UPDATE
   (cross-process mutual exclusion) and survive a server restart; pollers reconcile orphaned

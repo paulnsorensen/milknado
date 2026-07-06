@@ -21,6 +21,11 @@ class NodeKind(Enum):
     TASK = "task"
 
 
+class WorktreeMode(Enum):
+    ISOLATE = "isolate"
+    THIS_BRANCH = "this_branch"
+
+
 class TaskFlavor(Enum):
     IMPLEMENT = "implement"
     SPEC = "spec"

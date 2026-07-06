@@ -12,13 +12,14 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.common import WorktreeMode
 from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp_run import (
     milknado_deposit_result,
     milknado_run_cancel,
+    milknado_run_inline_poll,
+    milknado_run_inline_start,
     milknado_run_list,
-    milknado_run_once_poll,
-    milknado_run_once_start,
 )
 from milknado.mcp_server import open_graph
 from milknado.mcp_todo_mutate import milknado_todo_add
@@ -64,6 +65,11 @@ finally:
 
 def _call(tool, **kwargs):
     fn = getattr(tool, "fn", tool)
+    # run_inline{,_start} now default to ISOLATE (per-dispatch worktree). These
+    # legacy tests target the shared-checkout path, so pin THIS_BRANCH unless a
+    # test opts into ISOLATE explicitly.
+    if fn.__name__ in ("milknado_run_inline", "milknado_run_inline_start"):
+        kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
     return fn(**kwargs)
 
 
@@ -167,17 +173,17 @@ def _wait_for_terminal(run_id: str, root: str, tool, timeout: float = 5.0) -> di
 class TestUnifiedRunSchema:
     """Every run tool must return a dict that contains all superset keys."""
 
-    def test_run_once_start_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_start_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-start", kind="task", project_root=root)
         result = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
         missing = _SUPERSET_KEYS - result.keys()
-        assert not missing, f"milknado_run_once_start missing keys: {missing}"
+        assert not missing, f"milknado_run_inline_start missing keys: {missing}"
         # start tools return None for fields only available post-completion
         assert result["status"] == "running"
         assert result["run_id"] is not None
@@ -186,18 +192,18 @@ class TestUnifiedRunSchema:
         assert result["rebased"] is None
         assert result["summary"] is None
 
-    def test_run_once_poll_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_poll_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-poll", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        final = _wait_for_terminal(started["run_id"], root, milknado_run_once_poll)
+        final = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         missing = _SUPERSET_KEYS - final.keys()
-        assert not missing, f"milknado_run_once_poll missing keys: {missing}"
+        assert not missing, f"milknado_run_inline_poll missing keys: {missing}"
         assert final["run_id"] == started["run_id"]
         assert "rebased" in final  # may be None for headless runs
 
@@ -238,9 +244,9 @@ class TestUnifiedRunSchema:
 
 
 class TestSyncRunSchema:
-    """milknado_run_once (sync) must also return the superset schema and write a state file."""
+    """milknado_run_inline (sync) must also return the superset schema and write a state file."""
 
-    def test_run_once_returns_superset_schema(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_returns_superset_schema(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
         def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
@@ -249,19 +255,19 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-schema", kind="task", project_root=root)
-        result = _call(milknado_run_once, node_id=task["id"], project_root=root)
+        result = _call(milknado_run_inline, node_id=task["id"], project_root=root)
         missing = _SUPERSET_KEYS - result.keys()
-        assert not missing, f"milknado_run_once missing keys: {missing}"
+        assert not missing, f"milknado_run_inline missing keys: {missing}"
         assert result["run_id"] is not None
         assert result["rebased"] is None
         assert result["exit_code"] == 0
         assert result["timed_out"] is False
 
-    def test_run_once_writes_run_row(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_writes_run_row(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
         def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
@@ -270,17 +276,17 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-state", kind="task", project_root=root)
-        result = _call(milknado_run_once, node_id=task["id"], project_root=root)
+        result = _call(milknado_run_inline, node_id=task["id"], project_root=root)
         state = _read_run(tmp_path, result["run_id"])
         assert state is not None, "sync run must write a terminal run row"
         assert state["run_id"] == result["run_id"]
         assert state["status"] == "done"
 
-    def test_run_once_sets_run_id_on_node(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_sets_run_id_on_node(self, tmp_path: Path, monkeypatch) -> None:
         """#40: run_id must be threaded into the node after a sync run."""
         import milknado.domains.dispatch.runner as runner_mod
 
@@ -290,13 +296,13 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(
             milknado_todo_add, description="run-id-on-node", kind="task", project_root=root
         )
-        result = _call(milknado_run_once, node_id=task["id"], project_root=root)
+        result = _call(milknado_run_inline, node_id=task["id"], project_root=root)
         graph, _cfg = open_graph(tmp_path)
         try:
             node = graph.get_node(task["id"])
@@ -331,11 +337,11 @@ class TestSyncRunOrphanRescue:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
-        _call(milknado_run_once, node_id=task["id"], project_root=root)
+        _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
         state = observed.get("state")
         assert state is not None, "no 'running' run row existed while the worker ran"
@@ -345,78 +351,50 @@ class TestSyncRunOrphanRescue:
         assert state["started_at"]
         assert state["timeout_seconds"] is not None
 
-    def test_orphaned_sync_run_is_rescuable(self, tmp_path: Path, monkeypatch) -> None:
-        from datetime import UTC, datetime, timedelta
-
+    def test_sync_dispatch_exception_finalizes_run_failed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """An in-process exception during sync dispatch (here a worker crash,
+        simulated by _execute raising) must finalize the run and node FAILED
+        before re-raising — never strand them RUNNING. The true-orphan path (an
+        uncatchable kill leaving the up-front 'running' row for the stale sweep)
+        stays covered by test_sync_run_writes_rescuable_running_state_before_worker
+        plus the fail_stale_running_runs unit tests in test_mcp_server.py."""
         import milknado.domains.dispatch.runner as runner_mod
 
         def _crash_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
-            raise RuntimeError("server killed mid-run before terminal write")
+            raise RuntimeError("worker crashed mid-run before terminal write")
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
-        task = _call(milknado_todo_add, description="orphan-stale", kind="task", project_root=root)
+        task = _call(milknado_todo_add, description="crash", kind="task", project_root=root)
         with pytest.raises(RuntimeError):
-            _call(milknado_run_once, node_id=task["id"], project_root=root)
+            _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
-        rows = _node_running_runs(tmp_path, task["id"])
-        assert rows, "orphaned sync run left no running run row to rescue"
-        state = rows[0]
-        assert state["status"] == "running"
-        # Age the run past its timeout and the stale sweep must release the node.
+        # High-1 contract: the caught exception finalizes the node and its run
+        # terminal — nothing is left RUNNING for the stale sweep to clean up.
         graph, _cfg = open_graph(tmp_path)
         try:
-            aged = datetime.now(UTC) - timedelta(seconds=state["timeout_seconds"] + 3600)
-            graph._conn.execute(
-                "UPDATE runs SET started_at = ? WHERE run_id = ?",
-                (aged.isoformat(), state["run_id"]),
-            )
-            graph._conn.commit()
-            from milknado.domains.dispatch import fail_stale_running_runs
-
-            flipped = fail_stale_running_runs(graph, task["id"])
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.status.value == "failed", "exception must fail the node, not strand it"
+            runs = graph.runs_for_node(task["id"])
+            assert runs, "dispatch must have created a run row before the worker ran"
+            assert all(r["status"] != "running" for r in runs), "no run may be left running"
+            assert any(r["status"] == "failed" for r in runs), "the crashed run must be failed"
         finally:
             graph.close()
-        assert len(flipped) == 1
-        assert flipped[0]["status"] == "failed"
 
-    def test_done_node_rerun_writes_no_running_state(self, tmp_path: Path, monkeypatch) -> None:
-        """The running-state write is gated on an actual PENDING/FAILED->RUNNING
-        transition. A DONE node re-run must NOT drop a 'running' run the stale
-        sweep could later force-fail, which would clobber the prior DONE result."""
-        import milknado.domains.dispatch.runner as runner_mod
-
-        observed: dict = {}
-
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
-            observed["running"] = _node_running_runs(Path(project_root), node_id)
-            log_path.write_bytes(b"ok")
-            return 0, False
-
-        monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
-
-        from milknado.mcp_run import milknado_run_once
-
-        root = str(tmp_path)
-        task = _call(milknado_todo_add, description="done-rerun", kind="task", project_root=root)
-        _call(milknado_run_once, node_id=task["id"], project_root=root)  # -> DONE
-        # Second run sees a DONE node: _ensure_running returns False, so the gate
-        # must skip the running-run write — no 'running' run exists mid-run.
-        _call(milknado_run_once, node_id=task["id"], project_root=root)
-        assert observed["running"] == [], "DONE-node re-run must not write a 'running' run row"
-
-    def test_done_node_rerun_omits_run_id_from_worker_env(
+    def test_done_node_rerun_refused_first_run_injects_run_id(
         self, tmp_path: Path, monkeypatch
     ) -> None:
-        """A DONE-node re-run inserts no 'running' run row, so it must NOT inject
-        MILKNADO_RUN_ID. If it did, the brief's mandated final step
-        (milknado_deposit_result(run_id=$MILKNADO_RUN_ID, ...)) would deposit into a
-        run row that doesn't exist and fail with "run not found" — the exact #122
-        channel this consolidation protects. The first (PENDING->RUNNING) run does
-        have a row, so it MUST inject MILKNADO_RUN_ID. This exercises the real
+        """The first (PENDING->RUNNING) run has a run row, so it MUST inject
+        MILKNADO_RUN_ID — the brief's deposit step keys on it (the #122 channel).
+        A DONE-node re-dispatch is refused up front (High-5), so it spawns no
+        second worker and captures no second env. Exercises the real
         _execute -> _spawn_worker env-build path instead of stubbing past it.
         """
         import milknado.domains.dispatch.runner as runner_mod
@@ -438,24 +416,19 @@ class TestSyncRunOrphanRescue:
 
         monkeypatch.setattr(runner_mod.subprocess, "Popen", _capture_popen)
 
-        from milknado.mcp_run import milknado_run_once
+        from milknado.mcp_run import milknado_run_inline
 
         root = str(tmp_path)
-        desc = "done-rerun-env"
-        task = _call(milknado_todo_add, description=desc, kind="task", project_root=root)
+        task = _call(milknado_todo_add, description="rerun-env", kind="task", project_root=root)
         # First run: PENDING -> RUNNING -> DONE (a run row exists).
-        _call(milknado_run_once, node_id=task["id"], project_root=root)
-        # Second run sees a DONE node: no run row, so no MILKNADO_RUN_ID.
-        _call(milknado_run_once, node_id=task["id"], project_root=root)
+        _call(milknado_run_inline, node_id=task["id"], project_root=root)
+        # Second run sees a DONE node and is refused before any worker spawns.
+        with pytest.raises(ValueError, match="already done"):
+            _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
-        assert len(envs) == 2
-        first_env, rerun_env = envs
-        assert "MILKNADO_RUN_ID" in first_env, (
+        assert len(envs) == 1, "the refused re-dispatch must not spawn a second worker"
+        assert "MILKNADO_RUN_ID" in envs[0], (
             "a real (running) run must inject MILKNADO_RUN_ID so the worker can deposit"
-        )
-        assert "MILKNADO_RUN_ID" not in rerun_env, (
-            "DONE-node re-run has no run row; injecting MILKNADO_RUN_ID would make the "
-            "brief's deposit step fail with 'run not found'"
         )
 
 
@@ -473,12 +446,12 @@ class TestRunList:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-test", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_once_poll)
+        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         runs = _call(milknado_run_list, project_root=root)
         assert len(runs) >= 1
         run_ids = [r["run_id"] for r in runs]
@@ -488,12 +461,12 @@ class TestRunList:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-keys", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_once_poll)
+        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         runs = _call(milknado_run_list, project_root=root)
         assert len(runs) >= 1
         missing = _SUPERSET_KEYS - runs[0].keys()
@@ -856,7 +829,7 @@ class TestAsyncCancel:
         # "failed" terminal state can only come from cooperative cancellation.
         slow_cmd = worker_stub("sleep 30")
         started = _call(
-            milknado_run_once_start, node_id=node_id, worker_cmd=slow_cmd, project_root=root
+            milknado_run_inline_start, node_id=node_id, worker_cmd=slow_cmd, project_root=root
         )
         run_id = started["run_id"]
         assert started["status"] == "running"
@@ -906,7 +879,7 @@ class TestAsyncCancel:
         # from the poll loop's deadline enforcement, not from the worker exiting.
         slow_cmd = worker_stub("sleep 30")
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=node_id,
             worker_cmd=slow_cmd,
             timeout_seconds=1,
@@ -914,7 +887,7 @@ class TestAsyncCancel:
         )
         run_id = started["run_id"]
 
-        final = _wait_for_terminal(run_id, root, milknado_run_once_poll, timeout=8.0)
+        final = _wait_for_terminal(run_id, root, milknado_run_inline_poll, timeout=8.0)
 
         assert final["status"] == "failed"
         assert final["timed_out"] is True, "timeout must be recorded, not a plain fail"
@@ -1233,39 +1206,39 @@ class TestDepositResult:
         finally:
             graph.close()
 
-    def test_run_once_poll_returns_deposited_result(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_poll_returns_deposited_result(self, tmp_path: Path, worker_stub) -> None:
         """The async-run poll must surface the deposited result under `result`."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="deposit-poll", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_once_poll)
+        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         _call(
             milknado_deposit_result,
             run_id=started["run_id"],
             payload="the deliverable",
             project_root=root,
         )
-        final = _call(milknado_run_once_poll, run_id=started["run_id"], project_root=root)
+        final = _call(milknado_run_inline_poll, run_id=started["run_id"], project_root=root)
         assert final["result"] == "the deliverable"
 
     def test_poll_result_is_none_without_deposit(self, tmp_path: Path, worker_stub) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="no-deposit", kind="task", project_root=root)
         started = _call(
-            milknado_run_once_start,
+            milknado_run_inline_start,
             node_id=task["id"],
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        final = _wait_for_terminal(started["run_id"], root, milknado_run_once_poll)
+        final = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         assert final["result"] is None, "no deposit -> result is None, not a missing key"
 
-    def test_run_once_poll_derives_log_path_from_run_id(self, tmp_path: Path) -> None:
+    def test_run_inline_poll_derives_log_path_from_run_id(self, tmp_path: Path) -> None:
         """The poll must tail the log derived from the validated run_id — a
         tampered runs.log_path in the user-editable db must not cause an
         arbitrary-file read (mirrors milknado_run_loop_poll's derivation)."""
@@ -1284,7 +1257,7 @@ class TestDepositResult:
             graph._conn.commit()
         finally:
             graph.close()
-        final = _call(milknado_run_once_poll, run_id=run_id, project_root=str(tmp_path))
+        final = _call(milknado_run_inline_poll, run_id=run_id, project_root=str(tmp_path))
         assert final["summary"] == "real log"
         assert "SECRET-CONTENT" not in (final["summary"] or "")
         assert final["log_path"] == str(derived), "returned log_path must be the derived one"
@@ -1309,6 +1282,6 @@ class TestDepositResult:
             graph._conn.commit()
         finally:
             graph.close()
-        final = _call(milknado_run_once_poll, run_id=run_id, project_root=str(tmp_path))
+        final = _call(milknado_run_inline_poll, run_id=run_id, project_root=str(tmp_path))
         assert final["result"] == payload
         assert final["result"].count("\n") == 39, "every line of the deliverable must survive"
