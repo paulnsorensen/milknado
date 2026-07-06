@@ -20,6 +20,7 @@ from milknado.domains.common.config import (
 from milknado.domains.common.flavor_profile import (
     resolve_flavor_profile,
 )
+from milknado.domains.common.types import BUILTIN_FLAVORS
 
 # ── AC2: single-list grammar + sentinel ─────────────────────────────────────
 
@@ -125,6 +126,46 @@ def test_load_config_flavor_custom_key_registers(tmp_path: Path) -> None:
     )
     cfg = load_config(cfg_path)
     assert "customflavorkey" in cfg.flavors
+
+
+def test_flavor_registry_includes_builtins_and_declared(tmp_path: Path) -> None:
+    """MilknadoConfig.flavor_registry is BUILTIN_FLAVORS unioned with declared TOML names."""
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.customflavorkey]\n"
+        "quality_gates = []\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavor_registry == BUILTIN_FLAVORS | {"customflavorkey"}
+
+
+def test_flavor_registry_defaults_to_builtins_only(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.flavor_registry == BUILTIN_FLAVORS
+
+
+def test_load_config_flavor_worktree_parses(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = false\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavors["spec"].worktree is False
+
+
+def test_load_config_flavor_worktree_not_bool_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = "nope"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="worktree"):
+        load_config(cfg_path)
 
 
 def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> None:
@@ -491,6 +532,22 @@ def test_save_config_preserves_flavor_execution_agent(tmp_path: Path) -> None:
     save_config(cfg, cfg_path)
     loaded = load_config(cfg_path)
     assert loaded.flavors["spike"].execution_agent == "claude -p --model opus"
+
+
+def test_save_load_roundtrip_flavor_worktree(tmp_path: Path) -> None:
+    """save_config round-trips a flavor with worktree set (9th knob, ADR-005)."""
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=False),
+        },
+    )
+    cfg_path = tmp_path / "milknado.toml"
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+    assert loaded.flavors["spec"].worktree is False
 
 
 def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
