@@ -713,6 +713,30 @@ class TestDeleteOneGoalClaimsCascade:
         assert graph.get_node(goal_id) is None
 
 
+class TestDeleteOneClearsRuns:
+    """_delete_one must clear runs/run_messages to avoid the runs.node_id FK error."""
+
+    def test_delete_node_with_started_run_does_not_raise_integrity_error(
+        self, graph: MikadoGraph
+    ) -> None:
+        """Deleting a node that has a run row must not raise on the runs FK.
+
+        runs.node_id is a NOT NULL FK to nodes(id) with no ON DELETE action, and
+        run_messages.run_id references runs. A node dispatched via claim/start_run
+        gets a runs row; without clearing run_messages then runs before
+        DELETE FROM nodes, deleting that node (here via its parent goal's cascade)
+        aborts the delete_subtree transaction with sqlite3.IntegrityError.
+        """
+        goal_id, task_id = _make_goal_with_task(graph)
+        graph.start_run("run-started", task_id, "/log", now_iso(), 600)
+        graph.deposit_run_message("run-started", "result", "partial output", now_iso())
+        # Must not raise: _delete_one must clear run_messages then runs first.
+        deleted = graph.delete_node(goal_id, cascade=True)
+        assert deleted == 2, "goal + task must be deleted"
+        assert graph.get_node(goal_id) is None
+        assert graph.get_node(task_id) is None
+
+
 class TestNullPidClaimReclaimable:
     """A goal claim with pid=NULL is treated as reclaimable (medium finding).
 
