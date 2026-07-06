@@ -6,7 +6,9 @@ The dispatch chain (`mcp_run.py` → `start_headless_async` → `_spawn_worker`,
 main checkout — unconditionally. No config key changes this; the
 `worktree_pattern` setting is consumed only by the `milknado_todo_claim` /
 run-loop path, which does isolate (`mcp_node.py:136`, `_create_node_worktree`).
-Nodes dispatched via run_once carry `worktree_path=""` in the db.
+Nodes dispatched via run_once leave `worktree_path` as `NULL` in the db — the
+run_once path claims via `claim_node`, which never writes the column (the schema
+default is NULL, `worktree_path TEXT` with no DEFAULT).
 
 Verified empirically 2026-07-04: three concurrent `run_once_start` workers
 (tilth n14, easy-cheese n10, hallouminate n6) all ran in their repos' main
