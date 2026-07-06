@@ -1,11 +1,13 @@
 # run_once dispatches in the shared checkout — no worktree
 
 `milknado_run_once` / `milknado_run_once_start` never create a git worktree.
-The dispatch chain (`mcp_run.py` → `start_headless_async` → `_spawn_worker`,
-`runner.py:157`) spawns the worker with `cwd=str(project_root)` — the shared
-main checkout — unconditionally. No config key changes this; the
-`worktree_pattern` setting is consumed only by the `milknado_todo_claim` /
-run-loop path, which does isolate (`mcp_node.py:136`, `_create_node_worktree`).
+The dispatch chain (`mcp_run.py:151` → `start_headless_async`,
+`async_run.py:231` → `_async_worker` thread → `_run_worker_process`,
+`async_run.py:63` → `_execute_cancellable`, `runner.py:216` → `_spawn_worker`,
+`runner.py:137`) spawns the worker with `cwd=str(project_root)` — the shared
+main checkout — unconditionally (`runner.py:157`). No config key changes this;
+the `worktree_pattern` setting is consumed only by the `milknado_todo_claim` /
+run-loop path, which does isolate (`mcp_node.py:171`, `_create_node_worktree`).
 Nodes dispatched via run_once leave `worktree_path` as `NULL` in the db — the
 run_once path claims via `claim_node`, which never writes the column (the schema
 default is NULL, `worktree_path TEXT` with no DEFAULT).
