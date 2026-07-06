@@ -1,0 +1,6 @@
+
+### ADR-006: Flavor-appropriate completion evidence  [status: accepted]
+- **Context:** _build_completion_verifier (loop.py:216-248) fails closed on None gates; with explicitly-empty gates it still requires a committed/stageable change — wrong twice for in-place prose nodes (the current checkout carries unrelated changes; artifacts under ignored paths read as no-change). node_verify also hard-requires a worktree (mcp_node.py:215-216), which per-node worktree policy (ADR-005) breaks.
+- **Decision:** node_verify runs gates in `worktree_path or project_root`. Completion evidence: stageable-change for worktree nodes (unchanged); artifact-exists-and-non-empty for in-place nodes bearing artifact_path with explicitly-empty gates. None gates stay fail-closed.
+- **Alternatives:** Uniform diff-based evidence (rejected: false negatives for prose deliverables, false positives in a dirty checkout). Skipping verification for in-place nodes (rejected: silent-completion hole — violates fail fast and loud).
+- **Consequences:** Deliverable-checked completion for prose phases without pretending diff semantics apply; verification behavior becomes profile-legible (gates + worktree knob + artifact define the check).

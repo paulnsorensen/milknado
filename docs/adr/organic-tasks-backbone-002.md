@@ -1,0 +1,6 @@
+
+### ADR-002: Narratives as opaque artifact_path markdown references  [status: accepted]
+- **Context:** Nodes have no narrative field; briefs are rendered on demand and worker results land in run_messages DB rows. easy-cheese and the studied skill-chain patterns pass state via durable markdown. Workers run in per-node worktrees, so a file written on a branch may never reach the main checkout — no write-time validation can be truthful across checkouts.
+- **Decision:** Add MikadoNode.artifact_path: an opaque repo-relative markdown reference (wiki_ref precedent, types.py:73-74), settable at add-time and post-hoc via edit_node, with no existence enforcement.
+- **Alternatives:** DB-only narratives (rejected: prose invisible to git/editors/the .cheese ecosystem). Wiki page per node (rejected: wiki churn for ephemeral tasks). Validated paths (rejected: cross-checkout validity is unknowable; a false guarantee is worse than an honest annotation).
+- **Consequences:** DB owns graph/status, files own prose; dangling references are possible and documented as convention; completion verification gains an artifact-existence mode (ADR-006) rather than pretending path validity.

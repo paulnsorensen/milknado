@@ -1,0 +1,6 @@
+
+### ADR-005: Per-node worktree policy; every agent dispatch is a claimed node  [status: accepted]
+- **Context:** todo_claim bundles claim + worktree provisioning + runs row (mcp_node.py:96-106). Ultracook-style sessions need multi-curd cooks isolated in worktrees but wiring/prose phases executed in the current checkout — the worktree decision is per-node, not per-session. User-corrected during grill: an earlier proposal of a session-wide manual-status flow conflated the two axes.
+- **Decision:** Every agent dispatch claims its node (uniform fencing + run telemetry). Worktree provisioning becomes policy: a new `worktree` FlavorOverride/FlavorProfile knob (9th) supplies the per-flavor default (implement→true; prose/wiring→false) and todo_claim accepts a per-call override for cases like a single cook in the current checkout.
+- **Alternatives:** Session-wide manual flow inside the claimed GOAL, todo_claim reserved for dispatch (rejected by user: loses per-agent nodes/telemetry and doesn't fit multi-curd isolation). Always-worktree (rejected: fights working the current checkout).
+- **Consequences:** node_verify's worktree hard-requirement must relax (ADR-006); the claim path gains one boolean of complexity; multi-curd pipelines get worktree-isolated curd nodes plus an in-place wiring node with prereq edges on all curds.

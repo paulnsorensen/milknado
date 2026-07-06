@@ -1,0 +1,6 @@
+
+### ADR-001: Replace native Tasks outright, presence-gated  [status: accepted]
+- **Context:** Claude Code's native Tasks (v2.1.201, observed) are an on-disk dependency graph but carry no node type and no per-task narrative artifact — the two properties the easy-cheese workflow needs. Mirroring milknado→native was possible via in-session task tools + CLAUDE_CODE_TASK_LIST_ID.
+- **Decision:** When milknado is present in a repo, the mikado graph is the sole session task surface; skills and orchestrator stop writing the native list. Adoption is presence-gated — repos without milknado keep today's fallbacks.
+- **Alternatives:** One-way mirror (rejected: lossy — native schema cannot hold flavor/artifact; rides an undocumented env var; adds drift surface). Loose coexistence (rejected: splits task truth across two surfaces).
+- **Consequences:** One source of truth with types + narratives; an interim visibility gap (no harness UI renders the graph) until the tmux panel sibling goal lands — named in the contract; instruction-level override text required because the harness nags agents toward native task tools.
