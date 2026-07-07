@@ -1,4 +1,4 @@
-"""Tmux run-window policy: fail-closed preflight, the run-once pane waiter,
+"""Tmux run-window policy: fail-closed preflight, the run-inline pane waiter,
 window lifecycle reconciliation, and attach preconditions.
 
 The tmux target is derived deterministically from the run_id at read time —
@@ -81,7 +81,7 @@ def execute_in_window(
     *,
     on_start: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
-    """Run a run-once worker inside a tmux window; mirrors ``_execute_cancellable``.
+    """Run a run-inline worker inside a tmux window; mirrors ``_execute_cancellable``.
 
     The waiter polls the pane pid (there is no Popen handle — the process is a
     child of the tmux server) and enforces the same cancel-sentinel and

@@ -29,7 +29,7 @@ identity; without a real one, "coordinator→worker" has no sender to attribute.
 - A worker can append `role='progress'` (or equivalent) messages during a run via
   an MCP tool, using the same atomic single-statement seq assignment the result
   path uses (concurrent depositors cannot collide).
-- `milknado_run_once_poll` / `milknado_run_loop_poll` surface progress messages
+- `milknado_run_inline_poll` / `milknado_run_loop_poll` surface progress messages
   distinctly from the final `result` and the log-tail `summary`.
 - A coordinator→worker inbound path exists: the coordinator writes an inbound
   message and the worker can read it; the worker tool allowlist

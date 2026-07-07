@@ -21,6 +21,11 @@ class NodeKind(Enum):
     TASK = "task"
 
 
+class WorktreeMode(Enum):
+    ISOLATE = "isolate"
+    THIS_BRANCH = "this_branch"
+
+
 # Flavor is a free string validated against BUILTIN_FLAVORS ∪ TOML-declared
 # names at write paths (see config.MilknadoConfig.flavors); the registry
 # mechanism lives in milknado, the vocabulary lives in user space.

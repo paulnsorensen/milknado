@@ -52,7 +52,7 @@ def exit_code_path(runs_dir: Path, run_id: str) -> Path:
 
 
 def brief_path(runs_dir: Path, run_id: str) -> Path:
-    """Where the run-once tmux path stages the worker brief (stdin redirect)."""
+    """Where the run-inline tmux path stages the worker brief (stdin redirect)."""
     return runs_dir / f"{run_id}.brief"
 
 

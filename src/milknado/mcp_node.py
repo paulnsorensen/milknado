@@ -32,6 +32,7 @@ from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.agent_argv import resolve_worker_tools
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso
+from milknado.domains.dispatch.isolate import _create_node_worktree
 
 _logger = logging.getLogger(__name__)
 
@@ -53,11 +54,6 @@ def _resolve_model(execution_agent: str) -> str:
     """
     match = _MODEL_FLAG_RE.search(execution_agent)
     return match.group(1) if match else "sonnet"
-
-
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:30]
 
 
 # Family-specific tool name the worker uses to self-verify in loop_mode="single".
@@ -166,25 +162,6 @@ def milknado_todo_claim(node_id: int, project_root: str = "") -> dict:
         }
     finally:
         graph.close()
-
-
-def _create_node_worktree(  # noqa: ANN001
-    git, root, node_id: int, description: str, worktree_pattern: str
-):
-    """Create the node's durable worktree under project_root, mirroring the executor.
-
-    Formats ``worktree_pattern`` ({node_id}, {slug}) for the directory name and
-    uses the executor's branch convention (milknado/<id>-<slug>), reusing
-    GitAdapter.create_worktree with the same path-traversal guard.
-    """
-    slug = _slugify(description)
-    wt_path = root / worktree_pattern.format(node_id=node_id, slug=slug)
-    resolved_root = root.resolve()
-    if not wt_path.resolve().is_relative_to(resolved_root):
-        raise ValueError(f"worktree path resolves outside project_root: {wt_path!r}")
-    branch = f"milknado/{node_id}-{slug}"
-    git.create_worktree(wt_path, branch)
-    return wt_path, branch
 
 
 @mcp.tool()

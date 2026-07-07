@@ -1,10 +1,13 @@
 """Milknado MCP ralph-loop tools — detached, worktree-isolated ralph runs.
 
 COORDINATOR-ONLY: never add these to WORKER_ALLOWED_TOOLS — a worker must not be
-able to spawn sub-ralph-loops. Unlike milknado_run_once* (a single-shot worker
-piped a brief on stdin, run in the shared working tree), these dispatch a node
-into its own git worktree + branch, iterate the ralph loop until the node's
-quality gates pass, then rebase-merge the branch back. The loop runs in its own
+able to spawn sub-ralph-loops. Unlike milknado_run_inline* (a single-shot worker
+piped a brief on stdin, isolated in its own worktree by default and merged back
+on success — or run in the shared checkout via worktree=THIS_BRANCH), these
+dispatch a node into its own git worktree + branch, iterate the ralph loop until
+the node's quality gates pass, then rebase-merge the branch back — reusing the
+same rebase-merge machinery run_inline's ISOLATE path now shares. The loop runs
+in its own
 detached process so it survives the MCP server restarting (hot-reload) or a
 cloud env being reclaimed; run state and node status both live in SQLite (the
 `runs` table and the `nodes` table), with log files on the filesystem.

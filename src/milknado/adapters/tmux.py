@@ -42,7 +42,7 @@ class RunWindow:
     ``log_path`` receives a live copy of the pane output (the same file the
     poll tools tail); ``exit_code_path`` receives the runner's exit code so a
     waiter with no process handle can still read it; ``brief_path``, when set,
-    is redirected to the runner's stdin (the run-once brief channel).
+    is redirected to the runner's stdin (the run-inline brief channel).
     """
 
     run_id: str
