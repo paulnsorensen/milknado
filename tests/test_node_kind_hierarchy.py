@@ -380,7 +380,7 @@ class TestCoverageBranches:
         from milknado._mcp_core import _parse_flavor
 
         with pytest.raises(ValueError, match="invalid flavor"):
-            _parse_flavor("unknown-flavor")
+            _parse_flavor("unknown-flavor", BUILTIN_FLAVORS)
 
     def test_cli_add_node_invalid_kind_raises(self, tmp_path: Path) -> None:
         """CLI add_node raises BadParameter for invalid kind strings."""

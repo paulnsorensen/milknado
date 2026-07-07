@@ -1184,7 +1184,6 @@ class TestSchemaMigration:
         """A SQLite DB created before the `kind` column must be migrated by
         MikadoGraph.__init__'s ensure_schema so that add_node's INSERT
         (which includes `kind`) works on upgrade."""
-        import sqlite3
 
         from milknado.domains.common import NodeKind
 
@@ -2127,6 +2126,13 @@ class TestArtifactAndPrereqsMcp:
             milknado_edit_node, node_id=task["id"], artifact="docs/x.md", project_root=root
         )
         assert result["description"] == "original"
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            node = graph.get_node(task["id"])
+            assert node is not None
+            assert node.artifact_path == "docs/x.md"
+        finally:
+            graph.close()
 
     def test_edit_node_nothing_raises_mentions_artifact(self, tmp_path: Path) -> None:
         root = str(tmp_path)
@@ -2170,18 +2176,98 @@ class TestArtifactAndPrereqsMcp:
 
     def test_todo_add_prereq_missing_node_raises(self, tmp_path: Path) -> None:
         root = str(tmp_path)
-        with pytest.raises(sqlite3.IntegrityError):
+        graph, _cfg = open_graph(resolve_project_root(root))
+        before = len(graph.get_all_nodes())
+        graph.close()
+        with pytest.raises(ValueError):
             _call(milknado_todo_add, description="t", prereqs=[9999], project_root=root)
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            assert len(graph.get_all_nodes()) == before
+        finally:
+            graph.close()
 
     def test_todo_add_prereq_duplicating_parent_raises(self, tmp_path: Path) -> None:
         root = str(tmp_path)
         parent = _call(milknado_todo_add, description="root", project_root=root)
-        with pytest.raises(sqlite3.IntegrityError):
+        graph, _cfg = open_graph(resolve_project_root(root))
+        before = len(graph.get_all_nodes())
+        graph.close()
+        with pytest.raises(ValueError):
             _call(
                 milknado_todo_add,
                 description="t",
                 parent_id=parent["id"],
                 prereqs=[parent["id"]],
+                project_root=root,
+            )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            assert len(graph.get_all_nodes()) == before
+        finally:
+            graph.close()
+
+    def test_todo_add_absolute_artifact_escapes_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        with pytest.raises(ValueError, match="escapes"):
+            _call(
+                milknado_todo_add,
+                description="t",
+                artifact="/etc/hostname",
+                project_root=root,
+            )
+
+    def test_todo_add_relative_artifact_escapes_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        with pytest.raises(ValueError, match="escapes"):
+            _call(
+                milknado_todo_add,
+                description="t",
+                artifact="../outside.md",
+                project_root=root,
+            )
+
+    def test_edit_node_absolute_artifact_escapes_raises(self, tmp_path: Path) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="original", project_root=root)
+        with pytest.raises(ValueError, match="escapes"):
+            _call(
+                milknado_edit_node,
+                node_id=task["id"],
+                artifact="/etc/hostname",
+                project_root=root,
+            )
+
+    def test_toml_declared_custom_flavor_accepted_on_add_and_edit(self, tmp_path: Path) -> None:
+        """Acceptance clause 1: a TOML-declared custom flavor resolves through the MCP
+        write surface (todo_add + edit_node); an undeclared non-builtin flavor is
+        still rejected fail-fast. This is the end-to-end proof the flavor registry
+        reaches the write path (config union was previously computed but never read)."""
+        (tmp_path / "milknado.toml").write_text("[milknado.flavor.brainstorm]\nworktree = false\n")
+        root = str(tmp_path)
+        goal = _call(milknado_todo_add, description="g", kind="goal", project_root=root)
+        # custom declared flavor accepted at add-time
+        task = _call(
+            milknado_todo_add,
+            description="t1",
+            parent_id=goal["id"],
+            flavor="brainstorm",
+            project_root=root,
+        )
+        assert task["flavor"] == "brainstorm"
+        # and post-hoc via edit_node on a second task
+        task2 = _call(milknado_todo_add, description="t2", parent_id=goal["id"], project_root=root)
+        edited = _call(
+            milknado_edit_node, node_id=task2["id"], flavor="brainstorm", project_root=root
+        )
+        assert edited["flavor"] == "brainstorm"
+        # an undeclared, non-builtin flavor is still rejected fail-fast
+        with pytest.raises(ValueError, match="invalid flavor"):
+            _call(
+                milknado_todo_add,
+                description="t3",
+                parent_id=goal["id"],
+                flavor="notdeclared",
                 project_root=root,
             )
 

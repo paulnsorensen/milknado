@@ -85,10 +85,10 @@ def milknado_todo_next(
     flavor: if provided, only returns nodes with the matching flavor.
     """
     node_kind = _parse_kind(kind)
-    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
+        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         for node in graph.get_ready_nodes():
             if node.kind != node_kind:
                 continue

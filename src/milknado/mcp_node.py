@@ -126,12 +126,19 @@ def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -
         raise ValueError(f"owner is required (or set {GOAL_OWNER_ENV_VAR})")
 
     root = resolve_project_root(project_root or None)
-    graph, cfg = open_graph(root)
+    graph, _cfg = open_graph(root)
     try:
         now = now_iso()
         won = graph.claim_goal(goal_id, owner, now=now)
-        if not won and graph.try_reclaim_goal(goal_id, now=now):
-            won = graph.claim_goal(goal_id, owner, now=now)
+        if not won:
+            prior = graph.get_node(goal_id)
+            if graph.try_reclaim_goal(goal_id, now=now):
+                _logger.warning(
+                    "milknado_goal_claim: reclaimed goal=%d from dead owner=%s",
+                    goal_id,
+                    prior.goal_run_id if prior is not None else None,
+                )
+                won = graph.claim_goal(goal_id, owner, now=now)
         if not won:
             node = graph.get_node(goal_id)
             current_owner = node.goal_run_id if node is not None else None
@@ -155,7 +162,7 @@ def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "")
         raise ValueError(f"owner is required (or set {GOAL_OWNER_ENV_VAR})")
 
     root = resolve_project_root(project_root or None)
-    graph, cfg = open_graph(root)
+    graph, _cfg = open_graph(root)
     try:
         released = graph.release_goal(goal_id, owner)
         _logger.info(
@@ -185,7 +192,6 @@ def milknado_todo_claim(
     max_iterations, max_turns. NO process is spawned — the harness-side
     Workflow is the driver.
     """
-    from milknado.adapters import GitAdapter
     from milknado.domains.dispatch import render_brief
 
     root = resolve_project_root(project_root or None)
@@ -213,26 +219,7 @@ def milknado_todo_claim(
                 f"node {node_id} is already {status}; set status back to pending to retry"
             )
 
-        use_worktree = profile.worktree if worktree is None else worktree
-        wt_path: Path | None = None
-        try:
-            if use_worktree:
-                wt_path, branch = _create_node_worktree(
-                    GitAdapter(root), root, node_id, node.description, cfg.worktree_pattern
-                )
-                graph.set_worktree(node_id, run_id, str(wt_path), branch)
-                graph.start_run(run_id, node_id, str(wt_path), now_iso(), None)
-            else:
-                graph.start_run(run_id, node_id, str(root), now_iso(), None)
-            # Stamp the native-backend marker so the done-transition gate fires
-            # for this run even before its first verify (fail-closed), while
-            # leaving subprocess runs — which never carry it — exempt.
-            graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
-        except Exception:
-            # Claim succeeded but worktree/run setup failed: release the claim with a
-            # fenced terminal write so the node is not stranded RUNNING.
-            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
-            raise
+        wt_path = _provision_claim_run(graph, root, node, run_id, worktree, cfg)
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None
         tools = _resolve_node_tools(cfg, profile, override)
@@ -252,6 +239,40 @@ def milknado_todo_claim(
         }
     finally:
         graph.close()
+
+
+def _provision_claim_run(
+    graph, root, node, run_id: str, worktree: bool | None, cfg
+) -> Path | None:  # noqa: ANN001
+    """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE.
+
+    On any failure the claim is released with a fenced terminal write so the
+    node is not stranded RUNNING; the exception is re-raised for the caller.
+    """
+    from milknado.adapters import GitAdapter
+
+    profile = resolve_flavor_profile(cfg, node.flavor)
+    use_worktree = profile.worktree if worktree is None else worktree
+    wt_path: Path | None = None
+    try:
+        if use_worktree:
+            wt_path, branch = _create_node_worktree(
+                GitAdapter(root), root, node.id, node.description, cfg.worktree_pattern
+            )
+            graph.set_worktree(node.id, run_id, str(wt_path), branch)
+            graph.start_run(run_id, node.id, str(wt_path), now_iso(), None)
+        else:
+            graph.start_run(run_id, node.id, str(root), now_iso(), None)
+        # Stamp the native-backend marker so the done-transition gate fires
+        # for this run even before its first verify (fail-closed), while
+        # leaving subprocess runs — which never carry it — exempt.
+        graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
+    except Exception:
+        # Claim succeeded but worktree/run setup failed: release the claim with a
+        # fenced terminal write so the node is not stranded RUNNING.
+        graph.mark_terminal(node.id, run_id, NodeStatus.FAILED)
+        raise
+    return wt_path
 
 
 @mcp.tool()

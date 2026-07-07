@@ -14,7 +14,6 @@ from typing import Literal, TypedDict
 from fastmcp import FastMCP
 
 from milknado.domains.common import NodeKind, NodeStatus
-from milknado.domains.common.types import BUILTIN_FLAVORS
 
 Kind = Literal["roadmap", "goal", "task"]
 Flavor = str  # validated at runtime against BUILTIN_FLAVORS ∪ TOML-declared names (ADR-004)
@@ -157,7 +156,7 @@ def _parse_todo_status(value: str) -> NodeStatus:
     return _TODO_STATUS_MAP[value]
 
 
-def _parse_flavor(value: str) -> str:
-    if value not in BUILTIN_FLAVORS:
-        raise ValueError(f"invalid flavor {value!r}; expected one of {sorted(BUILTIN_FLAVORS)}")
+def _parse_flavor(value: str, registry: frozenset[str]) -> str:
+    if value not in registry:
+        raise ValueError(f"invalid flavor {value!r}; expected one of {sorted(registry)}")
     return value
