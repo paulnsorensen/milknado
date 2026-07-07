@@ -268,10 +268,26 @@ def _artifact_rejection(worktree: Path, artifact_path: str) -> str | None:
     """Rejection feedback when *artifact_path* is missing or empty, else None.
 
     Evidence for an in-place node with explicitly-empty gates: the file must
-    exist under *worktree* and be non-empty. A stat failure (e.g. a symlink
-    loop) fails closed rather than being mistaken for a present artifact.
+    exist under *worktree* and be non-empty. Absolute paths and ``..`` escapes
+    fail closed before stat so user-controlled artifact paths cannot probe
+    outside the repo. A stat failure (e.g. a symlink loop) fails closed rather
+    than being mistaken for a present artifact.
     """
-    path = worktree / artifact_path
+    root = worktree.resolve()
+    raw_path = Path(artifact_path)
+    if raw_path.is_absolute():
+        return (
+            f"you emitted the completion promise but artifact_path {artifact_path!r} "
+            "must be repo-relative"
+        )
+    path = (root / raw_path).resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return (
+            f"you emitted the completion promise but artifact_path {artifact_path!r} "
+            f"escapes {worktree}"
+        )
     try:
         exists_and_non_empty = path.is_file() and path.stat().st_size > 0
     except OSError as exc:

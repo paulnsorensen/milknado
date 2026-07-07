@@ -254,6 +254,40 @@ class TestArtifactEvidenceMode:
         assert verdict.ok is True
         assert verdict.feedback == ""
 
+    def test_absolute_artifact_path_rejected_before_file_check(
+        self, worktree: Path, tmp_path: Path
+    ) -> None:
+        """Absolute artifact paths must be rejected before Path.exists() can
+        be tricked by a file outside the worktree."""
+        outside = tmp_path / "absolute-artifact.md"
+        outside.write_text("done\n", encoding="utf-8")
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path=str(outside)
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "must be repo-relative" in verdict.feedback
+        assert str(outside) in verdict.feedback
+
+    def test_traversal_artifact_path_rejected_before_file_check(
+        self, worktree: Path
+    ) -> None:
+        """Traversal artifact paths must be rejected before they can escape
+        the worktree and satisfy the artifact check."""
+        escaped = worktree.parent / "traversal-artifact.md"
+        escaped.write_text("done\n", encoding="utf-8")
+        verifier = _build_completion_verifier(
+            worktree, (), in_place=True, artifact_path="../traversal-artifact.md"
+        )
+
+        verdict = verifier()
+
+        assert verdict.ok is False
+        assert "escapes" in verdict.feedback
+        assert "../traversal-artifact.md" in verdict.feedback
+
     def test_missing_artifact_rejected(self, worktree: Path) -> None:
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="NOTES.md"
