@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from milknado._mcp_core import (
     Flavor,
@@ -28,6 +29,25 @@ from milknado.mcp_todo import follow_up_parent_id, node_to_summary
 _logger = logging.getLogger(__name__)
 
 
+def _reject_escaping_artifact(artifact: str | None, project_root: Path) -> None:
+    """Raise ValueError if *artifact* escapes *project_root*; does not transform it.
+
+    Boundary rejection only: artifact_path is persisted verbatim (existing
+    contract), never checked for existence, never resolved before storage.
+    """
+    if artifact is None:
+        return
+    raw = artifact.strip()
+    if not raw:
+        raise ValueError("artifact path is empty")
+    p = Path(raw)
+    resolved = (project_root / p if not p.is_absolute() else p).resolve()
+    try:
+        resolved.relative_to(project_root.resolve())
+    except ValueError:
+        raise ValueError(f"artifact {artifact!r} escapes project root {project_root}") from None
+
+
 @mcp.tool()
 def milknado_todo_add(
     description: str,
@@ -50,10 +70,11 @@ def milknado_todo_add(
     would create a cycle.
     """
     node_kind = _parse_kind(kind)
-    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    _reject_escaping_artifact(artifact, root)
+    graph, cfg = open_graph(root)
     try:
+        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         node = graph.add_node(
             description,
             parent_id=parent_id,
@@ -61,6 +82,7 @@ def milknado_todo_add(
             flavor=node_flavor,
             artifact_path=artifact,
             prereqs=prereqs or (),
+            flavor_registry=cfg.flavor_registry,
         )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
@@ -145,10 +167,11 @@ def milknado_track_follow_up(
     persisted verbatim. prereqs: node ids that must complete first; rejected on cycle.
     """
     node_kind = _parse_kind(kind)
-    node_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    _reject_escaping_artifact(artifact, root)
+    graph, cfg = open_graph(root)
     try:
+        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         if parent_id is None:
             parent_id = follow_up_parent_id(graph)
         node = graph.add_node(
@@ -158,6 +181,7 @@ def milknado_track_follow_up(
             flavor=node_flavor,
             artifact_path=artifact,
             prereqs=prereqs or (),
+            flavor_registry=cfg.flavor_registry,
         )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
@@ -229,15 +253,16 @@ def milknado_edit_node(
             "nothing to edit: provide description, kind, flavor, files, and/or artifact"
         )
     node_kind = _parse_kind(kind) if kind is not None else None
-    node_flavor = _parse_flavor(flavor) if flavor is not None else None
-    if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
-        raise ValueError(
-            "flavor is only valid for task nodes; cannot set flavor with non-task kind"
-        )
     root = resolve_project_root(project_root or None)
+    _reject_escaping_artifact(artifact, root)
     hint_paths = normalize_hint_paths(files, root) if files is not None else None
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
+        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
+        if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
+            raise ValueError(
+                "flavor is only valid for task nodes; cannot set flavor with non-task kind"
+            )
         if node_flavor is not None and node_kind is None:
             # Check existing node kind before setting flavor
             existing = graph.get_node(node_id)
@@ -260,6 +285,7 @@ def milknado_edit_node(
                 kind=node_kind,
                 flavor=node_flavor,
                 artifact_path=artifact,
+                flavor_registry=cfg.flavor_registry,
             )
         if hint_paths is not None:
             node_exists = graph.get_node(node_id) is not None

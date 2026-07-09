@@ -10,7 +10,7 @@ import sqlite3
 
 from milknado.domains.common import NodeKind
 from milknado.domains.common.errors import InvalidContainment
-from milknado.domains.common.types import VALID_CHILD_KINDS
+from milknado.domains.common.types import BUILTIN_FLAVORS, VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
 
 
@@ -116,8 +116,11 @@ def update_node_fields(
     kind: NodeKind | None,
     flavor: str | None = None,
     artifact_path: str | None = None,
+    flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
 ) -> None:
     """Update description, kind, flavor, and/or artifact_path; raise if node absent."""
+    if flavor is not None and flavor not in flavor_registry:
+        raise ValueError(f"unknown flavor {flavor!r}; valid flavors: {sorted(flavor_registry)}")
     fields: list[str] = []
     values: list[object] = []
     if description is not None:

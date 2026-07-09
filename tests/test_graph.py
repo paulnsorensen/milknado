@@ -838,9 +838,13 @@ class TestPrereqEdges:
         """A prereq id equal to parent_id re-inserts the same (parent, child) edge,
         which the edges table's composite primary key refuses."""
         root = graph.add_node("root")
-        with pytest.raises(sqlite3.IntegrityError):
+        before = len(graph.get_all_nodes())
+        with pytest.raises(ValueError):
             graph.add_node("t", parent_id=root.id, prereqs=[root.id])
+        assert len(graph.get_all_nodes()) == before
 
     def test_add_node_prereq_missing_node_raises(self, graph: MikadoGraph) -> None:
-        with pytest.raises(sqlite3.IntegrityError):
+        before = len(graph.get_all_nodes())
+        with pytest.raises(ValueError):
             graph.add_node("t", prereqs=[999])
+        assert len(graph.get_all_nodes()) == before

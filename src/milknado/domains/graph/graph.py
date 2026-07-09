@@ -96,6 +96,14 @@ class MikadoGraph(_AnalyticsFacade):
                 raise ValueError(f"parent_id {parent_id} not found")
             if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
                 raise InvalidContainment(parent.kind, kind)
+        for prereq_id in prereqs:
+            if self.get_node(prereq_id) is None:
+                raise ValueError(f"prereq {prereq_id} not found")
+            if prereq_id == parent_id:
+                raise ValueError(
+                    f"prereq {prereq_id} duplicates parent_id {parent_id}; "
+                    "the parent edge already covers this prerequisite"
+                )
         # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
         if kind != NodeKind.TASK and flavor is not None:
             raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
@@ -170,10 +178,13 @@ class MikadoGraph(_AnalyticsFacade):
         kind: NodeKind | None = None,
         flavor: str | None = None,
         artifact_path: str | None = None,
+        flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
     ) -> None:
         """Update description, kind, flavor, and/or artifact_path on a node. Status stays
         governed by the state machine and is not editable here."""
-        update_node_fields(self._conn, node_id, description, kind, flavor, artifact_path)
+        update_node_fields(
+            self._conn, node_id, description, kind, flavor, artifact_path, flavor_registry
+        )
 
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         """Re-parent a node, rewriting its edge and parent_id with cycle checks."""

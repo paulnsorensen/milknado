@@ -50,10 +50,10 @@ def milknado_graph_summary(
     """
     want_status = _parse_todo_status(status) if status is not None else None
     want_kind = _parse_kind(kind) if kind is not None else None
-    want_flavor = _parse_flavor(flavor) if flavor is not None else None
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
+        want_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         nodes = [
             n
             for n in graph.get_all_nodes()
