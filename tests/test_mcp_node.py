@@ -15,8 +15,16 @@ import pytest
 from milknado._mcp_core import open_graph
 from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.common import NodeKind, NodeStatus
-from milknado.mcp_node import milknado_node_verify, milknado_todo_claim
+from milknado.mcp_node import (
+    GOAL_OWNER_ENV_VAR,
+    milknado_goal_claim,
+    milknado_goal_release,
+    milknado_node_verify,
+    milknado_todo_claim,
+)
 from milknado.mcp_todo_mutate import milknado_set_subtree_status, milknado_todo_set_status
+
+_DEAD_PID = 2**31 - 1  # no process can hold this; os.kill(_, 0) -> ProcessLookupError
 
 
 def _call(tool, **kwargs):
@@ -183,6 +191,54 @@ def test_claim_refuses_non_task_node(repo: Path) -> None:
         graph.close()
     with pytest.raises(ValueError, match="only task nodes"):
         _call(milknado_todo_claim, node_id=goal_id, project_root=str(repo))
+
+
+# ── milknado_todo_claim: per-node worktree policy (ADR-005) ─────────────────
+
+
+def test_claim_worktree_false_override_skips_worktree(repo: Path) -> None:
+    """worktree=False claims RUNNING in place: no worktree, node.worktree_path stays None."""
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+
+    payload = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
+
+    assert payload["worktree_path"] is None
+    graph, _cfg = open_graph(repo)
+    try:
+        node = graph.get_node(node_id)
+        assert node is not None
+        assert node.status == NodeStatus.RUNNING
+        assert node.worktree_path is None
+        run = graph.get_run(payload["run_id"])
+        assert run is not None and run["status"] == "running"
+    finally:
+        graph.close()
+
+
+def test_claim_worktree_none_defaults_to_profile(repo: Path) -> None:
+    """worktree=None (default) follows the resolved flavor profile's worktree knob."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        "\n[milknado.flavor.implement]\nworktree = false\n",
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)  # tasks default to the implement flavor
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert payload["worktree_path"] is None
+
+
+def test_claim_worktree_true_override_wins_over_false_profile_default(repo: Path) -> None:
+    """An explicit worktree=True override wins even when the flavor default is false."""
+    (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
+        "\n[milknado.flavor.implement]\nworktree = false\n",
+        encoding="utf-8",
+    )
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, worktree=True, project_root=str(repo))
+    assert payload["worktree_path"] is not None
+    assert Path(payload["worktree_path"]).is_dir()
 
 
 # ── milknado_node_verify ─────────────────────────────────────────────────────
@@ -401,8 +457,8 @@ def test_claim_rolls_back_claim_when_worktree_creation_fails(
         graph.close()
 
 
-def test_node_verify_node_missing_worktree_raises(repo: Path) -> None:
-    """A run whose node was never given a worktree cannot be verified."""
+def test_node_verify_in_place_no_worktree_uses_project_root(repo: Path) -> None:
+    """ADR-005/006: a node with no worktree_path is verified in project_root."""
     from datetime import UTC, datetime
 
     _write_config(repo, gates=["true"])
@@ -413,8 +469,54 @@ def test_node_verify_node_missing_worktree_raises(repo: Path) -> None:
         graph.start_run(run_id, node_id, "log", datetime.now(UTC).isoformat(), None)
     finally:
         graph.close()
-    with pytest.raises(ValueError, match="no worktree_path"):
-        _call(milknado_node_verify, run_id=run_id, project_root=str(repo))
+    # An in-place node with non-empty gates keeps the stageable-change check;
+    # the repo has an untracked file relative to its own HEAD -> passes.
+    (repo / "out.txt").write_text("work\n", encoding="utf-8")
+
+    verdict = _call(milknado_node_verify, run_id=run_id, project_root=str(repo))
+    assert verdict["ok"] is True
+
+
+def test_node_verify_in_place_artifact_evidence_pass(repo: Path) -> None:
+    """ADR-006: in-place node, explicitly-empty gates, artifact exists+non-empty -> ok."""
+    _write_config(repo, gates=[])
+    node_id = _add_task(repo)
+    claim = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
+    assert claim["worktree_path"] is None
+
+    graph, _cfg = open_graph(repo)
+    try:
+        graph._conn.execute(
+            "UPDATE nodes SET artifact_path = ? WHERE id = ?", ("docs/out.md", node_id)
+        )
+        graph._conn.commit()
+    finally:
+        graph.close()
+    (repo / "docs").mkdir()
+    (repo / "docs" / "out.md").write_text("deliverable\n", encoding="utf-8")
+
+    verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
+    assert verdict == {"ok": True, "feedback": ""}
+
+
+def test_node_verify_in_place_artifact_missing_fails(repo: Path) -> None:
+    """ADR-006: in-place node, explicitly-empty gates, artifact missing -> not ok."""
+    _write_config(repo, gates=[])
+    node_id = _add_task(repo)
+    claim = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
+
+    graph, _cfg = open_graph(repo)
+    try:
+        graph._conn.execute(
+            "UPDATE nodes SET artifact_path = ? WHERE id = ?", ("docs/out.md", node_id)
+        )
+        graph._conn.commit()
+    finally:
+        graph.close()
+
+    verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
+    assert verdict["ok"] is False
+    assert verdict["feedback"]
 
 
 def test_resolve_model_extracts_flag_and_defaults() -> None:
@@ -441,3 +543,102 @@ def test_latest_verify_ok_false_on_missing_or_malformed(repo: Path) -> None:
         assert latest_verify_ok(graph, claim["run_id"]) is False
     finally:
         graph.close()
+
+
+# ── milknado_goal_claim / milknado_goal_release (ADR-003) ───────────────────
+
+
+def _add_goal(repo: Path, description: str = "a goal") -> int:
+    graph, _cfg = open_graph(repo)
+    try:
+        return graph.add_node(description, kind=NodeKind.GOAL).id
+    finally:
+        graph.close()
+
+
+def test_goal_claim_then_release_frees_it(repo: Path) -> None:
+    goal_id = _add_goal(repo)
+
+    payload = _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
+    assert payload == {"goal_id": goal_id, "owner": "sess-1"}
+    graph, _cfg = open_graph(repo)
+    try:
+        assert graph.get_node(goal_id).goal_run_id == "sess-1"
+    finally:
+        graph.close()
+
+    released = _call(
+        milknado_goal_release, goal_id=goal_id, owner="sess-1", project_root=str(repo)
+    )
+    assert released == {"goal_id": goal_id, "released": True}
+    graph, _cfg = open_graph(repo)
+    try:
+        assert graph.get_node(goal_id).goal_run_id is None
+    finally:
+        graph.close()
+
+
+def test_goal_claim_blocks_second_live_owner(repo: Path) -> None:
+    goal_id = _add_goal(repo)
+    _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
+
+    with pytest.raises(ValueError, match="already claimed by owner 'sess-1'"):
+        _call(milknado_goal_claim, goal_id=goal_id, owner="sess-2", project_root=str(repo))
+
+
+def test_goal_release_is_fenced_on_owner(repo: Path) -> None:
+    """Releasing with a non-owning token is a no-op; the claim survives."""
+    goal_id = _add_goal(repo)
+    _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
+
+    released = _call(
+        milknado_goal_release, goal_id=goal_id, owner="not-the-owner", project_root=str(repo)
+    )
+    assert released == {"goal_id": goal_id, "released": False}
+    graph, _cfg = open_graph(repo)
+    try:
+        assert graph.get_node(goal_id).goal_run_id == "sess-1"
+    finally:
+        graph.close()
+
+
+def test_goal_claim_reclaims_dead_pid_owner(repo: Path) -> None:
+    """A claim whose recorded pid is provably dead is reclaimed for the new owner."""
+    goal_id = _add_goal(repo)
+    graph, _cfg = open_graph(repo)
+    try:
+        from milknado.domains.dispatch import now_iso
+
+        assert graph.claim_goal(goal_id, "stale-owner", now=now_iso()) is True
+        graph.set_goal_pid(goal_id, "stale-owner", _DEAD_PID)
+    finally:
+        graph.close()
+
+    payload = _call(
+        milknado_goal_claim, goal_id=goal_id, owner="fresh-owner", project_root=str(repo)
+    )
+    assert payload == {"goal_id": goal_id, "owner": "fresh-owner"}
+
+
+def test_goal_claim_requires_owner_or_env(repo: Path) -> None:
+    goal_id = _add_goal(repo)
+    with pytest.raises(ValueError, match="owner is required"):
+        _call(milknado_goal_claim, goal_id=goal_id, project_root=str(repo))
+
+
+def test_goal_claim_falls_back_to_env_owner(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sub-agent that inherited MILKNADO_GOAL_OWNER can claim/release without `owner`."""
+    monkeypatch.setenv(GOAL_OWNER_ENV_VAR, "env-owner")
+    goal_id = _add_goal(repo)
+
+    payload = _call(milknado_goal_claim, goal_id=goal_id, project_root=str(repo))
+    assert payload["owner"] == "env-owner"
+
+    released = _call(milknado_goal_release, goal_id=goal_id, project_root=str(repo))
+    assert released == {"goal_id": goal_id, "released": True}
+
+
+def test_goal_claim_refuses_non_goal_node(repo: Path) -> None:
+    task_id = _add_task(repo)
+    with pytest.raises(ValueError, match="only goal nodes can be claimed"):
+        _call(milknado_goal_claim, goal_id=task_id, owner="sess-1", project_root=str(repo))
