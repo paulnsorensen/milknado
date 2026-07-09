@@ -2,7 +2,7 @@
 agent_family = "claude"
 planning_agent = "claude --model opus -p --dangerously-skip-permissions"
 # execution_agent intentionally absent — let worker_tools derive it.
-quality_gates = ['uv run pytest', 'uv run ruff check', 'uv run ty check']
+quality_gates = ['just check-llm']
 worktree_pattern = "milknado-{node_id}-{slug}"
 concurrency_limit = 4
 db_path = ".milknado/milknado.db"

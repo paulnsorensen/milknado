@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.common.types import TaskFlavor
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
@@ -37,7 +36,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             batch_index INTEGER,
             kind TEXT NOT NULL DEFAULT 'task',
             flavor TEXT,
-            wiki_ref TEXT
+            wiki_ref TEXT,
+            artifact_path TEXT
         );
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
@@ -112,6 +112,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         ("pid", "ALTER TABLE nodes ADD COLUMN pid INTEGER"),
         ("flavor", "ALTER TABLE nodes ADD COLUMN flavor TEXT"),
         ("wiki_ref", "ALTER TABLE nodes ADD COLUMN wiki_ref TEXT"),
+        ("artifact_path", "ALTER TABLE nodes ADD COLUMN artifact_path TEXT"),
     ]:
         if col not in columns:
             conn.execute(ddl)
@@ -138,9 +139,10 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     completed_at_raw = row["completed_at"]
     kind = NodeKind(row["kind"]) if "kind" in keys else NodeKind.TASK
     wiki_ref = row["wiki_ref"] if "wiki_ref" in keys else None
+    artifact_path = row["artifact_path"] if "artifact_path" in keys else None
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
-        flavor = TaskFlavor(flavor_raw) if flavor_raw is not None else None
+        flavor = flavor_raw
     elif flavor_raw is not None:
         raise ValueError(
             f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor_raw!r}; "
@@ -166,6 +168,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         kind=kind,
         flavor=flavor,
         wiki_ref=wiki_ref,
+        artifact_path=artifact_path,
     )
 
 

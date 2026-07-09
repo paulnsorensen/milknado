@@ -7,12 +7,9 @@ import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import tomli_w
-
-if TYPE_CHECKING:
-    from milknado.domains.common.types import TaskFlavor
 
 from milknado.domains.common.agent_argv import (
     _ALLOWED_WORKER_EXECUTABLES,
@@ -21,6 +18,7 @@ from milknado.domains.common.agent_argv import (
     resolve_planning_agent_command,
     resolve_worker_tools,
 )
+from milknado.domains.common.types import BUILTIN_FLAVORS
 
 _logger = logging.getLogger(__name__)
 
@@ -60,6 +58,8 @@ class FlavorOverride:
     ``quality_gates = ()`` means skip gates; ``None`` means inherit.
     ``agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns`` drive the
     native Workflow backend; ``None`` inherits the global default.
+    ``worktree`` drives per-flavor worktree provisioning policy (ADR-005);
+    ``None`` inherits the caller/global default.
     """
 
     execution_agent: str | None = None
@@ -70,6 +70,7 @@ class FlavorOverride:
     loop_mode: str | None = None
     max_iterations: int | None = None
     max_turns: int | None = None
+    worktree: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -93,7 +94,8 @@ class MilknadoConfig:
     completion_timeout_seconds: float = 1800.0
     eta_sample_size: int = 10
     worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    flavors: dict[TaskFlavor, FlavorOverride] = field(default_factory=dict)
+    flavors: dict[str, FlavorOverride] = field(default_factory=dict)
+    flavor_registry: frozenset[str] = field(default_factory=lambda: BUILTIN_FLAVORS)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
     commit_footer: str | None = None
@@ -215,10 +217,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
 
     # Save [flavor.*] tables.
     flavor_tables: dict[str, dict[str, Any]] = {}
-    for flavor_key, fo in config.flavors.items():
-        from milknado.domains.common.types import TaskFlavor
-
-        flavor_name = flavor_key.value if isinstance(flavor_key, TaskFlavor) else str(flavor_key)
+    for flavor_name, fo in config.flavors.items():
         entry: dict[str, Any] = {}
         if fo.execution_agent is not None:
             entry["execution_agent"] = fo.execution_agent
@@ -236,6 +235,8 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
             entry["max_iterations"] = fo.max_iterations
         if fo.max_turns is not None:
             entry["max_turns"] = fo.max_turns
+        if fo.worktree is not None:
+            entry["worktree"] = fo.worktree
         if entry:
             flavor_tables[flavor_name] = entry
     if flavor_tables:
@@ -442,6 +443,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         eta_sample_size=int(raw.get("eta_sample_size", 10)),
         worker_tools=worker_tools,
         flavors=flavors,
+        flavor_registry=BUILTIN_FLAVORS | flavors.keys(),
         planning_prompt_prepend=planning_prompt_prepend,
         worker_brief_prepend=worker_brief_prepend,
         worker_agent_type=_validated_str(
@@ -561,28 +563,27 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
 def _parse_flavor_tables(
     flavor_raw: Any,
     project_root: Path,
-) -> dict[TaskFlavor, FlavorOverride]:
-    """Parse [milknado.flavor.*] tables into {TaskFlavor: FlavorOverride}."""
-    from milknado.domains.common.types import TaskFlavor
+) -> dict[str, FlavorOverride]:
+    """Parse [milknado.flavor.*] tables into {flavor name: FlavorOverride}.
 
+    Any string key is accepted here: a TOML-declared table is itself the
+    registration of that flavor name (see ADR-004).
+    """
     if flavor_raw is None:
         return {}
     if not isinstance(flavor_raw, dict):
         raise ValueError("[milknado.flavor] must be a table")
 
-    out: dict[TaskFlavor, FlavorOverride] = {}
+    out: dict[str, FlavorOverride] = {}
     for flavor_name, entry in flavor_raw.items():
-        try:
-            flavor = TaskFlavor(flavor_name)
-        except ValueError:
+        if not isinstance(flavor_name, str) or not flavor_name:
             raise ValueError(
-                f"[milknado.flavor] unknown flavor key {flavor_name!r}; "
-                f"expected one of {sorted(f.value for f in TaskFlavor)}"
-            ) from None
+                f"[milknado.flavor] flavor keys must be non-empty strings, got {flavor_name!r}"
+            )
         if not isinstance(entry, dict):
             raise ValueError(f"[milknado.flavor.{flavor_name}] must be a table")
         fo = _parse_flavor_entry(entry, flavor_name, project_root)
-        out[flavor] = fo
+        out[flavor_name] = fo
     return out
 
 
@@ -630,6 +631,10 @@ def _parse_flavor_entry(
     max_iterations = _validated_positive_int(entry.get("max_iterations"), f"{ctx} max_iterations")
     max_turns = _validated_positive_int(entry.get("max_turns"), f"{ctx} max_turns")
 
+    worktree_raw = entry.get("worktree")
+    if worktree_raw is not None and not isinstance(worktree_raw, bool):
+        raise ValueError(f"{ctx} worktree must be a boolean")
+
     return FlavorOverride(
         execution_agent=execution_agent,
         tools=tools,
@@ -639,6 +644,7 @@ def _parse_flavor_entry(
         loop_mode=loop_mode,
         max_iterations=max_iterations,
         max_turns=max_turns,
+        worktree=worktree_raw,
     )
 
 

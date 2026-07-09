@@ -16,7 +16,7 @@ from milknado.domains.common import (
     pid_alive,
 )
 from milknado.domains.common.errors import InvalidContainment
-from milknado.domains.common.types import TaskFlavor
+from milknado.domains.common.types import DEFAULT_FLAVOR
 from milknado.domains.graph import _transitions
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
 from milknado.domains.graph._mutations import (
@@ -80,7 +80,7 @@ class MikadoGraph(_AnalyticsFacade):
         oversized: bool = False,
         batch_index: int | None = None,
         kind: NodeKind = NodeKind.TASK,
-        flavor: TaskFlavor | None = None,
+        flavor: str | None = None,
         wiki_ref: str | None = None,
     ) -> MikadoNode:
         # Validate parent_id before inserting: the node row commits before the
@@ -96,7 +96,7 @@ class MikadoGraph(_AnalyticsFacade):
         # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
         if kind != NodeKind.TASK and flavor is not None:
             raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
-        flavor_value = (flavor or TaskFlavor.IMPLEMENT).value if kind == NodeKind.TASK else None
+        flavor_value = (flavor or DEFAULT_FLAVOR) if kind == NodeKind.TASK else None
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
@@ -158,7 +158,7 @@ class MikadoGraph(_AnalyticsFacade):
         node_id: int,
         description: str | None = None,
         kind: NodeKind | None = None,
-        flavor: TaskFlavor | None = None,
+        flavor: str | None = None,
     ) -> None:
         """Update description, kind, and/or flavor on a node. Status stays governed by
         the state machine and is not editable here."""

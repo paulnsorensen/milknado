@@ -1,0 +1,6 @@
+
+### ADR-003: Session-as-GOAL over goal_claims  [status: accepted]
+- **Context:** Replacing the native list means in-session tasks need an ownership boundary in the one-per-project graph. Claim/release/pid machinery already exists (claim_goal_row/release_goal_row/set_goal_claim_pid, _persistence.py:513-569) and todo_claim already honors subtree fencing.
+- **Decision:** A session claims a GOAL node; its subtree is the session's task list. New thin MCP tools milknado_goal_claim/milknado_goal_release wrap existing persistence; owner token is env-inherited by sub-agents; dead-pid claims are reclaimable on the next claim attempt.
+- **Alternatives:** No session concept (rejected: ephemeral clutter with no ownership boundary). Per-session lists/namespaces (rejected: new schema surface + a second "which list" indirection).
+- **Consequences:** One graph stays one tree; fencing arbitrates concurrent coordinators (fail-loud for the loser); stale-claim reaping becomes an acceptance criterion rather than an incident.

@@ -216,19 +216,30 @@ class LoopAdapter:
 def _build_completion_verifier(
     worktree: Path,
     quality_gates: tuple[Gate, ...] | None,
+    *,
+    in_place: bool = False,
+    artifact_path: str | None = None,
 ) -> Callable[[], CompletionVerdict]:
     """Build the tier-2 completion verifier for a node's worktree.
 
     The returned closure is the authoritative harness-side check the engine
     consults when exit-0 + the completion promise would otherwise mark the
     node done. It re-runs every configured quality gate in *worktree* (the
-    RALPH.md copy is only fast agent-side feedback) and confirms the branch
-    actually produced a committed or stageable change. A failing gate, an empty
-    diff, or an unresolvable base rejects the completion with feedback for the
-    next iteration.
+    RALPH.md copy is only fast agent-side feedback) and then confirms the node
+    actually produced evidence of completed work. A failing gate rejects the
+    completion outright, regardless of evidence mode.
 
     When ``quality_gates`` is None (unconfigured), the verifier fails closed
     immediately with an actionable message — no gates run.
+
+    Evidence mode (ADR-006): worktree nodes (``in_place=False``, the default)
+    are checked for a committed or stageable change, as before. An in-place
+    node (``in_place=True``) with explicitly-empty gates (``()``) and an
+    ``artifact_path`` is checked instead for that artifact existing and being
+    non-empty — the current checkout may carry unrelated changes, so a diff
+    check is the wrong evidence for a prose deliverable. Every other
+    combination (worktree nodes, non-empty gates, or no artifact_path) keeps
+    the stageable-change check.
     """
     gates = quality_gates
 
@@ -240,12 +251,62 @@ def _build_completion_verifier(
         gate_failure = _run_quality_gates(worktree, list(gates))
         if gate_failure is not None:
             return CompletionVerdict(ok=False, feedback=gate_failure)
+        if in_place and not gates and artifact_path is not None:
+            artifact_rejection = _artifact_rejection(worktree, artifact_path)
+            if artifact_rejection is not None:
+                return CompletionVerdict(ok=False, feedback=artifact_rejection)
+            return CompletionVerdict(ok=True, feedback="")
         change_rejection = _change_rejection(worktree)
         if change_rejection is not None:
             return CompletionVerdict(ok=False, feedback=change_rejection)
         return CompletionVerdict(ok=True, feedback="")
 
     return verify
+
+
+def _artifact_rejection(worktree: Path, artifact_path: str) -> str | None:
+    """Rejection feedback when *artifact_path* is missing or empty, else None.
+
+    Evidence for an in-place node with explicitly-empty gates: the file must
+    exist under *worktree* and be non-empty. Absolute paths and ``..`` escapes
+    fail closed before stat so user-controlled artifact paths cannot probe
+    outside the repo. A stat failure (e.g. a symlink loop) fails closed rather
+    than being mistaken for a present artifact.
+    """
+    root = worktree.resolve()
+    raw_path = Path(artifact_path)
+    if raw_path.is_absolute():
+        return (
+            f"you emitted the completion promise but artifact_path {artifact_path!r} "
+            "must be repo-relative"
+        )
+    path = (root / raw_path).resolve(strict=False)
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return (
+            f"you emitted the completion promise but artifact_path {artifact_path!r} "
+            f"escapes {worktree}"
+        )
+    try:
+        exists_and_non_empty = path.is_file() and path.stat().st_size > 0
+    except OSError as exc:
+        _logger.warning(
+            "completion verifier: could not stat artifact %s in %s: %s",
+            artifact_path,
+            worktree,
+            exc,
+        )
+        return (
+            f"you emitted the completion promise but artifact_path {artifact_path!r} "
+            f"could not be checked in {worktree}"
+        )
+    if exists_and_non_empty:
+        return None
+    return (
+        f"you emitted the completion promise but artifact_path {artifact_path!r} "
+        "does not exist or is empty"
+    )
 
 
 def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:

@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import NodeKind, NodeStatus, TaskFlavor
+from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.types import DEFAULT_FLAVOR
 
 if TYPE_CHECKING:
     from milknado.domains.graph.graph import MikadoGraph
@@ -69,7 +70,7 @@ def _check_subtree(
             )
         else:
             # Advisory warning: implement-flavored task without file hints
-            if node.flavor == TaskFlavor.IMPLEMENT:
+            if node.flavor == DEFAULT_FLAVOR:
                 files = graph.get_file_ownership(node_id)
                 if not files:
                     report.warnings.append(

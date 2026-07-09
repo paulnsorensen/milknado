@@ -13,6 +13,7 @@ from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.common.types import (
+    BUILTIN_FLAVORS,
     VALID_CHILD_KINDS,
     VALID_TRANSITIONS,
     MikadoEdge,
@@ -20,11 +21,11 @@ from milknado.domains.common.types import (
     NodeKind,
     NodeStatus,
     RebaseResult,
-    TaskFlavor,
     WorktreeMode,
 )
 
 __all__ = [
+    "BUILTIN_FLAVORS",
     "CrgPort",
     "GitPort",
     "Gate",
@@ -36,7 +37,6 @@ __all__ = [
     "NodeKind",
     "NodeStatus",
     "RebaseResult",
-    "TaskFlavor",
     "WorktreeMode",
     "PluginHook",
     "PluginMeta",

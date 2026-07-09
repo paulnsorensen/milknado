@@ -29,7 +29,7 @@ def node_to_summary(node: MikadoNode) -> dict:
         "description": node.description,
     }
     if node.flavor is not None:
-        result["flavor"] = node.flavor.value
+        result["flavor"] = node.flavor
     return result
 
 

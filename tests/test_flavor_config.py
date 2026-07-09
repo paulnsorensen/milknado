@@ -20,7 +20,7 @@ from milknado.domains.common.config import (
 from milknado.domains.common.flavor_profile import (
     resolve_flavor_profile,
 )
-from milknado.domains.common.types import TaskFlavor
+from milknado.domains.common.types import BUILTIN_FLAVORS
 
 # ── AC2: single-list grammar + sentinel ─────────────────────────────────────
 
@@ -109,21 +109,62 @@ def test_load_config_flavor_table_parses(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
-    assert TaskFlavor.RESEARCH in cfg.flavors
-    fo = cfg.flavors[TaskFlavor.RESEARCH]
+    assert "research" in cfg.flavors
+    fo = cfg.flavors["research"]
     assert fo.quality_gates == ()
     assert fo.brief_prepend == "Research mode."
 
 
-def test_load_config_flavor_invalid_key_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_custom_key_registers(tmp_path: Path) -> None:
+    """A TOML-declared flavor name outside BUILTIN_FLAVORS is its own registration (ADR-004)."""
     cfg_path = tmp_path / "milknado.toml"
     cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.badflavorkey]\n"
+        "[milknado.flavor.customflavorkey]\n"
         "quality_gates = []\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="badflavorkey"):
+    cfg = load_config(cfg_path)
+    assert "customflavorkey" in cfg.flavors
+
+
+def test_flavor_registry_includes_builtins_and_declared(tmp_path: Path) -> None:
+    """MilknadoConfig.flavor_registry is BUILTIN_FLAVORS unioned with declared TOML names."""
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.customflavorkey]\n"
+        "quality_gates = []\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavor_registry == BUILTIN_FLAVORS | {"customflavorkey"}
+
+
+def test_flavor_registry_defaults_to_builtins_only(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.flavor_registry == BUILTIN_FLAVORS
+
+
+def test_load_config_flavor_worktree_parses(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = false\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavors["spec"].worktree is False
+
+
+def test_load_config_flavor_worktree_not_bool_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = "nope"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="worktree"):
         load_config(cfg_path)
 
 
@@ -213,7 +254,7 @@ def test_load_config_flavor_brief_prepend_path_list(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
-    fo = cfg.flavors[TaskFlavor.RESEARCH]
+    fo = cfg.flavors["research"]
     assert fo.brief_prepend is not None
     assert "house rules" in fo.brief_prepend
     assert "research rules" in fo.brief_prepend
@@ -232,11 +273,11 @@ def test_save_load_roundtrip_with_flavors(tmp_path: Path) -> None:
         db_path=tmp_path / ".milknado" / "milknado.db",
         worker_tools={"claude": ("...", "Bash(just:*)")},
         flavors={
-            TaskFlavor.RESEARCH: FlavorOverride(
+            "research": FlavorOverride(
                 quality_gates=(),
                 brief_prepend="Research mode",
             ),
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 tools=("...", "WebSearch"),
             ),
         },
@@ -245,12 +286,12 @@ def test_save_load_roundtrip_with_flavors(tmp_path: Path) -> None:
     loaded = load_config(cfg_path)
 
     # field-by-field: flavors
-    assert TaskFlavor.RESEARCH in loaded.flavors
-    assert TaskFlavor.SPIKE in loaded.flavors
-    r = loaded.flavors[TaskFlavor.RESEARCH]
+    assert "research" in loaded.flavors
+    assert "spike" in loaded.flavors
+    r = loaded.flavors["research"]
     assert r.quality_gates == ()
     assert r.brief_prepend == "Research mode"
-    s = loaded.flavors[TaskFlavor.SPIKE]
+    s = loaded.flavors["spike"]
     assert s.tools == ("...", "WebSearch")
 
     # field-by-field: worker_tools (single-list — sentinel round-trips raw)
@@ -297,7 +338,7 @@ def test_resolve_flavor_profile_no_flavor_returns_defaults(tmp_path: Path) -> No
 
 def test_resolve_flavor_profile_flavor_no_entry_returns_defaults(tmp_path: Path) -> None:
     cfg = _base_cfg(tmp_path)
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     assert profile.execution_agent == cfg.execution_agent
     assert profile.quality_gates == cfg.quality_gates
 
@@ -308,12 +349,12 @@ def test_resolve_flavor_profile_explicit_execution_agent_wins(tmp_path: Path) ->
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
         flavors={
-            TaskFlavor.RESEARCH: FlavorOverride(
+            "research": FlavorOverride(
                 execution_agent="claude -p --model opus",
             ),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+    profile = resolve_flavor_profile(cfg, "research")
     assert profile.execution_agent == "claude -p --model opus"
 
 
@@ -323,12 +364,12 @@ def test_resolve_flavor_profile_tools_derive_command(tmp_path: Path) -> None:
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 tools=("Read", "Edit"),
             ),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     assert "Read,Edit" in profile.execution_agent
 
 
@@ -338,12 +379,12 @@ def test_resolve_flavor_profile_quality_gates_empty_tuple(tmp_path: Path) -> Non
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
         flavors={
-            TaskFlavor.RESEARCH: FlavorOverride(
+            "research": FlavorOverride(
                 quality_gates=(),
             ),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+    profile = resolve_flavor_profile(cfg, "research")
     assert profile.quality_gates == ()
 
 
@@ -354,11 +395,56 @@ def test_resolve_flavor_profile_quality_gates_none_inherits(tmp_path: Path) -> N
         db_path=tmp_path / ".milknado" / "milknado.db",
         quality_gates=(Gate("uv run pytest"),),
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(),
+            "spike": FlavorOverride(),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     assert profile.quality_gates == (Gate("uv run pytest"),)
+
+
+def test_resolve_flavor_profile_no_flavor_worktree_defaults_true(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, None)
+    assert profile.worktree is True
+
+
+def test_resolve_flavor_profile_entry_without_worktree_defaults_true(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spike": FlavorOverride(),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spike")
+    assert profile.worktree is True
+
+
+def test_resolve_flavor_profile_worktree_false_override(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=False),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spec")
+    assert profile.worktree is False
+
+
+def test_resolve_flavor_profile_worktree_true_override(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=True),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spec")
+    assert profile.worktree is True
 
 
 def test_resolve_flavor_profile_brief_replaces_global(tmp_path: Path) -> None:
@@ -368,12 +454,12 @@ def test_resolve_flavor_profile_brief_replaces_global(tmp_path: Path) -> None:
         db_path=tmp_path / ".milknado" / "milknado.db",
         worker_brief_prepend="global prepend",
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 brief_prepend="spike prepend",
             ),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     assert profile.brief_prepend == "spike prepend"
 
 
@@ -385,12 +471,12 @@ def test_resolve_flavor_profile_single_winner_tools_precedence(tmp_path: Path) -
         db_path=tmp_path / ".milknado" / "milknado.db",
         worker_tools={"claude": ("mcp__tilth__*", "Bash(rtk:*)")},
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 tools=("Read", "Edit"),
             ),
         },
     )
-    profile = resolve_flavor_profile(cfg, TaskFlavor.SPIKE)
+    profile = resolve_flavor_profile(cfg, "spike")
     # Flavor tools replace; family tools not merged
     assert "Read,Edit" in profile.execution_agent
     assert "Bash(rtk:*)" not in profile.execution_agent
@@ -447,12 +533,12 @@ def test_flavor_brief_replaces_global() -> None:
             db_path=tmp / ".milknado" / "milknado.db",
             worker_brief_prepend="global prepend",
             flavors={
-                TaskFlavor.RESEARCH: FlavorOverride(
+                "research": FlavorOverride(
                     brief_prepend="research prepend",
                 ),
             },
         )
-        profile = resolve_flavor_profile(cfg, TaskFlavor.RESEARCH)
+        profile = resolve_flavor_profile(cfg, "research")
         assert profile.brief_prepend == "research prepend"
         assert profile.brief_prepend != cfg.worker_brief_prepend
 
@@ -470,22 +556,19 @@ def test_load_config_flavor_valid_execution_agent(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
-    from milknado.domains.common.types import TaskFlavor
 
-    fo = cfg.flavors[TaskFlavor.SPIKE]
+    fo = cfg.flavors["spike"]
     assert fo.execution_agent == "claude -p --model opus"
 
 
 def test_save_config_preserves_flavor_execution_agent(tmp_path: Path) -> None:
     """save_config round-trips a flavor with execution_agent set."""
-    from milknado.domains.common.types import TaskFlavor
-
     cfg = MilknadoConfig(
         agent_family="claude",
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
         flavors={
-            TaskFlavor.SPIKE: FlavorOverride(
+            "spike": FlavorOverride(
                 execution_agent="claude -p --model opus",
             ),
         },
@@ -493,7 +576,23 @@ def test_save_config_preserves_flavor_execution_agent(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     save_config(cfg, cfg_path)
     loaded = load_config(cfg_path)
-    assert loaded.flavors[TaskFlavor.SPIKE].execution_agent == "claude -p --model opus"
+    assert loaded.flavors["spike"].execution_agent == "claude -p --model opus"
+
+
+def test_save_load_roundtrip_flavor_worktree(tmp_path: Path) -> None:
+    """save_config round-trips a flavor with worktree set (9th knob, ADR-005)."""
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(worktree=False),
+        },
+    )
+    cfg_path = tmp_path / "milknado.toml"
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+    assert loaded.flavors["spec"].worktree is False
 
 
 def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
@@ -618,7 +717,7 @@ def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
         flavors={
-            TaskFlavor.PROTOTYPE: FlavorOverride(
+            "prototype": FlavorOverride(
                 execution_agent="claude -p --model haiku",
                 tools=("Read", "Edit"),
                 brief_prepend="Prototype: ship rough cut.",
@@ -629,7 +728,7 @@ def test_save_load_roundtrip_flavor_all_fields(tmp_path: Path) -> None:
     save_config(cfg, cfg_path)
     loaded = load_config(cfg_path)
 
-    fo = loaded.flavors[TaskFlavor.PROTOTYPE]
+    fo = loaded.flavors["prototype"]
     assert fo.execution_agent == "claude -p --model haiku"
     assert fo.tools == ("Read", "Edit")
     assert fo.brief_prepend == "Prototype: ship rough cut."

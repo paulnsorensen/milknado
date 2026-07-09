@@ -1,0 +1,6 @@
+
+### ADR-004: Flavor mechanism in milknado, vocabulary in the easy-cheese preset pack  [status: accepted]
+- **Context:** TaskFlavor is a closed 5-member enum, but flavor semantics are already fully profile-driven (only 3 enum-member references in src, none business logic) and the DB column is free TEXT. The phase vocabulary (brainstorm/explore/agent-review/harden/fix) is an easy-cheese opinion, not a milknado one.
+- **Decision:** milknado ships the registry mechanism: flavor becomes a free string validated fail-fast against BUILTIN ∪ TOML-declared names. The phase vocabulary ships as a preset-pack TOML documented in the adoption contract, installable globally via ~/.config/milknado/milknado.toml.
+- **Alternatives:** Grow milknado built-ins with phase names (rejected: hardcodes one workflow taxonomy; renames become breaking changes). Fully free strings (rejected: a typo'd flavor silently running with defaults violates fail-fast). Hybrid +review built-in (rejected: same taxonomy creep, smaller).
+- **Consequences:** Vocabulary evolves in user space without milknado releases; tool schemas lose the Literal enum hint (runtime registry errors compensate); repos without the preset reject phase flavors until the global config is installed.
