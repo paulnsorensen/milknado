@@ -11,7 +11,7 @@ from milknado.domains.batching import (
     SymbolRef,
     SymbolSpread,
 )
-from milknado.domains.common import InvalidTransition, NodeStatus
+from milknado.domains.common import InvalidTransition, NodeKind, NodeStatus
 from milknado.domains.graph import MikadoGraph
 
 
@@ -774,3 +774,73 @@ class TestDeleteSubtreePostOrder:
                 graph.delete_node(root.id, cascade=True)
 
         assert len(graph.get_all_nodes()) == 3
+
+
+class TestFlavorRegistry:
+    def test_add_node_accepts_flavor_in_default_registry(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("t", flavor="spike")
+        assert node.flavor == "spike"
+
+    def test_add_node_rejects_flavor_outside_default_registry(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="unknown flavor"):
+            graph.add_node("t", flavor="brainstorm")
+
+    def test_add_node_accepts_custom_flavor_via_registry_param(self, graph: MikadoGraph) -> None:
+        node = graph.add_node(
+            "t", flavor="brainstorm", flavor_registry=frozenset({"implement", "brainstorm"})
+        )
+        assert node.flavor == "brainstorm"
+
+    def test_add_node_rejects_flavor_not_in_custom_registry(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match="unknown flavor"):
+            graph.add_node("t", flavor="spike", flavor_registry=frozenset({"implement"}))
+
+    def test_unknown_flavor_error_names_flavor_and_valid_set(self, graph: MikadoGraph) -> None:
+        with pytest.raises(ValueError, match=r"'brainstorm'.*'implement'"):
+            graph.add_node("t", flavor="brainstorm", flavor_registry=frozenset({"implement"}))
+
+
+class TestArtifactPath:
+    def test_add_node_persists_artifact_path(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("t", artifact_path="docs/notes/t.md")
+        assert node.artifact_path == "docs/notes/t.md"
+        reloaded = graph.get_node(node.id)
+        assert reloaded is not None
+        assert reloaded.artifact_path == "docs/notes/t.md"
+
+    def test_add_node_defaults_artifact_path_to_none(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("t")
+        assert node.artifact_path is None
+
+    def test_update_node_sets_artifact_path(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("t")
+        graph.update_node(node.id, artifact_path="docs/notes/t.md")
+        reloaded = graph.get_node(node.id)
+        assert reloaded is not None
+        assert reloaded.artifact_path == "docs/notes/t.md"
+
+
+class TestPrereqEdges:
+    def test_add_node_creates_prereq_edges(self, graph: MikadoGraph) -> None:
+        goal = graph.add_node("goal", kind=NodeKind.GOAL)
+        p1 = graph.add_node("prereq-1", parent_id=goal.id)
+        p2 = graph.add_node("prereq-2", parent_id=goal.id)
+        node = graph.add_node("t", parent_id=goal.id, prereqs=[p1.id, p2.id])
+        parents = {
+            row[0]
+            for row in graph._conn.execute(
+                "SELECT parent_id FROM edges WHERE child_id = ?", (node.id,)
+            ).fetchall()
+        }
+        assert parents == {goal.id, p1.id, p2.id}
+
+    def test_add_node_prereq_duplicating_containment_edge_raises(self, graph: MikadoGraph) -> None:
+        """A prereq id equal to parent_id re-inserts the same (parent, child) edge,
+        which the edges table's composite primary key refuses."""
+        root = graph.add_node("root")
+        with pytest.raises(sqlite3.IntegrityError):
+            graph.add_node("t", parent_id=root.id, prereqs=[root.id])
+
+    def test_add_node_prereq_missing_node_raises(self, graph: MikadoGraph) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            graph.add_node("t", prereqs=[999])
