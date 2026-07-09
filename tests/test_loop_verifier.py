@@ -271,9 +271,7 @@ class TestArtifactEvidenceMode:
         assert "must be repo-relative" in verdict.feedback
         assert str(outside) in verdict.feedback
 
-    def test_traversal_artifact_path_rejected_before_file_check(
-        self, worktree: Path
-    ) -> None:
+    def test_traversal_artifact_path_rejected_before_file_check(self, worktree: Path) -> None:
         """Traversal artifact paths must be rejected before they can escape
         the worktree and satisfy the artifact check."""
         escaped = worktree.parent / "traversal-artifact.md"

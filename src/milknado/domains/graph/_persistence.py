@@ -142,7 +142,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     artifact_path = row["artifact_path"] if "artifact_path" in keys else None
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
-        flavor = flavor_raw if flavor_raw is not None else None
+        flavor = flavor_raw
     elif flavor_raw is not None:
         raise ValueError(
             f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor_raw!r}; "
