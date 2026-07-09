@@ -14,9 +14,11 @@ import pytest
 
 from milknado.loop._agent import (
     AgentResult,
+    AgentRunSpec,
     _kill_process_group,
     _pump_stream,
     _read_agent_stream,
+    _ResolvedAgentRun,
     _run_agent_blocking,
     _run_agent_streaming,
     _write_log,
@@ -245,7 +247,9 @@ class TestReadAgentStream:
 class TestExecuteAgentBlocking:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_success(self, mock_popen):
-        result = execute_agent(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        result = execute_agent(
+            AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        )
 
         assert result.returncode == 0
         assert result.timed_out is False
@@ -254,14 +258,18 @@ class TestExecuteAgentBlocking:
 
     @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
     def test_failure(self, mock_popen):
-        result = execute_agent(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        result = execute_agent(
+            AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        )
 
         assert result.returncode == 1
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
     def test_timeout(self, mock_popen):
-        result = execute_agent(["echo"], "prompt", timeout=5, log_dir=None, iteration=1)
+        result = execute_agent(
+            AgentRunSpec(["echo"], "prompt", timeout=5, log_dir=None, iteration=1)
+        )
 
         assert result.returncode is None
         assert result.timed_out is True
@@ -270,7 +278,9 @@ class TestExecuteAgentBlocking:
     def test_returncode_is_none_on_blocking_timeout(self, mock_popen):
         """Blocking path returns returncode=None on timeout, matching the
         ProcessResult contract and the streaming path's behavior."""
-        result = _run_agent_blocking(["echo"], "prompt", timeout=5, log_dir=None, iteration=1)
+        result = _run_agent_blocking(
+            _ResolvedAgentRun(["echo"], "prompt", timeout=5, log_dir=None, iteration=1)
+        )
 
         assert result.returncode is None
         assert result.timed_out is True
@@ -279,11 +289,13 @@ class TestExecuteAgentBlocking:
     def test_writes_log_on_success(self, mock_popen, tmp_path):
         mock_popen.return_value = ok_proc(stdout_text="agent output\n")
         result = execute_agent(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=tmp_path,
-            iteration=3,
+            AgentRunSpec(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=tmp_path,
+                iteration=3,
+            )
         )
 
         assert result.log_file is not None
@@ -295,11 +307,13 @@ class TestExecuteAgentBlocking:
     def test_writes_log_on_timeout(self, mock_popen, tmp_path):
         mock_popen.return_value = timeout_proc(stdout_text="partial", stderr_text="err")
         result = execute_agent(
-            ["echo"],
-            "prompt",
-            timeout=5,
-            log_dir=tmp_path,
-            iteration=1,
+            AgentRunSpec(
+                ["echo"],
+                "prompt",
+                timeout=5,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.log_file is not None
@@ -313,11 +327,13 @@ class TestExecuteAgentBlocking:
             stdout_text="partial stdout", stderr_text="partial stderr"
         )
         result = execute_agent(
-            ["echo"],
-            "prompt",
-            timeout=5,
-            log_dir=tmp_path,
-            iteration=1,
+            AgentRunSpec(
+                ["echo"],
+                "prompt",
+                timeout=5,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.captured_stdout == "partial stdout"
@@ -330,12 +346,14 @@ class TestExecuteAgentBlocking:
             stderr_text="some stderr\n",
         )
         result = _run_agent_blocking(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            capture_result_text=True,
+            _ResolvedAgentRun(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                capture_result_text=True,
+            )
         )
 
         assert result.captured_stdout is None
@@ -349,7 +367,9 @@ class TestExecuteAgentBlocking:
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_no_log_when_dir_not_set(self, mock_popen):
-        result = execute_agent(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        result = execute_agent(
+            AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        )
 
         assert result.log_file is None
 
@@ -359,11 +379,13 @@ class TestExecuteAgentBlocking:
 
         with pytest.raises(FileNotFoundError):
             execute_agent(
-                ["nonexistent"],
-                "prompt",
-                timeout=None,
-                log_dir=None,
-                iteration=1,
+                AgentRunSpec(
+                    ["nonexistent"],
+                    "prompt",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=1,
+                )
             )
 
 
@@ -409,11 +431,13 @@ class TestExecuteAgentDispatch:
             returncode=0,
         )
         result = execute_agent(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            AgentRunSpec(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -431,31 +455,35 @@ class TestExecuteAgentDispatch:
         monkeypatch.setattr("milknado.loop._agent._run_agent_streaming", fake_streaming)
 
         execute_agent(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            on_activity=on_activity,
-            on_output_line=on_output_line,
-            capture_result_text=True,
+            AgentRunSpec(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_activity=on_activity,
+                on_output_line=on_output_line,
+                capture_result_text=True,
+            )
         )
 
         fake_streaming.assert_called_once_with(
-            claude_adapter.build_command(["claude", "-p"]),
-            "prompt",
-            None,
-            None,
-            1,
-            on_activity=on_activity,
-            on_output_line=on_output_line,
-            capture_result_text=True,
-            capture_stdout=False,
-            adapter=claude_adapter,
-            max_turns=None,
-            on_tool_use=None,
-            env=None,
-            cwd=None,
+            _ResolvedAgentRun(
+                cmd=claude_adapter.build_command(["claude", "-p"]),
+                stdin_text="prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_activity=on_activity,
+                on_output_line=on_output_line,
+                capture_result_text=True,
+                capture_stdout=False,
+                adapter=claude_adapter,
+                max_turns=None,
+                on_tool_use=None,
+                env=None,
+                cwd=None,
+            )
         )
 
     def test_execute_agent_passes_capture_result_text_to_blocking_helper(self, monkeypatch):
@@ -470,29 +498,33 @@ class TestExecuteAgentDispatch:
         monkeypatch.setattr("milknado.loop._agent._run_agent_blocking", fake_blocking)
 
         execute_agent(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            on_output_line=on_output_line,
-            capture_result_text=True,
+            AgentRunSpec(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_output_line=on_output_line,
+                capture_result_text=True,
+            )
         )
 
         fake_blocking.assert_called_once_with(
-            ["echo"],
-            "prompt",
-            None,
-            None,
-            1,
-            on_output_line=on_output_line,
-            capture_result_text=True,
-            capture_stdout=False,
-            adapter=ANY,
-            max_turns=None,
-            on_tool_use=None,
-            env=None,
-            cwd=None,
+            _ResolvedAgentRun(
+                cmd=["echo"],
+                stdin_text="prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_output_line=on_output_line,
+                capture_result_text=True,
+                capture_stdout=False,
+                adapter=ANY,
+                max_turns=None,
+                on_tool_use=None,
+                env=None,
+                cwd=None,
+            )
         )
 
 
@@ -506,11 +538,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+            )
         )
         assert result.result_text == "early done"
         assert result.returncode == 0
@@ -523,11 +557,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_blocking(
-            ["claude", "-p"],
-            "prompt",
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.result_text == "early done"
@@ -541,11 +577,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+            )
         )
         assert result.result_text is None
         assert result.returncode == 0
@@ -560,11 +598,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+            )
         )
         assert result.result_text == "second"
         assert result.returncode == 0
@@ -577,11 +617,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -592,11 +634,13 @@ class TestExecuteAgentStreaming:
     def test_failure(self, mock_popen):
         mock_popen.return_value = make_mock_popen(returncode=1)
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 1
@@ -610,11 +654,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.result_text == "All tests passed"
@@ -624,11 +670,13 @@ class TestExecuteAgentStreaming:
         proc = make_mock_popen(returncode=0)
         mock_popen.return_value = proc
         _run_agent_streaming(
-            ["claude", "-p"],
-            "my prompt text",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "my prompt text",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         proc.stdin.write.assert_called_once_with("my prompt text")
@@ -640,11 +688,13 @@ class TestExecuteAgentStreaming:
         (via ``adapter.build_command``) owns CLI flags now."""
         mock_popen.return_value = make_mock_popen(returncode=0)
         _run_agent_streaming(
-            ["claude", "-p", "--output-format", "stream-json", "--verbose"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p", "--output-format", "stream-json", "--verbose"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         call_args = mock_popen.call_args
@@ -665,11 +715,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=tmp_path,
-            iteration=3,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=tmp_path,
+                iteration=3,
+            )
         )
 
         assert result.log_file is not None
@@ -690,11 +742,13 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.captured_stdout == "agent output\n"
@@ -708,12 +762,14 @@ class TestExecuteAgentStreaming:
             returncode=0,
         )
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            capture_result_text=True,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                capture_result_text=True,
+            )
         )
 
         assert result.captured_stdout is None
@@ -731,11 +787,13 @@ class TestExecuteAgentStreaming:
     def test_no_log_when_dir_not_set(self, mock_popen):
         mock_popen.return_value = make_mock_popen(returncode=0)
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.log_file is None
@@ -748,12 +806,14 @@ class TestExecuteAgentStreaming:
         )
         activities = []
         _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            on_activity=activities.append,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_activity=activities.append,
+            )
         )
 
         assert len(activities) == 2
@@ -779,11 +839,13 @@ class TestExecuteAgentStreaming:
         mock_popen.return_value = proc
 
         result = _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=5,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=5,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.timed_out is True
@@ -854,18 +916,20 @@ class TestProcessGroupCleanup:
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_blocking_uses_start_new_session(self, mock_popen):
-        execute_agent(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        execute_agent(AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1))
         assert mock_popen.call_args[1].get("start_new_session") is True
 
     @patch(MOCK_SUBPROCESS)
     def test_streaming_uses_start_new_session(self, mock_popen):
         mock_popen.return_value = make_mock_popen(returncode=0)
         _run_agent_streaming(
-            ["claude", "-p"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
         assert mock_popen.call_args[1].get("start_new_session") is True
 
@@ -922,11 +986,13 @@ class TestRunAgentStreamingPipeGuard:
 
         with pytest.raises(RuntimeError, match="PIPE stdin"):
             _run_agent_streaming(
-                ["claude", "-p"],
-                "prompt",
-                timeout=None,
-                log_dir=None,
-                iteration=1,
+                _ResolvedAgentRun(
+                    ["claude", "-p"],
+                    "prompt",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=1,
+                )
             )
 
 
@@ -952,11 +1018,13 @@ class TestRunAgentBlockingKeyboardInterrupt:
 
         with pytest.raises(KeyboardInterrupt):
             execute_agent(
-                ["echo"],
-                "prompt",
-                timeout=None,
-                log_dir=None,
-                iteration=1,
+                AgentRunSpec(
+                    ["echo"],
+                    "prompt",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=1,
+                )
             )
 
         proc.wait.assert_called()
@@ -974,12 +1042,14 @@ class TestRunAgentBlockingLineStreaming:
         received: list[tuple[str, str]] = []
 
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=lambda line, stream: received.append((line, stream)),
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=lambda line, stream: received.append((line, stream)),
+            )
         )
 
         assert result.returncode == 0
@@ -1003,12 +1073,14 @@ class TestRunAgentBlockingLineStreaming:
         received: list[tuple[str, str]] = []
 
         _run_agent_blocking(
-            [sys.executable, "-u", "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=lambda line, stream: received.append((line, stream)),
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=lambda line, stream: received.append((line, stream)),
+            )
         )
 
         streams = {stream for _, stream in received}
@@ -1023,12 +1095,14 @@ class TestRunAgentBlockingLineStreaming:
         received: list[str] = []
 
         _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text="hello-from-prompt\n",
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=lambda line, stream: received.append(line),
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="hello-from-prompt\n",
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=lambda line, stream: received.append(line),
+            )
         )
 
         assert received == ["hello-from-prompt"]
@@ -1055,11 +1129,13 @@ class TestRunAgentBlockingLineStreaming:
         large_prompt = "x" * 200000
 
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text=large_prompt,
-            timeout=15,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text=large_prompt,
+                timeout=15,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -1074,11 +1150,13 @@ class TestRunAgentBlockingLineStreaming:
         large_prompt = "x" * 200000
 
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text=large_prompt,
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text=large_prompt,
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -1101,11 +1179,13 @@ class TestRunAgentBlockingLineStreaming:
         )
 
         result = _run_agent_streaming(
-            [sys.executable, "-c", script],
-            stdin_text="hi",
-            timeout=15,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="hi",
+                timeout=15,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -1131,11 +1211,13 @@ class TestRunAgentBlockingLineStreaming:
 
         start = time.monotonic()
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text=large_prompt,
-            timeout=2.0,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text=large_prompt,
+                timeout=2.0,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
         elapsed = time.monotonic() - start
 
@@ -1167,12 +1249,14 @@ class TestExecuteAgentCwd:
         out_file = tmp_path / "pwd.txt"
 
         result = execute_agent(
-            self._pwd_probe_cmd(out_file),
-            "prompt",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            cwd=work_dir,
+            AgentRunSpec(
+                self._pwd_probe_cmd(out_file),
+                "prompt",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                cwd=work_dir,
+            )
         )
 
         assert result.returncode == 0
@@ -1187,11 +1271,13 @@ class TestExecuteAgentCwd:
         out_file = tmp_path / "pwd.txt"
 
         result = execute_agent(
-            self._pwd_probe_cmd(out_file),
-            "prompt",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
+            AgentRunSpec(
+                self._pwd_probe_cmd(out_file),
+                "prompt",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert result.returncode == 0
@@ -1205,12 +1291,14 @@ class TestExecuteAgentCwd:
         out_file = tmp_path / "pwd.txt"
 
         _run_agent_blocking(
-            self._pwd_probe_cmd(out_file),
-            stdin_text="",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            cwd=work_dir,
+            _ResolvedAgentRun(
+                self._pwd_probe_cmd(out_file),
+                stdin_text="",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                cwd=work_dir,
+            )
         )
 
         assert Path(out_file.read_text()).resolve() == work_dir.resolve()
@@ -1222,12 +1310,14 @@ class TestExecuteAgentCwd:
         out_file = tmp_path / "pwd.txt"
 
         _run_agent_streaming(
-            self._pwd_probe_cmd(out_file),
-            stdin_text="",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            cwd=work_dir,
+            _ResolvedAgentRun(
+                self._pwd_probe_cmd(out_file),
+                stdin_text="",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                cwd=work_dir,
+            )
         )
 
         assert Path(out_file.read_text()).resolve() == work_dir.resolve()
@@ -1255,11 +1345,13 @@ class TestStreamingDeadlineAndBuffering:
 
         start = time.monotonic()
         result = _run_agent_streaming(
-            [sys.executable, "-u", "-c", script],
-            stdin_text="go",
-            timeout=1.0,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                stdin_text="go",
+                timeout=1.0,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
         elapsed = time.monotonic() - start
 
@@ -1291,12 +1383,14 @@ class TestStreamingDeadlineAndBuffering:
             receive_times.append(time.monotonic())
 
         result = _run_agent_streaming(
-            [sys.executable, "-u", "-c", script],
-            stdin_text="go",
-            timeout=15,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=on_line,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                stdin_text="go",
+                timeout=15,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=on_line,
+            )
         )
 
         assert result.returncode == 0
@@ -1330,12 +1424,14 @@ class TestBlockingInheritPath:
     def test_no_pipe_when_no_log_no_callback(self, mock_popen):
         """Popen must NOT receive stdout/stderr=PIPE when no one needs capture."""
         result = _run_agent_blocking(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            on_output_line=None,
+            _ResolvedAgentRun(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_output_line=None,
+            )
         )
 
         call_kwargs = mock_popen.call_args[1]
@@ -1348,12 +1444,14 @@ class TestBlockingInheritPath:
     def test_still_pipes_when_callback_set(self, mock_popen):
         """When on_output_line is provided, stdout/stderr must be PIPE'd."""
         _run_agent_blocking(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
-            on_output_line=lambda line, stream: None,
+            _ResolvedAgentRun(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                on_output_line=lambda line, stream: None,
+            )
         )
 
         call_kwargs = mock_popen.call_args[1]
@@ -1364,12 +1462,14 @@ class TestBlockingInheritPath:
     def test_still_pipes_when_log_dir_set(self, mock_popen, tmp_path):
         """When log_dir is provided, stdout/stderr must be PIPE'd."""
         _run_agent_blocking(
-            ["echo"],
-            "prompt",
-            timeout=None,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=None,
+            _ResolvedAgentRun(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=None,
+            )
         )
 
         call_kwargs = mock_popen.call_args[1]
@@ -1387,12 +1487,14 @@ class TestBlockingInheritPath:
         script = "import sys; print('visible-output')"
 
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            on_output_line=None,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                on_output_line=None,
+            )
         )
 
         assert result.returncode == 0
@@ -1408,12 +1510,14 @@ class TestBlockingInheritPath:
         received: list[str] = []
 
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            on_output_line=lambda line, stream: received.append(line),
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                on_output_line=lambda line, stream: received.append(line),
+            )
         )
 
         assert result.returncode == 0
@@ -1437,12 +1541,14 @@ class TestPumpStreamExceptionHandling:
                 raise RuntimeError("boom")
 
         result = _run_agent_blocking(
-            [sys.executable, "-u", "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=None,
-            iteration=1,
-            on_output_line=raising_callback,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=None,
+                iteration=1,
+                on_output_line=raising_callback,
+            )
         )
 
         assert result.returncode == 0
@@ -1459,12 +1565,14 @@ class TestPumpStreamExceptionHandling:
             raise ValueError("always fails")
 
         result = _run_agent_blocking(
-            [sys.executable, "-u", "-c", script],
-            stdin_text="",
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
-            on_output_line=always_raises,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                stdin_text="",
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+                on_output_line=always_raises,
+            )
         )
 
         assert result.returncode == 0
@@ -1583,11 +1691,13 @@ class TestBoundedReaderThreadJoins:
 
         start = time.monotonic()
         result = _run_agent_blocking(
-            [sys.executable, "-c", script],
-            stdin_text="",
-            timeout=15,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-c", script],
+                stdin_text="",
+                timeout=15,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
         elapsed = time.monotonic() - start
 
@@ -1659,12 +1769,14 @@ class TestBoundedReaderThreadJoins:
                     side_effect=tracking_start_pump,
                 ):
                     _run_agent_blocking(
-                        [sys.executable, "-c", script],
-                        stdin_text="",
-                        timeout=10,
-                        log_dir=None,
-                        iteration=1,
-                        on_output_line=lambda line, stream: None,
+                        _ResolvedAgentRun(
+                            [sys.executable, "-c", script],
+                            stdin_text="",
+                            timeout=10,
+                            log_dir=None,
+                            iteration=1,
+                            on_output_line=lambda line, stream: None,
+                        )
                     )
 
         # After the exception propagated, the finally block must have
@@ -1694,11 +1806,13 @@ class TestArgDeliveryStdin:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_streaming_arg_delivery_uses_devnull_and_no_writer(self, mock_popen, mock_writer):
         _run_agent_streaming(
-            ["opencode", "run", "--format", "json", "hi"],
-            None,
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["opencode", "run", "--format", "json", "hi"],
+                None,
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
@@ -1708,11 +1822,13 @@ class TestArgDeliveryStdin:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_streaming_stdin_delivery_pipes_and_writes(self, mock_popen, mock_writer):
         _run_agent_streaming(
-            ["claude", "-p"],
-            "the prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["claude", "-p"],
+                "the prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.PIPE
@@ -1722,11 +1838,13 @@ class TestArgDeliveryStdin:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_blocking_arg_delivery_uses_devnull_and_no_writer(self, mock_popen, mock_writer):
         _run_agent_blocking(
-            ["aider", "the prompt"],
-            None,
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["aider", "the prompt"],
+                None,
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
@@ -1736,11 +1854,13 @@ class TestArgDeliveryStdin:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_blocking_stdin_delivery_pipes_and_writes(self, mock_popen, mock_writer):
         _run_agent_blocking(
-            ["aider"],
-            "the prompt",
-            timeout=None,
-            log_dir=None,
-            iteration=1,
+            _ResolvedAgentRun(
+                ["aider"],
+                "the prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+            )
         )
 
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.PIPE
@@ -1754,11 +1874,13 @@ class TestArgDeliveryStdin:
         """
         with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
             execute_agent(
-                ["opencode", "run"],
-                "do the work",
-                timeout=None,
-                log_dir=None,
-                iteration=1,
+                AgentRunSpec(
+                    ["opencode", "run"],
+                    "do the work",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=1,
+                )
             )
 
         spawn_cmd = mock_popen.call_args.args[0]
@@ -1777,11 +1899,13 @@ class TestArgDeliveryStdin:
 
         start = time.monotonic()
         result = _run_agent_streaming(
-            [sys.executable, "-u", "-c", script],
-            None,
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                None,
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
         elapsed = time.monotonic() - start
 
@@ -1811,11 +1935,13 @@ class TestArgDeliveryStdin:
 
         start = time.monotonic()
         result = _run_agent_streaming(
-            [sys.executable, "-u", "-c", script],
-            None,
-            timeout=10,
-            log_dir=tmp_path,
-            iteration=1,
+            _ResolvedAgentRun(
+                [sys.executable, "-u", "-c", script],
+                None,
+                timeout=10,
+                log_dir=tmp_path,
+                iteration=1,
+            )
         )
         elapsed = time.monotonic() - start
 

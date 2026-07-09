@@ -426,6 +426,22 @@ class TestRunManagerShutdown:
         assert b.thread is not None and not b.thread.is_alive()
         assert a.state.status == RunStatus.STOPPED
         assert b.state.status == RunStatus.STOPPED
+        # Terminal runs no longer occupy the registry after shutdown.
+        assert manager.get_run(a.state.run_id) is None
+        assert manager.get_run(b.state.run_id) is None
+        assert manager.list_runs() == []
+
+    def test_reap_evicts_only_terminal_runs(self, tmp_path):
+        manager = RunManager()
+        finished = manager.create_run(make_config(tmp_path))
+        pending = manager.create_run(make_config(tmp_path))
+        finished.state.status = RunStatus.COMPLETED
+
+        reaped = manager.reap()
+
+        assert reaped == [finished.state.run_id]
+        assert manager.get_run(finished.state.run_id) is None
+        assert manager.get_run(pending.state.run_id) is pending
 
     def test_shutdown_with_no_runs_returns_true(self):
         manager = RunManager()

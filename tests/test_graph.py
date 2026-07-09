@@ -11,8 +11,8 @@ from milknado.domains.batching import (
     SymbolRef,
     SymbolSpread,
 )
-from milknado.domains.common import InvalidTransition, NodeKind, NodeStatus
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.common import InvalidTransition, NodeKind, NodeSpec, NodeStatus
+from milknado.domains.graph import MikadoGraph, _transitions
 
 
 class TestAddNode:
@@ -492,6 +492,36 @@ class TestStatusTransitions:
         with pytest.raises(ValueError, match="not found"):
             graph.mark_running(999)
 
+    def test_cas_rejects_stale_transition(self, tmp_path: Path) -> None:
+        """_apply_transition's CAS UPDATE rejects a stale `current` (rowcount==0),
+        leaving the node at whatever a concurrent writer already moved it to."""
+        db_path = tmp_path / "cas.db"
+        graph_a = MikadoGraph(db_path)
+        graph_b = MikadoGraph(db_path)
+        try:
+            node = graph_a.add_node("task")
+            graph_a.mark_running(node.id)  # PENDING -> RUNNING
+            graph_b.mark_done(node.id)  # RUNNING -> DONE (concurrent writer)
+
+            # graph_a, unaware of graph_b's write, applies a CAS UPDATE still
+            # gated on the stale belief that status is RUNNING.
+            with pytest.raises(InvalidTransition):
+                _transitions._apply_transition(
+                    graph_a._conn,
+                    node.id,
+                    NodeStatus.RUNNING,
+                    NodeStatus.FAILED,
+                    "UPDATE nodes SET status = ?, completed_at = NULL WHERE id = ? AND status = ?",
+                    (NodeStatus.FAILED.value, node.id, NodeStatus.RUNNING.value),
+                )
+
+            updated = graph_a.get_node(node.id)
+            assert updated is not None
+            assert updated.status == NodeStatus.DONE
+        finally:
+            graph_a.close()
+            graph_b.close()
+
 
 class TestFileOwnership:
     def test_set_and_get(self, graph: MikadoGraph) -> None:
@@ -562,7 +592,7 @@ class TestBatchMetadata:
         self,
         graph: MikadoGraph,
     ) -> None:
-        node = graph.add_node("big batch", oversized=True, batch_index=2)
+        node = graph.add_node("big batch", spec=NodeSpec(oversized=True, batch_index=2))
         assert node.oversized is True
         assert node.batch_index == 2
         fetched = graph.get_node(node.id)
@@ -582,7 +612,7 @@ class TestBatchMetadata:
         assert updated.batch_index == 5
 
     def test_set_batch_metadata_clears_flags(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("big", oversized=True, batch_index=7)
+        node = graph.add_node("big", spec=NodeSpec(oversized=True, batch_index=7))
         graph.set_batch_metadata(node.id, oversized=False, batch_index=None)
         updated = graph.get_node(node.id)
         assert updated is not None
@@ -778,31 +808,38 @@ class TestDeleteSubtreePostOrder:
 
 class TestFlavorRegistry:
     def test_add_node_accepts_flavor_in_default_registry(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("t", flavor="spike")
+        node = graph.add_node("t", spec=NodeSpec(flavor="spike"))
         assert node.flavor == "spike"
 
     def test_add_node_rejects_flavor_outside_default_registry(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="unknown flavor"):
-            graph.add_node("t", flavor="brainstorm")
+            graph.add_node("t", spec=NodeSpec(flavor="brainstorm"))
 
     def test_add_node_accepts_custom_flavor_via_registry_param(self, graph: MikadoGraph) -> None:
         node = graph.add_node(
-            "t", flavor="brainstorm", flavor_registry=frozenset({"implement", "brainstorm"})
+            "t",
+            spec=NodeSpec(
+                flavor="brainstorm", flavor_registry=frozenset({"implement", "brainstorm"})
+            ),
         )
         assert node.flavor == "brainstorm"
 
     def test_add_node_rejects_flavor_not_in_custom_registry(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="unknown flavor"):
-            graph.add_node("t", flavor="spike", flavor_registry=frozenset({"implement"}))
+            graph.add_node(
+                "t", spec=NodeSpec(flavor="spike", flavor_registry=frozenset({"implement"}))
+            )
 
     def test_unknown_flavor_error_names_flavor_and_valid_set(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match=r"'brainstorm'.*'implement'"):
-            graph.add_node("t", flavor="brainstorm", flavor_registry=frozenset({"implement"}))
+            graph.add_node(
+                "t", spec=NodeSpec(flavor="brainstorm", flavor_registry=frozenset({"implement"}))
+            )
 
 
 class TestArtifactPath:
     def test_add_node_persists_artifact_path(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("t", artifact_path="docs/notes/t.md")
+        node = graph.add_node("t", spec=NodeSpec(artifact_path="docs/notes/t.md"))
         assert node.artifact_path == "docs/notes/t.md"
         reloaded = graph.get_node(node.id)
         assert reloaded is not None
@@ -822,10 +859,10 @@ class TestArtifactPath:
 
 class TestPrereqEdges:
     def test_add_node_creates_prereq_edges(self, graph: MikadoGraph) -> None:
-        goal = graph.add_node("goal", kind=NodeKind.GOAL)
+        goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
         p1 = graph.add_node("prereq-1", parent_id=goal.id)
         p2 = graph.add_node("prereq-2", parent_id=goal.id)
-        node = graph.add_node("t", parent_id=goal.id, prereqs=[p1.id, p2.id])
+        node = graph.add_node("t", parent_id=goal.id, spec=NodeSpec(prereqs=[p1.id, p2.id]))
         parents = {
             row[0]
             for row in graph._conn.execute(
@@ -840,11 +877,11 @@ class TestPrereqEdges:
         root = graph.add_node("root")
         before = len(graph.get_all_nodes())
         with pytest.raises(ValueError):
-            graph.add_node("t", parent_id=root.id, prereqs=[root.id])
+            graph.add_node("t", parent_id=root.id, spec=NodeSpec(prereqs=[root.id]))
         assert len(graph.get_all_nodes()) == before
 
     def test_add_node_prereq_missing_node_raises(self, graph: MikadoGraph) -> None:
         before = len(graph.get_all_nodes())
         with pytest.raises(ValueError):
-            graph.add_node("t", prereqs=[999])
+            graph.add_node("t", spec=NodeSpec(prereqs=[999]))
         assert len(graph.get_all_nodes()) == before

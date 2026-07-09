@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import WorktreeMode
+from milknado.domains.common import RunResult, WorktreeMode
 from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp_run import (
     milknado_deposit_result,
@@ -41,6 +41,7 @@ _STUB_RUNNER = """
 import argparse
 from pathlib import Path
 from milknado._mcp_core import open_graph
+from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
@@ -51,12 +52,14 @@ graph, _cfg = open_graph(Path(a.project_root))
 try:
     graph.finish_run(
         a.run_id,
-        status="{status}",
-        exit_code={exit_code},
-        timed_out=False,
-        ended_at="2026-01-01T00:00:00+00:00",
-        rebased={rebased},
-        detail=None,
+        RunResult(
+            status="{status}",
+            exit_code={exit_code},
+            timed_out=False,
+            ended_at="2026-01-01T00:00:00+00:00",
+            rebased={rebased},
+            detail=None,
+        ),
     )
 finally:
     graph.close()
@@ -103,11 +106,13 @@ def _seed_run(
         if status != "running":
             graph.finish_run(
                 run_id,
-                status=status,
-                exit_code=exit_code,
-                timed_out=timed_out,
-                ended_at=ended_at or datetime.now(UTC).isoformat(),
-                error=error,
+                RunResult(
+                    status=status,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    ended_at=ended_at or datetime.now(UTC).isoformat(),
+                    error=error,
+                ),
             )
         graph._conn.commit()
     finally:
@@ -918,7 +923,10 @@ class TestAsyncCancel:
         # flips to done and that is what `_await_cancel_finalize` returns.
         def fake_finalize(graph, rid: str) -> dict:
             graph.finish_run(
-                rid, status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+                rid,
+                RunResult(
+                    status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+                ),
             )
             return graph.get_run(rid)
 
@@ -1101,7 +1109,10 @@ class TestCancelFinalizeAndRace:
 
         def elapsed_after_done(graph, rid: str):
             graph.finish_run(
-                rid, status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+                rid,
+                RunResult(
+                    status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
+                ),
             )
             return None
 
@@ -1274,10 +1285,12 @@ class TestDepositResult:
         try:
             graph.finish_run(
                 run_id,
-                status="done",
-                exit_code=0,
-                timed_out=False,
-                ended_at="2026-01-01T00:00:00Z",
+                RunResult(
+                    status="done",
+                    exit_code=0,
+                    timed_out=False,
+                    ended_at="2026-01-01T00:00:00Z",
+                ),
             )
             graph._conn.commit()
         finally:

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common.agent_argv import _ALLOWED_WORKER_EXECUTABLES
+from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
@@ -40,10 +40,10 @@ def validate_worker_argv(argv: list[str]) -> None:
     profile default — by checking the basename of argv[0] against the allowlist.
     """
     executable = Path(argv[0]).name if argv else ""
-    if executable not in _ALLOWED_WORKER_EXECUTABLES:
+    if executable not in ALLOWED_WORKER_EXECUTABLES:
         raise ValueError(
             "worker_cmd must start with one of "
-            f"{sorted(_ALLOWED_WORKER_EXECUTABLES)!r}; got {executable!r}"
+            f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {executable!r}"
         )
 
 
@@ -115,7 +115,7 @@ _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def _build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+def build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """Return a filtered environment for worker subprocesses.
 
     Passes only allowlisted system vars plus MILKNADO_* config vars from the
@@ -150,7 +150,7 @@ def _spawn_worker(  # noqa: ANN001
     extra = {"MILKNADO_NODE_ID": str(node_id)}
     if run_id is not None:
         extra["MILKNADO_RUN_ID"] = run_id
-    env = _build_worker_env(extra)
+    env = build_worker_env(extra)
     return subprocess.Popen(
         argv,
         stdin=subprocess.PIPE,

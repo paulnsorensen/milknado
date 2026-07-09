@@ -388,18 +388,11 @@ class Executor:
                 time.sleep(wait)
         raise last_exc or RuntimeError("dispatch exhausted retries")
 
-    def _dispatch_once(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
-        node = self._graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-
-        self._wt.ensure_clean(node_id)
-
+    def _resolve_worktree_path(
+        self, node_id: int, node: MikadoNode, config: ExecutionConfig
+    ) -> tuple[Path, str]:
         slug = _slugify(node.description)
-        worktree_name = config.worktree_pattern.format(
-            node_id=node_id,
-            slug=slug,
-        )
+        worktree_name = config.worktree_pattern.format(node_id=node_id, slug=slug)
         wt_path = config.project_root / worktree_name
 
         resolved_root = config.project_root.resolve()
@@ -411,6 +404,38 @@ class Executor:
             )
 
         branch = f"milknado/{node_id}-{slug}"
+        return wt_path, branch
+
+    def _claim_or_mark_running(
+        self,
+        node: MikadoNode,
+        node_id: int,
+        config: ExecutionConfig,
+        wt_path: Path,
+        branch: str,
+        *,
+        already_claimed: bool,
+    ) -> str:
+        if already_claimed:
+            # Re-marking RUNNING would be an illegal RUNNING -> RUNNING transition
+            # that kills the detached run on startup. Attach worktree metadata via a
+            # fence-gated update instead, and do NOT clobber the claim's run_id — the
+            # parent's set_pid and the completion fence both depend on it.
+            self._graph.set_worktree(node_id, node.run_id, str(wt_path), branch)
+            return self._create_ralph_run(node, config, wt_path)
+        self._graph.mark_running(node_id, worktree_path=str(wt_path), branch_name=branch)
+        run_id = self._create_ralph_run(node, config, wt_path)
+        self._graph.set_run_id(node_id, run_id)
+        return run_id
+
+    def _dispatch_once(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
+        node = self._graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+
+        self._wt.ensure_clean(node_id)
+
+        wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
 
         # The ralph MCP path claims the node RUNNING in the dispatching parent
@@ -419,21 +444,9 @@ class Executor:
         already_claimed = node.status == NodeStatus.RUNNING and node.run_id is not None
         self._wt.create(node_id, wt_path, branch)
         try:
-            if already_claimed:
-                # Re-marking RUNNING would be an illegal RUNNING -> RUNNING transition
-                # that kills the detached run on startup. Attach worktree metadata via a
-                # fence-gated update instead, and do NOT clobber the claim's run_id — the
-                # parent's set_pid and the completion fence both depend on it.
-                self._graph.set_worktree(node_id, node.run_id, str(wt_path), branch)
-                run_id = self._create_ralph_run(node, config, wt_path)
-            else:
-                self._graph.mark_running(
-                    node_id,
-                    worktree_path=str(wt_path),
-                    branch_name=branch,
-                )
-                run_id = self._create_ralph_run(node, config, wt_path)
-                self._graph.set_run_id(node_id, run_id)
+            run_id = self._claim_or_mark_running(
+                node, node_id, config, wt_path, branch, already_claimed=already_claimed
+            )
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -501,6 +514,52 @@ class Executor:
         finally:
             self._wt.discard(node_id, wt_path)
 
+    def _rebase_or_fail(
+        self, worktree: Path | None, feature_branch: str, node: MikadoNode
+    ) -> RebaseResult:
+        try:
+            return self._wt.rebase_and_merge(
+                worktree,
+                feature_branch,
+                node.id,
+                node.description,
+                worker_branch=node.branch_name,
+            )
+        except RebaseAbortError:
+            raise  # repo-corruption state: do not swallow
+        except Exception as exc:
+            _logger.error("Rebase-merge failed for node %d", node.id, exc_info=True)
+            return RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
+
+    def _finalize_completion(
+        self, node: MikadoNode, rebase_result: RebaseResult
+    ) -> CompletionResult:
+        node_id = node.id
+        conflict: RebaseConflict | None = None
+        if rebase_result.success:
+            wrote = self._mark_terminal(node, NodeStatus.DONE)
+            if wrote and node.dispatched_at is not None:
+                completed_now = datetime.now(UTC)
+                duration = (completed_now - node.dispatched_at).total_seconds()
+                self._graph.record_completion_duration(node_id, duration)
+        else:
+            self._mark_terminal(node, NodeStatus.FAILED)
+            if rebase_result.conflicting_files or rebase_result.detail:
+                conflict = RebaseConflict(
+                    node_id=node_id,
+                    description=node.description,
+                    conflicting_files=rebase_result.conflicting_files,
+                    detail=rebase_result.detail,
+                )
+
+        newly_ready = get_dispatchable_nodes(self._graph) if rebase_result.success else []
+        return CompletionResult(
+            node_id=node_id,
+            rebased=rebase_result.success,
+            newly_ready=newly_ready,
+            rebase_conflict=conflict,
+        )
+
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
@@ -534,44 +593,8 @@ class Executor:
             )
 
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        try:
-            rebase_result = self._wt.rebase_and_merge(
-                worktree,
-                feature_branch,
-                node.id,
-                node.description,
-                worker_branch=node.branch_name,
-            )
-        except RebaseAbortError:
-            raise  # repo-corruption state: do not swallow
-        except Exception as exc:
-            _logger.error("Rebase-merge failed for node %d", node_id, exc_info=True)
-            rebase_result = RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
-
-        conflict: RebaseConflict | None = None
-        if rebase_result.success:
-            wrote = self._mark_terminal(node, NodeStatus.DONE)
-            if wrote and node.dispatched_at is not None:
-                completed_now = datetime.now(UTC)
-                duration = (completed_now - node.dispatched_at).total_seconds()
-                self._graph.record_completion_duration(node_id, duration)
-        else:
-            self._mark_terminal(node, NodeStatus.FAILED)
-            if rebase_result.conflicting_files or rebase_result.detail:
-                conflict = RebaseConflict(
-                    node_id=node_id,
-                    description=node.description,
-                    conflicting_files=rebase_result.conflicting_files,
-                    detail=rebase_result.detail,
-                )
-
-        newly_ready = get_dispatchable_nodes(self._graph) if rebase_result.success else []
-        return CompletionResult(
-            node_id=node_id,
-            rebased=rebase_result.success,
-            newly_ready=newly_ready,
-            rebase_conflict=conflict,
-        )
+        rebase_result = self._rebase_or_fail(worktree, feature_branch, node)
+        return self._finalize_completion(node, rebase_result)
 
     def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:
         """Write a node's terminal status, fenced on its run_id so a run that was

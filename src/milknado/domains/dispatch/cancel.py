@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from milknado.adapters import GitAdapter
+from milknado.domains.common import RunResult
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch._runstate import clear_cancel, now_iso, request_cancel, runs_dir
 from milknado.domains.dispatch.reconcile import reconcile_node_status
@@ -42,11 +43,13 @@ def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
     """
     graph.finish_run(
         run_id,
-        status="failed",
-        exit_code=-1,
-        timed_out=False,
-        ended_at=now_iso(),
-        error="cancelled",
+        RunResult(
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at=now_iso(),
+            error="cancelled",
+        ),
     )
     return graph.get_run(run_id)
 

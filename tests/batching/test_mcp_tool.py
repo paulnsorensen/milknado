@@ -449,13 +449,13 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None
     ROADMAP accepts only GOAL children, so attaching TASK batches under it must raise.
     This pins the tool's own ValueError path, not only the bridge's.
     """
-    from milknado.domains.common import NodeKind
+    from milknado.domains.common import NodeKind, NodeSpec
     from milknado.mcp_server import open_graph
 
     _stub_crg(monkeypatch)
     graph, _ = open_graph(tmp_path)
     try:
-        roadmap = graph.add_node("roadmap root", kind=NodeKind.ROADMAP)
+        roadmap = graph.add_node("roadmap root", spec=NodeSpec(kind=NodeKind.ROADMAP))
         roadmap_id = roadmap.id
     finally:
         graph.close()

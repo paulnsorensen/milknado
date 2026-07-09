@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.common.types import BUILTIN_FLAVORS
 from milknado.domains.graph import MikadoGraph
 
@@ -47,26 +47,28 @@ class TestContainmentEnforcement:
         """add_node of a task under a roadmap must raise InvalidContainment."""
         from milknado.domains.common.errors import InvalidContainment
 
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         with pytest.raises(InvalidContainment):
-            graph.add_node("t", parent_id=roadmap.id, kind=NodeKind.TASK)
+            graph.add_node("t", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.TASK))
 
     def test_goal_under_roadmap_is_legal(self, graph: MikadoGraph) -> None:
         """ROADMAP → GOAL is in VALID_CHILD_KINDS."""
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
-        goal = graph.add_node("g", parent_id=roadmap.id, kind=NodeKind.GOAL)
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = graph.add_node("g", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL))
         assert goal.kind == NodeKind.GOAL
 
     def test_task_under_goal_is_legal(self, graph: MikadoGraph) -> None:
         """GOAL → TASK is in VALID_CHILD_KINDS."""
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        task = graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = graph.add_node("t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         assert task.kind == NodeKind.TASK
 
     def test_goal_under_goal_is_legal(self, graph: MikadoGraph) -> None:
         """GOAL → GOAL (sub-goal) is in VALID_CHILD_KINDS."""
-        parent_goal = graph.add_node("pg", kind=NodeKind.GOAL)
-        sub_goal = graph.add_node("sg", parent_id=parent_goal.id, kind=NodeKind.GOAL)
+        parent_goal = graph.add_node("pg", spec=NodeSpec(kind=NodeKind.GOAL))
+        sub_goal = graph.add_node(
+            "sg", parent_id=parent_goal.id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
         assert sub_goal.kind == NodeKind.GOAL
 
     def test_task_under_task_is_legal(self, graph: MikadoGraph) -> None:
@@ -77,9 +79,9 @@ class TestContainmentEnforcement:
 
     def test_roadmap_at_root_is_legal(self, graph: MikadoGraph) -> None:
         """Root nodes (parent_id=None) accept any kind."""
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        task = graph.add_node("t", kind=NodeKind.TASK)
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = graph.add_node("t", spec=NodeSpec(kind=NodeKind.TASK))
         assert roadmap.kind == NodeKind.ROADMAP
         assert goal.kind == NodeKind.GOAL
         assert task.kind == NodeKind.TASK
@@ -88,8 +90,8 @@ class TestContainmentEnforcement:
         """move_node that would place a roadmap under a task raises InvalidContainment."""
         from milknado.domains.common.errors import InvalidContainment
 
-        task = graph.add_node("t", kind=NodeKind.TASK)
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
+        task = graph.add_node("t", spec=NodeSpec(kind=NodeKind.TASK))
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         with pytest.raises(InvalidContainment):
             graph.move_node(roadmap.id, task.id)
 
@@ -97,8 +99,8 @@ class TestContainmentEnforcement:
         """move_node that would place a goal under a task also raises."""
         from milknado.domains.common.errors import InvalidContainment
 
-        task = graph.add_node("t", kind=NodeKind.TASK)
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
+        task = graph.add_node("t", spec=NodeSpec(kind=NodeKind.TASK))
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
         with pytest.raises(InvalidContainment):
             graph.move_node(goal.id, task.id)
 
@@ -111,8 +113,8 @@ class TestContainmentEnforcement:
         """
         from milknado.domains.common.errors import InvalidContainment
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         with pytest.raises(InvalidContainment):
             graph.update_node(goal.id, kind=NodeKind.ROADMAP)
 
@@ -124,8 +126,8 @@ class TestContainmentEnforcement:
         """
         from milknado.domains.common.errors import InvalidContainment
 
-        parent = graph.add_node("pg", kind=NodeKind.GOAL)
-        graph.add_node("sg", parent_id=parent.id, kind=NodeKind.GOAL)
+        parent = graph.add_node("pg", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("sg", parent_id=parent.id, spec=NodeSpec(kind=NodeKind.GOAL))
         with pytest.raises(InvalidContainment):
             graph.update_node(parent.id, kind=NodeKind.TASK)
 
@@ -142,7 +144,7 @@ class TestRunStartRefusal:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal node", kind=NodeKind.GOAL)
+        goal = g.add_node("goal node", spec=NodeSpec(kind=NodeKind.GOAL))
         g.close()
 
         with (
@@ -165,7 +167,7 @@ class TestRunStartRefusal:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        roadmap = g.add_node("roadmap node", kind=NodeKind.ROADMAP)
+        roadmap = g.add_node("roadmap node", spec=NodeSpec(kind=NodeKind.ROADMAP))
         g.close()
 
         with (
@@ -196,7 +198,7 @@ class TestValidateGoalRunnable:
         """A pending GOAL with zero children is an undecomposed stub → error."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
         report = validate_goal_runnable(graph, goal.id)
         assert any("zero" in e.lower() or "child" in e.lower() for e in report.errors)
 
@@ -204,8 +206,8 @@ class TestValidateGoalRunnable:
         """A leaf descendant that is a goal (not task) counts as an error."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        _ = graph.add_node("sg", parent_id=goal.id, kind=NodeKind.GOAL)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        _ = graph.add_node("sg", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.GOAL))
         # sub_goal is a leaf and not a TASK → error
         report = validate_goal_runnable(graph, goal.id)
         assert any("leaf" in e.lower() or "task" in e.lower() for e in report.errors)
@@ -214,9 +216,9 @@ class TestValidateGoalRunnable:
         """A goal with all leaf descendants being tasks has no errors."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        graph.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK)
-        graph.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("t1", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
+        graph.add_node("t2", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []
 
@@ -224,8 +226,8 @@ class TestValidateGoalRunnable:
         """An implement-flavored task without file hints emits a warning (never an error)."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []
         assert len(report.warnings) >= 1
@@ -240,8 +242,8 @@ class TestFlavorRoundTrip:
         assert task.flavor == "implement"
 
     def test_non_task_nodes_have_no_flavor(self, graph: MikadoGraph) -> None:
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         assert goal.flavor is None
         assert roadmap.flavor is None
 
@@ -249,9 +251,11 @@ class TestFlavorRoundTrip:
         """flavor persists through graph close/reopen."""
         db_path = tmp_path / "rt.db"
         g = MikadoGraph(db_path)
-        goal = g.add_node("g", kind=NodeKind.GOAL)
+        goal = g.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
         # Task under goal — must pass containment check
-        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
+        task = g.add_node(
+            "t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike")
+        )
         task_id = task.id
         g.close()
 
@@ -265,10 +269,12 @@ class TestFlavorRoundTrip:
         """Every builtin flavor value persists through close/reopen."""
         db_path = tmp_path / "flavors.db"
         g = MikadoGraph(db_path)
-        goal = g.add_node("g", kind=NodeKind.GOAL)
+        goal = g.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
         flavor_ids: dict[str, int] = {}
         for flavor in BUILTIN_FLAVORS:
-            t = g.add_node(f"t-{flavor}", parent_id=goal.id, kind=NodeKind.TASK, flavor=flavor)
+            t = g.add_node(
+                f"t-{flavor}", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor=flavor)
+            )
             flavor_ids[flavor] = t.id
         g.close()
 
@@ -282,12 +288,12 @@ class TestFlavorRoundTrip:
     def test_setting_flavor_on_goal_raises(self, graph: MikadoGraph) -> None:
         """Setting flavor on a kind=goal node raises ValueError."""
         with pytest.raises(ValueError, match="flavor"):
-            graph.add_node("g", kind=NodeKind.GOAL, flavor="spike")
+            graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL, flavor="spike"))
 
     def test_setting_flavor_on_roadmap_raises(self, graph: MikadoGraph) -> None:
         """Setting flavor on a kind=roadmap node raises ValueError."""
         with pytest.raises(ValueError, match="flavor"):
-            graph.add_node("rm", kind=NodeKind.ROADMAP, flavor="research")
+            graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP, flavor="research"))
 
 
 # ── missing-column defaults (pre-migration db) ─────────────────────────────────
@@ -338,7 +344,7 @@ class TestMissingColumnDefaults:
         conn.commit()
         conn.close()
 
-        # Open via MikadoGraph — ensure_schema should add the flavor column
+        # Open via MikadoGraph — row_to_node should default the flavor column
         g = MikadoGraph(db_path)
         nodes = g.get_all_nodes()
         g.close()
@@ -403,7 +409,7 @@ class TestCoverageBranches:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal node", kind=NodeKind.GOAL)
+        goal = g.add_node("goal node", spec=NodeSpec(kind=NodeKind.GOAL))
         g.close()
 
         with (
@@ -426,8 +432,10 @@ class TestCoverageBranches:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("g", kind=NodeKind.GOAL)
-        g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)  # flavor=IMPLEMENT (default)
+        goal = g.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        g.add_node(
+            "t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK)
+        )  # flavor=IMPLEMENT (default)
         g.close()
 
         with (
@@ -455,8 +463,8 @@ class TestEditNodeFlavor:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal", kind=NodeKind.GOAL)
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = g.add_node("task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         g.close()
 
         with (
@@ -479,7 +487,7 @@ class TestEditNodeFlavor:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal", kind=NodeKind.GOAL)
+        goal = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
         g.close()
 
         with (
@@ -502,9 +510,11 @@ class TestEditNodeFlavor:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        root = g.add_node("root", kind=NodeKind.ROADMAP)
-        goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
+        root = g.add_node("root", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = g.add_node("goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
+        task = g.add_node(
+            "task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike")
+        )
         g.close()
 
         with (
@@ -529,9 +539,9 @@ class TestEditNodeFlavor:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        root = g.add_node("root", kind=NodeKind.ROADMAP)
-        goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+        root = g.add_node("root", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = g.add_node("goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
+        task = g.add_node("task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         g.close()
 
         with (
@@ -560,9 +570,9 @@ class TestGraphSummaryFlavorFilter:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal", kind=NodeKind.GOAL)
-        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
-        g.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK, flavor="implement")
+        goal = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        g.add_node("t1", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike"))
+        g.add_node("t2", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="implement"))
         g.close()
 
         with (
@@ -586,9 +596,9 @@ class TestGraphSummaryFlavorFilter:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal", kind=NodeKind.GOAL)
-        g.add_node("t1", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
-        g.add_node("t2", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        g.add_node("t1", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike"))
+        g.add_node("t2", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         g.close()
 
         with (
@@ -623,10 +633,12 @@ class TestKindEditClearsFlavor:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        root = g.add_node("root", kind=NodeKind.ROADMAP)
-        goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
+        root = g.add_node("root", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = g.add_node("goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
         # TASK→TASK under goal is legal; parent is goal so we can later edit to sub-goal
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
+        task = g.add_node(
+            "task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike")
+        )
         task_id = task.id
         g.close()
 
@@ -660,9 +672,11 @@ class TestKindEditClearsFlavor:
 
         graph_path = tmp_path / "direct.db"
         g = MikadoGraph(graph_path)
-        root = g.add_node("root", kind=NodeKind.ROADMAP)
-        goal = g.add_node("goal", parent_id=root.id, kind=NodeKind.GOAL)
-        task = g.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="research")
+        root = g.add_node("root", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = g.add_node("goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
+        task = g.add_node(
+            "t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="research")
+        )
         task_id = task.id
 
         # Confirm flavor is set before the edit
@@ -693,7 +707,7 @@ class TestRalphRunStartRefusesGoal:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal node", kind=NodeKind.GOAL)
+        goal = g.add_node("goal node", spec=NodeSpec(kind=NodeKind.GOAL))
         goal_id = goal.id
         g.close()
 
@@ -722,8 +736,8 @@ class TestValidateGoalRunnableEdgeCases:
         # Build goal → task, then directly corrupt the task row to kind=roadmap
         # to simulate any path that produces a non-TASK leaf without going through
         # the containment enforcement (e.g. direct DB manipulation or legacy data).
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        task = graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = graph.add_node("t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
 
         # Corrupt the task kind directly in the DB to roadmap (clearing flavor to
         # keep the row's flavor invariant: only task nodes may carry a flavor).
@@ -742,7 +756,7 @@ class TestValidateGoalRunnableEdgeCases:
         Reading a corrupt row (kind!=task but flavor set) must fail loud rather
         than silently coercing flavor to None and hiding the broken invariant.
         """
-        task = graph.add_node("t", kind=NodeKind.TASK, flavor="implement")
+        task = graph.add_node("t", spec=NodeSpec(kind=NodeKind.TASK, flavor="implement"))
         graph._conn.execute("UPDATE nodes SET kind = 'roadmap' WHERE id = ?", (task.id,))
         graph._conn.commit()
         with pytest.raises(ValueError, match="flavor"):
@@ -752,10 +766,10 @@ class TestValidateGoalRunnableEdgeCases:
         """A goal → task → task (Mikado prereq chain) has no errors; leaf tasks are fine."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        parent_task = graph.add_node("pt", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        parent_task = graph.add_node("pt", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         # TASK → TASK is a Mikado prerequisite chain (legal by VALID_CHILD_KINDS)
-        graph.add_node("ct", parent_id=parent_task.id, kind=NodeKind.TASK)
+        graph.add_node("ct", parent_id=parent_task.id, spec=NodeSpec(kind=NodeKind.TASK))
 
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []
@@ -765,8 +779,8 @@ class TestValidateGoalRunnableEdgeCases:
         spec/spike/etc. don't."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        goal = graph.add_node("g", kind=NodeKind.GOAL)
-        graph.add_node("t", parent_id=goal.id, kind=NodeKind.TASK, flavor="spike")
+        goal = graph.add_node("g", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("t", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK, flavor="spike"))
 
         report = validate_goal_runnable(graph, goal.id)
         assert report.errors == []
@@ -789,8 +803,8 @@ class TestEditNodeFlavorPersistence:
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
-        goal = g.add_node("goal", kind=NodeKind.GOAL)
-        task = g.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+        goal = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = g.add_node("task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         task_id = task.id
         # Starts as IMPLEMENT (default)
         assert task.flavor == "implement"
@@ -827,8 +841,8 @@ class TestReparentToRoot:
     ) -> None:
         """Reparenting a node to None (detaching to root) always succeeds;
         spec says root nodes (parent_id=None) accept any kind."""
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
-        goal = graph.add_node("g", parent_id=roadmap.id, kind=NodeKind.GOAL)
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = graph.add_node("g", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL))
 
         # Move goal to root (parent_id=None) — no containment check applies
         graph.move_node(goal.id, None)  # must not raise
@@ -847,8 +861,10 @@ class TestDoneLeafGoalNoError:
         undecomposed stub; the spec scopes that error to PENDING goals only."""
         from milknado.domains.graph.runnability import validate_goal_runnable
 
-        outer = graph.add_node("outer", kind=NodeKind.GOAL)
-        done_leaf = graph.add_node("done-leaf", parent_id=outer.id, kind=NodeKind.GOAL)
+        outer = graph.add_node("outer", spec=NodeSpec(kind=NodeKind.GOAL))
+        done_leaf = graph.add_node(
+            "done-leaf", parent_id=outer.id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
         # Force DONE via direct DB write (same pattern as test_roadmap_leaf_is_an_error
         # above — the normal status machine requires PENDING→RUNNING→DONE).
         graph._conn.execute("UPDATE nodes SET status = 'done' WHERE id = ?", (done_leaf.id,))
@@ -868,7 +884,7 @@ class TestUpdateNodeFieldsConflictingFlavor:
         from milknado.domains.graph._mutations import update_node_fields
 
         g = MikadoGraph(tmp_path / "mutations.db")
-        task = g.add_node("t", kind=NodeKind.TASK)
+        task = g.add_node("t", spec=NodeSpec(kind=NodeKind.TASK))
         task_id = task.id
         g.close()
 
@@ -889,7 +905,7 @@ class TestApplyBatchesParentContainmentCheck:
         ROADMAP → TASK is not in VALID_CHILD_KINDS."""
         from milknado.domains.planning.batching_bridge import apply_batches_to_graph
 
-        roadmap = graph.add_node("rm", kind=NodeKind.ROADMAP)
+        roadmap = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         plan, manifest = _simple_plan()
 
         with pytest.raises(ValueError, match="parent"):

@@ -11,6 +11,7 @@ from rich.console import Console
 
 from milknado.domains.common.types import (
     MikadoNode,
+    NodeSpec,
     NodeStatus,
     RebaseResult,
 )
@@ -1572,7 +1573,7 @@ class TestDispatchBatchFlavoredGates:
         graph.add_node(
             "research leaf",
             parent_id=root.id,
-            flavor="research",
+            spec=NodeSpec(flavor="research"),
         )
 
         captured: list = []

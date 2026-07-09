@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -10,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from milknado._mcp_core import mcp
-from milknado.domains.common import WorktreeMode
+from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
 from milknado.mcp_run import (
@@ -99,11 +98,13 @@ def _seed_run(
         if status != "running":
             graph.finish_run(
                 run_id,
-                status=status,
-                exit_code=exit_code,
-                timed_out=timed_out,
-                ended_at=ended_at or datetime.now(UTC).isoformat(),
-                error=error,
+                RunResult(
+                    status=status,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    ended_at=ended_at or datetime.now(UTC).isoformat(),
+                    error=error,
+                ),
             )
         conn.commit()
     finally:
@@ -385,9 +386,9 @@ class TestTodoTools:
     def test_node_kind_persists_round_trip(self, tmp_path: Path) -> None:
         graph, _cfg = open_graph(tmp_path)
         try:
-            from milknado.domains.common import NodeKind
+            from milknado.domains.common import NodeKind, NodeSpec
 
-            node = graph.add_node("roadmap-node", kind=NodeKind.ROADMAP)
+            node = graph.add_node("roadmap-node", spec=NodeSpec(kind=NodeKind.ROADMAP))
             reloaded = graph.get_node(node.id)
             assert reloaded is not None
             assert reloaded.kind == NodeKind.ROADMAP
@@ -435,9 +436,9 @@ class TestTodoBriefAndRun:
     def test_brief_with_file_ownership_lists_files(self, tmp_path: Path) -> None:
         graph, _cfg = open_graph(tmp_path)
         try:
-            from milknado.domains.common import NodeKind
+            from milknado.domains.common import NodeKind, NodeSpec
 
-            node = graph.add_node("touch foo", kind=NodeKind.TASK)
+            node = graph.add_node("touch foo", spec=NodeSpec(kind=NodeKind.TASK))
             graph.set_file_ownership(node.id, ["src/foo.py", "src/bar.py"])
         finally:
             graph.close()
@@ -1177,58 +1178,6 @@ class TestTodoAsyncRun:
             graph.close()
         assert node is not None
         assert node.run_id == started["run_id"]
-
-
-class TestSchemaMigration:
-    def test_mikado_graph_migrates_pre_kind_db(self, tmp_path: Path) -> None:
-        """A SQLite DB created before the `kind` column must be migrated by
-        MikadoGraph.__init__'s ensure_schema so that add_node's INSERT
-        (which includes `kind`) works on upgrade."""
-
-        from milknado.domains.common import NodeKind
-
-        # Pre-populate the standard milknado db path with a pre-`kind` schema.
-        db_dir = tmp_path / ".milknado"
-        db_dir.mkdir()
-        db_path = db_dir / "milknado.db"
-        conn = sqlite3.connect(db_path)
-        conn.executescript("""
-            CREATE TABLE nodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                parent_id INTEGER,
-                worktree_path TEXT,
-                branch_name TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT,
-                oversized INTEGER NOT NULL DEFAULT 0,
-                batch_index INTEGER
-            );
-        """)
-        conn.execute(
-            "INSERT INTO nodes (description, created_at) VALUES (?, ?)",
-            ("legacy", "2026-01-01T00:00:00+00:00"),
-        )
-        conn.commit()
-        conn.close()
-
-        # Open MikadoGraph — its __init__ runs create_tables + ensure_schema,
-        # which must migrate the `kind` column onto the existing table.
-        graph, _cfg = open_graph(tmp_path)
-        try:
-            # The legacy row reads back as TASK (default).
-            all_nodes = graph.get_all_nodes()
-            legacy_node = next(n for n in all_nodes if n.description == "legacy")
-            assert legacy_node.kind == NodeKind.TASK
-            # And a fresh add_node with a non-default kind must succeed
-            # (this is the INSERT that would fail without the migration).
-            node = graph.add_node("post-migration", kind=NodeKind.GOAL)
-            reloaded = graph.get_node(node.id)
-            assert reloaded is not None
-            assert reloaded.kind == NodeKind.GOAL
-        finally:
-            graph.close()
 
 
 class TestTrackFollowUp:

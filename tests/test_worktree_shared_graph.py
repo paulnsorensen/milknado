@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from milknado._mcp_core import resolve_project_root
-from milknado.domains.common import NodeKind, WorktreeMode
+from milknado.domains.common import NodeKind, NodeSpec, WorktreeMode
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import MikadoGraph
 
@@ -118,8 +118,8 @@ class TestResolveProjectRootWorktreeAnchoring:
 
 def _make_goal_with_task(graph: MikadoGraph) -> tuple[int, int]:
     """Add a goal with one task child. Returns (goal_id, task_id)."""
-    goal = graph.add_node("goal", kind=NodeKind.GOAL)
-    task = graph.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    task = graph.add_node("task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
     return goal.id, task.id
 
 
@@ -295,25 +295,20 @@ class TestDispatchRefusalUnderClaimedGoal:
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir()
         g = MikadoGraph(db)
-        goal_id = g.add_node("goal", kind=NodeKind.GOAL).id
-        task1_id = g.add_node("task1", parent_id=goal_id, kind=NodeKind.TASK).id
-        task2_id = g.add_node("task2", parent_id=goal_id, kind=NodeKind.TASK).id
+        goal_id = g.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL)).id
+        task1_id = g.add_node("task1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK)).id
+        task2_id = g.add_node("task2", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK)).id
         g.close()
-
-        from milknado._mcp_core import (
-            _check_ancestor_goal_not_claimed,
-            _claim_ancestor_goal_for_dispatch,
-        )
 
         graph = MikadoGraph(db)
         # First dispatch: claim the goal under task1's run_id.
-        _claim_ancestor_goal_for_dispatch(graph, task1_id, "run-T1")
+        graph.claim_ancestor_goal_for_dispatch(task1_id, "run-T1")
 
         # Second dispatch by the same process: must NOT raise.
         # The goal is claimed by run-T1/current-pid; the same process dispatching
         # task2 must be exempt — not refused as a foreign coordinator.
         try:
-            _check_ancestor_goal_not_claimed(graph, task2_id)
+            graph.claim_ancestor_goal_for_dispatch(task2_id, "run-T2")
         except ValueError as exc:
             raise AssertionError(
                 f"same coordinator process dispatching a sibling must not be refused; got: {exc}"
@@ -407,9 +402,9 @@ class TestAncestorWalkDeepNesting:
         """roadmap → goal (claimed) → task: walk reaches the goal through the roadmap."""
         from milknado.domains.common import NodeKind
 
-        roadmap = graph.add_node("roadmap", kind=NodeKind.ROADMAP)
-        goal = graph.add_node("goal", parent_id=roadmap.id, kind=NodeKind.GOAL)
-        task = graph.add_node("task", parent_id=goal.id, kind=NodeKind.TASK)
+        roadmap = graph.add_node("roadmap", spec=NodeSpec(kind=NodeKind.ROADMAP))
+        goal = graph.add_node("goal", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL))
+        task = graph.add_node("task", parent_id=goal.id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.claim_goal(goal.id, "run-coord-A", now=now_iso())
         graph.set_goal_pid(goal.id, "run-coord-A", os.getpid())
 
@@ -422,7 +417,7 @@ class TestAncestorWalkDeepNesting:
 
     def test_task_with_no_ancestor_goal_is_allowed(self, graph: MikadoGraph) -> None:
         """A task with no goal ancestor is never blocked."""
-        task = graph.add_node("orphan task", kind=NodeKind.TASK)
+        task = graph.add_node("orphan task", spec=NodeSpec(kind=NodeKind.TASK))
         assert graph.ancestor_goal_claimed_by_other(task.id, caller_run_id="any") is None
 
 
@@ -611,12 +606,10 @@ class TestProductionClaimPath:
         return tmp_path, MikadoGraph(db), goal_id, task_id
 
     def test_claim_ancestor_goal_for_dispatch_writes_claim(self, tmp_path: Path) -> None:
-        """_claim_ancestor_goal_for_dispatch claims the ancestor goal with the caller pid."""
-        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
-
+        """claim_ancestor_goal_for_dispatch claims the ancestor goal with the caller pid."""
         _, graph, goal_id, task_id = self._seed(tmp_path)
         run_id = "run-A"
-        _claim_ancestor_goal_for_dispatch(graph, task_id, run_id)
+        graph.claim_ancestor_goal_for_dispatch(task_id, run_id)
         goal = graph.get_node(goal_id)
         assert goal is not None
         assert goal.goal_run_id == run_id, (
@@ -633,12 +626,11 @@ class TestProductionClaimPath:
         Simulate a different coordinator by overwriting the claim's pid with a
         different live process pid after claiming.
         """
-        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
         from milknado.domains.graph._persistence import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
         # Run A claims via the production helper.
-        _claim_ancestor_goal_for_dispatch(graph, task_id, "run-A")
+        graph.claim_ancestor_goal_for_dispatch(task_id, "run-A")
         # Simulate run A running in a different (live) process so the fence blocks run B.
         set_goal_claim_pid(graph._conn, goal_id, "run-A", os.getppid())
         graph._conn.commit()
@@ -654,12 +646,11 @@ class TestProductionClaimPath:
 
     def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
         """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
-        from milknado._mcp_core import _claim_ancestor_goal_for_dispatch
         from milknado.domains.graph._persistence import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
         # Run A claims, then set a dead pid to simulate coordinator crash.
-        _claim_ancestor_goal_for_dispatch(graph, task_id, "run-dead")
+        graph.claim_ancestor_goal_for_dispatch(task_id, "run-dead")
         set_goal_claim_pid(graph._conn, goal_id, "run-dead", _DEAD_PID)
         graph.close()
 
@@ -674,6 +665,38 @@ class TestProductionClaimPath:
             assert "claimed" not in str(exc).lower(), (
                 f"dead claimant must be reclaimed inline; dispatch must not be blocked: {exc}"
             )
+
+    def test_claim_node_for_dispatch_cannot_bypass_ancestor_goal_fence(
+        self, tmp_path: Path
+    ) -> None:
+        """claim_node_for_dispatch must not let a foreign run bypass the goal fence.
+
+        Regression for finding #1: dispatch used to fence-check via a separate
+        helper that a caller could skip and claim the node directly. Now the
+        fence is inlined into claim_node_for_dispatch itself, so claiming a
+        node under an ancestor goal already held by a different live run must
+        raise — the node claim never happens.
+        """
+        from milknado.domains.graph._persistence import set_goal_claim_pid
+
+        root, graph, goal_id, task_id = self._seed(tmp_path)
+        # Run A claims the ancestor goal.
+        graph.claim_ancestor_goal_for_dispatch(task_id, "run-A")
+        # Simulate run A as a different live process so the fence blocks run B.
+        set_goal_claim_pid(graph._conn, goal_id, "run-A", os.getppid())
+        graph._conn.commit()
+
+        # Run B tries to claim the node directly via claim_node_for_dispatch.
+        with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
+            graph.claim_node_for_dispatch(task_id, "run-B", now=now_iso())
+
+        # The node must still be unclaimed — run B's claim never took effect.
+        node = graph.get_node(task_id)
+        assert node is not None
+        assert node.run_id is None, (
+            "a rejected dispatch claim must not leave the node claimed by run B"
+        )
+        graph.close()
 
     def test_claim_writes_pid_atomically(self, tmp_path: Path) -> None:
         """claim_goal_row must write the pid in the same INSERT, not via a separate UPDATE.

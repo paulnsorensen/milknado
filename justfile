@@ -189,3 +189,7 @@ fmt:
 # Open HTML coverage report
 coverage-html: test-coverage
     @if command -v open &> /dev/null; then open htmlcov/index.html; else echo "htmlcov/index.html ready"; fi
+
+# Audit runtime dependencies for known CVEs
+audit:
+    uv run --with pip-audit pip-audit

@@ -118,3 +118,30 @@ class DegradationMarker:
     source: str
     reason: str
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class NodeSpec:
+    """Optional add_node attributes, grouped to keep add_node's signature small."""
+
+    kind: NodeKind = NodeKind.TASK
+    flavor: str | None = None
+    wiki_ref: str | None = None
+    artifact_path: str | None = None
+    prereqs: tuple[int, ...] = ()
+    flavor_registry: frozenset[str] = BUILTIN_FLAVORS
+    oversized: bool = False
+    batch_index: int | None = None
+
+
+@dataclass(frozen=True)
+class RunResult:
+    """Terminal outcome of a run, threaded from graph.finish_run to persistence."""
+
+    status: str
+    exit_code: int | None
+    timed_out: bool
+    ended_at: str
+    error: str | None = None
+    detail: str | None = None
+    rebased: bool | None = None

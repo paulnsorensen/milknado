@@ -13,9 +13,9 @@ import shlex
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
-from milknado.loop._agent import execute_agent
+from milknado.loop._agent import AgentRunSpec, execute_agent
 from milknado.loop._events import (
     AgentActivityData,
     BoundEmitter,
@@ -186,36 +186,62 @@ def _assemble_prompt(
     return prompt
 
 
-def _run_agent_phase(
-    prompt: str,
-    config: RunConfig,
-    state: RunState,
-    emit: BoundEmitter,
-    hooks: CombinedAgentHook | None,
-) -> tuple[bool, bool]:
-    """Run the agent subprocess, update state counters, and emit the result event.
+class _AgentCallbacks(NamedTuple):
+    on_output_line: Any
+    on_tool_use: Any
+    on_activity: Any
 
-    Returns ``(agent_succeeded, stop_for_completion_signal)``.
-    """
+
+def _resolve_agent_command(config: RunConfig) -> tuple[list[str], Any]:
+    """Parse the agent command string and select its adapter."""
     try:
         cmd = shlex.split(config.agent)
     except ValueError as exc:
         raise ValueError(
             f"Invalid agent command syntax: {config.agent!r}. {_field_hint(FIELD_AGENT)}"
         ) from exc
+    return cmd, select_adapter(cmd)
 
-    adapter = select_adapter(cmd)
-    completion_signal = config.completion_signal
+
+def _build_agent_callbacks(
+    config: RunConfig,
+    state: RunState,
+    emit: BoundEmitter,
+    hooks: CombinedAgentHook | None,
+) -> _AgentCallbacks:
+    """Build the on_output_line, on_tool_use, and on_activity callbacks for one iteration."""
 
     def _on_output_line(line: str, stream: OutputStream) -> None:
         if emit.wants_agent_output_lines():
             emit.agent_output_line(line, stream, state.iteration)
 
-    if emit.wants_agent_output_lines() or config.log_dir is not None:
-        on_output_line = _on_output_line
-    else:
-        on_output_line = None
+    on_output_line = (
+        _on_output_line if emit.wants_agent_output_lines() or config.log_dir is not None else None
+    )
 
+    on_tool_use = _build_tool_use_bridge(
+        state=state,
+        emit=emit,
+        hooks=hooks,
+        max_turns=config.max_turns,
+        max_turns_grace=config.max_turns_grace,
+    )
+
+    def on_activity(data: dict[str, Any]) -> None:
+        emit(EventType.AGENT_ACTIVITY, AgentActivityData(raw=data, iteration=state.iteration))
+
+    return _AgentCallbacks(on_output_line, on_tool_use, on_activity)
+
+
+def _launch_agent(
+    cmd: list[str],
+    adapter: Any,
+    prompt: str,
+    config: RunConfig,
+    state: RunState,
+    callbacks: _AgentCallbacks,
+):
+    """Run the agent subprocess, translating a missing binary into a clear error."""
     # Capture full stdout only when somebody downstream actually needs the
     # bytes — log writing, or promise detection for adapters that cannot
     # work from ``agent.result_text`` alone.  Without this gate every
@@ -226,88 +252,93 @@ def _run_agent_phase(
     )
     capture_stdout = config.log_dir is not None or capture_stdout_for_promise
 
-    on_tool_use = _build_tool_use_bridge(
-        state=state,
-        emit=emit,
-        hooks=hooks,
-        max_turns=config.max_turns,
-        max_turns_grace=config.max_turns_grace,
-    )
-
     try:
-
-        def on_activity(data: dict[str, Any]) -> None:
-            emit(
-                EventType.AGENT_ACTIVITY,
-                AgentActivityData(raw=data, iteration=state.iteration),
+        return execute_agent(
+            AgentRunSpec(
+                cmd,
+                prompt,
+                timeout=config.timeout,
+                log_dir=config.log_dir,
+                iteration=state.iteration,
+                adapter=adapter,
+                on_activity=callbacks.on_activity,
+                on_output_line=callbacks.on_output_line,
+                capture_result_text=True,
+                capture_stdout=capture_stdout,
+                max_turns=config.max_turns,
+                max_turns_grace=config.max_turns_grace,
+                on_tool_use=callbacks.on_tool_use,
+                cwd=config.project_root,
             )
-
-        agent = execute_agent(
-            cmd,
-            prompt,
-            timeout=config.timeout,
-            log_dir=config.log_dir,
-            iteration=state.iteration,
-            adapter=adapter,
-            on_activity=on_activity,
-            on_output_line=on_output_line,
-            capture_result_text=True,
-            capture_stdout=capture_stdout,
-            max_turns=config.max_turns,
-            max_turns_grace=config.max_turns_grace,
-            on_tool_use=on_tool_use,
-            cwd=config.project_root,
         )
     except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"Agent command not found: {config.agent!r}. {_field_hint(FIELD_AGENT)}"
         ) from exc
 
-    duration = format_duration(agent.elapsed)
-    promise_completed = agent.success and adapter.extract_completion_signal(
-        result_text=agent.result_text,
-        stdout=agent.captured_stdout,
-        user_signal=completion_signal,
-    )
-    if promise_completed:
-        state.promise_completed = True
 
-    if agent.turn_capped:
-        emit(
-            EventType.ITERATION_TURN_CAPPED,
-            TurnCappedData(
-                iteration=state.iteration,
-                count=agent.tool_use_count,
-            ),
+def _promise_completed(agent: Any, adapter: Any, config: RunConfig) -> bool:
+    """Return whether the agent's exit + output satisfy the completion signal."""
+    return bool(
+        agent.success
+        and adapter.extract_completion_signal(
+            result_text=agent.result_text,
+            stdout=agent.captured_stdout,
+            user_signal=config.completion_signal,
         )
-        if hooks is not None:
-            hooks.on_turn_capped(
-                iteration=state.iteration,
-                count=agent.tool_use_count,
-            )
+    )
 
+
+def _emit_turn_capped(
+    agent: Any, state: RunState, emit: BoundEmitter, hooks: CombinedAgentHook | None
+) -> None:
+    if not agent.turn_capped:
+        return
+    emit(
+        EventType.ITERATION_TURN_CAPPED,
+        TurnCappedData(iteration=state.iteration, count=agent.tool_use_count),
+    )
+    if hooks is not None:
+        hooks.on_turn_capped(iteration=state.iteration, count=agent.tool_use_count)
+
+
+def _classify_iteration_outcome(
+    agent: Any,
+    state: RunState,
+    promise_completed: bool,
+    completion_signal: str | None,
+    duration: str,
+) -> tuple[EventType, str]:
+    """Mark the state counter for this outcome and derive its (event_type, detail)."""
     if agent.timed_out:
         state.mark_timed_out()
-        event_type = EventType.ITERATION_TIMED_OUT
-        state_detail = f"timed out after {duration}"
-    elif agent.turn_capped:
+        return EventType.ITERATION_TIMED_OUT, f"timed out after {duration}"
+    if agent.turn_capped:
         state.mark_completed()
-        event_type = EventType.ITERATION_COMPLETED
-        state_detail = f"completed at turn cap ({agent.tool_use_count} tool uses, {duration})"
-    elif agent.success:
+        detail = f"completed at turn cap ({agent.tool_use_count} tool uses, {duration})"
+        return EventType.ITERATION_COMPLETED, detail
+    if agent.success:
         state.mark_completed()
-        event_type = EventType.ITERATION_COMPLETED
         if promise_completed:
-            state_detail = (
+            detail = (
                 f"completed via promise tag <promise>{completion_signal}</promise> ({duration})"
             )
         else:
-            state_detail = f"completed ({duration})"
-    else:
-        state.mark_failed()
-        event_type = EventType.ITERATION_FAILED
-        state_detail = f"failed with exit code {agent.returncode} ({duration})"
+            detail = f"completed ({duration})"
+        return EventType.ITERATION_COMPLETED, detail
+    state.mark_failed()
+    return EventType.ITERATION_FAILED, f"failed with exit code {agent.returncode} ({duration})"
 
+
+def _build_ended_data(
+    agent: Any,
+    state: RunState,
+    config: RunConfig,
+    duration: str,
+    state_detail: str,
+    emit: BoundEmitter,
+) -> IterationEndedData:
+    """Build the IterationEndedData, echoing raw output when peek is off."""
     ended_data = IterationEndedData(
         iteration=state.iteration,
         returncode=agent.returncode,
@@ -327,25 +358,62 @@ def _run_agent_phase(
             ended_data["echo_stderr"] = agent.captured_stderr
         elif agent.result_text is None and agent.captured_stdout is not None:
             ended_data["echo_stdout"] = agent.captured_stdout
+    return ended_data
 
+
+def _notify_iteration_hooks(
+    hooks: CombinedAgentHook | None,
+    state: RunState,
+    agent: Any,
+    promise_completed: bool,
+    completion_signal: str | None,
+) -> None:
+    if hooks is None:
+        return
+    hooks.on_iteration_completed(
+        iteration=state.iteration,
+        result={
+            "returncode": agent.returncode,
+            "timed_out": agent.timed_out,
+            "turn_capped": agent.turn_capped,
+            "tool_use_count": agent.tool_use_count,
+            "duration": agent.elapsed,
+            "result_text": agent.result_text,
+        },
+    )
+    if promise_completed:
+        hooks.on_completion_signal(iteration=state.iteration, signal=completion_signal)
+
+
+def _run_agent_phase(
+    prompt: str,
+    config: RunConfig,
+    state: RunState,
+    emit: BoundEmitter,
+    hooks: CombinedAgentHook | None,
+) -> tuple[bool, bool]:
+    """Run the agent subprocess, update state counters, and emit the result event.
+
+    Returns ``(agent_succeeded, stop_for_completion_signal)``.
+    """
+    cmd, adapter = _resolve_agent_command(config)
+    callbacks = _build_agent_callbacks(config, state, emit, hooks)
+    agent = _launch_agent(cmd, adapter, prompt, config, state, callbacks)
+
+    duration = format_duration(agent.elapsed)
+    promise_completed = _promise_completed(agent, adapter, config)
+    if promise_completed:
+        state.promise_completed = True
+
+    _emit_turn_capped(agent, state, emit, hooks)
+
+    event_type, state_detail = _classify_iteration_outcome(
+        agent, state, promise_completed, config.completion_signal, duration
+    )
+    ended_data = _build_ended_data(agent, state, config, duration, state_detail, emit)
     emit(event_type, ended_data)
-    if hooks is not None:
-        hooks.on_iteration_completed(
-            iteration=state.iteration,
-            result={
-                "returncode": agent.returncode,
-                "timed_out": agent.timed_out,
-                "turn_capped": agent.turn_capped,
-                "tool_use_count": agent.tool_use_count,
-                "duration": agent.elapsed,
-                "result_text": agent.result_text,
-            },
-        )
-        if promise_completed:
-            hooks.on_completion_signal(
-                iteration=state.iteration,
-                signal=completion_signal,
-            )
+    _notify_iteration_hooks(hooks, state, agent, promise_completed, config.completion_signal)
+
     return agent.success, promise_completed and config.stop_on_completion_signal
 
 

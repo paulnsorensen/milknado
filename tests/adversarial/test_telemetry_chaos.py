@@ -6,6 +6,7 @@ Focus: permission errors, symlink traps, NaN/Infinity floats, concurrent writes.
 from __future__ import annotations
 
 import json
+import math
 import threading
 from pathlib import Path
 
@@ -108,40 +109,28 @@ class TestSymlinkToFullDevice:
 
 class TestFloatEdgeCasesInSpread:
     def test_nan_spread_in_spread_report(self) -> None:
-        """NaN in spread — _build_record must not crash."""
+        """NaN in spread — _build_record propagates it; json.dumps allows NaN by default."""
         sym = SymbolRef(name="foo", file="src/foo.py")
         spread_report = (SymbolSpread(symbol=sym, spread=float("nan")),)  # ty: ignore[invalid-argument-type]
-        # SymbolSpread.spread is typed as int; float("nan") is a float.
-        # This probes whether the runtime allows it and whether max/mean crash.
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(spread_report=spread_report)
-        # May raise TypeError in max() or propagate NaN — document behavior.
-        try:
-            record = _build_record(manifest, plan)
-            # If it doesn't crash, NaN may propagate into the record.
-            # json.dumps(NaN) raises ValueError in strict mode.
-            try:
-                dumped = json.dumps(record)
-                parsed = json.loads(dumped)
-                # If JSON serialized, max_spread might be "NaN" string or similar.
-                _ = parsed
-            except (ValueError, TypeError):
-                pass  # NaN not JSON-serializable — silent failure in production
-        except (TypeError, ValueError):
-            pass  # Acceptable: runtime rejects NaN spread
+        record = _build_record(manifest, plan)
+        assert math.isnan(record["max_spread"])  # type: ignore[arg-type]
+        dumped = json.dumps(record)
+        assert "NaN" in dumped  # json.dumps(allow_nan=True) is the Python default
 
     def test_infinity_spread_in_spread_report(self) -> None:
-        """Infinity in spread — json.dumps(Infinity) raises ValueError in standard JSON."""
+        """Infinity in spread - _build_record propagates it; json.dumps allows
+        Infinity by default.
+        """
         sym = SymbolRef(name="foo", file="src/foo.py")
         spread_report = (SymbolSpread(symbol=sym, spread=float("inf")),)  # ty: ignore[invalid-argument-type]
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(spread_report=spread_report)
-        try:
-            record = _build_record(manifest, plan)
-            result = json.dumps(record)
-            _ = result
-        except (TypeError, ValueError):
-            pass  # Expected: json.dumps rejects Infinity
+        record = _build_record(manifest, plan)
+        assert record["max_spread"] == float("inf")
+        dumped = json.dumps(record)
+        assert "Infinity" in dumped  # json.dumps(allow_nan=True) is the Python default
 
 
 class TestConcurrentWrites:

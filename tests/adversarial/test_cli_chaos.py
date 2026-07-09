@@ -52,8 +52,8 @@ class TestSpecFlagValidation:
         )
         assert result.exit_code != 0
 
-    def test_binary_file_renamed_md_exit_nonzero_or_error(self, tmp_path: Path) -> None:
-        """Binary file with .md extension — _derive_goal reads it as UTF-8."""
+    def test_binary_file_renamed_md_exit_nonzero(self, tmp_path: Path) -> None:
+        """Binary file with .md extension — _derive_goal reads it as UTF-8 and rejects it."""
         spec = tmp_path / "binary.md"
         spec.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd")
         with (
@@ -69,9 +69,10 @@ class TestSpecFlagValidation:
                 app,
                 ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
             )
-            # Binary file read as UTF-8 may raise UnicodeDecodeError or return garbage goal.
-            # Either crash (exit != 0) or succeed with a garbage goal is documented.
-            _ = result  # document the exit code without asserting — it's implementation-defined
+            # The bytes are not valid UTF-8 — _derive_goal raises typer.BadParameter,
+            # which typer surfaces as exit code 2.
+            assert result.exit_code == 2
+            assert "not valid UTF-8" in result.output
 
     def test_empty_spec_file_does_not_crash(self, tmp_path: Path) -> None:
         """0-byte spec.md — _derive_goal returns stem, planner is launched."""
@@ -93,10 +94,9 @@ class TestSpecFlagValidation:
                 ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
             )
             # Empty spec → _derive_goal should return stem ("spec") not crash
-            if mock_planner.launch.called:
-                goal_arg = mock_planner.launch.call_args[0][0]
-                assert isinstance(goal_arg, str)
-                assert len(goal_arg) > 0
+            mock_planner.launch.assert_called_once()
+            goal_arg = mock_planner.launch.call_args[0][0]
+            assert goal_arg == "spec"
 
 
 class TestSolverStatusExitCodes:

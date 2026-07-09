@@ -24,6 +24,7 @@ from milknado.loop._agent import (
     _atomic_write_counter,
     _count_tool_uses_post_hoc,
     _read_agent_stream,
+    _ResolvedAgentRun,
     _run_agent_blocking,
     _setup_wind_down,
     _wrap_tool_use_with_counter,
@@ -221,14 +222,16 @@ def test_blocking_path_forces_buffering_for_post_hoc_cap(tmp_path) -> None:
     )
 
     result = _run_agent_blocking(
-        [sys.executable, "-c", script],
-        stdin_text="",
-        timeout=10,
-        log_dir=None,  # no log buffering
-        iteration=1,
-        capture_stdout=False,  # caller did not request capture
-        adapter=CopilotAdapter(),
-        max_turns=2,
+        _ResolvedAgentRun(
+            cmd=[sys.executable, "-c", script],
+            stdin_text="",
+            timeout=10,
+            log_dir=None,  # no log buffering
+            iteration=1,
+            capture_stdout=False,  # caller did not request capture
+            adapter=CopilotAdapter(),
+            max_turns=2,
+        )
     )
 
     # All three tool uses are counted post-hoc; 3 >= cap of 2 → capped.
@@ -241,14 +244,16 @@ def test_blocking_path_no_buffering_without_cap(tmp_path) -> None:
     script = 'print(\'{"type":"tool_use","name":"read"}\')'
 
     result = _run_agent_blocking(
-        [sys.executable, "-c", script],
-        stdin_text="",
-        timeout=10,
-        log_dir=None,
-        iteration=1,
-        capture_stdout=False,
-        adapter=CopilotAdapter(),
-        max_turns=None,  # no cap → no forced buffering, no post-hoc count
+        _ResolvedAgentRun(
+            cmd=[sys.executable, "-c", script],
+            stdin_text="",
+            timeout=10,
+            log_dir=None,
+            iteration=1,
+            capture_stdout=False,
+            adapter=CopilotAdapter(),
+            max_turns=None,  # no cap → no forced buffering, no post-hoc count
+        )
     )
 
     assert result.tool_use_count == 0

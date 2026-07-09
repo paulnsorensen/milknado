@@ -155,18 +155,18 @@ class TestPromiseCompletionSignals:
         assert state.failed == 0
         assert state.status == RunStatus.COMPLETED
         assert state.promise_completed is False
-        assert [call.kwargs["on_output_line"] for call in mock_execute_agent.call_args_list] == [
+        assert [call.args[0].on_output_line for call in mock_execute_agent.call_args_list] == [
             None,
             None,
             None,
         ]
         assert [
-            call.kwargs["capture_result_text"] for call in mock_execute_agent.call_args_list
+            call.args[0].capture_result_text for call in mock_execute_agent.call_args_list
         ] == [True, True, True]
         # Generic adapter requires full stdout, but the user didn't opt in
         # and no log dir is set — capture should stay off to avoid
         # buffering verbose agent output.
-        assert [call.kwargs["capture_stdout"] for call in mock_execute_agent.call_args_list] == [
+        assert [call.args[0].capture_stdout for call in mock_execute_agent.call_args_list] == [
             False,
             False,
             False,
@@ -195,7 +195,7 @@ class TestPromiseCompletionSignals:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_execute_agent.call_args.kwargs["capture_stdout"] is False
+        assert mock_execute_agent.call_args.args[0].capture_stdout is False
         assert state.promise_completed is True
 
     @patch("milknado.loop.engine.execute_agent")
@@ -220,7 +220,7 @@ class TestPromiseCompletionSignals:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_execute_agent.call_args.kwargs["capture_stdout"] is True
+        assert mock_execute_agent.call_args.args[0].capture_stdout is True
         assert state.promise_completed is True
 
     @patch("milknado.loop.engine.execute_agent")
@@ -238,7 +238,7 @@ class TestPromiseCompletionSignals:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_execute_agent.call_args.kwargs["capture_stdout"] is True
+        assert mock_execute_agent.call_args.args[0].capture_stdout is True
 
     @patch("milknado.loop.engine.execute_agent")
     def test_tagged_promise_stops_early_when_enabled(self, mock_execute_agent, tmp_path):
@@ -259,7 +259,7 @@ class TestPromiseCompletionSignals:
         run_loop(config, state, emitter)
 
         mock_execute_agent.assert_called_once()
-        assert mock_execute_agent.call_args.kwargs["capture_result_text"] is True
+        assert mock_execute_agent.call_args.args[0].capture_result_text is True
         assert state.iteration == 1
         assert state.completed == 1
         assert state.failed == 0
@@ -520,8 +520,8 @@ class TestCompletionVerifier:
         run_loop(config, state, NullEmitter())
 
         assert mock_execute_agent.call_count == 2
-        first_prompt = mock_execute_agent.call_args_list[0].args[1]
-        second_prompt = mock_execute_agent.call_args_list[1].args[1]
+        first_prompt = mock_execute_agent.call_args_list[0].args[0].prompt
+        second_prompt = mock_execute_agent.call_args_list[1].args[0].prompt
         assert feedback not in first_prompt
         assert feedback in second_prompt
         assert state.iteration == 2
@@ -554,7 +554,7 @@ class TestCompletionVerifier:
 
         run_loop(config, state, NullEmitter())
 
-        prompts = [c.args[1] for c in mock_execute_agent.call_args_list]
+        prompts = [c.args[0].prompt for c in mock_execute_agent.call_args_list]
         assert [feedback in p for p in prompts] == [False, True]
 
     @patch("milknado.loop.engine.execute_agent")

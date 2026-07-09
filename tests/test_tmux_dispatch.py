@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from milknado.adapters.tmux import RunWindow, TmuxDispatchError
-from milknado.domains.common import NodeStatus, WorktreeMode, pid_alive
+from milknado.domains.common import NodeStatus, RunResult, WorktreeMode, pid_alive
 from milknado.domains.dispatch import (
     ensure_tmux_ready,
     reconcile_run_window,
@@ -470,10 +470,9 @@ def test_loop_poll_reconciles_done_run_window(tmp_path, monkeypatch) -> None:
         graph.start_run(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
         graph.finish_run(
             run_id,
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:01:00+00:00",
+            RunResult(
+                status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:01:00+00:00"
+            ),
         )
     finally:
         graph.close()
@@ -503,10 +502,12 @@ def _seed_run(graph, run_id: str, status: str = "running") -> None:
     if status != "running":
         graph.finish_run(
             run_id,
-            status=status,
-            exit_code=0 if status == "done" else 1,
-            timed_out=False,
-            ended_at="2026-01-01T00:01:00+00:00",
+            RunResult(
+                status=status,
+                exit_code=0 if status == "done" else 1,
+                timed_out=False,
+                ended_at="2026-01-01T00:01:00+00:00",
+            ),
         )
 
 

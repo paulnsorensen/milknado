@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from milknado.domains.common import NodeStatus, WorktreeMode
+from milknado.domains.common import NodeStatus, RunResult, WorktreeMode
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.isolate import (
@@ -123,11 +123,13 @@ def dispatch_node_sync(
         graph.mark_failed(node_id)
         graph.finish_run(
             run_id,
-            status="failed",
-            exit_code=-1,
-            timed_out=False,
-            ended_at=now_iso(),
-            error=f"{type(exc).__name__}: {exc}",
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=now_iso(),
+                error=f"{type(exc).__name__}: {exc}",
+            ),
         )
         raise
     if merge is not None and not merge.rebased:
@@ -144,11 +146,13 @@ def dispatch_node_sync(
     if running:
         graph.finish_run(
             run_id,
-            status=worker_terminal,
-            exit_code=result.exit_code,
-            timed_out=result.timed_out,
-            ended_at=now_iso(),
-            rebased=rebased,
+            RunResult(
+                status=worker_terminal,
+                exit_code=result.exit_code,
+                timed_out=result.timed_out,
+                ended_at=now_iso(),
+                rebased=rebased,
+            ),
         )
     graph.set_run_id(node_id, run_id)
     return {

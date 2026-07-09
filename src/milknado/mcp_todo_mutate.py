@@ -16,7 +16,7 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph.status_flow import (
     apply_todo_status,
@@ -78,11 +78,13 @@ def milknado_todo_add(
         node = graph.add_node(
             description,
             parent_id=parent_id,
-            kind=node_kind,
-            flavor=node_flavor,
-            artifact_path=artifact,
-            prereqs=prereqs or (),
-            flavor_registry=cfg.flavor_registry,
+            spec=NodeSpec(
+                kind=node_kind,
+                flavor=node_flavor,
+                artifact_path=artifact,
+                prereqs=prereqs or (),
+                flavor_registry=cfg.flavor_registry,
+            ),
         )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
@@ -177,11 +179,13 @@ def milknado_track_follow_up(
         node = graph.add_node(
             description,
             parent_id=parent_id,
-            kind=node_kind,
-            flavor=node_flavor,
-            artifact_path=artifact,
-            prereqs=prereqs or (),
-            flavor_registry=cfg.flavor_registry,
+            spec=NodeSpec(
+                kind=node_kind,
+                flavor=node_flavor,
+                artifact_path=artifact,
+                prereqs=prereqs or (),
+                flavor_registry=cfg.flavor_registry,
+            ),
         )
         if files is not None:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, root))

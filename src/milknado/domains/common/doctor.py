@@ -48,14 +48,6 @@ def _probe(name: str) -> ToolProbe:
     return ToolProbe(name=name, path=path, version=ver)
 
 
-def _probe_python_package(name: str) -> ToolProbe:
-    try:
-        ver = pkg_version(name)
-    except PackageNotFoundError:
-        return ToolProbe(name=name, path=None, version="unknown")
-    return ToolProbe(name=name, path="(python package)", version=ver)
-
-
 def run_doctor(config_path: Path, config: MilknadoConfig) -> DoctorReport:
     try:
         milknado_version = pkg_version("milknado")

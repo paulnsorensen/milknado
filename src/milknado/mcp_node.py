@@ -29,8 +29,6 @@ import re
 from pathlib import Path
 
 from milknado._mcp_core import (
-    _check_ancestor_goal_not_claimed,
-    _claim_ancestor_goal_for_dispatch,
     mcp,
     open_graph,
     resolve_project_root,
@@ -38,8 +36,7 @@ from milknado._mcp_core import (
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.agent_argv import resolve_worker_tools
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
-from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso
-from milknado.domains.dispatch.isolate import _create_node_worktree
+from milknado.domains.dispatch import RUN_ID_RE, create_isolated_worktree, make_run_id, now_iso
 
 _logger = logging.getLogger(__name__)
 
@@ -206,18 +203,11 @@ def milknado_todo_claim(
             )
 
         run_id = make_run_id(node_id)
-        _check_ancestor_goal_not_claimed(graph, node_id)
-        _claim_ancestor_goal_for_dispatch(graph, node_id, run_id)
 
         profile = resolve_flavor_profile(cfg, node.flavor)
         brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
 
-        if not graph.claim_node(node_id, run_id, now=now_iso()):
-            current = graph.get_node(node_id)
-            status = current.status.value if current is not None else "gone"
-            raise ValueError(
-                f"node {node_id} is already {status}; set status back to pending to retry"
-            )
+        graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
 
         wt_path = _provision_claim_run(graph, root, node, run_id, worktree, cfg)
 
@@ -249,15 +239,13 @@ def _provision_claim_run(
     On any failure the claim is released with a fenced terminal write so the
     node is not stranded RUNNING; the exception is re-raised for the caller.
     """
-    from milknado.adapters import GitAdapter
-
     profile = resolve_flavor_profile(cfg, node.flavor)
     use_worktree = profile.worktree if worktree is None else worktree
     wt_path: Path | None = None
     try:
         if use_worktree:
-            wt_path, branch = _create_node_worktree(
-                GitAdapter(root), root, node.id, node.description, cfg.worktree_pattern
+            wt_path, branch = create_isolated_worktree(
+                root, node.id, node.description, cfg.worktree_pattern
             )
             graph.set_worktree(node.id, run_id, str(wt_path), branch)
             graph.start_run(run_id, node.id, str(wt_path), now_iso(), None)

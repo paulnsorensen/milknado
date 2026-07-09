@@ -8,6 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from milknado.adapters.tmux import RunWindow, TmuxAdapter
+from milknado.domains.common import RunResult
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -42,9 +43,9 @@ from milknado.domains.dispatch.isolate import (
 )
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
-    _build_worker_env,
     _execute_cancellable,
     _resolve_worker_cmd,
+    build_worker_env,
 )
 from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
 
@@ -136,7 +137,7 @@ def _run_in_tmux_window(
         cwd=cwd,
         log_path=log_path,
         exit_code_path=_exit_code_path(rdir, run_id),
-        env=_build_worker_env(
+        env=build_worker_env(
             {"MILKNADO_NODE_ID": str(base_state["node_id"]), "MILKNADO_RUN_ID": run_id}
         ),
         brief_path=staged_brief,
@@ -212,11 +213,13 @@ def _async_worker(
         if cancelled:
             graph.finish_run(
                 run_id,
-                status="failed",
-                exit_code=-1,
-                timed_out=timed_out,
-                ended_at=_now_iso(),
-                error="cancelled",
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    error="cancelled",
+                ),
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
@@ -231,15 +234,19 @@ def _async_worker(
             # matching the sync dispatch path and milknado_run_cancel.
             graph.finish_run(
                 run_id,
-                status=terminal,
-                exit_code=exit_code,
-                timed_out=timed_out,
-                ended_at=_now_iso(),
-                rebased=merge.rebased if merge is not None else None,
-                detail=merge.worktree_preserved if merge is not None else None,
+                RunResult(
+                    status=terminal,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    rebased=merge.rebased if merge is not None else None,
+                    detail=merge.worktree_preserved if merge is not None else None,
+                ),
             )
     except Exception as exc:
-        _logger.warning("async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc)
+        _logger.warning(
+            "async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc, exc_info=True
+        )
         # Spawn failures (FileNotFoundError on bad worker_cmd, OSError, etc.) or
         # write failures must not leave the run stuck on "running" — that would
         # silently lock out the node forever. Append to the log so any partial
@@ -254,11 +261,13 @@ def _async_worker(
             pass
         graph.finish_run(
             run_id,
-            status="failed",
-            exit_code=-1,
-            timed_out=False,
-            ended_at=_now_iso(),
-            error=f"{type(exc).__name__}: {exc}",
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=_now_iso(),
+                error=f"{type(exc).__name__}: {exc}",
+            ),
         )
     finally:
         graph.close()

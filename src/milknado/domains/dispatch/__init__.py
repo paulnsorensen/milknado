@@ -2,11 +2,13 @@ from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     cancel_path,
     clear_cancel,
+    exit_code_path,
     is_cancel_requested,
     make_run_id,
     now_iso,
     request_cancel,
     runs_dir,
+    tail,
 )
 from milknado.domains.dispatch.async_run import poll_async_run, start_headless_async
 from milknado.domains.dispatch.brief import render_brief
@@ -29,6 +31,7 @@ from milknado.domains.dispatch.reconcile import (
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
     RunResult,
+    build_worker_env,
     run_headless,
     validate_worker_argv,
 )
@@ -47,10 +50,12 @@ __all__ = [
     "cancel_path",
     "cancel_run",
     "clear_cancel",
+    "build_worker_env",
     "create_isolated_worktree",
     "dispatch_node_sync",
     "merge_back_isolated",
     "resolve_feature_branch",
+    "exit_code_path",
     "ensure_tmux_ready",
     "fail_stale_running_runs",
     "find_terminal_runs_for_node",
@@ -68,6 +73,7 @@ __all__ = [
     "setup_isolated_worktree",
     "run_headless",
     "runs_dir",
+    "tail",
     "start_headless_async",
     "validate_worker_argv",
 ]

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from milknado.domains.batching import DUMB_ZONE_BUDGET, plan_batches
-from milknado.domains.common import VALID_CHILD_KINDS, NodeKind
+from milknado.domains.common import VALID_CHILD_KINDS, NodeKind, NodeSpec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,7 +62,7 @@ def apply_batches_to_graph(
             raise ValueError(
                 "manifest.goal and manifest.goal_summary must be non-empty when parent_id is None"
             )
-        goal_root = graph.add_node(manifest.goal_summary, kind=NodeKind.GOAL)
+        goal_root = graph.add_node(manifest.goal_summary, spec=NodeSpec(kind=NodeKind.GOAL))
         created.append(goal_root.id)
         attach_to = goal_root.id
     else:
@@ -89,10 +89,7 @@ def apply_batches_to_graph(
         files = _batch_files(batch, paths_by_change, input_order)
         node = graph.add_node(
             _batch_description(batch, desc_by_change),
-            parent_id=None,
-            oversized=batch.oversized,
-            batch_index=batch.index,
-            kind=NodeKind.TASK,
+            spec=NodeSpec(oversized=batch.oversized, batch_index=batch.index, kind=NodeKind.TASK),
         )
         if batch.depends_on:
             sorted_deps = sorted(batch.depends_on)
