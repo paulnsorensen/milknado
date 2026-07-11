@@ -78,6 +78,8 @@ class MikadoNode:
     goal_run_id: str | None = None  # coordinator run that claimed this goal (goal_claims table)
     # deterministic wiki key (uuid5); set for imported roadmap/goal nodes
     wiki_ref: str | None = None
+    # GitHub Projects node id (project or item PVTI id); set for github-bound roadmap/goal nodes
+    github_ref: str | None = None
     # opaque repo-relative markdown reference (wiki_ref precedent); no existence enforcement
     artifact_path: str | None = None
 
@@ -127,6 +129,7 @@ class NodeSpec:
     kind: NodeKind = NodeKind.TASK
     flavor: str | None = None
     wiki_ref: str | None = None
+    github_ref: str | None = None
     artifact_path: str | None = None
     prereqs: tuple[int, ...] = ()
     flavor_registry: frozenset[str] = BUILTIN_FLAVORS
