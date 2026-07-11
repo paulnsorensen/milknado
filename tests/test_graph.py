@@ -505,15 +505,19 @@ class TestStatusTransitions:
 
             # graph_a, unaware of graph_b's write, applies a CAS UPDATE still
             # gated on the stale belief that status is RUNNING.
-            with pytest.raises(InvalidTransition):
+            with pytest.raises(InvalidTransition) as exc_info:
                 _transitions._apply_transition(
                     graph_a._conn,
                     node.id,
-                    NodeStatus.RUNNING,
                     NodeStatus.FAILED,
                     "UPDATE nodes SET status = ?, completed_at = NULL WHERE id = ? AND status = ?",
                     (NodeStatus.FAILED.value, node.id, NodeStatus.RUNNING.value),
                 )
+
+            # The exception reports the node's *actual* post-conflict status (DONE),
+            # re-read on the 0-row result — not the stale RUNNING the CAS was gated on.
+            assert exc_info.value.current == NodeStatus.DONE
+            assert NodeStatus.RUNNING not in exc_info.value.valid_targets
 
             updated = graph_a.get_node(node.id)
             assert updated is not None

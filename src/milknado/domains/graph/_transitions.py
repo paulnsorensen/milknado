@@ -34,24 +34,31 @@ def assert_transition(conn: sqlite3.Connection, node_id: int, target: NodeStatus
 def _apply_transition(
     conn: sqlite3.Connection,
     node_id: int,
-    current: NodeStatus,
     target: NodeStatus,
     sql: str,
     params: tuple,
 ) -> None:
     """Run a CAS UPDATE gated on the source status observed by assert_transition,
-    committing then raising InvalidTransition on 0 rows (a concurrent writer moved
-    the node off `current` between the SELECT and this UPDATE).
+    committing then raising InvalidTransition on 0 rows.
+
+    A 0-row result means a concurrent writer moved the node off the status
+    assert_transition saw between its SELECT and this UPDATE. Re-read the node's
+    actual status so the raised InvalidTransition reports where the node truly is
+    now (and the valid_targets reachable from there), not the stale pre-conflict
+    value assert_transition observed.
     """
     cur = conn.execute(sql, params)
     conn.commit()
     if cur.rowcount == 0:
-        allowed = VALID_TRANSITIONS.get(current, set())
+        row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Node {node_id} not found")
+        actual = NodeStatus(row[0])
         raise InvalidTransition(
             node_id=node_id,
-            current=current,
+            current=actual,
             target=target,
-            valid_targets=tuple(allowed),
+            valid_targets=tuple(VALID_TRANSITIONS.get(actual, set())),
         )
 
 
@@ -62,7 +69,6 @@ def transition_status(conn: sqlite3.Connection, node_id: int, target: NodeStatus
     _apply_transition(
         conn,
         node_id,
-        current,
         target,
         "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
         (target.value, completed_at, node_id, current.value),
@@ -74,7 +80,6 @@ def mark_failed(conn: sqlite3.Connection, node_id: int) -> None:
     _apply_transition(
         conn,
         node_id,
-        current,
         NodeStatus.FAILED,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
         "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
@@ -93,7 +98,6 @@ def mark_running(
     _apply_transition(
         conn,
         node_id,
-        current,
         NodeStatus.RUNNING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
         "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ?",
@@ -106,7 +110,6 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
     _apply_transition(
         conn,
         node_id,
-        current,
         NodeStatus.PENDING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
         "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
