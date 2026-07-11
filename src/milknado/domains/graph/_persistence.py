@@ -47,10 +47,13 @@ def create_tables(conn: sqlite3.Connection) -> None:
             kind TEXT NOT NULL DEFAULT 'task',
             flavor TEXT,
             wiki_ref TEXT,
-            artifact_path TEXT
+            artifact_path TEXT,
+            github_ref TEXT
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref
             ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_github_ref
+            ON nodes(github_ref) WHERE github_ref IS NOT NULL;
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
             child_id INTEGER NOT NULL,
@@ -124,6 +127,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
     completed_at_raw = row["completed_at"]
     kind = NodeKind(row["kind"]) if "kind" in keys else NodeKind.TASK
     wiki_ref = row["wiki_ref"] if "wiki_ref" in keys else None
+    github_ref = row["github_ref"] if "github_ref" in keys else None
     artifact_path = row["artifact_path"] if "artifact_path" in keys else None
     flavor_raw = row["flavor"] if "flavor" in keys else None
     if kind == NodeKind.TASK:
@@ -153,6 +157,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         kind=kind,
         flavor=flavor,
         wiki_ref=wiki_ref,
+        github_ref=github_ref,
         artifact_path=artifact_path,
     )
 
