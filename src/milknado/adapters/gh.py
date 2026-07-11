@@ -43,14 +43,30 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
         raise GhTransportError(f"`gh {' '.join(args)}` failed: {exc.stderr.strip()}") from exc
 
 
+def _run_json(args: list[str]) -> dict:
+    """Run `gh <args>` and parse stdout as a JSON object; raise GhTransportError on bad output."""
+    result = _run(args)
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise GhTransportError(
+            f"`gh {' '.join(args)}` returned unparseable JSON: {result.stdout.strip()[:200]!r}"
+        ) from exc
+    if not isinstance(data, dict):
+        raise GhTransportError(
+            f"`gh {' '.join(args)}` returned a non-object JSON payload: {data!r}"
+        )
+    return data
+
+
 def gh_preflight() -> None:
     """Verify gh is installed, authenticated, and holds the `project` token scope.
 
     Fails fast with a message instructing `gh auth refresh -s project` (Acceptance 6).
     """
-    _gh_bin()
+    gh_bin = _gh_bin()
     result = subprocess.run(
-        [_gh_bin(), "auth", "status"],
+        [gh_bin, "auth", "status"],
         capture_output=True,
         text=True,
         check=False,
@@ -61,7 +77,7 @@ def gh_preflight() -> None:
             "gh is not authenticated; run `gh auth login` then "
             "`gh auth refresh -s project` to grant the Projects scope"
         )
-    if "project" not in combined:
+    if "'project'" not in combined:
         raise GhTransportError(
             "gh token is missing the Projects scope; run `gh auth refresh -s project`"
         )
@@ -69,8 +85,7 @@ def gh_preflight() -> None:
 
 def gh_project_view(owner: str, number: int) -> dict:
     """Return the project's own metadata, including its `id` (PVT node id)."""
-    result = _run(["project", "view", str(number), "--owner", owner, "--format", "json"])
-    return json.loads(result.stdout)
+    return _run_json(["project", "view", str(number), "--owner", owner, "--format", "json"])
 
 
 def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
@@ -78,7 +93,7 @@ def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
 
     `id` is the ProjectV2 *item* node id (PVTI_...), the goal's github_ref.
     """
-    result = _run(
+    return _run_json(
         [
             "project",
             "item-list",
@@ -90,13 +105,12 @@ def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
             "--limit",
             str(limit),
         ]
-    )
-    return json.loads(result.stdout).get("items", [])
+    ).get("items", [])
 
 
 def gh_item_add(owner: str, number: int, issue_url: str) -> str:
     """Link an existing Issue as a project item; return the new item node id."""
-    result = _run(
+    data = _run_json(
         [
             "project",
             "item-add",
@@ -109,7 +123,10 @@ def gh_item_add(owner: str, number: int, issue_url: str) -> str:
             "json",
         ]
     )
-    return json.loads(result.stdout)["id"]
+    try:
+        return data["id"]
+    except KeyError as exc:
+        raise GhTransportError(f"`gh project item-add` response has no `id`: {data!r}") from exc
 
 
 def gh_item_edit(
@@ -142,8 +159,9 @@ def gh_item_edit(
 
 def gh_field_list(owner: str, number: int) -> list[dict]:
     """Return the project's fields: each `{id, name, type, options?:[{id,name}]}`."""
-    result = _run(["project", "field-list", str(number), "--owner", owner, "--format", "json"])
-    return json.loads(result.stdout).get("fields", [])
+    return _run_json(
+        ["project", "field-list", str(number), "--owner", owner, "--format", "json"]
+    ).get("fields", [])
 
 
 def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> dict:
@@ -151,7 +169,7 @@ def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> d
 
     Never adds options to an existing field — that path is GraphQL-only.
     """
-    result = _run(
+    return _run_json(
         [
             "project",
             "field-create",
@@ -166,12 +184,11 @@ def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> d
             ",".join(options),
         ]
     )
-    return json.loads(result.stdout)
 
 
 def gh_field_create_text(number: int, owner: str, name: str) -> dict:
     """Create a free-text field (create-once, used for the harvest field)."""
-    result = _run(
+    return _run_json(
         [
             "project",
             "field-create",
@@ -184,7 +201,6 @@ def gh_field_create_text(number: int, owner: str, name: str) -> dict:
             "TEXT",
         ]
     )
-    return json.loads(result.stdout)
 
 
 def gh_issue_create(owner: str, repo: str, title: str, body: str) -> str:

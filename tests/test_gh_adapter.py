@@ -197,6 +197,23 @@ class TestWrapperArgv:
         assert rec.calls[0][1:] == ["issue", "edit", "https://x/3", "--body", "new body"]
 
 
+class TestRunJson:
+    def test_unparseable_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+        wire("not json{")
+        with pytest.raises(GhTransportError, match="unparseable JSON"):
+            gh_project_view("acme", 7)
+
+    def test_non_object_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+        wire("[]")
+        with pytest.raises(GhTransportError, match="non-object JSON"):
+            gh_project_view("acme", 7)
+
+    def test_item_add_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+        wire(json.dumps({"foo": 1}))
+        with pytest.raises(GhTransportError, match="has no `id`"):
+            gh_item_add("acme", 7, "https://x/1")
+
+
 class TestZeroGraphql:
     def test_no_wrapper_argv_contains_graphql_or_api(self, wire) -> None:  # noqa: ANN001
         # Acceptance 8: the entire transport is `gh project`/`gh issue` — never
@@ -252,10 +269,22 @@ class TestPreflight:
             gh.subprocess,
             "run",
             lambda *_a, **_k: subprocess.CompletedProcess(
-                [], 0, stdout="scopes: repo, project", stderr=""
+                [], 0, stdout="Token scopes: 'repo', 'project'", stderr=""
             ),
         )
         gh_preflight()  # no raise
+
+    def test_read_only_project_scope_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
+        monkeypatch.setattr(
+            gh.subprocess,
+            "run",
+            lambda *_a, **_k: subprocess.CompletedProcess(
+                [], 0, stdout="Token scopes: 'read:project'", stderr=""
+            ),
+        )
+        with pytest.raises(GhTransportError, match="Projects scope"):
+            gh_preflight()
 
 
 class TestRunFailure:
