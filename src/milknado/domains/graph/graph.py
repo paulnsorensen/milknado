@@ -89,8 +89,8 @@ class MikadoGraph(_AnalyticsFacade):
         cur = self._conn.execute(
             "INSERT INTO nodes "
             "(description, status, parent_id, created_at, oversized, batch_index, "
-            "kind, flavor, wiki_ref, artifact_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "kind, flavor, wiki_ref, github_ref, artifact_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 description,
                 NodeStatus.PENDING.value,
@@ -101,6 +101,7 @@ class MikadoGraph(_AnalyticsFacade):
                 spec.kind.value,
                 flavor_value,
                 spec.wiki_ref,
+                spec.github_ref,
                 spec.artifact_path,
             ),
         )
@@ -249,6 +250,18 @@ class MikadoGraph(_AnalyticsFacade):
         row = self._conn.execute("SELECT * FROM nodes WHERE wiki_ref = ?", (wiki_ref,)).fetchone()
         return row_to_node(row) if row else None
 
+    def find_node_by_github_ref(self, github_ref: str) -> MikadoNode | None:
+        """Return the node carrying this GitHub Projects node id, or None.
+
+        The stable join between a GitHub project/item and its milknado node:
+        github_ref is the opaque PVT/PVTI id, identical across dbs, so it is the
+        idempotency key the github importer/binder round-trip on.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM nodes WHERE github_ref = ?", (github_ref,)
+        ).fetchone()
+        return row_to_node(row) if row else None
+
     def get_all_nodes(self) -> list[MikadoNode]:
         return [row_to_node(r) for r in self._conn.execute("SELECT * FROM nodes").fetchall()]
 
@@ -374,6 +387,17 @@ class MikadoGraph(_AnalyticsFacade):
         cur = self._conn.execute(
             "UPDATE nodes SET wiki_ref = ? WHERE id = ?",
             (wiki_ref, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
+
+    def set_github_ref(self, node_id: int, github_ref: str) -> None:
+        """Attach a GitHub Projects node id to an already-created node (used by
+        bind to record the project/item ids on the roadmap and goal nodes)."""
+        cur = self._conn.execute(
+            "UPDATE nodes SET github_ref = ? WHERE id = ?",
+            (github_ref, node_id),
         )
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")

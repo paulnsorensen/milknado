@@ -2260,6 +2260,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
     from milknado import (  # noqa: F401
+        mcp_github,
         mcp_node,
         mcp_ralph,
         mcp_run,
@@ -2276,6 +2277,9 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_deposit_result",
         "milknado_edit_node",
         "milknado_get_node",
+        "milknado_github_roadmap_bind",
+        "milknado_github_roadmap_export",
+        "milknado_github_roadmap_import",
         "milknado_goal_claim",
         "milknado_goal_release",
         "milknado_graph_summary",

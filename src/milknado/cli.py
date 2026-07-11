@@ -18,6 +18,7 @@ from milknado._cli_helpers import (
     console,
 )
 from milknado.cli_agents import agents_app
+from milknado.cli_github_roadmap import github_roadmap_app
 from milknado.cli_graph import edge_app
 from milknado.cli_plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
 from milknado.cli_plan import plan
@@ -54,6 +55,7 @@ app.add_typer(edge_app)
 app.add_typer(plugin_app)
 app.add_typer(tools_app)
 app.add_typer(roadmap_app)
+app.add_typer(github_roadmap_app)
 app.command()(plan)
 app.command()(run)
 app.command()(attach)

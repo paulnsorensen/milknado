@@ -9,6 +9,7 @@ from milknado.domains.common.config import (
     save_config,
 )
 from milknado.domains.common.errors import InvalidContainment, InvalidTransition
+from milknado.domains.common.harvest import HarvestSummary, build_harvest_summary
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
@@ -28,6 +29,8 @@ from milknado.domains.common.types import (
 
 __all__ = [
     "BUILTIN_FLAVORS",
+    "HarvestSummary",
+    "build_harvest_summary",
     "CrgPort",
     "GitPort",
     "Gate",

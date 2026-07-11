@@ -307,6 +307,7 @@ def main() -> None:
 
     # Importing each tool module registers its @mcp.tool()s on the shared instance.
     from milknado import (  # noqa: F401
+        mcp_github,
         mcp_node,
         mcp_ralph,
         mcp_run,
