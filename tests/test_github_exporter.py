@@ -233,6 +233,28 @@ def test_wiki_origin_body_skipped_when_item_absent_from_project(
     assert any(e["text"] is not None for e in wiki_edits)
 
 
+def test_malformed_item_without_id_is_skipped(
+    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # gh item-list may return a draft/malformed entry with no `id`; building the
+    # url map must skip it deterministically rather than KeyError the whole export.
+    rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
+    graph.mark_running(wiki_goal_id)
+    graph.mark_done(wiki_goal_id)
+    fake = FakeExport(
+        fields=[_status_field(), HARVEST_FIELD],
+        items=[
+            {"url": "https://x/0"},  # malformed: no id
+            {"id": "PVTI_wiki", "url": "https://x/1"},
+            {"id": "PVTI_gh", "url": "https://x/2"},
+        ],
+    )
+    _wire(monkeypatch, fake)
+    result = export_github_roadmap(graph, rid, wiki_root, owner="acme", number=7)
+    assert result.goals_exported == 2
+    assert result.bodies_overwritten == 1
+
+
 class TestExportGuards:
     def test_non_roadmap_node_raises(self, graph: MikadoGraph, tmp_path: Path) -> None:
         node = graph.add_node("plain")

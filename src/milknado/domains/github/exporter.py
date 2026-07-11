@@ -57,7 +57,11 @@ def export_github_roadmap(
         )
     gh_preflight()
     status_field, harvest_field = _resolve_fields(owner, number)
-    url_by_item = {item["id"]: item.get("url") for item in gh_item_list(owner, number)}
+    url_by_item = {
+        item_id: item.get("url")
+        for item in gh_item_list(owner, number)
+        if (item_id := item.get("id"))
+    }
     file_map = goal_file_map(wiki_root, roadmap.wiki_ref) if roadmap.wiki_ref else {}
 
     goals_exported = 0
