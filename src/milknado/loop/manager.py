@@ -230,8 +230,26 @@ class RunManager:
             timed_out_count=state.timed_out_count,
         )
 
+    def reap(self) -> list[str]:
+        """Evict every registered run whose status is terminal.
+
+        Prevents ``_runs`` from growing unbounded across a long-lived
+        manager session; callers should call this after a run is known
+        to be finished with (e.g. once its result has been consumed).
+        Returns the evicted run IDs.
+        """
+        with self._lock:
+            reaped = [
+                run_id
+                for run_id, managed in self._runs.items()
+                if managed.state.status in _TERMINAL_STATUSES
+            ]
+            for run_id in reaped:
+                del self._runs[run_id]
+        return reaped
+
     def shutdown(self, timeout: float | None = None) -> bool:
-        """Request stop on every run and join its thread.
+        """Request stop on every run, join its thread, and reap terminal runs.
 
         Returns ``True`` iff all live threads joined within *timeout*.
         With ``timeout=None`` this blocks until every run thread exits.
@@ -253,4 +271,5 @@ class RunManager:
             thread.join(timeout=remaining)
             if thread.is_alive():
                 all_joined = False
+        self.reap()
         return all_joined

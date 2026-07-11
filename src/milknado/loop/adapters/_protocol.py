@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
+from milknado.loop._promise import has_promise_completion
+
 AdapterEventKind = Literal["tool_use", "turn", "message", "result"]
 """Categories of events an adapter can surface from a CLI's output stream."""
 
@@ -53,6 +55,19 @@ def stdin_invocation(cmd: list[str], prompt: str) -> Invocation:
     same ``Invocation(list(cmd), prompt)`` construction.
     """
     return Invocation(argv=list(cmd), stdin_text=prompt)
+
+
+def stdout_only_completion_signal(*, stdout: str | None, user_signal: str) -> bool:
+    """Scan the full stdout buffer for the promise tag.
+
+    Shared default for adapters with no event schema (or no streaming
+    result text) to key off: they must set
+    ``requires_full_stdout_for_completion = True`` so the engine supplies
+    *stdout*, then delegate their ``extract_completion_signal`` here.
+    """
+    if stdout is None:
+        return False
+    return has_promise_completion(stdout, user_signal)
 
 
 @runtime_checkable

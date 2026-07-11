@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus, RunResult
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
@@ -18,6 +18,16 @@ _logger = logging.getLogger(__name__)
 
 
 def create_tables(conn: sqlite3.Connection) -> None:
+    """Create the schema if the `nodes` table is absent; no-op otherwise.
+
+    The `sqlite_master` probe skips the executescript (9x CREATE IF NOT EXISTS)
+    on every MikadoGraph open against an already-initialized db path.
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nodes'"
+    ).fetchone()
+    if exists is not None:
+        return
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +49,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             wiki_ref TEXT,
             artifact_path TEXT
         );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref
+            ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
             child_id INTEGER NOT NULL,
@@ -97,33 +109,6 @@ def create_tables(conn: sqlite3.Connection) -> None:
             claimed_at  TEXT NOT NULL
         );
     """)
-
-
-def ensure_schema(conn: sqlite3.Connection) -> None:
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
-    for col, ddl in [
-        ("run_id", "ALTER TABLE nodes ADD COLUMN run_id TEXT"),
-        (
-            "completion_duration_seconds",
-            "ALTER TABLE nodes ADD COLUMN completion_duration_seconds REAL",
-        ),
-        ("dispatched_at", "ALTER TABLE nodes ADD COLUMN dispatched_at TEXT"),
-        ("kind", "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'"),
-        ("pid", "ALTER TABLE nodes ADD COLUMN pid INTEGER"),
-        ("flavor", "ALTER TABLE nodes ADD COLUMN flavor TEXT"),
-        ("wiki_ref", "ALTER TABLE nodes ADD COLUMN wiki_ref TEXT"),
-        ("artifact_path", "ALTER TABLE nodes ADD COLUMN artifact_path TEXT"),
-    ]:
-        if col not in columns:
-            conn.execute(ddl)
-            conn.commit()
-    # Partial UNIQUE index: deterministic wiki_ref keys must not collide, but the
-    # many NULL refs (every non-imported node) must stay unrestricted. Created
-    # here, after the column is guaranteed present on both fresh and legacy dbs.
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref "
-        "ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL"
-    )
     conn.commit()
 
 
@@ -194,6 +179,16 @@ def get_file_ownership(conn: sqlite3.Connection, node_id: int) -> list[str]:
         "SELECT file_path FROM file_ownership WHERE node_id = ?", (node_id,)
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def get_file_ownership_map(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """node_id -> owned file paths from a single file_ownership scan."""
+    mapping: dict[int, list[str]] = {}
+    for node_id, file_path in conn.execute(
+        "SELECT node_id, file_path FROM file_ownership"
+    ).fetchall():
+        mapping.setdefault(node_id, []).append(file_path)
+    return mapping
 
 
 def check_parallel_safety(
@@ -390,18 +385,7 @@ def start_run(
     conn.commit()
 
 
-def finish_run(
-    conn: sqlite3.Connection,
-    run_id: str,
-    *,
-    status: str,
-    exit_code: int | None,
-    timed_out: bool,
-    ended_at: str,
-    error: str | None = None,
-    detail: str | None = None,
-    rebased: bool | None = None,
-) -> None:
+def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None:
     """UPDATE a running run to a terminal status; first terminal write wins.
 
     Gated on status = 'running' so a late terminal write (e.g. a wedged worker
@@ -412,20 +396,20 @@ def finish_run(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
         "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = 'running'",
         (
-            status,
-            exit_code,
-            1 if timed_out else 0,
-            ended_at,
-            error,
-            detail,
-            None if rebased is None else (1 if rebased else 0),
+            result.status,
+            result.exit_code,
+            1 if result.timed_out else 0,
+            result.ended_at,
+            result.error,
+            result.detail,
+            None if result.rebased is None else (1 if result.rebased else 0),
             run_id,
         ),
     )
     conn.commit()
     if cur.rowcount == 0:
         _logger.warning(
-            "finish_run dropped late terminal write for run %s (status=%s)", run_id, status
+            "finish_run dropped late terminal write for run %s (status=%s)", run_id, result.status
         )
 
 

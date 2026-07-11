@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
-from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
+from milknado.domains.execution.run_loop._logging import (
+    _logger,
+    configure_run_logging,
+    configure_stderr_logging,
+    ts,
+)
 
 
 class TestConfigureRunLoggingLevelRestore:
@@ -103,3 +109,27 @@ class TestTs:
         parts = result.split(":")
         assert len(parts) == 3
         assert all(p.isdigit() for p in parts)
+
+
+class TestConfigureStderrLogging:
+    @pytest.fixture(autouse=True)
+    def _restore_handlers(self) -> object:
+        original = list(_logger.handlers)
+        yield
+        _logger.handlers = original
+
+    def test_second_call_reuses_handler_and_adds_no_duplicate(self) -> None:
+        """Idempotency matters: the MCP server may reconfigure logging more than
+        once in-process (tests, embedding), and a stacked stderr handler would
+        double every log line. The second call must return the same handler and
+        leave the stderr-handler count at one."""
+        first = configure_stderr_logging()
+        second = configure_stderr_logging()
+
+        assert second is first
+        stderr_handlers = [
+            h
+            for h in _logger.handlers
+            if isinstance(h, logging.StreamHandler) and h.stream is sys.stderr
+        ]
+        assert len(stderr_handlers) == 1

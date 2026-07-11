@@ -79,20 +79,14 @@ class TestGoalRootNode:
         # No goal root — just the one batch node
         assert len(created) == 1
 
-    def test_parent_id_nonexistent_does_not_raise(self, graph: MikadoGraph) -> None:
-        # Nonexistent parent_id — graph.add_edge will handle or ignore it.
+    def test_parent_id_nonexistent_raises_value_error(self, graph: MikadoGraph) -> None:
+        # Nonexistent parent_id — apply_batches_to_graph checks graph.get_node(parent_id)
+        # up front and raises before any edge is written.
         manifest = _make_manifest(changes=(_make_change("c1"),))
         batch = Batch(index=0, change_ids=("c1",), depends_on=())
         plan = _make_plan(batches=(batch,))
-        # The bridge calls graph.add_edge(attach_to, node.id) without checking
-        # whether parent_id exists. This probes whether it raises or silently succeeds.
-        try:
-            created = apply_batches_to_graph(graph, plan, manifest, parent_id=99999)
-            # If it succeeds — note the behavior (no validation of parent_id existence).
-            assert len(created) == 1
-        except Exception as exc:
-            # If graph raises on add_edge with invalid parent_id, that's acceptable.
-            assert "node" in str(exc).lower() or "not found" in str(exc).lower() or True
+        with pytest.raises(ValueError, match="parent_id 99999 not found"):
+            apply_batches_to_graph(graph, plan, manifest, parent_id=99999)
 
 
 class TestBatchDescriptionStacking:

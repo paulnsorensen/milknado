@@ -123,10 +123,12 @@ def _graph_section(graph: MikadoGraph) -> str:
     lines = ["# Existing Graph\n"]
     lines.append(_progress_summary(nodes))
 
+    children_map = graph.get_children_map()
+    ownership_map = graph.get_file_ownership_map()
     for node in nodes:
         desc = _truncate_description(node.description)
-        children = graph.get_children(node.id)
-        files = graph.get_file_ownership(node.id)
+        children = children_map.get(node.id, [])
+        files = ownership_map.get(node.id, [])
         parts = [f"- [{node.id}] {desc} ({node.status.value})"]
         if children:
             child_ids = ", ".join(str(c.id) for c in children)

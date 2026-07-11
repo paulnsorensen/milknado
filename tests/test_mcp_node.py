@@ -14,7 +14,7 @@ import pytest
 
 from milknado._mcp_core import open_graph
 from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.mcp_node import (
     GOAL_OWNER_ENV_VAR,
     milknado_goal_claim,
@@ -61,7 +61,7 @@ def repo(tmp_path: Path) -> Path:
 def _add_task(repo: Path, description: str = "do the thing") -> int:
     graph, _cfg = open_graph(repo)
     try:
-        return graph.add_node(description, kind=NodeKind.TASK).id
+        return graph.add_node(description, spec=NodeSpec(kind=NodeKind.TASK)).id
     finally:
         graph.close()
 
@@ -186,7 +186,7 @@ def test_claim_refuses_non_task_node(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     graph, _cfg = open_graph(repo)
     try:
-        goal_id = graph.add_node("a goal", kind=NodeKind.GOAL).id
+        goal_id = graph.add_node("a goal", spec=NodeSpec(kind=NodeKind.GOAL)).id
     finally:
         graph.close()
     with pytest.raises(ValueError, match="only task nodes"):
@@ -364,8 +364,8 @@ def test_subtree_done_gate_blocks_unverified_native_node(repo: Path) -> None:
     """A native-claimed task in the subtree blocks the bulk done until verified."""
     graph, _cfg = open_graph(repo)
     try:
-        goal_id = graph.add_node("goal", kind=NodeKind.GOAL).id
-        task_id = graph.add_node("task", parent_id=goal_id, kind=NodeKind.TASK).id
+        goal_id = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL)).id
+        task_id = graph.add_node("task", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK)).id
     finally:
         graph.close()
     _write_config(repo, gates=["true"])
@@ -443,7 +443,7 @@ def test_claim_rolls_back_claim_when_worktree_creation_fails(
     def _boom(*_a, **_k):
         raise RuntimeError("worktree boom")
 
-    monkeypatch.setattr("milknado.mcp_node._create_node_worktree", _boom)
+    monkeypatch.setattr("milknado.mcp_node.create_isolated_worktree", _boom)
     with pytest.raises(RuntimeError, match="worktree boom"):
         _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
@@ -551,7 +551,7 @@ def test_latest_verify_ok_false_on_missing_or_malformed(repo: Path) -> None:
 def _add_goal(repo: Path, description: str = "a goal") -> int:
     graph, _cfg = open_graph(repo)
     try:
-        return graph.add_node(description, kind=NodeKind.GOAL).id
+        return graph.add_node(description, spec=NodeSpec(kind=NodeKind.GOAL)).id
     finally:
         graph.close()
 

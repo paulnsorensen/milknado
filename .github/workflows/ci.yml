@@ -46,6 +46,11 @@ jobs:
       - name: Run full build (lint → test → coverage)
         run: just build-ci
 
+      - name: Dependency audit (pip-audit)
+        if: matrix.python-version == '3.11'
+        continue-on-error: true
+        run: just audit
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
         if: matrix.python-version == '3.11'

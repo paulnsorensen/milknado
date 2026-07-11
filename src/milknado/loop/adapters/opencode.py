@@ -33,12 +33,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
     AdapterEvent,
     CountsWhat,
     Invocation,
+    stdout_only_completion_signal,
 )
 
 OPENCODE_BINARY_STEM = "opencode"
@@ -146,9 +146,7 @@ class OpenCodeAdapter:
         is supplied when promise detection is requested.
         """
         del result_text
-        if stdout is None:
-            return False
-        return has_promise_completion(stdout, user_signal)
+        return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
 
     def install_wind_down_hook(
         self,

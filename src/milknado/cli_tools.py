@@ -12,6 +12,7 @@ from rich.console import Console
 
 from milknado.domains.common import MilknadoConfig
 from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS, resolve_worker_tools
+from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
 
 console = Console()
@@ -77,19 +78,8 @@ def _merge_json(path: Path, patch: dict) -> None:
             existing = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             existing = {}
-    _deep_merge_dicts(existing, patch)
+    existing = deep_merge(existing, patch, list_mode="merge_dedup")
     path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
-
-
-def _deep_merge_dicts(base: dict, override: dict) -> None:
-    for key, val in override.items():
-        if key in base and isinstance(base[key], dict) and isinstance(val, dict):
-            _deep_merge_dicts(base[key], val)
-        elif key in base and isinstance(base[key], list) and isinstance(val, list):
-            seen = {json.dumps(item, sort_keys=True) for item in base[key]}
-            base[key].extend(item for item in val if json.dumps(item, sort_keys=True) not in seen)
-        else:
-            base[key] = val
 
 
 def _write_claude_worker_settings(

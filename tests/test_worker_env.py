@@ -1,4 +1,4 @@
-"""Tests for _build_worker_env: secrets stay in the parent, config passes through."""
+"""Tests for build_worker_env: secrets stay in the parent, config passes through."""
 
 from __future__ import annotations
 
@@ -10,14 +10,14 @@ import pytest
 from milknado.domains.dispatch import run_headless
 from milknado.domains.dispatch.runner import (
     _WORKER_ENV_ALLOWLIST,
-    _build_worker_env,
+    build_worker_env,
 )
 
 
 def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     monkeypatch.setenv("HOME", "/home/testuser")
-    env = _build_worker_env()
+    env = build_worker_env()
     assert env["PATH"] == "/usr/bin:/bin"
     assert env["HOME"] == "/home/testuser"
 
@@ -25,7 +25,7 @@ def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -
 def test_milknado_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MILKNADO_PROJECT_ROOT", "/tmp/proj")
     monkeypatch.setenv("MILKNADO_NODE_ID", "99")
-    env = _build_worker_env()
+    env = build_worker_env()
     assert env["MILKNADO_PROJECT_ROOT"] == "/tmp/proj"
     assert env["MILKNADO_NODE_ID"] == "99"
 
@@ -36,7 +36,7 @@ def test_secrets_are_not_passed_to_workers(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("DATABASE_URL", "postgres://user:pass@host/db")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "aws-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_token")
-    env = _build_worker_env()
+    env = build_worker_env()
     assert "ANTHROPIC_API_KEY" not in env
     assert "DATABASE_URL" not in env
     assert "AWS_SECRET_ACCESS_KEY" not in env
@@ -44,18 +44,18 @@ def test_secrets_are_not_passed_to_workers(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_extra_vars_are_merged(monkeypatch: pytest.MonkeyPatch) -> None:
-    env = _build_worker_env({"MILKNADO_NODE_ID": "42"})
+    env = build_worker_env({"MILKNADO_NODE_ID": "42"})
     assert env["MILKNADO_NODE_ID"] == "42"
 
 
 def test_extra_overrides_existing_milknado_var(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MILKNADO_FOO", "original")
-    env = _build_worker_env({"MILKNADO_FOO": "overridden"})
+    env = build_worker_env({"MILKNADO_FOO": "overridden"})
     assert env["MILKNADO_FOO"] == "overridden"
 
 
 def test_none_extra_is_safe() -> None:
-    env = _build_worker_env(None)
+    env = build_worker_env(None)
     assert isinstance(env, dict)
 
 
@@ -73,7 +73,7 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """End-to-end on the dispatch path that DOES filter env (run_headless ->
-    _execute -> _build_worker_env): a secret planted in the parent process must
+    _execute -> build_worker_env): a secret planted in the parent process must
     never appear in the spawned worker's environment. The worker dumps its own
     env to the log; we assert the secret value is absent and the allowlisted
     MILKNADO_NODE_ID injection is present."""

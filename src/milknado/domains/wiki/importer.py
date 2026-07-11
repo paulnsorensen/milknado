@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._locate import resolve_roadmap_dir
 from milknado.domains.wiki._serialize import (
@@ -125,7 +125,7 @@ def _ingest_file(
         counters.reused += 1
         return existing.id, prereqs
     description = extract_title(text) or path.stem
-    node = graph.add_node(description, parent_id=parent_id, kind=kind, wiki_ref=ref)
+    node = graph.add_node(description, parent_id=parent_id, spec=NodeSpec(kind=kind, wiki_ref=ref))
     counters.created += 1
     return node.id, prereqs
 

@@ -19,8 +19,10 @@ from milknado.domains.common.types import (
     MikadoEdge,
     MikadoNode,
     NodeKind,
+    NodeSpec,
     NodeStatus,
     RebaseResult,
+    RunResult,
     WorktreeMode,
 )
 
@@ -35,8 +37,10 @@ __all__ = [
     "MikadoNode",
     "MilknadoConfig",
     "NodeKind",
+    "NodeSpec",
     "NodeStatus",
     "RebaseResult",
+    "RunResult",
     "WorktreeMode",
     "PluginHook",
     "PluginMeta",

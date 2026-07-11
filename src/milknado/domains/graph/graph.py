@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -12,7 +13,9 @@ from milknado.domains.common import (
     MikadoEdge,
     MikadoNode,
     NodeKind,
+    NodeSpec,
     NodeStatus,
+    RunResult,
     pid_alive,
 )
 from milknado.domains.common.errors import InvalidContainment
@@ -33,10 +36,10 @@ from milknado.domains.graph._persistence import (
     create_tables,
     deposit_run_message,
     drop_all,
-    ensure_schema,
     find_ancestor_goal_id,
     finish_run,
     get_file_ownership,
+    get_file_ownership_map,
     get_goal_claim,
     get_run,
     latest_run_message,
@@ -70,48 +73,18 @@ class MikadoGraph(_AnalyticsFacade):
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._plugins: tuple[PluginHook, ...] = tuple(plugins)
         create_tables(self._conn)
-        ensure_schema(self._conn)
 
     def add_node(
-        self,
-        description: str,
-        parent_id: int | None = None,
-        *,
-        oversized: bool = False,
-        batch_index: int | None = None,
-        kind: NodeKind = NodeKind.TASK,
-        flavor: str | None = None,
-        wiki_ref: str | None = None,
-        artifact_path: str | None = None,
-        prereqs: Sequence[int] = (),
-        flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
+        self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
     ) -> MikadoNode:
+        spec = spec or NodeSpec()
         # Validate parent_id before inserting: the node row commits before the
         # edge is added, so a nonexistent parent would otherwise leave a
         # committed stray node when the edge FK insert fails (e.g. a stale
         # MILKNADO_NODE_ID passed by milknado_track_follow_up).
-        if parent_id is not None:
-            parent = self.get_node(parent_id)
-            if parent is None:
-                raise ValueError(f"parent_id {parent_id} not found")
-            if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
-                raise InvalidContainment(parent.kind, kind)
-        for prereq_id in prereqs:
-            if self.get_node(prereq_id) is None:
-                raise ValueError(f"prereq {prereq_id} not found")
-            if prereq_id == parent_id:
-                raise ValueError(
-                    f"prereq {prereq_id} duplicates parent_id {parent_id}; "
-                    "the parent edge already covers this prerequisite"
-                )
-        # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
-        if kind != NodeKind.TASK and flavor is not None:
-            raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
-        flavor_value = (flavor or DEFAULT_FLAVOR) if kind == NodeKind.TASK else None
-        if flavor_value is not None and flavor_value not in flavor_registry:
-            raise ValueError(
-                f"unknown flavor {flavor_value!r}; valid flavors: {sorted(flavor_registry)}"
-            )
+        self._validate_parent(parent_id, spec.kind)
+        self._validate_prereqs(spec.prereqs, parent_id)
+        flavor_value = self._validate_flavor(spec.kind, spec.flavor, spec.flavor_registry)
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
@@ -123,12 +96,12 @@ class MikadoGraph(_AnalyticsFacade):
                 NodeStatus.PENDING.value,
                 parent_id,
                 now,
-                1 if oversized else 0,
-                batch_index,
-                kind.value,
+                1 if spec.oversized else 0,
+                spec.batch_index,
+                spec.kind.value,
                 flavor_value,
-                wiki_ref,
-                artifact_path,
+                spec.wiki_ref,
+                spec.artifact_path,
             ),
         )
         self._conn.commit()
@@ -138,11 +111,43 @@ class MikadoGraph(_AnalyticsFacade):
         _logger.debug("node %d created: %r", node_id, description[:80])
         if parent_id is not None:
             self.add_edge(parent_id, node_id)
-        for prereq_id in prereqs:
+        for prereq_id in spec.prereqs:
             self.add_edge(prereq_id, node_id)
         return row_to_node(
             self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         )
+
+    def _validate_parent(self, parent_id: int | None, kind: NodeKind) -> None:
+        if parent_id is None:
+            return
+        parent = self.get_node(parent_id)
+        if parent is None:
+            raise ValueError(f"parent_id {parent_id} not found")
+        if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
+            raise InvalidContainment(parent.kind, kind)
+
+    def _validate_prereqs(self, prereqs: Sequence[int], parent_id: int | None) -> None:
+        for prereq_id in prereqs:
+            if self.get_node(prereq_id) is None:
+                raise ValueError(f"prereq {prereq_id} not found")
+            if prereq_id == parent_id:
+                raise ValueError(
+                    f"prereq {prereq_id} duplicates parent_id {parent_id}; "
+                    "the parent edge already covers this prerequisite"
+                )
+
+    def _validate_flavor(
+        self, kind: NodeKind, flavor: str | None, flavor_registry: frozenset[str]
+    ) -> str | None:
+        # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
+        if kind != NodeKind.TASK and flavor is not None:
+            raise ValueError(f"flavor must be None for kind={kind.value}; got {flavor!r}")
+        flavor_value = (flavor or DEFAULT_FLAVOR) if kind == NodeKind.TASK else None
+        if flavor_value is not None and flavor_value not in flavor_registry:
+            raise ValueError(
+                f"unknown flavor {flavor_value!r}; valid flavors: {sorted(flavor_registry)}"
+            )
+        return flavor_value
 
     def set_batch_metadata(self, node_id: int, oversized: bool, batch_index: int | None) -> None:
         cur = self._conn.execute(
@@ -268,6 +273,14 @@ class MikadoGraph(_AnalyticsFacade):
                 mapping[parent_id] = kids
         return mapping
 
+    def get_file_ownership_map(self) -> dict[int, list[str]]:
+        """Map node_id -> owned file paths, reusing the persistence id-scan.
+
+        Lets callers materialise ownership for an entire subtree without issuing
+        one get_file_ownership query per node (the N+1 pattern).
+        """
+        return get_file_ownership_map(self._conn)
+
     def get_leaves(self) -> list[MikadoNode]:
         rows = self._conn.execute(
             "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
@@ -388,6 +401,42 @@ class MikadoGraph(_AnalyticsFacade):
             self._notify_status_change(node_id, old, NodeStatus.RUNNING)
         return claimed
 
+    def claim_ancestor_goal_for_dispatch(
+        self, node_id: int, run_id: str, *, now: str | None = None
+    ) -> None:
+        """Enforce and claim the ancestor-goal subtree fence before dispatch.
+
+        Raises ValueError if an ancestor goal is claimed by a different live
+        coordinator (a different pid). Same-process dispatch (same pid) is
+        exempt: the current process is the coordinator that holds the claim,
+        so sibling tasks may proceed. No-op claim when there is no ancestor
+        goal. Pass ``now`` to share one timestamp with a paired node claim;
+        it defaults to the current UTC time.
+        """
+        claim = self.ancestor_goal_claimed_by_other(node_id)
+        if claim is not None and claim["pid"] != os.getpid():
+            raise ValueError(
+                f"node {node_id}'s ancestor goal is claimed by a different run "
+                f"({claim['run_id']!r}); dispatch refused"
+            )
+        self.claim_ancestor_goal(
+            node_id, run_id, os.getpid(), now=now or datetime.now(UTC).isoformat()
+        )
+
+    def claim_node_for_dispatch(self, node_id: int, run_id: str, *, now: str) -> None:
+        """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING.
+
+        Raises ValueError if blocked by a foreign ancestor-goal claim, or if
+        node_id itself could not be claimed (already claimed / wrong status).
+        """
+        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now)
+        if not self.claim_node(node_id, run_id, now=now):
+            current = self.get_node(node_id)
+            status = current.status.value if current is not None else "gone"
+            raise ValueError(
+                f"node {node_id} is already {status}; set status back to pending to retry"
+            )
+
     def try_reclaim(self, node_id: int, *, now: str) -> bool:
         """Free a RUNNING node whose owner process is provably dead.
 
@@ -466,30 +515,9 @@ class MikadoGraph(_AnalyticsFacade):
         """INSERT a status='running' run row (replaces the initial sidecar write)."""
         start_run(self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid)
 
-    def finish_run(
-        self,
-        run_id: str,
-        *,
-        status: str,
-        exit_code: int | None,
-        timed_out: bool,
-        ended_at: str,
-        error: str | None = None,
-        detail: str | None = None,
-        rebased: bool | None = None,
-    ) -> None:
+    def finish_run(self, run_id: str, result: RunResult) -> None:
         """UPDATE a run to a terminal status (replaces the terminal sidecar write)."""
-        finish_run(
-            self._conn,
-            run_id,
-            status=status,
-            exit_code=exit_code,
-            timed_out=timed_out,
-            ended_at=ended_at,
-            error=error,
-            detail=detail,
-            rebased=rebased,
-        )
+        finish_run(self._conn, run_id, result)
 
     def set_run_pid(self, run_id: str, pid: int) -> None:
         """Record the detached runner's pid on a still-running run (fenced)."""

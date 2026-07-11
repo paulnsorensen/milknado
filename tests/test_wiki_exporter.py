@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
@@ -140,8 +140,8 @@ class TestTaskRollup:
     def test_counts_done_and_failed_tasks(self, wiki_root: Path, graph: MikadoGraph) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
-        t1 = graph.add_node("t1", parent_id=goal_id, kind=NodeKind.TASK)
-        t2 = graph.add_node("t2", parent_id=goal_id, kind=NodeKind.TASK)
+        t1 = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
+        t2 = graph.add_node("t2", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.mark_running(t1.id)
         graph.mark_done(t1.id)
         graph.mark_failed(t2.id)
@@ -152,9 +152,11 @@ class TestTaskRollup:
     def test_summary_includes_deposit_result(self, wiki_root: Path, graph: MikadoGraph) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
-        task = graph.add_node("t1", parent_id=goal_id, kind=NodeKind.TASK)
+        task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
-        graph.finish_run("run-1", status="done", exit_code=0, timed_out=False, ended_at=NOW)
+        graph.finish_run(
+            "run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW)
+        )
         graph.deposit_run_message("run-1", "result", "shipped the exporter", NOW)
         graph.mark_running(task.id)
         graph.mark_done(task.id)
@@ -165,7 +167,7 @@ class TestTaskRollup:
     def test_branch_links_rendered(self, wiki_root: Path, graph: MikadoGraph) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
-        task = graph.add_node("t1", parent_id=goal_id, kind=NodeKind.TASK)
+        task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.mark_running(task.id, worktree_path="/wt", branch_name="claude/t1", run_id="r1")
         export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         text = _goal_path(wiki_root).read_text()
@@ -178,7 +180,7 @@ class TestOrphanGoal:
     ) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         orphan = graph.add_node(
-            "Discovered goal", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL
+            "Discovered goal", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
         )
         r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         new_path = wiki_root / "roadmaps" / ROADMAP_SLUG / "discovered-goal.md"
@@ -193,7 +195,9 @@ class TestOrphanGoal:
         self, wiki_root: Path, graph: MikadoGraph
     ) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node("Discovered goal", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        graph.add_node(
+            "Discovered goal", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
         export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         second = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         # second export rewrites the now-existing file, does not create again.
@@ -205,8 +209,12 @@ class TestOrphanGoal:
         # L1: two discovered goals with the SAME description must not overwrite
         # each other's file or collide on the UNIQUE(wiki_ref) index.
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node("Same name", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
-        graph.add_node("Same name", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        graph.add_node(
+            "Same name", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
+        graph.add_node(
+            "Same name", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
         r = export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         assert r.files_created == 2
         roadmap_dir = wiki_root / "roadmaps" / ROADMAP_SLUG
@@ -218,7 +226,9 @@ class TestOrphanGoal:
         # frontmatter, the human-owned Intent/Acceptance scaffold, and the
         # harvest markers must all be present or the next import/export breaks.
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node("Discovered goal", parent_id=result.roadmap_node_id, kind=NodeKind.GOAL)
+        graph.add_node(
+            "Discovered goal", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
+        )
         export_roadmap(graph, result.roadmap_node_id, wiki_root, now=NOW)
         text = (wiki_root / "roadmaps" / ROADMAP_SLUG / "discovered-goal.md").read_text()
         fm = load_frontmatter(text)
@@ -316,7 +326,7 @@ class TestExportGuards:
             export_roadmap(graph, node.id, wiki_root, now=NOW)
 
     def test_roadmap_without_wiki_ref_raises(self, wiki_root: Path, graph: MikadoGraph) -> None:
-        node = graph.add_node("rm", kind=NodeKind.ROADMAP)
+        node = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         with pytest.raises(ValueError, match="wiki_ref"):
             export_roadmap(graph, node.id, wiki_root, now=NOW)
 

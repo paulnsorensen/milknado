@@ -6,8 +6,6 @@ import logging
 import shlex
 
 from milknado._mcp_core import (
-    _check_ancestor_goal_not_claimed,
-    _claim_ancestor_goal_for_dispatch,
     mcp,
     open_graph,
     resolve_project_root,
@@ -124,8 +122,7 @@ def milknado_run_inline(
             raise ValueError(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
-        _check_ancestor_goal_not_claimed(graph, node_id)
-        _claim_ancestor_goal_for_dispatch(graph, node_id, make_run_id(node_id))
+        graph.claim_ancestor_goal_for_dispatch(node_id, make_run_id(node_id))
         profile = resolve_flavor_profile(cfg, node.flavor)
         return dispatch_node_sync(
             graph,
@@ -187,8 +184,6 @@ def milknado_run_inline_start(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
         run_id = make_run_id(node_id)
-        _check_ancestor_goal_not_claimed(graph, node_id)
-        _claim_ancestor_goal_for_dispatch(graph, node_id, run_id)
         if node.status == NodeStatus.RUNNING:
             # Before the claim can succeed, reconcile any orphaned terminal runs
             # for this node — a prior worker may have finished without anyone
@@ -206,12 +201,7 @@ def milknado_run_inline_start(
         # RUNNING transition and the run_id fence are written in one statement, so a
         # second concurrent caller sees RUNNING and loses. The same run_id keys the
         # run row, keeping the node row and the run row in agreement.
-        if not graph.claim_node(node_id, run_id, now=now_iso()):
-            current = graph.get_node(node_id)
-            status = current.status.value if current is not None else "gone"
-            raise ValueError(
-                f"node {node_id} is already {status}; set status back to pending to retry"
-            )
+        graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
         try:
             worker_cwd, merge_ctx = _prepare_isolation(
                 graph, root, node, run_id, worktree, merge_back, cfg.worktree_pattern

@@ -24,32 +24,28 @@ from contextlib import suppress
 from pathlib import Path
 
 from milknado._mcp_core import (
-    _check_ancestor_goal_not_claimed,
-    _claim_ancestor_goal_for_dispatch,
     mcp,
     open_graph,
     resolve_project_root,
 )
 from milknado.adapters import GitAdapter, RunWindow, TmuxAdapter, TmuxDispatchError
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeStatus, RunResult
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
+    RUN_ID_RE,
+    build_worker_env,
     ensure_tmux_ready,
+    exit_code_path,
     fail_stale_running_runs,
     find_terminal_runs_for_node,
     latest_terminal_run,
+    make_run_id,
     now_iso,
     reconcile_node_status,
     reconcile_run_window,
     runs_dir,
-)
-from milknado.domains.dispatch._runstate import (
-    RUN_ID_RE,
-    exit_code_path,
-    make_run_id,
     tail,
 )
-from milknado.domains.dispatch.runner import _build_worker_env
 
 _logger = logging.getLogger(__name__)
 
@@ -98,8 +94,6 @@ def milknado_run_loop_start(
                 f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
             )
         run_id = make_run_id(node_id)
-        _check_ancestor_goal_not_claimed(graph, node_id)
-        _claim_ancestor_goal_for_dispatch(graph, node_id, run_id)
         now = now_iso()
         if node.status == NodeStatus.RUNNING:
             # Capture the worktree path BEFORE reconcile clears it from the node row,
@@ -143,12 +137,7 @@ def milknado_run_loop_start(
                 except Exception as exc:
                     _logger.warning("Failed to remove orphan worktree %s: %s", orphan_wt, exc)
 
-        if not graph.claim_node(node_id, run_id, now=now):
-            current = graph.get_node(node_id)
-            status = current.status.value if current is not None else "gone"
-            raise ValueError(
-                f"node {node_id} is already {status}; set status back to pending to retry"
-            )
+        graph.claim_node_for_dispatch(node_id, run_id, now=now)
         # The node is RUNNING under our run_id BEFORE we spawn — a second concurrent
         # caller's claim above already lost. From here a failure must release the
         # claim (mark_terminal failed) so the node is not stranded RUNNING.
@@ -182,7 +171,7 @@ def milknado_run_loop_start(
                         cwd=root,
                         log_path=log_path,
                         exit_code_path=exit_code_path(rdir, run_id),
-                        env=_build_worker_env(
+                        env=build_worker_env(
                             {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
                         ),
                     )
@@ -195,7 +184,7 @@ def milknado_run_loop_start(
                         stderr=subprocess.STDOUT,
                         cwd=str(root),
                         start_new_session=True,
-                        env=_build_worker_env(
+                        env=build_worker_env(
                             {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
                         ),
                     )
@@ -207,12 +196,14 @@ def milknado_run_loop_start(
             with suppress(Exception):
                 graph.finish_run(
                     run_id,
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=f"spawn failed: {type(exc).__name__}: {exc}",
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=False,
+                        ended_at=now_iso(),
+                        rebased=False,
+                        detail=f"spawn failed: {type(exc).__name__}: {exc}",
+                    ),
                 )
             graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
             raise

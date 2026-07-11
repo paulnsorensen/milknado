@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from milknado.domains.common import NodeStatus, pid_alive
+from milknado.domains.common import NodeStatus, RunResult, pid_alive
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
 
 _logger = logging.getLogger(__name__)
@@ -76,11 +76,13 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
         ended_at = _now_iso()
         graph.finish_run(
             state["run_id"],
-            status="failed",
-            exit_code=-1,
-            timed_out=False,
-            ended_at=ended_at,
-            error=error,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=ended_at,
+                error=error,
+            ),
         )
         flipped.append(
             {

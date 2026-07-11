@@ -10,11 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._persistence import (
     create_tables,
-    ensure_schema,
     get_goal_claim,
     get_spec_hash,
     row_to_node,
@@ -28,7 +27,6 @@ def conn(tmp_path: Path) -> Generator[sqlite3.Connection, None, None]:
     c = sqlite3.connect(str(tmp_path / "p.db"))
     c.row_factory = sqlite3.Row
     create_tables(c)
-    ensure_schema(c)
     yield c
     c.close()
 
@@ -111,7 +109,7 @@ class TestDropAll:
         """goal_claims.goal_id REFERENCES nodes(id) with no ON DELETE CASCADE and
         foreign_keys=ON, so drop_all must clear goal_claims before nodes or the
         DELETE FROM nodes raises IntegrityError. Seed a claim, then prove reset works."""
-        goal = graph.add_node("goal", kind=NodeKind.GOAL)
+        goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
         graph.claim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
         assert get_goal_claim(graph._conn, goal.id) is not None
         # Must not raise sqlite3.IntegrityError, and must clear the claim row.
@@ -152,11 +150,13 @@ class TestRunsRepo:
         graph.start_run("r1", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
         graph.finish_run(
             "r1",
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:01:00+00:00",
-            detail="all-green",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:01:00+00:00",
+                detail="all-green",
+            ),
         )
         row = graph.get_run("r1")
         assert row is not None
@@ -173,11 +173,13 @@ class TestRunsRepo:
         graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
         graph.finish_run(
             "rt",
-            status="failed",
-            exit_code=-1,
-            timed_out=True,
-            ended_at="2026-01-01T00:00:10+00:00",
-            rebased=False,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=True,
+                ended_at="2026-01-01T00:00:10+00:00",
+                rebased=False,
+            ),
         )
         row = graph.get_run("rt")
         assert row is not None
@@ -189,11 +191,13 @@ class TestRunsRepo:
         graph.start_run("rb", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
         graph.finish_run(
             "rb",
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:00:10+00:00",
-            rebased=True,
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:00:10+00:00",
+                rebased=True,
+            ),
         )
         row = graph.get_run("rb")
         assert row is not None
@@ -208,19 +212,23 @@ class TestRunsRepo:
         graph.start_run("rc", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
         graph.finish_run(
             "rc",
-            status="failed",
-            exit_code=-1,
-            timed_out=False,
-            ended_at="2026-01-01T00:01:00+00:00",
-            error="cancelled",
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at="2026-01-01T00:01:00+00:00",
+                error="cancelled",
+            ),
         )
         # The wedged worker finally finishes and lands its own terminal write.
         graph.finish_run(
             "rc",
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:02:00+00:00",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:02:00+00:00",
+            ),
         )
         row = graph.get_run("rc")
         assert row is not None
@@ -245,10 +253,12 @@ class TestRunsRepo:
         graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 600, pid=11)
         graph.finish_run(
             "rt",
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:00:10+00:00",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:00:10+00:00",
+            ),
         )
         graph.set_run_pid("rt", 9999)
         row = graph.get_run("rt")
@@ -261,10 +271,12 @@ class TestRunsRepo:
         graph.start_run("done", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
         graph.finish_run(
             "done",
-            status="done",
-            exit_code=0,
-            timed_out=False,
-            ended_at="2026-01-01T00:00:10+00:00",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:00:10+00:00",
+            ),
         )
         all_runs = {r["run_id"] for r in graph.runs_for_node(nid)}
         terminal = {r["run_id"] for r in graph.runs_for_node(nid, terminal_only=True)}
@@ -332,51 +344,6 @@ class TestSetDispatchedAt:
         node = graph.get_node(1)
         assert node is not None
         assert node.dispatched_at is not None
-
-
-class TestSchemaEvolution:
-    def test_ensure_schema_adds_missing_columns(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "legacy.db"
-        c = sqlite3.connect(str(db_path))
-        c.row_factory = sqlite3.Row
-        c.executescript("""
-            CREATE TABLE nodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                parent_id INTEGER,
-                worktree_path TEXT,
-                branch_name TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT
-            );
-            CREATE TABLE edges (
-                parent_id INTEGER NOT NULL,
-                child_id INTEGER NOT NULL,
-                PRIMARY KEY (parent_id, child_id)
-            );
-            CREATE TABLE file_ownership (
-                node_id INTEGER NOT NULL,
-                file_path TEXT NOT NULL,
-                PRIMARY KEY (node_id, file_path)
-            );
-        """)
-        c.execute(
-            "INSERT INTO nodes (description, status, created_at) VALUES (?, ?, ?)",
-            ("legacy", "pending", "2026-01-01T00:00:00+00:00"),
-        )
-        c.commit()
-        ensure_schema(c)
-        cols = {row[1] for row in c.execute("PRAGMA table_info(nodes)").fetchall()}
-        assert "run_id" in cols
-        assert "dispatched_at" in cols
-        assert "completion_duration_seconds" in cols
-        c.close()
-
-    def test_ensure_schema_idempotent(self, conn: sqlite3.Connection) -> None:
-        # Running ensure_schema twice should not raise
-        ensure_schema(conn)
-        ensure_schema(conn)
 
 
 class TestRowToNode:

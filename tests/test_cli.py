@@ -15,7 +15,7 @@ from milknado.cli_tools import (
     _write_gemini_worker_settings,
     _write_worker_hooks,
 )
-from milknado.domains.common import NodeKind, default_config
+from milknado.domains.common import NodeKind, NodeSpec, default_config
 from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -1609,8 +1609,8 @@ class TestRunRunnabilityGate:
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         # Root GOAL with a sub-goal that has no children (undecomposed stub)
-        root = graph.add_node("root goal", kind=NodeKind.GOAL)
-        graph.add_node("sub-goal", parent_id=root.id, kind=NodeKind.GOAL)
+        root = graph.add_node("root goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("sub-goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
         graph.close()
 
         result = runner.invoke(
@@ -1638,8 +1638,8 @@ class TestRunRunnabilityGate:
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
-        root = graph.add_node("root goal", kind=NodeKind.GOAL)
-        graph.add_node("task", parent_id=root.id, kind=NodeKind.TASK)
+        root = graph.add_node("root goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("task", parent_id=root.id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.close()
 
         _configure_ralph_mocks(mock_ralph_cls, project_dir)
@@ -1697,9 +1697,9 @@ class TestRunRunnabilityGate:
         runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
-        root = graph.add_node("root goal", kind=NodeKind.GOAL)
+        root = graph.add_node("root goal", spec=NodeSpec(kind=NodeKind.GOAL))
         # IMPLEMENT task (default flavor) without file hints → warning only
-        graph.add_node("task", parent_id=root.id, kind=NodeKind.TASK)
+        graph.add_node("task", parent_id=root.id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.close()
 
         _configure_ralph_mocks(mock_ralph_cls, project_dir)

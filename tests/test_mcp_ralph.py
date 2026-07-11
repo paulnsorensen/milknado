@@ -18,6 +18,7 @@ _STUB_RUNNER = """
 import argparse
 from pathlib import Path
 from milknado._mcp_core import open_graph
+from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
@@ -28,12 +29,14 @@ graph, _cfg = open_graph(Path(a.project_root))
 try:
     graph.finish_run(
         a.run_id,
-        status="{status}",
-        exit_code={exit_code},
-        timed_out=False,
-        ended_at="2026-01-01T00:00:00+00:00",
-        rebased={rebased},
-        detail={detail},
+        RunResult(
+            status="{status}",
+            exit_code={exit_code},
+            timed_out=False,
+            ended_at="2026-01-01T00:00:00+00:00",
+            rebased={rebased},
+            detail={detail},
+        ),
     )
 finally:
     graph.close()
@@ -46,6 +49,7 @@ _ENV_CAPTURE_RUNNER = """
 import argparse, os
 from pathlib import Path
 from milknado._mcp_core import open_graph
+from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
@@ -56,12 +60,14 @@ graph, _cfg = open_graph(Path(a.project_root))
 try:
     graph.finish_run(
         a.run_id,
-        status="done",
-        exit_code=0,
-        timed_out=False,
-        ended_at="2026-01-01T00:00:00+00:00",
-        rebased=True,
-        detail=os.environ.get("MILKNADO_NODE_ID", "<unset>"),
+        RunResult(
+            status="done",
+            exit_code=0,
+            timed_out=False,
+            ended_at="2026-01-01T00:00:00+00:00",
+            rebased=True,
+            detail=os.environ.get("MILKNADO_NODE_ID", "<unset>"),
+        ),
     )
 finally:
     graph.close()
@@ -104,6 +110,8 @@ def _seed_run(
     """Insert a runs row directly (replaces writing a .state.json sidecar)."""
     from datetime import UTC, datetime
 
+    from milknado.domains.common import RunResult
+
     graph, _cfg = open_graph(root)
     try:
         graph._conn.execute(
@@ -117,10 +125,12 @@ def _seed_run(
         if status != "running":
             graph.finish_run(
                 run_id,
-                status=status,
-                exit_code=exit_code,
-                timed_out=False,
-                ended_at=ended_at or datetime.now(UTC).isoformat(),
+                RunResult(
+                    status=status,
+                    exit_code=exit_code,
+                    timed_out=False,
+                    ended_at=ended_at or datetime.now(UTC).isoformat(),
+                ),
             )
         graph._conn.commit()
     finally:
@@ -429,8 +439,8 @@ def test_runner_writes_done_on_successful_outcome(
         def get_node(self, node_id: int) -> None:  # noqa: ARG002
             return None
 
-        def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
-            self.finished = {"run_id": run_id, **fields}
+        def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
+            self.finished = {"run_id": run_id, **vars(result)}
 
         def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
             return 1
@@ -507,8 +517,8 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def get_node(self, node_id: int) -> None:  # noqa: ARG002
             return None
 
-        def finish_run(self, run_id: str, **fields) -> None:  # noqa: ANN003
-            self.finished = {"run_id": run_id, **fields}
+        def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
+            self.finished = {"run_id": run_id, **vars(result)}
 
         def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
             return 1

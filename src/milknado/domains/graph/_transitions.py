@@ -14,7 +14,8 @@ from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 
 
-def assert_transition(conn: sqlite3.Connection, node_id: int, target: NodeStatus) -> None:
+def assert_transition(conn: sqlite3.Connection, node_id: int, target: NodeStatus) -> NodeStatus:
+    """Validate target is reachable from the node's current status; return current."""
     row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
     if row is None:
         raise ValueError(f"Node {node_id} not found")
@@ -27,27 +28,63 @@ def assert_transition(conn: sqlite3.Connection, node_id: int, target: NodeStatus
             target=target,
             valid_targets=tuple(allowed),
         )
+    return current
+
+
+def _apply_transition(
+    conn: sqlite3.Connection,
+    node_id: int,
+    target: NodeStatus,
+    sql: str,
+    params: tuple,
+) -> None:
+    """Run a CAS UPDATE gated on the source status observed by assert_transition,
+    committing then raising InvalidTransition on 0 rows.
+
+    A 0-row result means a concurrent writer moved the node off the status
+    assert_transition saw between its SELECT and this UPDATE. Re-read the node's
+    actual status so the raised InvalidTransition reports where the node truly is
+    now (and the valid_targets reachable from there), not the stale pre-conflict
+    value assert_transition observed.
+    """
+    cur = conn.execute(sql, params)
+    conn.commit()
+    if cur.rowcount == 0:
+        row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"Node {node_id} not found")
+        actual = NodeStatus(row[0])
+        raise InvalidTransition(
+            node_id=node_id,
+            current=actual,
+            target=target,
+            valid_targets=tuple(VALID_TRANSITIONS.get(actual, set())),
+        )
 
 
 def transition_status(conn: sqlite3.Connection, node_id: int, target: NodeStatus) -> None:
     """Validate then apply a plain status change (sets completed_at on DONE)."""
-    assert_transition(conn, node_id, target)
+    current = assert_transition(conn, node_id, target)
     completed_at = datetime.now(UTC).isoformat() if target == NodeStatus.DONE else None
-    conn.execute(
-        "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ?",
-        (target.value, completed_at, node_id),
+    _apply_transition(
+        conn,
+        node_id,
+        target,
+        "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+        (target.value, completed_at, node_id, current.value),
     )
-    conn.commit()
 
 
 def mark_failed(conn: sqlite3.Connection, node_id: int) -> None:
-    assert_transition(conn, node_id, NodeStatus.FAILED)
-    conn.execute(
+    current = assert_transition(conn, node_id, NodeStatus.FAILED)
+    _apply_transition(
+        conn,
+        node_id,
+        NodeStatus.FAILED,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
-        (NodeStatus.FAILED.value, node_id),
+        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        (NodeStatus.FAILED.value, node_id, current.value),
     )
-    conn.commit()
 
 
 def mark_running(
@@ -57,23 +94,27 @@ def mark_running(
     branch_name: str | None = None,
     run_id: str | None = None,
 ) -> None:
-    assert_transition(conn, node_id, NodeStatus.RUNNING)
-    conn.execute(
+    current = assert_transition(conn, node_id, NodeStatus.RUNNING)
+    _apply_transition(
+        conn,
+        node_id,
+        NodeStatus.RUNNING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ?",
-        (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id),
+        "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ?",
+        (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
     )
-    conn.commit()
 
 
 def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
-    assert_transition(conn, node_id, NodeStatus.PENDING)
-    conn.execute(
+    current = assert_transition(conn, node_id, NodeStatus.PENDING)
+    _apply_transition(
+        conn,
+        node_id,
+        NodeStatus.PENDING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ?",
-        (NodeStatus.PENDING.value, node_id),
+        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        (NodeStatus.PENDING.value, node_id, current.value),
     )
-    conn.commit()
 
 
 # --- Atomic optimistic claim / reclaim / fence ---------------------------------

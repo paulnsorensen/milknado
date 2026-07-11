@@ -32,6 +32,7 @@ from milknado.cli_tools import (
 from milknado.domains.common import (
     MikadoNode,
     NodeKind,
+    NodeSpec,
     NodeStatus,
     default_config,
     load_config,
@@ -223,7 +224,7 @@ def add_node(
     graph = _ensure_db(config, plugins)
 
     try:
-        node = graph.add_node(description, parent_id=parent, kind=node_kind)
+        node = graph.add_node(description, parent_id=parent, spec=NodeSpec(kind=node_kind))
         if files:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
 

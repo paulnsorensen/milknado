@@ -9,12 +9,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
     AdapterEvent,
     CountsWhat,
     Invocation,
     stdin_invocation,
+    stdout_only_completion_signal,
 )
 
 
@@ -63,9 +63,7 @@ class GenericAdapter:
         supplied when promise detection is requested.
         """
         del result_text
-        if stdout is None:
-            return False
-        return has_promise_completion(stdout, user_signal)
+        return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
 
     def install_wind_down_hook(
         self,
