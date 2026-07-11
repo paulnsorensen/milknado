@@ -401,14 +401,17 @@ class MikadoGraph(_AnalyticsFacade):
             self._notify_status_change(node_id, old, NodeStatus.RUNNING)
         return claimed
 
-    def claim_ancestor_goal_for_dispatch(self, node_id: int, run_id: str) -> None:
+    def claim_ancestor_goal_for_dispatch(
+        self, node_id: int, run_id: str, *, now: str | None = None
+    ) -> None:
         """Enforce and claim the ancestor-goal subtree fence before dispatch.
 
         Raises ValueError if an ancestor goal is claimed by a different live
         coordinator (a different pid). Same-process dispatch (same pid) is
         exempt: the current process is the coordinator that holds the claim,
         so sibling tasks may proceed. No-op claim when there is no ancestor
-        goal.
+        goal. Pass ``now`` to share one timestamp with a paired node claim;
+        it defaults to the current UTC time.
         """
         claim = self.ancestor_goal_claimed_by_other(node_id)
         if claim is not None and claim["pid"] != os.getpid():
@@ -416,9 +419,9 @@ class MikadoGraph(_AnalyticsFacade):
                 f"node {node_id}'s ancestor goal is claimed by a different run "
                 f"({claim['run_id']!r}); dispatch refused"
             )
-        from milknado.domains.dispatch import now_iso
-
-        self.claim_ancestor_goal(node_id, run_id, os.getpid(), now=now_iso())
+        self.claim_ancestor_goal(
+            node_id, run_id, os.getpid(), now=now or datetime.now(UTC).isoformat()
+        )
 
     def claim_node_for_dispatch(self, node_id: int, run_id: str, *, now: str) -> None:
         """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING.
@@ -426,7 +429,7 @@ class MikadoGraph(_AnalyticsFacade):
         Raises ValueError if blocked by a foreign ancestor-goal claim, or if
         node_id itself could not be claimed (already claimed / wrong status).
         """
-        self.claim_ancestor_goal_for_dispatch(node_id, run_id)
+        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now)
         if not self.claim_node(node_id, run_id, now=now):
             current = self.get_node(node_id)
             status = current.status.value if current is not None else "gone"

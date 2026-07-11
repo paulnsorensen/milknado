@@ -29,13 +29,14 @@ deposit channel, UNIQUE `(run_id, seq)` — closes #122).
 `MikadoGraph.__init__` (`graph.py`) opens the connection in **WAL mode** with
 `foreign_keys=ON` and `busy_timeout=5000` — the detached runner and the MCP
 server both write the same db concurrently, so the busy window is explicit.
-`create_tables` + `ensure_schema` run on every open: `ensure_schema` is an
-additive `ALTER TABLE` migration for columns added over time (`run_id`, `pid`,
-`dispatched_at`, `kind`, `completion_duration_seconds`), and `row_to_node`
-defends missing columns so old rows still deserialize. `runs` and
-`run_messages` are created directly in `create_tables` with **no
-`ensure_schema` ladder entry** — a deliberate clean cut (pre-release "No
-Migration Code" rule): the ladder touches only `nodes` columns. `close()` runs
+`create_tables` runs on every open but short-circuits: a `sqlite_master` probe
+for the `nodes` table skips the `executescript` (one batch of `CREATE TABLE IF
+NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) once the db is initialized. The full
+schema — all `nodes` columns, `edges`, `file_ownership`, `plan_state`,
+`batch_plans`, `runs`, `run_messages`, and `idx_nodes_wiki_ref` — is declared
+inline in that one script with **no `ALTER TABLE` migration ladder**: a
+deliberate clean cut (pre-release "No Migration Code" rule), so the old
+`ensure_schema` additive-migration step was removed entirely. `close()` runs
 `PRAGMA wal_checkpoint(TRUNCATE)` so a non-last-connection close folds the WAL
 tail into the main `.db` — without it a tool call's committed writes could be
 lost on container reclaim before the WAL checkpoints.

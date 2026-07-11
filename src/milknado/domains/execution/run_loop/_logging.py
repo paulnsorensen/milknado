@@ -47,8 +47,13 @@ def configure_stderr_logging() -> logging.Handler:
 
     The MCP server has no single run to scope a log file to and speaks stdio —
     logging to stdout would corrupt the protocol stream, so this writes to
-    stderr instead of reusing configure_run_logging's file handler.
+    stderr instead of reusing configure_run_logging's file handler. Idempotent:
+    a second call returns the already-installed stderr handler rather than
+    stacking a duplicate that would double every log line.
     """
+    for existing in _logger.handlers:
+        if isinstance(existing, logging.StreamHandler) and existing.stream is sys.stderr:
+            return existing
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     _logger.setLevel(logging.INFO)
