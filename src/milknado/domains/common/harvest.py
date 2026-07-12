@@ -1,9 +1,9 @@
 """Shared harvest rollup: fold a goal's task subtree into an execution summary.
 
 Both the wiki exporter and the github exporter project the same outcome — task
-done/failed counts, result-message summaries, and branch names — into their own
-target format. This builder is the single source of that rollup so the two
-projections never drift; each caller formats the returned summary its own way.
+done/failed counts, result-message summaries, and branch names. This builder is
+the single source of that rollup, and `format_harvest_text` is the single source
+of its plain-text rendering, so the two projections never drift.
 """
 
 from __future__ import annotations
@@ -61,3 +61,21 @@ def build_harvest_summary(graph: MikadoGraph, goal: MikadoNode) -> HarvestSummar
         result_summaries=_collect_summaries(graph, tasks),
         branch_names=branches,
     )
+
+
+def format_harvest_text(summary: HarvestSummary) -> str:
+    """Render a harvest summary as plain text.
+
+    No separate `follow-ups:` line (despite the spec's illustrated schema):
+    milknado tracks follow-ups as new graph nodes, not a queryable field, so
+    they already fold into the task done/failed rollup below.
+    """
+    lines = [
+        f"result: {summary.status} · tasks: "
+        f"{summary.tasks_done} done / {summary.tasks_failed} failed"
+    ]
+    if summary.result_summaries:
+        lines.append("summary: " + " | ".join(summary.result_summaries))
+    if summary.branch_names:
+        lines.append("branches: " + ", ".join(summary.branch_names))
+    return "\n".join(lines)

@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import MikadoNode, NodeKind, build_harvest_summary
+from milknado.domains.common import (
+    MikadoNode,
+    NodeKind,
+    build_harvest_summary,
+    format_harvest_text,
+)
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._locate import goal_file_map, locate_roadmap_dir, resolve_roadmap_dir
 from milknado.domains.wiki._serialize import (
@@ -66,7 +71,7 @@ def export_roadmap(
     for goal in graph.get_children(roadmap_node_id):
         if goal.kind != NodeKind.GOAL:
             continue
-        inner = _render_harvest_inner(graph, goal)
+        inner = format_harvest_text(build_harvest_summary(graph, goal))
         path = file_map.get(goal.wiki_ref) if goal.wiki_ref else None
         if path is not None:
             _rewrite_goal_file(path, inner, goal.status.value, now_iso)
@@ -97,22 +102,6 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
     if node is None:
         raise LookupError(f"roadmap {roadmap_slug!r} not imported into milknado yet")
     return node
-
-
-def _render_harvest_inner(graph: MikadoGraph, goal: MikadoNode) -> str:
-    # No separate `follow-ups:` line (despite the spec's illustrated schema):
-    # milknado tracks follow-ups as new graph nodes, not a queryable field, so
-    # they already fold into the task done/failed rollup below.
-    summary = build_harvest_summary(graph, goal)
-    lines = [
-        f"result: {summary.status} · tasks: "
-        f"{summary.tasks_done} done / {summary.tasks_failed} failed"
-    ]
-    if summary.result_summaries:
-        lines.append("summary: " + " | ".join(summary.result_summaries))
-    if summary.branch_names:
-        lines.append("branches: " + ", ".join(summary.branch_names))
-    return "\n".join(lines)
 
 
 def _rewrite_goal_file(path: Path, inner: str, status: str, now_iso: str) -> None:

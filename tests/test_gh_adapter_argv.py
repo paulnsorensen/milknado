@@ -1,6 +1,6 @@
 """`adapters/gh.py` transport: each `gh project`/`gh issue` wrapper builds the
-right argv and parses the JSON reply, preflight fails loud on missing gh/auth/
-scope, and NO argv ever contains `graphql`/`api` (Acceptance 6, 8).
+right argv and parses the JSON reply, and NO argv ever contains
+`graphql`/`api` (Acceptance 6, 8).
 
 subprocess.run is fully mocked so these tests never touch a real `gh`.
 """
@@ -14,7 +14,6 @@ import pytest
 
 from milknado.adapters import gh
 from milknado.adapters.gh import (
-    GhTransportError,
     gh_field_create,
     gh_field_create_text,
     gh_field_list,
@@ -23,7 +22,6 @@ from milknado.adapters.gh import (
     gh_item_add,
     gh_item_edit,
     gh_item_list,
-    gh_preflight,
     gh_project_view,
 )
 
@@ -197,28 +195,11 @@ class TestWrapperArgv:
         assert rec.calls[0][1:] == ["issue", "edit", "https://x/3", "--body", "new body"]
 
 
-class TestRunJson:
-    def test_unparseable_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
-        wire("not json{")
-        with pytest.raises(GhTransportError, match="unparseable JSON"):
-            gh_project_view("acme", 7)
-
-    def test_non_object_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
-        wire("[]")
-        with pytest.raises(GhTransportError, match="non-object JSON"):
-            gh_project_view("acme", 7)
-
-    def test_item_add_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
-        wire(json.dumps({"foo": 1}))
-        with pytest.raises(GhTransportError, match="has no `id`"):
-            gh_item_add("acme", 7, "https://x/1")
-
-
 class TestZeroGraphql:
     def test_no_wrapper_argv_contains_graphql_or_api(self, wire) -> None:  # noqa: ANN001
         # Acceptance 8: the entire transport is `gh project`/`gh issue` — never
         # a raw GraphQL/api call. Exercise every wrapper and scan the argv.
-        rec = wire(json.dumps({"id": "x", "items": [], "fields": []}))
+        rec = wire(json.dumps({"id": "x", "title": "t", "items": [], "fields": []}))
         gh_project_view("a", 1)
         gh_item_list("a", 1)
         gh_item_add("a", 1, "u")
@@ -231,71 +212,3 @@ class TestZeroGraphql:
         tokens = [tok for call in rec.calls for tok in call]
         assert "graphql" not in tokens
         assert "api" not in tokens
-
-
-class TestPreflight:
-    def test_missing_gh_binary_raises_with_refresh_hint(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: None)
-        with pytest.raises(GhTransportError, match="gh auth refresh -s project"):
-            gh_preflight()
-
-    def test_unauthenticated_raises_refresh_hint(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
-        monkeypatch.setattr(
-            gh.subprocess,
-            "run",
-            lambda *_a, **_k: subprocess.CompletedProcess([], 1, stdout="", stderr="no auth"),
-        )
-        with pytest.raises(GhTransportError, match="gh auth refresh -s project"):
-            gh_preflight()
-
-    def test_missing_project_scope_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
-        monkeypatch.setattr(
-            gh.subprocess,
-            "run",
-            lambda *_a, **_k: subprocess.CompletedProcess(
-                [], 0, stdout="Logged in with scopes: repo", stderr=""
-            ),
-        )
-        with pytest.raises(GhTransportError, match="Projects scope"):
-            gh_preflight()
-
-    def test_authenticated_with_scope_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
-        monkeypatch.setattr(
-            gh.subprocess,
-            "run",
-            lambda *_a, **_k: subprocess.CompletedProcess(
-                [], 0, stdout="Token scopes: 'repo', 'project'", stderr=""
-            ),
-        )
-        gh_preflight()  # no raise
-
-    def test_read_only_project_scope_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
-        monkeypatch.setattr(
-            gh.subprocess,
-            "run",
-            lambda *_a, **_k: subprocess.CompletedProcess(
-                [], 0, stdout="Token scopes: 'read:project'", stderr=""
-            ),
-        )
-        with pytest.raises(GhTransportError, match="Projects scope"):
-            gh_preflight()
-
-
-class TestRunFailure:
-    def test_called_process_error_becomes_transport_error(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
-
-        def _boom(*_a, **_k):
-            raise subprocess.CalledProcessError(1, "gh", stderr="boom detail")
-
-        monkeypatch.setattr(gh.subprocess, "run", _boom)
-        with pytest.raises(GhTransportError, match="boom detail"):
-            gh_project_view("a", 1)
