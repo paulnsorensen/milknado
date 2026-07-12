@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.common import MikadoNode, NodeKind, build_harvest_summary
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.wiki._locate import resolve_roadmap_dir
+from milknado.domains.wiki._locate import goal_file_map, locate_roadmap_dir, resolve_roadmap_dir
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
     HARVEST_START,
@@ -58,8 +58,8 @@ def export_roadmap(
         raise ValueError(
             f"roadmap node {roadmap_node_id} has no wiki_ref; import the roadmap first"
         )
-    roadmap_dir, roadmap_slug = _locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
-    file_map = _goal_file_map(roadmap_dir, roadmap_slug)
+    roadmap_dir, roadmap_slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
+    file_map = goal_file_map(roadmap_dir, roadmap_slug)
     now_iso = now or _now_iso()
     written = 0
     created = 0
@@ -99,76 +99,19 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
     return node
 
 
-def _locate_roadmap_dir(wiki_root: Path, roadmap_ref: str) -> tuple[Path, str]:
-    """Recover (dir, slug) by matching each roadmap index.md's computed key.
-
-    Searches nested `roadmaps/*/index.md` first, then flat `wiki_root/*/index.md`
-    siblings (for roadmaps imported from a flat layout).
-    """
-    candidates: list[Path] = []
-    roadmaps = wiki_root / "roadmaps"
-    if roadmaps.is_dir():
-        candidates.extend(sorted(roadmaps.glob("*/index.md")))
-    # flat siblings: wiki_root/*/index.md, skipping the roadmaps/ subdir itself
-    candidates.extend(
-        p for p in sorted(wiki_root.glob("*/index.md")) if p.parent.name != "roadmaps"
-    )
-    for index_path in candidates:
-        slug = index_path.parent.name
-        created = load_frontmatter(index_path.read_text()).get("created")
-        if created is not None and compute_roadmap_ref(slug, str(created)) == roadmap_ref:
-            return index_path.parent, slug
-    raise FileNotFoundError(f"no roadmap dir under {wiki_root} matches wiki_ref {roadmap_ref}")
-
-
-def _goal_file_map(roadmap_dir: Path, roadmap_slug: str) -> dict[str, Path]:
-    """Map each goal file's computed wiki_ref to its path."""
-    mapping: dict[str, Path] = {}
-    for path in sorted(roadmap_dir.glob("*.md")):
-        if path.name == "index.md":
-            continue
-        created = load_frontmatter(path.read_text()).get("created")
-        if created is not None:
-            mapping[compute_goal_ref(roadmap_slug, path.stem, str(created))] = path
-    return mapping
-
-
-def _task_descendants(graph: MikadoGraph, goal_id: int) -> list[MikadoNode]:
-    """Collect TASK nodes in the goal's subtree, not crossing into sibling goals."""
-    tasks: list[MikadoNode] = []
-    stack = list(graph.get_children(goal_id))
-    while stack:
-        node = stack.pop()
-        if node.kind == NodeKind.TASK:
-            tasks.append(node)
-            stack.extend(graph.get_children(node.id))
-    return tasks
-
-
-def _collect_summaries(graph: MikadoGraph, tasks: list[MikadoNode]) -> list[str]:
-    summaries: list[str] = []
-    for task in tasks:
-        for run in graph.runs_for_node(task.id, terminal_only=True):
-            msg = graph.latest_run_message(run["run_id"], "result")
-            if msg:
-                summaries.append(msg.strip())
-    return summaries
-
-
 def _render_harvest_inner(graph: MikadoGraph, goal: MikadoNode) -> str:
     # No separate `follow-ups:` line (despite the spec's illustrated schema):
     # milknado tracks follow-ups as new graph nodes, not a queryable field, so
     # they already fold into the task done/failed rollup below.
-    tasks = _task_descendants(graph, goal.id)
-    done = sum(1 for t in tasks if t.status == NodeStatus.DONE)
-    failed = sum(1 for t in tasks if t.status == NodeStatus.FAILED)
-    lines = [f"result: {goal.status.value} · tasks: {done} done / {failed} failed"]
-    summaries = _collect_summaries(graph, tasks)
-    if summaries:
-        lines.append("summary: " + " | ".join(summaries))
-    branches = sorted({t.branch_name for t in tasks if t.branch_name})
-    if branches:
-        lines.append("branches: " + ", ".join(branches))
+    summary = build_harvest_summary(graph, goal)
+    lines = [
+        f"result: {summary.status} · tasks: "
+        f"{summary.tasks_done} done / {summary.tasks_failed} failed"
+    ]
+    if summary.result_summaries:
+        lines.append("summary: " + " | ".join(summary.result_summaries))
+    if summary.branch_names:
+        lines.append("branches: " + ", ".join(summary.branch_names))
     return "\n".join(lines)
 
 
