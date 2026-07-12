@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from milknado.domains.common.harvest import HarvestSummary
+from milknado.domains.common.harvest import HarvestSummary, format_harvest_text
 from milknado.domains.github._fields import (
     STATUS_OPTIONS,
     find_field,
     find_option_id,
-    format_harvest_text,
     status_option_name,
 )
 

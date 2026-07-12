@@ -9,6 +9,7 @@ human-owned). Field ownership, not byte ranges, is the membrane here.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,17 +21,23 @@ from milknado.adapters.gh import (
     gh_preflight,
     gh_project_view,
 )
-from milknado.domains.common import MikadoNode, NodeKind, build_harvest_summary
+from milknado.domains.common import (
+    MikadoNode,
+    NodeKind,
+    build_harvest_summary,
+    format_harvest_text,
+)
 from milknado.domains.github._fields import (
     HARVEST_FIELD_NAME,
     STATUS_FIELD_NAME,
     find_field,
     find_option_id,
-    format_harvest_text,
     status_option_name,
 )
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.graph import MikadoGraph
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -105,10 +112,17 @@ def _write_status(goal: MikadoNode, project_id: str, status_field: dict) -> None
     if option is None:
         return
     option_id = find_option_id(status_field, option)
-    if option_id is not None:
-        gh_item_edit(
-            project_id, goal.github_ref, status_field["id"], single_select_option_id=option_id
+    if option_id is None:
+        _logger.warning(
+            "goal %s: status option %r not found on field %r; skipping status write",
+            goal.id,
+            option,
+            status_field.get("name"),
         )
+        return
+    gh_item_edit(
+        project_id, goal.github_ref, status_field["id"], single_select_option_id=option_id
+    )
 
 
 def _write_harvest(

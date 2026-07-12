@@ -69,8 +69,11 @@ build the second goal
 class FakeGh:
     """Records the bind's gh calls; returns a distinct item id per issue."""
 
-    def __init__(self, fields: list[dict] | None = None) -> None:
+    def __init__(
+        self, fields: list[dict] | None = None, existing_items: list[dict] | None = None
+    ) -> None:
         self.fields = fields or []
+        self.existing_items = existing_items or []
         self.issues: list[tuple[str, str, str, str]] = []
         self.items: list[str] = []
         self.created_fields: list[tuple[str, list[str]]] = []
@@ -85,6 +88,9 @@ class FakeGh:
     def item_add(self, _owner: str, _number: int, url: str) -> str:
         self.items.append(url)
         return f"PVTI_{len(self.items)}"
+
+    def item_list(self, _owner: str, _number: int) -> list[dict]:
+        return list(self.existing_items)
 
     def field_list(self, _owner: str, _number: int) -> list[dict]:
         return list(self.fields)
@@ -101,6 +107,7 @@ class FakeGh:
 def _wire(monkeypatch: pytest.MonkeyPatch, fake: FakeGh) -> None:
     monkeypatch.setattr(bind_mod, "gh_preflight", lambda: None)
     monkeypatch.setattr(bind_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
+    monkeypatch.setattr(bind_mod, "gh_item_list", fake.item_list)
     monkeypatch.setattr(bind_mod, "gh_issue_create", fake.issue_create)
     monkeypatch.setattr(bind_mod, "gh_item_add", fake.item_add)
     monkeypatch.setattr(bind_mod, "gh_field_list", fake.field_list)
@@ -247,6 +254,52 @@ class TestBindGuards:
         _wire(monkeypatch, FakeGh())
         with pytest.raises(ValueError, match="malformed `github_repo`"):
             bind_github_project(graph, rid, wiki_root)
+
+
+class TestRebindGuard:
+    def test_different_project_id_raises(
+        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rid, wiki_root = _import(tmp_path, graph)
+        graph.set_github_ref(rid, "PVT_other")
+        _wire(monkeypatch, FakeGh())
+        with pytest.raises(ValueError, match="PVT_other.*PVT_1"):
+            bind_github_project(graph, rid, wiki_root)
+
+    def test_same_project_id_is_noop(
+        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rid, wiki_root = _import(tmp_path, graph)
+        graph.set_github_ref(rid, "PVT_1")
+        calls: list[tuple[int, str]] = []
+        original_set_ref = graph.set_github_ref
+
+        def _spy(node_id: int, ref: str) -> None:
+            calls.append((node_id, ref))
+            original_set_ref(node_id, ref)
+
+        monkeypatch.setattr(graph, "set_github_ref", _spy)
+        _wire(monkeypatch, FakeGh())
+        bind_github_project(graph, rid, wiki_root)  # no raise
+        assert graph.get_node(rid).github_ref == "PVT_1"
+        assert (rid, "PVT_1") not in calls
+
+
+class TestAdoptExistingItem:
+    def test_matching_title_is_adopted_without_issue_create(
+        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rid, wiki_root = _import(tmp_path, graph)
+        goals = graph.get_children(rid)
+        adopted_goal = next(g for g in goals if g.description == "Goal one")
+        fake = FakeGh(existing_items=[{"id": "PVTI_existing", "title": "Goal one"}])
+        _wire(monkeypatch, fake)
+        result = bind_github_project(graph, rid, wiki_root)
+        assert graph.get_node(adopted_goal.id).github_ref == "PVTI_existing"
+        assert all(title != "Goal one" for *_h, title, _b in fake.issues)
+        assert "PVTI_existing" not in fake.items  # never went through item_add
+        assert result.issues_created == 1  # only "Goal two" was truly created
+        assert result.items_added == 1
 
 
 class TestGoalIntent:

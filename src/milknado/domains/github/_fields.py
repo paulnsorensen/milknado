@@ -8,8 +8,6 @@ the names and option set without either re-deriving them.
 
 from __future__ import annotations
 
-from milknado.domains.common import HarvestSummary
-
 # Distinct from the builtin Projects v2 "Status" (Todo/In Progress/Done) so the
 # two never collide on a project that also uses the native workflow field.
 STATUS_FIELD_NAME = "Milknado Status"
@@ -43,16 +41,3 @@ def find_option_id(field: dict, option_name: str) -> str | None:
         if option.get("name") == option_name:
             return option.get("id")
     return None
-
-
-def format_harvest_text(summary: HarvestSummary) -> str:
-    """Render a harvest summary as plain text for the Project harvest field."""
-    lines = [
-        f"result: {summary.status} · tasks: "
-        f"{summary.tasks_done} done / {summary.tasks_failed} failed"
-    ]
-    if summary.result_summaries:
-        lines.append("summary: " + " | ".join(summary.result_summaries))
-    if summary.branch_names:
-        lines.append("branches: " + ", ".join(summary.branch_names))
-    return "\n".join(lines)

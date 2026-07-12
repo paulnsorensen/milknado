@@ -85,7 +85,13 @@ def gh_preflight() -> None:
 
 def gh_project_view(owner: str, number: int) -> dict:
     """Return the project's own metadata, including its `id` (PVT node id)."""
-    return _run_json(["project", "view", str(number), "--owner", owner, "--format", "json"])
+    data = _run_json(["project", "view", str(number), "--owner", owner, "--format", "json"])
+    project_id = data.get("id")
+    if not isinstance(project_id, str) or not project_id:
+        raise GhTransportError(f"`gh project view` response has no valid `id`: {data!r}")
+    if "title" not in data:
+        raise GhTransportError(f"`gh project view` response has no `title`: {data!r}")
+    return data
 
 
 def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
@@ -159,9 +165,21 @@ def gh_item_edit(
 
 def gh_field_list(owner: str, number: int) -> list[dict]:
     """Return the project's fields: each `{id, name, type, options?:[{id,name}]}`."""
-    return _run_json(
+    fields = _run_json(
         ["project", "field-list", str(number), "--owner", owner, "--format", "json"]
     ).get("fields", [])
+    for field in fields:
+        field_id = field.get("id")
+        if not isinstance(field_id, str) or not field_id:
+            raise GhTransportError(
+                f"`gh project field-list` returned a field with no valid `id`: {field!r}"
+            )
+        name = field.get("name")
+        if not isinstance(name, str) or not name:
+            raise GhTransportError(
+                f"`gh project field-list` returned a field with no valid `name`: {field!r}"
+            )
+    return fields
 
 
 def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> dict:

@@ -176,14 +176,18 @@ def test_harvest_text_written_per_goal(
 
 
 def test_blocked_status_skips_option_but_writes_harvest(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    graph: MikadoGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     rid, _wg, gh_goal_id, wiki_root = _seed(tmp_path, graph)
     graph._conn.execute("UPDATE nodes SET status = 'blocked' WHERE id = ?", (gh_goal_id,))
     graph._conn.commit()
     fake = _full_fake()
     _wire(monkeypatch, fake)
-    export_github_roadmap(graph, rid, wiki_root, owner="acme", number=7)
+    with caplog.at_level("WARNING", logger="milknado.domains.github.exporter"):
+        export_github_roadmap(graph, rid, wiki_root, owner="acme", number=7)
     gh_option_edits = [
         e for e in fake.item_edits if e["item_id"] == "PVTI_gh" and e["option"] is not None
     ]
@@ -192,10 +196,15 @@ def test_blocked_status_skips_option_but_writes_harvest(
     ]
     assert gh_option_edits == []  # blocked has no Status option
     assert len(gh_text_edits) == 1  # harvest still written
+    # blocked -> None is an intentional no-op, not a missing-option warning.
+    assert caplog.records == []
 
 
 def test_missing_option_id_skips_status_write(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    graph: MikadoGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
     graph.mark_running(wiki_goal_id)
@@ -205,10 +214,15 @@ def test_missing_option_id_skips_status_write(
         items=[{"id": "PVTI_wiki", "url": "https://x/1"}, {"id": "PVTI_gh", "url": "https://x/2"}],
     )
     _wire(monkeypatch, fake)
-    export_github_roadmap(graph, rid, wiki_root, owner="acme", number=7)
+    with caplog.at_level("WARNING", logger="milknado.domains.github.exporter"):
+        export_github_roadmap(graph, rid, wiki_root, owner="acme", number=7)
     assert [e for e in fake.item_edits if e["option"] is not None] == []
     # harvest text still written for both goals
     assert len([e for e in fake.item_edits if e["text"] is not None]) == 2
+    # the mapped-but-missing option is a non-fatal warning, not a silent drop.
+    assert len(caplog.records) == 2  # one per goal
+    assert all("Milknado Status" in r.getMessage() for r in caplog.records)
+    assert any("'Done'" in r.getMessage() for r in caplog.records)
 
 
 def test_wiki_origin_body_skipped_when_item_absent_from_project(

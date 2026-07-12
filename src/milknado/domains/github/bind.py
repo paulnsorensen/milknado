@@ -5,6 +5,13 @@ Project item, records the project/item node ids on the roadmap + goal nodes, and
 bootstraps the two milknado-owned fields (Status single-select + harvest text)
 create-once. Distinct from the idempotent-repeatable export: bind is the scaffold
 step and skips any goal already bound.
+
+Retry idempotency: before creating, bind fetches the Project's existing items
+once and adopts by title (goal.description) any that already exist rather than
+re-creating them, so a re-run after a mid-loop `GhTransportError` does not
+duplicate Issues. Residual gap: a crash between `gh_issue_create` and
+`gh_item_add` can still orphan one Issue with no linked item (its title won't
+match any item yet), but re-runs no longer duplicate unboundedly.
 """
 
 from __future__ import annotations
@@ -18,6 +25,7 @@ from milknado.adapters.gh import (
     gh_field_list,
     gh_issue_create,
     gh_item_add,
+    gh_item_list,
     gh_preflight,
     gh_project_view,
 )
@@ -65,23 +73,48 @@ def bind_github_project(
     file_map = goal_file_map(wiki_root, roadmap.wiki_ref)
 
     project = gh_project_view(owner, number)
-    graph.set_github_ref(roadmap_node_id, project["id"])
+    _bind_roadmap_ref(graph, roadmap_node_id, roadmap.github_ref, project["id"])
+    existing_items_by_title = {
+        item["title"]: item["id"]
+        for item in gh_item_list(owner, number)
+        if item.get("title") and item.get("id")
+    }
     issues_created = 0
+    items_added = 0
     for goal in graph.get_children(roadmap_node_id):
         if goal.kind != NodeKind.GOAL or goal.github_ref is not None:
+            continue
+        existing_item_id = existing_items_by_title.get(goal.description)
+        if existing_item_id is not None:
+            graph.set_github_ref(goal.id, existing_item_id)
             continue
         intent = goal_intent(goal, file_map)
         url = gh_issue_create(issue_owner, issue_repo, goal.description, intent)
         item_id = gh_item_add(owner, number, url)
         graph.set_github_ref(goal.id, item_id)
         issues_created += 1
+        items_added += 1
     field_created = _ensure_fields(owner, number)
     return GithubBindResult(
         roadmap_node_id=roadmap_node_id,
         issues_created=issues_created,
-        items_added=issues_created,
+        items_added=items_added,
         field_created=field_created,
     )
+
+
+def _bind_roadmap_ref(
+    graph: MikadoGraph, roadmap_node_id: int, current_ref: str | None, project_id: str
+) -> None:
+    """Set the roadmap's github_ref once; guard against silently rebinding it."""
+    if current_ref is None:
+        graph.set_github_ref(roadmap_node_id, project_id)
+        return
+    if current_ref != project_id:
+        raise ValueError(
+            f"roadmap node {roadmap_node_id} is already bound to github_ref "
+            f"{current_ref!r}, cannot rebind to {project_id!r}"
+        )
 
 
 def _resolve_project(owner: str | None, number: int | None, frontmatter: dict) -> tuple[str, int]:
