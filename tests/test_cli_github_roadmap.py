@@ -87,6 +87,7 @@ def test_bind_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(bind_mod, "gh_preflight", lambda: None)
     monkeypatch.setattr(bind_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
+    monkeypatch.setattr(bind_mod, "gh_item_list", lambda _o, _n: [])
     monkeypatch.setattr(bind_mod, "gh_issue_create", lambda o, r, _t, _b: f"https://x/{o}/{r}/1")
     monkeypatch.setattr(bind_mod, "gh_item_add", lambda _o, _n, _u: "PVTI_1")
     monkeypatch.setattr(bind_mod, "gh_field_list", lambda _o, _n: [])

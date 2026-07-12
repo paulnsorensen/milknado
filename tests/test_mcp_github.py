@@ -67,7 +67,8 @@ def test_import_tool_seeds_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         milknado_github_roadmap_import, owner="acme", number=7, project_root=str(tmp_path)
     )
     assert result["created"] == 2
-    assert result["goal_node_ids"] == {"PVTI_1": result["goal_node_ids"]["PVTI_1"]}
+    assert set(result["goal_node_ids"]) == {"PVTI_1"}
+    assert isinstance(result["goal_node_ids"]["PVTI_1"], int)
 
 
 def test_import_tool_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -91,6 +92,7 @@ def test_bind_tool_projects_roadmap(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(bind_mod, "gh_preflight", lambda: None)
     monkeypatch.setattr(bind_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
+    monkeypatch.setattr(bind_mod, "gh_item_list", lambda _o, _n: [])
     monkeypatch.setattr(bind_mod, "gh_issue_create", lambda *_a: "https://x/1")
     monkeypatch.setattr(bind_mod, "gh_item_add", lambda _o, _n, _u: "PVTI_1")
     monkeypatch.setattr(bind_mod, "gh_field_list", lambda _o, _n: [])
