@@ -14,11 +14,13 @@ import pytest
 
 from milknado.adapters import gh
 from milknado.adapters.gh import (
+    GithubIssue,
     gh_field_create,
     gh_field_create_text,
     gh_field_list,
     gh_issue_create,
     gh_issue_edit_body,
+    gh_issue_view,
     gh_item_add,
     gh_item_edit,
     gh_item_list,
@@ -193,6 +195,31 @@ class TestWrapperArgv:
         rec = wire("")
         gh_issue_edit_body("https://x/3", "new body")
         assert rec.calls[0][1:] == ["issue", "edit", "https://x/3", "--body", "new body"]
+
+    def test_issue_view_builds_argv_and_returns_typed_issue(self, wire) -> None:  # noqa: ANN001
+        rec = wire(
+            '{"title":"Bug","body":"Details","number":7,'
+            '"url":"https://github.com/acme/app/issues/7"}'
+        )
+
+        issue = gh_issue_view("acme/app#7")
+
+        assert issue == GithubIssue(
+            title="Bug",
+            body="Details",
+            number=7,
+            url="https://github.com/acme/app/issues/7",
+        )
+        assert rec.calls == [
+            [
+                GH_BIN,
+                "issue",
+                "view",
+                "acme/app#7",
+                "--json",
+                "title,body,number,url",
+            ]
+        ]
 
 
 class TestZeroGraphql:

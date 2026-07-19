@@ -316,9 +316,10 @@ class TestStatus:
         mock_ralph_cls.return_value.get_run.side_effect = RuntimeError("ralph down")
 
         result = runner.invoke(app, ["status", str(project_dir)])
-        # Enrichment failure must not break the status render.
         assert result.exit_code == 0
         assert "Worker" in result.output
+        assert "Degraded status: 1 run state unavailable" in result.output
+        assert "run-99: RuntimeError: ralph down" in result.output
 
 
 class TestAddNode:
@@ -722,7 +723,7 @@ class TestPlanInteractive:
 
 
 class TestIssueHelpers:
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     def test_fetch_issue_invalid_json_exits(self, mock_run: MagicMock) -> None:
         from milknado.cli_plan import _fetch_issue
 
@@ -731,17 +732,11 @@ class TestIssueHelpers:
             _fetch_issue("42")
         assert exc.value.exit_code == 1
 
-    def test_issue_title_falls_back_to_number(self) -> None:
-        from milknado.cli_plan import _issue_title
-
-        assert _issue_title({"number": 7}) == "Issue 7"
-        assert _issue_title({}) == "Issue"
-
     def test_materialize_issue_spec_rejects_empty_refs(self, project_dir: Path) -> None:
-        from milknado.cli_plan import _materialize_issue_spec
+        from milknado.domains.planning.source_material import materialize_issue_spec
 
         with pytest.raises(ValueError, match="issue_refs must not be empty"):
-            _materialize_issue_spec([], project_dir)
+            materialize_issue_spec([], project_dir, MagicMock())
 
 
 def _make_plan_result(**kwargs: object) -> MagicMock:
@@ -948,7 +943,7 @@ class TestPlanIssueOption:
         completed.stderr = ""
         return completed
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_fetches_and_runs_planner(
@@ -970,13 +965,24 @@ class TestPlanIssueOption:
         assert "Add --issue support" in result.output  # title becomes goal
         mock_run.assert_called_once()
         argv = mock_run.call_args.args[0]
-        assert argv[:3] == ["gh", "issue", "view"]
-        assert "42" in argv
+        assert Path(argv[0]).name == "gh"
+        assert argv[1:] == [
+            "issue",
+            "view",
+            "42",
+            "--json",
+            "title,body,number,url",
+        ]
+        assert mock_run.call_args.kwargs == {
+            "capture_output": True,
+            "text": True,
+            "check": True,
+        }
         spec_file = project_dir / ".milknado" / "issues" / "issue-42.md"
         assert spec_file.exists()
         assert spec_file.read_text().startswith("# Add --issue support")
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_issue_and_spec_combine_into_one_plan(
@@ -1019,17 +1025,17 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "--spec or --issue" in result.output
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     def test_issue_gh_failure_exits_one(
         self,
         mock_run: MagicMock,
         project_dir: Path,
     ) -> None:
-        failed = MagicMock()
-        failed.returncode = 1
-        failed.stdout = ""
-        failed.stderr = "no such issue"
-        mock_run.return_value = failed
+        mock_run.side_effect = subprocess.CalledProcessError(
+            1,
+            ["gh", "issue", "view", "99999"],
+            stderr="no such issue",
+        )
 
         result = runner.invoke(
             app,
@@ -1038,7 +1044,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "no such issue" in result.output
 
-    @patch("milknado.cli.subprocess.run", side_effect=FileNotFoundError())
+    @patch("milknado.adapters.gh.shutil.which", return_value=None)
     def test_issue_gh_not_installed_exits_one(
         self,
         _mock_run: MagicMock,
@@ -1051,7 +1057,7 @@ class TestPlanIssueOption:
         assert result.exit_code == 1
         assert "gh" in result.output.lower()
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_multiple_issues_merged_into_one_spec(
@@ -1109,7 +1115,7 @@ class TestPlanIssueOption:
         # Goal derived from combined heading
         assert "Plan for issues #42, #43" in result.output
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     @patch("milknado.adapters.crg.CrgAdapter")
     @patch("milknado.domains.planning.Planner")
     def test_comma_separated_issues_accepted(
@@ -1183,17 +1189,18 @@ class TestPlanIssueOption:
         assert "## Spec: valid" in content
         assert "## Spec: no_heading" in content
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.adapters.gh.subprocess.run")
     def test_multi_issue_second_fetch_fails_exits_one(
         self,
         mock_run: MagicMock,
         project_dir: Path,
     ) -> None:
         ok = self._gh_ok()
-        failed = MagicMock()
-        failed.returncode = 1
-        failed.stdout = ""
-        failed.stderr = "bad issue"
+        failed = subprocess.CalledProcessError(
+            1,
+            ["gh", "issue", "view", "9999"],
+            stderr="bad issue",
+        )
         mock_run.side_effect = [ok, failed]
 
         result = runner.invoke(
@@ -1848,16 +1855,34 @@ def test_ensure_plugins_loaded_announces_each_plugin(
     ep_plugin = MagicMock()
     ep_plugin.meta.name = "entry-hook"
 
-    with (
-        patch("milknado.plugins.load_plugins", return_value=[local_plugin]),
-        patch("milknado.plugins.discover_entry_point_plugins", return_value=[ep_plugin]),
+    with patch(
+        "milknado._cli_helpers.load_project_plugins",
+        return_value=(local_plugin, ep_plugin),
     ):
         loaded = _ensure_plugins_loaded(config)
 
     assert loaded == [local_plugin, ep_plugin]
     out = capsys.readouterr().out
     assert "Plugin loaded: local-hook" in out
-    assert "Plugin loaded: entry-hook (entry point)" in out
+    assert "Plugin loaded: entry-hook" in out
+
+
+def test_open_project_announces_loaded_plugins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from milknado._cli_helpers import _open_project
+
+    plugin = MagicMock()
+    plugin.meta.name = "loaded-hook"
+    opened = MagicMock()
+    opened.plugins = (plugin,)
+
+    with patch("milknado._cli_helpers.open_project", return_value=opened) as open_mock:
+        result = _open_project(tmp_path)
+
+    assert result is opened
+    open_mock.assert_called_once_with(tmp_path, None)
+    assert capsys.readouterr().out.strip() == "Plugin loaded: loaded-hook"
 
 
 def test_plan_exit_code_default_fallthrough() -> None:

@@ -17,12 +17,12 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from milknado.adapters.tmux import RunWindow, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import pid_alive
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     is_cancel_requested,
 )
+from milknado.domains.dispatch.ports import RunWindow, TmuxPort
 
 _logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ _PANE_POLL_SECS = 0.5
 _PANE_KILL_GRACE_SECS = 5.0
 
 
-def ensure_tmux_ready(tmux: TmuxAdapter) -> None:
+def ensure_tmux_ready(tmux: TmuxPort) -> None:
     """Fail-closed preflight for an explicitly tmux-requested dispatch.
 
     tmux was asked for, so a missing binary or an unstartable server fails the
@@ -43,8 +43,8 @@ def ensure_tmux_ready(tmux: TmuxAdapter) -> None:
         )
     try:
         tmux.ensure_session()
-    except TmuxDispatchError as exc:
-        raise ValueError(f"tmux was requested but its server could not start: {exc}") from exc
+    except Exception as exc:
+        raise ValueError(f"tmux server could not start: {exc}") from exc
 
 
 def _terminate_pane(pane_pid: int) -> None:
@@ -74,7 +74,7 @@ def read_exit_code(path: Path) -> int:
 
 
 def execute_in_window(
-    tmux: TmuxAdapter,
+    tmux: TmuxPort,
     window: RunWindow,
     timeout: int,
     rdir: Path,
@@ -109,7 +109,7 @@ def execute_in_window(
     return read_exit_code(window.exit_code_path), timed_out, cancelled
 
 
-def cleanup_run_window(tmux: TmuxAdapter, run_state: dict) -> bool:
+def cleanup_run_window(tmux: TmuxPort, run_state: dict) -> bool:
     """Per-row window reconciliation — the runs table is the expected set.
 
     A run that completed successfully has its window cleaned up (normally the
@@ -129,17 +129,20 @@ def cleanup_run_window(tmux: TmuxAdapter, run_state: dict) -> bool:
     return tmux.kill_window(run_id)
 
 
-def reconcile_run_window(project_root: Path, run_state: dict) -> None:
+def reconcile_run_window(tmux: TmuxPort, run_state: dict) -> None:
     """Best-effort poll-time reconcile hook: tmux trouble must never break a poll."""
     try:
-        cleanup_run_window(TmuxAdapter(project_root), run_state)
+        cleanup_run_window(tmux, run_state)
     except Exception as exc:  # noqa: BLE001 — diagnostics-only path; poll result is the payload
         _logger.warning(
-            "tmux window reconcile failed for run %s: %s", run_state.get("run_id"), exc
+            "tmux window reconcile failed: run_id=%s error=%s",
+            run_state.get("run_id"),
+            exc,
+            exc_info=True,
         )
 
 
-def resolve_attach_target(graph, tmux: TmuxAdapter, run_id: str) -> str:  # noqa: ANN001
+def resolve_attach_target(graph, tmux: TmuxPort, run_id: str) -> str:  # noqa: ANN001
     """Attach preconditions, each failure mode with its own message.
 
     Pane existence is inherently a tmux question, so this is the one place

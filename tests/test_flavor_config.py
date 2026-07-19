@@ -609,7 +609,7 @@ def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
 def test_load_config_flavor_entry_not_a_table_raises(tmp_path: Path) -> None:
     """A scalar flavor entry raises ValueError."""
     # We simulate this via a raw dict in _parse_flavor_tables directly.
-    from milknado.domains.common.config import _parse_flavor_tables
+    from milknado.domains.common.flavor_codec import parse_flavor_tables as _parse_flavor_tables
 
     with pytest.raises(ValueError, match="\\[milknado.flavor.spike\\] must be a table"):
         _parse_flavor_tables({"spike": "oops"}, tmp_path)
@@ -617,7 +617,7 @@ def test_load_config_flavor_entry_not_a_table_raises(tmp_path: Path) -> None:
 
 def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) -> None:
     """Non-string execution_agent in a flavor entry raises ValueError."""
-    from milknado.domains.common.config import _parse_flavor_entry
+    from milknado.domains.common.flavor_codec import _parse_flavor_entry
 
     with pytest.raises(ValueError, match="execution_agent must be a string"):
         _parse_flavor_entry({"execution_agent": 42}, "spike", tmp_path)
@@ -636,7 +636,7 @@ def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path)
 
 def test_load_config_flavor_quality_gates_error_names_quality_gates_key(tmp_path: Path) -> None:
     """Parse errors in a flavor's quality_gates mention 'quality_gates' in the message."""
-    from milknado.domains.common.config import _parse_flavor_entry
+    from milknado.domains.common.flavor_codec import _parse_flavor_entry
 
     with pytest.raises(ValueError, match="quality_gates"):
         _parse_flavor_entry({"quality_gates": [42]}, "spike", tmp_path)
@@ -644,7 +644,7 @@ def test_load_config_flavor_quality_gates_error_names_quality_gates_key(tmp_path
 
 def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> None:
     """Non-string brief_prepend in a flavor entry raises ValueError."""
-    from milknado.domains.common.config import _parse_flavor_entry
+    from milknado.domains.common.flavor_codec import _parse_flavor_entry
 
     with pytest.raises(ValueError, match="brief_prepend must be a string"):
         _parse_flavor_entry({"brief_prepend": 42}, "spike", tmp_path)
@@ -652,7 +652,7 @@ def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> N
 
 def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises(tmp_path: Path) -> None:
     """brief_prepend_path being a number raises ValueError."""
-    from milknado.domains.common.config import _parse_flavor_entry
+    from milknado.domains.common.flavor_codec import _parse_flavor_entry
 
     with pytest.raises(ValueError, match="brief_prepend_path must be a string or list"):
         _parse_flavor_entry({"brief_prepend_path": 42}, "spike", tmp_path)
@@ -660,7 +660,7 @@ def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises(tmp_pat
 
 def test_load_config_flavor_brief_prepend_path_list_non_string_raises(tmp_path: Path) -> None:
     """A list brief_prepend_path with a non-string entry raises ValueError."""
-    from milknado.domains.common.config import _parse_flavor_entry
+    from milknado.domains.common.flavor_codec import _parse_flavor_entry
 
     with pytest.raises(ValueError, match="brief_prepend_path entries must be strings"):
         _parse_flavor_entry({"brief_prepend_path": [42, "ok.md"]}, "spike", tmp_path)
@@ -668,7 +668,9 @@ def test_load_config_flavor_brief_prepend_path_list_non_string_raises(tmp_path: 
 
 def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
     """_absolutize_global_flavor_paths resolves relative path lists in flavor entries."""
-    from milknado.domains.common.config import _absolutize_global_flavor_paths
+    from milknado.domains.common.flavor_codec import (
+        absolutize_global_flavor_paths as _absolutize_global_flavor_paths,
+    )
 
     base_dir = tmp_path / "global"
     base_dir.mkdir()

@@ -15,7 +15,6 @@ import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.graph._persistence import row_to_node
 
 
 class TestWikiRefColumn:
@@ -26,31 +25,23 @@ class TestWikiRefColumn:
         idx = {row[1] for row in conn.execute("PRAGMA index_list(nodes)").fetchall()}
         assert "idx_nodes_wiki_ref" in idx
 
-    def test_row_to_node_defaults_wiki_ref_when_column_absent(self, tmp_path: Path) -> None:
+    def test_obsolete_schema_without_wiki_ref_is_rejected(self, tmp_path: Path) -> None:
         db_path = tmp_path / "sparse.db"
         c = sqlite3.connect(str(db_path))
-        c.row_factory = sqlite3.Row
-        c.executescript("""
-            CREATE TABLE nodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                parent_id INTEGER,
-                worktree_path TEXT,
-                branch_name TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT
-            );
-        """)
         c.execute(
-            "INSERT INTO nodes (description, status, created_at) VALUES (?, ?, ?)",
-            ("sparse", "pending", "2026-01-01T00:00:00+00:00"),
+            "CREATE TABLE nodes ("
+            "id INTEGER PRIMARY KEY, description TEXT NOT NULL, status TEXT NOT NULL, "
+            "parent_id INTEGER, worktree_path TEXT, branch_name TEXT, "
+            "created_at TEXT NOT NULL, completed_at TEXT)"
         )
         c.commit()
-        row = c.execute("SELECT * FROM nodes WHERE id = 1").fetchone()
-        node = row_to_node(row)
-        assert node.wiki_ref is None
         c.close()
+
+        with pytest.raises(
+            RuntimeError,
+            match=r"obsolete milknado database schema.*wiki_ref",
+        ):
+            MikadoGraph(db_path)
 
 
 class TestWikiRefGraphApi:

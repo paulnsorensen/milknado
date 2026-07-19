@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -78,13 +79,37 @@ class MikadoGraph(_AnalyticsFacade):
         self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
     ) -> MikadoNode:
         spec = spec or NodeSpec()
-        # Validate parent_id before inserting: the node row commits before the
-        # edge is added, so a nonexistent parent would otherwise leave a
-        # committed stray node when the edge FK insert fails (e.g. a stale
-        # MILKNADO_NODE_ID passed by milknado_track_follow_up).
-        self._validate_parent(parent_id, spec.kind)
-        self._validate_prereqs(spec.prereqs, parent_id)
-        flavor_value = self._validate_flavor(spec.kind, spec.flavor, spec.flavor_registry)
+        if not isinstance(spec.kind, NodeKind):
+            raise ValueError(f"invalid kind: {spec.kind!r}")
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._validate_parent(parent_id, spec.kind)
+            self._validate_prereqs(spec.prereqs, parent_id)
+            flavor = self._validate_flavor(spec.kind, spec.flavor, spec.flavor_registry)
+            node_id = self._insert_node(description, parent_id, spec, flavor)
+            if parent_id is not None:
+                self._conn.execute(
+                    "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+                    (parent_id, node_id),
+                )
+            for prereq_id in spec.prereqs:
+                if self._creates_cycle(node_id, prereq_id):
+                    raise ValueError(f"Edge {node_id}->{prereq_id} would create a cycle")
+            self._conn.executemany(
+                "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+                [(node_id, prereq_id) for prereq_id in spec.prereqs],
+            )
+        except Exception:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
+        _logger.debug("node %d created: %r", node_id, description[:80])
+        row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        return row_to_node(row)
+
+    def _insert_node(
+        self, description: str, parent_id: int | None, spec: NodeSpec, flavor: str | None
+    ) -> int:
         now = datetime.now(UTC).isoformat()
         cur = self._conn.execute(
             "INSERT INTO nodes "
@@ -96,27 +121,18 @@ class MikadoGraph(_AnalyticsFacade):
                 NodeStatus.PENDING.value,
                 parent_id,
                 now,
-                1 if spec.oversized else 0,
+                int(spec.oversized),
                 spec.batch_index,
                 spec.kind.value,
-                flavor_value,
+                flavor,
                 spec.wiki_ref,
                 spec.github_ref,
                 spec.artifact_path,
             ),
         )
-        self._conn.commit()
-        node_id = cur.lastrowid
-        if node_id is None:  # pragma: no cover - defensive: plain INSERT always sets lastrowid
+        if cur.lastrowid is None:
             raise RuntimeError("add_node INSERT did not return lastrowid")
-        _logger.debug("node %d created: %r", node_id, description[:80])
-        if parent_id is not None:
-            self.add_edge(parent_id, node_id)
-        for prereq_id in spec.prereqs:
-            self.add_edge(prereq_id, node_id)
-        return row_to_node(
-            self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
-        )
+        return cur.lastrowid
 
     def _validate_parent(self, parent_id: int | None, kind: NodeKind) -> None:
         if parent_id is None:
@@ -128,14 +144,13 @@ class MikadoGraph(_AnalyticsFacade):
             raise InvalidContainment(parent.kind, kind)
 
     def _validate_prereqs(self, prereqs: Sequence[int], parent_id: int | None) -> None:
+        if len(prereqs) != len(set(prereqs)):
+            raise ValueError("prereqs contains duplicate node ids")
         for prereq_id in prereqs:
             if self.get_node(prereq_id) is None:
                 raise ValueError(f"prereq {prereq_id} not found")
             if prereq_id == parent_id:
-                raise ValueError(
-                    f"prereq {prereq_id} duplicates parent_id {parent_id}; "
-                    "the parent edge already covers this prerequisite"
-                )
+                raise ValueError(f"prereq {prereq_id} duplicates parent_id {parent_id}")
 
     def _validate_flavor(
         self, kind: NodeKind, flavor: str | None, flavor_registry: frozenset[str]
@@ -197,12 +212,17 @@ class MikadoGraph(_AnalyticsFacade):
         reparent(self._conn, node_id, new_parent_id)
 
     def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
-        if self._creates_cycle(parent_id, child_id):
-            raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
-        self._conn.execute(
-            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
-            (parent_id, child_id),
-        )
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if self._creates_cycle(parent_id, child_id):
+                raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
+            self._conn.execute(
+                "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+                (parent_id, child_id),
+            )
+        except Exception:
+            self._conn.rollback()
+            raise
         self._conn.commit()
         return MikadoEdge(parent_id=parent_id, child_id=child_id)
 
@@ -228,8 +248,6 @@ class MikadoGraph(_AnalyticsFacade):
                 _logger.exception("Plugin %s raised in on_node_status_change", plugin.meta.name)
 
     def get_node(self, node_id: int) -> MikadoNode | None:
-        from dataclasses import replace
-
         row = self._conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if row is None:
             return None
@@ -239,6 +257,53 @@ class MikadoGraph(_AnalyticsFacade):
             if claim is not None:
                 return replace(node, goal_run_id=claim["run_id"])
         return node
+
+    def get_nodes(self, node_ids: Iterable[int]) -> list[MikadoNode]:
+        """Load nodes in input order with duplicate IDs preserved."""
+        ids = list(node_ids)
+        if not ids:
+            return []
+        unique_ids = list(dict.fromkeys(ids))
+        rows = []
+        for start in range(0, len(unique_ids), 500):
+            chunk = unique_ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows.extend(
+                self._conn.execute(
+                    f"SELECT * FROM nodes WHERE id IN ({placeholders})",
+                    chunk,  # noqa: S608
+                ).fetchall()
+            )
+        nodes = {row["id"]: row_to_node(row) for row in rows}
+        goal_ids = [node_id for node_id, node in nodes.items() if node.kind == NodeKind.GOAL]
+        if goal_ids:
+            placeholders = ",".join("?" for _ in goal_ids)
+            claims = self._conn.execute(
+                f"SELECT goal_id, run_id FROM goal_claims WHERE goal_id IN ({placeholders})",  # noqa: S608
+                goal_ids,
+            ).fetchall()
+            for goal_id, run_id in claims:
+                nodes[goal_id] = replace(nodes[goal_id], goal_run_id=run_id)
+        return [nodes[node_id] for node_id in ids if node_id in nodes]
+
+    def latest_results_for_nodes(self, node_ids: Iterable[int]) -> dict[int, str]:
+        """Return each requested node's newest deposited result body."""
+        ids = list(dict.fromkeys(node_ids))
+        results: dict[int, str] = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start : start + 500]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = self._conn.execute(
+                "SELECT node_id, body FROM ("
+                "SELECT r.node_id, m.body, ROW_NUMBER() OVER ("
+                "PARTITION BY r.node_id ORDER BY m.created_at DESC, m.seq DESC"
+                ") AS ordinal FROM runs r JOIN run_messages m ON m.run_id = r.run_id "
+                f"WHERE m.role = 'result' AND r.node_id IN ({placeholders})"  # noqa: S608
+                ") WHERE ordinal = 1",
+                chunk,
+            ).fetchall()
+            results.update((row["node_id"], row["body"]) for row in rows)
+        return results
 
     def find_node_by_wiki_ref(self, wiki_ref: str) -> MikadoNode | None:
         """Return the node carrying this deterministic wiki key, or None.
@@ -300,19 +365,62 @@ class MikadoGraph(_AnalyticsFacade):
         ).fetchall()
         return [row_to_node(r) for r in rows]
 
-    def get_ready_nodes(self) -> list[MikadoNode]:
-        root_ids = {r.id for r in self.get_roots()}
-        children_map = self.get_children_map()
-        ready = []
-        for node in self.get_all_nodes():
-            if node.status != NodeStatus.PENDING:
-                continue
-            if node.id in root_ids:
-                continue
-            children = children_map.get(node.id, [])
-            if not children or all(c.status == NodeStatus.DONE for c in children):
-                ready.append(node)
-        return ready
+    def get_ready_nodes(
+        self,
+        *,
+        kind: NodeKind | None = None,
+        flavor: str | None = None,
+        limit: int = 100,
+    ) -> list[MikadoNode]:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        filters = ["n.status = ?", "EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id)"]
+        params: list[object] = [NodeStatus.PENDING.value]
+        if kind is not None:
+            filters.append("n.kind = ?")
+            params.append(kind.value)
+        if flavor is not None:
+            filters.append("n.flavor = ?")
+            params.append(flavor)
+        params.append(limit)
+        rows = self._conn.execute(
+            "SELECT n.* FROM nodes n WHERE "
+            + " AND ".join(filters)
+            + " AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "
+            "WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id LIMIT ?",
+            params,
+        ).fetchall()
+        return [row_to_node(row) for row in rows]
+
+    def get_node_summaries(
+        self,
+        *,
+        status: NodeStatus | None = None,
+        kind: NodeKind | None = None,
+        flavor: str | None = None,
+        page: tuple[int, int] = (100, 0),
+    ) -> list[dict[str, int | str]]:
+        limit, offset = page
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        filters, params = [], []
+        for column, value in (
+            ("status", status.value if status else None),
+            ("kind", kind.value if kind else None),
+            ("flavor", flavor),
+        ):
+            if value is not None:
+                filters.append(f"{column} = ?")
+                params.append(value)
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        params.extend((limit, offset))
+        rows = self._conn.execute(
+            f"SELECT id, status, description FROM nodes{where} ORDER BY id LIMIT ? OFFSET ?",  # noqa: S608
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_root(self) -> MikadoNode | None:
         row = self._conn.execute(
@@ -329,11 +437,8 @@ class MikadoGraph(_AnalyticsFacade):
         return [row_to_node(r) for r in rows]
 
     def get_next_runnable(self, kind: NodeKind | None = None) -> MikadoNode | None:
-        for node in self.get_ready_nodes():
-            if kind is not None and node.kind != kind:
-                continue
-            return node
-        return None
+        ready = self.get_ready_nodes(kind=kind, limit=1)
+        return ready[0] if ready else None
 
     def _transition_status(self, node_id: int, target: NodeStatus) -> None:
         old = self._node_status(node_id)
@@ -601,6 +706,37 @@ class MikadoGraph(_AnalyticsFacade):
         row = self._conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
         if row is not None and row["kind"] == NodeKind.GOAL.value:
             release_goal_row_unconditional(self._conn, node_id)
+
+    def claim_or_reclaim_goal(self, goal_id: int, owner: str, pid: int, *, now: str) -> bool:
+        """Atomically acquire a goal claim, replacing a provably dead owner."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
+            if row is None:
+                raise ValueError(f"node {goal_id} not found")
+            if row["kind"] != NodeKind.GOAL.value:
+                raise ValueError(
+                    f"node {goal_id} has kind={row['kind']}; only goal nodes can be claimed"
+                )
+            claim = get_goal_claim(self._conn, goal_id)
+            if claim is not None and claim["run_id"] != owner:
+                prior_pid = claim["pid"]
+                if prior_pid is None or pid_alive(prior_pid):
+                    self._conn.rollback()
+                    return False
+                self._conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
+            self._conn.execute(
+                "INSERT INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(goal_id) DO UPDATE SET pid=excluded.pid, "
+                "claimed_at=excluded.claimed_at "
+                "WHERE goal_claims.run_id=excluded.run_id",
+                (goal_id, owner, pid, now),
+            )
+        except Exception:
+            self._conn.rollback()
+            raise
+        self._conn.commit()
+        return True
 
     def claim_goal(self, goal_id: int, run_id: str, *, now: str) -> bool:
         """Claim a goal node as owned by run_id. Returns True iff this caller won.

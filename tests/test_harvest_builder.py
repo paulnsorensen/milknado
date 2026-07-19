@@ -9,7 +9,11 @@ deduped sorted branch names — directly.
 from __future__ import annotations
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
-from milknado.domains.common.harvest import build_harvest_summary
+from milknado.domains.common.harvest import (
+    _bounded_results,
+    _truncate_result,
+    build_harvest_summary,
+)
 from milknado.domains.graph import MikadoGraph
 
 NOW = "2026-06-08T12:00:00Z"
@@ -67,6 +71,36 @@ def test_result_summaries_collected_from_terminal_runs(graph: MikadoGraph) -> No
     goal = graph.get_node(goal_id)
     assert goal is not None
     assert build_harvest_summary(graph, goal).result_summaries == ["shipped the thing"]
+
+
+def test_result_summaries_are_bounded(graph: MikadoGraph) -> None:
+    goal_id = _goal(graph)
+    task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
+    graph.start_run("run-large", task.id, "/tmp/log", NOW, None)
+    graph.finish_run(
+        "run-large",
+        RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW),
+    )
+    graph.deposit_run_message("run-large", "result", "x" * 10_000, NOW)
+    goal = graph.get_node(goal_id)
+    assert goal is not None
+
+    summaries = build_harvest_summary(graph, goal).result_summaries
+
+    assert len(summaries) == 1
+    assert len(summaries[0]) == 4_000
+    assert summaries[0].endswith("\n[truncated]")
+
+
+def test_tiny_result_limit_is_still_bounded() -> None:
+    assert _truncate_result("payload", 3) == "\n[t"
+
+
+def test_total_result_payload_is_bounded() -> None:
+    summaries = _bounded_results(["x" * 4_000] * 9)
+
+    assert len(summaries) == 8
+    assert sum(map(len, summaries)) == 32_000
 
 
 def test_branch_names_sorted_and_deduped(graph: MikadoGraph) -> None:

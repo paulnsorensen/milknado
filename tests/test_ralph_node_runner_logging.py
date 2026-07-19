@@ -1,5 +1,4 @@
-"""#17 residual: _ralph_node_runner.main() wraps the run in configure_run_logging,
-writing a .milknado/run-*.log file for the detached headless run."""
+"""Ralph runner logs correlate terminal events with the dispatch run ID."""
 
 from __future__ import annotations
 
@@ -8,16 +7,21 @@ from pathlib import Path
 import pytest
 
 
-def test_main_writes_run_log_file_on_successful_outcome(
+def test_main_logs_terminal_event_with_run_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The detached runner wraps its work in configure_run_logging (#17): a
-    run-*.log file must exist under .milknado/ once main() returns."""
     import milknado._mcp_core as mcp_core
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
     from milknado import _ralph_node_runner
     from milknado.domains.execution.headless import HeadlessOutcome
+
+    messages: list[tuple[str, tuple[object, ...]]] = []
+    monkeypatch.setattr(
+        _ralph_node_runner._logger,
+        "info",
+        lambda message, *args: messages.append((message, args)),
+    )
 
     class _Cfg:
         execution_agent = "claude"
@@ -74,9 +78,22 @@ def test_main_writes_run_log_file_on_successful_outcome(
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
-        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "30"]
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--timeout",
+            "30",
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "base",
+        ]
     )
 
     assert rc == 0
-    log_files = list((tmp_path / ".milknado").glob("run-*.log"))
-    assert len(log_files) == 1, f"expected exactly one run log, found {log_files}"
+    assert any("ralph runner terminal" in message and run_id in args for message, args in messages)
+    assert list((tmp_path / ".milknado").glob("run-*.log")) == []

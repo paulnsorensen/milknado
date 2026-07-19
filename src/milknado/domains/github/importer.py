@@ -19,8 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from milknado.adapters.gh import gh_item_list, gh_preflight, gh_project_view
 from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
 
 
@@ -32,10 +32,12 @@ class GithubImportResult:
     reused_count: int
 
 
-def import_github_roadmap(graph: MikadoGraph, owner: str, number: int) -> GithubImportResult:
+def import_github_roadmap(
+    graph: MikadoGraph, owner: str, number: int, github: GithubProjectPort
+) -> GithubImportResult:
     """Seed roadmap + goal nodes from a Project; idempotent, no task nodes."""
-    gh_preflight()
-    project = gh_project_view(owner, number)
+    github.preflight()
+    project = github.project_view(owner, number)
     project_id = project["id"]
     created = 0
     reused = 0
@@ -48,7 +50,7 @@ def import_github_roadmap(graph: MikadoGraph, owner: str, number: int) -> Github
     else:
         reused += 1
     goal_node_ids: dict[str, int] = {}
-    for item in gh_item_list(owner, number):
+    for item in github.item_list(owner, number):
         item_id = item.get("id")
         if not item_id:
             continue  # draft/malformed item with no node id — skip deterministically

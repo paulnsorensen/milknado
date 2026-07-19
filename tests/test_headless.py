@@ -26,7 +26,13 @@ class _FakeExecutor:
         self.completed: list[int] = []
         self.failed: list[int] = []
 
-    def dispatch(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
+    def dispatch(
+        self,
+        node_id: int,
+        config: ExecutionConfig,
+        *,
+        base_oid: str | None = None,
+    ) -> DispatchResult:
         assert isinstance(config, ExecutionConfig)
         self.dispatched.append(node_id)
         return DispatchResult(node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}")
@@ -51,8 +57,9 @@ class _FakeRalph:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
         return next(iter(active_run_ids)), self._completed
 
-    def stop_run(self, run_id: str) -> None:
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         self.stopped.append(run_id)
+        return True
 
 
 def _ok_completion(node_id: int) -> CompletionResult:
@@ -138,3 +145,27 @@ def test_non_completed_stops_the_ralph_run() -> None:
     outcome = run_node_to_completion(ex, ralph, 11, _EXEC_CONFIG, "main", 30.0)
     assert outcome.success is False
     assert ralph.stopped == ["run-11"], "non-completion must stop the ralph run"
+
+
+def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
+    ex = _FakeExecutor()
+    ralph = _FakeRalph(timeout=True)
+    ralph.stop_run = lambda run_id, timeout=None: False
+
+    result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
+
+    assert result.success is False
+    assert result.detail == "completion timeout; worker did not exit, ownership preserved"
+    assert ex.failed == []
+
+
+def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
+    ex = _FakeExecutor()
+    ralph = _FakeRalph(completed=False)
+    ralph.stop_run = lambda run_id, timeout=None: False
+
+    result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
+
+    assert result.success is False
+    assert result.detail == "worker run did not complete or exit; ownership preserved"
+    assert ex.failed == []

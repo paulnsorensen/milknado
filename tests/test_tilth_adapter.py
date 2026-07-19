@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from milknado.adapters.tilth import TilthAdapter, _parse_symbol_headers, _run_tilth_json
+from milknado.domains.common.protocols import SymbolLocation
 from milknado.domains.common.types import DegradationMarker, TilthMap
 
 
@@ -58,11 +59,21 @@ class TestStructuralMap:
         assert result.scope == tmp_path
         assert result.budget_tokens == 1500
         assert result.data == payload
-        argv = mock_run.call_args[0][0]
-        assert argv[0] == "tilth"
-        assert "--map" in argv and "--json" in argv
-        assert "--scope" in argv and str(tmp_path) in argv
-        assert "--budget" in argv and "1500" in argv
+        mock_run.assert_called_once_with(
+            [
+                "tilth",
+                "--map",
+                "--json",
+                "--scope",
+                str(tmp_path),
+                "--budget",
+                "1500",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
@@ -209,18 +220,20 @@ class TestSearchSymbol:
         adapter = TilthAdapter()
         result = adapter.search_symbol("MyClass")
 
-        assert len(result) == 1
-        assert result[0].path == Path("src/foo.py")
-        assert result[0].line_start == 5
+        assert result == [SymbolLocation(path=Path("src/foo.py"), line_start=5, line_end=15)]
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
     def test_passes_glob_when_provided(self, _which: MagicMock, mock_run: MagicMock) -> None:
         mock_run.return_value = _ok(json.dumps({"output": ""}))
         TilthAdapter().search_symbol("Foo", glob="*.py")
-        argv = mock_run.call_args[0][0]
-        assert "--glob" in argv
-        assert "*.py" in argv
+        mock_run.assert_called_once_with(
+            ["tilth", "Foo", "--json", "--glob", "*.py"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")
@@ -262,10 +275,13 @@ class TestReadSection:
         mock_run.return_value = _ok("def foo():\n    pass\n")
         result = TilthAdapter().read_section(Path("src/foo.py"), 1, 5)
         assert result == "def foo():\n    pass\n"
-        argv = mock_run.call_args[0][0]
-        assert "tilth" in argv
-        assert "--section" in argv
-        assert "1-5" in argv
+        mock_run.assert_called_once_with(
+            ["tilth", "src/foo.py", "--section", "1-5"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
 
     @patch("milknado.adapters.tilth.subprocess.run")
     @patch("milknado.adapters.tilth.shutil.which", return_value="/usr/bin/tilth")

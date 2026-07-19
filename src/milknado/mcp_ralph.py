@@ -18,21 +18,23 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-import subprocess
 import sys
-from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from milknado._mcp_core import (
+    build_run_dict,
     mcp,
     open_graph,
     resolve_project_root,
 )
-from milknado.adapters import GitAdapter, RunWindow, TmuxAdapter, TmuxDispatchError
+from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus, RunResult
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
     RUN_ID_RE,
+    ProcessPort,
+    RunWindow,
     build_worker_env,
     ensure_tmux_ready,
     exit_code_path,
@@ -61,6 +63,145 @@ def _resolve_runner_cmd(explicit: str | None) -> list[str]:
     return list(_DEFAULT_RUNNER)
 
 
+@dataclass(frozen=True)
+class RalphStartRequest:
+    node_id: int
+    runner_cmd: str | None
+    timeout_seconds: int
+    use_tmux: bool
+    root: Path
+
+
+@dataclass(frozen=True)
+class RalphClaim:
+    run_id: str
+    node_id: int
+    target_branch: str
+    base_oid: str
+    stale_worktree: Path | None
+
+
+def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:  # noqa: ANN001
+    node = graph.get_node(request.node_id)
+    if node is None:
+        raise ValueError(f"node {request.node_id} not found")
+    if node.kind != NodeKind.TASK:
+        raise ValueError(
+            f"node {request.node_id} has kind={node.kind.value}; only task nodes can be dispatched"
+        )
+    stale_worktree = Path(node.worktree_path) if node.worktree_path else None
+    if node.status == NodeStatus.RUNNING:
+        fail_stale_running_runs(graph, request.node_id)
+        winner = latest_terminal_run(
+            find_terminal_runs_for_node(graph, request.node_id, run_id=node.run_id)
+        )
+        if winner is not None:
+            reconcile_node_status(
+                graph,
+                request.node_id,
+                winner["status"],
+                run_id=winner.get("run_id"),
+            )
+        graph.try_reclaim(request.node_id, now=now_iso())
+    run_id = make_run_id(request.node_id)
+    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    target_branch = git.current_branch()
+    return RalphClaim(
+        run_id=run_id,
+        node_id=request.node_id,
+        target_branch=target_branch,
+        base_oid=git.resolve_ref(f"refs/heads/{target_branch}"),
+        stale_worktree=stale_worktree,
+    )
+
+
+def _remove_reclaimed_worktree(git: GitAdapter, claim: RalphClaim) -> None:
+    worktree = claim.stale_worktree
+    if worktree is None or not worktree.exists():
+        return
+    try:
+        git.remove_worktree(worktree)
+    except UnlandedWorkError as exc:
+        _logger.warning("Keeping orphan worktree (dispatch relocates): %s", exc)
+    except Exception:
+        _logger.exception(
+            "Failed to remove reclaimed worktree: run_id=%s node_id=%d worktree=%s",
+            claim.run_id,
+            claim.node_id,
+            worktree,
+        )
+
+
+def _runner_argv(request: RalphStartRequest, claim: RalphClaim) -> list[str]:
+    return [
+        *_resolve_runner_cmd(request.runner_cmd),
+        "--node-id",
+        str(request.node_id),
+        "--project-root",
+        str(request.root),
+        "--run-id",
+        claim.run_id,
+        "--timeout",
+        str(request.timeout_seconds),
+        "--target-branch",
+        claim.target_branch,
+        "--base-oid",
+        claim.base_oid,
+    ]
+
+
+def _spawn_ralph(
+    process: ProcessPort,
+    tmux: TmuxAdapter | None,
+    request: RalphStartRequest,
+    claim: RalphClaim,
+    log_path: Path,
+) -> int:
+    argv = _runner_argv(request, claim)
+    env = build_worker_env(
+        {
+            "MILKNADO_NODE_ID": str(request.node_id),
+            "MILKNADO_RUN_ID": claim.run_id,
+            "MILKNADO_PROJECT_ROOT": str(request.root),
+        }
+    )
+    if tmux is not None:
+        log_path.touch()
+        return tmux.open_run_window(
+            RunWindow(
+                run_id=claim.run_id,
+                argv=tuple(argv),
+                cwd=request.root,
+                log_path=log_path,
+                exit_code_path=exit_code_path(runs_dir(request.root), claim.run_id),
+                env=env,
+            )
+        )
+    return process.spawn_detached(tuple(argv), request.root, log_path, env)
+
+
+def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # noqa: ANN001
+    try:
+        graph.finish_run(
+            claim.run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=now_iso(),
+                rebased=False,
+                detail=f"spawn failed: {type(exc).__name__}: {exc}",
+            ),
+        )
+    except Exception:
+        _logger.exception(
+            "spawn failure persistence failed: run_id=%s node_id=%d",
+            claim.run_id,
+            claim.node_id,
+        )
+    graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
+
+
 @mcp.tool()
 def milknado_run_loop_start(
     node_id: int,
@@ -69,168 +210,58 @@ def milknado_run_loop_start(
     use_tmux: bool = False,
     project_root: str = "",
 ) -> dict:
-    """Dispatch a task node in a detached worktree-backed ralph loop.
+    """Start a task node in a detached worktree-backed Ralph loop.
 
-    Returns immediately with a run_id; poll with milknado_run_loop_poll(run_id).
-    Survives MCP-server restarts; refuses concurrent dispatch.
-    use_tmux=True runs the loop in a named tmux window
-    (`milknado attach <run_id>`); fails fast if tmux is unavailable.
+    Returns immediately with a run ID for polling. Refuses concurrent dispatch.
     """
     root = resolve_project_root(project_root or None)
-    tmux: TmuxAdapter | None = None
-    if use_tmux:
-        # Fail closed BEFORE any claim: tmux was explicitly requested, so a
-        # missing binary or unstartable server fails the dispatch loudly —
-        # never a silent fallback to the detached path.
-        tmux = TmuxAdapter(root)
+    request = RalphStartRequest(
+        node_id=node_id,
+        runner_cmd=runner_cmd,
+        timeout_seconds=timeout_seconds,
+        use_tmux=use_tmux,
+        root=root,
+    )
+    tmux = TmuxAdapter(root) if use_tmux else None
+    if tmux is not None:
         ensure_tmux_ready(tmux)
     graph, _cfg = open_graph(root)
+    git = GitAdapter(root)
     try:
-        node = graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"node {node_id} not found")
-        if node.kind != NodeKind.TASK:
-            raise ValueError(
-                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
-            )
-        run_id = make_run_id(node_id)
-        now = now_iso()
-        if node.status == NodeStatus.RUNNING:
-            # Capture the worktree path BEFORE reconcile clears it from the node row,
-            # so we can prune an orphaned worktree left by a killed runner before
-            # spawning a new one — git-worktree-add fails if the path still exists.
-            orphan_wt = Path(node.worktree_path) if node.worktree_path else None
-            # First release a node locked by a run that finished, or whose detached
-            # process vanished, without anyone polling (mirrors run_start).
-            fail_stale_running_runs(graph, node_id)
-            # Filter terminal files to this node's fence BEFORE picking the latest,
-            # so a stale run with a later ended_at cannot mask the current owner's
-            # file. reconcile_node_status routes the write through the atomic
-            # run_id + status fence (graph.mark_terminal), closing the TOCTOU a
-            # pre-check-then-unfenced-write left open: a node re-claimed under a
-            # newer run cannot be clobbered. A legacy node with no run_id has no
-            # fence to honour and falls back to the unconditional reconcile.
-            winner = latest_terminal_run(
-                find_terminal_runs_for_node(graph, node_id, run_id=node.run_id)
-            )
-            if winner is not None:
-                reconcile_node_status(
-                    graph, node_id, winner["status"], run_id=winner.get("run_id")
-                )
-            # Then free a provably-dead owner by pid-liveness, so a crashed
-            # runner does not lock the node for the full timeout (default 1800s).
-            if graph.try_reclaim(node_id, now=now):
-                _logger.info(
-                    "milknado_run_loop_start: reclaimed node=%d from a dead runner "
-                    "(pid-liveness); re-dispatching without the stale-timeout wait",
-                    node_id,
-                )
-            # Prune the orphaned worktree so git-worktree-add can reuse the path.
-            # Fail-closed: a dirty/unlanded orphan refuses removal and is kept —
-            # the dispatch relocates to a suffixed path instead of blocking the
-            # run loop (see WorktreeManager.relocate_occupied).
-            if orphan_wt is not None and orphan_wt.exists():
-                try:
-                    GitAdapter(root).remove_worktree(orphan_wt)
-                except UnlandedWorkError as exc:
-                    _logger.warning("Keeping orphan worktree (dispatch relocates): %s", exc)
-                except Exception as exc:
-                    _logger.warning("Failed to remove orphan worktree %s: %s", orphan_wt, exc)
-
-        graph.claim_node_for_dispatch(node_id, run_id, now=now)
-        # The node is RUNNING under our run_id BEFORE we spawn — a second concurrent
-        # caller's claim above already lost. From here a failure must release the
-        # claim (mark_terminal failed) so the node is not stranded RUNNING.
-        rdir = runs_dir(root)
-        log_path = rdir / f"{run_id}.log"
-        argv = [
-            *_resolve_runner_cmd(runner_cmd),
-            "--node-id",
-            str(node_id),
-            "--project-root",
-            str(root),
-            "--run-id",
-            run_id,
-            "--timeout",
-            str(timeout_seconds),
-        ]
-        try:
-            # Both the run-row insert and the spawn are inside the guard: a failure
-            # in either (fs permissions, partial .milknado setup, or an unspawnable
-            # process) must release the claim, or the node is left stranded RUNNING
-            # with no worker and no terminal run to reconcile.
-            graph.start_run(run_id, node_id, str(log_path), now, timeout_seconds)
-            if tmux is not None:
-                # The runner becomes the pane's child; the pane pid stands in
-                # for Popen's pid so pid-liveness and cancel keep working.
-                log_path.touch()
-                pid = tmux.open_run_window(
-                    RunWindow(
-                        run_id=run_id,
-                        argv=tuple(argv),
-                        cwd=root,
-                        log_path=log_path,
-                        exit_code_path=exit_code_path(rdir, run_id),
-                        env=build_worker_env(
-                            {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
-                        ),
-                    )
-                )
-            else:
-                with log_path.open("wb") as log_fh:
-                    proc = subprocess.Popen(  # noqa: S603 — COORDINATOR-ONLY module (see docstring); argv is coordinator-assembled, not external input
-                        argv,
-                        stdout=log_fh,
-                        stderr=subprocess.STDOUT,
-                        cwd=str(root),
-                        start_new_session=True,
-                        env=build_worker_env(
-                            {"MILKNADO_NODE_ID": str(node_id), "MILKNADO_RUN_ID": run_id}
-                        ),
-                    )
-                pid = proc.pid
-        except (OSError, TmuxDispatchError) as exc:
-            # Mark the node terminal via the fenced write that releases our claim,
-            # then re-raise so the caller sees a clean failure. The terminal run
-            # write is best-effort — the run row exists only if start_run landed.
-            with suppress(Exception):
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=False,
-                        ended_at=now_iso(),
-                        rebased=False,
-                        detail=f"spawn failed: {type(exc).__name__}: {exc}",
-                    ),
-                )
-            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
-            raise
-        # Record the detached pid on the node row (fenced on run_id) AND on the run
-        # row so the next dispatch can liveness-check this run and reclaim it
-        # immediately if it dies. set_run_pid is gated on status='running', so the
-        # pid write never clobbers a runner that already wrote its terminal state.
-        graph.set_run_pid(run_id, pid)
-        graph.set_pid(node_id, run_id, pid)
-        _logger.info(
-            "milknado_run_loop_start: node=%d run_id=%s timeout=%ds pid=%d",
+        claim = _claim_ralph(graph, git, request)
+        _remove_reclaimed_worktree(git, claim)
+        log_path = runs_dir(root) / f"{claim.run_id}.log"
+        graph.start_run(
+            claim.run_id,
             node_id,
-            run_id,
+            str(log_path),
+            now_iso(),
             timeout_seconds,
-            pid,
         )
-        return {
-            "run_id": run_id,
-            "node_id": node_id,
-            "status": "running",
-            "exit_code": None,
-            "timed_out": None,
-            "rebased": None,
-            "pid": pid,
-            "log_path": str(log_path),
-            "summary": None,
-        }
+        try:
+            pid = _spawn_ralph(ProcessAdapter(), tmux, request, claim, log_path)
+        except (OSError, TmuxDispatchError) as exc:
+            _record_spawn_failure(graph, claim, exc)
+            raise
+        graph.set_run_pid(claim.run_id, pid)
+        graph.set_pid(node_id, claim.run_id, pid)
+        _logger.info(
+            "ralph dispatch started: run_id=%s node_id=%d pid=%d target_branch=%s base_oid=%s",
+            claim.run_id,
+            node_id,
+            pid,
+            claim.target_branch,
+            claim.base_oid,
+        )
+        return build_run_dict(
+            {
+                "run_id": claim.run_id,
+                "node_id": node_id,
+                "status": "running",
+                "pid": pid,
+                "log_path": str(log_path),
+            }
+        )
     finally:
         graph.close()
 
@@ -256,10 +287,8 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
     if state.get("status") == "done":
         # Per-row window reconcile backstop: a completed run's window is
         # normally self-cleaned; kill a straggler (e.g. after a restart).
-        reconcile_run_window(root, state)
+        reconcile_run_window(TmuxAdapter(root), state)
     # Derive the log path from the validated run_id rather than trusting the
     # stored field: no arbitrary-file read via a tampered log_path.
     state["summary"] = tail(rdir / f"{run_id}.log")
-    state.setdefault("exit_code", None)
-    state.setdefault("timed_out", None)
-    return state
+    return build_run_dict(state)

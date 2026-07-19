@@ -10,11 +10,13 @@ from milknado.domains.github.exporter import (
     resolve_github_roadmap_node,
 )
 from milknado.domains.github.importer import GithubImportResult, import_github_roadmap
+from milknado.domains.github.ports import GithubProjectPort
 
 __all__ = [
     "GithubBindResult",
     "GithubExportResult",
     "GithubImportResult",
+    "GithubProjectPort",
     "bind_github_project",
     "export_github_roadmap",
     "import_github_roadmap",

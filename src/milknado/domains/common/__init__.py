@@ -8,12 +8,13 @@ from milknado.domains.common.config import (
     load_config,
     save_config,
 )
-from milknado.domains.common.errors import InvalidContainment, InvalidTransition
+from milknado.domains.common.errors import GitOperationError, InvalidContainment, InvalidTransition
 from milknado.domains.common.harvest import (
     HarvestSummary,
     build_harvest_summary,
     format_harvest_text,
 )
+from milknado.domains.common.paths import slugify, validate_hint_path
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
@@ -38,6 +39,7 @@ __all__ = [
     "format_harvest_text",
     "CrgPort",
     "GitPort",
+    "GitOperationError",
     "Gate",
     "InvalidContainment",
     "InvalidTransition",
@@ -61,5 +63,7 @@ __all__ = [
     "detect_project_gates",
     "global_config_path",
     "load_config",
+    "slugify",
+    "validate_hint_path",
     "save_config",
 ]

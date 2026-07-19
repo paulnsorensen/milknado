@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 from dataclasses import dataclass, field
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,8 +48,12 @@ def start_input_thread(state: InputState) -> None:
         finally:
             try:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:
+                _logger.exception(
+                    "terminal reset failed input_thread=%s fd=%d",
+                    threading.current_thread().name,
+                    fd,
+                )
 
     state.input_thread = threading.Thread(target=_read_keys, daemon=True, name="milknado-input")
     state.input_thread.start()

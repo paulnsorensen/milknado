@@ -1,8 +1,7 @@
-"""Subprocess-worker dispatch: spawn, execute, and the sync/cancellable run paths.
+"""Worker dispatch orchestration over the injected process port.
 
-Covers sync and detached headless spawning (piping the brief to stdin and
-capturing combined output). The async worker, poll, and reconciliation
-helpers live in async_run.py and reconcile.py respectively.
+Builds worker commands and environments for sync and cancellable runs. Concrete
+process launch, wait, timeout, and termination mechanics live in the adapter.
 """
 
 from __future__ import annotations
@@ -11,9 +10,7 @@ import logging
 import os
 import secrets
 import shlex
-import subprocess
-import threading
-import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,14 +20,9 @@ from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_T
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
 from milknado.domains.dispatch._runstate import tail as _tail
+from milknado.domains.dispatch.ports import ProcessPort
 
 _logger = logging.getLogger(__name__)
-
-# Cooperative-cancel tuning for the async worker's poll loop: how often it
-# checks the cancel sentinel / timeout, and how long it waits after SIGTERM
-# before escalating to SIGKILL.
-_CANCEL_POLL_SECS = 0.5
-_CANCEL_GRACE_SECS = 5
 
 
 def validate_worker_argv(argv: list[str]) -> None:
@@ -134,85 +126,34 @@ def build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def _spawn_worker(  # noqa: ANN001
-    cwd: Path, node_id: int, log_fh, argv: list[str], run_id: str | None = None
-) -> subprocess.Popen:
-    """Popen a worker with the filtered env, stdin piped and output to log_fh.
-
-    Shared by the blocking `_execute` (sync path) and the polling
-    `_execute_cancellable` (async path) so the spawn + env + redirection contract
-    lives in one place; only the wait strategy differs between the two. `cwd` is
-    the working tree the worker runs in — the shared checkout under THIS_BRANCH,
-    or the isolated worktree under ISOLATE. The worker receives MILKNADO_NODE_ID
-    and, when this is a tracked run, MILKNADO_RUN_ID so it can deposit its result
-    via milknado_deposit_result.
-    """
-    extra = {"MILKNADO_NODE_ID": str(node_id)}
-    if run_id is not None:
-        extra["MILKNADO_RUN_ID"] = run_id
-    env = build_worker_env(extra)
-    return subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE,
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-        cwd=str(cwd),
-        env=env,
-    )
-
-
 def _execute(
-    cwd: Path,
+    project_root: Path,
     node_id: int,
     log_path: Path,
     brief: str,
     argv: list[str],
     timeout: int,
     run_id: str | None = None,
+    *,
+    canonical_root: Path | None = None,
+    process: ProcessPort,
 ) -> tuple[int, bool]:
-    timed_out = False
-    with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(cwd, node_id, log_fh, argv, run_id)
-        try:
-            proc.communicate(input=brief.encode("utf-8"), timeout=timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-            timed_out = True
-    exit_code = proc.returncode if proc.returncode is not None else -1
-    return exit_code, timed_out
-
-
-def _terminate_worker(proc: subprocess.Popen) -> None:
-    """SIGTERM the worker, allow a grace window, then SIGKILL if still alive.
-
-    The async subprocess shares the MCP server's process group, so signalling
-    the group (`killpg`) would kill the server itself — we terminate this one
-    process directly instead.
-    """
-    proc.terminate()
-    try:
-        proc.wait(timeout=_CANCEL_GRACE_SECS)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-
-
-def _write_worker_stdin(stdin, brief: str) -> None:  # noqa: ANN001
-    """Write the brief to the worker's stdin and close it.
-
-    Runs in a daemon thread (async path) so a brief larger than the OS pipe
-    buffer can't block before the cancel/timeout poll loop starts. A
-    BrokenPipeError/OSError just means the worker already exited — nothing to do.
-    """
-    try:
-        stdin.write(brief.encode("utf-8"))
-        stdin.close()
-    except (BrokenPipeError, OSError) as exc:
-        _logger.debug(
-            "Worker stdin unavailable while sending brief (worker likely exited): %s",
-            exc,
-        )
+    root = canonical_root or project_root
+    extra = {
+        "MILKNADO_NODE_ID": str(node_id),
+        "MILKNADO_PROJECT_ROOT": str(root.resolve()),
+    }
+    if run_id is not None:
+        extra["MILKNADO_RUN_ID"] = run_id
+    outcome = process.run(
+        tuple(argv),
+        project_root,
+        log_path,
+        brief.encode(),
+        build_worker_env(extra),
+        timeout,
+    )
+    return outcome.exit_code, outcome.timed_out
 
 
 def _execute_cancellable(
@@ -225,39 +166,27 @@ def _execute_cancellable(
     *,
     runs_dir: Path,
     run_id: str,
+    project_root: Path,
+    process: ProcessPort,
+    on_started: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
-    """Run a worker under a poll loop so a cancel sentinel can stop it mid-run.
-
-    Mirrors `_execute`'s spawn but cannot use the blocking `communicate`: the
-    brief is written to stdin and the loop polls `proc.poll()` on a short
-    interval, enforcing the timeout deadline and checking the cancel sentinel.
-    Returns `(exit_code, timed_out, cancelled)`. Used only by the async worker;
-    the sync `_execute` path stays blocking.
-    """
-    timed_out = False
-    cancelled = False
-    deadline = time.monotonic() + timeout
-    with log_path.open("wb") as log_fh:
-        proc = _spawn_worker(cwd, node_id, log_fh, argv, run_id)
-        # Write the brief from a daemon thread so a brief larger than the OS pipe
-        # buffer can't block before the cancel/timeout poll loop starts — a
-        # synchronous write would be unkillable until the worker drained stdin.
-        if proc.stdin is not None:
-            threading.Thread(
-                target=_write_worker_stdin, args=(proc.stdin, brief), daemon=True
-            ).start()
-        while proc.poll() is None:
-            if _is_cancel_requested(runs_dir, run_id):
-                _terminate_worker(proc)
-                cancelled = True
-                break
-            if time.monotonic() >= deadline:
-                _terminate_worker(proc)
-                timed_out = True
-                break
-            time.sleep(_CANCEL_POLL_SECS)
-    exit_code = proc.returncode if proc.returncode is not None else -1
-    return exit_code, timed_out, cancelled
+    outcome = process.run(
+        tuple(argv),
+        cwd,
+        log_path,
+        brief.encode(),
+        build_worker_env(
+            {
+                "MILKNADO_NODE_ID": str(node_id),
+                "MILKNADO_RUN_ID": run_id,
+                "MILKNADO_PROJECT_ROOT": str(project_root.resolve()),
+            }
+        ),
+        timeout,
+        cancel_requested=lambda: _is_cancel_requested(runs_dir, run_id),
+        on_started=on_started,
+    )
+    return outcome.exit_code, outcome.timed_out, outcome.cancelled
 
 
 def run_headless(
@@ -270,6 +199,7 @@ def run_headless(
     run_id: str | None = None,
     default_cmd: str,
     cwd: Path | None = None,
+    process: ProcessPort,
 ) -> RunResult:
     argv = _resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
@@ -277,8 +207,25 @@ def run_headless(
         if run_id is not None
         else _log_path(project_root, node_id)
     )
+    worker_cwd = cwd or project_root
+    _logger.info("worker dispatch started: run_id=%s node_id=%d", run_id, node_id)
     exit_code, timed_out = _execute(
-        cwd or project_root, node_id, log_path, brief, argv, timeout_seconds, run_id
+        worker_cwd,
+        node_id,
+        log_path,
+        brief,
+        argv,
+        timeout_seconds,
+        run_id,
+        canonical_root=project_root,
+        process=process,
+    )
+    _logger.info(
+        "worker dispatch terminal: run_id=%s node_id=%d exit_code=%d timed_out=%s",
+        run_id,
+        node_id,
+        exit_code,
+        timed_out,
     )
     return RunResult(
         exit_code=exit_code,

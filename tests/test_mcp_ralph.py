@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,27 @@ from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp_server import open_graph
 from milknado.mcp_todo import milknado_todo_tree
 from milknado.mcp_todo_mutate import milknado_todo_add
+
+
+@pytest.fixture(autouse=True)
+def _initialize_git_repository(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+
 
 # A stub runner standing in for `python -m milknado._ralph_node_runner`: it honors
 # the same argv the MCP tool appends and writes the requested terminal state,
@@ -24,6 +46,8 @@ p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
 p.add_argument("--timeout")
+p.add_argument("--target-branch")
+p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
@@ -55,6 +79,8 @@ p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
 p.add_argument("--timeout")
+p.add_argument("--target-branch")
+p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
@@ -213,7 +239,7 @@ def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
     )
     final = _wait_for_terminal(started["run_id"], root)
     assert final["status"] == "done"
-    assert final["detail"] == str(task["id"])
+    assert _read_run(tmp_path, started["run_id"])["detail"] == str(task["id"])
 
 
 def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:
@@ -242,7 +268,7 @@ def test_poll_reads_failed_with_detail(tmp_path: Path) -> None:
     final = _wait_for_terminal(started["run_id"], root)
     assert final["status"] == "failed"
     assert final["rebased"] is False
-    assert final["detail"] == "boom"
+    assert _read_run(tmp_path, started["run_id"])["detail"] == "boom"
 
 
 def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
@@ -343,6 +369,65 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     assert node.run_id is None, "the fence run_id is cleared so the node is freed for re-dispatch"
 
 
+def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from milknado.mcp_ralph import RalphClaim, _remove_reclaimed_worktree
+
+    worktree = tmp_path / "orphan"
+    worktree.mkdir()
+
+    class Git:
+        def remove_worktree(self, path: Path) -> None:  # noqa: ARG002
+            raise RuntimeError("adapter unavailable")
+
+    claim = RalphClaim(
+        run_id="node-5-20260101T000000Z-orph",
+        node_id=5,
+        target_branch="main",
+        base_oid="abc123",
+        stale_worktree=worktree,
+    )
+    with caplog.at_level(logging.ERROR):
+        _remove_reclaimed_worktree(Git(), claim)  # type: ignore[arg-type]
+    assert "Failed to remove reclaimed worktree" in caplog.text
+    assert worktree.exists()
+
+
+def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    from milknado.domains.common import NodeStatus
+    from milknado.mcp_ralph import RalphClaim, _record_spawn_failure
+
+    class Graph:
+        def __init__(self) -> None:
+            self.terminal: tuple[int, str, NodeStatus] | None = None
+
+        def finish_run(self, run_id: str, result: object) -> None:  # noqa: ARG002
+            raise RuntimeError("database unavailable")
+
+        def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
+            self.terminal = (node_id, run_id, status)
+
+    claim = RalphClaim(
+        run_id="node-6-20260101T000000Z-spwn",
+        node_id=6,
+        target_branch="main",
+        base_oid="abc123",
+        stale_worktree=None,
+    )
+    graph = Graph()
+    with caplog.at_level(logging.ERROR):
+        _record_spawn_failure(graph, claim, OSError("missing runner"))
+    assert graph.terminal == (6, claim.run_id, NodeStatus.FAILED)
+    assert "spawn failure persistence failed" in caplog.text
+
+
 def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
     """Poll derives the log path from the validated run_id, not the stored field,
     so a tampered log_path can't read an arbitrary file. With no log file on disk
@@ -377,7 +462,20 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     run_id = "node-1-20260101T000000Z-abcd"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
     rc = _ralph_node_runner.main(
-        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "12"]
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--timeout",
+            "12",
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
     )
     assert rc == 1
     state = _read_run(tmp_path, run_id)
@@ -392,13 +490,24 @@ def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> 
     """When quality_gates is absent from config, the runner fails closed immediately
     before building adapters — the run row records the fail-closed message."""
     from milknado import _ralph_node_runner
-    from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+    from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 
     # No milknado.toml → quality_gates=None (fail-closed)
     run_id = "node-1-20260101T000000Z-pref"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
     rc = _ralph_node_runner.main(
-        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id]
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
     )
     assert rc == 1
     state = _read_run(tmp_path, run_id)
@@ -474,7 +583,20 @@ def test_runner_writes_done_on_successful_outcome(
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
-        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "30"]
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--timeout",
+            "30",
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
     )
     assert rc == 0
     assert graph.closed is True  # the graph handle is always released
@@ -539,14 +661,15 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
 
-        def stop_run(self, run_id: str) -> None:
+        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:  # noqa: ARG002
             self.stopped.append(run_id)
+            return True
 
         def poll_progress_events(self) -> list:
             return []
 
     class _StubExecutor:
-        def dispatch(self, node_id: int, config) -> DispatchResult:  # noqa: ANN001
+        def dispatch(self, node_id: int, config, *, base_oid=None) -> DispatchResult:  # noqa: ANN001, ARG002
             return DispatchResult(
                 node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
             )
@@ -565,7 +688,20 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
-        ["--node-id", "1", "--project-root", str(tmp_path), "--run-id", run_id, "--timeout", "5"]
+        [
+            "--node-id",
+            "1",
+            "--project-root",
+            str(tmp_path),
+            "--run-id",
+            run_id,
+            "--timeout",
+            "5",
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
     )
     assert rc == 1
     assert stub_ralph.stopped == ["run-1"], "timeout must call stop_run on the ralph adapter"

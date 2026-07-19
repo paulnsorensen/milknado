@@ -17,6 +17,7 @@ from milknado.adapters import gh
 from milknado.adapters.gh import (
     GhTransportError,
     gh_field_list,
+    gh_issue_view,
     gh_item_add,
     gh_preflight,
     gh_project_view,
@@ -65,6 +66,33 @@ class TestRunJson:
         wire(json.dumps({"foo": 1}))
         with pytest.raises(GhTransportError, match="has no `id`"):
             gh_item_add("acme", 7, "https://x/1")
+
+
+class TestIssueViewValidation:
+    def test_missing_required_field_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+        recorder = wire(
+            json.dumps(
+                {
+                    "body": "Issue body",
+                    "number": 7,
+                    "url": "https://github.example/acme/app/issues/7",
+                }
+            )
+        )
+
+        with pytest.raises(GhTransportError, match=r"`gh issue view` response is malformed"):
+            gh_issue_view("acme/app#7")
+
+        assert recorder.calls == [
+            [
+                GH_BIN,
+                "issue",
+                "view",
+                "acme/app#7",
+                "--json",
+                "title,body,number,url",
+            ]
+        ]
 
 
 class TestProjectViewValidation:

@@ -79,7 +79,23 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
     return parse_manifest_from_dict(raw)
 
 
+def decode_manifest(raw: object) -> PlanChangeManifest:
+    """Decode a manifest or raise the public boundary error."""
+    manifest = _decode_manifest_or_none(raw)
+    if manifest is None:
+        raise ValueError("manifest is not a valid milknado.plan.v2 object")
+    return manifest
+
+
 def parse_manifest_from_dict(raw: object) -> PlanChangeManifest | None:
+    """Decode untrusted planner output without raising."""
+    try:
+        return decode_manifest(raw)
+    except ValueError:
+        return None
+
+
+def _decode_manifest_or_none(raw: object) -> PlanChangeManifest | None:
     if not isinstance(raw, dict):
         _logger.warning("manifest root is not an object")
         return None

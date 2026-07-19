@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import queue
 import re
-import subprocess
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Final
 
@@ -15,44 +12,11 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
-from milknado.loop import (
-    CompletionVerdict,
-    EventType,
-    QueueEmitter,
-    RunConfig,
-    RunManager,
-    RunStatus,
-)
+from milknado.domains.execution.completion import build_completion_verifier
+from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
-# Per-gate wall-clock cap. The gates are the harness-side re-run of the repo's
-# real quality suite (e.g. `uv run pytest` over the full test set), which runs
-# for minutes — not the short RALPH.md frontmatter snippets DEFAULT_COMMAND_TIMEOUT
-# (60s) sizes for. The cap is set at the run-dispatch scale (the 1800s default a
-# whole node loop is allotted, milknado_run_loop_start) so an honest full-suite
-# gate completes within it, while a genuinely wedged gate still cannot stall the
-# verdict forever.
-_GATE_TIMEOUT_SECONDS: Final[float] = 1800.0
-# Per-git-query cap. The verifier's git probes (worktree list, status, merge-base,
-# diff) are near-instant, so they keep the short DEFAULT_COMMAND_TIMEOUT ceiling —
-# a hung git invocation is a degraded-environment signal, not slow honest work.
-_GIT_QUERY_TIMEOUT_SECONDS: Final[float] = 60.0
-# Tail of a failing gate's combined output folded into the rejection feedback.
-_FEEDBACK_TAIL_CHARS: Final[int] = 2000
-
-_NO_CHANGE_FEEDBACK: Final[str] = (
-    "you emitted the completion promise but produced no committed/stageable change"
-)
-NO_GATES_CONFIGURED_MESSAGE: Final[str] = (
-    "no quality_gates configured — set [milknado] quality_gates in milknado.toml "
-    "(or a per-flavor [milknado.flavor.<flavor>] table; use [] to intentionally skip)"
-)
-_UNRESOLVABLE_BASE_FEEDBACK: Final[str] = (
-    "the completion verifier could not resolve a base branch to diff against "
-    "(detached main worktree or git unqueryable), so it cannot confirm your "
-    "committed work landed; ensure the node worktree forks a named branch"
-)
 
 _logger = logging.getLogger(__name__)
 
@@ -75,6 +39,7 @@ class LoopAdapter:
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
+        base_oid: str | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
@@ -90,16 +55,16 @@ class LoopAdapter:
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
         )
-        config.completion_verifier = _build_completion_verifier(ralph_dir, quality_gates)
-        run = self._manager.create_run(config)
-        run.add_listener(self._emitter)
-        return run
+        config.completion_verifier = build_completion_verifier(
+            ralph_dir, quality_gates, base_oid=base_oid
+        )
+        return self._manager.create_run(config, emitter=self._emitter)
 
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)
 
-    def stop_run(self, run_id: str) -> None:
-        self._manager.stop_run(run_id)
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return self._manager.stop_and_join(run_id, timeout)
 
     def list_runs(self) -> list[Any]:
         return self._manager.list_runs()
@@ -213,276 +178,6 @@ class LoopAdapter:
         return output_path
 
 
-def _build_completion_verifier(
-    worktree: Path,
-    quality_gates: tuple[Gate, ...] | None,
-    *,
-    in_place: bool = False,
-    artifact_path: str | None = None,
-) -> Callable[[], CompletionVerdict]:
-    """Build the tier-2 completion verifier for a node's worktree.
-
-    The returned closure is the authoritative harness-side check the engine
-    consults when exit-0 + the completion promise would otherwise mark the
-    node done. It re-runs every configured quality gate in *worktree* (the
-    RALPH.md copy is only fast agent-side feedback) and then confirms the node
-    actually produced evidence of completed work. A failing gate rejects the
-    completion outright, regardless of evidence mode.
-
-    When ``quality_gates`` is None (unconfigured), the verifier fails closed
-    immediately with an actionable message — no gates run.
-
-    Evidence mode (ADR-006): worktree nodes (``in_place=False``, the default)
-    are checked for a committed or stageable change, as before. An in-place
-    node (``in_place=True``) with explicitly-empty gates (``()``) and an
-    ``artifact_path`` is checked instead for that artifact existing and being
-    non-empty — the current checkout may carry unrelated changes, so a diff
-    check is the wrong evidence for a prose deliverable. Every other
-    combination (worktree nodes, non-empty gates, or no artifact_path) keeps
-    the stageable-change check.
-    """
-    gates = quality_gates
-
-    def verify() -> CompletionVerdict:
-        if gates is None:
-            return CompletionVerdict(ok=False, feedback=NO_GATES_CONFIGURED_MESSAGE)
-        if not gates:
-            _logger.info("quality gates explicitly skipped for %s", worktree)
-        gate_failure = _run_quality_gates(worktree, list(gates))
-        if gate_failure is not None:
-            return CompletionVerdict(ok=False, feedback=gate_failure)
-        if in_place and not gates and artifact_path is not None:
-            artifact_rejection = _artifact_rejection(worktree, artifact_path)
-            if artifact_rejection is not None:
-                return CompletionVerdict(ok=False, feedback=artifact_rejection)
-            return CompletionVerdict(ok=True, feedback="")
-        change_rejection = _change_rejection(worktree)
-        if change_rejection is not None:
-            return CompletionVerdict(ok=False, feedback=change_rejection)
-        return CompletionVerdict(ok=True, feedback="")
-
-    return verify
-
-
-def _artifact_rejection(worktree: Path, artifact_path: str) -> str | None:
-    """Rejection feedback when *artifact_path* is missing or empty, else None.
-
-    Evidence for an in-place node with explicitly-empty gates: the file must
-    exist under *worktree* and be non-empty. Absolute paths and ``..`` escapes
-    fail closed before stat so user-controlled artifact paths cannot probe
-    outside the repo. A stat failure (e.g. a symlink loop) fails closed rather
-    than being mistaken for a present artifact.
-    """
-    root = worktree.resolve()
-    raw_path = Path(artifact_path)
-    if raw_path.is_absolute():
-        return (
-            f"you emitted the completion promise but artifact_path {artifact_path!r} "
-            "must be repo-relative"
-        )
-    path = (root / raw_path).resolve(strict=False)
-    try:
-        path.relative_to(root)
-    except ValueError:
-        return (
-            f"you emitted the completion promise but artifact_path {artifact_path!r} "
-            f"escapes {worktree}"
-        )
-    try:
-        exists_and_non_empty = path.is_file() and path.stat().st_size > 0
-    except OSError as exc:
-        _logger.warning(
-            "completion verifier: could not stat artifact %s in %s: %s",
-            artifact_path,
-            worktree,
-            exc,
-        )
-        return (
-            f"you emitted the completion promise but artifact_path {artifact_path!r} "
-            f"could not be checked in {worktree}"
-        )
-    if exists_and_non_empty:
-        return None
-    return (
-        f"you emitted the completion promise but artifact_path {artifact_path!r} "
-        "does not exist or is empty"
-    )
-
-
-def _run_quality_gates(worktree: Path, gates: list[Gate]) -> str | None:
-    """Re-run each gate in *worktree*, stopping at the first failure.
-
-    A gate fails on non-zero exit OR when ``gate.fail_on_stdout`` (a regex)
-    matches combined stdout+stderr even on exit 0.
-
-    Returns rejection feedback on the first failure or timeout, or ``None``
-    when every gate passes.
-
-    The gate command is the project's own quality suite (e.g. ``uv run pytest``),
-    run as CI would run it. milknado's injected orchestration namespace
-    (``MILKNADO_*``, e.g. the worker's MILKNADO_RUN_ID / MILKNADO_NODE_ID) is
-    stripped from its environment so the worker's own node/run identity cannot
-    leak into the suite and flake tests that read those vars (#178).
-    """
-    gate_env = {k: v for k, v in os.environ.items() if not k.startswith("MILKNADO_")}
-    for gate in gates:
-        command = gate.command
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=worktree,
-                capture_output=True,
-                text=True,
-                timeout=_GATE_TIMEOUT_SECONDS,
-                env=gate_env,
-            )
-        except subprocess.TimeoutExpired:
-            _logger.warning(
-                "completion verifier: quality gate `%s` timed out after %.0fs in %s",
-                command,
-                _GATE_TIMEOUT_SECONDS,
-                worktree,
-            )
-            return f"quality gate `{command}` timed out after {_GATE_TIMEOUT_SECONDS:.0f}s"
-        combined = result.stdout + "\n" + result.stderr
-        if result.returncode != 0:
-            tail = combined[-_FEEDBACK_TAIL_CHARS:].strip()
-            _logger.warning(
-                "completion verifier: quality gate `%s` failed (exit %d) in %s",
-                command,
-                result.returncode,
-                worktree,
-            )
-            return f"quality gate `{command}` failed (exit {result.returncode}):\n{tail}"
-        if gate.fail_on_stdout is not None and re.search(gate.fail_on_stdout, combined):
-            matched_line = next(
-                (ln for ln in combined.splitlines() if re.search(gate.fail_on_stdout, ln)),
-                combined[-_FEEDBACK_TAIL_CHARS:].strip(),
-            )
-            _logger.warning(
-                "completion verifier: quality gate `%s` stdout matched failure pattern in %s",
-                command,
-                worktree,
-            )
-            return (
-                f"quality gate `{command}` exited 0 but output matched failure pattern "
-                f"{gate.fail_on_stdout!r}:\n{matched_line}"
-            )
-    return None
-
-
-def _resolve_feature_branch(worktree: Path) -> str | None:
-    """Return the branch the *worktree* forked from — the main worktree's branch.
-
-    `git worktree list --porcelain` lists the main worktree first; its
-    ``branch refs/heads/<name>`` line names the feature branch this worktree
-    was created from, the same ref the executor later rebases onto. Returns
-    ``None`` when the main worktree is detached or git cannot be queried.
-    """
-    try:
-        listing = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
-        ).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        _logger.warning("completion verifier: could not list worktrees in %s: %s", worktree, exc)
-        return None
-    # The first record (up to the first blank line) is the main worktree.
-    first_record = listing.split("\n\n", 1)[0]
-    for line in first_record.splitlines():
-        if line.startswith("branch refs/heads/"):
-            return line[len("branch refs/heads/") :].strip()
-    return None
-
-
-def _change_rejection(worktree: Path) -> str | None:
-    """Rejection feedback when the branch produced no provable change, else None.
-
-    Committed work is measured against the merge-base with the feature branch
-    (the fork point); stageable work is any dirty or untracked file in the
-    worktree. Either one present means the worker produced change (returns None).
-
-    Two distinct fail-closed cases are kept apart so the agent gets honest
-    feedback: a clean tree with a resolvable base and no committed change is a
-    true empty diff (``_NO_CHANGE_FEEDBACK``); a clean tree whose base cannot be
-    resolved (detached main worktree, git unqueryable) is a degraded verifier,
-    not idle work, and says so (``_UNRESOLVABLE_BASE_FEEDBACK``).
-    """
-    if _has_working_tree_change(worktree):
-        return None
-    feature_branch = _resolve_feature_branch(worktree)
-    if feature_branch is None:
-        _logger.warning(
-            "completion verifier: clean tree but no resolvable base branch in %s; "
-            "rejecting as unverifiable rather than empty",
-            worktree,
-        )
-        return _UNRESOLVABLE_BASE_FEEDBACK
-    if _has_committed_change(worktree, feature_branch):
-        return None
-    return _NO_CHANGE_FEEDBACK
-
-
-def _has_working_tree_change(worktree: Path) -> bool:
-    try:
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
-        ).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        _logger.warning("completion verifier: git status failed in %s: %s", worktree, exc)
-        return False
-    return bool(status.strip())
-
-
-def _has_committed_change(worktree: Path, feature_branch: str) -> bool:
-    try:
-        base = subprocess.run(
-            ["git", "merge-base", "HEAD", feature_branch],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
-        ).stdout.strip()
-        diff = subprocess.run(
-            ["git", "diff", "--quiet", base, "HEAD"],
-            cwd=worktree,
-            timeout=_GIT_QUERY_TIMEOUT_SECONDS,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        _logger.warning(
-            "completion verifier: could not diff against %s in %s: %s",
-            feature_branch,
-            worktree,
-            exc,
-        )
-        return False
-    # `git diff --quiet` exits 0 (identical), 1 (diff present), or >=2 (typically
-    # 128) on error. Only exit 1 is a committed change; an errored diff must fail
-    # closed -- treating it as change would accept completion on a broken git call.
-    if diff.returncode == 1:
-        return True
-    if diff.returncode != 0:
-        _logger.warning(
-            "completion verifier: `git diff` against %s in %s exited %d; "
-            "treating as no committed change",
-            feature_branch,
-            worktree,
-            diff.returncode,
-        )
-    return False
-
-
 def _build_verify_prompt(spec_text: str, graph_state: Any) -> str:
     graph_summary = str(graph_state) if graph_state is not None else "(no graph state)"
     return (
@@ -520,12 +215,12 @@ def _drain_verify_run(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                local_manager.stop_run(run_id)
+                local_manager.stop_and_join(run_id, timeout=5.0)
                 return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
             try:
                 event = ev_queue.get(timeout=remaining)
             except queue.Empty:
-                local_manager.stop_run(run_id)
+                local_manager.stop_and_join(run_id, timeout=5.0)
                 return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
             if event.type in _ITERATION_EVENTS:
                 text = event.data.get("result_text") or ""
@@ -534,17 +229,16 @@ def _drain_verify_run(
             elif event.type == EventType.RUN_STOPPED:
                 break
     except Exception as exc:
-        _logger.warning("verify_spec error: %s", exc)
+        _logger.exception("verify_spec drain failed for run_id=%s", run_id)
         try:
-            local_manager.stop_run(run_id)
+            local_manager.stop_and_join(run_id, timeout=5.0)
         except Exception:
-            pass
-        return VerifySpecResult(outcome="done")
+            _logger.exception("verify_spec stop failed for run_id=%s", run_id)
+        return VerifySpecResult(outcome="gaps", goal_delta=f"verification failed: {exc}")
     return _parse_verify_output("\n".join(output_parts))
 
 
 def _parse_verify_output(output: str) -> VerifySpecResult:
-    import re
 
     if "<result>done</result>" in output:
         return VerifySpecResult(outcome="done")
@@ -552,8 +246,8 @@ def _parse_verify_output(output: str) -> VerifySpecResult:
         m = re.search(r"<goal_delta>(.*?)</goal_delta>", output, re.DOTALL)
         delta = m.group(1).strip() if m else None
         return VerifySpecResult(outcome="gaps", goal_delta=delta)
-    _logger.warning("verify_spec: unparseable output, treating as done")
-    return VerifySpecResult(outcome="done")
+    _logger.warning("verify_spec: unparseable output, returning gaps")
+    return VerifySpecResult(outcome="gaps", goal_delta="verification produced no explicit result")
 
 
 def _build_ralph_content(

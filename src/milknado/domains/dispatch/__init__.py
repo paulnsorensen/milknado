@@ -10,7 +10,11 @@ from milknado.domains.dispatch._runstate import (
     runs_dir,
     tail,
 )
-from milknado.domains.dispatch.async_run import poll_async_run, start_headless_async
+from milknado.domains.dispatch.async_run import (
+    AsyncRunRequest,
+    poll_async_run,
+    start_headless_async,
+)
 from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.isolate import (
@@ -18,10 +22,21 @@ from milknado.domains.dispatch.isolate import (
     MergeBackResult,
     create_isolated_worktree,
     merge_back_isolated,
-    resolve_feature_branch,
     setup_isolated_worktree,
 )
-from milknado.domains.dispatch.lifecycle import dispatch_node_sync, reclaim_stale_node
+from milknado.domains.dispatch.lifecycle import (
+    SyncDispatchRequest,
+    dispatch_node_sync,
+    reclaim_stale_node,
+)
+from milknado.domains.dispatch.ports import (
+    GraphSessionPort,
+    ProcessOutcome,
+    ProcessPort,
+    ProcessTerminationPort,
+    RunWindow,
+    TmuxPort,
+)
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -42,11 +57,19 @@ from milknado.domains.dispatch.tmux_run import (
 )
 
 __all__ = [
+    "AsyncRunRequest",
     "AsyncStartRef",
     "RUN_ID_RE",
     "RunResult",
     "IsolateContext",
     "MergeBackResult",
+    "SyncDispatchRequest",
+    "GraphSessionPort",
+    "ProcessOutcome",
+    "ProcessPort",
+    "ProcessTerminationPort",
+    "RunWindow",
+    "TmuxPort",
     "cancel_path",
     "cancel_run",
     "clear_cancel",
@@ -54,7 +77,6 @@ __all__ = [
     "create_isolated_worktree",
     "dispatch_node_sync",
     "merge_back_isolated",
-    "resolve_feature_branch",
     "exit_code_path",
     "ensure_tmux_ready",
     "fail_stale_running_runs",

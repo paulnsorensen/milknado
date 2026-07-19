@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+import logging
 import math
 import os
 from pathlib import Path
@@ -60,6 +61,8 @@ FLAT_COST: dict[str, int] = {"delete": 80, "rename": 120}
 HEADROOM: float = 1.25
 TIKTOKEN_BLOB_URL = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
 TIKTOKEN_CACHE_KEY = hashlib.sha1(TIKTOKEN_BLOB_URL.encode(), usedforsecurity=False).hexdigest()
+
+_logger = logging.getLogger(__name__)
 
 
 def _configure_tiktoken_cache() -> None:
@@ -133,13 +136,15 @@ def _estimate_path_level(change: FileChange, root: Path) -> int:
 
 
 def _log_degradation(root: Path, change: FileChange, reason: str) -> None:
-    log_dir = root / ".milknado"
-    try:
-        log_dir.mkdir(parents=True, exist_ok=True)
-        with open(log_dir / "planning-context-warn.log", "a") as f:
-            f.write(f"[weights] symbol resolution failed for {change.path}: {reason}\n")
-    except OSError:
-        pass
+    _logger.warning(
+        "planning token estimate degraded to path-level analysis",
+        extra={
+            "project_root": str(root),
+            "change_id": change.id,
+            "change_path": change.path,
+            "reason": reason,
+        },
+    )
 
 
 def estimate_tokens_per_symbols(
@@ -154,8 +159,7 @@ def estimate_tokens_per_symbols(
        resolves each SymbolRef via search_symbol + read_section and encodes the
        concatenated slices.  Proportional to symbols touched, not whole-file size.
     2. Whole-file tiktoken: when tilth_port is None, symbols are absent, or any
-       resolution step raises.  Degradations are logged to
-       .milknado/planning-context-warn.log.
+       resolution step raises. Degradations are emitted through structured logging.
     3. Line-heuristic: NEW_FILE_LINES x TOKENS_PER_LINE x HEADROOM when the file
        doesn't exist on disk (add) or for flat-cost kinds (delete/rename).
     """

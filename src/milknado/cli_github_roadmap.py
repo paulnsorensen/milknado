@@ -8,14 +8,14 @@ from typing import Annotated
 import typer
 
 from milknado._cli_helpers import _ensure_db, _load_or_default, console
-from milknado.adapters.gh import GhTransportError
+from milknado.adapters.gh import GhProjectAdapter, GhTransportError
 from milknado.domains.github import (
     bind_github_project,
     export_github_roadmap,
     import_github_roadmap,
     resolve_github_roadmap_node,
 )
-from milknado.domains.wiki import resolve_roadmap_node
+from milknado.domains.wiki import resolve_roadmap_node, wiki_root
 
 github_roadmap_app = typer.Typer(
     name="github-roadmap", help="Import/bind/export roadmaps to a GitHub Project v2"
@@ -28,18 +28,15 @@ _Number = Annotated[int, typer.Argument(help="Project number")]
 _ERRORS = (FileNotFoundError, ValueError, LookupError, GhTransportError)
 
 
-def _wiki_root(project_root: Path) -> Path:
-    return project_root / ".hallouminate" / "wiki"
-
-
 @github_roadmap_app.command("import")
 def import_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path(".")) -> None:
     """Seed milknado roadmap + goal nodes from a GitHub Project (github-origin)."""
     project_root = project_root.resolve()
+    github = GhProjectAdapter()
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
     try:
-        result = import_github_roadmap(graph, owner, number)
+        result = import_github_roadmap(graph, owner, number, github)
     except _ERRORS as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -58,12 +55,13 @@ def bind_cmd(
 ) -> None:
     """Project a wiki-origin roadmap onto a GitHub Project (one-time bind)."""
     project_root = project_root.resolve()
-    wiki_root = _wiki_root(project_root)
+    roadmap_root = wiki_root(project_root)
     config, plugins = _load_or_default(project_root)
+    github = GhProjectAdapter()
     graph = _ensure_db(config, plugins)
     try:
-        node = resolve_roadmap_node(graph, wiki_root, slug)
-        result = bind_github_project(graph, node.id, wiki_root)
+        node = resolve_roadmap_node(graph, roadmap_root, slug)
+        result = bind_github_project(graph, node.id, roadmap_root, github)
     except _ERRORS as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -79,12 +77,15 @@ def bind_cmd(
 def export_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path(".")) -> None:
     """Harvest milknado execution state onto the bound Project item fields."""
     project_root = project_root.resolve()
-    wiki_root = _wiki_root(project_root)
+    roadmap_root = wiki_root(project_root)
     config, plugins = _load_or_default(project_root)
+    github = GhProjectAdapter()
     graph = _ensure_db(config, plugins)
     try:
-        node = resolve_github_roadmap_node(graph, owner, number)
-        result = export_github_roadmap(graph, node.id, wiki_root, owner=owner, number=number)
+        node = resolve_github_roadmap_node(graph, owner, number, github)
+        result = export_github_roadmap(
+            graph, node.id, roadmap_root, github, owner=owner, number=number
+        )
     except _ERRORS as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None

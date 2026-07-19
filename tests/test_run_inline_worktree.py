@@ -8,14 +8,14 @@ machinery.
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-import milknado.domains.dispatch.runner as runner_mod
-import milknado.domains.execution.executor as executor_mod
-from milknado.domains.common import WorktreeMode
+import milknado.adapters as adapters
+from milknado.domains.common import RebaseResult, WorktreeMode
 from milknado.mcp_run import (
     milknado_run_inline,
     milknado_run_inline_poll,
@@ -30,8 +30,14 @@ def _call(tool, **kwargs):
     return fn(**kwargs)
 
 
-def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True)
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def _init_repo(root: Path) -> None:
@@ -66,13 +72,13 @@ def worker_writes_pwd(worker_stub):
 def _spy_worker_cwd(monkeypatch) -> dict:
     """Capture the cwd handed to the spawned worker while still spawning it."""
     captured: dict = {}
-    real = runner_mod._spawn_worker
+    real = adapters.ProcessAdapter.run
 
-    def spy(cwd, *args, **kwargs):  # noqa: ANN002, ANN003
+    def spy(self, argv, cwd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         captured["cwd"] = Path(cwd)
-        return real(cwd, *args, **kwargs)
+        return real(self, argv, cwd, *args, **kwargs)
 
-    monkeypatch.setattr(runner_mod, "_spawn_worker", spy)
+    monkeypatch.setattr(adapters.ProcessAdapter, "run", spy)
     return captured
 
 
@@ -225,13 +231,13 @@ class TestDoneTerminalization:
         assert first["status"] == "done"
 
         spawned: list = []
-        real = runner_mod._spawn_worker
+        real = adapters.ProcessAdapter.run
 
-        def spy(*args, **kwargs):  # noqa: ANN002, ANN003
+        def spy(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
             spawned.append(args)
-            return real(*args, **kwargs)
+            return real(self, *args, **kwargs)
 
-        monkeypatch.setattr(runner_mod, "_spawn_worker", spy)
+        monkeypatch.setattr(adapters.ProcessAdapter, "run", spy)
 
         with pytest.raises(ValueError, match="already done"):
             _call(
@@ -244,35 +250,57 @@ class TestDoneTerminalization:
 
 
 class TestMergeBackReuse:
-    """Criterion 6: the ISOLATE merge-back reuses WorktreeManager.rebase_and_merge."""
-
-    def test_delegates_to_executor_machinery(
+    def test_compare_and_swap_uses_captured_target(
         self, tmp_path: Path, worker_writes_pwd, monkeypatch
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
-        calls: list[dict] = []
-        original = executor_mod.WorktreeManager.rebase_and_merge
+        calls: list[tuple[str, str, str]] = []
+        original = adapters.GitAdapter.compare_and_swap_ref
 
-        def spy(self, worktree, feature_branch, node_id, description, worker_branch=None):  # noqa: ANN001, ANN202
-            calls.append({"feature_branch": feature_branch, "worker_branch": worker_branch})
-            return original(
-                self, worktree, feature_branch, node_id, description, worker_branch=worker_branch
-            )
+        def spy(self, ref, expected_oid, new_oid):  # noqa: ANN001, ANN202
+            calls.append((ref, expected_oid, new_oid))
+            return original(self, ref, expected_oid, new_oid)
 
-        monkeypatch.setattr(executor_mod.WorktreeManager, "rebase_and_merge", spy)
+        monkeypatch.setattr(adapters.GitAdapter, "compare_and_swap_ref", spy)
         task = _call(milknado_todo_add, description="reuse", kind="task", project_root=str(root))
-
-        _call(
+        result = _call(
             milknado_run_inline,
             node_id=task["id"],
             worker_cmd=worker_writes_pwd,
             project_root=str(root),
         )
+        assert result["status"] == "done"
+        assert len(calls) == 1
+        assert calls[0][0] == "refs/heads/main"
 
-        assert len(calls) == 1, "merge-back must go through the executor's rebase_and_merge"
-        assert calls[0]["feature_branch"] == "main"  # the caller's dispatch branch
-        assert calls[0]["worker_branch"] == f"milknado/{task['id']}-reuse"
+    def test_branch_switch_cannot_redirect_merge_target(self, tmp_path: Path, worker_stub) -> None:
+        root = tmp_path / "repo"
+        _init_repo(root)
+        worker = tmp_path / "switch-worker.py"
+        worker.write_text(
+            "import pathlib, subprocess\n"
+            f"root = pathlib.Path({str(root)!r})\n"
+            "subprocess.run(['git', '-C', str(root), 'switch', '-q', '-c', "
+            "'diversion'], check=True)\n"
+            "pathlib.Path('landed.txt').write_text('immutable-target')\n"
+        )
+        task = _call(
+            milknado_todo_add,
+            description="immutable target",
+            kind="task",
+            project_root=str(root),
+        )
+        result = _call(
+            milknado_run_inline,
+            node_id=task["id"],
+            worker_cmd=f"claude {sys.executable} {worker}",
+            project_root=str(root),
+        )
+        assert result["status"] == "done"
+        assert _git(root, "branch", "--show-current").strip() == "diversion"
+        assert _git(root, "show", "main:landed.txt") == "immutable-target"
+        assert not (root / "landed.txt").exists()
 
 
 class TestIsolateAsync:
@@ -312,7 +340,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_root, ctx):  # noqa: ANN001, ANN202
+        def _fail(_git, _root, ctx):  # noqa: ANN001, ANN202
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _fail)
@@ -350,7 +378,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _boom(_root, ctx):  # noqa: ANN001, ANN202
+        def _boom(_git, _root, ctx):  # noqa: ANN001, ANN202
             raise RebaseAbortError(ctx.worktree_path, "rebase --abort failed")
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _boom)
@@ -381,7 +409,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_root, ctx):  # noqa: ANN001, ANN202
+        def _fail(_git, _root, ctx):  # noqa: ANN001, ANN202
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(async_mod, "merge_back_isolated", _fail)
@@ -406,20 +434,18 @@ class TestMergeBackFailure:
 
 
 class TestFailClosedPreservation:
-    """isolate.merge_back_isolated's OWN fail-closed teardown preserves an unlanded
-    worktree. The merge-failure tests above stub the whole function; these exercise
-    its real branches by stubbing only WorktreeManager.rebase_and_merge one level
-    down, so the preservation logic in isolate.py is what actually runs.
-    """
+    """Merge-back failures preserve the isolated worktree for recovery."""
 
     def _ctx(self, root: Path):  # noqa: ANN202
         from milknado.domains.dispatch.isolate import IsolateContext
 
         wt = root / "milknado-1-x"
-        return IsolateContext(
+        git = adapters.GitAdapter(root)
+        return git, IsolateContext(
             worktree_path=wt,
             worker_branch="milknado/1-x",
-            feature_branch="main",
+            target_branch="main",
+            base_oid=git.resolve_ref("refs/heads/main"),
             node_id=1,
             description="x",
         )
@@ -433,14 +459,17 @@ class TestFailClosedPreservation:
 
         root = tmp_path / "repo"
         _init_repo(root)
-        ctx = self._ctx(root)
+        git, ctx = self._ctx(root)
+        monkeypatch.setattr(git, "squash_and_commit", lambda *a, **k: True)
+        monkeypatch.setattr(git, "rebase", lambda *a, **k: RebaseResult(success=True))
+        monkeypatch.setattr(git, "resolve_ref", lambda *a, **k: "worker-oid")
+        monkeypatch.setattr(git, "compare_and_swap_ref", lambda *a, **k: None)
 
-        def _refuse(self, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        def _refuse(*a, **k):  # noqa: ANN002, ANN003, ANN202
             raise UnlandedWorkError(ctx.worktree_path, "dirty files:\nx")
 
-        monkeypatch.setattr(executor_mod.WorktreeManager, "rebase_and_merge", _refuse)
-
-        result = merge_back_isolated(root, ctx)
+        monkeypatch.setattr(git, "remove_worktree", _refuse)
+        result = merge_back_isolated(git, root, ctx)
 
         assert result.rebased is False
         assert result.worktree_preserved == str(ctx.worktree_path)
@@ -453,15 +482,14 @@ class TestFailClosedPreservation:
 
         root = tmp_path / "repo"
         _init_repo(root)
-        ctx = self._ctx(root)
-
+        git, ctx = self._ctx(root)
         monkeypatch.setattr(
-            executor_mod.WorktreeManager,
-            "rebase_and_merge",
-            lambda self, *a, **k: RebaseResult(success=False),
+            git,
+            "squash_and_commit",
+            lambda *a, **k: True,
         )
-
-        result = merge_back_isolated(root, ctx)
+        monkeypatch.setattr(git, "rebase", lambda *a, **k: RebaseResult(success=False))
+        result = merge_back_isolated(git, root, ctx)
 
         assert result.rebased is False
         assert result.worktree_preserved == str(ctx.worktree_path)
@@ -495,6 +523,33 @@ class TestIsolateWorkerFailure:
         assert _node(root, task["id"]).status.value == "failed"
 
 
+def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> None:
+    from milknado.domains.common.errors import GitOperationError
+    from milknado.domains.dispatch.isolate import create_isolated_worktree
+
+    class Git:
+        def __init__(self) -> None:
+            self.removed: list[Path] = []
+
+        def current_branch(self) -> str:
+            return "main"
+
+        def resolve_ref(self, ref: str) -> str:
+            return "base-before" if ref == "refs/heads/main" else "base-after"
+
+        def create_worktree(self, path: Path, branch: str) -> None:  # noqa: ARG002
+            path.mkdir(parents=True)
+
+        def force_remove_worktree(self, path: Path) -> None:
+            self.removed.append(path)
+
+    git = Git()
+    expected = tmp_path / "milknado-8-race"
+    with pytest.raises(GitOperationError, match="checkout changed"):
+        create_isolated_worktree(git, tmp_path, 8, "race", "milknado-{node_id}-{slug}")  # type: ignore[arg-type]
+    assert git.removed == [expected]
+
+
 class TestMergeBackLock:
     """merge_back_isolated serializes concurrent merge-backs on a cross-process
     flock, so two dispatches never rebase onto the same dispatch branch at once."""
@@ -507,28 +562,41 @@ class TestMergeBackLock:
 
         root = tmp_path / "repo"
         _init_repo(root)
+        base_oid = adapters.GitAdapter(root).resolve_ref("refs/heads/main")
         intervals: list = []
         record_lock = threading.Lock()
 
-        def _record(self, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
-            start = time.monotonic()
-            time.sleep(0.05)
-            end = time.monotonic()
-            with record_lock:
-                intervals.append((start, end))
-            return RebaseResult(success=True)
+        class _Git:
+            def squash_and_commit(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+                start = time.monotonic()
+                time.sleep(0.05)
+                end = time.monotonic()
+                with record_lock:
+                    intervals.append((start, end))
+                return True
 
-        monkeypatch.setattr(executor_mod.WorktreeManager, "rebase_and_merge", _record)
+            def rebase(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+                return RebaseResult(success=True)
+
+            def resolve_ref(self, ref: str) -> str:
+                return f"{ref}-oid"
+
+            def compare_and_swap_ref(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                return None
+
+            def remove_worktree(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                return None
 
         def _run(n: int) -> None:
             ctx = IsolateContext(
                 worktree_path=root / f"milknado-{n}-x",
                 worker_branch=f"milknado/{n}-x",
-                feature_branch="main",
+                target_branch="main",
+                base_oid=base_oid,
                 node_id=n,
                 description="x",
             )
-            merge_back_isolated(root, ctx)
+            merge_back_isolated(_Git(), root, ctx)
 
         threads = [threading.Thread(target=_run, args=(n,)) for n in (1, 2)]
         for t in threads:

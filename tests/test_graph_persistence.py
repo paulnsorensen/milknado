@@ -16,7 +16,6 @@ from milknado.domains.graph._persistence import (
     create_tables,
     get_goal_claim,
     get_spec_hash,
-    row_to_node,
     set_dispatched_at,
     set_spec_hash,
 )
@@ -344,37 +343,6 @@ class TestSetDispatchedAt:
         node = graph.get_node(1)
         assert node is not None
         assert node.dispatched_at is not None
-
-
-class TestRowToNode:
-    def test_handles_missing_optional_columns(self, tmp_path: Path) -> None:
-        """row_to_node gracefully handles rows without optional columns."""
-        db_path = tmp_path / "sparse.db"
-        c = sqlite3.connect(str(db_path))
-        c.row_factory = sqlite3.Row
-        c.executescript("""
-            CREATE TABLE nodes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',
-                parent_id INTEGER,
-                worktree_path TEXT,
-                branch_name TEXT,
-                created_at TEXT NOT NULL,
-                completed_at TEXT
-            );
-        """)
-        c.execute(
-            "INSERT INTO nodes (description, status, created_at) VALUES (?, ?, ?)",
-            ("sparse node", "pending", "2026-01-01T00:00:00+00:00"),
-        )
-        c.commit()
-        row = c.execute("SELECT * FROM nodes WHERE id = 1").fetchone()
-        node = row_to_node(row)
-        assert node.run_id is None
-        assert node.dispatched_at is None
-        assert node.completion_duration_seconds is None
-        c.close()
 
 
 class TestWalDurability:

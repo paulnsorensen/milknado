@@ -390,20 +390,28 @@ class TestPlanBatchesImpl:
     def test_missing_id_raises_value_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(ValueError, match="id"):
-            _plan_batches_impl([{"path": "a.py"}], 70_000, tmp_path)
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _plan_batches_impl([{"path": "a.py", "description": "missing id"}], 70_000, tmp_path)
 
     def test_missing_path_raises_value_error(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(ValueError, match="path"):
-            _plan_batches_impl([{"id": "1"}], 70_000, tmp_path)
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _plan_batches_impl([{"id": "1", "description": "missing path"}], 70_000, tmp_path)
 
     def test_extra_keys_ignored(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
         result = _plan_batches_impl(
-            [{"id": "1", "path": "a.py", "edit_kind": "delete", "bogus": "trash"}],
+            [
+                {
+                    "id": "1",
+                    "path": "a.py",
+                    "edit_kind": "delete",
+                    "description": "delete a",
+                    "bogus": "trash",
+                }
+            ],
             70_000,
             tmp_path,
         )
@@ -412,9 +420,16 @@ class TestPlanBatchesImpl:
     def test_symbol_missing_name_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(ValueError, match="must have string"):
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl(
-                [{"id": "1", "path": "a.py", "symbols": [{"file": "a.py"}]}],
+                [
+                    {
+                        "id": "1",
+                        "path": "a.py",
+                        "description": "change a",
+                        "symbols": [{"file": "a.py"}],
+                    }
+                ],
                 70_000,
                 tmp_path,
             )
@@ -422,9 +437,16 @@ class TestPlanBatchesImpl:
     def test_symbol_missing_file_raises(self, tmp_path):
         from milknado.mcp_server import _plan_batches_impl
 
-        with pytest.raises(ValueError, match="must have string"):
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl(
-                [{"id": "1", "path": "a.py", "symbols": [{"name": "Foo"}]}],
+                [
+                    {
+                        "id": "1",
+                        "path": "a.py",
+                        "description": "change a",
+                        "symbols": [{"name": "Foo"}],
+                    }
+                ],
                 70_000,
                 tmp_path,
             )
@@ -434,7 +456,14 @@ class TestPlanBatchesImpl:
 
         nonexistent = tmp_path / "ghost_dir"
         result = _plan_batches_impl(
-            [{"id": "1", "path": "a.py", "edit_kind": "delete"}],
+            [
+                {
+                    "id": "1",
+                    "path": "a.py",
+                    "edit_kind": "delete",
+                    "description": "delete a",
+                }
+            ],
             70_000,
             nonexistent,
         )

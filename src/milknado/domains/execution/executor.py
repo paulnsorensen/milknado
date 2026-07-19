@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
+    GitOperationError,
     InvalidTransition,
     RebaseAbortError,
     TransientDispatchError,
@@ -155,6 +156,13 @@ def _preserve_run_logs(worktree: Path, node_id: int) -> None:
     dest = root / ".milknado" / "logs" / str(node_id)
     try:
         shutil.copytree(logs, dest, dirs_exist_ok=True)
+        retained = sorted(
+            (path for path in dest.rglob("*") if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for stale in retained[20:]:
+            stale.unlink(missing_ok=True)
     except OSError as exc:
         _logger.warning("Failed to preserve run logs for node %d: %s", node_id, exc)
 
@@ -174,20 +182,24 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
-    ready = graph.get_ready_nodes()
-    ids = [n.id for n in ready]
-    conflicts = graph.check_parallel_safety(ids)
-    if conflicts:
-        milknado_logger = logging.getLogger("milknado")
-        for left_id, right_id, paths in conflicts:
+    ready_ids = [node.id for node in graph.get_ready_nodes()]
+    active_ids = [node.id for node in graph.get_all_nodes() if node.status is NodeStatus.RUNNING]
+    conflicts = graph.check_parallel_safety([*active_ids, *ready_ids])
+    blocked = {
+        right_id
+        for left_id, right_id, paths in conflicts
+        if right_id in ready_ids and (left_id in active_ids or left_id in ready_ids)
+    }
+    milknado_logger = logging.getLogger("milknado")
+    for left_id, right_id, paths in conflicts:
+        if right_id in blocked:
             milknado_logger.info(
                 "Node %d blocked by Node %d on shared files: %s",
                 right_id,
                 left_id,
                 paths,
             )
-    blocked = {c[1] for c in conflicts}
-    return [nid for nid in ids if nid not in blocked]
+    return [node_id for node_id in ready_ids if node_id not in blocked]
 
 
 class WorktreeManager:
@@ -196,6 +208,12 @@ class WorktreeManager:
     def __init__(self, git: GitPort) -> None:
         self._git = git
         self._worktrees: dict[int, Path] = {}
+
+    def current_branch(self) -> str:
+        return self._git.current_branch()
+
+    def resolve_ref(self, ref: str) -> str:
+        return self._git.resolve_ref(ref)
 
     def create(self, node_id: int, wt_path: Path, branch: str) -> None:
         self._git.create_worktree(wt_path, branch)
@@ -321,10 +339,7 @@ class WorktreeManager:
             committed = self._git.squash_and_commit(worktree, feature_branch, msg)
             rebase_result = self._git.rebase(worktree, feature_branch)
             if rebase_result.success and committed and worker_branch:
-                try:
-                    self._git.fast_forward(worker_branch)
-                except subprocess.CalledProcessError as exc:
-                    raise RebaseAbortError(worktree, stderr=exc.stderr or "") from exc
+                self._git.fast_forward(worker_branch)
             landed = rebase_result.success
             return rebase_result
         finally:
@@ -348,25 +363,24 @@ class Executor:
         crg: CrgPort,
     ) -> None:
         self._graph = graph
+        self._wt = WorktreeManager(git)
         self._ralph = ralph
         self._crg = crg
-        self._wt = WorktreeManager(git)
         self._attempts_by_node: dict[int, int] = {}
-
-    def get_attempt_count(self, node_id: int) -> int:
-        return self._attempts_by_node.get(node_id, 0)
 
     def dispatch(
         self,
         node_id: int,
         config: ExecutionConfig,
+        *,
+        base_oid: str | None = None,
     ) -> DispatchResult:
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
         last_exc: BaseException | None = None
         for attempt in range(max_retries + 1):
             try:
-                result = self._dispatch_once(node_id, config)
+                result = self._dispatch_once(node_id, config, base_oid=base_oid)
                 self._attempts_by_node[node_id] = attempt
                 return result
             except (InvalidTransition, ValueError):
@@ -394,7 +408,6 @@ class Executor:
         slug = _slugify(node.description)
         worktree_name = config.worktree_pattern.format(node_id=node_id, slug=slug)
         wt_path = config.project_root / worktree_name
-
         resolved_root = config.project_root.resolve()
         resolved_wt = wt_path.resolve()
         if not resolved_wt.is_relative_to(resolved_root):
@@ -402,9 +415,7 @@ class Executor:
                 f"worktree_pattern resolves outside project_root: "
                 f"{resolved_wt!r} is not under {resolved_root!r}"
             )
-
-        branch = f"milknado/{node_id}-{slug}"
-        return wt_path, branch
+        return wt_path, f"milknado/{node_id}-{slug}"
 
     def _claim_or_mark_running(
         self,
@@ -413,39 +424,44 @@ class Executor:
         config: ExecutionConfig,
         wt_path: Path,
         branch: str,
+        base_oid: str,
         *,
         already_claimed: bool,
     ) -> str:
         if already_claimed:
-            # Re-marking RUNNING would be an illegal RUNNING -> RUNNING transition
-            # that kills the detached run on startup. Attach worktree metadata via a
-            # fence-gated update instead, and do NOT clobber the claim's run_id — the
-            # parent's set_pid and the completion fence both depend on it.
             self._graph.set_worktree(node_id, node.run_id, str(wt_path), branch)
-            return self._create_ralph_run(node, config, wt_path)
+            return self._create_ralph_run(node, config, wt_path, base_oid)
         self._graph.mark_running(node_id, worktree_path=str(wt_path), branch_name=branch)
-        run_id = self._create_ralph_run(node, config, wt_path)
+        run_id = self._create_ralph_run(node, config, wt_path, base_oid)
         self._graph.set_run_id(node_id, run_id)
         return run_id
 
-    def _dispatch_once(self, node_id: int, config: ExecutionConfig) -> DispatchResult:
+    def _dispatch_once(
+        self,
+        node_id: int,
+        config: ExecutionConfig,
+        *,
+        base_oid: str | None = None,
+    ) -> DispatchResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
-
         self._wt.ensure_clean(node_id)
-
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
+        target_branch = self._wt.current_branch()
+        dispatch_base_oid = base_oid or self._wt.resolve_ref(target_branch)
         wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
-
-        # The ralph MCP path claims the node RUNNING in the dispatching parent
-        # (cross-process mutual exclusion) before this detached runner gets here;
-        # the in-process TUI / e2e path arrives with a still-PENDING node.
         already_claimed = node.status == NodeStatus.RUNNING and node.run_id is not None
         self._wt.create(node_id, wt_path, branch)
         try:
             run_id = self._claim_or_mark_running(
-                node, node_id, config, wt_path, branch, already_claimed=already_claimed
+                node,
+                node_id,
+                config,
+                wt_path,
+                branch,
+                dispatch_base_oid,
+                already_claimed=already_claimed,
             )
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
@@ -459,20 +475,15 @@ class Executor:
             )
             self._cleanup_failed_dispatch(node_id, wt_path)
             raise
-
-        return DispatchResult(
-            node_id=node_id,
-            worktree=wt_path,
-            run_id=run_id,
-        )
+        return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
 
     def _create_ralph_run(
         self,
         node: MikadoNode,
         config: ExecutionConfig,
         wt_path: Path,
+        base_oid: str,
     ) -> str:
-        """Generate RALPH.md, create the run, start it, and return the run_id."""
         context = build_node_context(node, self._graph, self._crg)
         ralph_path = self._ralph.generate_ralph_md(
             node,
@@ -488,20 +499,13 @@ class Executor:
             quality_gates=config.quality_gates,
             project_root=wt_path,
             commit_footer=config.commit_footer,
+            base_oid=base_oid,
         )
         run_id = run.state.run_id
         self._ralph.start_run(run_id)
         return run_id
 
     def _cleanup_failed_dispatch(self, node_id: int, wt_path: Path) -> None:
-        """Best-effort state reset; worktree cleanup always runs.
-
-        Release fenced on the node's run_id when it has one (the already-claimed
-        ralph path owns the claim under run_id), so a failed dispatch cannot walk
-        a node back to PENDING after a different run has re-claimed it. A node with
-        no run_id (in-process TUI / a fresh dispatch that failed before set_run_id)
-        has no fence to honour and falls back to the unconditional reset.
-        """
         try:
             current = self._graph.get_node(node_id)
             if current and current.status == NodeStatus.RUNNING:
@@ -509,8 +513,12 @@ class Executor:
                     self._graph.release(node_id, current.run_id)
                 else:
                     self._graph.mark_pending(node_id)
-        except Exception as reset_exc:
-            _logger.warning("state reset failed during cleanup: %s", reset_exc)
+        except Exception:
+            _logger.exception(
+                "state reset failed during cleanup node_id=%d worktree=%s",
+                node_id,
+                wt_path,
+            )
         finally:
             self._wt.discard(node_id, wt_path)
 
@@ -526,9 +534,18 @@ class Executor:
                 worker_branch=node.branch_name,
             )
         except RebaseAbortError:
-            raise  # repo-corruption state: do not swallow
-        except Exception as exc:
+            raise
+        except GitOperationError as exc:
             _logger.error("Rebase-merge failed for node %d", node.id, exc_info=True)
+            return RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            _logger.error(
+                "Rebase-merge failed for node %d: %s: %s",
+                node.id,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
             return RebaseResult(success=False, detail=f"{type(exc).__name__}: {exc}")
 
     def _finalize_completion(
@@ -617,3 +634,6 @@ class Executor:
             if wt.exists():
                 self._wt.remove(node_id, wt)
         self._graph.mark_failed(node_id)
+
+    def get_attempt_count(self, node_id: int) -> int:
+        return self._attempts_by_node.get(node_id, 0)

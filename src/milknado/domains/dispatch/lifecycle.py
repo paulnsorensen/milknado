@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import NodeStatus, RunResult, WorktreeMode
+from milknado.domains.common import GitPort, NodeKind, NodeStatus, RunResult, WorktreeMode
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
     merge_back_isolated,
-    resolve_feature_branch,
     setup_isolated_worktree,
 )
+from milknado.domains.dispatch.ports import ProcessPort
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -26,176 +27,148 @@ from milknado.domains.dispatch.runner import run_headless
 _logger = logging.getLogger(__name__)
 
 
-def _ensure_running(graph, node_id: int) -> bool:  # noqa: ANN001
-    """Move a node to RUNNING so a (re)run's terminal transition (RUNNING ->
-    DONE/FAILED) is always valid. BLOCKED/FAILED are reset through PENDING
-    first. A DONE node cannot be reopened by the state machine and is left
-    untouched — its prior result stands and callers must not record a new
-    terminal status for it. Returns True when the node is RUNNING afterward.
-    """
-    node = graph.get_node(node_id)
-    if node is None or node.status == NodeStatus.DONE:
-        return False
-    if node.status == NodeStatus.RUNNING:
-        return True
-    if node.status in (NodeStatus.BLOCKED, NodeStatus.FAILED):
-        graph.mark_pending(node_id)
-    graph.mark_running(node_id)
-    return True
+@dataclass(frozen=True)
+class SyncDispatchRequest:
+    node_id: int
+    project_root: Path
+    worker_cmd: str | None
+    timeout_seconds: int
+    default_cmd: str
+    process: ProcessPort
+    brief_prepend: str | None = None
+    worktree_mode: WorktreeMode = WorktreeMode.ISOLATE
+    merge_back: bool = True
+    worktree_pattern: str = ""
 
 
 def _setup_sync_worktree(
     graph,  # noqa: ANN001
-    project_root: Path,
+    git: GitPort,
     node,  # noqa: ANN001
     run_id: str,
-    worktree_mode: WorktreeMode,
-    worktree_pattern: str,
-) -> tuple[Path, str | None]:
-    """Resolve the worker cwd for a running sync dispatch.
+    request: SyncDispatchRequest,
+) -> tuple[Path, IsolateContext | None]:
+    if request.worktree_mode != WorktreeMode.ISOLATE:
+        return request.project_root, None
+    context = setup_isolated_worktree(
+        graph,
+        git,
+        request.project_root,
+        node,
+        run_id,
+        request.worktree_pattern,
+    )
+    return context.worktree_path, context
 
-    ISOLATE: create the node's worktree + branch, record it on the (already
-    run_id-fenced) node, and run there. THIS_BRANCH: run in the shared checkout.
-    Returns ``(worker_cwd, worker_branch)`` — ``worker_branch`` is None under
-    THIS_BRANCH (nothing to merge back).
-    """
-    if worktree_mode != WorktreeMode.ISOLATE:
-        return project_root, None
-    return setup_isolated_worktree(graph, project_root, node, run_id, worktree_pattern)
+
+def _finish_dispatch(
+    graph,  # noqa: ANN001
+    node_id: int,
+    run_id: str,
+    result,  # noqa: ANN001
+    terminal: str,
+    merge: MergeBackResult | None,
+) -> None:
+    graph.finish_run(
+        run_id,
+        RunResult(
+            status=terminal,
+            exit_code=result.exit_code,
+            timed_out=result.timed_out,
+            ended_at=now_iso(),
+            rebased=merge.rebased if merge is not None else None,
+        ),
+    )
+    status = NodeStatus.DONE if terminal == "done" else NodeStatus.FAILED
+    graph.mark_terminal(node_id, run_id, status)
 
 
 def dispatch_node_sync(
     graph,  # noqa: ANN001
-    node_id: int,
-    project_root: Path,
-    worker_cmd: str | None,
-    timeout_seconds: int,
-    *,
-    default_cmd: str,
-    brief_prepend: str | None = None,
-    worktree_mode: WorktreeMode = WorktreeMode.ISOLATE,
-    merge_back: bool = True,
-    worktree_pattern: str = "",
+    git: GitPort,
+    request: SyncDispatchRequest,
 ) -> dict:
-    node = graph.get_node(node_id)
+    node = graph.get_node(request.node_id)
     if node is None:
-        raise ValueError(f"node {node_id} not found")
-    brief = render_brief(graph, node_id, prepend=brief_prepend)
-    running = _ensure_running(graph, node_id)
-    if not running:
-        # _ensure_running returns False only for a DONE node (node is None was
-        # excluded above): refuse re-dispatch, mirroring the async claim_node
-        # refusal, rather than running a worker whose terminal write cannot land.
-        raise ValueError(f"node {node_id} is already done; set status back to pending to retry")
-    run_id = make_run_id(node_id)
-    started_at = now_iso()
-    log_path = runs_dir(project_root) / f"{run_id}.log"
-    worker_cwd: Path = project_root
-    worker_branch: str | None = None
+        raise ValueError(f"node {request.node_id} not found")
+    if node.kind != NodeKind.TASK:
+        raise ValueError(
+            f"node {request.node_id} has kind={node.kind.value}; only task nodes can be dispatched"
+        )
+    run_id = make_run_id(request.node_id)
+    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    log_path = runs_dir(request.project_root) / f"{run_id}.log"
+    started = False
     try:
-        # Fence the node on this run_id BEFORE set_worktree (which CAS-updates on
-        # run_id), then insert a rescuable "running" run row BEFORE blocking in
-        # run_headless: a client timeout + server kill mid-run would otherwise
-        # strand the node RUNNING until fail_stale_running_runs releases it.
-        graph.set_run_id(node_id, run_id)
-        worker_cwd, worker_branch = _setup_sync_worktree(
-            graph, project_root, node, run_id, worktree_mode, worktree_pattern
+        brief = render_brief(graph, request.node_id, prepend=request.brief_prepend)
+        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
+        graph.start_run(
+            run_id,
+            request.node_id,
+            str(log_path),
+            now_iso(),
+            request.timeout_seconds,
         )
-        graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
+        started = True
         result = run_headless(
-            project_root,
-            node_id,
+            request.project_root,
+            request.node_id,
             brief,
-            worker_cmd,
-            timeout_seconds,
+            request.worker_cmd,
+            request.timeout_seconds,
             run_id=run_id,
-            default_cmd=default_cmd,
-            cwd=worker_cwd,
+            default_cmd=request.default_cmd,
+            cwd=cwd,
+            process=request.process,
         )
-        worker_terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
-        merge = _maybe_merge_back(
-            project_root, node, worker_branch, worker_cwd, merge_back, worker_terminal
-        )
+        terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
+        merge = _maybe_merge_back(git, request, isolate, terminal)
+        if merge is not None and not merge.rebased:
+            terminal = "failed"
+        _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
     except Exception as exc:
-        # Worktree setup or the merge-back raising must not strand the node RUNNING —
-        # mirror the async worker's finalization (finish the run failed, mark the
-        # node failed) then re-raise the exception the sync caller expects.
-        graph.mark_failed(node_id)
-        graph.finish_run(
-            run_id,
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=now_iso(),
-                error=f"{type(exc).__name__}: {exc}",
-            ),
-        )
+        if started:
+            graph.finish_run(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=now_iso(),
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
+        graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
         raise
-    if merge is not None and not merge.rebased:
-        worker_terminal = "failed"
-    if running:
-        if worker_terminal == "done":
-            graph.mark_done(node_id)
-        else:
-            graph.mark_failed(node_id)
-    final = graph.get_node(node_id)
+    final = graph.get_node(request.node_id)
     if final is None:
-        raise RuntimeError(f"node {node_id} not found after run completed")
-    rebased = merge.rebased if merge is not None else None
-    if running:
-        graph.finish_run(
-            run_id,
-            RunResult(
-                status=worker_terminal,
-                exit_code=result.exit_code,
-                timed_out=result.timed_out,
-                ended_at=now_iso(),
-                rebased=rebased,
-            ),
-        )
-    graph.set_run_id(node_id, run_id)
+        raise RuntimeError(f"node {request.node_id} not found after run completed")
     return {
         "run_id": run_id,
-        "node_id": node_id,
+        "node_id": request.node_id,
         "status": final.status.value,
         "exit_code": result.exit_code,
         "timed_out": result.timed_out,
-        "rebased": rebased,
+        "rebased": merge.rebased if merge is not None else None,
         "log_path": str(result.log_path),
         "summary": result.summary,
-        "worktree_preserved": merge.worktree_preserved if merge is not None else None,
+        "worktree_preserved": (merge.worktree_preserved if merge is not None else None),
     }
 
 
 def _maybe_merge_back(
-    project_root: Path,
-    node,  # noqa: ANN001
-    worker_branch: str | None,
-    worktree_path: Path,
-    merge_back: bool,
+    git: GitPort,
+    request: SyncDispatchRequest,
+    context: IsolateContext | None,
     worker_terminal: str,
 ) -> MergeBackResult | None:
-    """Rebase-merge an ISOLATE worktree back on a clean exit, else no-op.
-
-    Returns None when there is nothing to merge (THIS_BRANCH, merge_back=False, or
-    a non-``done`` worker) so the caller leaves ``rebased`` at None — matching the
-    old shared-checkout dispatch that never rebased.
-    """
-    if worker_branch is None or not merge_back or worker_terminal != "done":
+    if context is None or not request.merge_back or worker_terminal != "done":
         return None
-    ctx = IsolateContext(
-        worktree_path=worktree_path,
-        worker_branch=worker_branch,
-        feature_branch=resolve_feature_branch(project_root),
-        node_id=node.id,
-        description=node.description,
-    )
-    result = merge_back_isolated(project_root, ctx)
+    result = merge_back_isolated(git, request.project_root, context)
     if result.worktree_preserved is not None:
         _logger.warning(
             "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
-            worker_branch,
+            context.worker_branch,
             result.worktree_preserved,
         )
     return result

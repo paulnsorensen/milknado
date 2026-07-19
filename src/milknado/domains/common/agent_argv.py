@@ -8,23 +8,24 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
 
-DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
-    "claude": "claude --model opus -p --dangerously-skip-permissions",
-    "cursor": "cursor-agent --model opus -p",
-    "gemini": "gemini --model gemini-3.1-pro-preview -p --yolo",
-    "codex": "codex exec --model gpt-5.4 --sandbox workspace-write",
+PLANNING_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
+    "claude": ("Read", "Glob", "Grep"),
+    "gemini": ("read_file", "glob", "search_file_content"),
 }
 
-# Per-family tool allowlists for deny-by-default execution workers.
-# Families absent from this dict have no CLI-level tool restriction:
-#   cursor-agent: --allowedTools not implemented for headless (config-file only, broken Apr 2026)
-#   codex: --sandbox workspace-write scopes files, not tools; no allowlist flag available
+DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
+    "claude": "claude --model opus -p",
+    "cursor": "cursor-agent --model opus -p",
+    "gemini": "gemini --model gemini-3.1-pro-preview -p",
+    "codex": "codex exec --model gpt-5.4 --sandbox read-only",
+}
+
+# Per-family tool allowlists for deny-by-default execution workers. Families
+# without CLI-level tool restriction receive no host-shell capability here.
 WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": (
         "mcp__tilth__*",
-        # serena layer: read, symbol edits, and content edits. serena's
-        # shell-exec tool is intentionally omitted; the only Bash workers get
-        # is the rtk-hooked Bash(rtk:*) below.
+        # serena shell execution is intentionally omitted.
         "mcp__serena__get_symbols_overview",
         "mcp__serena__find_symbol",
         "mcp__serena__find_referencing_symbols",
@@ -39,7 +40,6 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
         "mcp__serena__safe_delete_symbol",
         "mcp__milknado__milknado_track_follow_up",
         "mcp__milknado__milknado_deposit_result",
-        "Bash(rtk:*)",
         "Read",
         "Edit",
         "Write",
@@ -70,7 +70,6 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
         "safe_delete_symbol",
         "milknado_track_follow_up",
         "milknado_deposit_result",
-        "ShellTool(rtk *)",
         "read_file",
         "write_file",
         "edit_file",
@@ -165,6 +164,36 @@ def resolve_execution_agent_command(
     return _default_execution_command(family, effective_tools)
 
 
+def _replace_option(parts: list[str], option: str, value: str) -> None:
+    while option in parts:
+        index = parts.index(option)
+        del parts[index : index + 2]
+    parts.extend([option, value])
+
+
+def _sandbox_planning_argv(parts: list[str]) -> list[str]:
+    executable = Path(parts[0]).name
+    if executable not in ALLOWED_WORKER_EXECUTABLES:
+        raise ValueError(f"unsupported planning agent executable: {executable!r}")
+    unsafe_flags = {
+        "--dangerously-skip-permissions",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--full-auto",
+        "--yolo",
+    }
+    parts = [part for part in parts if part not in unsafe_flags]
+    if executable == "claude":
+        _replace_option(parts, "--permission-mode", "plan")
+        _replace_option(parts, "--allowedTools", ",".join(PLANNING_ALLOWED_TOOLS["claude"]))
+    elif executable == "gemini":
+        _replace_option(parts, "--allowed-tools", ",".join(PLANNING_ALLOWED_TOOLS["gemini"]))
+    elif executable == "codex":
+        _replace_option(parts, "--sandbox", "read-only")
+    else:
+        raise ValueError("cursor-agent cannot enforce read-only planning capabilities")
+    return parts
+
+
 def build_planning_subprocess(
     context_path: Path,
     planning_agent_command: str,
@@ -172,33 +201,26 @@ def build_planning_subprocess(
     allow_external_mcp: bool = False,
     project_root: Path | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
-    """Build argv + kwargs for one-shot planning subprocess."""
+    """Build a read-only argv and minimal environment for one-shot planning."""
     body = context_path.read_text(encoding="utf-8")
     parts = shlex.split(planning_agent_command, posix=True)
     if not parts:
         parts = shlex.split(DEFAULT_PLANNING_AGENT_BY_FAMILY["claude"], posix=True)
-    if "-" not in parts:
-        parts.append("-")
+    parts = _sandbox_planning_argv(parts)
+    parts = [part for part in parts if part != "-"]
     mcp_config = project_root / ".mcp.json" if project_root else None
-    if mcp_config and mcp_config.exists():
+    if allow_external_mcp and mcp_config and mcp_config.exists():
         parts.extend(["--mcp-config", str(mcp_config)])
-    extra: dict[str, Any] = {"input": body, "text": True}
-    if not allow_external_mcp:
-        extra["env"] = build_minimal_mcp_env()
+    parts.append("-")
+    extra: dict[str, Any] = {
+        "env": build_minimal_mcp_env(),
+        "input": body,
+        "text": True,
+    }
     return parts, extra
 
 
 def build_minimal_mcp_env() -> dict[str, str]:
-    """Return subprocess env with external MCP injection stripped by default."""
-    env = dict(os.environ)
-    for key in list(env.keys()):
-        upper = key.upper()
-        if "MCP" not in upper:
-            continue
-        if upper.startswith("MILKNADO_"):
-            continue
-        # Keep CRG env controls available to planning.
-        if upper.startswith("CRG_"):
-            continue
-        del env[key]
-    return env
+    """Return only process essentials; never forward coordinator credentials."""
+    allowed = ("HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR")
+    return {key: os.environ[key] for key in allowed if key in os.environ}

@@ -34,8 +34,8 @@ def load_plugins(plugin_names: tuple[str, ...]) -> list[PluginHook]:
             meta: PluginMeta = instance.meta
             logger.info("Loaded plugin: %s v%s", meta.name, meta.version)
             loaded.append(instance)
-        except ImportError:
-            logger.warning("Could not import plugin: %s", name)
+        except Exception:
+            logger.exception("Could not import plugin: %s", name)
     return loaded
 
 
@@ -51,5 +51,5 @@ def discover_entry_point_plugins() -> list[PluginHook]:
             logger.info("Loaded plugin: %s v%s (entry point)", meta.name, meta.version)
             loaded.append(instance)
         except Exception:
-            logger.warning("Failed to load entry point plugin: %s", ep.name)
+            logger.exception("Failed to load entry point plugin: %s", ep.name)
     return loaded

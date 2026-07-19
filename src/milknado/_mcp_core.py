@@ -7,6 +7,7 @@ would form an import cycle.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -15,30 +16,49 @@ from fastmcp import FastMCP
 
 from milknado.domains.common import NodeKind, NodeStatus
 
+_logger = logging.getLogger(__name__)
+
+
 Kind = Literal["roadmap", "goal", "task"]
 Flavor = str  # validated at runtime against BUILTIN_FLAVORS ∪ TOML-declared names (ADR-004)
 TodoStatus = Literal["pending", "in_progress", "blocked", "done"]
 
 
 class RunDict(TypedDict):
-    """Unified superset schema returned by all five run tools.
-
-    Fields present but nullable when not applicable to the run type:
-    - run_id: None only for callers that don't produce a state file (legacy)
-    - exit_code: None while running or for start tools
-    - timed_out: False while running; True only once failed by timeout; None for start tools
-    - rebased: None for headless (non-ralph) runs
-    - summary: None for start tools (no log tail until polling)
-    """
+    """Canonical superset returned by run start, poll, list, and cancel tools."""
 
     run_id: str | None
     node_id: int | None
     status: str | None
     exit_code: int | None
     timed_out: bool | None
+    error: str | None
+    detail: str | None
     rebased: bool | None
+    pid: int | None
     log_path: str | None
     summary: str | None
+    result: str | None
+    worktree_preserved: str | None
+
+
+def build_run_dict(state: object) -> RunDict:
+    source = state if isinstance(state, dict) else vars(state)
+    return RunDict(
+        run_id=source.get("run_id"),
+        node_id=source.get("node_id"),
+        status=source.get("status"),
+        exit_code=source.get("exit_code"),
+        timed_out=source.get("timed_out"),
+        error=source.get("error"),
+        detail=source.get("detail"),
+        rebased=source.get("rebased"),
+        pid=source.get("pid"),
+        log_path=source.get("log_path"),
+        summary=source.get("summary"),
+        result=source.get("result"),
+        worktree_preserved=source.get("worktree_preserved"),
+    )
 
 
 mcp = FastMCP(
@@ -56,6 +76,10 @@ mcp = FastMCP(
 )
 
 
+def _bounded(text: str, limit: int = 500) -> str:
+    return text.strip()[:limit]
+
+
 def _worktree_main_checkout(cwd: Path) -> Path | None:
     """If cwd is a linked git worktree, return the main checkout root; else None."""
     import subprocess
@@ -68,9 +92,21 @@ def _worktree_main_checkout(cwd: Path) -> Path | None:
             text=True,
             timeout=5,
         )
-    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+    except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
+        _logger.warning(
+            "git root discovery failed cwd=%s error=%s detail=%s",
+            cwd,
+            type(exc).__name__,
+            _bounded(str(exc)),
+        )
         return None
     if result.returncode != 0:
+        _logger.warning(
+            "git root discovery failed cwd=%s returncode=%s stderr=%s",
+            cwd,
+            result.returncode,
+            _bounded(result.stderr),
+        )
         return None
     common_dir = result.stdout.strip()
     # An absolute path means we're in a linked worktree: the common dir lives
@@ -82,26 +118,40 @@ def _worktree_main_checkout(cwd: Path) -> Path | None:
 
 
 def resolve_project_root(explicit: str | None) -> Path:
-    if explicit and explicit.strip():
-        return Path(explicit).expanduser().resolve()
-    env = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
-    if env:
-        return Path(env).expanduser().resolve()
+    requested = Path(explicit).expanduser().resolve() if explicit and explicit.strip() else None
+    injected = os.environ.get("MILKNADO_PROJECT_ROOT", "").strip()
+    worker = any(
+        os.environ.get(name, "").strip() for name in ("MILKNADO_NODE_ID", "MILKNADO_RUN_ID")
+    )
+    if worker:
+        if not injected:
+            raise ValueError("worker identity requires MILKNADO_PROJECT_ROOT")
+        canonical = Path(injected).expanduser().resolve()
+        if requested is not None and requested != canonical:
+            raise ValueError(
+                f"worker project root {requested} does not match injected root {canonical}"
+            )
+        return canonical
+    if requested is not None:
+        return requested
+    if injected:
+        return Path(injected).expanduser().resolve()
     cwd = Path.cwd().resolve()
     main = _worktree_main_checkout(cwd)
     return main if main is not None else cwd
 
 
-def open_graph(root: Path):
-    from milknado.domains.common import default_config, load_config
-    from milknado.domains.graph import MikadoGraph
-    from milknado.plugins import discover_entry_point_plugins, load_plugins
+def require_worker_run(run_id: str) -> None:
+    injected = os.environ.get("MILKNADO_RUN_ID", "").strip()
+    if injected and run_id != injected:
+        raise ValueError(f"worker run {run_id!r} does not match injected run {injected!r}")
 
-    cfg_path = root / "milknado.toml"
-    cfg = load_config(cfg_path) if cfg_path.exists() else default_config(root)
-    cfg.db_path.parent.mkdir(parents=True, exist_ok=True)
-    plugins = [*load_plugins(cfg.plugins), *discover_entry_point_plugins()]
-    return MikadoGraph(cfg.db_path, plugins=plugins), cfg
+
+def open_graph(root: Path):
+    from milknado.project import open_project
+
+    project = open_project(root)
+    return project.graph, project.config
 
 
 _TODO_STATUS_MAP = {

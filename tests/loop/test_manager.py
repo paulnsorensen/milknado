@@ -2,7 +2,7 @@
 
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -155,6 +155,24 @@ class TestRunManagerStopRun:
         managed.thread.join(timeout=5)
 
         assert managed.state.status == RunStatus.STOPPED
+
+    def test_stop_and_join_without_started_thread_proves_exit(self, tmp_path) -> None:
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path))
+
+        assert manager.stop_and_join(managed.state.run_id, timeout=0.01) is True
+        assert managed.state.stop_requested is True
+
+    def test_stop_and_join_reports_live_thread_after_timeout(self, tmp_path) -> None:
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path))
+        thread = MagicMock()
+        thread.is_alive.return_value = True
+        managed.thread = thread
+
+        assert manager.stop_and_join(managed.state.run_id, timeout=0.25) is False
+        thread.join.assert_called_once_with(timeout=0.25)
+        assert managed.state.stop_requested is True
 
 
 class TestRunManagerPauseResume:

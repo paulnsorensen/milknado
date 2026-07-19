@@ -242,3 +242,40 @@ class TestStartInputThreadTTY:
                 state.input_thread.join(timeout=1.0)
 
         assert not state.input_queue.empty() or state.input_stop.is_set()
+
+    def test_terminal_reset_failure_is_logged(
+        self, state: InputState, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import sys
+        from unittest.mock import MagicMock, patch
+
+        fake_stdin = MagicMock()
+        fake_stdin.isatty.return_value = True
+        fake_stdin.fileno.return_value = 9
+        fake_termios = MagicMock()
+        fake_termios.tcgetattr.return_value = ["saved"]
+        fake_termios.tcsetattr.side_effect = OSError("reset failed")
+        fake_select = MagicMock()
+
+        def stop_select(*args):
+            state.input_stop.set()
+            return ([], [], [])
+
+        fake_select.select.side_effect = stop_select
+        with (
+            caplog.at_level("ERROR"),
+            patch.object(sys, "stdin", fake_stdin),
+            patch.dict(
+                "sys.modules",
+                {
+                    "termios": fake_termios,
+                    "tty": MagicMock(),
+                    "select": fake_select,
+                },
+            ),
+        ):
+            start_input_thread(state)
+            assert state.input_thread is not None
+            state.input_thread.join(timeout=1.0)
+
+        assert "terminal reset failed input_thread=milknado-input fd=9" in caplog.text

@@ -12,9 +12,9 @@ import pytest
 from milknado.domains.execution.run_loop._logging import (
     _logger,
     configure_run_logging,
-    configure_stderr_logging,
     ts,
 )
+from milknado.process_logging import configure_stderr_logging
 
 
 class TestConfigureRunLoggingLevelRestore:

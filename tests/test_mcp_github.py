@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from milknado.adapters.gh import GhTransportError
-from milknado.domains.github import bind as bind_mod
-from milknado.domains.github import exporter as exp_mod
-from milknado.domains.github import importer as imp_mod
+from milknado.adapters.gh import GhProjectAdapter, GhTransportError
 from milknado.mcp_github import (
     milknado_github_roadmap_bind,
     milknado_github_roadmap_export,
@@ -43,9 +41,13 @@ do the thing
 """
 
 
-def _call(tool, **kwargs):  # noqa: ANN001, ANN003
+def _call(tool: Any, **kwargs: Any) -> Any:
     fn = getattr(tool, "fn", tool)
     return fn(**kwargs)
+
+
+def _stub_adapter(monkeypatch: pytest.MonkeyPatch, name: str, value: Any) -> None:
+    monkeypatch.setattr(GhProjectAdapter, name, staticmethod(value))
 
 
 def _seed_wiki(project_root: Path) -> None:
@@ -56,9 +58,9 @@ def _seed_wiki(project_root: Path) -> None:
 
 
 def _stub_import(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(imp_mod, "gh_preflight", lambda: None)
-    monkeypatch.setattr(imp_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1", "title": "RM"})
-    monkeypatch.setattr(imp_mod, "gh_item_list", lambda _o, _n: [{"id": "PVTI_1", "title": "g"}])
+    _stub_adapter(monkeypatch, "preflight", lambda: None)
+    _stub_adapter(monkeypatch, "project_view", lambda _o, _n: {"id": "PVT_1", "title": "RM"})
+    _stub_adapter(monkeypatch, "item_list", lambda _o, _n: [{"id": "PVTI_1", "title": "g"}])
 
 
 def test_import_tool_seeds_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -75,7 +77,7 @@ def test_import_tool_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     def _boom() -> None:
         raise GhTransportError("gh auth refresh -s project")
 
-    monkeypatch.setattr(imp_mod, "gh_preflight", _boom)
+    _stub_adapter(monkeypatch, "preflight", _boom)
     with pytest.raises(GhTransportError):
         _call(milknado_github_roadmap_import, owner="acme", number=7, project_root=str(tmp_path))
 
@@ -90,14 +92,14 @@ def test_bind_tool_projects_roadmap(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     import_roadmap(root / ".hallouminate" / "wiki", "demo", graph)
     graph.close()
 
-    monkeypatch.setattr(bind_mod, "gh_preflight", lambda: None)
-    monkeypatch.setattr(bind_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
-    monkeypatch.setattr(bind_mod, "gh_item_list", lambda _o, _n: [])
-    monkeypatch.setattr(bind_mod, "gh_issue_create", lambda *_a: "https://x/1")
-    monkeypatch.setattr(bind_mod, "gh_item_add", lambda _o, _n, _u: "PVTI_1")
-    monkeypatch.setattr(bind_mod, "gh_field_list", lambda _o, _n: [])
-    monkeypatch.setattr(bind_mod, "gh_field_create", lambda *_a: {"id": "F"})
-    monkeypatch.setattr(bind_mod, "gh_field_create_text", lambda *_a: {"id": "F2"})
+    _stub_adapter(monkeypatch, "preflight", lambda: None)
+    _stub_adapter(monkeypatch, "project_view", lambda _o, _n: {"id": "PVT_1"})
+    _stub_adapter(monkeypatch, "item_list", lambda _o, _n: [])
+    _stub_adapter(monkeypatch, "issue_create", lambda *_a: "https://x/1")
+    _stub_adapter(monkeypatch, "item_add", lambda _o, _n, _u: "PVTI_1")
+    _stub_adapter(monkeypatch, "field_list", lambda _o, _n: [])
+    _stub_adapter(monkeypatch, "field_create", lambda *_a: {"id": "F"})
+    _stub_adapter(monkeypatch, "field_create_text", lambda *_a: {"id": "F2"})
 
     result = _call(milknado_github_roadmap_bind, roadmap_slug="demo", project_root=str(tmp_path))
     assert result["issues_created"] == 1
@@ -108,21 +110,21 @@ def test_export_tool_after_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     _stub_import(monkeypatch)
     _call(milknado_github_roadmap_import, owner="acme", number=7, project_root=str(tmp_path))
 
-    monkeypatch.setattr(exp_mod, "gh_preflight", lambda: None)
-    monkeypatch.setattr(exp_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
-    monkeypatch.setattr(
-        exp_mod,
-        "gh_field_list",
+    _stub_adapter(monkeypatch, "preflight", lambda: None)
+    _stub_adapter(monkeypatch, "project_view", lambda _o, _n: {"id": "PVT_1"})
+    _stub_adapter(
+        monkeypatch,
+        "field_list",
         lambda _o, _n: [
             {"id": "F_s", "name": "Milknado Status", "options": [{"id": "o", "name": "Pending"}]},
             {"id": "F_h", "name": "Milknado Harvest"},
         ],
     )
-    monkeypatch.setattr(
-        exp_mod, "gh_item_list", lambda _o, _n: [{"id": "PVTI_1", "url": "https://x/1"}]
+    _stub_adapter(
+        monkeypatch, "item_list", lambda _o, _n: [{"id": "PVTI_1", "url": "https://x/1"}]
     )
-    monkeypatch.setattr(exp_mod, "gh_item_edit", lambda *_a, **_k: None)
-    monkeypatch.setattr(exp_mod, "gh_issue_edit_body", lambda *_a: None)
+    _stub_adapter(monkeypatch, "item_edit", lambda *_a, **_k: None)
+    _stub_adapter(monkeypatch, "issue_edit_body", lambda *_a: None)
 
     result = _call(
         milknado_github_roadmap_export, owner="acme", number=7, project_root=str(tmp_path)
@@ -132,7 +134,7 @@ def test_export_tool_after_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_export_tool_before_import_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(exp_mod, "gh_preflight", lambda: None)
-    monkeypatch.setattr(exp_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_unbound"})
+    _stub_adapter(monkeypatch, "preflight", lambda: None)
+    _stub_adapter(monkeypatch, "project_view", lambda _o, _n: {"id": "PVT_unbound"})
     with pytest.raises(LookupError):
         _call(milknado_github_roadmap_export, owner="acme", number=7, project_root=str(tmp_path))

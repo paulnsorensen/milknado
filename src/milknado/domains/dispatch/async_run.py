@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.adapters.tmux import RunWindow, TmuxAdapter
-from milknado.domains.common import RunResult
+from milknado.domains.common import GitPort, RunResult
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -25,9 +25,6 @@ from milknado.domains.dispatch._runstate import (
     exit_code_path as _exit_code_path,
 )
 from milknado.domains.dispatch._runstate import (
-    make_run_id as _make_run_id,
-)
-from milknado.domains.dispatch._runstate import (
     now_iso as _now_iso,
 )
 from milknado.domains.dispatch._runstate import (
@@ -41,6 +38,7 @@ from milknado.domains.dispatch.isolate import (
     MergeBackResult,
     merge_back_isolated,
 )
+from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
     _execute_cancellable,
@@ -52,18 +50,28 @@ from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_
 _logger = logging.getLogger(__name__)
 
 
-def _open_worker_graph(project_root: Path):  # noqa: ANN202
-    """Open a fresh MikadoGraph for the worker thread.
+@dataclass(frozen=True)
+class AsyncRunRequest:
+    project_root: Path
+    node_id: int
+    brief: str
+    worker_cmd: str | None
+    timeout_seconds: int
+    run_id: str
+    default_cmd: str
+    cwd: Path
+    merge_ctx: IsolateContext | None = None
 
-    sqlite connections are not cross-thread, so the async worker cannot reuse the
-    dispatching tool's connection — it opens its own in-thread for the run-row
-    writes. Imported lazily to avoid a domains -> _mcp_core import cycle (the same
-    pattern the detached _ralph_node_runner uses).
-    """
-    from milknado._mcp_core import open_graph
 
-    graph, _cfg = open_graph(project_root)
-    return graph
+@dataclass(frozen=True)
+class AsyncWorkerContext:
+    request: AsyncRunRequest
+    log_path: Path
+    argv: tuple[str, ...]
+    graph_sessions: GraphSessionPort
+    git: GitPort
+    process: ProcessPort
+    tmux: TmuxPort | None = None
 
 
 def _run_worker_process(
@@ -75,8 +83,9 @@ def _run_worker_process(
     timeout: int,
     base_state: dict,
     rdir: Path,
-    tmux: TmuxAdapter | None,
+    tmux: TmuxPort | None,
     graph,  # noqa: ANN001
+    process: ProcessPort,
 ) -> tuple[int, bool, bool]:
     """Execute the worker on the requested substrate: tmux window or subprocess.
 
@@ -96,6 +105,9 @@ def _run_worker_process(
             timeout,
             runs_dir=rdir,
             run_id=base_state["run_id"],
+            project_root=Path(base_state["project_root"]),
+            process=process,
+            on_started=lambda pid: graph.set_run_pid(base_state["run_id"], pid),
         )
     return _run_in_tmux_window(
         cwd,
@@ -119,7 +131,7 @@ def _run_in_tmux_window(
     timeout: int,
     base_state: dict,
     rdir: Path,
-    tmux: TmuxAdapter,
+    tmux: TmuxPort,
     graph,  # noqa: ANN001
 ) -> tuple[int, bool, bool]:
     """Stage the brief and run the worker inside its named tmux window.
@@ -138,7 +150,11 @@ def _run_in_tmux_window(
         log_path=log_path,
         exit_code_path=_exit_code_path(rdir, run_id),
         env=build_worker_env(
-            {"MILKNADO_NODE_ID": str(base_state["node_id"]), "MILKNADO_RUN_ID": run_id}
+            {
+                "MILKNADO_NODE_ID": str(base_state["node_id"]),
+                "MILKNADO_RUN_ID": run_id,
+                "MILKNADO_PROJECT_ROOT": str(Path(base_state["project_root"]).resolve()),
+            }
         ),
         brief_path=staged_brief,
     )
@@ -156,7 +172,10 @@ def _run_in_tmux_window(
 
 
 def _async_merge_back(
-    project_root: Path, merge_ctx: IsolateContext | None, terminal: str
+    git: GitPort,
+    project_root: Path,
+    merge_ctx: IsolateContext | None,
+    terminal: str,
 ) -> MergeBackResult | None:
     """Rebase-merge an ISOLATE branch back after a clean worker exit.
 
@@ -168,7 +187,7 @@ def _async_merge_back(
     """
     if merge_ctx is None or terminal != "done":
         return None
-    result = merge_back_isolated(project_root, merge_ctx)
+    result = merge_back_isolated(git, project_root, merge_ctx)
     if result.worktree_preserved is not None:
         _logger.warning(
             "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
@@ -178,33 +197,30 @@ def _async_merge_back(
     return result
 
 
-def _async_worker(
-    project_root: Path,
-    log_path: Path,
-    brief: str,
-    argv: list[str],
-    timeout: int,
-    base_state: dict,
-    tmux: TmuxAdapter | None = None,
-    *,
-    cwd: Path | None = None,
-    merge_ctx: IsolateContext | None = None,
-) -> None:
+def _async_worker(context: AsyncWorkerContext) -> None:
+    request = context.request
+    project_root = request.project_root
+    log_path = context.log_path
+    run_id = request.run_id
     rdir = _runs_dir(project_root)
-    run_id = base_state["run_id"]
-    # sqlite connections are not cross-thread: open a fresh in-thread graph for
-    # the terminal write rather than reusing the dispatching tool's connection.
-    graph = _open_worker_graph(project_root)
+    graph = None
     try:
+        graph, _cfg = context.graph_sessions.open_graph(project_root)
+        _logger.info("async dispatch started: run_id=%s node_id=%d", run_id, request.node_id)
         exit_code, timed_out, cancelled = _run_worker_process(
-            cwd or project_root,
+            request.cwd,
             log_path,
-            brief,
-            argv,
-            timeout=timeout,
-            base_state=base_state,
+            request.brief,
+            list(context.argv),
+            timeout=request.timeout_seconds,
+            base_state={
+                "run_id": run_id,
+                "node_id": request.node_id,
+                "project_root": str(project_root),
+            },
             rdir=rdir,
-            tmux=tmux,
+            tmux=context.tmux,
+            process=context.process,
             graph=graph,
         )
         # The worker owns the terminal write for a cancelled run: run_cancel only
@@ -223,7 +239,7 @@ def _async_worker(
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
-            merge = _async_merge_back(project_root, merge_ctx, terminal)
+            merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
             if merge is not None and merge.rebased is False:
                 # ISOLATE merge_back requested but the branch did not land: the
                 # deliverable never reached the dispatch branch, so this is a real
@@ -243,6 +259,17 @@ def _async_worker(
                     detail=merge.worktree_preserved if merge is not None else None,
                 ),
             )
+            _logger.info(
+                "async dispatch terminal: run_id=%s node_id=%d status=%s "
+                "exit_code=%d timed_out=%s cancelled=%s rebased=%s",
+                run_id,
+                request.node_id,
+                terminal,
+                exit_code,
+                timed_out,
+                cancelled,
+                merge.rebased if merge is not None else None,
+            )
     except Exception as exc:
         _logger.warning(
             "async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc, exc_info=True
@@ -259,18 +286,20 @@ def _async_worker(
             # what actually releases the node, so a log-write failure here is
             # deliberately ignored.
             pass
-        graph.finish_run(
-            run_id,
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=_now_iso(),
-                error=f"{type(exc).__name__}: {exc}",
-            ),
-        )
+        if graph is not None:
+            graph.finish_run(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=_now_iso(),
+                    error=f"{type(exc).__name__}: {exc}",
+                ),
+            )
     finally:
-        graph.close()
+        if graph is not None:
+            graph.close()
         # Clear the sentinel after the terminal write (both branches) so a reused
         # run dir never carries a stale cancel request into the next run. The
         # tmux path's staged brief and rc file are equally transient — the log
@@ -282,43 +311,42 @@ def _async_worker(
 
 
 def start_headless_async(
-    project_root: Path,
-    node_id: int,
-    brief: str,
-    worker_cmd: str | None = None,
-    timeout_seconds: int = 600,
-    run_id: str | None = None,
-    *,
-    default_cmd: str,
-    tmux: TmuxAdapter | None = None,
-    cwd: Path | None = None,
-    merge_ctx: IsolateContext | None = None,
+    request: AsyncRunRequest,
+    graph_sessions: GraphSessionPort,
+    git: GitPort,
+    process: ProcessPort,
+    tmux: TmuxPort | None = None,
 ) -> AsyncStartRef:
-    argv = _resolve_worker_cmd(worker_cmd, default_cmd)
-    # The caller (milknado_run_inline_start) claims the node under a run_id before
-    # spawning, then hands that same id here so the node row and the run row agree
-    # on the fence; standalone callers let us mint one. Under ISOLATE the caller
-    # also created the worktree and passes its path as `cwd` plus a `merge_ctx` for
-    # the deferred (post-exit) merge-back the worker thread runs.
-    run_id = run_id or _make_run_id(node_id)
-    runs_dir = _runs_dir(project_root)
-    log_path = runs_dir / f"{run_id}.log"
-    started_at = _now_iso()
-    base_state = {"run_id": run_id, "node_id": node_id}
-    # Insert the rescuable "running" run row BEFORE spawning the worker thread, on
-    # a short-lived connection (the thread opens its own for the terminal write).
-    graph = _open_worker_graph(project_root)
+    argv = tuple(_resolve_worker_cmd(request.worker_cmd, request.default_cmd))
+    runs = _runs_dir(request.project_root)
+    log_path = runs / f"{request.run_id}.log"
+    graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
-        graph.start_run(run_id, node_id, str(log_path), started_at, timeout_seconds)
+        graph.start_run(
+            request.run_id,
+            request.node_id,
+            str(log_path),
+            _now_iso(),
+            request.timeout_seconds,
+        )
     finally:
         graph.close()
+    context = AsyncWorkerContext(
+        request=request,
+        log_path=log_path,
+        argv=argv,
+        graph_sessions=graph_sessions,
+        git=git,
+        process=process,
+        tmux=tmux,
+    )
     threading.Thread(
         target=_async_worker,
-        args=(project_root, log_path, brief, argv, timeout_seconds, base_state, tmux),
-        kwargs={"cwd": cwd, "merge_ctx": merge_ctx},
+        args=(context,),
+        name=f"milknado-{request.run_id}",
         daemon=True,
     ).start()
-    return AsyncStartRef(run_id=run_id, log_path=log_path)
+    return AsyncStartRef(run_id=request.run_id, log_path=log_path)
 
 
 def poll_async_run(graph, project_root: Path, run_id: str) -> dict:  # noqa: ANN001

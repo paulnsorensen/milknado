@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from milknado.cli_plan import _PlanningSubprocess
 from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
 from milknado.domains.common.types import DegradationMarker, TilthMap
@@ -17,6 +20,13 @@ from milknado.domains.planning.manifest import (
     parse_manifest_from_output,
 )
 from milknado.domains.planning.planner import Planner, PlanResult
+from milknado.domains.planning.ports import PlanningPorts, PlanningProcessResult
+
+
+def _ports() -> PlanningPorts:
+    tilth = MagicMock()
+    tilth.structural_map.return_value = DegradationMarker(source="tilth", reason="mocked")
+    return PlanningPorts(tilth=tilth, process=_PlanningSubprocess())
 
 
 @pytest.fixture()
@@ -39,6 +49,72 @@ def mock_crg() -> MagicMock:
     crg.get_bridge_nodes.return_value = [{"name": f"bridge_{i}"} for i in range(10)]
     crg.get_hub_nodes.return_value = [{"name": f"hub_{i}"} for i in range(10)]
     return crg
+
+
+class TestPlanningSubprocess:
+    def test_local_planner_requires_explicit_capability(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MILKNADO_LOCAL_PLANNER", raising=False)
+        context = tmp_path / "context.md"
+        context.write_text("plan context", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="requires MILKNADO_LOCAL_PLANNER"):
+            _PlanningSubprocess().run_agent(context, "local-planner", tmp_path)
+
+    def test_local_planner_must_be_inside_project(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        context = project / "context.md"
+        context.write_text("plan context", encoding="utf-8")
+        outside = tmp_path / "planner.py"
+        outside.write_text("print('no')", encoding="utf-8")
+        monkeypatch.setenv("MILKNADO_LOCAL_PLANNER", str(outside))
+
+        with pytest.raises(ValueError, match="within the project root"):
+            _PlanningSubprocess().run_agent(context, "local-planner", project)
+
+    @patch("milknado.cli_plan.subprocess.run")
+    def test_local_planner_uses_exact_interpreter_contract(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        context = tmp_path / "context.md"
+        context.write_text("plan context", encoding="utf-8")
+        planner = tmp_path / "planner.py"
+        planner.write_text("print('ok')", encoding="utf-8")
+        monkeypatch.setenv("MILKNADO_LOCAL_PLANNER", str(planner))
+        mock_run.return_value = MagicMock(returncode=0, stdout="manifest", stderr="")
+
+        result = _PlanningSubprocess().run_agent(context, "local-planner", tmp_path)
+
+        assert result == PlanningProcessResult(exit_code=0, stdout="manifest", stderr="")
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == [sys.executable, str(planner)]
+        assert mock_run.call_args.kwargs == {
+            "cwd": tmp_path,
+            "check": False,
+            "input": "plan context",
+            "text": True,
+            "stderr": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+        }
+
+    def test_empty_validation_command_returns_explicit_failure(self, tmp_path: Path) -> None:
+        assert _PlanningSubprocess().run_validation("   ", {}, tmp_path) == (
+            PlanningProcessResult(
+                exit_code=1,
+                stderr="empty planning validation command",
+            )
+        )
 
 
 class TestBuildPlanningContext:
@@ -324,7 +400,7 @@ class TestBuildPlanningContext:
 
 
 class TestPlanner:
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_writes_context_file(
         self,
         mock_run: MagicMock,
@@ -333,7 +409,7 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("my goal", tmp_path)
         assert result.success is True
         assert result.exit_code == 0
@@ -342,56 +418,84 @@ class TestPlanner:
         content = result.context_path.read_text()
         assert "my goal" in content
 
-    @patch("milknado.domains.planning.planner.TilthAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_calls_agent(
         self,
         mock_run: MagicMock,
-        mock_tilth_cls: MagicMock,
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        from milknado.domains.common.types import DegradationMarker
-
-        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
-            source="tilth", reason="mocked"
-        )
         mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "claude"
         assert cmd[-1] == "-"
 
-    @patch("milknado.domains.planning.planner.TilthAdapter")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_uses_stdin_input(
         self,
         mock_run: MagicMock,
-        mock_tilth_cls: MagicMock,
         tmp_path: Path,
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        from milknado.domains.common.types import DegradationMarker
-
-        mock_tilth_cls.return_value.structural_map.return_value = DegradationMarker(
-            source="tilth", reason="mocked"
-        )
         mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude -p --dangerously-skip-permissions")
+        planner = Planner(
+            tmp_graph,
+            mock_crg,
+            "claude -p --dangerously-skip-permissions",
+            _ports(),
+        )
         planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
-        assert cmd[:3] == ["claude", "-p", "--dangerously-skip-permissions"]
-        assert cmd[-1] == "-"
+        assert cmd == [
+            "claude",
+            "-p",
+            "--permission-mode",
+            "plan",
+            "--allowedTools",
+            "Read,Glob,Grep",
+            "-",
+        ]
         kwargs = mock_run.call_args[1]
         assert kwargs.get("text") is True
+        assert kwargs.get("input") is not None
         assert "my goal" in str(kwargs.get("input", ""))
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    def test_launch_uses_injected_planning_ports(
+        self,
+        tmp_graph: MikadoGraph,
+        mock_crg: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        process = MagicMock()
+        process.run_agent.return_value = PlanningProcessResult(exit_code=0, stdout="")
+        tilth = MagicMock()
+        tilth.structural_map.return_value = DegradationMarker(
+            source="tilth",
+            reason="test",
+        )
+        planner = Planner(
+            tmp_graph,
+            mock_crg,
+            "claude",
+            PlanningPorts(tilth=tilth, process=process),
+        )
+
+        result = planner.launch("goal", tmp_path)
+
+        assert result.success is True
+        process.run_agent.assert_called_once_with(
+            tmp_path / ".milknado" / "planning-context.md",
+            "claude",
+            tmp_path,
+        )
+
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_failure(
         self,
         mock_run: MagicMock,
@@ -400,13 +504,13 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=1, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("my goal", tmp_path)
         assert result.success is False
         assert result.exit_code == 1
 
     @patch("milknado.domains.planning.planner.run_batching")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_propagates_mega_batch_change_count(
         self,
         mock_run: MagicMock,
@@ -433,12 +537,12 @@ class TestPlanner:
             spread_report=(),
             solver_status="OPTIMAL",
         )
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path)
         assert result.mega_batch_change_count == 6
 
     @patch("milknado.domains.planning.planner.run_batching")
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_mega_batch_change_count_none_when_within_threshold(
         self,
         mock_run: MagicMock,
@@ -457,11 +561,11 @@ class TestPlanner:
             spread_report=(),
             solver_status="OPTIMAL",
         )
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path)
         assert result.mega_batch_change_count is None
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_custom_agent_command(
         self,
         mock_run: MagicMock,
@@ -469,15 +573,15 @@ class TestPlanner:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "aider --model opus")
-        planner.launch("goal", tmp_path)
-        cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "aider"
-        assert "--model" in cmd
-        assert "opus" in cmd
+        planner = Planner(tmp_graph, mock_crg, "aider --model opus", _ports())
+        with pytest.raises(
+            ValueError,
+            match=r"^unsupported planning agent executable: 'aider'$",
+        ):
+            planner.launch("goal", tmp_path)
+        mock_run.assert_not_called()
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_launch_runs_in_project_root(
         self,
         mock_run: MagicMock,
@@ -486,12 +590,12 @@ class TestPlanner:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
-    def test_launch_passes_repo_mcp_config_to_agent(
+    @patch("milknado.cli_plan.subprocess.run")
+    def test_launch_excludes_untrusted_repo_mcp_config(
         self,
         mock_run: MagicMock,
         tmp_path: Path,
@@ -500,13 +604,13 @@ class TestPlanner:
     ) -> None:
         (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
         mock_run.return_value = MagicMock(returncode=0, stdout="")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         planner.launch("goal", tmp_path)
         cmd = mock_run.call_args[0][0]
-        assert "--mcp-config" in cmd
-        assert str(tmp_path / ".mcp.json") in cmd
+        assert "--mcp-config" not in cmd
+        assert str(tmp_path / ".mcp.json") not in cmd
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_validation_hook_accepts_manifest(
         self,
         mock_run: MagicMock,
@@ -528,6 +632,7 @@ class TestPlanner:
             tmp_graph,
             mock_crg,
             "claude",
+            _ports(),
             planning_validation_hook="python scripts/validate_plan.py",
         )
         result = planner.launch("goal", tmp_path)
@@ -541,7 +646,7 @@ class TestPlanner:
         assert '"manifest_version": "milknado.plan.v2"' in hook_payload
         assert '"id": "c1"' in hook_payload
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_validation_hook_rejects_manifest(
         self,
         mock_run: MagicMock,
@@ -559,7 +664,13 @@ class TestPlanner:
             return MagicMock(returncode=0, stdout=stdout)
 
         mock_run.side_effect = _side_effect
-        planner = Planner(tmp_graph, mock_crg, "claude", planning_validation_hook="node hook.mjs")
+        planner = Planner(
+            tmp_graph,
+            mock_crg,
+            "claude",
+            _ports(),
+            planning_validation_hook="node hook.mjs",
+        )
         result = planner.launch("goal", tmp_path)
         assert result.success is False
         assert result.exit_code == 1
@@ -618,7 +729,7 @@ def _make_v2_manifest_stdout(changes: list[dict]) -> str:  # type: ignore[type-a
 
 
 class TestPlannerSpecPath:
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_spec_path_read_and_passed(
         self,
         mock_run: MagicMock,
@@ -629,7 +740,7 @@ class TestPlannerSpecPath:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         spec = tmp_path / "spec.md"
         spec.write_text("## My Spec\nDo the thing.", encoding="utf-8")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path, spec_path=spec)
         assert result.context_path is not None
         content = result.context_path.read_text()
@@ -642,11 +753,11 @@ class TestPlannerSpecPath:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         with pytest.raises(FileNotFoundError, match="spec_path"):
             planner.launch("goal", tmp_path, spec_path=tmp_path / "nonexistent.md")
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_no_manifest_returns_no_manifest_status(
         self,
         mock_run: MagicMock,
@@ -655,13 +766,13 @@ class TestPlannerSpecPath:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="no JSON block here")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path)
         assert result.solver_status == "NO_MANIFEST"
         assert result.nodes_created == 0
         assert result.batch_count == 0
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_no_manifest_no_telemetry(
         self,
         mock_run: MagicMock,
@@ -670,11 +781,11 @@ class TestPlannerSpecPath:
         mock_crg: MagicMock,
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="no block")
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         planner.launch("goal", tmp_path)
         assert not (tmp_path / ".milknado" / "calibration.jsonl").exists()
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_happy_path_creates_nodes_and_telemetry(
         self,
         mock_run: MagicMock,
@@ -688,12 +799,12 @@ class TestPlannerSpecPath:
             ]
         )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("Test goal", tmp_path)
         assert result.nodes_created > 0
         assert (tmp_path / ".milknado" / "calibration.jsonl").exists()
 
-    @patch("milknado.domains.planning.planner.subprocess.run")
+    @patch("milknado.cli_plan.subprocess.run")
     def test_crg_failure_still_runs_batching(
         self,
         mock_run: MagicMock,
@@ -708,7 +819,7 @@ class TestPlannerSpecPath:
             ]
         )
         mock_run.return_value = MagicMock(returncode=0, stdout=stdout)
-        planner = Planner(tmp_graph, mock_crg, "claude")
+        planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path)
         assert result.nodes_created > 0
 

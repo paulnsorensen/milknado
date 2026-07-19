@@ -31,7 +31,24 @@ from milknado.domains.batching.solver import (
     STATUS_UNKNOWN,
     _worse_status,
 )
-from milknado.mcp_server import _dict_to_new_relationship
+from milknado.domains.planning.manifest import decode_manifest
+
+
+def _decode_relationship(raw: dict):
+    manifest = decode_manifest(
+        {
+            "manifest_version": "milknado.plan.v2",
+            "goal": "test",
+            "goal_summary": "test relationship decoding",
+            "changes": [
+                {"id": "a", "path": "a.py", "description": "change a"},
+                {"id": "b", "path": "b.py", "description": "change b"},
+            ],
+            "new_relationships": [raw],
+        }
+    )
+    return manifest.new_relationships[0]
+
 
 # ---------------------------------------------------------------------------
 # 1. Lexicographic solver — status downgrade and two-pass behaviour
@@ -430,22 +447,22 @@ class TestDictToNewRelationship:
             "dependant_change_id": "b",
             "reason": "new_import",
         }
-        rel = _dict_to_new_relationship(d)
+        rel = _decode_relationship(d)
         assert rel.source_change_id == "a"
         assert rel.dependant_change_id == "b"
         assert rel.reason == "new_import"
 
     def test_missing_source_change_id_raises_key_error(self):
-        with pytest.raises(KeyError):
-            _dict_to_new_relationship({"dependant_change_id": "b", "reason": "new_import"})
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _decode_relationship({"dependant_change_id": "b", "reason": "new_import"})
 
     def test_missing_dependant_change_id_raises_key_error(self):
-        with pytest.raises(KeyError):
-            _dict_to_new_relationship({"source_change_id": "a", "reason": "new_import"})
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _decode_relationship({"source_change_id": "a", "reason": "new_import"})
 
     def test_missing_reason_raises_key_error(self):
-        with pytest.raises(KeyError):
-            _dict_to_new_relationship({"source_change_id": "a", "dependant_change_id": "b"})
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _decode_relationship({"source_change_id": "a", "dependant_change_id": "b"})
 
     def test_invalid_reason_string_raises_value_error(self):
         """_dict_to_new_relationship must reject reasons not in RelationshipReason."""
@@ -454,8 +471,8 @@ class TestDictToNewRelationship:
             "dependant_change_id": "b",
             "reason": "new_function",  # not in RelationshipReason Literal
         }
-        with pytest.raises(ValueError, match="invalid reason"):
-            _dict_to_new_relationship(d)
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _decode_relationship(d)
 
     def test_empty_new_relationships_list_accepted(self, tmp_path, monkeypatch):
         """An empty new_relationships list at the MCP boundary is accepted."""
@@ -477,7 +494,7 @@ class TestDictToNewRelationship:
 
         monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
         result = _plan_batches_impl(
-            [{"id": "1", "path": "a.py", "edit_kind": "delete"}],
+            [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
             70_000,
             tmp_path,
             new_relationships=[],
@@ -504,7 +521,7 @@ class TestDictToNewRelationship:
 
         monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
         result = _plan_batches_impl(
-            [{"id": "1", "path": "a.py", "edit_kind": "delete"}],
+            [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
             70_000,
             tmp_path,
             new_relationships=None,
@@ -520,13 +537,13 @@ class TestDictToNewRelationship:
                 "dependant_change_id": "b",
                 "reason": reason,
             }
-            rel = _dict_to_new_relationship(d)
+            rel = _decode_relationship(d)
             assert rel.reason == reason
 
     def test_invalid_reason_rejected_at_mcp_boundary(self):
         """MCP boundary must reject invalid reason values with a descriptive ValueError."""
-        with pytest.raises(ValueError, match="invalid reason"):
-            _dict_to_new_relationship(
+        with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
+            _decode_relationship(
                 {
                     "source_change_id": "a",
                     "dependant_change_id": "b",

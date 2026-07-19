@@ -79,6 +79,7 @@ def _start_plan_proc(project_root: Path, spec: Path) -> tuple[subprocess.Popen[b
         env = dict(os.environ)
         src_root = str(Path(__file__).resolve().parents[1] / "src")
         env["PYTHONPATH"] = src_root + os.pathsep + env.get("PYTHONPATH", "")
+        env["MILKNADO_LOCAL_PLANNER"] = str(project_root / "fake_planner.py")
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -108,12 +109,12 @@ def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
     project_root = tmp_path
     spec = project_root / "spec.md"
     spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
-    agent = _write_fake_planner(project_root)
+    _write_fake_planner(project_root)
     (project_root / "milknado.toml").write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n'
-            f'planning_agent = "{sys.executable} {agent}"\n'
+            'planning_agent = "local-planner"\n'
             f'db_path = "{_milknado_db_rel(project_root)}"\n'
         ),
         encoding="utf-8",
@@ -139,12 +140,12 @@ def test_plan_interactive_pty_revise_then_accept(tmp_path: Path) -> None:
     project_root = tmp_path
     spec = project_root / "spec.md"
     spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
-    agent = _write_fake_planner(project_root)
+    _write_fake_planner(project_root)
     (project_root / "milknado.toml").write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n'
-            f'planning_agent = "{sys.executable} {agent}"\n'
+            'planning_agent = "local-planner"\n'
             f'db_path = "{_milknado_db_rel(project_root)}"\n'
         ),
         encoding="utf-8",

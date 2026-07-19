@@ -14,6 +14,15 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class GithubIssue:
+    title: str
+    body: str
+    number: int | None
+    url: str
 
 
 class GhTransportError(RuntimeError):
@@ -221,6 +230,20 @@ def gh_field_create_text(number: int, owner: str, name: str) -> dict:
     )
 
 
+def gh_issue_view(ref: str) -> GithubIssue:
+    """Return stable identity and content for one GitHub issue."""
+    data = _run_json(["issue", "view", ref, "--json", "title,body,number,url"])
+    try:
+        return GithubIssue(
+            title=data["title"],
+            body=data["body"],
+            number=data.get("number"),
+            url=data["url"],
+        )
+    except (KeyError, TypeError) as exc:
+        raise GhTransportError(f"`gh issue view` response is malformed: {data!r}") from exc
+
+
 def gh_issue_create(owner: str, repo: str, title: str, body: str) -> str:
     """Create an Issue and return its URL (used for wiki-origin projection)."""
     result = _run(
@@ -241,3 +264,16 @@ def gh_issue_create(owner: str, repo: str, title: str, body: str) -> str:
 def gh_issue_edit_body(issue_url: str, body: str) -> None:
     """Overwrite an Issue's body (wiki-origin body mirror, overwritten each export)."""
     _run(["issue", "edit", issue_url, "--body", body])
+
+
+class GhProjectAdapter:
+    preflight = staticmethod(gh_preflight)
+    project_view = staticmethod(gh_project_view)
+    item_list = staticmethod(gh_item_list)
+    item_add = staticmethod(gh_item_add)
+    item_edit = staticmethod(gh_item_edit)
+    field_list = staticmethod(gh_field_list)
+    field_create = staticmethod(gh_field_create)
+    field_create_text = staticmethod(gh_field_create_text)
+    issue_create = staticmethod(gh_issue_create)
+    issue_edit_body = staticmethod(gh_issue_edit_body)

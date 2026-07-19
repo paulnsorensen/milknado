@@ -8,13 +8,15 @@ worktree on disk and node_verify runs real quality gates in it.
 from __future__ import annotations
 
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 
 from milknado._mcp_core import open_graph
-from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
+from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.mcp_node import (
     GOAL_OWNER_ENV_VAR,
     milknado_goal_claim,
@@ -216,6 +218,35 @@ def test_claim_worktree_false_override_skips_worktree(repo: Path) -> None:
         graph.close()
 
 
+def test_in_place_reclaim_clears_stale_isolated_metadata(repo: Path) -> None:
+    from milknado.domains.dispatch import now_iso
+
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+    stale = repo / "stale-worktree"
+    stale.mkdir()
+    graph, _cfg = open_graph(repo)
+    try:
+        assert graph.claim_node(node_id, "old-run", now=now_iso()) is True
+        graph.set_worktree(node_id, "old-run", str(stale), "old-branch")
+        graph.mark_terminal(node_id, "old-run", NodeStatus.FAILED)
+    finally:
+        graph.close()
+
+    payload = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
+    (repo / "new-evidence.txt").write_text("current checkout\n", encoding="utf-8")
+    verdict = _call(milknado_node_verify, run_id=payload["run_id"], project_root=str(repo))
+    assert payload["worktree_path"] is None
+    assert verdict == {"ok": True, "feedback": ""}
+    graph, _cfg = open_graph(repo)
+    try:
+        node = graph.get_node(node_id)
+        assert node is not None
+        assert (node.worktree_path, node.branch_name) == (None, None)
+    finally:
+        graph.close()
+
+
 def test_claim_worktree_none_defaults_to_profile(repo: Path) -> None:
     """worktree=None (default) follows the resolved flavor profile's worktree knob."""
     (repo / "milknado.toml").write_text(
@@ -395,7 +426,6 @@ def test_done_gate_exempts_subprocess_run_node(repo: Path) -> None:
     result message, no claim/verify message) and assert the gate lets it through.
     """
     from milknado.domains.dispatch import now_iso
-    from milknado.mcp_node import _is_native_claimed
 
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo, "subprocess node")
@@ -413,8 +443,8 @@ def test_done_gate_exempts_subprocess_run_node(repo: Path) -> None:
         node = graph.get_node(node_id)
         assert node is not None
         assert node.run_id == run_id
-        # No CLAIM_ROLE and no verify message -> non-native -> exempt.
-        assert _is_native_claimed(graph, run_id) is False
+        assert graph.latest_run_message(run_id, "claim") is None
+        assert graph.latest_run_message(run_id, "verify") is None
     finally:
         graph.close()
 
@@ -529,7 +559,7 @@ def test_resolve_model_extracts_flag_and_defaults() -> None:
 
 def test_latest_verify_ok_false_on_missing_or_malformed(repo: Path) -> None:
     from milknado.domains.dispatch import now_iso
-    from milknado.mcp_node import VERIFY_ROLE, latest_verify_ok
+    from milknado.domains.graph.status_flow import VERIFY_ROLE, latest_verify_ok
 
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
@@ -584,6 +614,41 @@ def test_goal_claim_blocks_second_live_owner(repo: Path) -> None:
 
     with pytest.raises(ValueError, match="already claimed by owner 'sess-1'"):
         _call(milknado_goal_claim, goal_id=goal_id, owner="sess-2", project_root=str(repo))
+
+
+def test_goal_claim_concurrent_public_calls_report_one_winner(repo: Path) -> None:
+    goal_id = _add_goal(repo)
+    barrier = Barrier(2)
+
+    def claim(owner: str) -> tuple[str, str]:
+        barrier.wait()
+        try:
+            result = _call(
+                milknado_goal_claim,
+                goal_id=goal_id,
+                owner=owner,
+                project_root=str(repo),
+            )
+        except ValueError as exc:
+            return "lost", str(exc)
+        return "won", result["owner"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(claim, ("owner-a", "owner-b")))
+    assert sorted(result[0] for result in results) == ["lost", "won"]
+    winner = next(result[1] for result in results if result[0] == "won")
+    assert all(
+        "already claimed by owner" in message
+        for disposition, message in results
+        if disposition == "lost"
+    )
+    graph, _cfg = open_graph(repo)
+    try:
+        claimed = graph.get_node(goal_id)
+        assert claimed is not None
+        assert claimed.goal_run_id == winner
+    finally:
+        graph.close()
 
 
 def test_goal_release_is_fenced_on_owner(repo: Path) -> None:

@@ -7,7 +7,6 @@ import pytest
 
 from milknado.adapters.loop import (
     MILKNADO_COMPLETION_SIGNAL,
-    NO_GATES_CONFIGURED_MESSAGE,
     LoopAdapter,
     _build_ralph_content,
     _build_verify_prompt,
@@ -17,6 +16,7 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.common.types import MikadoNode
+from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import EventType
 
 
@@ -69,8 +69,7 @@ class TestCreateRun:
             log_dir=Path("/project") / ".ralph-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
         )
-        mock_manager.create_run.assert_called_once_with(mock_config)
-        mock_run.add_listener.assert_called_once()
+        mock_manager.create_run.assert_called_once_with(mock_config, emitter=adapter._emitter)
         assert result.id == "run-1"
 
 
@@ -79,9 +78,10 @@ class TestStartStopRun:
         adapter.start_run("run-1")
         mock_manager.start_run.assert_called_once_with("run-1")
 
-    def test_stop_delegates(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
-        adapter.stop_run("run-1")
-        mock_manager.stop_run.assert_called_once_with("run-1")
+    def test_stop_joins_worker(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
+        mock_manager.stop_and_join.return_value = True
+        assert adapter.stop_run("run-1", timeout=3.0) is True
+        mock_manager.stop_and_join.assert_called_once_with("run-1", 3.0)
 
 
 class TestListAndGetRuns:
@@ -321,9 +321,12 @@ class TestParseVerifyOutput:
         result = _parse_verify_output("<result>gaps</result>")
         assert result == VerifySpecResult(outcome="gaps", goal_delta=None)
 
-    def test_unparseable_defaults_to_done(self) -> None:
+    def test_unparseable_fails_closed(self) -> None:
         result = _parse_verify_output("no recognizable tags here")
-        assert result == VerifySpecResult(outcome="done")
+        assert result == VerifySpecResult(
+            outcome="gaps",
+            goal_delta="verification produced no explicit result",
+        )
 
 
 class TestVerifySpec:
@@ -381,7 +384,19 @@ class TestVerifySpec:
             mock_time.monotonic.side_effect = [0.0, 200.0]
             result = adapter.verify_spec("spec", "graph")
 
-        mock_manager.stop_run.assert_called_once()
+        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)
+        assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
+
+    def test_queue_timeout_stops_and_joins_verifier(self) -> None:
+        from milknado.adapters.loop import _drain_verify_run
+
+        manager = MagicMock()
+        events = MagicMock()
+        events.get.side_effect = queue.Empty
+
+        result = _drain_verify_run(manager, "verify-empty", events)
+
+        manager.stop_and_join.assert_called_once_with("verify-empty", timeout=5.0)
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
 
@@ -443,8 +458,10 @@ class TestLoopAdapterInit:
 
 class TestDrainVerifyRunExceptionHandler:
     @patch("milknado.adapters.loop.RunManager")
-    def test_exception_in_drain_returns_done(
-        self, mock_manager_cls: MagicMock, adapter: LoopAdapter
+    def test_exception_in_drain_returns_gaps(
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: LoopAdapter,
     ) -> None:
         adapter._agent = "claude"  # type: ignore[attr-defined]
         local_q: queue.Queue[MagicMock] = queue.Queue()
@@ -456,14 +473,34 @@ class TestDrainVerifyRunExceptionHandler:
         mock_run.state.run_id = "verify-1"
         mock_run.emitter = mock_emitter
         mock_manager.create_run.return_value = mock_run
-
-        # Put an event whose .type attribute raises an exception
         bad_event = MagicMock()
         type(bad_event).type = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
         local_q.put(bad_event)
 
         result = adapter.verify_spec("spec", "graph")
-        assert result == VerifySpecResult(outcome="done")
+
+        assert result == VerifySpecResult(outcome="gaps", goal_delta="verification failed: boom")
+        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)
+
+    def test_stop_failure_is_logged_without_masking_drain_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        from milknado.adapters.loop import _drain_verify_run
+
+        manager = MagicMock()
+        manager.stop_and_join.side_effect = RuntimeError("stop boom")
+        events = MagicMock()
+        events.get.side_effect = RuntimeError("drain boom")
+
+        with caplog.at_level(logging.ERROR):
+            result = _drain_verify_run(manager, "verify-failed", events)
+
+        assert result == VerifySpecResult(
+            outcome="gaps", goal_delta="verification failed: drain boom"
+        )
+        assert "verify_spec stop failed" in caplog.text
 
 
 class TestPollProgressEvents:

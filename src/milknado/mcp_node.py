@@ -33,19 +33,18 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
+from milknado.adapters import GitAdapter
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.agent_argv import resolve_worker_tools
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.dispatch import RUN_ID_RE, create_isolated_worktree, make_run_id, now_iso
+from milknado.domains.execution.completion import build_completion_verifier
+from milknado.domains.graph.status_flow import CLAIM_ROLE, VERIFY_ROLE
 
 _logger = logging.getLogger(__name__)
 
-VERIFY_ROLE = "verify"
-# Native-backend marker: milknado_todo_claim stamps this run message at claim
-# time. The subprocess executor starts its runs via start_run and never deposits
-# it, so its presence is what distinguishes a native-claimed run from a
-# subprocess run that merely shares the run_id + runs-row shape.
-CLAIM_ROLE = "claim"
+# Native claims carry CLAIM_ROLE so domain completion transitions can distinguish
+# them from subprocess runs that use the same run table.
 _MODEL_FLAG_RE = re.compile(r"--model[= ]+(\S+)")
 
 # Session owner-token env var (ADR-003): a coordinator claiming a GOAL passes an
@@ -111,12 +110,9 @@ def _resolve_owner(owner: str) -> str:
 def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -> dict:
     """Claim a GOAL node's subtree as this session's task list (ADR-003).
 
-    Wraps claim_goal_row/set_goal_claim_pid: `owner` fences the subtree the same
-    way a run_id fences a node claim, and the caller's pid is recorded so a
-    crashed coordinator's claim is reclaimable. `owner` falls back to
-    GOAL_OWNER_ENV_VAR when omitted, so a sub-agent that inherited the
-    coordinator's env can act under the same token without being told it
-    out-of-band. A dead-pid claim is reclaimed in place before retrying.
+    Acquires or reclaims the owner token and coordinator PID in one transaction.
+    `owner` falls back to GOAL_OWNER_ENV_VAR so inherited coordinator sessions
+    can act under the same token.
     """
     owner = _resolve_owner(owner)
     if not owner:
@@ -125,22 +121,11 @@ def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        now = now_iso()
-        won = graph.claim_goal(goal_id, owner, now=now)
-        if not won:
-            prior = graph.get_node(goal_id)
-            if graph.try_reclaim_goal(goal_id, now=now):
-                _logger.warning(
-                    "milknado_goal_claim: reclaimed goal=%d from dead owner=%s",
-                    goal_id,
-                    prior.goal_run_id if prior is not None else None,
-                )
-                won = graph.claim_goal(goal_id, owner, now=now)
+        won = graph.claim_or_reclaim_goal(goal_id, owner, os.getpid(), now=now_iso())
         if not won:
             node = graph.get_node(goal_id)
             current_owner = node.goal_run_id if node is not None else None
             raise ValueError(f"goal {goal_id} is already claimed by owner {current_owner!r}")
-        graph.set_goal_pid(goal_id, owner, os.getpid())
         _logger.info("milknado_goal_claim: goal=%d owner=%s", goal_id, owner)
         return {"goal_id": goal_id, "owner": owner}
     finally:
@@ -244,10 +229,11 @@ def _provision_claim_run(
     wt_path: Path | None = None
     try:
         if use_worktree:
-            wt_path, branch = create_isolated_worktree(
-                root, node.id, node.description, cfg.worktree_pattern
+            isolated = create_isolated_worktree(
+                GitAdapter(root), root, node.id, node.description, cfg.worktree_pattern
             )
-            graph.set_worktree(node.id, run_id, str(wt_path), branch)
+            wt_path = isolated.worktree_path
+            graph.set_worktree(node.id, run_id, str(wt_path), isolated.worker_branch)
             graph.start_run(run_id, node.id, str(wt_path), now_iso(), None)
         else:
             graph.start_run(run_id, node.id, str(root), now_iso(), None)
@@ -277,8 +263,6 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
     is persisted as a role="verify" run message so the deposit/mark-terminal
     gate can confirm a "done" transition was actually verified.
     """
-    from milknado.adapters.loop import _build_completion_verifier
-
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
     root = resolve_project_root(project_root or None)
@@ -293,7 +277,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
 
         cwd = Path(node.worktree_path) if node.worktree_path is not None else root
         profile = resolve_flavor_profile(cfg, node.flavor)
-        verifier = _build_completion_verifier(
+        verifier = build_completion_verifier(
             cwd,
             profile.quality_gates,
             in_place=node.worktree_path is None,
@@ -310,56 +294,3 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
         return {"ok": verdict.ok, "feedback": verdict.feedback}
     finally:
         graph.close()
-
-
-def latest_verify_ok(graph, run_id: str) -> bool:  # noqa: ANN001
-    """Return True iff the latest role='verify' message for run_id had ok=True.
-
-    The server-side completion precondition: a "done" transition is rejected
-    unless the node's owning run has a passing verify on record. A missing or
-    malformed verdict reads as not-ok (fail-closed).
-    """
-    body = graph.latest_run_message(run_id, VERIFY_ROLE)
-    if not body:
-        return False
-    try:
-        return bool(json.loads(body).get("ok") is True)
-    except (ValueError, TypeError, AttributeError):
-        return False
-
-
-def _is_native_claimed(graph, run_id: str) -> bool:  # noqa: ANN001
-    """True iff the run was claimed via the native backend (milknado_todo_claim).
-
-    Discriminates on the CLAIM_ROLE marker that milknado_todo_claim stamps — a
-    NATIVE-only signal. A subprocess run carries the same run_id + runs-row shape
-    but never deposits it, so it reads as non-native and is exempt from the gate.
-    The verify message is also accepted as a marker for forward-safety: any run
-    that has been through milknado_node_verify is native by construction.
-    """
-    return (
-        graph.latest_run_message(run_id, CLAIM_ROLE) is not None
-        or graph.latest_run_message(run_id, VERIFY_ROLE) is not None
-    )
-
-
-def assert_done_verified(graph, node) -> None:  # noqa: ANN001
-    """Reject a "done" transition for a native-claimed node lacking a passing verify.
-
-    Scoped to native-backend nodes only: the gate fires only when the node's
-    owning run carries the native CLAIM_ROLE marker (or a verify message).
-    Manual nodes (no owning run) and subprocess runs (run_id + runs row but no
-    native marker) are left untouched — this gate is the precondition the spec
-    puts on `milknado_node_verify`, not a new constraint on every status change.
-    Fail-closed: a natively-claimed node with no passing verdict on record cannot
-    be marked done, even before its first verify.
-    """
-    if node.run_id is None or graph.get_run(node.run_id) is None:
-        return
-    if not _is_native_claimed(graph, node.run_id):
-        return
-    if not latest_verify_ok(graph, node.run_id):
-        raise ValueError(
-            f"node {node.id} cannot be marked done: milknado_node_verify(run_id="
-            f"{node.run_id!r}) has not returned ok=True. Run milknado_node_verify first."
-        )

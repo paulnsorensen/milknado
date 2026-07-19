@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.tmux import RunWindow, TmuxDispatchError
+from milknado.adapters.tmux import TmuxDispatchError
 from milknado.domains.common import NodeStatus, RunResult, WorktreeMode, pid_alive
 from milknado.domains.dispatch import (
+    RunWindow,
     ensure_tmux_ready,
     reconcile_run_window,
     resolve_attach_target,
@@ -129,7 +130,30 @@ def test_ensure_tmux_ready_fails_closed_when_server_cannot_start() -> None:
 
 
 def _add_task(root: str) -> int:
-    return _call(milknado_todo_add, description="tmux-task", kind="task", project_root=root)["id"]
+    project = Path(root)
+    if not (project / ".git").exists():
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=project, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ],
+            cwd=project,
+            check=True,
+        )
+    return _call(
+        milknado_todo_add,
+        description="tmux-task",
+        kind="task",
+        project_root=root,
+    )["id"]
 
 
 def _node_status(root, node_id: int) -> NodeStatus:
@@ -262,7 +286,7 @@ def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
     fake = SpawningFakeTmux("cat {brief} >> {log}; echo 0 > {rc}")
     monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
     # The poll-time reconcile hook constructs its own adapter — same fake.
-    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
     root = str(tmp_path)
     node_id = _add_task(root)
     started = _call(
@@ -274,6 +298,10 @@ def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
     )
     final = _wait_for_terminal(root, started["run_id"])
     assert final["status"] == "done"
+    (window,) = fake.opened
+    assert window.env["MILKNADO_NODE_ID"] == str(node_id)
+    assert window.env["MILKNADO_RUN_ID"] == started["run_id"]
+    assert window.env["MILKNADO_PROJECT_ROOT"] == str(tmp_path.resolve())
     assert "tmux-task" in final["summary"]  # brief made it through the stdin redirect
     assert _node_status(root, node_id) == NodeStatus.DONE
     # The fake never self-cleans its window, so the completed-run window must
@@ -292,7 +320,7 @@ def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
 def test_run_inline_use_tmux_failure_preserves_window(tmp_path, monkeypatch) -> None:
     fake = SpawningFakeTmux("echo boom >> {log}; echo 7 > {rc}; exit 7")
     monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
     root = str(tmp_path)
     started = _call(
         milknado_run_inline_start,
@@ -314,7 +342,7 @@ def test_run_inline_use_tmux_records_pane_pid_on_run_row(tmp_path, monkeypatch) 
     on the run row for the stale sweep's pid-liveness skip and cancel."""
     fake = SpawningFakeTmux("cat {brief} > /dev/null; echo 0 > {rc}")
     monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.mcp_run.TmuxAdapter", lambda root: fake)
     root = str(tmp_path)
     started = _call(
         milknado_run_inline_start,
@@ -478,18 +506,18 @@ def test_loop_poll_reconciles_done_run_window(tmp_path, monkeypatch) -> None:
         graph.close()
     fake = FakeTmux()
     fake.windows.add(run_id)
-    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.mcp_ralph.TmuxAdapter", lambda root: fake)
     state = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
     assert state["status"] == "done"
     assert fake.killed == [run_id]
 
 
-def test_reconcile_run_window_never_breaks_a_poll(tmp_path, monkeypatch, caplog) -> None:
-    def _boom(root):
-        raise RuntimeError("tmux exploded")
+def test_reconcile_run_window_never_breaks_a_poll(caplog) -> None:
+    class BrokenTmux:
+        def available(self) -> bool:
+            raise RuntimeError("tmux exploded")
 
-    monkeypatch.setattr("milknado.domains.dispatch.tmux_run.TmuxAdapter", _boom)
-    reconcile_run_window(tmp_path, {"run_id": RUN_ID, "status": "done"})
+    reconcile_run_window(BrokenTmux(), {"run_id": RUN_ID, "status": "done"})
     assert "tmux window reconcile failed" in caplog.text
 
 

@@ -156,7 +156,15 @@ class RunLoop:
         )
         newly_failed = 0
         for timed_out_id in list(self._active):
-            nid = self._active.pop(timed_out_id)
+            nid = self._active[timed_out_id]
+            if not self._ralph.stop_run(timed_out_id, timeout=10.0):
+                _logger.error(
+                    "worker did not exit after stop; preserving ownership node_id=%d run_id=%s",
+                    nid,
+                    timed_out_id,
+                )
+                continue
+            self._active.pop(timed_out_id)
             self._executor.fail(nid)
             self._logs.append(f"[{ts()}] ⏱ node {nid} timeout")
             newly_failed += 1
@@ -305,7 +313,7 @@ class RunLoop:
                     quality_gates=profile.quality_gates,
                 )
             if node_config.quality_gates is None:
-                from milknado.adapters.loop import NO_GATES_CONFIGURED_MESSAGE
+                from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 
                 _logger.error(
                     "preflight: node %d (%s): %s", node_id, desc, NO_GATES_CONFIGURED_MESSAGE

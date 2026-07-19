@@ -14,6 +14,7 @@ import pytest
 
 from milknado.domains.common import NodeKind
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.wiki._locate import RoadmapPathError
 from milknado.domains.wiki.importer import import_roadmap
 
 ROADMAP_SLUG = "demo-roadmap"
@@ -239,6 +240,22 @@ class TestFailFast:
         root.mkdir(parents=True)
         with pytest.raises(ValueError, match="unsafe roadmap slug"):
             import_roadmap(root, "../../etc", graph)
+
+    def test_symlinked_goal_cannot_read_outside_wiki(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        roadmap_dir = root / "roadmaps" / ROADMAP_SLUG
+        roadmap_dir.mkdir(parents=True)
+        (roadmap_dir / "index.md").write_text(INDEX_MD)
+        outside = tmp_path / "outside.md"
+        outside.write_text(GOAL_A)
+        (roadmap_dir / "define-schema.md").symlink_to(outside)
+
+        with pytest.raises(RoadmapPathError, match="symlinked roadmap path"):
+            import_roadmap(root, ROADMAP_SLUG, graph)
+
+        assert outside.read_text() == GOAL_A
 
     def test_invalid_prereqs_field_raises_with_filename(
         self, tmp_path: Path, graph: MikadoGraph

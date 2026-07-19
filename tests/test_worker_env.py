@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from milknado.adapters import ProcessAdapter
 from milknado.domains.dispatch import run_headless
 from milknado.domains.dispatch.runner import (
     _WORKER_ENV_ALLOWLIST,
@@ -87,7 +88,12 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
 
     result = run_headless(
-        tmp_path, node_id=7, brief="hi", timeout_seconds=10, default_cmd="claude"
+        tmp_path,
+        node_id=7,
+        brief="hi",
+        timeout_seconds=10,
+        default_cmd="claude",
+        process=ProcessAdapter(),
     )
 
     assert result.exit_code == 0
@@ -122,6 +128,7 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
         brief=brief_marker,
         timeout_seconds=10,
         default_cmd="claude -p --dangerously-skip-permissions --allowedTools 'Read,Edit'",
+        process=ProcessAdapter(),
     )
 
     assert result.exit_code == 0

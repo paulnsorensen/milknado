@@ -153,16 +153,23 @@ wire = milknado_todo_add(
 press = milknado_todo_add("press: harden tests", kind="task", parent_id=goal.id,
                            flavor="harden", prereqs=[wire.id])
 age   = milknado_todo_add("age: review", kind="task", parent_id=goal.id,
-                           flavor="agent-review", prereqs=[press.id])
+                           flavor="agent-review", artifact=".cheese/age/<slug>.md",
+                           prereqs=[press.id])
 cure  = milknado_todo_add("cure: apply findings", kind="task", parent_id=goal.id,
-                           flavor="fix", artifact=".cheese/age/<slug>.md", prereqs=[age.id])
+                           flavor="fix", artifact=".cheese/cure/<slug>.md",
+                           prereqs=[age.id])
+age_run = milknado_todo_claim(age.id, worktree=False)
+# Dispatch the age worker; it writes the declared .cheese/age/<slug>.md artifact.
+milknado_node_verify(age_run["run_id"])
 ```
 
 Each curd runs in its own worktree and merges independently; the wiring node
 runs in the current checkout (`worktree=false`) because it needs to see all
 three curds' merged results at once — worktree isolation would hide them
-from each other. `age`'s findings live at the `artifact` path; `cure` reads
-that path per the ingestion convention below.
+from each other. `age` declares its findings report as its own `artifact`, so
+verification requires that report to exist before `cure` becomes runnable.
+`cure` reads the age report per the ingestion convention below and records its
+own deliverable at `.cheese/cure/<slug>.md`.
 
 ## wheypoint + severity-gated findings ingestion
 

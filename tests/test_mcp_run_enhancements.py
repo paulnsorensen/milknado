@@ -12,7 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import RunResult, WorktreeMode
+from milknado._mcp_core import RunDict
+from milknado.adapters import ProcessAdapter
+from milknado.domains.common import NodeKind, RunResult, WorktreeMode
+from milknado.domains.dispatch import ProcessOutcome
 from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp_run import (
     milknado_deposit_result,
@@ -24,18 +27,7 @@ from milknado.mcp_run import (
 from milknado.mcp_server import open_graph
 from milknado.mcp_todo_mutate import milknado_todo_add
 
-_SUPERSET_KEYS = frozenset(
-    {
-        "run_id",
-        "node_id",
-        "status",
-        "exit_code",
-        "timed_out",
-        "rebased",
-        "log_path",
-        "summary",
-    }
-)
+_SUPERSET_KEYS = frozenset(RunDict.__annotations__)
 
 _STUB_RUNNER = """
 import argparse
@@ -47,6 +39,8 @@ p.add_argument("--node-id", type=int)
 p.add_argument("--project-root")
 p.add_argument("--run-id")
 p.add_argument("--timeout")
+p.add_argument("--target-branch")
+p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
@@ -64,6 +58,27 @@ try:
 finally:
     graph.close()
 """
+
+
+def _init_git(root: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+        cwd=root,
+        check=True,
+    )
 
 
 def _call(tool, **kwargs):
@@ -172,6 +187,22 @@ def _wait_for_terminal(run_id: str, root: str, tool, timeout: float = 5.0) -> di
 
 # ---------------------------------------------------------------------------
 # #83 — Unified RunDict superset schema
+def test_run_dict_schema_matches_annotations() -> None:
+    from milknado._mcp_core import build_run_dict
+
+    assert set(build_run_dict({})) == set(RunDict.__annotations__)
+
+
+def test_cancel_sentinel_uses_touch_and_missing_ok_unlink(tmp_path: Path) -> None:
+    from milknado.domains.dispatch import clear_cancel, is_cancel_requested, request_cancel
+
+    request_cancel(tmp_path, "node-1-20260101T000000Z-abcd")
+    assert is_cancel_requested(tmp_path, "node-1-20260101T000000Z-abcd")
+    clear_cancel(tmp_path, "node-1-20260101T000000Z-abcd")
+    clear_cancel(tmp_path, "node-1-20260101T000000Z-abcd")
+    assert not is_cancel_requested(tmp_path, "node-1-20260101T000000Z-abcd")
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -213,6 +244,7 @@ class TestUnifiedRunSchema:
         assert "rebased" in final  # may be None for headless runs
 
     def test_run_loop_start_returns_superset_schema(self, tmp_path: Path) -> None:
+        _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
             milknado_todo_add, description="schema-ralph-start", kind="task", project_root=root
@@ -232,6 +264,7 @@ class TestUnifiedRunSchema:
         assert result["summary"] is None
 
     def test_run_loop_poll_returns_superset_schema(self, tmp_path: Path) -> None:
+        _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
             milknado_todo_add, description="schema-ralph-poll", kind="task", project_root=root
@@ -254,7 +287,9 @@ class TestSyncRunSchema:
     def test_run_inline_returns_superset_schema(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+        def _stub_execute(
+            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
+        ):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -275,7 +310,9 @@ class TestSyncRunSchema:
     def test_run_inline_writes_run_row(self, tmp_path: Path, monkeypatch) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+        def _stub_execute(
+            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
+        ):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -295,7 +332,9 @@ class TestSyncRunSchema:
         """#40: run_id must be threaded into the node after a sync run."""
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+        def _stub_execute(
+            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
+        ):
             log_path.write_bytes(b"ok")
             return 0, False
 
@@ -331,7 +370,9 @@ class TestSyncRunOrphanRescue:
 
         observed: dict = {}
 
-        def _stub_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+        def _stub_execute(
+            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
+        ):
             # Snapshot the run row WHILE the worker runs — the exact window a
             # client timeout orphans the sync call in.
             rows = _node_running_runs(Path(project_root), node_id)
@@ -367,7 +408,9 @@ class TestSyncRunOrphanRescue:
         plus the fail_stale_running_runs unit tests in test_mcp_server.py."""
         import milknado.domains.dispatch.runner as runner_mod
 
-        def _crash_execute(project_root, node_id, log_path, brief, argv, timeout, run_id=None):
+        def _crash_execute(
+            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
+        ):
             raise RuntimeError("worker crashed mid-run before terminal write")
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
@@ -400,26 +443,26 @@ class TestSyncRunOrphanRescue:
         MILKNADO_RUN_ID — the brief's deposit step keys on it (the #122 channel).
         A DONE-node re-dispatch is refused up front (High-5), so it spawns no
         second worker and captures no second env. Exercises the real
-        _execute -> _spawn_worker env-build path instead of stubbing past it.
+        ProcessAdapter boundary instead of stubbing process mechanics in the
+        dispatch domain.
         """
-        import milknado.domains.dispatch.runner as runner_mod
+        envs: list[dict[str, str]] = []
 
-        class _FakeProc:
-            returncode = 0
-            stdin = None
+        def _capture_run(
+            self,
+            argv,
+            cwd,
+            log_path,
+            stdin,
+            env,
+            timeout,
+            **kwargs,  # noqa: ANN001, ARG001
+        ):
+            envs.append(env)
+            log_path.write_text("", encoding="utf-8")
+            return ProcessOutcome(exit_code=0, timed_out=False, cancelled=False)
 
-            def communicate(self, input=None, timeout=None):  # noqa: A002, ARG002
-                return b"", b""
-
-        envs: list[dict] = []
-
-        def _capture_popen(argv, **kwargs):  # noqa: ARG001
-            # Run the real _spawn_worker so the captured env is exactly what the
-            # worker process would receive; intercept only the Popen boundary.
-            envs.append(kwargs["env"])
-            return _FakeProc()
-
-        monkeypatch.setattr(runner_mod.subprocess, "Popen", _capture_popen)
+        monkeypatch.setattr(ProcessAdapter, "run", _capture_run)
 
         from milknado.mcp_run import milknado_run_inline
 
@@ -440,6 +483,109 @@ class TestSyncRunOrphanRescue:
 # ---------------------------------------------------------------------------
 # #82 — milknado_run_list
 # ---------------------------------------------------------------------------
+
+
+class TestDispatchLifecycleGuards:
+    @pytest.mark.parametrize(
+        ("node", "message"),
+        [
+            (None, "not found"),
+            (type("GoalNode", (), {"kind": NodeKind.GOAL})(), "only task nodes"),
+        ],
+    )
+    def test_sync_dispatch_rejects_missing_or_non_task_node(
+        self, tmp_path: Path, node: object | None, message: str
+    ) -> None:
+        from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
+
+        class Graph:
+            def get_node(self, node_id: int) -> object | None:  # noqa: ARG002
+                return node
+
+        request = SyncDispatchRequest(
+            node_id=7,
+            project_root=tmp_path,
+            worker_cmd=None,
+            timeout_seconds=1,
+            default_cmd="claude",
+            process=object(),  # type: ignore[arg-type]
+            worktree_mode=WorktreeMode.THIS_BRANCH,
+        )
+        with pytest.raises(ValueError, match=message):
+            dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+
+    def test_sync_dispatch_detects_node_deleted_after_worker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from milknado.domains.common import NodeKind
+        from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync, lifecycle
+        from milknado.domains.dispatch.runner import RunResult as WorkerResult
+
+        node = type("TaskNode", (), {"kind": NodeKind.TASK})()
+
+        class Graph:
+            def __init__(self) -> None:
+                self.reads = 0
+
+            def get_node(self, node_id: int) -> object | None:  # noqa: ARG002
+                self.reads += 1
+                return node if self.reads == 1 else None
+
+            def claim_node_for_dispatch(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                pass
+
+            def start_run(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                pass
+
+            def finish_run(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                pass
+
+            def mark_terminal(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+                pass
+
+        monkeypatch.setattr(lifecycle, "render_brief", lambda *args, **kwargs: "")
+        monkeypatch.setattr(
+            lifecycle,
+            "run_headless",
+            lambda *args, **kwargs: WorkerResult(
+                exit_code=0,
+                log_path=tmp_path / "run.log",
+                summary="",
+                timed_out=False,
+            ),
+        )
+        request = SyncDispatchRequest(
+            node_id=7,
+            project_root=tmp_path,
+            worker_cmd=None,
+            timeout_seconds=1,
+            default_cmd="claude",
+            process=object(),  # type: ignore[arg-type]
+            worktree_mode=WorktreeMode.THIS_BRANCH,
+        )
+        with pytest.raises(RuntimeError, match="not found after run completed"):
+            dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+
+
+def test_stale_sweep_logs_and_skips_malformed_started_at(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from milknado.domains.dispatch import fail_stale_running_runs
+
+    class Graph:
+        def runs_for_node(self, node_id: int) -> list[dict]:  # noqa: ARG002
+            return [
+                {
+                    "run_id": "node-4-20260101T000000Z-bad1",
+                    "status": "running",
+                    "started_at": "not-a-timestamp",
+                    "timeout_seconds": 1,
+                }
+            ]
+
+    with caplog.at_level(logging.WARNING):
+        assert fail_stale_running_runs(Graph(), 4) == []
+    assert "malformed timestamp" in caplog.text
 
 
 class TestRunList:
@@ -506,10 +652,14 @@ class TestRunList:
 
 class TestRunCancel:
     @pytest.fixture(autouse=True)
-    def _fast_cancel_finalize(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No-pid states hand-written here have no live worker, so cancel falls
-        back after the finalize bound. Shorten it so these tests stay fast."""
-        monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_TIMEOUT_SECS", 0.3)
+    def _joined_cancel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from milknado.domains.dispatch import cancel as cancel_module
+
+        monkeypatch.setattr(
+            cancel_module,
+            "_await_cancel_finalize",
+            lambda graph, run_id: cancel_module._finalize_cancelled(graph, run_id),
+        )
 
     def test_cancel_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
@@ -621,23 +771,15 @@ class TestRunCancel:
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         removed: list[Path] = []
-        pruned: list[bool] = []
-
         monkeypatch.setattr(
             adapters.GitAdapter,
             "remove_worktree",
             lambda self, wt, target="HEAD": removed.append(wt),
         )
-        monkeypatch.setattr(
-            adapters.GitAdapter, "prune_worktrees", lambda self: pruned.append(True)
-        )
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
         _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
         assert removed == [orphan_wt], "orphaned worktree must be removed on cancel"
-        assert pruned, "git worktree prune must be called after cancel"
 
     def test_sync_stuck_running_cancel_reconciles_and_clears(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -678,9 +820,6 @@ class TestRunCancel:
     def test_cancel_logs_when_worktree_removal_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """If `git worktree remove` raises mid-cancel, _reconcile_cancel logs a
-        warning and still reconciles the node + prunes — a failed removal must
-        never strand the node RUNNING."""
         import milknado.adapters as adapters
 
         root = str(tmp_path)
@@ -696,33 +835,14 @@ class TestRunCancel:
         run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
-        pruned: list[bool] = []
-
         def boom(self, wt, target="HEAD"):
             raise RuntimeError("worktree locked")
 
         monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", boom)
-        monkeypatch.setattr(
-            adapters.GitAdapter, "prune_worktrees", lambda self: pruned.append(True)
-        )
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-
-        with caplog.at_level(logging.WARNING, logger="milknado.mcp_run"):
+        with caplog.at_level(logging.WARNING, logger="milknado.domains.dispatch.cancel"):
             result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
-
         assert result["status"] == "failed"
-        assert any("Failed to remove worktree" in r.getMessage() for r in caplog.records), (
-            "a failed worktree removal must be logged"
-        )
-        assert pruned, "prune must still run even when removal fails"
-        graph2, _cfg2 = open_graph(tmp_path)
-        try:
-            node = graph2.get_node(node_id)
-            assert node is not None
-            assert node.status.value == "failed", "removal failure must not strand node RUNNING"
-        finally:
-            graph2.close()
+        assert any("cancel preserving worktree" in r.getMessage() for r in caplog.records)
 
     def _cancel_repo_with_worktree(
         self, tmp_path: Path, *, unlanded: bool
@@ -1133,23 +1253,54 @@ class TestCancelFinalizeAndRace:
         finally:
             graph2.close()
 
+    def test_pid_cancel_preserves_state_when_process_will_not_exit(self) -> None:
+        from milknado.domains.dispatch.cancel import _cancel_pid_run
+
+        class Process:
+            def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002
+                return False
+
+        with pytest.raises(RuntimeError, match="did not exit after termination"):
+            _cancel_pid_run(
+                object(),  # type: ignore[arg-type]
+                object(),  # type: ignore[arg-type]
+                Process(),
+                {"pid": 91, "node_id": 3},
+                "node-3-20260101T000000Z-stuk",
+            )
+
+    def test_async_cancel_preserves_running_state_without_exit_confirmation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from milknado.domains.dispatch import cancel as cancel_module
+
+        class Graph:
+            def get_run(self, run_id: str) -> dict:  # noqa: ARG002
+                return {"status": "running"}
+
+        monkeypatch.setattr(cancel_module, "_await_cancel_finalize", lambda graph, run_id: None)
+        run_id = "node-3-20260101T000000Z-stuk"
+        with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
+            cancel_module._cancel_async_run(
+                Graph(),
+                object(),  # type: ignore[arg-type]
+                tmp_path,
+                {"node_id": 3},
+                run_id,
+            )
+        assert (cancel_module.runs_dir(tmp_path) / f"{run_id}.cancel").exists()
+
 
 class TestTerminateWorker:
-    """_terminate_worker's SIGKILL escalation: a worker that ignores SIGTERM must
-    be force-killed after the grace window (runner.py:196-198)."""
+    """The production process adapter escalates an ignored SIGTERM to SIGKILL."""
 
     def test_terminate_worker_escalates_to_sigkill_when_sigterm_ignored(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ) -> None:
         import signal as sig_mod
         import subprocess as sp_mod
 
-        import milknado.domains.dispatch.runner as runner_mod
-
-        monkeypatch.setattr(runner_mod, "_CANCEL_GRACE_SECS", 0.2)
         ready = tmp_path / "handler-ready"
-        # Trap+ignore SIGTERM, signal readiness, then sleep far past the grace
-        # window: the only way this worker dies is the kill() escalation.
         code = (
             "import signal, time, pathlib; "
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
@@ -1162,12 +1313,10 @@ class TestTerminateWorker:
             time.sleep(0.01)
         assert ready.exists(), "worker did not install its SIGTERM handler in time"
         try:
-            runner_mod._terminate_worker(proc)
-            # _terminate_worker must have reaped the process itself — capture the
-            # code BEFORE the cleanup net so a regressed escalation can't be masked.
+            ProcessAdapter(termination_grace=0.2)._terminate(proc)
             rc = proc.returncode
         finally:
-            if proc.poll() is None:  # cleanup net; only fires if escalation regressed
+            if proc.poll() is None:
                 proc.kill()
                 proc.wait()
 
@@ -1197,6 +1346,21 @@ class TestDepositResult:
                 milknado_deposit_result,
                 run_id="node-1-20260101T000000Z-abcd",
                 payload="x",
+                project_root=str(tmp_path),
+            )
+
+    def test_deposit_rejects_mismatched_worker_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run_id = "node-1-20260101T000000Z-abcd"
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
+        monkeypatch.setenv("MILKNADO_PROJECT_ROOT", str(tmp_path.resolve()))
+        monkeypatch.setenv("MILKNADO_RUN_ID", "node-2-20260101T000000Z-feed")
+        with pytest.raises(ValueError, match="does not match injected run"):
+            _call(
+                milknado_deposit_result,
+                run_id=run_id,
+                payload="wrong owner",
                 project_root=str(tmp_path),
             )
 

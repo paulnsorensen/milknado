@@ -25,6 +25,11 @@ def test_worker_allowlist_grants_track_follow_up_not_delete_or_edit() -> None:
     assert "edit_node" not in joined
 
 
+def test_worker_allowlist_cannot_invoke_rtk_run() -> None:
+    for tools in WORKER_ALLOWED_TOOLS.values():
+        assert all("rtk" not in tool.lower() for tool in tools)
+
+
 def test_gemini_worker_allowlist_grants_track_follow_up() -> None:
     assert "milknado_track_follow_up" in WORKER_ALLOWED_TOOLS["gemini"]
 
@@ -72,75 +77,178 @@ def test_resolve_execution_uses_override() -> None:
     )
 
 
-def test_non_default_family_with_override_keeps_planning_and_execution_consistent(
-    tmp_path: Path,
-) -> None:
-    p = tmp_path / "ctx.md"
-    p.write_text("hello world", encoding="utf-8")
+def test_custom_planning_agent_is_forced_into_read_only_mode(tmp_path: Path) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
     override = "claude --model custom -p --dangerously-skip-permissions"
 
-    planning_command = resolve_planning_agent_command(
-        "claude",
-        planning_agent=override,
-    )
-    execution_command = resolve_execution_agent_command(
-        "claude",
-        execution_agent=override,
-    )
-    argv, _extra = build_planning_subprocess(p, planning_command)
+    planning_command = resolve_planning_agent_command("claude", planning_agent=override)
+    argv, extra = build_planning_subprocess(context, planning_command)
 
     assert planning_command == override
-    assert execution_command == override
-    assert argv[0] == "claude"
-    assert "--model" in argv
-    assert "custom" in argv
-    assert argv[-1] == "-"
+    assert argv == [
+        "claude",
+        "--model",
+        "custom",
+        "-p",
+        "--permission-mode",
+        "plan",
+        "--allowedTools",
+        "Read,Glob,Grep",
+        "-",
+    ]
+    assert extra == {
+        "env": build_minimal_mcp_env(),
+        "input": "hello world",
+        "text": True,
+    }
 
 
 def test_build_planning_subprocess_uses_stdin(tmp_path: Path) -> None:
-    p = tmp_path / "ctx.md"
-    p.write_text("hello world", encoding="utf-8")
-    argv, extra = build_planning_subprocess(p, "echo")
-    assert argv[0] == "echo"
-    assert argv[-1] == "-"
-    assert extra.get("text") is True
-    assert extra.get("input") == "hello world"
-    assert isinstance(extra.get("env"), dict)
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    argv, extra = build_planning_subprocess(context, "claude --model opus -p")
+    assert argv == [
+        "claude",
+        "--model",
+        "opus",
+        "-p",
+        "--permission-mode",
+        "plan",
+        "--allowedTools",
+        "Read,Glob,Grep",
+        "-",
+    ]
+    assert extra == {
+        "env": build_minimal_mcp_env(),
+        "input": "hello world",
+        "text": True,
+    }
+
+
+def test_build_planning_subprocess_replaces_duplicate_claude_capability_options(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+
+    argv, extra = build_planning_subprocess(
+        context,
+        (
+            "claude --permission-mode bypass --permission-mode acceptEdits "
+            "--allowedTools Bash --allowedTools Write -p"
+        ),
+    )
+
+    assert argv == [
+        "claude",
+        "-p",
+        "--permission-mode",
+        "plan",
+        "--allowedTools",
+        "Read,Glob,Grep",
+        "-",
+    ]
+    assert extra == {
+        "env": build_minimal_mcp_env(),
+        "input": "hello world",
+        "text": True,
+    }
+
+
+def test_build_planning_subprocess_sandboxes_gemini_exactly(tmp_path: Path) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+
+    argv, extra = build_planning_subprocess(
+        context,
+        "gemini --allowed-tools ShellTool -p",
+    )
+
+    assert argv == [
+        "gemini",
+        "-p",
+        "--allowed-tools",
+        "read_file,glob,search_file_content",
+        "-",
+    ]
+    assert extra == {
+        "env": build_minimal_mcp_env(),
+        "input": "hello world",
+        "text": True,
+    }
+
+
+def test_build_planning_subprocess_sandboxes_codex_exactly(tmp_path: Path) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+
+    argv, extra = build_planning_subprocess(
+        context,
+        "codex exec --sandbox danger-full-access",
+    )
+
+    assert argv == ["codex", "exec", "--sandbox", "read-only", "-"]
+    assert extra == {
+        "env": build_minimal_mcp_env(),
+        "input": "hello world",
+        "text": True,
+    }
+
+
+def test_build_planning_subprocess_rejects_cursor_without_read_only_mode(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+
+    with pytest.raises(
+        ValueError,
+        match="cursor-agent cannot enforce read-only planning capabilities",
+    ):
+        build_planning_subprocess(context, "cursor-agent -p")
 
 
 def test_build_planning_subprocess_allows_external_mcp(tmp_path: Path) -> None:
-    p = tmp_path / "ctx.md"
-    p.write_text("hello world", encoding="utf-8")
-    _argv, extra = build_planning_subprocess(
-        p,
-        "echo",
-        allow_external_mcp=True,
-    )
-    assert "env" not in extra
-
-
-def test_build_planning_subprocess_adds_repo_mcp_config(tmp_path: Path) -> None:
-    p = tmp_path / "ctx.md"
-    p.write_text("hello world", encoding="utf-8")
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
     (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
-    argv, extra = build_planning_subprocess(p, "echo", project_root=tmp_path)
-    assert "--mcp-config" in argv
-    assert str(tmp_path / ".mcp.json") in argv
-    assert isinstance(extra.get("env"), dict)
+    argv, extra = build_planning_subprocess(
+        context,
+        "claude -p",
+        allow_external_mcp=True,
+        project_root=tmp_path,
+    )
+    assert argv[-3:] == ["--mcp-config", str(tmp_path / ".mcp.json"), "-"]
+    assert extra["env"] == build_minimal_mcp_env()
 
 
-def test_build_minimal_mcp_env_strips_external_mcp() -> None:
+def test_build_planning_subprocess_does_not_forward_repo_mcp_by_default(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+    argv, extra = build_planning_subprocess(
+        context,
+        "claude -p",
+        project_root=tmp_path,
+    )
+    assert "--mcp-config" not in argv
+    assert extra["env"] == build_minimal_mcp_env()
+
+
+def test_build_minimal_mcp_env_forwards_only_process_essentials() -> None:
     mocked_env = {
-        "MCP_SERVER_URL": "https://example.com/mcp",
-        "MILKNADO_MCP_MODE": "local",
+        "ANTHROPIC_API_KEY": "secret",
         "CRG_EMBEDDING_MODEL": "all-MiniLM-L6-v2",
+        "HOME": "/home/test",
+        "MILKNADO_PROJECT_ROOT": "/secret/root",
         "PATH": "/bin",
     }
     with patch("milknado.domains.common.agent_argv.os.environ", mocked_env):
         env = build_minimal_mcp_env()
-    assert "MCP_SERVER_URL" not in env
-    assert env["MILKNADO_MCP_MODE"] == "local"
-    assert env["CRG_EMBEDDING_MODEL"] == "all-MiniLM-L6-v2"
+    assert env == {"HOME": "/home/test", "PATH": "/bin"}
 
 
 def test_load_config_roundtrip_split_agents(tmp_path: Path) -> None:
