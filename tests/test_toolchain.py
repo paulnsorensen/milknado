@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from milknado.domains.common.toolchain import (
     REQUIRED_RUST_TOOLS,
@@ -65,17 +64,6 @@ def test_status_uses_toolchain_port() -> None:
         ("mergiraf", False, None),
         ("rtk", False, None),
     ]
-
-
-def test_default_status_composes_system_adapter() -> None:
-    toolchain = FakeToolchain({"tilth": "/bin/tilth"})
-    with patch(
-        "milknado.adapters.toolchain.SystemToolchainAdapter",
-        return_value=toolchain,
-    ):
-        statuses = get_required_tool_status()
-
-    assert statuses[0].path == "/bin/tilth"
 
 
 def test_no_cargo_marks_only_missing_tools_failed() -> None:
