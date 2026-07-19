@@ -414,7 +414,11 @@ def _run_agent_phase(
     emit(event_type, ended_data)
     _notify_iteration_hooks(hooks, state, agent, promise_completed, config.completion_signal)
 
-    return agent.success, promise_completed and config.stop_on_completion_signal
+    # A turn cap is a graceful, ITERATION_COMPLETED outcome, but the streaming
+    # path SIGKILLs the child so agent.success is False. Treat it as success so
+    # a per-iteration cap never trips stop_on_error into a FAILED run.
+    iteration_succeeded = agent.success or agent.turn_capped
+    return iteration_succeeded, promise_completed and config.stop_on_completion_signal
 
 
 def _build_tool_use_bridge(
