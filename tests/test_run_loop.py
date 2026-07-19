@@ -67,6 +67,9 @@ class FakeGit:
     def current_branch(self) -> str:
         return "main"
 
+    def resolve_ref(self, ref: str) -> str:
+        return f"{ref}-oid"
+
     def commit_all(self, worktree: Path, message: str) -> None:
         pass
 
@@ -120,6 +123,7 @@ class FakeRalph:
         quality_gates: list[str],
         project_root: Path | None = None,
         commit_footer: str | None = None,
+        base_oid: str | None = None,
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
@@ -130,8 +134,8 @@ class FakeRalph:
     def start_run(self, run_id: str) -> None:
         pass
 
-    def stop_run(self, run_id: str) -> None:
-        pass
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return True
 
     def list_runs(self) -> list[Any]:
         return []
@@ -1143,7 +1147,8 @@ class TestLoopAdapterLogDir:
 
         captured_configs: list[Any] = []
 
-        def fake_create_run(config: Any) -> Any:
+        def fake_create_run(config: Any, *, emitter: Any) -> Any:
+            assert emitter is adapter._emitter
             captured_configs.append(config)
             fake_run = MagicMock()
             fake_run.state.run_id = "run-test"
@@ -1338,6 +1343,27 @@ class TestHandleCompletionTimeout:
         result = loop.run(config, "main", strict=True)
 
         assert result.strict_exit is True
+
+    def test_timeout_preserves_active_ownership_until_worker_exits(
+        self,
+        graph: MikadoGraph,
+    ) -> None:
+        from milknado.domains.common.errors import CompletionTimeout
+
+        executor = MagicMock()
+        ralph = FakeRalph()
+        ralph.stop_run = MagicMock(return_value=False)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop._active = {"run-1": 7}
+
+        failed = loop._handle_completion_timeout(
+            CompletionTimeout(waited_seconds=60.0, active_run_ids={"run-1"})
+        )
+
+        assert failed == 0
+        assert loop._active == {"run-1": 7}
+        executor.fail.assert_not_called()
+        ralph.stop_run.assert_called_once_with("run-1", timeout=10.0)
 
 
 class TestVerifySpecGapsPath:

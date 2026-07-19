@@ -15,7 +15,12 @@ from pathlib import Path
 
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.wiki._locate import resolve_roadmap_dir
+from milknado.domains.wiki._locate import (
+    read_text,
+    resolve_roadmap_dir,
+    roadmap_markdown_files,
+    write_text_atomic,
+)
 from milknado.domains.wiki._serialize import (
     compute_goal_ref,
     compute_roadmap_ref,
@@ -60,6 +65,7 @@ def import_roadmap(
     counters = _Counters()
     roadmap_id, _ = _ingest_file(
         graph,
+        wiki_root,
         index_path,
         kind=NodeKind.ROADMAP,
         parent_id=None,
@@ -69,12 +75,13 @@ def import_roadmap(
     )
     goal_ids: dict[str, int] = {}
     prereqs: dict[str, list[str]] = {}
-    for path in sorted(roadmap_dir.glob("*.md")):
+    for path in roadmap_markdown_files(wiki_root, roadmap_dir):
         if path.name == "index.md":
             continue
         goal_slug = path.stem
         goal_ids[goal_slug], prereqs[goal_slug] = _ingest_file(
             graph,
+            wiki_root,
             path,
             kind=NodeKind.GOAL,
             parent_id=roadmap_id,
@@ -94,6 +101,7 @@ def import_roadmap(
 
 def _ingest_file(
     graph: MikadoGraph,
+    wiki_root: Path,
     path: Path,
     *,
     kind: NodeKind,
@@ -107,7 +115,7 @@ def _ingest_file(
     Returns the node id and the file's declared prereq slugs, parsed from the
     single frontmatter read so the caller need not re-read the file.
     """
-    text = path.read_text()
+    text = read_text(wiki_root, path)
     frontmatter = load_frontmatter(text)
     created = frontmatter.get("created")
     try:
@@ -116,7 +124,7 @@ def _ingest_file(
         raise ValueError(f"{path.name}: {exc}") from exc
     if created is None:
         text = set_frontmatter_field(text, "created", stamp)
-        path.write_text(text)
+        write_text_atomic(wiki_root, path, text)
         created = stamp
         counters.stamped.append(path.stem)
     ref = ref_for(str(created))

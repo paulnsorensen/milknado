@@ -18,13 +18,14 @@ silently skip — otherwise the stranded-work bug returns disguised as success.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from milknado.adapters.git import GitAdapter
-from milknado.domains.common.errors import RebaseAbortError
+from milknado.domains.common.errors import GitOperationError
 from milknado.domains.execution.executor import (
     Executor,
     WorktreeManager,
@@ -152,12 +153,9 @@ class TestMergeBackIntegration:
         assert preserved.is_file()
         assert "iteration 1 log line" in preserved.read_text()
 
-    def test_fast_forward_failure_raises_no_silent_skip(
+    def test_fast_forward_failure_returns_failed_domain_outcome(
         self, project: Path, tmp_path: Path
     ) -> None:
-        """A dirty project-root tree overlapping the merge makes --ff-only abort —
-        complete() must raise, not swallow it into a false success (the exact shape
-        of the stranded-work bug returning disguised as DONE)."""
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
@@ -173,8 +171,10 @@ class TestMergeBackIntegration:
         try:
             _running_node(graph, wt, branch)
             ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
-            with pytest.raises(RebaseAbortError):
-                ex.complete(1, "feature")
+            result = ex.complete(1, "feature")
+            assert result.rebased is False
+            assert result.rebase_conflict is not None
+            assert "GitOperationError" in result.rebase_conflict.detail
         finally:
             graph.close()
 
@@ -233,7 +233,7 @@ class TestGitAdapterContract:
         (project / "g.py").write_text("y = 2\n")
         _git(project, "add", "g.py")
         _git(project, "commit", "-qm", "feature moves on")
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(GitOperationError, match="merge --ff-only"):
             git.fast_forward(branch)
 
 
@@ -317,6 +317,22 @@ class TestPreserveRunLogs:
         assert (dest / "a.log").read_text() == "a\n"
         assert (dest / "sub" / "b.log").read_text() == "b\n"
 
+    def test_retains_only_twenty_newest_log_files(self, tmp_path: Path) -> None:
+        wt = tmp_path / "proj" / "wt"
+        logs = wt / ".ralph-logs"
+        logs.mkdir(parents=True)
+        for index in range(22):
+            path = logs / f"{index:02}.log"
+            path.write_text(f"{index}\n")
+            os.utime(path, (index, index))
+
+        _preserve_run_logs(wt, 7)
+
+        dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
+        assert {path.name for path in dest.iterdir()} == {
+            f"{index:02}.log" for index in range(2, 22)
+        }
+
     def test_nested_worktree_preserves_under_checkout_root(self, project: Path) -> None:
         """When the worktree is nested in a subdirectory under the project root
         (a legal `worktree_pattern`), logs must land under the main checkout root,
@@ -368,15 +384,13 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         assert git.fast_forwarded == []
 
     def test_worktree_kept_when_fast_forward_raises(self, tmp_path: Path) -> None:
-        """A ff failure means the squashed commit never landed on the feature
-        branch — the worktree is the only copy of that work. Fail-closed
-        teardown keeps it (the old force-remove here was the exact
-        silent-destruction bug) while RebaseAbortError still propagates."""
         wt = tmp_path / "wt"
         wt.mkdir()
-        git = _RecordingGit(committed=True, ff_error=subprocess.CalledProcessError(1, "git"))
+        git = _RecordingGit(
+            committed=True, ff_error=GitOperationError("merge --ff-only", "diverged")
+        )
         wm = WorktreeManager(git)
-        with pytest.raises(RebaseAbortError):
+        with pytest.raises(GitOperationError, match="merge --ff-only"):
             wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.removed == [], "unlanded work must not be torn down"
         assert wt.exists()

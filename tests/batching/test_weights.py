@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from milknado.domains.batching import (
     FileChange,
@@ -123,7 +126,10 @@ def test_per_symbols_multiple_symbols_concatenated(tmp_path: Path) -> None:
     assert result > 0
 
 
-def test_per_symbols_symbol_not_found_degrades_to_path_level(tmp_path: Path) -> None:
+def test_per_symbols_symbol_not_found_degrades_to_path_level(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     f = tmp_path / "src" / "foo.py"
     f.parent.mkdir()
     f.write_text("x = 1\n")
@@ -135,15 +141,20 @@ def test_per_symbols_symbol_not_found_degrades_to_path_level(tmp_path: Path) -> 
         edit_kind="modify",
         symbols=(SymbolRef(name="missing", file="src/foo.py"),),
     )
-    with patch("milknado.domains.batching.weights._tiktoken_count", return_value=15):
+    with (
+        patch("milknado.domains.batching.weights._tiktoken_count", return_value=15),
+        caplog.at_level(logging.WARNING, logger="milknado.domains.batching.weights"),
+    ):
         result = estimate_tokens_per_symbols(c, tmp_path, port)
     assert result == math.ceil(15 * HEADROOM)
-    warn_log = tmp_path / ".milknado" / "planning-context-warn.log"
-    assert warn_log.exists()
-    assert "missing" in warn_log.read_text()
+    [record] = caplog.records
+    assert record.reason == "symbol not found: 'missing' in 'src/foo.py'"
 
 
-def test_per_symbols_read_section_error_degrades(tmp_path: Path) -> None:
+def test_per_symbols_read_section_error_degrades(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     port = MagicMock()
     port.search_symbol.return_value = [
         SymbolLocation(path=Path("src/foo.py"), line_start=1, line_end=5)
@@ -155,11 +166,14 @@ def test_per_symbols_read_section_error_degrades(tmp_path: Path) -> None:
         edit_kind="modify",
         symbols=(SymbolRef(name="foo", file="src/foo.py"),),
     )
-    with patch("milknado.domains.batching.weights._tiktoken_count", return_value=10):
+    with (
+        patch("milknado.domains.batching.weights._tiktoken_count", return_value=10),
+        caplog.at_level(logging.WARNING, logger="milknado.domains.batching.weights"),
+    ):
         result = estimate_tokens_per_symbols(c, tmp_path, port)
     assert result == math.ceil(10 * HEADROOM)
-    warn_log = tmp_path / ".milknado" / "planning-context-warn.log"
-    assert warn_log.exists()
+    [record] = caplog.records
+    assert record.reason == "tilth unavailable"
 
 
 def test_per_symbols_add_uses_heuristic_ignores_tilth(tmp_path: Path) -> None:
@@ -182,43 +196,41 @@ def test_per_symbols_delete_flat_cost_ignores_tilth(tmp_path: Path) -> None:
     port.search_symbol.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# #80 — warn-log write failure must not propagate to caller
-# ---------------------------------------------------------------------------
-
-
-def test_log_degradation_absorbs_oserror(tmp_path: Path) -> None:
-    """_log_degradation silently absorbs OSError from the log file write."""
+def test_log_degradation_emits_structured_warning(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from milknado.domains.batching.weights import _log_degradation
 
-    c = FileChange(id="1", path="a.py", edit_kind="modify")
-    with patch("builtins.open", side_effect=OSError("no space left on device")):
-        _log_degradation(tmp_path, c, "test reason")  # must not raise
+    change = FileChange(id="c1", path="src/a.py", edit_kind="modify")
+    with caplog.at_level(logging.WARNING, logger="milknado.domains.batching.weights"):
+        _log_degradation(tmp_path, change, "tilth unavailable")
+
+    [record] = caplog.records
+    assert record.getMessage() == "planning token estimate degraded to path-level analysis"
+    assert record.project_root == str(tmp_path)
+    assert record.change_id == "c1"
+    assert record.change_path == "src/a.py"
+    assert record.reason == "tilth unavailable"
 
 
-def test_estimate_survives_log_write_oserror(tmp_path: Path) -> None:
-    """estimate_tokens_per_symbols returns a valid int even when the warn-log write OSErrors.
-
-    Why: _log_degradation is called from a bare except-block in estimate_tokens_per_symbols;
-    if _log_degradation itself raises, the fallback path-level estimate would never run.
-    The OSError must be absorbed inside _log_degradation so the caller always gets a result.
-    """
+def test_estimate_logs_degradation_and_returns_fallback(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     port = MagicMock()
-    port.search_symbol.return_value = []  # triggers ValueError → _log_degradation call
-
-    c = FileChange(
+    port.search_symbol.return_value = []
+    change = FileChange(
         id="1",
         path="src/foo.py",
         edit_kind="modify",
         symbols=(SymbolRef(name="foo", file="src/foo.py"),),
     )
-    real_open = open
 
-    def selective_fail(path, *args, **kwargs):
-        if "planning-context-warn" in str(path):
-            raise OSError("disk full")
-        return real_open(path, *args, **kwargs)
+    with caplog.at_level(logging.WARNING, logger="milknado.domains.batching.weights"):
+        result = estimate_tokens_per_symbols(change, tmp_path, port)
 
-    with patch("builtins.open", side_effect=selective_fail):
-        result = estimate_tokens_per_symbols(c, tmp_path, port)
-    assert isinstance(result, int) and result > 0
+    assert result > 0
+    [record] = caplog.records
+    assert record.change_id == "1"
+    assert record.change_path == "src/foo.py"

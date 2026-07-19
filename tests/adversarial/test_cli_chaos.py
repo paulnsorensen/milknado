@@ -59,8 +59,7 @@ class TestSpecFlagValidation:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli._load_or_default"),
-            patch("milknado.cli._ensure_db"),
+            patch("milknado.cli_plan._ensure_db"),
         ):
             mock_planner = MagicMock()
             mock_planner_cls.return_value = mock_planner
@@ -81,8 +80,7 @@ class TestSpecFlagValidation:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli._load_or_default"),
-            patch("milknado.cli._ensure_db") as mock_ensure_db,
+            patch("milknado.cli_plan._ensure_db") as mock_ensure_db,
         ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
@@ -106,8 +104,7 @@ class TestSolverStatusExitCodes:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli._load_or_default"),
-            patch("milknado.cli._ensure_db") as mock_ensure_db,
+            patch("milknado.cli_plan._ensure_db") as mock_ensure_db,
         ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph

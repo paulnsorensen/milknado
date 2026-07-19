@@ -36,7 +36,7 @@ class ManagedRun:
 
     config: RunConfig
     state: RunState
-    emitter: QueueEmitter
+    emitter: EventEmitter
     thread: threading.Thread | None = None
     _extra_emitters: list[EventEmitter] = field(default_factory=list)
 
@@ -85,16 +85,19 @@ class RunManager:
         with self._lock:
             return self._lookup(run_id)
 
-    def create_run(self, config: RunConfig) -> ManagedRun:
-        """Create a new run from *config* and register it.
-
-        Assigns a unique run ID and returns the :class:`ManagedRun`.
-        The run is not started — call :meth:`start_run` to begin execution.
-        """
+    def create_run(
+        self,
+        config: RunConfig,
+        emitter: EventEmitter | None = None,
+    ) -> ManagedRun:
+        """Create and register a run, using a queue only when no emitter is supplied."""
         run_id = generate_run_id()
         state = RunState(run_id=run_id)
-        emitter = QueueEmitter()
-        managed = ManagedRun(config=config, state=state, emitter=emitter)
+        managed = ManagedRun(
+            config=config,
+            state=state,
+            emitter=emitter if emitter is not None else QueueEmitter(),
+        )
         with self._lock:
             self._runs[run_id] = managed
         return managed
@@ -145,6 +148,16 @@ class RunManager:
     def resume_run(self, run_id: str) -> None:
         """Resume a paused run."""
         self._require_run(run_id).state.request_resume()
+
+    def stop_and_join(self, run_id: str, timeout: float | None = None) -> bool:
+        """Request stop and wait until the run thread has actually exited."""
+        managed = self._require_run(run_id)
+        managed.state.request_stop()
+        thread = managed.thread
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
 
     def list_runs(self) -> list[ManagedRun]:
         """Return a snapshot of all registered runs."""

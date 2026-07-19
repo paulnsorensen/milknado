@@ -30,7 +30,13 @@ class HeadlessOutcome:
 
 
 class _ExecutorLike(Protocol):
-    def dispatch(self, node_id: int, config: ExecutionConfig) -> DispatchResult: ...
+    def dispatch(
+        self,
+        node_id: int,
+        config: ExecutionConfig,
+        *,
+        base_oid: str | None = None,
+    ) -> DispatchResult: ...
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
     def fail(self, node_id: int) -> None: ...
 
@@ -39,7 +45,7 @@ class _RalphLike(Protocol):
     def wait_for_next_completion(
         self, active_run_ids: set[str], timeout: float | None = None
     ) -> tuple[str, bool]: ...
-    def stop_run(self, run_id: str) -> None: ...
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
 
 
 def run_node_to_completion(
@@ -49,6 +55,8 @@ def run_node_to_completion(
     exec_config: ExecutionConfig,
     feature_branch: str,
     timeout: float,
+    *,
+    base_oid: str | None = None,
 ) -> HeadlessOutcome:
     """Dispatch one node into its worktree, wait for the ralph run to finish, then
     rebase-merge it back. Returns success only when the run completed AND the
@@ -66,16 +74,26 @@ def run_node_to_completion(
             success=False,
             detail=f"invalid feature branch {feature_branch!r}; refusing to dispatch",
         )
-    dispatch = executor.dispatch(node_id, exec_config)
+    dispatch = executor.dispatch(node_id, exec_config, base_oid=base_oid)
     try:
         _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
     except CompletionTimeout:
-        ralph.stop_run(dispatch.run_id)
+        if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+            return HeadlessOutcome(
+                node_id,
+                success=False,
+                detail="completion timeout; worker did not exit, ownership preserved",
+            )
         executor.fail(node_id)
         return HeadlessOutcome(node_id, success=False, detail="completion timeout")
 
     if not completed:
-        ralph.stop_run(dispatch.run_id)
+        if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+            return HeadlessOutcome(
+                node_id,
+                success=False,
+                detail="worker run did not complete or exit; ownership preserved",
+            )
         executor.fail(node_id)
         return HeadlessOutcome(node_id, success=False, detail="worker run did not complete")
 

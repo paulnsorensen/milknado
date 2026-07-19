@@ -4,11 +4,8 @@ import logging
 
 import pytest
 
-from milknado.mcp_server import (
-    _dict_to_file_change,
-    _plan_batches_impl,
-    milknado_plan_apply,
-)
+from milknado.domains.planning.manifest import decode_manifest
+from milknado.mcp_server import _plan_batches_impl, milknado_plan_apply
 
 
 def _stub_crg(monkeypatch) -> None:
@@ -27,7 +24,7 @@ def _stub_crg(monkeypatch) -> None:
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
 
 
-def _apply(**kwargs):
+def _call_tool(**kwargs):
     """Call the milknado_plan_apply tool via its underlying Python callable."""
     fn = getattr(milknado_plan_apply, "fn", milknado_plan_apply)
     return fn(**kwargs)
@@ -45,8 +42,7 @@ def _valid_manifest() -> dict:
     }
 
 
-def test_plan_batches_impl_stub(tmp_path, monkeypatch) -> None:
-    """Test _plan_batches_impl with a stubbed CrgAdapter."""
+def test_plan_batches_single_change_returns_exact_payload(tmp_path, monkeypatch) -> None:
     from milknado.adapters import crg as crg_mod
 
     class StubAdapter:
@@ -65,22 +61,22 @@ def test_plan_batches_impl_stub(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
 
     result = _plan_batches_impl(
-        [{"id": "1", "path": "a.py", "edit_kind": "delete"}],
+        [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
         70_000,
         tmp_path,
     )
-    assert result["solver_status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
-    assert "batches" in result
-    assert "spread_report" in result
-    # Verify new batch shape
-    if result["batches"]:
-        first = result["batches"][0]
-        assert "index" in first
-        assert "change_ids" in first
-        assert "depends_on" in first
-        assert "oversized" in first
-    # spread_report is a list (not dict) in new shape
-    assert isinstance(result["spread_report"], list)
+    assert result == {
+        "batches": [
+            {
+                "index": 0,
+                "change_ids": ["1"],
+                "depends_on": [],
+                "oversized": False,
+            }
+        ],
+        "spread_report": [],
+        "solver_status": "OPTIMAL",
+    }
 
 
 @pytest.mark.asyncio
@@ -113,7 +109,17 @@ async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
     async with Client(mcp) as c:
         result = await c.call_tool(
             "milknado_plan_batches",
-            {"changes": [{"id": "1", "path": "a.py", "edit_kind": "delete"}], "budget": 70_000},
+            {
+                "changes": [
+                    {
+                        "id": "1",
+                        "path": "a.py",
+                        "edit_kind": "delete",
+                        "description": "delete a",
+                    }
+                ],
+                "budget": 70_000,
+            },
         )
 
     assert result is not None
@@ -126,61 +132,21 @@ async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
     assert isinstance(data.get("spread_report"), list)
 
 
-# ---------------------------------------------------------------------------
-# #66 — MCP-path field round-trip (hash_anchors, dependencies, description)
-# ---------------------------------------------------------------------------
-
-
-def test_hash_anchors_round_trip() -> None:
-    """hash_anchors survive the dict→FileChange boundary."""
-    fc = _dict_to_file_change(
+def _decode_change(raw: dict):
+    manifest = decode_manifest(
         {
-            "id": "c1",
-            "path": "src/foo.py",
-            "edit_kind": "modify",
-            "hash_anchors": {"before": "sha256:aaa", "after": "sha256:bbb"},
+            "manifest_version": "milknado.plan.v2",
+            "goal": "test",
+            "goal_summary": "test change decoding",
+            "changes": [raw],
+            "new_relationships": [],
         }
     )
-    assert fc.hash_anchors is not None
-    assert fc.hash_anchors.before == "sha256:aaa"
-    assert fc.hash_anchors.after == "sha256:bbb"
+    return manifest.changes[0]
 
 
-def test_description_round_trip() -> None:
-    """description survives the dict→FileChange boundary."""
-    fc = _dict_to_file_change({"id": "c1", "path": "src/foo.py", "description": "fix the widget"})
-    assert fc.description == "fix the widget"
-
-
-def test_dependencies_round_trip() -> None:
-    """dependencies survive the dict→FileChange boundary with all sub-fields."""
-    fc = _dict_to_file_change(
-        {
-            "id": "c1",
-            "path": "src/foo.py",
-            "dependencies": [
-                {
-                    "path": "src/bar.py",
-                    "symbols": [{"name": "bar_fn", "file": "src/bar.py"}],
-                    "hash_anchors": {"before": "sha256:111", "after": "sha256:222"},
-                    "reason": "constrains foo",
-                }
-            ],
-        }
-    )
-    assert len(fc.dependencies) == 1
-    dep = fc.dependencies[0]
-    assert dep.path == "src/bar.py"
-    assert len(dep.symbols) == 1
-    assert dep.symbols[0].name == "bar_fn"
-    assert dep.hash_anchors is not None
-    assert dep.hash_anchors.before == "sha256:111"
-    assert dep.reason == "constrains foo"
-
-
-def test_all_file_change_fields_populated() -> None:
-    """Every non-default FileChange field carries through the MCP boundary."""
-    fc = _dict_to_file_change(
+def test_file_change_fields_round_trip_through_strict_decoder() -> None:
+    change = _decode_change(
         {
             "id": "c1",
             "path": "src/foo.py",
@@ -188,64 +154,58 @@ def test_all_file_change_fields_populated() -> None:
             "description": "why this change",
             "symbols": [{"name": "Foo", "file": "src/foo.py"}],
             "hash_anchors": {"before": "sha256:aaa", "after": "sha256:bbb"},
-            "dependencies": [{"path": "src/dep.py", "reason": "call site"}],
+            "dependencies": [
+                {
+                    "path": "src/dep.py",
+                    "symbols": [{"name": "dep", "file": "src/dep.py"}],
+                    "hash_anchors": {"before": "sha256:111", "after": "sha256:222"},
+                    "reason": "call site",
+                }
+            ],
             "depends_on": [],
         }
     )
-    assert fc.id == "c1"
-    assert fc.path == "src/foo.py"
-    assert fc.edit_kind == "modify"
-    assert fc.description == "why this change"
-    assert fc.symbols[0].name == "Foo"
-    assert fc.hash_anchors is not None
-    assert len(fc.dependencies) == 1
+    assert change.id == "c1"
+    assert change.path == "src/foo.py"
+    assert change.edit_kind == "modify"
+    assert change.description == "why this change"
+    assert change.symbols[0].name == "Foo"
+    assert change.hash_anchors is not None
+    assert change.hash_anchors.before == "sha256:aaa"
+    assert change.hash_anchors.after == "sha256:bbb"
+    assert change.dependencies[0].path == "src/dep.py"
+    assert change.dependencies[0].symbols[0].name == "dep"
+    assert change.dependencies[0].hash_anchors is not None
+    assert change.dependencies[0].hash_anchors.before == "sha256:111"
+    assert change.dependencies[0].reason == "call site"
 
 
-# ---------------------------------------------------------------------------
-# #74 — clear ValueError on missing id/path
-# ---------------------------------------------------------------------------
-
-
-def test_missing_id_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="id"):
-        _dict_to_file_change({"path": "a.py"})
-
-
-def test_missing_path_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="path"):
-        _dict_to_file_change({"id": "1"})
-
-
-def test_empty_id_raises_value_error() -> None:
-    with pytest.raises(ValueError, match="id"):
-        _dict_to_file_change({"id": "", "path": "a.py"})
-
-
-# ---------------------------------------------------------------------------
-# #76 — traversal guard on symbols[].file
-# ---------------------------------------------------------------------------
-
-
-def test_symbol_file_traversal_rejected() -> None:
-    with pytest.raises(ValueError, match="traversal"):
-        _dict_to_file_change(
-            {
-                "id": "c1",
-                "path": "src/foo.py",
-                "symbols": [{"name": "Foo", "file": "../../etc/passwd"}],
-            }
-        )
-
-
-def test_symbol_file_absolute_rejected() -> None:
-    with pytest.raises(ValueError, match="traversal"):
-        _dict_to_file_change(
-            {
-                "id": "c1",
-                "path": "src/foo.py",
-                "symbols": [{"name": "Foo", "file": "/etc/passwd"}],
-            }
-        )
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"path": "a.py", "description": "missing id"},
+        {"id": "1", "description": "missing path"},
+        {"id": "", "path": "a.py", "description": "empty id"},
+        {
+            "id": "c1",
+            "path": "src/foo.py",
+            "description": "bad symbol path",
+            "symbols": [{"name": "Foo", "file": "../../etc/passwd"}],
+        },
+        {
+            "id": "c1",
+            "path": "src/foo.py",
+            "description": "absolute symbol path",
+            "symbols": [{"name": "Foo", "file": "/etc/passwd"}],
+        },
+    ],
+)
+def test_malformed_change_uses_one_boundary_error(change: dict) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^manifest is not a valid milknado\.plan\.v2 object$",
+    ):
+        _decode_change(change)
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +236,10 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
     # Lower threshold to 2 so 3 changes in a single budget-fitting batch triggers the guard.
     # The property reads change.MEGA_BATCH_THRESHOLD, so that is the binding to patch.
     monkeypatch.setattr("milknado.domains.batching.change.MEGA_BATCH_THRESHOLD", 2)
-    changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
+    changes = [
+        {"id": str(i), "path": f"f{i}.py", "edit_kind": "delete", "description": f"delete {i}"}
+        for i in range(3)
+    ]
     with pytest.raises(MegaBatchAborted) as exc_info:
         _plan_batches_impl(changes, 70_000, tmp_path)
     assert exc_info.value.change_count == 3
@@ -298,7 +261,10 @@ def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
     monkeypatch.setattr("milknado.domains.batching.change.MEGA_BATCH_THRESHOLD", 2)
-    changes = [{"id": str(i), "path": f"f{i}.py", "edit_kind": "delete"} for i in range(3)]
+    changes = [
+        {"id": str(i), "path": f"f{i}.py", "edit_kind": "delete", "description": f"delete {i}"}
+        for i in range(3)
+    ]
     result = _plan_batches_impl(changes, 70_000, tmp_path, force_single_batch=True)
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE")
 
@@ -318,7 +284,11 @@ def test_telemetry_written_via_mcp(tmp_path, monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
-    _plan_batches_impl([{"id": "1", "path": "a.py", "edit_kind": "delete"}], 70_000, tmp_path)
+    _plan_batches_impl(
+        [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
+        70_000,
+        tmp_path,
+    )
     cal = tmp_path / ".milknado" / "calibration.jsonl"
     assert cal.exists(), "calibration.jsonl must be written by the MCP path"
 
@@ -345,7 +315,16 @@ def test_crg_failure_logged_not_swallowed(tmp_path, monkeypatch, caplog) -> None
     monkeypatch.setattr(crg_mod, "CrgAdapter", _BrokenCrg)
     with caplog.at_level(logging.WARNING, logger="milknado.mcp_server"):
         result = _plan_batches_impl(
-            [{"id": "1", "path": "a.py", "edit_kind": "delete"}], 70_000, tmp_path
+            [
+                {
+                    "id": "1",
+                    "path": "a.py",
+                    "edit_kind": "delete",
+                    "description": "delete a",
+                }
+            ],
+            70_000,
+            tmp_path,
         )
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
     assert any("CRG unavailable" in r.message for r in caplog.records), (
@@ -378,7 +357,7 @@ def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
     from milknado.mcp_server import open_graph
 
     _stub_crg(monkeypatch)
-    result = _apply(manifest=_valid_manifest(), project_root=str(tmp_path))
+    result = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
 
     created = result["nodes_created"]
     assert len(created) >= 2  # goal root + at least one task batch
@@ -407,7 +386,7 @@ def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeyp
 
     _stub_crg(monkeypatch)
     # First apply creates a GOAL root we can attach a second batch of tasks under.
-    first = _apply(manifest=_valid_manifest(), project_root=str(tmp_path))
+    first = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
     goal_root_id = first["nodes_created"][0]
 
     second_manifest = {
@@ -416,7 +395,7 @@ def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeyp
         "goal_summary": "Second wave",
         "changes": [{"id": "d1", "path": "src/c.py", "description": "Add module C"}],
     }
-    result = _apply(
+    result = _call_tool(
         manifest=second_manifest,
         project_root=str(tmp_path),
         parent_id=goal_root_id,
@@ -440,7 +419,7 @@ def test_plan_apply_nonexistent_parent_id_raises(tmp_path, monkeypatch) -> None:
     """A parent_id with no matching node raises ValueError at apply time."""
     _stub_crg(monkeypatch)
     with pytest.raises(ValueError, match="parent"):
-        _apply(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=99999)
+        _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=99999)
 
 
 def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None:
@@ -461,7 +440,7 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None
         graph.close()
 
     with pytest.raises(ValueError, match="TASK is not a valid child"):
-        _apply(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=roadmap_id)
+        _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=roadmap_id)
 
 
 def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) -> None:
@@ -469,7 +448,7 @@ def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) 
     from milknado.mcp_server import open_graph
 
     _stub_crg(monkeypatch)
-    result = _apply(manifest=_valid_manifest(), project_root=str(tmp_path))
+    result = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
 
     created = set(result["nodes_created"])
     summary_nodes = result["graph_summary"]["nodes"]
@@ -498,7 +477,7 @@ def test_plan_apply_invalid_manifest_raises_value_error(tmp_path, monkeypatch) -
     _stub_crg(monkeypatch)
     bad = {"manifest_version": "wrong.version", "goal": "x", "goal_summary": "y", "changes": []}
     with pytest.raises(ValueError, match="milknado.plan.v2"):
-        _apply(manifest=bad, project_root=str(tmp_path))
+        _call_tool(manifest=bad, project_root=str(tmp_path))
 
 
 def test_plan_apply_mega_batch_aborts(tmp_path, monkeypatch) -> None:
@@ -517,7 +496,7 @@ def test_plan_apply_mega_batch_aborts(tmp_path, monkeypatch) -> None:
         ],
     }
     with pytest.raises(MegaBatchAborted):
-        _apply(manifest=manifest, project_root=str(tmp_path), budget=70_000)
+        _call_tool(manifest=manifest, project_root=str(tmp_path), budget=70_000)
 
 
 def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch) -> None:
@@ -535,7 +514,7 @@ def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch
             for i in range(3)
         ],
     }
-    result = _apply(
+    result = _call_tool(
         manifest=manifest,
         project_root=str(tmp_path),
         budget=70_000,
@@ -564,4 +543,4 @@ def test_plan_apply_traversal_path_raises_value_error(tmp_path, monkeypatch) -> 
         ],
     }
     with pytest.raises(ValueError):
-        _apply(manifest=manifest, project_root=str(tmp_path))
+        _call_tool(manifest=manifest, project_root=str(tmp_path))

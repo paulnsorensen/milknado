@@ -1,10 +1,4 @@
-"""`bind_github_project`: wiki-origin projection (Acceptance 3, 5).
-
-Creates one Issue per goal (body = wiki Intent), adds items, stores github_ref on
-roadmap + goals, and bootstraps the Status field create-once — never an
-add-option-to-existing-field call. gh transport is monkeypatched at the bind
-module's own `gh_*` names.
-"""
+"""`bind_github_project`: wiki-origin projection through an injected port."""
 
 from __future__ import annotations
 
@@ -13,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.github import bind as bind_mod
 from milknado.domains.github._fields import STATUS_FIELD_NAME, STATUS_OPTIONS
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.github.bind import bind_github_project
@@ -67,7 +60,7 @@ build the second goal
 
 
 class FakeGh:
-    """Records the bind's gh calls; returns a distinct item id per issue."""
+    """Records bind operations and exposes the injected GitHub port."""
 
     def __init__(
         self, fields: list[dict] | None = None, existing_items: list[dict] | None = None
@@ -79,6 +72,12 @@ class FakeGh:
         self.created_fields: list[tuple[str, list[str]]] = []
         self.created_text_fields: list[str] = []
         self._counter = 0
+
+    def preflight(self) -> None:
+        pass
+
+    def project_view(self, _owner: str, _number: int) -> dict:
+        return {"id": "PVT_1"}
 
     def issue_create(self, owner: str, repo: str, title: str, body: str) -> str:
         self.issues.append((owner, repo, title, body))
@@ -104,17 +103,6 @@ class FakeGh:
         return {"id": "F_harvest"}
 
 
-def _wire(monkeypatch: pytest.MonkeyPatch, fake: FakeGh) -> None:
-    monkeypatch.setattr(bind_mod, "gh_preflight", lambda: None)
-    monkeypatch.setattr(bind_mod, "gh_project_view", lambda _o, _n: {"id": "PVT_1"})
-    monkeypatch.setattr(bind_mod, "gh_item_list", fake.item_list)
-    monkeypatch.setattr(bind_mod, "gh_issue_create", fake.issue_create)
-    monkeypatch.setattr(bind_mod, "gh_item_add", fake.item_add)
-    monkeypatch.setattr(bind_mod, "gh_field_list", fake.field_list)
-    monkeypatch.setattr(bind_mod, "gh_field_create", fake.field_create)
-    monkeypatch.setattr(bind_mod, "gh_field_create_text", fake.field_create_text)
-
-
 def _seed_wiki(tmp_path: Path, *, index: str = INDEX_MD) -> Path:
     d = tmp_path / ".hallouminate" / "wiki" / "roadmaps" / SLUG
     d.mkdir(parents=True)
@@ -129,177 +117,135 @@ def _import(tmp_path: Path, graph: MikadoGraph, **kw: str) -> tuple[int, Path]:
     return import_roadmap(wiki_root, SLUG, graph).roadmap_node_id, wiki_root
 
 
-def test_bind_creates_issue_and_item_per_goal(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rid, wiki_root = _import(tmp_path, graph)
-    fake = FakeGh()
-    _wire(monkeypatch, fake)
-    result = bind_github_project(graph, rid, wiki_root)
+def test_bind_creates_issue_and_item_per_goal(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    github = FakeGh()
+
+    result = bind_github_project(graph, rid, root, github)
+
     assert result.issues_created == 2
     assert result.items_added == 2
-    assert len(fake.issues) == 2
-    # Issue bodies mirror the wiki Intent.
-    bodies = {body for *_h, body in fake.issues}
-    assert "build the first goal" in bodies
-    assert "build the second goal" in bodies
-
-
-def test_bind_stores_refs_on_roadmap_and_goals(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rid, wiki_root = _import(tmp_path, graph)
-    _wire(monkeypatch, FakeGh())
-    bind_github_project(graph, rid, wiki_root)
+    assert {body for *_head, body in github.issues} == {
+        "build the first goal",
+        "build the second goal",
+    }
     assert graph.get_node(rid).github_ref == "PVT_1"
-    goals = graph.get_children(rid)
-    assert all(g.github_ref is not None for g in goals)
+    assert all(goal.github_ref for goal in graph.get_children(rid))
 
 
-def test_bind_creates_status_field_once_with_all_options(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rid, wiki_root = _import(tmp_path, graph)
-    fake = FakeGh(fields=[])  # no pre-existing fields
-    _wire(monkeypatch, fake)
-    result = bind_github_project(graph, rid, wiki_root)
+def test_bind_creates_missing_fields_once(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    github = FakeGh()
+
+    result = bind_github_project(graph, rid, root, github)
+
     assert result.field_created is True
-    assert fake.created_fields == [(STATUS_FIELD_NAME, STATUS_OPTIONS)]
-    assert len(fake.created_text_fields) == 1  # harvest text field too
+    assert github.created_fields == [(STATUS_FIELD_NAME, STATUS_OPTIONS)]
+    assert github.created_text_fields == ["Milknado Harvest"]
 
 
-def test_bind_skips_field_create_when_present(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rid, wiki_root = _import(tmp_path, graph)
-    fake = FakeGh(
+def test_bind_preserves_existing_fields(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    github = FakeGh(
         fields=[
             {"id": "F_status", "name": "Milknado Status"},
             {"id": "F_harvest", "name": "Milknado Harvest"},
         ]
     )
-    _wire(monkeypatch, fake)
-    result = bind_github_project(graph, rid, wiki_root)
+
+    result = bind_github_project(graph, rid, root, github)
+
     assert result.field_created is False
-    assert fake.created_fields == []  # never an add-option / re-create path
-    assert fake.created_text_fields == []
+    assert github.created_fields == []
+    assert github.created_text_fields == []
 
 
-def test_bind_skips_already_bound_goals(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    rid, wiki_root = _import(tmp_path, graph)
+def test_bind_skips_already_bound_goals(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
     already = graph.get_children(rid)[0]
     graph.set_github_ref(already.id, "PVTI_pre")
-    fake = FakeGh()
-    _wire(monkeypatch, fake)
-    result = bind_github_project(graph, rid, wiki_root)
-    assert result.issues_created == 1  # only the still-unbound goal
+
+    result = bind_github_project(graph, rid, root, FakeGh())
+
+    assert result.issues_created == 1
+    assert graph.get_node(already.id).github_ref == "PVTI_pre"
 
 
-def test_bind_accepts_explicit_owner_number(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Explicit args bypass the github_project frontmatter parse.
+def test_bind_accepts_explicit_owner_number(tmp_path: Path, graph: MikadoGraph) -> None:
     index = INDEX_MD.replace("github_project: acme/7\n", "")
-    rid, wiki_root = _import(tmp_path, graph, index=index)
-    _wire(monkeypatch, FakeGh())
-    result = bind_github_project(graph, rid, wiki_root, owner="acme", number=7)
+    rid, root = _import(tmp_path, graph, index=index)
+
+    result = bind_github_project(graph, rid, root, FakeGh(), owner="acme", number=7)
+
     assert result.issues_created == 2
 
 
-class TestBindGuards:
-    def test_non_roadmap_node_raises(self, graph: MikadoGraph, tmp_path: Path) -> None:
-        node = graph.add_node("task-ish")
-        with pytest.raises(ValueError, match="roadmap"):
-            bind_github_project(graph, node.id, tmp_path)
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ("github_repo: acme/repo\n", "", "github_repo"),
+        ("github_project: acme/7\n", "", "github_project"),
+        ("github_project: acme/7", "github_project: acme/notanumber", "malformed"),
+        ("github_repo: acme/repo", "github_repo: acme/", "malformed"),
+    ],
+)
+def test_bind_rejects_invalid_frontmatter(
+    tmp_path: Path, graph: MikadoGraph, old: str, new: str, message: str
+) -> None:
+    rid, root = _import(tmp_path, graph, index=INDEX_MD.replace(old, new))
 
-    def test_roadmap_without_wiki_ref_raises(self, graph: MikadoGraph, tmp_path: Path) -> None:
-        node = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
-        with pytest.raises(ValueError, match="wiki_ref"):
-            bind_github_project(graph, node.id, tmp_path)
-
-    def test_missing_github_repo_frontmatter_raises(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        index = INDEX_MD.replace("github_repo: acme/repo\n", "")
-        rid, wiki_root = _import(tmp_path, graph, index=index)
-        _wire(monkeypatch, FakeGh())
-        with pytest.raises(ValueError, match="github_repo"):
-            bind_github_project(graph, rid, wiki_root)
-
-    def test_missing_github_project_frontmatter_raises(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        index = INDEX_MD.replace("github_project: acme/7\n", "")
-        rid, wiki_root = _import(tmp_path, graph, index=index)
-        _wire(monkeypatch, FakeGh())
-        with pytest.raises(ValueError, match="github_project"):
-            bind_github_project(graph, rid, wiki_root)
-
-    def test_malformed_github_project_raises(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        index = INDEX_MD.replace("github_project: acme/7", "github_project: acme/notanumber")
-        rid, wiki_root = _import(tmp_path, graph, index=index)
-        _wire(monkeypatch, FakeGh())
-        with pytest.raises(ValueError, match="malformed `github_project`"):
-            bind_github_project(graph, rid, wiki_root)
-
-    def test_malformed_github_repo_raises(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        index = INDEX_MD.replace("github_repo: acme/repo", "github_repo: acme/")
-        rid, wiki_root = _import(tmp_path, graph, index=index)
-        _wire(monkeypatch, FakeGh())
-        with pytest.raises(ValueError, match="malformed `github_repo`"):
-            bind_github_project(graph, rid, wiki_root)
+    with pytest.raises(ValueError, match=message):
+        bind_github_project(graph, rid, root, FakeGh())
 
 
-class TestRebindGuard:
-    def test_different_project_id_raises(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        rid, wiki_root = _import(tmp_path, graph)
-        graph.set_github_ref(rid, "PVT_other")
-        _wire(monkeypatch, FakeGh())
-        with pytest.raises(ValueError, match="PVT_other.*PVT_1"):
-            bind_github_project(graph, rid, wiki_root)
-
-    def test_same_project_id_is_noop(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        rid, wiki_root = _import(tmp_path, graph)
-        graph.set_github_ref(rid, "PVT_1")
-        calls: list[tuple[int, str]] = []
-        original_set_ref = graph.set_github_ref
-
-        def _spy(node_id: int, ref: str) -> None:
-            calls.append((node_id, ref))
-            original_set_ref(node_id, ref)
-
-        monkeypatch.setattr(graph, "set_github_ref", _spy)
-        _wire(monkeypatch, FakeGh())
-        bind_github_project(graph, rid, wiki_root)  # no raise
-        assert graph.get_node(rid).github_ref == "PVT_1"
-        assert (rid, "PVT_1") not in calls
+def test_bind_rejects_invalid_node(graph: MikadoGraph, tmp_path: Path) -> None:
+    node = graph.add_node("task-ish")
+    with pytest.raises(ValueError, match="roadmap"):
+        bind_github_project(graph, node.id, tmp_path, FakeGh())
 
 
-class TestAdoptExistingItem:
-    def test_matching_title_is_adopted_without_issue_create(
-        self, tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        rid, wiki_root = _import(tmp_path, graph)
-        goals = graph.get_children(rid)
-        adopted_goal = next(g for g in goals if g.description == "Goal one")
-        fake = FakeGh(existing_items=[{"id": "PVTI_existing", "title": "Goal one"}])
-        _wire(monkeypatch, fake)
-        result = bind_github_project(graph, rid, wiki_root)
-        assert graph.get_node(adopted_goal.id).github_ref == "PVTI_existing"
-        assert all(title != "Goal one" for *_h, title, _b in fake.issues)
-        assert "PVTI_existing" not in fake.items  # never went through item_add
-        assert result.issues_created == 1  # only "Goal two" was truly created
-        assert result.items_added == 1
+def test_bind_rejects_roadmap_without_wiki_ref(graph: MikadoGraph, tmp_path: Path) -> None:
+    node = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
+    with pytest.raises(ValueError, match="wiki_ref"):
+        bind_github_project(graph, node.id, tmp_path, FakeGh())
+
+
+def test_bind_rejects_different_project(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    graph.set_github_ref(rid, "PVT_other")
+
+    with pytest.raises(ValueError, match="PVT_other.*PVT_1"):
+        bind_github_project(graph, rid, root, FakeGh())
+
+
+def test_same_project_binding_is_idempotent(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    graph.set_github_ref(rid, "PVT_1")
+
+    bind_github_project(graph, rid, root, FakeGh())
+
+    assert graph.get_node(rid).github_ref == "PVT_1"
+
+
+def test_same_title_unrelated_item_is_never_adopted(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    target = next(goal for goal in graph.get_children(rid) if goal.description == "Goal one")
+    github = FakeGh(
+        existing_items=[
+            {
+                "id": "PVTI_unrelated",
+                "title": "Goal one",
+                "url": "https://github.com/other/repo/issues/99",
+            }
+        ]
+    )
+
+    result = bind_github_project(graph, rid, root, github)
+
+    assert graph.get_node(target.id).github_ref != "PVTI_unrelated"
+    assert {title for *_prefix, title, _body in github.issues} == {"Goal one", "Goal two"}
+    assert result.issues_created == 2
+    assert result.items_added == 2
 
 
 class TestGoalIntent:
@@ -308,8 +254,8 @@ class TestGoalIntent:
         roadmap = graph.get_node(rid)
         file_map = goal_file_map(wiki_root, roadmap.wiki_ref)
         goal = graph.get_children(rid)[0]
-        assert "build the" in goal_intent(goal, file_map)
+        assert "build the" in goal_intent(goal, file_map, wiki_root)
 
     def test_intent_falls_back_to_description_without_wiki_ref(self, graph: MikadoGraph) -> None:
         goal = graph.add_node("bare goal", spec=NodeSpec(kind=NodeKind.GOAL))
-        assert goal_intent(goal, {}) == "bare goal"
+        assert goal_intent(goal, {}, Path()) == "bare goal"

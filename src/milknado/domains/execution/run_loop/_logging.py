@@ -2,33 +2,42 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
 _logger = logging.getLogger("milknado")
-
 _MAX_RETAINED_LOGS = 20
 
 
-def _prune_old_logs(log_dir: Path, pattern: str, keep: int = _MAX_RETAINED_LOGS) -> None:
-    logs = sorted(log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
-    for stale in logs[keep:]:
+def _prune_old_logs(
+    log_dir: Path,
+    pattern: str,
+    keep: int = _MAX_RETAINED_LOGS,
+    active_run_ids: Iterable[str] = (),
+) -> None:
+    active = tuple(active_run_ids)
+    logs = sorted(log_dir.glob(pattern), key=lambda path: path.stat().st_mtime, reverse=True)
+    removable = [path for path in logs if not any(run_id in path.name for run_id in active)]
+    protected_count = len(logs) - len(removable)
+    for stale in removable[max(keep - protected_count, 0) :]:
         with contextlib.suppress(OSError):
             stale.unlink()
 
 
 @contextmanager
-def configure_run_logging(project_root: Path) -> Generator[Path, None, None]:
+def configure_run_logging(
+    project_root: Path,
+    *,
+    active_run_ids: Iterable[str] = (),
+) -> Generator[Path, None, None]:
     log_dir = project_root / ".milknado"
     log_dir.mkdir(parents=True, exist_ok=True)
-    _prune_old_logs(log_dir, "run-*.log")
-    _prune_old_logs(log_dir / "runs", "*.log")
-    iso = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    log_path = log_dir / f"run-{iso}.log"
-    handler = logging.FileHandler(str(log_path), mode="w", encoding="utf-8", delay=False)
+    _prune_old_logs(log_dir, "run-*.log", active_run_ids=active_run_ids)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    log_path = log_dir / f"run-{timestamp}.log"
+    handler = logging.FileHandler(log_path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     previous_level = _logger.level
     _logger.setLevel(logging.INFO)
@@ -42,24 +51,8 @@ def configure_run_logging(project_root: Path) -> Generator[Path, None, None]:
         handler.close()
 
 
-def configure_stderr_logging() -> logging.Handler:
-    """Install a formatted stderr handler for long-lived non-interactive surfaces.
-
-    The MCP server has no single run to scope a log file to and speaks stdio —
-    logging to stdout would corrupt the protocol stream, so this writes to
-    stderr instead of reusing configure_run_logging's file handler. Idempotent:
-    a second call returns the already-installed stderr handler rather than
-    stacking a duplicate that would double every log line.
-    """
-    for existing in _logger.handlers:
-        if isinstance(existing, logging.StreamHandler) and existing.stream is sys.stderr:
-            return existing
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    _logger.setLevel(logging.INFO)
-    _logger.addHandler(handler)
-    return handler
-
-
 def ts() -> str:
     return datetime.now(UTC).strftime("%H:%M:%S")
+
+
+__all__ = ["configure_run_logging", "ts"]

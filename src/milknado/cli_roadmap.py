@@ -8,15 +8,17 @@ from typing import Annotated
 import typer
 
 from milknado._cli_helpers import _ensure_db, _load_or_default, console
-from milknado.domains.wiki import export_roadmap, import_roadmap, resolve_roadmap_node
+from milknado.adapters.hallouminate import HallouminateIndexer
+from milknado.domains.wiki import (
+    export_roadmap,
+    import_roadmap,
+    resolve_roadmap_node,
+    wiki_root,
+)
 
 roadmap_app = typer.Typer(name="roadmap", help="Import/export roadmaps to the hallouminate wiki")
 
 _ProjectRoot = Annotated[Path, typer.Option("--project-root", help="Project root directory")]
-
-
-def _wiki_root(project_root: Path) -> Path:
-    return project_root / ".hallouminate" / "wiki"
 
 
 @roadmap_app.command("import")
@@ -29,7 +31,7 @@ def import_roadmap_cmd(
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
     try:
-        result = import_roadmap(_wiki_root(project_root), slug, graph)
+        result = import_roadmap(wiki_root(project_root), slug, graph)
     except (FileNotFoundError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -48,18 +50,20 @@ def export_roadmap_cmd(
 ) -> None:
     """Harvest milknado execution state back into the wiki goal files."""
     project_root = project_root.resolve()
-    wiki_root = _wiki_root(project_root)
+    root = wiki_root(project_root)
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
+    indexer = HallouminateIndexer()
     try:
-        node = resolve_roadmap_node(graph, wiki_root, slug)
-        result = export_roadmap(graph, node.id, wiki_root)
+        node = resolve_roadmap_node(graph, root, slug)
+        result = export_roadmap(graph, node.id, root, indexer)
     except (FileNotFoundError, ValueError, LookupError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
     finally:
         graph.close()
+    detail = f": {result.index.detail}" if result.index.detail else ""
     console.print(
         f"Exported roadmap {slug}: {result.files_written} updated, "
-        f"{result.files_created} created, index_refreshed={result.index_refreshed}."
+        f"{result.files_created} created, index={result.index.status}{detail}."
     )

@@ -7,7 +7,11 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from milknado.domains.common.errors import RebaseAbortError, UnlandedWorkError
+from milknado.domains.common.errors import (
+    GitOperationError,
+    RebaseAbortError,
+    UnlandedWorkError,
+)
 from milknado.domains.common.types import RebaseResult
 
 _CONFLICT_FILE_RE = re.compile(
@@ -42,13 +46,19 @@ class GitAdapter:
         self._root = repo_root
 
     def _run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["git", *args],
-            cwd=cwd or self._root,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        try:
+            return subprocess.run(
+                ["git", *args],
+                cwd=cwd or self._root,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            raise GitOperationError(" ".join(args), detail) from exc
+        except OSError as exc:
+            raise GitOperationError(" ".join(args), str(exc)) from exc
 
     def create_worktree(self, path: Path, branch: str) -> Path:
         self._run(["worktree", "add", "-b", branch, str(path)])
@@ -192,6 +202,61 @@ class GitAdapter:
     def current_branch(self) -> str:
         result = self._run(["rev-parse", "--abbrev-ref", "HEAD"])
         return result.stdout.strip()
+
+    def resolve_ref(self, ref: str) -> str:
+        return self._run(["rev-parse", "--verify", ref]).stdout.strip()
+
+    def compare_and_swap_ref(
+        self,
+        ref: str,
+        expected_oid: str,
+        new_oid: str,
+    ) -> None:
+        symbolic = subprocess.run(
+            ["git", "symbolic-ref", "-q", "HEAD"],
+            cwd=self._root,
+            capture_output=True,
+            text=True,
+        )
+        if symbolic.returncode not in (0, 1):
+            raise GitOperationError("symbolic-ref -q HEAD", symbolic.stderr.strip())
+        checked_out = symbolic.stdout.strip()
+        normalized_ref = ref if ref.startswith("refs/") else f"refs/heads/{ref}"
+        synchronize = checked_out == normalized_ref
+        if synchronize:
+            tracked = subprocess.run(
+                ["git", "diff-index", "--quiet", expected_oid, "--"],
+                cwd=self._root,
+            )
+            if tracked.returncode == 1:
+                raise GitOperationError(
+                    f"update-ref {ref}",
+                    "checked-out target has tracked changes",
+                )
+            if tracked.returncode != 0:
+                raise GitOperationError(
+                    f"diff-index --quiet {expected_oid} --",
+                    f"git exited {tracked.returncode}",
+                )
+            if self.resolve_ref("HEAD") != expected_oid:
+                raise GitOperationError(
+                    f"update-ref {ref}",
+                    "checked-out target no longer matches expected OID",
+                )
+        self._run(["update-ref", normalized_ref, new_oid, expected_oid])
+        if not synchronize:
+            return
+        try:
+            self._run(["read-tree", "-u", "-m", expected_oid, new_oid])
+        except GitOperationError:
+            try:
+                self._run(["read-tree", "-u", "-m", new_oid, expected_oid])
+                self._run(["update-ref", normalized_ref, expected_oid, new_oid])
+            except GitOperationError:
+                _logger.exception(
+                    "failed to roll back ref and worktree after synchronization failure"
+                )
+            raise
 
     def commit_all(self, worktree: Path, message: str) -> None:
         self._run(["add", "-A"], cwd=worktree)

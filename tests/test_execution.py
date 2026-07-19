@@ -68,6 +68,9 @@ class FakeGit:
     def current_branch(self) -> str:
         return "main"
 
+    def resolve_ref(self, ref: str) -> str:
+        return f"{ref}-oid"
+
     def commit_all(self, worktree: Path, message: str) -> None:
         self.commits.append((worktree, message))
 
@@ -90,17 +93,23 @@ class FakeRalph:
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
+        base_oid: str | None = None,
     ) -> FakeRun:
         self.runs_created.append(
-            {"agent": agent, "dir": ralph_dir, "commit_footer": commit_footer}
+            {
+                "agent": agent,
+                "dir": ralph_dir,
+                "commit_footer": commit_footer,
+                "base_oid": base_oid,
+            }
         )
         return FakeRun()
 
     def start_run(self, run_id: str) -> None:
         self.runs_started.append(run_id)
 
-    def stop_run(self, run_id: str) -> None:
-        pass
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return True
 
     def list_runs(self) -> list[Any]:
         return []
@@ -219,6 +228,16 @@ class TestGetDispatchableNodes:
         dispatchable = get_dispatchable_nodes(graph)
         assert len(dispatchable) == 1
         assert dispatchable[0] == a.id
+
+    def test_active_owner_blocks_pending_conflict(self, graph: MikadoGraph) -> None:
+        root = graph.add_node("root")
+        active = graph.add_node("active", parent_id=root.id)
+        pending = graph.add_node("pending", parent_id=root.id)
+        graph.set_file_ownership(active.id, ["shared.py"])
+        graph.set_file_ownership(pending.id, ["shared.py"])
+        graph.mark_running(active.id)
+
+        assert get_dispatchable_nodes(graph) == []
 
     def test_child_must_complete_before_parent(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
@@ -1272,7 +1291,8 @@ class TestGetAttemptCount:
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
-            ) -> FakeRun:  # noqa: E501
+                base_oid: str | None = None,
+            ) -> FakeRun:
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
@@ -1307,7 +1327,8 @@ class TestGetAttemptCount:
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
-            ) -> FakeRun:  # noqa: E501
+                base_oid: str | None = None,
+            ) -> FakeRun:
                 raise ValueError("bad config")
 
         ex = Executor(graph=graph, git=FakeGit(), ralph=FailRalph(), crg=FakeCrg())
@@ -1331,7 +1352,8 @@ class TestGetAttemptCount:
                 quality_gates: tuple[Gate, ...] | None,
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
-            ) -> FakeRun:  # noqa: E501
+                base_oid: str | None = None,
+            ) -> FakeRun:
                 raise TransientDispatchError("always fails")
 
         config_retry = ExecutionConfig(

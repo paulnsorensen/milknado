@@ -27,7 +27,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
@@ -65,19 +65,21 @@ exceptions are swallowed so a buggy subscriber cannot kill the agent loop.
 """
 
 
-def _call_safely(callback: Callable[..., Any] | None, *args: Any) -> None:
-    """Invoke an observer *callback* with *args*, swallowing any exception.
-
-    Used for best-effort observer callbacks during output draining: a
-    raising callback must never stop the drain loop or leave the reader
-    thread hung.
-    """
+def _call_safely(
+    callback: Callable[..., Any] | None,
+    *args: Any,
+    correlation: str = "unknown",
+) -> None:
     if callback is None:
         return
     try:
         callback(*args)
     except Exception:
-        pass
+        _log.exception(
+            "agent observer callback failed callback=%s correlation=%s",
+            getattr(callback, "__name__", type(callback).__name__),
+            correlation,
+        )
 
 
 # Typed constants for the OutputStream literal so the type checker enforces
@@ -103,6 +105,26 @@ _THREAD_JOIN_TIMEOUT = 5.0
 
 # Seconds to wait for the agent process to exit after a kill signal.
 _PROCESS_WAIT_TIMEOUT = 5.0
+_OUTPUT_TAIL_CHARS = 64 * 1024
+
+
+@dataclass(slots=True)
+class _BoundedOutput:
+    limit: int = _OUTPUT_TAIL_CHARS
+    _lines: list[str] = field(default_factory=list)
+    _chars: int = 0
+
+    def append(self, line: str) -> None:
+        if len(line) > self.limit:
+            line = line[-self.limit :]
+        self._lines.append(line)
+        self._chars += len(line)
+        while self._chars > self.limit and len(self._lines) > 1:
+            self._chars -= len(self._lines.pop(0))
+
+    def __iter__(self):
+        return iter(self._lines)
+
 
 # Tempdir prefix for per-iteration wind-down hook config.  Surfaces in
 # ``$TMPDIR`` listings so users can spot stale dirs after a crash.
@@ -415,9 +437,7 @@ def _readline_pump(
 
 @dataclass(slots=True)
 class _StreamState:
-    """Mutable accumulator for :func:`_read_agent_stream`'s line loop."""
-
-    stdout_lines: list[str] | None
+    stdout_lines: _BoundedOutput | None
     result_text: str | None = None
     tool_use_count: int = 0
     turn_capped: bool = False
@@ -436,11 +456,11 @@ def _record_stream_line(
     state: _StreamState,
     line: str,
     on_output_line: OutputLineCallback | None,
+    correlation: str,
 ) -> None:
-    """Append *line* to the state's buffer (if any) and forward it to the callback."""
     if state.stdout_lines is not None:
         state.stdout_lines.append(line)
-    _call_safely(on_output_line, line.rstrip("\r\n"), _STDOUT)
+    _call_safely(on_output_line, line.rstrip("\r\n"), _STDOUT, correlation=correlation)
 
 
 def _update_tool_use(
@@ -449,17 +469,13 @@ def _update_tool_use(
     on_tool_use: ToolUseCallback | None,
     max_turns: int | None,
     stripped_line: str,
+    correlation: str,
 ) -> bool:
-    """Parse a tool-use event from *stripped_line* and update *state*.
-
-    Returns ``True`` when the update pushed the tool-use count to the
-    *max_turns* cap, signalling the caller should stop reading.
-    """
     event = adapter.parse_event(stripped_line)
     if event is None or event.kind != "tool_use":
         return False
     state.tool_use_count += 1
-    _call_safely(on_tool_use, event.name or "", state.tool_use_count)
+    _call_safely(on_tool_use, event.name or "", state.tool_use_count, correlation=correlation)
     if max_turns is not None and state.tool_use_count >= max_turns:
         state.turn_capped = True
         return True
@@ -476,62 +492,23 @@ def _read_agent_stream(
     adapter: CLIAdapter | None = None,
     max_turns: int | None = None,
     on_tool_use: ToolUseCallback | None = None,
+    correlation: str = "unknown",
 ) -> _StreamResult:
-    """Read the agent's JSON stream line-by-line until EOF or timeout.
-
-    Uses a background reader thread that feeds lines into a
-    :class:`queue.Queue`.  The main thread pulls from the queue with a
-    bounded wait derived from *deadline*, so the timeout is enforced even
-    when the agent produces no output (a silent hang).  This is
-    cross-platform — ``select.select`` on pipes only works on POSIX.
-
-    ``SUBPROCESS_TEXT_KWARGS`` sets ``bufsize=1`` (line-buffered), so
-    ``readline()`` in the reader thread returns as soon as a newline
-    arrives instead of filling an 8 KB readahead buffer.  Combined with
-    the queue, peek lines flow one-at-a-time.
-
-    Parses each non-empty line as JSON.  Valid JSON objects are forwarded
-    to *on_activity* (if provided).  The ``result`` field from
-    ``{"type": "result"}`` events is captured as *result_text*.
-
-    Lines that aren't valid JSON are silently collected for logging but
-    not forwarded — this keeps the caller working even if the agent
-    emits non-JSON diagnostics to stdout.
-
-    Returns early with ``timed_out=True`` when the deadline is exceeded,
-    leaving the caller responsible for killing the subprocess.
-
-    When *capture_stdout* is ``False``, stdout is still drained and parsed but
-    not retained in memory.  This keeps the streaming path lightweight when no
-    later completion-signal parsing or log writing needs the raw bytes.
-    """
-    state = _StreamState(stdout_lines=[] if capture_stdout else None)
+    state = _StreamState(stdout_lines=_BoundedOutput() if capture_stdout else None)
     count_tool_use = adapter is not None and adapter.counts_what == "tool_use"
-
     line_q: queue.Queue[str | None] = queue.Queue()
     threading.Thread(target=_readline_pump, args=(stdout, line_q), daemon=True).start()
 
     while True:
-        # Compute how long we can wait for the next line.
-        if deadline is not None:
-            # Clamp to 0 so that an already-expired deadline still does a
-            # non-blocking drain of queued lines before returning — lines
-            # the reader thread already buffered are not silently lost.
-            get_timeout: float | None = max(deadline - time.monotonic(), 0)
-        else:
-            get_timeout = None
-
+        get_timeout = max(deadline - time.monotonic(), 0) if deadline is not None else None
         try:
             line = line_q.get(timeout=get_timeout)
         except queue.Empty:
-            # Deadline expired while waiting for a line.
             return state.to_result(timed_out=True)
-
-        if line is None:  # EOF sentinel from reader thread
+        if line is None:
             return state.to_result(timed_out=False)
 
-        _record_stream_line(state, line, on_output_line)
-
+        _record_stream_line(state, line, on_output_line, correlation)
         stripped = line.strip()
         if stripped:
             try:
@@ -544,91 +521,60 @@ def _read_agent_stream(
                         parsed.get(_RESULT_FIELD), str
                     ):
                         state.result_text = parsed[_RESULT_FIELD]
-                    _call_safely(on_activity, parsed)
-
+                    _call_safely(on_activity, parsed, correlation=correlation)
             if count_tool_use and adapter is not None:
-                if _update_tool_use(state, adapter, on_tool_use, max_turns, stripped):
+                if _update_tool_use(
+                    state,
+                    adapter,
+                    on_tool_use,
+                    max_turns,
+                    stripped,
+                    correlation,
+                ):
                     return state.to_result(timed_out=False)
-
-        # Also check deadline after processing — if the reader thread
-        # already queued many lines, this prevents unbounded processing
-        # past the deadline.
         if deadline is not None and time.monotonic() > deadline:
             return state.to_result(timed_out=True)
 
 
 def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
-    """Run the agent subprocess with line-by-line streaming of JSON output.
-
-    Used for adapters whose ``supports_streaming`` flag is True (e.g. Claude
-    Code's ``--output-format stream-json``, Codex's ``--json``).  The command
-    list *must already include* any adapter-required flags —
-    :func:`execute_agent` calls ``adapter.build_command`` before dispatching.
-
-    ``run.stdin_text`` is the adapter-resolved prompt payload: a string when
-    the agent reads its prompt from stdin (the writer thread delivers it), or
-    ``None`` for arg-delivery agents whose prompt already lives in ``run.cmd``.
-    When ``None``, stdin is wired to ``DEVNULL`` so the child gets immediate
-    EOF and no writer thread runs.
-
-    Stream processing is delegated to :func:`_read_agent_stream`; this
-    function owns the subprocess lifecycle (spawn, stdin delivery, timeout
-    kill, and cleanup via ``try/finally``).
-
-    stderr is drained concurrently on a background reader thread so large
-    stderr volume can't deadlock the child on a full OS pipe buffer while
-    the main thread is reading stdout.
-    """
     start = time.monotonic()
     deadline = (start + run.timeout) if run.timeout is not None else None
-
     capture_stdout_text = run.log_dir is not None or run.capture_stdout
     pipe_stderr = run.log_dir is not None or run.on_output_line is not None
     capture_stderr_text = run.log_dir is not None
     pipe_stdin = run.stdin_text is not None
-
     writer_thread: threading.Thread | None = None
-    stderr_lines: list[str] | None = [] if capture_stderr_text else None
+    stderr_lines = _BoundedOutput() if capture_stderr_text else None
     stderr_thread: threading.Thread | None = None
+    correlation = f"iteration={run.iteration}"
 
-    spawn_env = _build_spawn_env(run.env)
     proc = subprocess.Popen(
         run.cmd,
         stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE if pipe_stderr else None,
-        env=spawn_env,
+        env=_build_spawn_env(run.env),
         cwd=run.cwd,
         **SUBPROCESS_TEXT_KWARGS,
         **SESSION_KWARGS,
     )
     try:
-        # Popen with PIPE guarantees non-None streams; guard explicitly
-        # so the type checker narrows and -O mode cannot skip the check.
         if proc.stdout is None:
             raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
         if pipe_stdin and proc.stdin is None:
             raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
         if pipe_stderr and proc.stderr is None:
             raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-
-        # Start the stderr pump BEFORE writing stdin so large prompts can't
-        # deadlock against an agent that writes substantial diagnostics to
-        # stderr while still reading its stdin.
         if proc.stderr is not None:
             stderr_thread = _start_pump_thread(
-                proc.stderr, stderr_lines, _STDERR, run.on_output_line
+                proc.stderr,
+                stderr_lines,
+                _STDERR,
+                run.on_output_line,
+                correlation,
             )
-
-        # Deliver the prompt on a background thread so that a blocked write
-        # (child not reading stdin, pipe buffer full) cannot prevent
-        # proc.wait / deadline checks from firing.  Killing the process
-        # group unblocks the write with BrokenPipeError, which
-        # _deliver_prompt already swallows.  Arg-delivery agents
-        # (stdin_text is None) skip this entirely.
         if run.stdin_text is not None:
             writer_thread = _start_writer_thread(proc, run.stdin_text)
-
         stream = _read_agent_stream(
             proc.stdout,
             deadline,
@@ -638,8 +584,8 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             adapter=run.adapter,
             max_turns=run.max_turns,
             on_tool_use=run.on_tool_use,
+            correlation=correlation,
         )
-
         if stream.timed_out or stream.turn_capped:
             _kill_process_group(proc)
         proc.wait()
@@ -648,9 +594,7 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
 
     stdout = "".join(stream.stdout_lines) if stream.stdout_lines is not None else None
     stderr = "".join(stderr_lines) if stderr_lines is not None else None
-
     log_file = _write_log(run.log_dir, run.iteration, stdout, stderr)
-
     return AgentResult(
         returncode=None if stream.timed_out else proc.returncode,
         elapsed=time.monotonic() - start,
@@ -666,33 +610,22 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
 
 def _pump_stream(
     stream: IO[str],
-    buffer: list[str] | None,
+    buffer: Any | None,
     stream_name: OutputStream,
     on_output_line: OutputLineCallback | None,
+    correlation: str = "unknown",
 ) -> None:
-    """Read *stream* line by line, optionally appending to *buffer* and forwarding to the callback.
-
-    When *buffer* is ``None`` lines are forwarded to the callback without
-    accumulating — this avoids unbounded memory growth when no log file
-    will be written.
-
-    Runs on a background thread so stdout and stderr can be drained
-    concurrently without deadlocking the child subprocess.
-
-    Exception handling:
-
-    - **Callback exceptions** are caught per-line so that a raising
-      callback never kills the drain loop.  The line is still buffered.
-    - **``ValueError`` / ``OSError``** from ``readline`` (e.g. the pipe
-      was closed concurrently) cause a clean exit so ``join()`` returns.
-    """
     try:
         for line in iter(stream.readline, ""):
             if buffer is not None:
                 buffer.append(line)
-            _call_safely(on_output_line, line.rstrip("\r\n"), stream_name)
+            _call_safely(
+                on_output_line,
+                line.rstrip("\r\n"),
+                stream_name,
+                correlation=correlation,
+            )
     except (ValueError, OSError):
-        # Pipe closed concurrently — exit cleanly so join() returns.
         pass
 
 
@@ -700,12 +633,6 @@ def _start_writer_thread(
     proc: subprocess.Popen[Any],
     prompt: str,
 ) -> threading.Thread:
-    """Create and start a daemon thread that delivers *prompt* to *proc*'s stdin.
-
-    A thin wrapper around :func:`_deliver_prompt` that eliminates the repeated
-    ``Thread(…, daemon=True) / .start()`` boilerplate across the streaming and
-    blocking execution paths.
-    """
     thread = threading.Thread(target=_deliver_prompt, args=(proc, prompt), daemon=True)
     thread.start()
     return thread
@@ -713,22 +640,14 @@ def _start_writer_thread(
 
 def _start_pump_thread(
     stream: IO[str],
-    buffer: list[str] | None,
+    buffer: Any | None,
     stream_name: OutputStream,
     on_output_line: OutputLineCallback | None,
+    correlation: str = "unknown",
 ) -> threading.Thread:
-    """Create and start a daemon thread that drains *stream*.
-
-    When *buffer* is not ``None``, lines are accumulated for later log
-    writing.  When ``None``, lines are only forwarded to the callback.
-
-    A thin wrapper around :func:`_pump_stream` that eliminates the repeated
-    ``Thread(…, daemon=True) / .start()`` boilerplate in the streaming and
-    blocking execution paths.
-    """
     thread = threading.Thread(
         target=_pump_stream,
-        args=(stream, buffer, stream_name, on_output_line),
+        args=(stream, buffer, stream_name, on_output_line, correlation),
         daemon=True,
     )
     thread.start()
@@ -757,6 +676,19 @@ def _drain_readers(
                 )
 
 
+def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
+    if IS_WINDOWS or proc.pid is None or proc.pid <= 0:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+
+
 def _cleanup_agent(
     proc: subprocess.Popen[Any],
     *threads: threading.Thread | None,
@@ -772,6 +704,8 @@ def _cleanup_agent(
     paths, which previously duplicated this exact sequence inline.
     """
     _ensure_process_dead(proc)
+    if proc.poll() is not None:
+        _terminate_lingering_group(proc)
     _close_pipes(proc)
     _drain_readers(*threads)
     _finalize_pipes(proc)
@@ -833,8 +767,8 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     writer_thread: threading.Thread | None = None
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
-    stdout_lines: list[str] | None = [] if capture_stdout_text else None
-    stderr_lines: list[str] | None = [] if capture_stderr_text else None
+    stdout_lines = _BoundedOutput() if capture_stdout_text else None
+    stderr_lines = _BoundedOutput() if capture_stderr_text else None
     result_text: str | None = None
 
     def _on_output_line(line: str, stream_name: OutputStream) -> None:
@@ -843,8 +777,12 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             extracted = _extract_result_text_from_line(line)
             if extracted is not None:
                 result_text = extracted
-        if run.on_output_line is not None:
-            run.on_output_line(line, stream_name)
+        _call_safely(
+            run.on_output_line,
+            line,
+            stream_name,
+            correlation=f"iteration={run.iteration}",
+        )
 
     spawn_env = _build_spawn_env(run.env)
     proc = subprocess.Popen(
@@ -1129,7 +1067,7 @@ def _wrap_tool_use_with_counter(
 def _count_tool_uses_post_hoc(
     *,
     adapter: CLIAdapter | None,
-    stdout_lines: list[str] | None,
+    stdout_lines: _BoundedOutput | None,
     max_turns: int | None,
     on_tool_use: ToolUseCallback | None,
 ) -> tuple[int, bool]:

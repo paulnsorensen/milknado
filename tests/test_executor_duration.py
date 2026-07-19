@@ -51,6 +51,9 @@ class _FakeGit:
     def current_branch(self) -> str:
         return "main"
 
+    def resolve_ref(self, ref: str) -> str:
+        return f"{ref}-oid"
+
     def commit_all(self, worktree: Path, message: str) -> None:
         pass
 
@@ -68,14 +71,15 @@ class _FakeRalph:
         quality_gates: list[str],
         project_root: Path | None = None,
         commit_footer: str | None = None,
+        base_oid: str | None = None,
     ) -> _FakeRun:
         return _FakeRun()
 
     def start_run(self, run_id: str) -> None:
         pass
 
-    def stop_run(self, run_id: str) -> None:
-        pass
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return True
 
     def list_runs(self) -> list[Any]:
         return []

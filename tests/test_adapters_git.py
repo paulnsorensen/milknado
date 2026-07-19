@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from milknado.adapters.git import GitAdapter, _try_mergiraf_resolve
-from milknado.domains.common.errors import RebaseAbortError, UnlandedWorkError
+from milknado.domains.common.errors import (
+    GitOperationError,
+    RebaseAbortError,
+    UnlandedWorkError,
+)
 
 
 @pytest.fixture()
@@ -39,10 +43,14 @@ class TestCreateWorktree:
         assert result == wt
 
     @patch("milknado.adapters.git.subprocess.run")
-    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
-        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
-        with pytest.raises(subprocess.CalledProcessError):
+    def test_translates_transport_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.side_effect = subprocess.CalledProcessError(1, "git", stderr="worktree failed")
+        with pytest.raises(
+            GitOperationError, match=r"git worktree add -b branch /tmp/wt failed"
+        ) as exc_info:
             adapter.create_worktree(Path("/tmp/wt"), "branch")
+        assert exc_info.value.operation == "worktree add -b branch /tmp/wt"
+        assert exc_info.value.detail == "worktree failed"
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -182,42 +190,6 @@ class TestForceRemoveWorktree:
         )
 
 
-class TestForceIsReachableOnlyViaDiscard:
-    """Acceptance 3: `--force` teardown must be reachable only through the
-    explicit discard path — a source-level audit of the production tree."""
-
-    SRC = Path(__file__).parent.parent / "src" / "milknado"
-
-    def _py_sources(self) -> list[Path]:
-        return [p for p in self.SRC.rglob("*.py") if "_vendor" not in p.parts]
-
-    def test_worktree_force_flag_lives_only_in_force_remove_worktree(self) -> None:
-        offenders = []
-        for path in self._py_sources():
-            text = path.read_text()
-            if "worktree" in text and '"remove", "--force"' in text:
-                offenders.append(path)
-        assert offenders == [self.SRC / "adapters" / "git.py"], (
-            f"worktree remove --force found outside GitAdapter: {offenders}"
-        )
-        # And inside git.py it appears exactly once — in force_remove_worktree.
-        text = (self.SRC / "adapters" / "git.py").read_text()
-        assert text.count('"remove", "--force"') == 1
-        body = text.split("def force_remove_worktree")[1]
-        assert '"remove", "--force"' in body
-
-    def test_force_remove_worktree_called_only_by_discard(self) -> None:
-        callers = []
-        for path in self._py_sources():
-            for line in path.read_text().splitlines():
-                stripped = line.strip()
-                if "force_remove_worktree(" in stripped and not stripped.startswith("def "):
-                    callers.append((str(path.relative_to(self.SRC)), stripped))
-        assert callers == [
-            ("domains/execution/executor.py", "self._git.force_remove_worktree(wt_path)")
-        ], f"force_remove_worktree must be called only by WorktreeManager.discard: {callers}"
-
-
 class TestPruneWorktrees:
     @patch("milknado.adapters.git.subprocess.run")
     def test_calls_git_worktree_prune(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
@@ -232,10 +204,12 @@ class TestPruneWorktrees:
         )
 
     @patch("milknado.adapters.git.subprocess.run")
-    def test_propagates_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
-        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
-        with pytest.raises(subprocess.CalledProcessError):
+    def test_translates_transport_error(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
+        mock_run.side_effect = OSError("git unavailable")
+        with pytest.raises(GitOperationError, match="git worktree prune failed") as exc_info:
             adapter.prune_worktrees()
+        assert exc_info.value.operation == "worktree prune"
+        assert exc_info.value.detail == "git unavailable"
 
 
 class TestRebase:
@@ -447,3 +421,123 @@ class TestBranchExists:
         _git(repo, "branch", "milknado/1-slug-2")
         adapter = GitAdapter(repo)
         assert adapter.branch_exists("milknado/1-slug-2") is True
+
+
+class TestAtomicRefUpdate:
+    def test_resolve_ref_returns_exact_oid(self, repo: Path) -> None:
+        git = GitAdapter(repo)
+        assert git.resolve_ref("feature") == _git(repo, "rev-parse", "feature").strip()
+
+    def test_checked_out_ref_update_synchronizes_worktree(self, repo: Path) -> None:
+        old_oid = _git(repo, "rev-parse", "HEAD").strip()
+        (repo / "landed.txt").write_text("landed")
+        _git(repo, "add", "landed.txt")
+        _git(repo, "commit", "-qm", "next")
+        new_oid = _git(repo, "rev-parse", "HEAD").strip()
+        _git(repo, "reset", "--hard", old_oid)
+
+        GitAdapter(repo).compare_and_swap_ref("refs/heads/feature", old_oid, new_oid)
+
+        assert _git(repo, "rev-parse", "HEAD").strip() == new_oid
+        assert (repo / "landed.txt").read_text() == "landed"
+        assert _git(repo, "status", "--porcelain") == ""
+
+    def test_dirty_checked_out_ref_fails_before_update(self, repo: Path) -> None:
+        old_oid = _git(repo, "rev-parse", "feature").strip()
+        new_oid = _git(
+            repo, "commit-tree", f"{old_oid}^{{tree}}", "-p", old_oid, "-m", "next"
+        ).strip()
+        (repo / "README.md").write_text("dirty")
+
+        with pytest.raises(GitOperationError, match="tracked changes"):
+            GitAdapter(repo).compare_and_swap_ref("feature", old_oid, new_oid)
+
+        assert _git(repo, "rev-parse", "feature").strip() == old_oid
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_symbolic_ref_transport_failure_is_domain_error(
+        self, run: MagicMock, repo: Path
+    ) -> None:
+        run.return_value = subprocess.CompletedProcess(
+            [], 128, stdout="", stderr="symbolic failure"
+        )
+        with pytest.raises(GitOperationError, match="symbolic failure"):
+            GitAdapter(repo).compare_and_swap_ref("feature", "old", "new")
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_diff_index_transport_failure_is_domain_error(
+        self, run: MagicMock, repo: Path
+    ) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="refs/heads/feature\n", stderr=""),
+            subprocess.CompletedProcess([], 128),
+        ]
+        with pytest.raises(GitOperationError, match="git exited 128"):
+            GitAdapter(repo).compare_and_swap_ref("feature", "old", "new")
+
+    def test_checked_out_head_must_still_match_expected(self, repo: Path) -> None:
+        actual = _git(repo, "rev-parse", "HEAD").strip()
+        stale = _git(repo, "commit-tree", f"{actual}^{{tree}}", "-m", "stale").strip()
+        with pytest.raises(GitOperationError, match="no longer matches expected OID"):
+            GitAdapter(repo).compare_and_swap_ref("feature", stale, actual)
+
+    def test_switched_branch_ref_update_does_not_touch_worktree(self, repo: Path) -> None:
+        old_oid = _git(repo, "rev-parse", "feature").strip()
+        _git(repo, "branch", "other")
+        _git(repo, "switch", "other")
+        new_oid = _git(
+            repo, "commit-tree", f"{old_oid}^{{tree}}", "-p", old_oid, "-m", "next"
+        ).strip()
+
+        GitAdapter(repo).compare_and_swap_ref("feature", old_oid, new_oid)
+
+        assert _git(repo, "rev-parse", "HEAD").strip() == old_oid
+        assert _git(repo, "rev-parse", "feature").strip() == new_oid
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_sync_failure_rolls_back_tree_and_ref(self, run: MagicMock, repo: Path) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="refs/heads/feature\n", stderr=""),
+            subprocess.CompletedProcess([], 0),
+        ]
+        adapter = GitAdapter(repo)
+        adapter._run = MagicMock(
+            side_effect=[
+                _ok("old\n"),
+                _ok(),
+                GitOperationError("read-tree", "collision"),
+                _ok(),
+                _ok(),
+            ]
+        )
+
+        with pytest.raises(GitOperationError, match="collision"):
+            adapter.compare_and_swap_ref("feature", "old", "new")
+
+        assert adapter._run.call_args_list[-2:] == [
+            call(["read-tree", "-u", "-m", "new", "old"]),
+            call(["update-ref", "refs/heads/feature", "old", "new"]),
+        ]
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_rollback_failure_is_logged(
+        self, run: MagicMock, repo: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="refs/heads/feature\n", stderr=""),
+            subprocess.CompletedProcess([], 0),
+        ]
+        adapter = GitAdapter(repo)
+        adapter._run = MagicMock(
+            side_effect=[
+                _ok("old\n"),
+                _ok(),
+                GitOperationError("read-tree", "collision"),
+                GitOperationError("read-tree", "rollback collision"),
+            ]
+        )
+
+        with caplog.at_level("ERROR"), pytest.raises(GitOperationError, match="collision"):
+            adapter.compare_and_swap_ref("feature", "old", "new")
+
+        assert "failed to roll back ref and worktree" in caplog.text

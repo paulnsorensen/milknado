@@ -17,16 +17,64 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-def create_tables(conn: sqlite3.Connection) -> None:
-    """Create the schema if the `nodes` table is absent; no-op otherwise.
+_REQUIRED_NODE_COLUMNS = frozenset(
+    {
+        "id",
+        "description",
+        "status",
+        "parent_id",
+        "worktree_path",
+        "branch_name",
+        "run_id",
+        "pid",
+        "created_at",
+        "completed_at",
+        "dispatched_at",
+        "completion_duration_seconds",
+        "oversized",
+        "batch_index",
+        "kind",
+        "flavor",
+        "wiki_ref",
+        "artifact_path",
+        "github_ref",
+    }
+)
 
-    The `sqlite_master` probe skips the executescript (9x CREATE IF NOT EXISTS)
-    on every MikadoGraph open against an already-initialized db path.
-    """
+
+def _validate_schema(conn: sqlite3.Connection) -> None:
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+    missing = sorted(_REQUIRED_NODE_COLUMNS - columns)
+    if missing:
+        raise RuntimeError(
+            "obsolete milknado database schema; recreate the database "
+            f"(missing nodes columns: {', '.join(missing)})"
+        )
+
+
+def _ensure_indexes(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref
+            ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_github_ref
+            ON nodes(github_ref) WHERE github_ref IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_nodes_ready
+            ON nodes(status, kind, flavor, id);
+        CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id);
+        """
+    )
+    conn.commit()
+
+
+def create_tables(conn: sqlite3.Connection) -> None:
+    """Create the current schema or validate an existing database."""
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nodes'"
     ).fetchone()
     if exists is not None:
+        _validate_schema(conn)
+        _ensure_indexes(conn)
         return
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS nodes (
@@ -54,6 +102,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
         CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_github_ref
             ON nodes(github_ref) WHERE github_ref IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_nodes_ready
+            ON nodes(status, kind, flavor, id);
         CREATE TABLE IF NOT EXISTS edges (
             parent_id INTEGER NOT NULL,
             child_id INTEGER NOT NULL,
@@ -61,6 +111,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             FOREIGN KEY (parent_id) REFERENCES nodes(id),
             FOREIGN KEY (child_id) REFERENCES nodes(id)
         );
+        CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id);
         CREATE TABLE IF NOT EXISTS file_ownership (
             node_id INTEGER NOT NULL,
             file_path TEXT NOT NULL,
@@ -116,29 +167,15 @@ def create_tables(conn: sqlite3.Connection) -> None:
 
 
 def row_to_node(row: sqlite3.Row) -> MikadoNode:
-    keys = row.keys()
-    run_id = row["run_id"] if "run_id" in keys else None
-    pid = row["pid"] if "pid" in keys else None
-    oversized = bool(row["oversized"]) if "oversized" in keys else False
-    batch_index = row["batch_index"] if "batch_index" in keys else None
-    dispatched_at_raw = row["dispatched_at"] if "dispatched_at" in keys else None
-    col = "completion_duration_seconds"
-    duration = row[col] if col in keys else None
-    completed_at_raw = row["completed_at"]
-    kind = NodeKind(row["kind"]) if "kind" in keys else NodeKind.TASK
-    wiki_ref = row["wiki_ref"] if "wiki_ref" in keys else None
-    github_ref = row["github_ref"] if "github_ref" in keys else None
-    artifact_path = row["artifact_path"] if "artifact_path" in keys else None
-    flavor_raw = row["flavor"] if "flavor" in keys else None
-    if kind == NodeKind.TASK:
-        flavor = flavor_raw
-    elif flavor_raw is not None:
+    kind = NodeKind(row["kind"])
+    flavor = row["flavor"]
+    if kind != NodeKind.TASK and flavor is not None:
         raise ValueError(
-            f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor_raw!r}; "
+            f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor!r}; "
             "only task nodes may carry a flavor"
         )
-    else:
-        flavor = None
+    completed_at = row["completed_at"]
+    dispatched_at = row["dispatched_at"]
     return MikadoNode(
         id=row["id"],
         description=row["description"],
@@ -146,19 +183,19 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         parent_id=row["parent_id"],
         worktree_path=row["worktree_path"],
         branch_name=row["branch_name"],
-        run_id=run_id,
-        pid=pid,
+        run_id=row["run_id"],
+        pid=row["pid"],
         created_at=datetime.fromisoformat(row["created_at"]),
-        completed_at=(datetime.fromisoformat(completed_at_raw) if completed_at_raw else None),
-        dispatched_at=(datetime.fromisoformat(dispatched_at_raw) if dispatched_at_raw else None),
-        oversized=oversized,
-        batch_index=batch_index,
-        completion_duration_seconds=duration,
+        completed_at=datetime.fromisoformat(completed_at) if completed_at else None,
+        dispatched_at=datetime.fromisoformat(dispatched_at) if dispatched_at else None,
+        oversized=bool(row["oversized"]),
+        batch_index=row["batch_index"],
+        completion_duration_seconds=row["completion_duration_seconds"],
         kind=kind,
-        flavor=flavor,
-        wiki_ref=wiki_ref,
-        github_ref=github_ref,
-        artifact_path=artifact_path,
+        flavor=flavor if kind == NodeKind.TASK else None,
+        wiki_ref=row["wiki_ref"],
+        github_ref=row["github_ref"],
+        artifact_path=row["artifact_path"],
     )
 
 
@@ -199,8 +236,18 @@ def get_file_ownership_map(conn: sqlite3.Connection) -> dict[int, list[str]]:
 def check_parallel_safety(
     conn: sqlite3.Connection, node_ids: list[int]
 ) -> list[tuple[int, int, list[str]]]:
-    ownership: dict[int, set[str]] = {nid: set(get_file_ownership(conn, nid)) for nid in node_ids}
-    conflicts: list[tuple[int, int, list[str]]] = []
+    if not node_ids:
+        return []
+    placeholders = ",".join("?" for _ in node_ids)
+    rows = conn.execute(
+        f"SELECT node_id, file_path FROM file_ownership "  # noqa: S608
+        f"WHERE node_id IN ({placeholders})",
+        node_ids,
+    ).fetchall()
+    ownership = {node_id: set() for node_id in node_ids}
+    for node_id, file_path in rows:
+        ownership[node_id].add(file_path)
+    conflicts = []
     for left_id, right_id in itertools.combinations(node_ids, 2):
         overlap = ownership[left_id] & ownership[right_id]
         if overlap:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from milknado.domains.common.protocols import ToolchainPort
 
 
 @dataclass(frozen=True)
@@ -33,26 +32,38 @@ class ToolStatus:
     path: str | None = None
 
 
-def get_required_tool_status() -> list[ToolStatus]:
-    statuses: list[ToolStatus] = []
-    for tool in REQUIRED_RUST_TOOLS:
-        path = shutil.which(tool.name)
-        statuses.append(
-            ToolStatus(name=tool.name, installed=path is not None, path=path),
+def _system_toolchain() -> ToolchainPort:
+    from milknado.adapters.toolchain import SystemToolchainAdapter
+
+    return SystemToolchainAdapter()
+
+
+def get_required_tool_status(
+    toolchain: ToolchainPort | None = None,
+) -> list[ToolStatus]:
+    toolchain = toolchain or _system_toolchain()
+    return [
+        ToolStatus(
+            name=tool.name,
+            installed=(path := toolchain.find_executable(tool.name)) is not None,
+            path=path,
         )
-    return statuses
+        for tool in REQUIRED_RUST_TOOLS
+    ]
 
 
-def install_missing_rust_tools() -> tuple[list[str], list[str]]:
+def install_missing_rust_tools(
+    toolchain: ToolchainPort | None = None,
+) -> tuple[list[str], list[str]]:
+    toolchain = toolchain or _system_toolchain()
     installed: list[str] = []
-    current_status = get_required_tool_status()
+    current_status = get_required_tool_status(toolchain)
 
-    has_cargo = shutil.which("cargo") is not None
-    if not has_cargo:
+    if toolchain.find_executable("cargo") is None:
         failed_without_cargo = [status.name for status in current_status if not status.installed]
         return installed, failed_without_cargo
 
-    use_binstall = _cargo_subcommand_exists("binstall")
+    use_binstall = _cargo_subcommand_exists("binstall", toolchain)
     tool_by_name = {t.name: t for t in REQUIRED_RUST_TOOLS}
     failed: list[str] = []
     for status in current_status:
@@ -63,26 +74,21 @@ def install_missing_rust_tools() -> tuple[list[str], list[str]]:
             cmd = ["cargo", "binstall", "--no-confirm", *tool.install_args]
         else:
             cmd = ["cargo", "install", "--locked", *tool.install_args]
-        result = subprocess.run(cmd, check=False)
-        if result.returncode == 0 and _cargo_bin_exists(status.name):
+        result = toolchain.run(cmd)
+        if result.returncode == 0 and _cargo_bin_exists(status.name, toolchain):
             installed.append(status.name)
         else:
             failed.append(status.name)
     return installed, failed
 
 
-def _cargo_bin_exists(name: str) -> bool:
-    if shutil.which(name) is not None:
+def _cargo_bin_exists(name: str, toolchain: ToolchainPort) -> bool:
+    if toolchain.find_executable(name) is not None:
         return True
-    cargo_home = os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo"))
-    return (Path(cargo_home) / "bin" / name).exists()
+    cargo_home = toolchain.environment("CARGO_HOME")
+    cargo_root = Path(cargo_home) if cargo_home else toolchain.home() / ".cargo"
+    return (cargo_root / "bin" / name).exists()
 
 
-def _cargo_subcommand_exists(subcommand: str) -> bool:
-    result = subprocess.run(
-        ["cargo", subcommand, "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+def _cargo_subcommand_exists(subcommand: str, toolchain: ToolchainPort) -> bool:
+    return toolchain.run(["cargo", subcommand, "--help"]).returncode == 0

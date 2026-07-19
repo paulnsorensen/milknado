@@ -13,14 +13,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.adapters.gh import (
-    gh_field_list,
-    gh_issue_edit_body,
-    gh_item_edit,
-    gh_item_list,
-    gh_preflight,
-    gh_project_view,
-)
 from milknado.domains.common import (
     MikadoNode,
     NodeKind,
@@ -35,6 +27,7 @@ from milknado.domains.github._fields import (
     status_option_name,
 )
 from milknado.domains.github._intent import goal_file_map, goal_intent
+from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
@@ -46,10 +39,18 @@ class GithubExportResult:
     bodies_overwritten: int
 
 
+@dataclass(frozen=True)
+class _ProjectFields:
+    project_id: str
+    status: dict
+    harvest: dict
+
+
 def export_github_roadmap(
     graph: MikadoGraph,
     roadmap_node_id: int,
     wiki_root: Path,
+    github: GithubProjectPort,
     *,
     owner: str,
     number: int,
@@ -62,11 +63,12 @@ def export_github_roadmap(
         raise ValueError(
             f"roadmap node {roadmap_node_id} has no github_ref; bind or import it first"
         )
-    gh_preflight()
-    status_field, harvest_field = _resolve_fields(owner, number)
+    github.preflight()
+    status_field, harvest_field = _resolve_fields(github, owner, number)
+    fields = _ProjectFields(roadmap.github_ref, status_field, harvest_field)
     url_by_item = {
         item_id: item.get("url")
-        for item in gh_item_list(owner, number)
+        for item in github.item_list(owner, number)
         if (item_id := item.get("id"))
     }
     file_map = goal_file_map(wiki_root, roadmap.wiki_ref) if roadmap.wiki_ref else {}
@@ -76,27 +78,31 @@ def export_github_roadmap(
     for goal in graph.get_children(roadmap_node_id):
         if goal.kind != NodeKind.GOAL or goal.github_ref is None:
             continue
-        _write_status(goal, roadmap.github_ref, status_field)
-        _write_harvest(graph, goal, roadmap.github_ref, harvest_field)
+        _write_status(github, goal, fields)
+        _write_harvest(github, graph, goal, fields)
         goals_exported += 1
         if goal.wiki_ref is not None and url_by_item.get(goal.github_ref):
-            gh_issue_edit_body(url_by_item[goal.github_ref], goal_intent(goal, file_map))
+            github.issue_edit_body(
+                url_by_item[goal.github_ref], goal_intent(goal, file_map, wiki_root)
+            )
             bodies_overwritten += 1
     return GithubExportResult(goals_exported=goals_exported, bodies_overwritten=bodies_overwritten)
 
 
-def resolve_github_roadmap_node(graph: MikadoGraph, owner: str, number: int) -> MikadoNode:
+def resolve_github_roadmap_node(
+    graph: MikadoGraph, owner: str, number: int, github: GithubProjectPort
+) -> MikadoNode:
     """Find the milknado roadmap node bound to a Project, via its PVT node id."""
-    gh_preflight()
-    project = gh_project_view(owner, number)
+    github.preflight()
+    project = github.project_view(owner, number)
     node = graph.find_node_by_github_ref(project["id"])
     if node is None:
         raise LookupError(f"project {owner}/{number} not bound to milknado yet")
     return node
 
 
-def _resolve_fields(owner: str, number: int) -> tuple[dict, dict]:
-    fields = gh_field_list(owner, number)
+def _resolve_fields(github: GithubProjectPort, owner: str, number: int) -> tuple[dict, dict]:
+    fields = github.field_list(owner, number)
     status_field = find_field(fields, STATUS_FIELD_NAME)
     harvest_field = find_field(fields, HARVEST_FIELD_NAME)
     if status_field is None or harvest_field is None:
@@ -107,26 +113,32 @@ def _resolve_fields(owner: str, number: int) -> tuple[dict, dict]:
     return status_field, harvest_field
 
 
-def _write_status(goal: MikadoNode, project_id: str, status_field: dict) -> None:
+def _write_status(github: GithubProjectPort, goal: MikadoNode, fields: _ProjectFields) -> None:
     option = status_option_name(goal.status.value)
     if option is None:
         return
-    option_id = find_option_id(status_field, option)
+    option_id = find_option_id(fields.status, option)
     if option_id is None:
         _logger.warning(
             "goal %s: status option %r not found on field %r; skipping status write",
             goal.id,
             option,
-            status_field.get("name"),
+            fields.status.get("name"),
         )
         return
-    gh_item_edit(
-        project_id, goal.github_ref, status_field["id"], single_select_option_id=option_id
+    github.item_edit(
+        fields.project_id,
+        goal.github_ref,
+        fields.status["id"],
+        single_select_option_id=option_id,
     )
 
 
 def _write_harvest(
-    graph: MikadoGraph, goal: MikadoNode, project_id: str, harvest_field: dict
+    github: GithubProjectPort,
+    graph: MikadoGraph,
+    goal: MikadoNode,
+    fields: _ProjectFields,
 ) -> None:
     text = format_harvest_text(build_harvest_summary(graph, goal))
-    gh_item_edit(project_id, goal.github_ref, harvest_field["id"], text=text)
+    github.item_edit(fields.project_id, goal.github_ref, fields.harvest["id"], text=text)

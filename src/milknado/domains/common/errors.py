@@ -11,6 +11,16 @@ class MilknadoError(Exception):
     """Base for all milknado-specific exceptions."""
 
 
+class GitOperationError(MilknadoError):
+    def __init__(self, operation: str, detail: str = "") -> None:
+        self.operation = operation
+        self.detail = detail
+        message = f"git {operation} failed"
+        if detail:
+            message = f"{message}: {detail}"
+        super().__init__(message)
+
+
 class RebaseAbortError(MilknadoError):
     def __init__(self, worktree: Path, stderr: str = "") -> None:
         self.worktree = worktree

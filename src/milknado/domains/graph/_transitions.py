@@ -141,8 +141,8 @@ def claim_node(conn: sqlite3.Connection, node_id: int, run_id: str, now: str) ->
     try_reclaim correctly refuses to reclaim.
     """
     cur = conn.execute(
-        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = NULL "  # noqa: S608 — fixed tuple
-        f"WHERE id = ? AND status IN {_CLAIMABLE}",
+        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = NULL, "  # noqa: S608 — fixed tuple
+        f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
         (run_id, now, node_id),
     )
     conn.commit()

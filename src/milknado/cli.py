@@ -10,11 +10,10 @@ from typing import Annotated
 import typer
 
 from milknado._cli_helpers import (
-    _ensure_db,
-    _ensure_plugins_loaded,
     _find_config,
     _load_or_default,
     _maybe_block_parent,
+    _open_project,
     console,
 )
 from milknado.cli_agents import agents_app
@@ -98,9 +97,8 @@ def init(
         save_config(config, config_path)
         console.print(f"Created config: {config_path}")
 
-    plugins = _ensure_plugins_loaded(config)
-    graph = _ensure_db(config, plugins)
-    graph.close()
+    project = _open_project(project_root, config)
+    project.graph.close()
     console.print(f"Database ready: {config.db_path}")
 
     crg = CrgAdapter(project_root)
@@ -139,22 +137,26 @@ def index(
         raise typer.Exit(code=1) from None
 
 
-def _fetch_run_states(nodes: list[MikadoNode]) -> dict[str, str] | None:
+def _fetch_run_states(
+    nodes: list[MikadoNode],
+) -> tuple[dict[str, str] | None, list[str]]:
     run_ids = [n.run_id for n in nodes if n.run_id and n.status == NodeStatus.RUNNING]
     if not run_ids:
-        return None
-    try:
-        from milknado.adapters.loop import LoopAdapter
+        return None, []
+    from milknado.adapters.loop import LoopAdapter
 
-        ralph = LoopAdapter()
-        states: dict[str, str] = {}
-        for run_id in run_ids:
-            run = ralph.get_run(run_id)
-            if run:
-                states[run_id] = getattr(run, "status", "unknown")
-        return states or None
-    except Exception:  # noqa: BLE001 — status enrichment is best-effort; never block render
-        return None
+    adapter = LoopAdapter()
+    states: dict[str, str] = {}
+    failures: list[str] = []
+    for run_id in run_ids:
+        try:
+            run = adapter.get_run(run_id)
+        except Exception as exc:
+            failures.append(f"{run_id}: {type(exc).__name__}: {exc}")
+            continue
+        if run:
+            states[run_id] = getattr(run, "status", "unknown")
+    return states or None, failures
 
 
 @app.command()
@@ -163,8 +165,8 @@ def status(
 ) -> None:
     """Show the current state of the Mikado graph."""
     project_root = project_root.resolve()
-    config, plugins = _load_or_default(project_root)
-    graph = _ensure_db(config, plugins)
+    project = _open_project(project_root)
+    graph = project.graph
 
     try:
         nodes = graph.get_all_nodes()
@@ -172,9 +174,14 @@ def status(
             console.print("No nodes in graph. Run [bold]milknado plan[/bold] to start.")
             return
 
-        run_states = _fetch_run_states(nodes)
-        output = render_tree(graph, run_states=run_states)
-        console.print(output)
+        run_states, failures = _fetch_run_states(nodes)
+        if failures:
+            console.print(
+                f"[yellow]Degraded status: {len(failures)} run state"
+                f"{'s' if len(failures) != 1 else ''} unavailable "
+                f"({'; '.join(failures)})[/yellow]"
+            )
+        console.print(render_tree(graph, run_states=run_states))
     finally:
         graph.close()
 
@@ -204,9 +211,9 @@ def add_node(
     description: Annotated[str, typer.Argument(help="Node description")],
     parent: Annotated[int | None, typer.Option("--parent", "-p", help="Parent node ID")] = None,
     kind: Annotated[
-        str,
-        typer.Option("--kind", "-k", help="Node kind: roadmap|goal|task"),
-    ] = "task",
+        NodeKind,
+        typer.Option("--kind", "-k", help="Node kind"),
+    ] = NodeKind.TASK,
     files: Annotated[
         list[str] | None,
         typer.Option("--files", "-f", help="Files this node will touch"),
@@ -216,20 +223,14 @@ def add_node(
     ] = Path("."),
 ) -> None:
     """Add a node to the Mikado graph."""
-    try:
-        node_kind = NodeKind(kind)
-    except ValueError:
-        valid = sorted(k.value for k in NodeKind)
-        raise typer.BadParameter(f"invalid kind {kind!r}; expected one of {valid}") from None
     project_root = project_root.resolve()
-    config, plugins = _load_or_default(project_root)
-    graph = _ensure_db(config, plugins)
+    project = _open_project(project_root)
+    graph = project.graph
 
     try:
-        node = graph.add_node(description, parent_id=parent, spec=NodeSpec(kind=node_kind))
+        node = graph.add_node(description, parent_id=parent, spec=NodeSpec(kind=kind))
         if files:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
-
         _maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
     finally:

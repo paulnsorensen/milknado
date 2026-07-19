@@ -42,6 +42,12 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
         try:
             started = datetime.fromisoformat(started_at)
         except ValueError:
+            _logger.warning(
+                "stale-run sweep skipped malformed timestamp: run_id=%s node_id=%d started_at=%r",
+                state.get("run_id"),
+                node_id,
+                started_at,
+            )
             continue
         if (now - started).total_seconds() <= timeout + _STALE_GRACE_SECONDS:
             continue
@@ -144,6 +150,12 @@ def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | No
     a node reset out of RUNNING is never force-marked. Shared by the sync (`mcp_run`)
     and detached worktree (`mcp_ralph`) dispatch tools.
     """
+    _logger.info(
+        "run reconciliation: run_id=%s node_id=%d status=%s",
+        run_id,
+        node_id,
+        run_status,
+    )
     node = graph.get_node(node_id)
     if node is None or node.status != NodeStatus.RUNNING:
         return

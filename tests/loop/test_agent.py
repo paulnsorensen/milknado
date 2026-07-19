@@ -8,19 +8,21 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from unittest.mock import ANY, MagicMock, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
 from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
+    _BoundedOutput,
     _kill_process_group,
     _pump_stream,
     _read_agent_stream,
     _ResolvedAgentRun,
     _run_agent_blocking,
     _run_agent_streaming,
+    _terminate_lingering_group,
     _write_log,
     execute_agent,
 )
@@ -1662,10 +1664,6 @@ class TestBoundedReaderThreadJoins:
     hang the CLI, and that joins always happen in the finally block.
     """
 
-    @pytest.mark.xfail(
-        reason="Grandchild pipe inheritance behaves differently on Linux CI runners",
-        strict=False,
-    )
     def test_grandchild_inheriting_stdout_does_not_hang(self, tmp_path):
         """Spawn an agent that forks a grandchild inheriting stdout.
 
@@ -1950,3 +1948,36 @@ class TestArgDeliveryStdin:
         # EOF on DEVNULL means read() returned the empty string, not a hang.
         assert result.result_text == ""
         assert elapsed < 9.0
+
+
+class TestBoundedOutput:
+    def test_drops_oldest_complete_lines_when_tail_exceeds_limit(self) -> None:
+        output = _BoundedOutput(limit=6)
+        output.append("abc")
+        output.append("def")
+        output.append("ghi")
+
+        assert list(output) == ["def", "ghi"]
+
+    def test_single_oversized_line_keeps_only_tail(self) -> None:
+        output = _BoundedOutput(limit=4)
+        output.append("abcdefgh")
+
+        assert list(output) == ["efgh"]
+
+
+def test_lingering_group_ignores_sigkill_race() -> None:
+    proc = MagicMock(pid=123)
+    with (
+        patch("milknado.loop._agent.IS_WINDOWS", False),
+        patch(
+            "milknado.loop._agent.os.killpg",
+            side_effect=[None, ProcessLookupError()],
+        ) as killpg,
+    ):
+        _terminate_lingering_group(proc)
+
+    assert killpg.call_args_list == [
+        call(123, signal.SIGTERM),
+        call(123, signal.SIGKILL),
+    ]

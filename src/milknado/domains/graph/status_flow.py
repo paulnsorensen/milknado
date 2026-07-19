@@ -2,8 +2,37 @@
 
 from __future__ import annotations
 
+import json
+
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
+
+VERIFY_ROLE = "verify"
+CLAIM_ROLE = "claim"
+
+
+def latest_verify_ok(graph, run_id: str) -> bool:  # noqa: ANN001
+    body = graph.latest_run_message(run_id, VERIFY_ROLE)
+    if not body:
+        return False
+    try:
+        return json.loads(body).get("ok") is True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def assert_done_verified(graph, node: MikadoNode) -> None:  # noqa: ANN001
+    if node.run_id is None or graph.get_run(node.run_id) is None:
+        return
+    native = (
+        graph.latest_run_message(node.run_id, CLAIM_ROLE) is not None
+        or graph.latest_run_message(node.run_id, VERIFY_ROLE) is not None
+    )
+    if native and not latest_verify_ok(graph, node.run_id):
+        raise ValueError(
+            f"node {node.id} cannot be marked done: milknado_node_verify(run_id="
+            f"{node.run_id!r}) has not returned ok=True. Run milknado_node_verify first."
+        )
 
 
 def todo_status_steps(current: NodeStatus, target: NodeStatus) -> list[NodeStatus]:
@@ -50,6 +79,8 @@ def apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:  # n
     a node to its current status is a no-op. Reopening a DONE node is
     intentionally disallowed and still raises InvalidTransition.
     """
+    if target == NodeStatus.DONE:
+        assert_done_verified(graph, node)
     dispatch = {
         NodeStatus.PENDING: graph.mark_pending,
         NodeStatus.RUNNING: graph.mark_running,

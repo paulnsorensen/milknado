@@ -9,7 +9,7 @@ import pytest
 def test_main_calls_configure_stderr_logging_before_mcp_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import milknado.domains.execution.run_loop._logging as logging_mod
+    import milknado.process_logging as logging_mod
     from milknado import mcp_server
 
     calls: list[str] = []

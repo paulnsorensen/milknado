@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-import shlex
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,11 +10,38 @@ from typing import Any
 import tomli_w
 
 from milknado.domains.common.agent_argv import (
-    ALLOWED_WORKER_EXECUTABLES,
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
     resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+)
+from milknado.domains.common.flavor_codec import (
+    FlavorOverride,
+    Gate,
+)
+from milknado.domains.common.flavor_codec import (
+    absolutize_global_flavor_paths as _absolutize_global_flavor_paths,
+)
+from milknado.domains.common.flavor_codec import (
+    coerce_tool_list as _coerce_single_tool_list,
+)
+from milknado.domains.common.flavor_codec import (
+    parse_flavor_tables as _parse_flavor_tables,
+)
+from milknado.domains.common.flavor_codec import (
+    parse_gates as _parse_gates,
+)
+from milknado.domains.common.flavor_codec import (
+    serialize_flavor_tables as _serialize_flavor_tables,
+)
+from milknado.domains.common.flavor_codec import (
+    serialize_gates as _serialize_gates,
+)
+from milknado.domains.common.flavor_codec import (
+    validate_loop_mode as _validated_loop_mode,
+)
+from milknado.domains.common.flavor_codec import (
+    validate_positive_int as _validated_positive_int,
 )
 from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.types import BUILTIN_FLAVORS
@@ -34,44 +59,6 @@ DEFAULT_LOOP_MODE = "redispatch"
 DEFAULT_MAX_ITERATIONS = 8
 DEFAULT_MAX_TURNS = 60
 _LOOP_MODES = ("redispatch", "single")
-
-
-@dataclass(frozen=True)
-class Gate:
-    """A single quality gate command, with an optional stdout failure pattern.
-
-    ``command`` is run in the worktree. On non-zero exit the gate fails.
-    When ``fail_on_stdout`` is set, a regex match against stdout+stderr on exit 0
-    also causes a failure — use this for harnesses that exit 0 even on failure
-    (e.g. Godot headless).
-    """
-
-    command: str
-    fail_on_stdout: str | None = None
-
-
-@dataclass(frozen=True)
-class FlavorOverride:
-    """Per-flavor config knobs loaded from [milknado.flavor.<flavor>] TOML tables.
-
-    All fields are optional; absent = inherit from global config.
-    ``brief_prepend`` holds the resolved text (inline or loaded from path(s)).
-    ``quality_gates = ()`` means skip gates; ``None`` means inherit.
-    ``agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns`` drive the
-    native Workflow backend; ``None`` inherits the global default.
-    ``worktree`` drives per-flavor worktree provisioning policy (ADR-005);
-    ``None`` inherits the caller/global default.
-    """
-
-    execution_agent: str | None = None
-    tools: tuple[str, ...] | None = None  # may contain one "..." sentinel
-    brief_prepend: str | None = None  # resolved text
-    quality_gates: tuple[Gate, ...] | None = None
-    agent_type: str | None = None
-    loop_mode: str | None = None
-    max_iterations: int | None = None
-    max_turns: int | None = None
-    worktree: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -163,7 +150,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
     if tools:
         milknado["worker"] = {"tools": tools}
 
-    flavor_tables = _serialize_flavor_tables(config)
+    flavor_tables = _serialize_flavor_tables(config.flavors)
     if flavor_tables:
         milknado["flavor"] = flavor_tables
 
@@ -241,53 +228,6 @@ def _serialize_worker_tools(config: MilknadoConfig) -> dict[str, list[str]]:
     return {fam: list(tool_list) for fam, tool_list in sorted(config.worker_tools.items())}
 
 
-def _serialize_flavor_tables(config: MilknadoConfig) -> dict[str, dict[str, Any]]:
-    flavor_tables: dict[str, dict[str, Any]] = {}
-    for flavor_name, fo in config.flavors.items():
-        entry = _serialize_flavor_entry(fo)
-        if entry:
-            flavor_tables[flavor_name] = entry
-    return flavor_tables
-
-
-def _serialize_flavor_entry(fo: FlavorOverride) -> dict[str, Any]:
-    entry: dict[str, Any] = {}
-    if fo.execution_agent is not None:
-        entry["execution_agent"] = fo.execution_agent
-    if fo.tools is not None:
-        entry["tools"] = list(fo.tools)
-    if fo.brief_prepend is not None:
-        entry["brief_prepend"] = fo.brief_prepend
-    if fo.quality_gates is not None:
-        entry["quality_gates"] = _serialize_gates(fo.quality_gates)
-    if fo.agent_type is not None:
-        entry["agent_type"] = fo.agent_type
-    if fo.loop_mode is not None:
-        entry["loop_mode"] = fo.loop_mode
-    if fo.max_iterations is not None:
-        entry["max_iterations"] = fo.max_iterations
-    if fo.max_turns is not None:
-        entry["max_turns"] = fo.max_turns
-    if fo.worktree is not None:
-        entry["worktree"] = fo.worktree
-    return entry
-
-
-def _serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
-    """Serialize Gate objects to TOML-compatible form.
-
-    A gate with no ``fail_on_stdout`` serializes as a bare string.
-    A gate with ``fail_on_stdout`` serializes as an inline table.
-    """
-    out: list[Any] = []
-    for gate in gates:
-        if gate.fail_on_stdout is None:
-            out.append(gate.command)
-        else:
-            out.append({"command": gate.command, "fail_on_stdout": gate.fail_on_stdout})
-    return out
-
-
 def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
     """Probe for language markers and return sane gates, else None.
 
@@ -353,26 +293,6 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
         value = prompts.get(key)
         if isinstance(value, str) and not Path(value).is_absolute():
             prompts[key] = str((base_dir / value).resolve())
-
-
-def _absolutize_global_flavor_paths(global_raw: dict[str, Any], base_dir: Path) -> None:
-    """Resolve relative flavor brief_prepend_path values in the global config."""
-    flavor = global_raw.get("flavor")
-    if not isinstance(flavor, dict):
-        return
-    for _flavor_name, flavor_raw in flavor.items():
-        if not isinstance(flavor_raw, dict):
-            continue
-        value = flavor_raw.get("brief_prepend_path")
-        if isinstance(value, str) and not Path(value).is_absolute():
-            flavor_raw["brief_prepend_path"] = str((base_dir / value).resolve())
-        elif isinstance(value, list):
-            flavor_raw["brief_prepend_path"] = [
-                str((base_dir / v).resolve())
-                if isinstance(v, str) and not Path(v).is_absolute()
-                else v
-                for v in value
-            ]
 
 
 def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
@@ -492,16 +412,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     return MilknadoConfig(**kwargs)
 
 
-def _validated_loop_mode(value: Any, ctx: str) -> str:
-    """Coerce a loop_mode value to one of the allowed modes, else raise."""
-    mode = str(value)
-    if mode not in _LOOP_MODES:
-        raise ValueError(f"{ctx} loop_mode must be one of {list(_LOOP_MODES)}; got {mode!r}")
-    return mode
-
-
 def _validated_str(value: Any, default: str, ctx: str) -> str:
-    """Return a string config value, rejecting non-string types instead of coercing."""
     if value is None:
         return default
     if not isinstance(value, str):
@@ -516,55 +427,6 @@ def _validated_optional_str(value: Any, ctx: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
     return value
-
-
-def _parse_gates(raw: Any, ctx: str) -> tuple[Gate, ...] | None:
-    """Parse a raw ``quality_gates`` value into a tuple of Gate objects (or None).
-
-    - None input  → None (key absent; fail-closed at runtime)
-    - []          → ()  (explicit skip)
-    - [entries]   → tuple of Gate objects
-
-    Each entry may be:
-    - a non-empty string → Gate(command=s)
-    - a table with required ``command`` (non-empty str) and optional
-      ``fail_on_stdout`` (str, must be a valid regex) → Gate(...)
-    """
-    if raw is None:
-        return None
-    if not isinstance(raw, list):
-        raise ValueError(f"{ctx} must be a list (use [] to explicitly skip gates)")
-    return tuple(_parse_gate_entry(entry, ctx, i) for i, entry in enumerate(raw))
-
-
-def _parse_gate_entry(entry: Any, ctx: str, i: int) -> Gate:
-    if isinstance(entry, str):
-        if not entry.strip():
-            raise ValueError(f"{ctx}[{i}] must be a non-empty string")
-        return Gate(command=entry)
-    if isinstance(entry, dict):
-        command = entry.get("command")
-        if not isinstance(command, str) or not command.strip():
-            raise ValueError(f"{ctx}[{i}].command must be a non-empty string")
-        return Gate(command=command, fail_on_stdout=_parse_fail_on_stdout(entry, ctx, i))
-    raise ValueError(
-        f"{ctx}[{i}] must be a string or a table with 'command', got {type(entry).__name__}"
-    )
-
-
-def _parse_fail_on_stdout(entry: dict[str, Any], ctx: str, i: int) -> str | None:
-    fail_on_stdout = entry.get("fail_on_stdout")
-    if fail_on_stdout is None:
-        return None
-    if not isinstance(fail_on_stdout, str):
-        raise ValueError(f"{ctx}[{i}].fail_on_stdout must be a string")
-    if not fail_on_stdout.strip():
-        return None
-    try:
-        re.compile(fail_on_stdout)
-    except re.error as exc:
-        raise ValueError(f"{ctx}[{i}].fail_on_stdout is not a valid regex: {exc}") from exc
-    return fail_on_stdout
 
 
 def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
@@ -589,161 +451,6 @@ def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
             raise ValueError(f"[milknado.worker.tools] family keys must be strings, got {fam!r}")
         out[fam] = _coerce_single_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
     return out
-
-
-def _parse_flavor_tables(
-    flavor_raw: Any,
-    project_root: Path,
-) -> dict[str, FlavorOverride]:
-    """Parse [milknado.flavor.*] tables into {flavor name: FlavorOverride}.
-
-    Any string key is accepted here: a TOML-declared table is itself the
-    registration of that flavor name (see ADR-004).
-    """
-    if flavor_raw is None:
-        return {}
-    if not isinstance(flavor_raw, dict):
-        raise ValueError("[milknado.flavor] must be a table")
-
-    out: dict[str, FlavorOverride] = {}
-    for flavor_name, entry in flavor_raw.items():
-        if not isinstance(flavor_name, str) or not flavor_name:
-            raise ValueError(
-                f"[milknado.flavor] flavor keys must be non-empty strings, got {flavor_name!r}"
-            )
-        if not isinstance(entry, dict):
-            raise ValueError(f"[milknado.flavor.{flavor_name}] must be a table")
-        fo = _parse_flavor_entry(entry, flavor_name, project_root)
-        out[flavor_name] = fo
-    return out
-
-
-def _parse_flavor_entry(
-    entry: dict[str, Any],
-    flavor_name: str,
-    project_root: Path,
-) -> FlavorOverride:
-    """Parse one [milknado.flavor.<flavor>] table."""
-    ctx = f"[milknado.flavor.{flavor_name}]"
-    # execution_agent
-    execution_agent_raw = entry.get("execution_agent")
-    execution_agent: str | None = None
-    if execution_agent_raw is not None:
-        if not isinstance(execution_agent_raw, str):
-            raise ValueError(f"{ctx} execution_agent must be a string")
-        argv = shlex.split(execution_agent_raw)
-        if argv:
-            exe = Path(argv[0]).name
-            if exe not in ALLOWED_WORKER_EXECUTABLES:
-                raise ValueError(
-                    f"{ctx} execution_agent must start with one of "
-                    f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {exe!r}"
-                )
-        execution_agent = execution_agent_raw
-
-    # tools
-    tools_raw = entry.get("tools")
-    tools: tuple[str, ...] | None = None
-    if tools_raw is not None:
-        tools = _coerce_single_tool_list(tools_raw, f"{ctx} tools")
-
-    # brief_prepend / brief_prepend_path
-    brief_prepend = _load_flavor_brief(entry, flavor_name, project_root)
-
-    # quality_gates
-    quality_gates = _parse_gates(entry.get("quality_gates"), f"{ctx} quality_gates")
-
-    # Native Workflow backend knobs (None = inherit global).
-    agent_type_raw = entry.get("agent_type")
-    if agent_type_raw is not None and not isinstance(agent_type_raw, str):
-        raise ValueError(f"{ctx} agent_type must be a string")
-    loop_mode_raw = entry.get("loop_mode")
-    loop_mode = _validated_loop_mode(loop_mode_raw, ctx) if loop_mode_raw is not None else None
-    max_iterations = _validated_positive_int(entry.get("max_iterations"), f"{ctx} max_iterations")
-    max_turns = _validated_positive_int(entry.get("max_turns"), f"{ctx} max_turns")
-
-    worktree_raw = entry.get("worktree")
-    if worktree_raw is not None and not isinstance(worktree_raw, bool):
-        raise ValueError(f"{ctx} worktree must be a boolean")
-
-    return FlavorOverride(
-        execution_agent=execution_agent,
-        tools=tools,
-        brief_prepend=brief_prepend,
-        quality_gates=quality_gates,
-        agent_type=agent_type_raw,
-        loop_mode=loop_mode,
-        max_iterations=max_iterations,
-        max_turns=max_turns,
-        worktree=worktree_raw,
-    )
-
-
-def _validated_positive_int(value: Any, ctx: str) -> int | None:
-    """Coerce an optional positive-int config value; None passes through."""
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{ctx} must be an integer")
-    if value < 1:
-        raise ValueError(f"{ctx} must be >= 1; got {value}")
-    return value
-
-
-def _load_flavor_brief(
-    entry: dict[str, Any],
-    flavor_name: str,
-    project_root: Path,
-) -> str | None:
-    """Resolve brief_prepend or brief_prepend_path for a flavor entry."""
-    ctx = f"[milknado.flavor.{flavor_name}]"
-    inline = entry.get("brief_prepend")
-    path_value = entry.get("brief_prepend_path")
-    if inline is not None and not isinstance(inline, str):
-        raise ValueError(f"{ctx} brief_prepend must be a string")
-    if inline is not None and path_value is not None:
-        raise ValueError(f"{ctx} brief_prepend and brief_prepend_path are mutually exclusive")
-    if inline is not None:
-        text = str(inline).strip()
-        return text or None
-    if path_value is not None:
-        # path_value may be a string or a list of strings.
-        if isinstance(path_value, str):
-            paths = [path_value]
-        elif isinstance(path_value, list):
-            paths = path_value
-        else:
-            raise ValueError(f"{ctx} brief_prepend_path must be a string or list of strings")
-        parts: list[str] = []
-        for p in paths:
-            if not isinstance(p, str):
-                raise ValueError(f"{ctx} brief_prepend_path entries must be strings")
-            resolved = Path(p)
-            if not resolved.is_absolute():
-                resolved = project_root / resolved
-            if not resolved.exists():
-                raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {resolved}")
-            parts.append(resolved.read_text(encoding="utf-8").strip())
-        text = "\n\n".join(p for p in parts if p)
-        return text or None
-    return None
-
-
-def _coerce_single_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
-    """Validate a single-list tool entry (list of non-empty strings, at most one \"...\")."""
-    if isinstance(value, str) or not isinstance(value, (list, tuple)):
-        raise ValueError(f"{ctx} must be a list of strings, got {type(value).__name__}")
-    items: list[str] = []
-    sentinel_count = 0
-    for i, item in enumerate(value):
-        if not isinstance(item, str) or not item:
-            raise ValueError(f"{ctx}[{i}] must be a non-empty string, got {item!r}")
-        if item == "...":
-            sentinel_count += 1
-            if sentinel_count > 1:
-                raise ValueError(f'{ctx} may contain at most one "..." sentinel, found multiple')
-        items.append(item)
-    return tuple(items)
 
 
 def _load_prompt_prepend(

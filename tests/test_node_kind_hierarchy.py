@@ -300,12 +300,11 @@ class TestFlavorRoundTrip:
 
 
 class TestMissingColumnDefaults:
-    def test_pre_migration_db_loads_with_implement_default_for_tasks(self, tmp_path: Path) -> None:
-        """A db without the flavor column loads tasks with implement default via row_to_node."""
+    def test_pre_migration_db_is_rejected(self, tmp_path: Path) -> None:
         db_path = tmp_path / "old.db"
-        # Build a db WITHOUT the flavor column by creating it manually
         conn = sqlite3.connect(str(db_path))
-        conn.executescript("""
+        conn.executescript(
+            """
             CREATE TABLE nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 description TEXT NOT NULL,
@@ -328,32 +327,15 @@ class TestMissingColumnDefaults:
                 child_id INTEGER NOT NULL,
                 PRIMARY KEY (parent_id, child_id)
             );
-        """)
-        # Insert a task row without flavor
-        conn.execute(
-            "INSERT INTO nodes (description, status, created_at, kind)"
-            " VALUES (?, 'pending', '2025-01-01', 'task')",
-            ("legacy task",),
+            """
         )
-        # Insert a goal row without flavor
-        conn.execute(
-            "INSERT INTO nodes (description, status, created_at, kind)"
-            " VALUES (?, 'pending', '2025-01-01', 'goal')",
-            ("legacy goal",),
-        )
-        conn.commit()
         conn.close()
 
-        # Open via MikadoGraph — row_to_node should default the flavor column
-        g = MikadoGraph(db_path)
-        nodes = g.get_all_nodes()
-        g.close()
-
-        task_node = next(n for n in nodes if n.description == "legacy task")
-        goal_node = next(n for n in nodes if n.description == "legacy goal")
-
-        assert task_node.flavor == "implement"
-        assert goal_node.flavor is None
+        with pytest.raises(
+            RuntimeError,
+            match=r"obsolete milknado database schema.*flavor",
+        ):
+            MikadoGraph(db_path)
 
 
 # ── apply_batches_to_graph kinds ─────────────────────────────────────────────
@@ -389,12 +371,11 @@ class TestCoverageBranches:
             _parse_flavor("unknown-flavor", BUILTIN_FLAVORS)
 
     def test_cli_add_node_invalid_kind_raises(self, tmp_path: Path) -> None:
-        """CLI add_node raises BadParameter for invalid kind strings."""
-        import typer
+        """Direct Python calls fail clearly before writing an invalid kind."""
 
         from milknado.cli import add_node
 
-        with pytest.raises((typer.BadParameter, SystemExit)):
+        with pytest.raises(ValueError, match="invalid kind"):
             add_node(
                 description="x",
                 kind="invalid-kind",

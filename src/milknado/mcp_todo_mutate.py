@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 
 from milknado._mcp_core import (
@@ -16,36 +17,53 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus, validate_hint_path
 from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph.status_flow import (
     apply_todo_status,
+    assert_done_verified,
     subtree_post_order,
     validate_todo_status,
 )
-from milknado.mcp_node import assert_done_verified
 from milknado.mcp_todo import follow_up_parent_id, node_to_summary
 
 _logger = logging.getLogger(__name__)
 
 
-def _reject_escaping_artifact(artifact: str | None, project_root: Path) -> None:
-    """Raise ValueError if *artifact* escapes *project_root*; does not transform it.
+@dataclass(frozen=True)
+class _CreateTodo:
+    description: str
+    kind: Kind
+    files: list[str] | None
+    flavor: Flavor | None
+    artifact: str | None
+    prereqs: list[int] | None
+    root: Path
 
-    Boundary rejection only: artifact_path is persisted verbatim (existing
-    contract), never checked for existence, never resolved before storage.
-    """
-    if artifact is None:
-        return
-    raw = artifact.strip()
-    if not raw:
-        raise ValueError("artifact path is empty")
-    p = Path(raw)
-    resolved = (project_root / p if not p.is_absolute() else p).resolve()
-    try:
-        resolved.relative_to(project_root.resolve())
-    except ValueError:
-        raise ValueError(f"artifact {artifact!r} escapes project root {project_root}") from None
+
+def _create_todo(graph, cfg, parent_id: int | None, request: _CreateTodo) -> dict:  # noqa: ANN001
+    if request.artifact is not None:
+        validate_hint_path(request.artifact, request.root, label="artifact")
+    files = (
+        normalize_hint_paths(request.files, request.root) if request.files is not None else None
+    )
+    flavor = (
+        _parse_flavor(request.flavor, cfg.flavor_registry) if request.flavor is not None else None
+    )
+    node = graph.add_node(
+        request.description,
+        parent_id=parent_id,
+        spec=NodeSpec(
+            kind=_parse_kind(request.kind),
+            flavor=flavor,
+            artifact_path=request.artifact,
+            prereqs=request.prereqs or (),
+            flavor_registry=cfg.flavor_registry,
+        ),
+    )
+    if files is not None:
+        graph.set_file_ownership(node.id, files)
+    return node_to_summary(node)
 
 
 @mcp.tool()
@@ -61,34 +79,17 @@ def milknado_todo_add(
 ) -> dict:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
 
-    files: optional list of paths this node will touch (relative to project root,
-    or absolute under it).
-    flavor: task flavor (implement|spec|spike|prototype|research); only valid for kind=task.
-    artifact: opaque repo-relative path to a markdown narrative for this node; persisted
-    verbatim, not checked for existence.
-    prereqs: node ids that must complete before this node is ready; rejected if any
-    would create a cycle.
+    files: optional paths this node will touch, confined to the project root.
+    flavor: a built-in flavor or a registry name declared in milknado.toml;
+    validation uses the resolved project flavor registry and is valid only for tasks.
+    artifact: opaque repo-relative markdown path, persisted without an existence check.
+    prereqs: node ids that must complete before this node is ready.
     """
-    node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
-    _reject_escaping_artifact(artifact, root)
     graph, cfg = open_graph(root)
     try:
-        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
-        node = graph.add_node(
-            description,
-            parent_id=parent_id,
-            spec=NodeSpec(
-                kind=node_kind,
-                flavor=node_flavor,
-                artifact_path=artifact,
-                prereqs=prereqs or (),
-                flavor_registry=cfg.flavor_registry,
-            ),
-        )
-        if files is not None:
-            graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
-        return node_to_summary(node)
+        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        return _create_todo(graph, cfg, parent_id, request)
     finally:
         graph.close()
 
@@ -103,8 +104,6 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
-        if target == NodeStatus.DONE:
-            assert_done_verified(graph, node)
         apply_todo_status(graph, node, target)
         updated = graph.get_node(node_id)
         if updated is None:
@@ -164,32 +163,15 @@ def milknado_track_follow_up(
     """Register discovered follow-up work as a new node.
 
     Without parent_id, attaches beside the worker's current node; without worker
-    context, creates a root node. Optional files record ownership hints. flavor is
-    valid only for task nodes. artifact: opaque repo-relative markdown narrative path,
-    persisted verbatim. prereqs: node ids that must complete first; rejected on cycle.
+    context, creates a root node. Flavor accepts a built-in or a registry name
+    declared in milknado.toml and is valid only for task nodes.
     """
-    node_kind = _parse_kind(kind)
     root = resolve_project_root(project_root or None)
-    _reject_escaping_artifact(artifact, root)
     graph, cfg = open_graph(root)
     try:
-        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
-        if parent_id is None:
-            parent_id = follow_up_parent_id(graph)
-        node = graph.add_node(
-            description,
-            parent_id=parent_id,
-            spec=NodeSpec(
-                kind=node_kind,
-                flavor=node_flavor,
-                artifact_path=artifact,
-                prereqs=prereqs or (),
-                flavor_registry=cfg.flavor_registry,
-            ),
-        )
-        if files is not None:
-            graph.set_file_ownership(node.id, normalize_hint_paths(files, root))
-        return node_to_summary(node)
+        resolved_parent = parent_id if parent_id is not None else follow_up_parent_id(graph)
+        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        return _create_todo(graph, cfg, resolved_parent, request)
     finally:
         graph.close()
 
@@ -258,7 +240,8 @@ def milknado_edit_node(
         )
     node_kind = _parse_kind(kind) if kind is not None else None
     root = resolve_project_root(project_root or None)
-    _reject_escaping_artifact(artifact, root)
+    if artifact is not None:
+        validate_hint_path(artifact, root, label="artifact")
     hint_paths = normalize_hint_paths(files, root) if files is not None else None
     graph, cfg = open_graph(root)
     try:

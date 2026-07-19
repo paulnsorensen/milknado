@@ -1,16 +1,7 @@
-"""Harvest milknado execution state back into the wiki goal files.
-
-The export is the milknado-owned half of the membrane: it overwrites only the
-`<!-- milknado:harvest -->` block and the `status` / `last_synced` frontmatter,
-leaving human-authored Intent/Acceptance byte-identical. A goal node milknado
-discovered mid-run (no matching file) gets a fresh goal file created for it.
-"""
+"""Harvest execution outcomes into confined wiki roadmap files."""
 
 from __future__ import annotations
 
-import logging
-import shutil
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +13,13 @@ from milknado.domains.common import (
     format_harvest_text,
 )
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.wiki._locate import goal_file_map, locate_roadmap_dir, resolve_roadmap_dir
+from milknado.domains.wiki._locate import (
+    goal_file_map,
+    locate_roadmap_dir,
+    read_text,
+    resolve_roadmap_dir,
+    write_text_atomic,
+)
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
     HARVEST_START,
@@ -33,15 +30,22 @@ from milknado.domains.wiki._serialize import (
     set_frontmatter_field,
     slugify,
 )
-
-_logger = logging.getLogger(__name__)
+from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult
 
 
 @dataclass(frozen=True)
 class ExportResult:
-    files_written: int  # existing goal files whose harvest block was rewritten
-    files_created: int  # orphan goal nodes given a fresh file
-    index_refreshed: bool  # whether `hallouminate index` was invoked
+    files_written: int
+    files_created: int
+    index: WikiIndexResult
+
+
+@dataclass(frozen=True)
+class _ExportContext:
+    wiki_root: Path
+    roadmap_dir: Path
+    roadmap_slug: str
+    synced_at: str
 
 
 def _now_iso() -> str:
@@ -52,6 +56,7 @@ def export_roadmap(
     graph: MikadoGraph,
     roadmap_node_id: int,
     wiki_root: Path,
+    indexer: WikiIndexerPort,
     *,
     now: str | None = None,
 ) -> ExportResult:
@@ -64,38 +69,28 @@ def export_roadmap(
             f"roadmap node {roadmap_node_id} has no wiki_ref; import the roadmap first"
         )
     roadmap_dir, roadmap_slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
-    file_map = goal_file_map(roadmap_dir, roadmap_slug)
-    now_iso = now or _now_iso()
+    context = _ExportContext(wiki_root, roadmap_dir, roadmap_slug, now or _now_iso())
+    files = goal_file_map(wiki_root, roadmap_dir, roadmap_slug)
     written = 0
     created = 0
     for goal in graph.get_children(roadmap_node_id):
         if goal.kind != NodeKind.GOAL:
             continue
-        inner = format_harvest_text(build_harvest_summary(graph, goal))
-        path = file_map.get(goal.wiki_ref) if goal.wiki_ref else None
+        harvest = format_harvest_text(build_harvest_summary(graph, goal))
+        path = files.get(goal.wiki_ref) if goal.wiki_ref else None
         if path is not None:
-            _rewrite_goal_file(path, inner, goal.status.value, now_iso)
+            _rewrite_goal_file(context, path, harvest, goal.status.value)
             written += 1
         else:
-            _create_orphan_goal_file(graph, roadmap_dir, roadmap_slug, goal, inner, now_iso)
+            _create_orphan_goal_file(graph, context, goal, harvest)
             created += 1
-    return ExportResult(
-        files_written=written,
-        files_created=created,
-        index_refreshed=_refresh_index(wiki_root),
-    )
+    return ExportResult(written, created, indexer.refresh(wiki_root))
 
 
 def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str) -> MikadoNode:
-    """Find the milknado roadmap node for a wiki slug via its deterministic key.
-
-    Raises FileNotFoundError (no index.md), ValueError (no `created` to key on),
-    or LookupError (roadmap not yet imported) — the CLI/MCP veneer maps these to
-    clean errors.
-    """
+    """Find the milknado roadmap node for a wiki slug via its deterministic key."""
     roadmap_dir = resolve_roadmap_dir(wiki_root, roadmap_slug)
-    index_path = roadmap_dir / "index.md"
-    created = load_frontmatter(index_path.read_text()).get("created")
+    created = load_frontmatter(read_text(wiki_root, roadmap_dir / "index.md")).get("created")
     if created is None:
         raise ValueError(f"roadmap {roadmap_slug!r} index.md has no `created`; import it first")
     node = graph.find_node_by_wiki_ref(compute_roadmap_ref(roadmap_slug, str(created)))
@@ -104,62 +99,53 @@ def resolve_roadmap_node(graph: MikadoGraph, wiki_root: Path, roadmap_slug: str)
     return node
 
 
-def _rewrite_goal_file(path: Path, inner: str, status: str, now_iso: str) -> None:
-    text = path.read_text()
-    text = replace_harvest_block(text, inner)
+def _rewrite_goal_file(context: _ExportContext, path: Path, harvest: str, status: str) -> None:
+    text = replace_harvest_block(read_text(context.wiki_root, path), harvest)
     text = set_frontmatter_field(text, "status", status)
-    text = set_frontmatter_field(text, "last_synced", f'"{now_iso}"')
-    path.write_text(text)
+    text = set_frontmatter_field(text, "last_synced", f'"{context.synced_at}"')
+    write_text_atomic(context.wiki_root, path, text)
 
 
 def _create_orphan_goal_file(
     graph: MikadoGraph,
-    roadmap_dir: Path,
-    roadmap_slug: str,
+    context: _ExportContext,
     goal: MikadoNode,
-    inner: str,
-    now_iso: str,
+    harvest: str,
 ) -> None:
     base = slugify(goal.description) or "untitled-goal"
-    # Two discovered goals with the same description slugify alike; disambiguate
-    # with a numeric suffix (never the internal node id, which must not leak into
-    # the wiki) so the second neither overwrites the first's file nor collides on
-    # the UNIQUE(wiki_ref) index.
-    slug = base
-    suffix = 2
-    while (roadmap_dir / f"{slug}.md").exists():
-        slug = f"{base}-{suffix}"
-        suffix += 1
-    created = now_iso[:10]
+    slug = _available_slug(context.wiki_root, context.roadmap_dir, base)
+    created = context.synced_at[:10]
     text = (
-        f"---\nkind: goal\nslug: {slug}\nroadmap: {roadmap_slug}\n"
+        f"---\nkind: goal\nslug: {slug}\nroadmap: {context.roadmap_slug}\n"
         f"created: {created}\nstatus: {goal.status.value}\n"
-        f'last_synced: "{now_iso}"\n---\n'
+        f'last_synced: "{context.synced_at}"\n---\n'
         f"# {goal.description}\n\n"
         "## Intent\n"
         f"{goal.description}\n\n"
         "## Acceptance\n"
         "- (discovered during execution)\n\n"
         "## Outcome\n"
-        f"{HARVEST_START}\n{inner}\n{HARVEST_END}\n"
+        f"{HARVEST_START}\n{harvest}\n{HARVEST_END}\n"
     )
-    (roadmap_dir / f"{slug}.md").write_text(text)
-    graph.set_wiki_ref(goal.id, compute_goal_ref(roadmap_slug, slug, created))
+    write_text_atomic(context.wiki_root, context.roadmap_dir / f"{slug}.md", text)
+    graph.set_wiki_ref(
+        goal.id,
+        compute_goal_ref(context.roadmap_slug, slug, created),
+    )
 
 
-def _refresh_index(wiki_root: Path) -> bool:
-    """Best-effort `hallouminate index`; never fatal if the CLI is absent."""
-    if shutil.which("hallouminate") is None:
-        return False
+def _available_slug(wiki_root: Path, roadmap_dir: Path, base: str) -> str:
+    slug = base
+    suffix = 2
+    while _confined_file_exists(wiki_root, roadmap_dir / f"{slug}.md"):
+        slug = f"{base}-{suffix}"
+        suffix += 1
+    return slug
+
+
+def _confined_file_exists(wiki_root: Path, path: Path) -> bool:
     try:
-        completed = subprocess.run(
-            ["hallouminate", "index"],
-            cwd=str(wiki_root),
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        _logger.debug("hallouminate index failed: %s", exc)
+        read_text(wiki_root, path)
+    except FileNotFoundError:
         return False
-    return completed.returncode == 0
+    return True

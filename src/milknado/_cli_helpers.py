@@ -7,8 +7,15 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
-from milknado.domains.common import MilknadoConfig, default_config, load_config
+from milknado.domains.common import MilknadoConfig
 from milknado.domains.graph import MikadoGraph
+from milknado.project import (
+    OpenProject,
+    load_project_config,
+    load_project_plugins,
+    open_project,
+    open_project_graph,
+)
 
 if TYPE_CHECKING:
     from milknado.domains.common.plugin import PluginHook
@@ -18,38 +25,37 @@ console = Console()
 CONFIG_FILE = "milknado.toml"
 
 
+def _open_project(
+    project_root: Path,
+    config: MilknadoConfig | None = None,
+) -> OpenProject:
+    project = open_project(project_root, config)
+    for plugin in project.plugins:
+        console.print(f"  Plugin loaded: {plugin.meta.name}")
+    return project
+
+
 def _find_config(project_root: Path) -> Path:
     return project_root / CONFIG_FILE
 
 
 def _ensure_plugins_loaded(config: MilknadoConfig) -> list[PluginHook]:
-    from milknado.plugins import discover_entry_point_plugins, load_plugins
-
-    loaded: list[PluginHook] = []
-    for plugin in load_plugins(config.plugins):
+    plugins = list(load_project_plugins(config))
+    for plugin in plugins:
         console.print(f"  Plugin loaded: {plugin.meta.name}")
-        loaded.append(plugin)
-    for plugin in discover_entry_point_plugins():
-        console.print(f"  Plugin loaded: {plugin.meta.name} (entry point)")
-        loaded.append(plugin)
-    return loaded
+    return plugins
 
 
 def _load_or_default(
     project_root: Path,
 ) -> tuple[MilknadoConfig, list[PluginHook]]:
-    config_path = _find_config(project_root)
-    if config_path.exists():
-        config = load_config(config_path)
-    else:
-        config = default_config(project_root)
+    config = load_project_config(project_root)
     plugins = _ensure_plugins_loaded(config)
     return config, plugins
 
 
 def _ensure_db(config: MilknadoConfig, plugins: list[PluginHook] | None = None) -> MikadoGraph:
-    config.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return MikadoGraph(config.db_path, plugins=plugins or ())
+    return open_project_graph(config, tuple(plugins or ()))
 
 
 def _maybe_block_parent(graph: MikadoGraph, parent: int | None) -> None:

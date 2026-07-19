@@ -20,26 +20,43 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.git import GitAdapter
-from milknado.adapters.loop import (
+from milknado.adapters.loop import LoopAdapter
+from milknado.domains.common.config import Gate
+from milknado.domains.execution.completion import (
     _GATE_TIMEOUT_SECONDS,
     _GIT_QUERY_TIMEOUT_SECONDS,
     _UNRESOLVABLE_BASE_FEEDBACK,
     NO_GATES_CONFIGURED_MESSAGE,
-    LoopAdapter,
-    _build_completion_verifier,
     _has_committed_change,
     _has_working_tree_change,
-    _resolve_feature_branch,
     _run_quality_gates,
+    build_completion_verifier,
 )
-from milknado.domains.common.config import Gate
 from milknado.loop import CompletionVerdict
 from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
 
 def _git(*args: str, cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+_BASE_OIDS: dict[Path, str] = {}
+
+
+def _build_completion_verifier(
+    worktree: Path,
+    quality_gates: tuple[Gate, ...] | None,
+    *,
+    in_place: bool = False,
+    artifact_path: str | None = None,
+):
+    return build_completion_verifier(
+        worktree,
+        quality_gates,
+        base_oid=_BASE_OIDS.get(worktree),
+        in_place=in_place,
+        artifact_path=artifact_path,
+    )
 
 
 @pytest.fixture()
@@ -61,6 +78,13 @@ def worktree(feature_repo: Path, tmp_path: Path) -> Path:
     """A worktree forked from the feature branch's HEAD, on its own branch."""
     wt = tmp_path / "wt"
     _git("worktree", "add", "-b", "milknado/1-x", str(wt), cwd=feature_repo)
+    _BASE_OIDS[wt] = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=wt,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     return wt
 
 
@@ -135,9 +159,9 @@ class TestFailingGate:
         self, worktree: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A gate that exceeds the cap is a failure, not a silent pass."""
-        import milknado.adapters.loop as loop_mod
+        import milknado.domains.execution.completion as completion_mod
 
-        monkeypatch.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
         verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
 
@@ -156,7 +180,7 @@ class TestFailingGate:
         _commit_change(worktree)
         verifier = _build_completion_verifier(worktree, (Gate("sh -c 'exit 2'"),))
 
-        with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
+        with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
             verifier()
 
         assert any(
@@ -169,13 +193,13 @@ class TestFailingGate:
     ) -> None:
         """A gate timeout — the exact failure mode the high finding predicts for
         an undersized cap — must also be diagnosable from the operator's logs."""
-        import milknado.adapters.loop as loop_mod
+        import milknado.domains.execution.completion as completion_mod
 
-        monkeypatch.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
+        monkeypatch.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
         verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
 
-        with caplog.at_level("WARNING", logger="milknado.adapters.loop"):
+        with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
             verifier()
 
         assert any(r.levelname == "WARNING" and "timed out" in r.message for r in caplog.records)
@@ -318,6 +342,13 @@ class TestArtifactEvidenceMode:
         _git("commit", "-m", "add notes", cwd=feature_repo)
         wt = tmp_path / "wt-ignores-artifact"
         _git("worktree", "add", "-b", "milknado/2-x", str(wt), cwd=feature_repo)
+        _BASE_OIDS[wt] = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=wt,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
         verifier = _build_completion_verifier(wt, (), artifact_path="NOTES.md")
 
         verdict = verifier()
@@ -359,7 +390,7 @@ class TestArtifactEvidenceMode:
     ) -> None:
         """A stat error while checking the artifact must reject, not raise or
         silently pass."""
-        import milknado.adapters.loop as loop_mod
+        import milknado.domains.execution.completion as completion_mod
 
         real_is_file = Path.is_file
 
@@ -368,7 +399,7 @@ class TestArtifactEvidenceMode:
                 raise OSError("simulated stat failure")
             return real_is_file(self)
 
-        monkeypatch.setattr(loop_mod.Path, "is_file", fake_is_file)
+        monkeypatch.setattr(completion_mod.Path, "is_file", fake_is_file)
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="NOTES.md"
         )
@@ -420,7 +451,7 @@ class TestNoneGatesFailClosed:
         _commit_change(worktree)
         verifier = _build_completion_verifier(worktree, ())
 
-        with caplog.at_level(logging.INFO, logger="milknado.adapters.loop"):
+        with caplog.at_level(logging.INFO, logger="milknado.domains.execution.completion"):
             verifier()
 
         assert any("explicitly skipped" in r.message for r in caplog.records)
@@ -489,58 +520,6 @@ class TestFailOnStdout:
         assert verdict.ok is True
 
 
-class TestFeatureBranchResolution:
-    def test_resolves_main_worktree_branch_as_fork_point(self, worktree: Path) -> None:
-        """The worktree's fork point is the main worktree's branch ('feature')."""
-        assert _resolve_feature_branch(worktree) == "feature"
-
-    def test_detached_main_worktree_yields_none(self, feature_repo: Path) -> None:
-        """A detached main worktree has no branch line; resolution returns None."""
-        head = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=feature_repo,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        _git("checkout", "--detach", head, cwd=feature_repo)
-
-        assert _resolve_feature_branch(feature_repo) is None
-
-    def test_non_git_dir_yields_none(self, tmp_path: Path) -> None:
-        """Outside a git repo, resolution fails closed rather than raising."""
-        assert _resolve_feature_branch(tmp_path) is None
-
-    def test_resolved_base_matches_executor_rebase_target(self, tmp_path: Path) -> None:
-        """Integration seam (Curd 6 verifier <-> Curd 4 merge-back): the branch the
-        verifier diffs against must be the SAME ref the executor rebases/ff onto.
-
-        The executor receives ``feature_branch`` from ``GitAdapter.current_branch()``
-        at the orchestrator root (cli_run.run: ``feature_branch = git.current_branch()``),
-        while the verifier independently re-derives it from ``git worktree list`` inside
-        the node worktree. If those two derivations drift, the empty-diff check measures
-        against the wrong base — accepting work that never lands, or rejecting work that
-        would. A non-default branch name proves the equality is structural, not a
-        coincidence of the literal 'feature' both sides happen to use elsewhere.
-        """
-        repo = tmp_path / "orch"
-        repo.mkdir()
-        _git("init", "-b", "release/v2", cwd=repo)
-        _git("config", "user.email", "t@t.t", cwd=repo)
-        _git("config", "user.name", "t", cwd=repo)
-        (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
-        _git("add", "-A", cwd=repo)
-        _git("commit", "-m", "seed", cwd=repo)
-        wt = tmp_path / "node-wt"
-        _git("worktree", "add", "-b", "milknado/9-x", str(wt), cwd=repo)
-
-        executor_target = GitAdapter(repo).current_branch()
-        verifier_base = _resolve_feature_branch(wt)
-
-        assert executor_target == "release/v2"
-        assert verifier_base == executor_target
-
-
 class TestGitFailureFailsClosed:
     """A failing git invocation must not raise out of the verifier; it logs and
     returns a safe degraded value (no spurious accept)."""
@@ -558,7 +537,7 @@ class TestGitFailureFailsClosed:
         committed change', not be mistaken for a non-empty diff (exit 1). Only
         exit 1 signals real change; treating a broken git call as change would
         let a worker that produced nothing slip through completion."""
-        import milknado.adapters.loop as loop_mod
+        import milknado.domains.execution.completion as completion_mod
 
         def fake_run(cmd: list[str], *args: object, **kwargs: object) -> object:
             if "merge-base" in cmd:
@@ -567,7 +546,7 @@ class TestGitFailureFailsClosed:
                 return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: bad object")
             raise AssertionError(f"unexpected git call: {cmd}")
 
-        monkeypatch.setattr(loop_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr(completion_mod.subprocess, "run", fake_run)
 
         assert _has_committed_change(tmp_path, "feature") is False
 
@@ -623,13 +602,13 @@ class TestGateCapSizing:
         gate sleeps past the *old* default-equivalent) so CI stays fast while the
         relationship under test — gate duration > per-command default < gate cap —
         is the same one a full pytest suite hits in production."""
-        import milknado.adapters.loop as loop_mod
+        import milknado.domains.execution.completion as completion_mod
 
         # Compressed mirror: gate runs ~1.5s, "old default" 1s, new cap 10s. A
         # 1.5s gate would have timed out at a 1s cap (the bug) but passes at 10s.
         loop_mod_gate_cap = 10.0
         with pytest.MonkeyPatch.context() as mp:
-            mp.setattr(loop_mod, "_GATE_TIMEOUT_SECONDS", loop_mod_gate_cap)
+            mp.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", loop_mod_gate_cap)
             _commit_change(worktree)
             verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 1.5'"),))
 
@@ -648,6 +627,7 @@ class TestCreateRunAttachesVerifier:
             ralph_file=worktree / "RALPH.md",
             commands=[],
             quality_gates=(Gate("true"),),
+            base_oid=_BASE_OIDS[worktree],
         )
 
         verifier = run.config.completion_verifier
@@ -665,6 +645,7 @@ class TestCreateRunAttachesVerifier:
             ralph_file=worktree / "RALPH.md",
             commands=[],
             quality_gates=None,
+            base_oid=_BASE_OIDS[worktree],
         )
 
         verifier = run.config.completion_verifier

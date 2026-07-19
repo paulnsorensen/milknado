@@ -17,6 +17,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from milknado.domains.common import GitPort, slugify
+from milknado.domains.common.errors import GitOperationError, UnlandedWorkError
+
 
 @dataclass(frozen=True)
 class IsolateContext:
@@ -24,7 +27,8 @@ class IsolateContext:
 
     worktree_path: Path
     worker_branch: str
-    feature_branch: str
+    target_branch: str
+    base_oid: str
     node_id: int
     description: str
 
@@ -35,38 +39,43 @@ class MergeBackResult:
     worktree_preserved: str | None
 
 
-def _create_node_worktree(  # noqa: ANN001, ANN202
-    git, root, node_id: int, description: str, worktree_pattern: str
-):
-    """Create the node's durable worktree under project_root, mirroring the executor.
-
-    Formats ``worktree_pattern`` ({node_id}, {slug}) for the directory name and
-    uses the executor's branch convention (milknado/<id>-<slug>), reusing
-    GitAdapter.create_worktree with the same path-traversal guard. Slug derivation
-    reuses the executor's ``_slugify`` (lazy-imported to keep the dispatch slice
-    free of the execution slice's import weight).
-    """
-    from milknado.domains.execution.executor import _slugify
-
-    slug = _slugify(description)
+def _create_node_worktree(
+    git: GitPort,
+    root: Path,
+    node_id: int,
+    description: str,
+    worktree_pattern: str,
+) -> IsolateContext:
+    slug = slugify(description)
     wt_path = root / worktree_pattern.format(node_id=node_id, slug=slug)
-    resolved_root = root.resolve()
-    if not wt_path.resolve().is_relative_to(resolved_root):
+    if not wt_path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"worktree path resolves outside project_root: {wt_path!r}")
-    branch = f"milknado/{node_id}-{slug}"
-    git.create_worktree(wt_path, branch)
-    return wt_path, branch
+    target_branch = git.current_branch()
+    target_ref = f"refs/heads/{target_branch}"
+    base_oid = git.resolve_ref(target_ref)
+    worker_branch = f"milknado/{node_id}-{slug}"
+    git.create_worktree(wt_path, worker_branch)
+    if git.resolve_ref(worker_branch) != base_oid:
+        git.force_remove_worktree(wt_path)
+        raise GitOperationError("checkout changed while isolated worktree was being created")
+    return IsolateContext(
+        worktree_path=wt_path,
+        worker_branch=worker_branch,
+        target_branch=target_branch,
+        base_oid=base_oid,
+        node_id=node_id,
+        description=description,
+    )
 
 
-def create_isolated_worktree(root: Path, node_id: int, description: str, worktree_pattern: str):  # noqa: ANN201
-    """Create the node's isolated worktree + branch; return ``(wt_path, branch)``.
-
-    Reuses ``_create_node_worktree`` (the same helper the native claim path uses)
-    so the path/branch convention and the path-traversal guard live in one place.
-    """
-    from milknado.adapters import GitAdapter
-
-    return _create_node_worktree(GitAdapter(root), root, node_id, description, worktree_pattern)
+def create_isolated_worktree(
+    git: GitPort,
+    root: Path,
+    node_id: int,
+    description: str,
+    worktree_pattern: str,
+) -> IsolateContext:
+    return _create_node_worktree(git, root, node_id, description, worktree_pattern)
 
 
 @contextmanager
@@ -86,57 +95,34 @@ def _merge_back_lock(root: Path):  # noqa: ANN202
         yield
 
 
-def setup_isolated_worktree(graph, root: Path, node, run_id: str, worktree_pattern: str):  # noqa: ANN001, ANN201
-    """Create the node's ISOLATE worktree + branch and record it on the run_id-fenced node.
-
-    The setup half shared by the sync (``dispatch_node_sync``) and async
-    (``run_inline_start``) dispatch paths; the async side additionally layers an
-    ``IsolateContext`` on the returned ``(wt_path, worker_branch)`` for the
-    deferred merge-back.
-    """
-    wt_path, worker_branch = create_isolated_worktree(
-        root, node.id, node.description, worktree_pattern
-    )
-    graph.set_worktree(node.id, run_id, str(wt_path), worker_branch)
-    return wt_path, worker_branch
+def setup_isolated_worktree(
+    graph,  # noqa: ANN001
+    git: GitPort,
+    root: Path,
+    node,  # noqa: ANN001
+    run_id: str,
+    worktree_pattern: str,
+) -> IsolateContext:
+    context = create_isolated_worktree(git, root, node.id, node.description, worktree_pattern)
+    graph.set_worktree(node.id, run_id, str(context.worktree_path), context.worker_branch)
+    return context
 
 
-def merge_back_isolated(root: Path, ctx: IsolateContext) -> MergeBackResult:
-    """Rebase-merge an ISOLATE branch back into its dispatch branch, then tear the
-    worktree down fail-closed. Delegates to ``WorktreeManager.rebase_and_merge``.
-
-    A teardown that refuses (dirty/unlanded work, ``UnlandedWorkError``) preserves
-    the worktree on disk and returns its path as ``worktree_preserved``; a rebase
-    that did not land leaves the worktree in place for inspection likewise.
-    """
-    from milknado.adapters import GitAdapter
-    from milknado.domains.common.errors import UnlandedWorkError
-    from milknado.domains.execution import WorktreeManager
-
-    manager = WorktreeManager(GitAdapter(root))
-    # Re-resolve the dispatch branch at merge time rather than trusting the branch
-    # captured when the context was built: fast_forward targets root's live current
-    # branch, so the rebase target must agree with it, not a stale snapshot.
-    feature_branch = resolve_feature_branch(root)
+def merge_back_isolated(git: GitPort, root: Path, ctx: IsolateContext) -> MergeBackResult:
+    target_ref = f"refs/heads/{ctx.target_branch}"
     with _merge_back_lock(root):
         try:
-            result = manager.rebase_and_merge(
+            git.squash_and_commit(
                 ctx.worktree_path,
-                feature_branch,
-                ctx.node_id,
-                ctx.description,
-                worker_branch=ctx.worker_branch,
+                ctx.base_oid,
+                f"feat: complete node {ctx.node_id} — {ctx.description}",
             )
-        except UnlandedWorkError:
-            # The branch never landed on the dispatch branch, so this is not a
-            # successful rebase: report rebased=False and preserve the worktree.
+            rebased = git.rebase(ctx.worktree_path, ctx.base_oid)
+            if not rebased.success:
+                return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
+            worker_oid = git.resolve_ref(ctx.worker_branch)
+            git.compare_and_swap_ref(target_ref, ctx.base_oid, worker_oid)
+            git.remove_worktree(ctx.worktree_path, target=target_ref)
+        except (GitOperationError, UnlandedWorkError):
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
-    preserved = None if result.success else str(ctx.worktree_path)
-    return MergeBackResult(rebased=result.success, worktree_preserved=preserved)
-
-
-def resolve_feature_branch(root: Path) -> str:
-    """The dispatch branch an ISOLATE merge-back lands on: the caller's current branch."""
-    from milknado.adapters import GitAdapter
-
-    return GitAdapter(root).current_branch()
+    return MergeBackResult(rebased=True, worktree_preserved=None)

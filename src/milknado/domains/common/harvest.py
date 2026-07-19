@@ -17,6 +17,32 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 
+MAX_HARVEST_RESULTS = 100
+MAX_HARVEST_RESULT_CHARS = 4_000
+MAX_HARVEST_TOTAL_CHARS = 32_000
+
+
+def _truncate_result(payload: str, limit: int) -> str:
+    marker = "\n[truncated]"
+    if len(payload) <= limit:
+        return payload
+    if limit <= len(marker):
+        return marker[:limit]
+    return f"{payload[: limit - len(marker)]}{marker}"
+
+
+def _bounded_results(results: list[str]) -> list[str]:
+    bounded: list[str] = []
+    remaining = MAX_HARVEST_TOTAL_CHARS
+    for payload in results[:MAX_HARVEST_RESULTS]:
+        if remaining <= 0:
+            break
+        result = _truncate_result(payload, min(MAX_HARVEST_RESULT_CHARS, remaining))
+        bounded.append(result)
+        remaining -= len(result)
+    return bounded
+
+
 @dataclass(frozen=True)
 class HarvestSummary:
     status: str  # the goal node's own status value
@@ -27,25 +53,23 @@ class HarvestSummary:
 
 
 def _task_descendants(graph: MikadoGraph, goal_id: int) -> list[MikadoNode]:
-    """Collect TASK nodes in the goal's subtree, not crossing into sibling goals."""
-    tasks: list[MikadoNode] = []
-    stack = list(graph.get_children(goal_id))
+    children: dict[int, list[int]] = {}
+    nodes = graph.get_all_nodes()
+    for node in nodes:
+        if node.parent_id is not None:
+            children.setdefault(node.parent_id, []).append(node.id)
+    task_ids: list[int] = []
+    stack = list(children.get(goal_id, ()))
     while stack:
-        node = stack.pop()
-        if node.kind == NodeKind.TASK:
-            tasks.append(node)
-            stack.extend(graph.get_children(node.id))
-    return tasks
+        node_id = stack.pop()
+        task_ids.append(node_id)
+        stack.extend(children.get(node_id, ()))
+    return [node for node in graph.get_nodes(task_ids) if node.kind == NodeKind.TASK]
 
 
 def _collect_summaries(graph: MikadoGraph, tasks: list[MikadoNode]) -> list[str]:
-    summaries: list[str] = []
-    for task in tasks:
-        for run in graph.runs_for_node(task.id, terminal_only=True):
-            msg = graph.latest_run_message(run["run_id"], "result")
-            if msg:
-                summaries.append(msg.strip())
-    return summaries
+    results = graph.latest_results_for_nodes(task.id for task in tasks)
+    return _bounded_results([results[task.id].strip() for task in tasks if task.id in results])
 
 
 def build_harvest_summary(graph: MikadoGraph, goal: MikadoNode) -> HarvestSummary:
