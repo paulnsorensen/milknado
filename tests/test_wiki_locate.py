@@ -142,6 +142,7 @@ class TestConfinedFilesystem:
 
         assert target.read_text() == "new"
         assert target.is_file()
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
     def test_atomic_replace_rejects_directory_destination(self, tmp_path: Path) -> None:
         root = tmp_path / "wiki"

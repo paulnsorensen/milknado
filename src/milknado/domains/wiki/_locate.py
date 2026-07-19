@@ -118,7 +118,7 @@ def write_text_atomic(root: Path, path: Path, content: str) -> None:
         try:
             current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
         except FileNotFoundError:
-            mode = 0o644
+            mode = 0o600
         else:
             if stat.S_ISLNK(current.st_mode):
                 raise RoadmapPathError(f"symlinked roadmap path rejected: {path}")
