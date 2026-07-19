@@ -115,7 +115,7 @@ def run(
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.app.run_command import check_protected_branch
     from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
-    from milknado.domains.graph.runnability import validate_runnable_roots
+    from milknado.domains.graph import validate_runnable_roots
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
