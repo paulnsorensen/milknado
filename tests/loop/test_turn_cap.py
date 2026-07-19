@@ -230,6 +230,35 @@ def test_turn_cap_does_not_trip_stop_on_error(tmp_path) -> None:
     assert state.failed == 0
 
 
+def test_timeout_with_turn_cap_still_trips_stop_on_error(tmp_path) -> None:
+    """A real timeout must trip stop_on_error even when the turn cap also fired.
+
+    The blocking path counts tool uses post-hoc *after* the child exits, so a
+    run that both exceeds max_turns and times out returns ``timed_out=True`` and
+    ``turn_capped=True`` together. That iteration classifies as TIMED_OUT, so the
+    stop_on_error signal must stay False -- deriving it from ``turn_capped`` would
+    mask the timeout and (wrongly) let the run finish COMPLETED.
+    """
+    config = make_config(tmp_path, max_turns=3, max_iterations=1, stop_on_error=True)
+    state = make_state()
+    emitter = QueueEmitter()
+
+    with patch("milknado.loop.engine.execute_agent") as mock_execute:
+        mock_execute.return_value = AgentResult(
+            returncode=None,
+            elapsed=0.01,
+            timed_out=True,
+            tool_use_count=3,
+            turn_capped=True,
+        )
+        run_loop(config, state, emitter)
+
+    assert state.status is RunStatus.FAILED
+    assert state.timed_out_count == 1
+    assert state.failed == 1
+    assert state.completed == 0
+
+
 # ── blocking path forces buffering so the post-hoc cap can count ───────
 
 
