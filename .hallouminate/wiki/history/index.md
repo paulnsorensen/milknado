@@ -1,6 +1,7 @@
 # history
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [github-roadmap-pr-split](./github-roadmap-pr-split.md) — GitHub Projects v2 roadmap integration — PR split map
 - [loop-vendor-in-decision](./loop-vendor-in-decision.md) — Decision — Vendor the Ralphify Engine into milknado.loop
 - [nih-decisions](./nih-decisions.md) — NIH Decisions — Justified Reinventions on Record
 - [pr137-loop-vendor-in](./pr137-loop-vendor-in.md) — PR #137 — Loop Vendor-In Execution Record
