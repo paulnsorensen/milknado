@@ -9,9 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from milknado.domains.common import MikadoNode
-from milknado.domains.wiki import extract_section, locate_roadmap_dir
+from milknado.domains.wiki import extract_section, locate_roadmap_dir, read_text
 from milknado.domains.wiki import goal_file_map as _wiki_goal_file_map
-from milknado.domains.wiki._locate import read_text
 
 
 def goal_file_map(wiki_root: Path, roadmap_ref: str) -> dict[str, Path]:
