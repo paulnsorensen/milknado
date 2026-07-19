@@ -9,7 +9,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus, RunResult
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus, RunResult, pid_alive
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
@@ -650,3 +650,84 @@ def find_ancestor_goal_id(conn: sqlite3.Connection, node_id: int) -> int | None:
             return current_id
         current_id = row["parent_id"]
     return None
+
+
+def release_goal_claim_on_terminal(conn: sqlite3.Connection, node_id: int) -> None:
+    """If node_id is a GOAL, unconditionally delete its claim on terminal transition.
+
+    Called after mark_done / mark_failed / mark_terminal so the completed
+    goal's claim does not permanently block re-dispatch under that goal.
+    """
+    row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is not None and row["kind"] == NodeKind.GOAL.value:
+        release_goal_row_unconditional(conn, node_id)
+
+
+def claim_or_reclaim_goal(
+    conn: sqlite3.Connection, goal_id: int, owner: str, pid: int, *, now: str
+) -> bool:
+    """Atomically acquire a goal claim, replacing a provably dead owner."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
+        if row is None:
+            raise ValueError(f"node {goal_id} not found")
+        if row["kind"] != NodeKind.GOAL.value:
+            raise ValueError(
+                f"node {goal_id} has kind={row['kind']}; only goal nodes can be claimed"
+            )
+        claim = get_goal_claim(conn, goal_id)
+        if claim is not None and claim["run_id"] != owner:
+            prior_pid = claim["pid"]
+            if prior_pid is None or pid_alive(prior_pid):
+                conn.rollback()
+                return False
+            conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
+        conn.execute(
+            "INSERT INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(goal_id) DO UPDATE SET pid=excluded.pid, "
+            "claimed_at=excluded.claimed_at "
+            "WHERE goal_claims.run_id=excluded.run_id",
+            (goal_id, owner, pid, now),
+        )
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+    return True
+
+
+def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:  # noqa: ARG001
+    """Free a goal claim whose owner pid is provably dead.
+
+    Returns True iff a dead owner was released so a new claimant can win.
+    A live or pid-unknown owner is left intact.
+    """
+    claim = get_goal_claim(conn, goal_id)
+    if claim is None:
+        return False
+    pid = claim["pid"]
+    if pid is None or pid_alive(pid):
+        return False
+    # Dead pid: delete the stale claim so a fresh claimant can win.
+    return release_goal_row(conn, goal_id, claim["run_id"])
+
+
+def ancestor_goal_claimed_by_other(
+    conn: sqlite3.Connection, node_id: int, *, caller_run_id: str | None = None
+) -> dict | None:
+    """Return a blocking goal claim dict if an ancestor goal is owned by a different run.
+
+    Performs pid-liveness reclaim in-line: a dead foreign claimant is freed
+    and the check returns None (allowed), mirroring claim_node's dead-owner reclaim.
+    Returns None when dispatch is allowed; returns the claim dict when blocked.
+    """
+    claim = ancestor_goal_claim(conn, node_id, caller_run_id)
+    if claim is None:
+        return None
+    pid = claim["pid"]
+    if pid is None or not pid_alive(pid):
+        # NULL or dead pid: reclaim and allow dispatch.
+        release_goal_row(conn, claim["goal_id"], claim["run_id"])
+        return None
+    return claim
