@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from milknado.domains.common.harvest import HarvestSummary, format_harvest_text
 from milknado.domains.github._fields import (
     STATUS_OPTIONS,
     find_field,
     find_option_id,
     status_option_name,
 )
+from milknado.domains.reporting import HarvestSummary, format_harvest_text
 
 
 def test_status_field_created_with_exactly_the_four_spec_options() -> None:

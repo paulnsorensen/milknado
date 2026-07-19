@@ -36,10 +36,10 @@ from milknado.domains.common import (
     NodeStatus,
     default_config,
     load_config,
+    normalize_hint_paths,
     save_config,
 )
 from milknado.domains.common.config import detect_project_gates
-from milknado.domains.common.paths import normalize_hint_paths
 from milknado.domains.graph import render_tree
 
 # Public surface of this facade: the Typer app plus the `_derive_goal`
@@ -242,7 +242,8 @@ def doctor(
     project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
 ) -> None:
     """Run health checks on the milknado installation."""
-    from milknado.domains.common.doctor import render_report, run_doctor
+    from milknado.domains.common import run_doctor
+    from milknado.domains.common.doctor import render_report
 
     project_root = project_root.resolve()
     config_path = _find_config(project_root)

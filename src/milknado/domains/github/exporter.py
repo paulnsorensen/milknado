@@ -13,12 +13,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import (
-    MikadoNode,
-    NodeKind,
-    build_harvest_summary,
-    format_harvest_text,
-)
+from milknado.domains.common import MikadoNode, NodeKind
 from milknado.domains.github._fields import (
     HARVEST_FIELD_NAME,
     STATUS_FIELD_NAME,
@@ -29,6 +24,7 @@ from milknado.domains.github._fields import (
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.reporting import build_harvest_summary, format_harvest_text
 
 _logger = logging.getLogger(__name__)
 

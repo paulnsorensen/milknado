@@ -6,13 +6,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import (
-    MikadoNode,
-    NodeKind,
-    build_harvest_summary,
-    format_harvest_text,
-)
+from milknado.domains.common import MikadoNode, NodeKind
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.reporting import build_harvest_summary, format_harvest_text
 from milknado.domains.wiki._locate import (
     goal_file_map,
     locate_roadmap_dir,

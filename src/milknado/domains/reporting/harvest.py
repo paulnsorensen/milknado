@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from milknado.domains.common.types import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph

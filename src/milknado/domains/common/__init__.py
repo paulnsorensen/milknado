@@ -1,3 +1,8 @@
+from milknado.domains.common.agent_argv import (
+    WORKER_ALLOWED_TOOLS,
+    build_planning_subprocess,
+    resolve_worker_tools,
+)
 from milknado.domains.common.config import (
     FlavorOverride,
     Gate,
@@ -8,16 +13,21 @@ from milknado.domains.common.config import (
     load_config,
     save_config,
 )
-from milknado.domains.common.errors import GitOperationError, InvalidContainment, InvalidTransition
-from milknado.domains.common.harvest import (
-    HarvestSummary,
-    build_harvest_summary,
-    format_harvest_text,
+from milknado.domains.common.doctor import run_doctor
+from milknado.domains.common.errors import (
+    GitOperationError,
+    InvalidContainment,
+    InvalidTransition,
+    MegaBatchAborted,
+    UnlandedWorkError,
 )
-from milknado.domains.common.paths import slugify, validate_hint_path
+from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
+from milknado.domains.common.merge import deep_merge
+from milknado.domains.common.paths import normalize_hint_paths, slugify, validate_hint_path
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
-from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
+from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort, ProgressEvent, TilthPort
+from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
 from milknado.domains.common.types import (
     BUILTIN_FLAVORS,
     VALID_CHILD_KINDS,
@@ -34,9 +44,6 @@ from milknado.domains.common.types import (
 
 __all__ = [
     "BUILTIN_FLAVORS",
-    "HarvestSummary",
-    "build_harvest_summary",
-    "format_harvest_text",
     "CrgPort",
     "GitPort",
     "GitOperationError",
@@ -66,4 +73,18 @@ __all__ = [
     "slugify",
     "validate_hint_path",
     "save_config",
+    "resolve_flavor_profile",
+    "FlavorProfile",
+    "resolve_worker_tools",
+    "WORKER_ALLOWED_TOOLS",
+    "build_planning_subprocess",
+    "deep_merge",
+    "get_required_tool_status",
+    "install_missing_rust_tools",
+    "run_doctor",
+    "normalize_hint_paths",
+    "UnlandedWorkError",
+    "MegaBatchAborted",
+    "TilthPort",
+    "ProgressEvent",
 ]

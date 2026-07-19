@@ -8,9 +8,8 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.common import ProgressEvent, resolve_flavor_profile
 from milknado.domains.common.errors import CompletionTimeout
-from milknado.domains.common.flavor_profile import resolve_flavor_profile
-from milknado.domains.common.protocols import ProgressEvent
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution.executor import RebaseConflict, get_dispatchable_nodes
 from milknado.domains.execution.run_loop._completion import handle_completion

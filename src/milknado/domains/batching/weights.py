@@ -13,7 +13,7 @@ import tiktoken
 from milknado.domains.batching.change import FileChange
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import TilthPort
+    from milknado.domains.common import TilthPort
 
 TOKENS_PER_LINE: dict[str, int] = {
     "py": 10,

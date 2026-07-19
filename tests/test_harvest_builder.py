@@ -9,12 +9,9 @@ deduped sorted branch names — directly.
 from __future__ import annotations
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
-from milknado.domains.common.harvest import (
-    _bounded_results,
-    _truncate_result,
-    build_harvest_summary,
-)
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.reporting import build_harvest_summary
+from milknado.domains.reporting.harvest import _bounded_results, _truncate_result
 
 NOW = "2026-06-08T12:00:00Z"
 

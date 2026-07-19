@@ -6,8 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from milknado.domains.common import GitPort, RunResult
-from milknado.domains.common.errors import UnlandedWorkError
+from milknado.domains.common import GitPort, RunResult, UnlandedWorkError
 from milknado.domains.dispatch._runstate import clear_cancel, now_iso, request_cancel, runs_dir
 from milknado.domains.dispatch.ports import ProcessTerminationPort
 from milknado.domains.dispatch.reconcile import reconcile_node_status
