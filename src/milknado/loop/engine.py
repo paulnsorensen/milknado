@@ -414,7 +414,15 @@ def _run_agent_phase(
     emit(event_type, ended_data)
     _notify_iteration_hooks(hooks, state, agent, promise_completed, config.completion_signal)
 
-    return agent.success, promise_completed and config.stop_on_completion_signal
+    # Derive the stop_on_error signal from the authoritative classification so
+    # it always agrees with _classify_iteration_outcome: only ITERATION_COMPLETED
+    # is a success. This treats a graceful turn cap as success (the streaming
+    # path SIGKILLs the child, so agent.success is False) without masking a real
+    # timeout — the blocking path can report timed_out and turn_capped together
+    # (post-hoc cap counting runs after a timeout), and that classifies as
+    # ITERATION_TIMED_OUT, so stop_on_error still fires.
+    iteration_succeeded = event_type == EventType.ITERATION_COMPLETED
+    return iteration_succeeded, promise_completed and config.stop_on_completion_signal
 
 
 def _build_tool_use_bridge(

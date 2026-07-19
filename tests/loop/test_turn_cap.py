@@ -30,6 +30,7 @@ from milknado.loop._agent import (
     _wrap_tool_use_with_counter,
 )
 from milknado.loop._events import EventType, QueueEmitter
+from milknado.loop._run_types import RunStatus
 from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from milknado.loop.adapters.codex import CodexAdapter
@@ -186,8 +187,10 @@ def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path) -> None:
     emitter = QueueEmitter()
 
     with patch("milknado.loop.engine.execute_agent") as mock_execute:
+        # A real streaming cap SIGKILLs the child, so returncode is negative
+        # (never 0) even though the iteration completed gracefully.
         mock_execute.return_value = AgentResult(
-            returncode=0,
+            returncode=-9,
             elapsed=0.01,
             tool_use_count=3,
             turn_capped=True,
@@ -200,6 +203,60 @@ def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path) -> None:
     # A capped iteration counts as completed, not failed.
     assert state.completed == 1
     assert state.failed == 0
+
+
+def test_turn_cap_does_not_trip_stop_on_error(tmp_path) -> None:
+    """max_turns + stop_on_error: a capped iteration must not mark the run FAILED.
+
+    A streaming cap SIGKILLs the child (returncode < 0), so ``agent.success``
+    is False. ``stop_on_error`` must not fire on that graceful outcome -- the
+    run completes, matching how the iteration is classified (COMPLETED).
+    """
+    config = make_config(tmp_path, max_turns=3, max_iterations=1, stop_on_error=True)
+    state = make_state()
+    emitter = QueueEmitter()
+
+    with patch("milknado.loop.engine.execute_agent") as mock_execute:
+        mock_execute.return_value = AgentResult(
+            returncode=-9,
+            elapsed=0.01,
+            tool_use_count=3,
+            turn_capped=True,
+        )
+        run_loop(config, state, emitter)
+
+    assert state.status is RunStatus.COMPLETED
+    assert state.completed == 1
+    assert state.failed == 0
+
+
+def test_timeout_with_turn_cap_still_trips_stop_on_error(tmp_path) -> None:
+    """A real timeout must trip stop_on_error even when the turn cap also fired.
+
+    The blocking path counts tool uses post-hoc *after* the child exits, so a
+    run that both exceeds max_turns and times out returns ``timed_out=True`` and
+    ``turn_capped=True`` together. That iteration classifies as TIMED_OUT, so the
+    stop_on_error signal must stay False -- deriving it from ``turn_capped`` would
+    mask the timeout and (wrongly) let the run finish COMPLETED.
+    """
+    config = make_config(tmp_path, max_turns=3, max_iterations=1, stop_on_error=True)
+    state = make_state()
+    emitter = QueueEmitter()
+
+    with patch("milknado.loop.engine.execute_agent") as mock_execute:
+        mock_execute.return_value = AgentResult(
+            returncode=None,
+            elapsed=0.01,
+            timed_out=True,
+            tool_use_count=3,
+            turn_capped=True,
+        )
+        run_loop(config, state, emitter)
+
+    assert state.status is RunStatus.FAILED
+    assert state.timed_out_count == 1
+    assert state.failed == 1
+    assert state.completed == 0
 
 
 # ── blocking path forces buffering so the post-hoc cap can count ───────

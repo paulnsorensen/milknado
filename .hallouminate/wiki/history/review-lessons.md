@@ -1,6 +1,6 @@
 # Review Lessons — Recurring Findings & Gotchas
 
-Distilled from review/cure cycles on PRs #96, #109, #110, #114. Grouped by theme —
+Distilled from review/cure cycles on PRs #96, #109, #110, #114, #244. Grouped by theme —
 things that bit us, don't repeat them.
 
 ## Lifecycle: completion guards must fail loud, not swallow
@@ -148,3 +148,28 @@ encapsulation dimension as a `high` trigger — see
 [easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).
 Diff-scoped review is the right default, but its blind spot is an inherited
 violation that the diff *tidies*.
+
+## Lifecycle: the stop_on_error signal must equal the iteration classification (#244)
+
+`_run_agent_phase` (`src/milknado/loop/engine.py`) derives two things from one
+`AgentResult`: the emitted event via `_classify_iteration_outcome` (the
+authority), and the boolean fed to `stop_on_error`. #244 first fixed a
+disagreement — a turn cap classifies COMPLETED, but `stop_on_error` saw
+`agent.success == False` (the streaming path SIGKILLs the capped child) and
+marked the run FAILED — by returning `agent.success or agent.turn_capped`. That
+reintroduced the *opposite* disagreement. On the **blocking path**,
+`_count_tool_uses_post_hoc` sets `turn_capped=True` from the tool-use count
+*after* the child exits, so a run that both exceeds `max_turns` and times out
+returns `timed_out=True` **and** `turn_capped=True`. `_classify_iteration_outcome`
+checks `timed_out` first (→ TIMED_OUT), but `agent.success or agent.turn_capped`
+was `True`, so a real timeout stopped tripping `stop_on_error` and the run could
+finish COMPLETED with `failed > 0`. Fix: derive the signal from the
+classification — `iteration_succeeded = event_type == EventType.ITERATION_COMPLETED`.
+
+**Rule:** when one result object feeds both a status classification and a
+control-flow boolean, compute the boolean *from* the classification, never
+recompute it from the raw fields — two independent derivations of "did this
+succeed" drift the moment a new field (`turn_capped`) can co-occur with an old
+one (`timed_out`). The streaming path makes those flags mutually exclusive; the
+blocking post-hoc path does not, so test the co-occurring case
+(`timed_out and turn_capped`), not just the happy cap.
