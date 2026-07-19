@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from milknado._mcp_core import open_graph
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
-    from milknado.domains.common.flavor_profile import resolve_flavor_profile
+    from milknado.domains.common import resolve_flavor_profile
     from milknado.domains.execution import (
         ExecutionConfig,
         Executor,
@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     root = Path(args.project_root)
-    from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
+    from milknado.domains.execution import NO_GATES_CONFIGURED_MESSAGE
 
     _logger.info(
         "ralph runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",

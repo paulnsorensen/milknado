@@ -14,8 +14,7 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import MikadoNode
-from milknado.domains.common.flavor_profile import resolve_flavor_profile
+from milknado.domains.common import MikadoNode, resolve_flavor_profile
 from milknado.domains.dispatch import render_brief
 
 _logger = logging.getLogger(__name__)

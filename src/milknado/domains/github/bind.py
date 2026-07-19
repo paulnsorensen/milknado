@@ -26,8 +26,7 @@ from milknado.domains.github._fields import (
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.wiki import load_frontmatter, locate_roadmap_dir
-from milknado.domains.wiki._locate import read_text
+from milknado.domains.wiki import load_frontmatter, locate_roadmap_dir, read_text
 
 
 @dataclass(frozen=True)

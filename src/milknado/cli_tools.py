@@ -10,10 +10,15 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from milknado.domains.common import MilknadoConfig
-from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS, resolve_worker_tools
-from milknado.domains.common.merge import deep_merge
-from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
+from milknado.adapters.toolchain import SystemToolchainAdapter
+from milknado.domains.common import (
+    WORKER_ALLOWED_TOOLS,
+    MilknadoConfig,
+    deep_merge,
+    get_required_tool_status,
+    install_missing_rust_tools,
+    resolve_worker_tools,
+)
 
 console = Console()
 
@@ -25,7 +30,7 @@ plugin_app = typer.Typer(name="plugin", help="Plugin management commands")
 
 
 def _print_tool_status() -> list[tuple[str, bool]]:
-    statuses = get_required_tool_status()
+    statuses = get_required_tool_status(SystemToolchainAdapter())
     rows: list[tuple[str, bool]] = []
     for status in statuses:
         state = "ok" if status.installed else "missing"
@@ -36,7 +41,7 @@ def _print_tool_status() -> list[tuple[str, bool]]:
 
 
 def _install_rust_tools_or_exit() -> None:
-    installed, failed = install_missing_rust_tools()
+    installed, failed = install_missing_rust_tools(SystemToolchainAdapter())
     for name in installed:
         console.print(f"[green]Installed {name}[/green]")
     if failed:

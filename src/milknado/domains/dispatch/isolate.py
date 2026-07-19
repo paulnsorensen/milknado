@@ -17,8 +17,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import GitPort, slugify
-from milknado.domains.common.errors import GitOperationError, UnlandedWorkError
+from milknado.domains.common import GitPort, UnlandedWorkError, slugify
+from milknado.domains.common.errors import GitOperationError
 
 
 @dataclass(frozen=True)

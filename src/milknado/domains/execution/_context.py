@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from milknado.domains.common.types import MikadoNode
     from milknado.domains.graph import MikadoGraph
 
-from milknado.domains.graph.traversals import walk_ancestors
+from milknado.domains.graph import walk_ancestors
 
 
 def build_node_context(

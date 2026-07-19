@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.graph import MikadoGraph
-from milknado.domains.graph.traversals import walk_ancestors
+from milknado.domains.graph import MikadoGraph, walk_ancestors
 
 
 def _done_prereqs(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:

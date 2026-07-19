@@ -4,6 +4,7 @@ execution outcomes back into the wiki goal files (one-way milknado -> wiki dep).
 from milknado.domains.wiki._locate import (
     goal_file_map,
     locate_roadmap_dir,
+    read_text,
     wiki_root,
 )
 from milknado.domains.wiki._serialize import extract_section, load_frontmatter
@@ -27,6 +28,7 @@ __all__ = [
     "import_roadmap",
     "load_frontmatter",
     "locate_roadmap_dir",
+    "read_text",
     "resolve_roadmap_node",
     "wiki_root",
 ]

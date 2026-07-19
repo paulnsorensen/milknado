@@ -14,8 +14,7 @@ from milknado._mcp_core import (
     resolve_project_root,
 )
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
-from milknado.domains.common import NodeKind, NodeStatus, WorktreeMode
-from milknado.domains.common.flavor_profile import resolve_flavor_profile
+from milknado.domains.common import NodeKind, NodeStatus, WorktreeMode, resolve_flavor_profile
 from milknado.domains.dispatch import (
     RUN_ID_RE,
     AsyncRunRequest,

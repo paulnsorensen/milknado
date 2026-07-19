@@ -32,16 +32,7 @@ class ToolStatus:
     path: str | None = None
 
 
-def _system_toolchain() -> ToolchainPort:
-    from milknado.adapters.toolchain import SystemToolchainAdapter
-
-    return SystemToolchainAdapter()
-
-
-def get_required_tool_status(
-    toolchain: ToolchainPort | None = None,
-) -> list[ToolStatus]:
-    toolchain = toolchain or _system_toolchain()
+def get_required_tool_status(toolchain: ToolchainPort) -> list[ToolStatus]:
     return [
         ToolStatus(
             name=tool.name,
@@ -53,9 +44,8 @@ def get_required_tool_status(
 
 
 def install_missing_rust_tools(
-    toolchain: ToolchainPort | None = None,
+    toolchain: ToolchainPort,
 ) -> tuple[list[str], list[str]]:
-    toolchain = toolchain or _system_toolchain()
     installed: list[str] = []
     current_status = get_required_tool_status(toolchain)
 
