@@ -17,9 +17,14 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import NodeKind, NodeSpec, NodeStatus, validate_hint_path
-from milknado.domains.common.paths import normalize_hint_paths
-from milknado.domains.graph.status_flow import (
+from milknado.domains.common import (
+    NodeKind,
+    NodeSpec,
+    NodeStatus,
+    normalize_hint_paths,
+    validate_hint_path,
+)
+from milknado.domains.graph import (
     apply_todo_status,
     assert_done_verified,
     subtree_post_order,
