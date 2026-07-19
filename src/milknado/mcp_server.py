@@ -99,8 +99,8 @@ def _solve_manifest(
     force_single_batch: bool,
 ) -> BatchPlan:
     from milknado.domains.batching import MEGA_BATCH_THRESHOLD, plan_batches
-    from milknado.domains.common.errors import MegaBatchAborted
-    from milknado.domains.planning.telemetry import record_batch_snapshot
+    from milknado.domains.common import MegaBatchAborted
+    from milknado.domains.planning import record_batch_snapshot
 
     plan = plan_batches(
         manifest.changes,
@@ -120,7 +120,7 @@ def _decode_mcp_changes(
     changes: list[dict],
     new_relationships: list[dict] | None,
 ) -> PlanChangeManifest:
-    from milknado.domains.planning.manifest import MANIFEST_VERSION, decode_manifest
+    from milknado.domains.planning import MANIFEST_VERSION, decode_manifest
 
     return decode_manifest(
         {
@@ -181,8 +181,7 @@ def milknado_plan_apply(
     parent_id=None creates a GOAL root from goal_summary with TASK children; a valid
     parent_id attaches TASK children under it. Returns {nodes_created, graph_summary}.
     """
-    from milknado.domains.planning.batching_bridge import apply_batches_to_graph
-    from milknado.domains.planning.manifest import decode_manifest
+    from milknado.domains.planning import apply_batches_to_graph, decode_manifest
 
     root = resolve_project_root(project_root or None)
     parsed = decode_manifest(manifest)
