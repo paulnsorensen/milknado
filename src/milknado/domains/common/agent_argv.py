@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
 import shlex
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -226,61 +224,3 @@ def build_minimal_mcp_env() -> dict[str, str]:
     """Return only process essentials; never forward coordinator credentials."""
     allowed = ("HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR")
     return {key: os.environ[key] for key in allowed if key in os.environ}
-
-
-@dataclass(frozen=True)
-class NodeAgentSession:
-    """Node-scoped agent session (NOT a run field) pinned across review/redispatch rounds."""
-
-    node_id: int
-    family: str
-    session_id: str
-    worktree_path: str
-    created_at: str
-
-
-def capture_session_id(family: str, first_turn_json: str) -> str:
-    """Extract the session id from a family's first-turn JSON stdout.
-
-    claude: top-level ``session_id``. codex: top-level ``session_id`` (or the
-    ``session_configured`` event's ``session_id``). gemini: plain
-    ``--output-format json`` output does not carry a session id (see spec open
-    question) — fail fast rather than guess.
-    """
-    try:
-        payload = json.loads(first_turn_json)
-    except (ValueError, TypeError) as exc:
-        raise ValueError(f"{family}: could not parse first-turn JSON output for session id") from exc
-    session_id = None
-    if isinstance(payload, dict):
-        session_id = payload.get("session_id")
-        if session_id is None and family == "codex":
-            nested = payload.get("msg")
-            if isinstance(nested, dict):
-                session_id = nested.get("session_id")
-    if not session_id or not isinstance(session_id, str):
-        raise ValueError(
-            f"{family}: first-turn JSON output carried no session_id — cannot resume "
-            "(gemini plain JSON output does not expose one; see spec open question)"
-        )
-    return session_id
-
-
-def build_resume_argv(
-    family: str,
-    session_id: str,
-    prompt: str,
-    model_flags: Sequence[str],
-) -> list[str]:
-    """Build the resume argv for `family`, always re-passing model/effort flags.
-
-    No family CLI restores model/effort flags on resume, so callers must supply
-    them fresh every round via ``model_flags``.
-    """
-    if family == "claude":
-        return ["claude", "-p", "--resume", session_id, *model_flags, prompt]
-    if family == "codex":
-        return ["codex", "exec", "resume", session_id, "--json", *model_flags, prompt]
-    if family == "gemini":
-        return ["gemini", "--resume", session_id, *model_flags, "--prompt", prompt]
-    raise ValueError(f"unsupported resume family: {family!r}")

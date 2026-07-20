@@ -3,10 +3,8 @@ from __future__ import annotations
 import logging
 import queue
 import re
-import subprocess
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -288,85 +286,3 @@ def _build_ralph_content(
         f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
         "so the run can stop before the iteration budget.\n"
     )
-
-
-@dataclass(frozen=True)
-class ReviewVerdict:
-    approved: bool
-    findings_md: str
-
-
-def run_node_review(
-    node: MikadoNode,
-    worktree: Path,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-    profile: Any,
-) -> ReviewVerdict:
-    """Spawn `profile.review_agent` in `worktree` with the node diff/brief/spec.
-
-    Persists findings to ``.cheese/age/<node-slug>.md`` in the easy-cheese
-    severity/dimension bullet format regardless of verdict. Parses
-    ``<verdict>approve|revise</verdict>`` (same tag family as `_parse_verify_output`).
-    """
-    if not profile.review_agent:
-        raise ValueError(
-            f"node {node.id} resolved review=true but no review_agent is configured "
-            "(set [milknado.flavor.<flavor>] review_agent)"
-        )
-    result = subprocess.run(
-        profile.review_agent,
-        shell=True,
-        cwd=worktree,
-        input=_build_review_prompt(node, diff, brief, spec_path),
-        capture_output=True,
-        text=True,
-        timeout=1800,
-    )
-    output = f"{result.stdout}\n{result.stderr}"
-    approved, findings_md = _parse_review_output(output)
-    _persist_review_findings(worktree, node, findings_md)
-    return ReviewVerdict(approved=approved, findings_md=findings_md)
-
-
-def _build_review_prompt(
-    node: MikadoNode,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-) -> str:
-    spec_section = f"## Spec\n\n{spec_path}\n\n" if spec_path else ""
-    return (
-        f"# Review: {node.description}\n\n"
-        f"## Brief\n\n{brief}\n\n"
-        f"{spec_section}"
-        f"## Diff\n\n```diff\n{diff}\n```\n\n"
-        "## Instructions\n\n"
-        "Review this diff against the brief and spec above. Emit findings as "
-        "easy-cheese severity/dimension bullets (`- **<Severity>** (<dimension>): "
-        "<finding>`). Then emit exactly one of:\n\n"
-        "<verdict>approve</verdict>\n\n"
-        "or\n\n"
-        "<verdict>revise</verdict>\n"
-    )
-
-
-def _parse_review_output(output: str) -> tuple[bool, str]:
-    findings_match = re.search(r"^(.*?)(?:<verdict>)", output, re.DOTALL)
-    findings_md = findings_match.group(1).strip() if findings_match else output.strip()
-    if "<verdict>approve</verdict>" in output:
-        return True, findings_md
-    if "<verdict>revise</verdict>" in output:
-        return False, findings_md
-    _logger.warning("run_node_review: unparseable reviewer output, treating as revise")
-    return False, findings_md or "reviewer produced no parseable <verdict> tag"
-
-
-def _persist_review_findings(worktree: Path, node: MikadoNode, findings_md: str) -> Path:
-    slug = re.sub(r"[^a-z0-9]+", "-", node.description.lower()).strip("-") or str(node.id)
-    age_dir = worktree / ".cheese" / "age"
-    age_dir.mkdir(parents=True, exist_ok=True)
-    path = age_dir / f"{slug}.md"
-    path.write_text(findings_md + "\n", encoding="utf-8")
-    return path
