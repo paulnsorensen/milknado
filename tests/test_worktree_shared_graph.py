@@ -626,7 +626,7 @@ class TestProductionClaimPath:
         Simulate a different coordinator by overwriting the claim's pid with a
         different live process pid after claiming.
         """
-        from milknado.domains.graph._persistence import set_goal_claim_pid
+        from milknado.domains.graph._goal_claims import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
         # Run A claims via the production helper.
@@ -646,7 +646,7 @@ class TestProductionClaimPath:
 
     def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
         """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
-        from milknado.domains.graph._persistence import set_goal_claim_pid
+        from milknado.domains.graph._goal_claims import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
         # Run A claims, then set a dead pid to simulate coordinator crash.
@@ -677,7 +677,7 @@ class TestProductionClaimPath:
         node under an ancestor goal already held by a different live run must
         raise — the node claim never happens.
         """
-        from milknado.domains.graph._persistence import set_goal_claim_pid
+        from milknado.domains.graph._goal_claims import set_goal_claim_pid
 
         root, graph, goal_id, task_id = self._seed(tmp_path)
         # Run A claims the ancestor goal.
@@ -706,7 +706,7 @@ class TestProductionClaimPath:
         recovery). After the fix, claim_goal_row accepts a pid and writes it atomically.
         """
         from milknado.domains.dispatch._runstate import now_iso
-        from milknado.domains.graph._persistence import claim_goal_row, get_goal_claim
+        from milknado.domains.graph._goal_claims import claim_goal_row, get_goal_claim
 
         _, graph, goal_id, _ = self._seed(tmp_path)
         pid = os.getpid()

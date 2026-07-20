@@ -11,7 +11,8 @@ from collections.abc import Iterable
 from dataclasses import replace
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.graph._persistence import children_id_map, get_goal_claim, row_to_node
+from milknado.domains.graph._goal_claims import get_goal_claim
+from milknado.domains.graph._persistence import children_id_map, row_to_node
 
 
 def node_status(conn: sqlite3.Connection, node_id: int) -> NodeStatus | None:

@@ -17,7 +17,14 @@ from milknado.domains.common import (
     RunResult,
 )
 from milknado.domains.common.types import BUILTIN_FLAVORS
-from milknado.domains.graph import _creation, _mutations, _persistence, _reads, _status
+from milknado.domains.graph import (
+    _creation,
+    _goal_claims,
+    _mutations,
+    _persistence,
+    _reads,
+    _status,
+)
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade
 from milknado.domains.graph._pipeline import StatusPipeline, _PluginAsMiddleware
 
@@ -314,7 +321,7 @@ class MikadoGraph(_AnalyticsFacade):
     # ── Goal-claim fencing ───────────────────────────────────────────────────
 
     def claim_or_reclaim_goal(self, goal_id: int, owner: str, pid: int, *, now: str) -> bool:
-        return _persistence.claim_or_reclaim_goal(self._conn, goal_id, owner, pid, now=now)
+        return _goal_claims.claim_or_reclaim_goal(self._conn, goal_id, owner, pid, now=now)
 
     def claim_goal(self, goal_id: int, run_id: str, *, now: str) -> bool:
         node = self.get_node(goal_id)
@@ -324,28 +331,28 @@ class MikadoGraph(_AnalyticsFacade):
             raise ValueError(
                 f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
             )
-        return _persistence.claim_goal_row(self._conn, goal_id, run_id, now)
+        return _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now)
 
     def release_goal(self, goal_id: int, run_id: str) -> bool:
-        return _persistence.release_goal_row(self._conn, goal_id, run_id)
+        return _goal_claims.release_goal_row(self._conn, goal_id, run_id)
 
     def claim_ancestor_goal(self, node_id: int, run_id: str, pid: int, *, now: str) -> int | None:
-        goal_id = _persistence.find_ancestor_goal_id(self._conn, node_id)
+        goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
         if goal_id is None:
             return None
-        _persistence.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid)
+        _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid)
         return goal_id
 
     def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
-        _persistence.set_goal_claim_pid(self._conn, goal_id, run_id, pid)
+        _goal_claims.set_goal_claim_pid(self._conn, goal_id, run_id, pid)
 
     def try_reclaim_goal(self, goal_id: int, *, now: str) -> bool:
-        return _persistence.try_reclaim_goal(self._conn, goal_id, now=now)
+        return _goal_claims.try_reclaim_goal(self._conn, goal_id, now=now)
 
     def ancestor_goal_claimed_by_other(
         self, node_id: int, *, caller_run_id: str | None = None
     ) -> dict | None:
-        return _persistence.ancestor_goal_claimed_by_other(
+        return _goal_claims.ancestor_goal_claimed_by_other(
             self._conn, node_id, caller_run_id=caller_run_id
         )
 

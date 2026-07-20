@@ -11,7 +11,8 @@ import logging
 import sqlite3
 
 from milknado.domains.common import NodeStatus, pid_alive
-from milknado.domains.graph import _persistence, _reads, _transitions
+from milknado.domains.graph import _reads, _transitions
+from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
 from milknado.domains.graph._pipeline import StatusPipeline
 
 _logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ def transition_status(
 
 def mark_done(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
     transition_status(pipeline, conn, node_id, NodeStatus.DONE)
-    _persistence.release_goal_claim_on_terminal(conn, node_id)
+    release_goal_claim_on_terminal(conn, node_id)
 
 
 def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
@@ -43,7 +44,7 @@ def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int
         return True
 
     pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.FAILED, mutate)
-    _persistence.release_goal_claim_on_terminal(conn, node_id)
+    release_goal_claim_on_terminal(conn, node_id)
 
 
 def mark_running(
@@ -155,7 +156,7 @@ def mark_terminal(
         lambda nid: _reads.get_node(conn, nid), node_id, NodeStatus.RUNNING, status, mutate
     )
     if ok:
-        _persistence.release_goal_claim_on_terminal(conn, node_id)
+        release_goal_claim_on_terminal(conn, node_id)
     return ok
 
 

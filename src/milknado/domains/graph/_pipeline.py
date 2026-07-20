@@ -21,11 +21,14 @@ _logger = logging.getLogger(__name__)
 
 class StatusMiddleware(Protocol):
     @property
-    def meta(self) -> PluginMeta: ...
+    def meta(self) -> PluginMeta:
+        pass
 
-    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None: ...
+    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+        pass
 
-    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None: ...
+    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+        pass
 
 
 class _PluginAsMiddleware:
@@ -78,6 +81,10 @@ class StatusPipeline:
 
     def _safe(self, mw: StatusMiddleware, hook_fn: Callable[..., None], *args: object) -> None:
         try:
+            name = mw.meta.name
+        except Exception:
+            name = "<unknown>"
+        try:
             hook_fn(*args)
         except Exception:
-            _logger.exception("Middleware %s raised in %s", mw.meta.name, hook_fn.__name__)
+            _logger.exception("Middleware %s raised in %s", name, hook_fn.__name__)
