@@ -2307,6 +2307,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     expected = [
         "milknado_delete_node",
         "milknado_deposit_result",
+        "milknado_deposit_review",
         "milknado_edit_node",
         "milknado_get_node",
         "milknado_github_roadmap_bind",

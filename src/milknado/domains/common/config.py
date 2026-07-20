@@ -68,6 +68,8 @@ class MilknadoConfig:
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
     planning_validation_hook: str | None = None
+    plan_reviewer_agent: str | None = None
+    plan_review_max_rounds: int = 3
     execution_agent: str = resolve_execution_agent_command("claude")
     quality_gates: tuple[Gate, ...] | None = None
     worktree_pattern: str = "milknado-{node_id}-{slug}"
@@ -203,10 +205,13 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
             "loop_mode": config.loop_mode,
             "max_iterations": config.max_iterations,
             "max_turns": config.max_turns,
+            "plan_review_max_rounds": config.plan_review_max_rounds,
         }
     )
     if config.commit_footer is not None:
         milknado["commit_footer"] = config.commit_footer
+    if config.plan_reviewer_agent is not None:
+        milknado["plan_reviewer_agent"] = config.plan_reviewer_agent
     return milknado
 
 
@@ -384,6 +389,12 @@ def _scalar_config_kwargs(raw: dict[str, Any], project_root: Path) -> dict[str, 
         ),
         "commit_footer": _validated_optional_str(
             raw.get("commit_footer"), "[milknado] commit_footer"
+        ),
+        "plan_reviewer_agent": _validated_optional_str(
+            raw.get("plan_reviewer_agent"), "[milknado] plan_reviewer_agent"
+        ),
+        "plan_review_max_rounds": _validated_positive_int(
+            raw.get("plan_review_max_rounds", 3), "[milknado] plan_review_max_rounds"
         ),
     }
 

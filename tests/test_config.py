@@ -249,6 +249,29 @@ class TestSaveConfig:
         loaded = load_config(path, include_global=False)
         assert loaded.commit_footer is None
 
+    def test_config_roundtrips_plan_reviewer_agent(self, tmp_path: Path) -> None:
+        cfg = MilknadoConfig(
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=5,
+        )
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        loaded = load_config(path, include_global=False)
+        assert loaded.plan_reviewer_agent == "claude --model sonnet -p"
+        assert loaded.plan_review_max_rounds == 5
+
+    def test_plan_reviewer_agent_omitted_stays_none(self, tmp_path: Path) -> None:
+        cfg = default_config(tmp_path)
+        path = tmp_path / "milknado.toml"
+        save_config(cfg, path)
+        content = path.read_text()
+        assert "plan_reviewer_agent" not in content
+        loaded = load_config(path, include_global=False)
+        assert loaded.plan_reviewer_agent is None
+        assert loaded.plan_review_max_rounds == 3
+
     def test_roundtrip_skips_empty_prompt_and_worker_sections(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)
         path = tmp_path / "milknado.toml"

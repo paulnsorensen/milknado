@@ -782,3 +782,201 @@ def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
     )
     result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
     assert "RESEARCH_MARKER: go deep." in result["brief"]
+
+
+# ── adversarial-review-loops: session_mode/review config contract ───────────
+
+
+def test_validate_session_mode_accepts_fresh_and_resume() -> None:
+    from milknado.domains.common.flavor_codec import validate_session_mode
+
+    assert validate_session_mode("fresh", "[ctx]") == "fresh"
+    assert validate_session_mode("resume", "[ctx]") == "resume"
+
+
+def test_validate_session_mode_rejects_invalid() -> None:
+    from milknado.domains.common.flavor_codec import validate_session_mode
+
+    with pytest.raises(ValueError, match="session_mode"):
+        validate_session_mode("eventual", "[ctx]")
+
+
+def test_validate_on_reject_accepts_block_and_warn() -> None:
+    from milknado.domains.common.flavor_codec import validate_on_reject
+
+    assert validate_on_reject("block", "[ctx]") == "block"
+    assert validate_on_reject("warn", "[ctx]") == "warn"
+
+
+def test_validate_on_reject_rejects_invalid() -> None:
+    from milknado.domains.common.flavor_codec import validate_on_reject
+
+    with pytest.raises(ValueError, match="on_reject"):
+        validate_on_reject("ignore", "[ctx]")
+
+
+def test_load_config_flavor_review_fields_parse(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.implement]\n"
+        'session_mode = "resume"\n'
+        "review = true\n"
+        'review_agent = "claude -p --model opus"\n'
+        "review_max_rounds = 5\n"
+        'on_reject = "warn"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    fo = cfg.flavors["implement"]
+    assert fo.session_mode == "resume"
+    assert fo.review is True
+    assert fo.review_agent == "claude -p --model opus"
+    assert fo.review_max_rounds == 5
+    assert fo.on_reject == "warn"
+
+
+def test_save_load_roundtrip_flavor_review_fields(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spec": FlavorOverride(
+                session_mode="resume",
+                review=True,
+                review_agent="claude -p --model opus",
+                review_max_rounds=3,
+                on_reject="warn",
+            ),
+        },
+    )
+    save_config(cfg, cfg_path)
+    loaded = load_config(cfg_path)
+    fo = loaded.flavors["spec"]
+    assert fo.session_mode == "resume"
+    assert fo.review is True
+    assert fo.review_agent == "claude -p --model opus"
+    assert fo.review_max_rounds == 3
+    assert fo.on_reject == "warn"
+
+
+def test_load_config_flavor_review_not_bool_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nreview = "yes"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="review must be a boolean"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_review_agent_not_string_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nreview_agent = 42\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="review_agent must be a string"):
+        load_config(cfg_path)
+
+
+# AC — cursor-agent resume fail-fast (adversarial-review-loops-F001), enforced
+# at both _parse_flavor_entry (config load) and resolve_flavor_profile.
+
+
+def test_load_config_flavor_resume_cursor_agent_execution_agent_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.implement]\n"
+        'session_mode = "resume"\n'
+        'execution_agent = "cursor-agent -p"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_resume_cursor_agent_review_agent_raises(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.implement]\n"
+        'session_mode = "resume"\n'
+        'review_agent = "cursor-agent -p"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
+        load_config(cfg_path)
+
+
+def test_resolve_flavor_profile_resume_cursor_agent_family_raises(tmp_path: Path) -> None:
+    """agent_family alone (no execution_agent override) drives the effective family."""
+    cfg = MilknadoConfig(
+        agent_family="cursor-agent",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "implement": FlavorOverride(session_mode="resume", execution_agent=""),
+        },
+    )
+    with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
+        resolve_flavor_profile(cfg, "implement")
+
+
+# AC — resolve_flavor_profile: default review, session_mode/on_reject/
+# review_agent/review_max_rounds resolution.
+
+
+def test_resolve_flavor_profile_review_default_true_for_implement(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, "implement")
+    assert profile.review is True
+
+
+def test_resolve_flavor_profile_review_default_true_for_spec(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, "spec")
+    assert profile.review is True
+
+
+def test_resolve_flavor_profile_review_default_false_for_other_flavors(tmp_path: Path) -> None:
+    cfg = _base_cfg(tmp_path)
+    profile = resolve_flavor_profile(cfg, "spike")
+    assert profile.review is False
+
+
+def test_resolve_flavor_profile_review_false_override_wins_on_implement(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "implement": FlavorOverride(review=False),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "implement")
+    assert profile.review is False
+
+
+def test_resolve_flavor_profile_review_config_resolves_from_override(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        flavors={
+            "spike": FlavorOverride(
+                session_mode="resume",
+                review_agent="claude -p --model opus",
+                review_max_rounds=7,
+                on_reject="warn",
+            ),
+        },
+    )
+    profile = resolve_flavor_profile(cfg, "spike")
+    assert profile.session_mode == "resume"
+    assert profile.review_agent == "claude -p --model opus"
+    assert profile.review_max_rounds == 7
+    assert profile.on_reject == "warn"

@@ -339,3 +339,36 @@ def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}
+
+
+_VALID_REVIEW_VERDICTS = frozenset({"approve", "reject"})
+
+
+@mcp.tool()
+def milknado_deposit_review(
+    run_id: str, verdict: str, findings_md: str, project_root: str = ""
+) -> dict:
+    """Persist a reviewer worker's structured verdict alongside the free-text result.
+
+    Called by a reviewer worker as its final step with `verdict` ("approve" or
+    "reject") and `findings_md` (the review findings in markdown). Stored as a
+    role='review' run message, distinct from milknado_deposit_result's role='result'.
+    Returns the run_id and the assigned message seq.
+    """
+    if not RUN_ID_RE.match(run_id):
+        raise ValueError(f"invalid run_id format: {run_id!r}")
+    if verdict not in _VALID_REVIEW_VERDICTS:
+        raise ValueError(
+            f"invalid verdict {verdict!r}: must be one of {sorted(_VALID_REVIEW_VERDICTS)}"
+        )
+    root = resolve_project_root(project_root or None)
+    require_worker_run(run_id)
+    graph, _cfg = open_graph(root)
+    try:
+        if graph.get_run(run_id) is None:
+            raise ValueError(f"run {run_id!r} not found")
+        body = f"{verdict}\n{findings_md}"
+        seq = graph.deposit_run_message(run_id, "review", body, now_iso())
+    finally:
+        graph.close()
+    return {"run_id": run_id, "seq": seq}

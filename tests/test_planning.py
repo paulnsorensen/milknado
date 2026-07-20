@@ -1,15 +1,25 @@
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 
-from milknado.cli_plan import _PlanningSubprocess
+from milknado.cli_plan import (
+    CriticVerdict,
+    _exec_plan_non_interactive,
+    _parse_critic_output,
+    _PlanningSubprocess,
+    _run_plan_with_critic,
+    run_plan_critic,
+)
 from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
+from milknado.domains.common.config import default_config
 from milknado.domains.common.types import DegradationMarker, TilthMap
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
@@ -1407,3 +1417,210 @@ class TestPlanChangeManifest:
         """Solver-internal construction with default description="" is allowed."""
         change = FileChange(id="c1", path="src/foo.py")
         assert change.description == ""
+
+
+def _cfg(tmp_path: Path, **overrides: object) -> object:
+    return dataclasses.replace(default_config(tmp_path), **overrides)
+
+
+def _plan_result(**overrides: object) -> PlanResult:
+    base = {
+        "success": True,
+        "exit_code": 0,
+        "solver_status": "OPTIMAL",
+        "change_count": 1,
+        "batch_count": 1,
+    }
+    base.update(overrides)
+    return PlanResult(**base)
+
+
+class TestParseCriticOutput:
+    def test_approve_verdict(self) -> None:
+        verdict = _parse_critic_output("<verdict>approve</verdict>")
+        assert verdict == CriticVerdict(approved=True, feedback="")
+
+    def test_revise_verdict_with_feedback(self) -> None:
+        output = (
+            "<verdict>revise</verdict>\n<feedback>split the change into two batches</feedback>"
+        )
+        verdict = _parse_critic_output(output)
+        assert verdict == CriticVerdict(
+            approved=False, feedback="split the change into two batches"
+        )
+
+    def test_revise_verdict_with_no_feedback_tag(self) -> None:
+        verdict = _parse_critic_output("<verdict>revise</verdict>")
+        assert verdict == CriticVerdict(approved=False, feedback="")
+
+    def test_unparseable_output_returns_none(self) -> None:
+        assert _parse_critic_output("the plan looks fine to me") is None
+
+
+class TestRunPlanCritic:
+    @patch("milknado.cli_plan._spawn_plan_critic")
+    def test_returns_approved_verdict(self, mock_spawn: MagicMock, tmp_path: Path) -> None:
+        mock_spawn.return_value = "<verdict>approve</verdict>"
+        cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
+
+        verdict = run_plan_critic("goal", "manifest summary", cfg)
+
+        assert verdict == CriticVerdict(approved=True, feedback="")
+        mock_spawn.assert_called_once()
+
+    @patch("milknado.cli_plan._spawn_plan_critic")
+    def test_parses_revise_with_feedback(self, mock_spawn: MagicMock, tmp_path: Path) -> None:
+        mock_spawn.return_value = (
+            "<verdict>revise</verdict>\n<feedback>batch is too large</feedback>"
+        )
+        cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
+
+        verdict = run_plan_critic("goal", "manifest summary", cfg)
+
+        assert verdict == CriticVerdict(approved=False, feedback="batch is too large")
+
+    @patch("milknado.cli_plan._spawn_plan_critic")
+    def test_reprompts_once_then_raises_on_persistent_unparseable_output(
+        self, mock_spawn: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_spawn.return_value = "garbage, no verdict tag"
+        cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
+
+        with pytest.raises(typer.Exit):
+            run_plan_critic("goal", "manifest summary", cfg)
+
+        assert mock_spawn.call_count == 2
+        second_prompt = mock_spawn.call_args_list[1].args[1]
+        assert "did not include a valid" in second_prompt
+
+
+class TestRunPlanWithCritic:
+    def test_returns_none_verdict_when_plan_reviewer_agent_unset(self, tmp_path: Path) -> None:
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        cfg = _cfg(tmp_path, plan_reviewer_agent=None)
+
+        result, verdict = _run_plan_with_critic(
+            planner, "goal", tmp_path, tmp_path / "spec.md", cfg
+        )
+
+        assert verdict is None
+        assert result == _plan_result()
+        planner.launch.assert_called_once()
+
+    @patch("milknado.cli_plan.run_plan_critic")
+    def test_returns_early_on_approve(self, mock_critic: MagicMock, tmp_path: Path) -> None:
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        mock_critic.return_value = CriticVerdict(approved=True, feedback="")
+        cfg = _cfg(
+            tmp_path,
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=3,
+        )
+
+        result, verdict = _run_plan_with_critic(
+            planner, "goal", tmp_path, tmp_path / "spec.md", cfg
+        )
+
+        assert verdict == CriticVerdict(approved=True, feedback="")
+        assert result == _plan_result()
+        planner.launch.assert_called_once()
+        mock_critic.assert_called_once()
+
+    @patch("milknado.cli_plan.run_plan_critic")
+    def test_loops_and_replans_on_revise(self, mock_critic: MagicMock, tmp_path: Path) -> None:
+        first = _plan_result(change_count=1)
+        second = _plan_result(change_count=2)
+        planner = MagicMock()
+        planner.launch.side_effect = [first, second]
+        mock_critic.side_effect = [
+            CriticVerdict(approved=False, feedback="add more detail"),
+            CriticVerdict(approved=True, feedback=""),
+        ]
+        cfg = _cfg(
+            tmp_path,
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=3,
+        )
+
+        result, verdict = _run_plan_with_critic(
+            planner, "goal", tmp_path, tmp_path / "spec.md", cfg
+        )
+
+        assert result == second
+        assert verdict == CriticVerdict(approved=True, feedback="")
+        assert planner.launch.call_count == 2
+        replan_goal = planner.launch.call_args_list[1].args[0]
+        assert "add more detail" in replan_goal
+
+    @patch("milknado.cli_plan.run_plan_critic")
+    def test_stops_at_round_cap_returning_last_unapproved_verdict(
+        self, mock_critic: MagicMock, tmp_path: Path
+    ) -> None:
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        mock_critic.return_value = CriticVerdict(approved=False, feedback="still not right")
+        cfg = _cfg(
+            tmp_path,
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=2,
+        )
+
+        result, verdict = _run_plan_with_critic(
+            planner, "goal", tmp_path, tmp_path / "spec.md", cfg
+        )
+
+        assert verdict == CriticVerdict(approved=False, feedback="still not right")
+        # initial launch + one replan per round == 1 + plan_review_max_rounds
+        assert planner.launch.call_count == 1 + cfg.plan_review_max_rounds
+        assert mock_critic.call_count == cfg.plan_review_max_rounds
+
+
+class TestExecPlanNonInteractive:
+    @patch("milknado.cli_plan.run_plan_critic")
+    def test_raises_when_critic_never_approves_within_cap(
+        self, mock_critic: MagicMock, tmp_path: Path
+    ) -> None:
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        mock_critic.return_value = CriticVerdict(approved=False, feedback="nope")
+        cfg = _cfg(
+            tmp_path,
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=2,
+        )
+
+        with pytest.raises(typer.Exit) as exc_info:
+            _exec_plan_non_interactive(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
+
+        assert exc_info.value.exit_code == 1
+
+
+class TestExecPlanInteractive:
+    @patch("milknado.cli_plan._prompt_plan_action")
+    @patch("milknado.cli_plan.run_plan_critic")
+    def test_unapproved_critic_prints_fallback_and_continues_to_human_gate(
+        self,
+        mock_critic: MagicMock,
+        mock_prompt: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from milknado.cli_plan import _exec_plan_interactive
+
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        mock_critic.return_value = CriticVerdict(approved=False, feedback="needs more detail")
+        mock_prompt.return_value = "1"  # accept, so the loop returns without raising
+        cfg = _cfg(
+            tmp_path,
+            plan_reviewer_agent="claude --model sonnet -p",
+            plan_review_max_rounds=1,
+        )
+
+        _exec_plan_interactive(planner, "goal", tmp_path, tmp_path / "spec.md", 5, cfg)
+
+        captured = capsys.readouterr()
+        assert "falling back to manual review" in captured.out
+        assert "needs more detail" in captured.out
