@@ -25,6 +25,11 @@ class FlavorProfile:
     max_iterations: int
     max_turns: int
     worktree: bool = True
+    session_mode: str = "fresh"
+    review: bool = False
+    review_agent: str | None = None
+    review_max_rounds: int = 2
+    on_reject: str = "block"
 
 
 def resolve_flavor_profile(
@@ -51,8 +56,10 @@ def resolve_flavor_profile(
     )
 
     override = cfg.flavors.get(flavor) if flavor is not None else None
+    default_review = flavor in ("implement", "spec")
 
     if override is None:
+        _validate_session_mode_family(cfg.agent_family, "fresh", None)
         return FlavorProfile(
             execution_agent=cfg.execution_agent,
             quality_gates=cfg.quality_gates,
@@ -62,6 +69,11 @@ def resolve_flavor_profile(
             max_iterations=cfg.max_iterations,
             max_turns=cfg.max_turns,
             worktree=True,
+            session_mode="fresh",
+            review=default_review,
+            review_agent=None,
+            review_max_rounds=2,
+            on_reject="block",
         )
 
     # Resolve execution_agent.
@@ -88,6 +100,12 @@ def resolve_flavor_profile(
     )
     max_turns = override.max_turns if override.max_turns is not None else cfg.max_turns
     worktree = override.worktree if override.worktree is not None else True
+    session_mode = override.session_mode
+    review = override.review if override.review is not None else default_review
+    review_agent = override.review_agent
+    review_max_rounds = override.review_max_rounds
+    on_reject = override.on_reject
+    _validate_session_mode_family(cfg.agent_family, session_mode, execution_agent)
 
     return FlavorProfile(
         execution_agent=execution_agent,
@@ -98,4 +116,42 @@ def resolve_flavor_profile(
         max_iterations=max_iterations,
         max_turns=max_turns,
         worktree=worktree,
+        session_mode=session_mode,
+        review=review,
+        review_agent=review_agent,
+        review_max_rounds=review_max_rounds,
+        on_reject=on_reject,
     )
+
+
+def _validate_session_mode_family(
+    agent_family: str,
+    session_mode: str,
+    execution_agent: str | None,
+) -> None:
+    """Fail config validation when session_mode='resume' targets cursor-agent.
+
+    Headless resume mechanics for cursor-agent are unverified (F001); resolve
+    the effective family from an explicit execution_agent, else agent_family.
+    """
+    if session_mode != "resume":
+        return
+    import shlex
+    from pathlib import Path
+
+    from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
+
+    family = agent_family
+    if execution_agent:
+        argv = shlex.split(execution_agent)
+        if argv:
+            name = Path(argv[0]).name
+            if name in ALLOWED_WORKER_EXECUTABLES:
+                family = name
+    if family == "cursor-agent" or family == "cursor":
+        raise ValueError(
+            "session_mode 'resume' is not supported for the cursor-agent family "
+            "(headless resume mechanics are unverified — see "
+            "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+            "different agent"
+        )
