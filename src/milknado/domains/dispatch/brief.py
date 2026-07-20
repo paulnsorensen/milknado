@@ -26,8 +26,10 @@ def _format_goal_context(chain: list[MikadoNode]) -> list[str]:
 def _resolve_spec_path(node: MikadoNode, chain: list[MikadoNode]) -> str | None:
     """Nearest spec markdown reference: the node's own, else the closest ancestor's.
 
-    artifact_path is populated upstream (durable corpus first, .cheese/specs/
-    fallback) when a goal is spec-backed; this only walks the chain to find it.
+    Returns whatever `artifact_path` the node (or ancestor) was created with
+    verbatim; no durable-corpus-first / .cheese/specs fallback resolution
+    happens here or anywhere upstream in this codebase today — the caller is
+    responsible for populating `artifact_path` with the value it wants embedded.
     """
     if node.artifact_path:
         return node.artifact_path
