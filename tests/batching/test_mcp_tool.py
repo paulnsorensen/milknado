@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from milknado.domains.planning.manifest import decode_manifest
-from milknado.mcp_server import _plan_batches_impl, milknado_plan_apply
+from milknado.mcp.server import _plan_batches_impl, milknado_plan_apply
 
 
 def _stub_crg(monkeypatch) -> None:
@@ -83,7 +83,7 @@ def test_plan_batches_single_change_returns_exact_payload(tmp_path, monkeypatch)
 async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
     """Test milknado_plan_batches tool end-to-end via FastMCP Client."""
     from milknado.adapters import crg as crg_mod
-    from milknado.mcp_server import mcp
+    from milknado.mcp.server import mcp
 
     class StubAdapter:
         def __init__(self, project_root) -> None:
@@ -313,7 +313,7 @@ def test_crg_failure_logged_not_swallowed(tmp_path, monkeypatch, caplog) -> None
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _BrokenCrg)
-    with caplog.at_level(logging.WARNING, logger="milknado.mcp_server"):
+    with caplog.at_level(logging.WARNING, logger="milknado.mcp.server"):
         result = _plan_batches_impl(
             [
                 {
@@ -354,7 +354,7 @@ def test_crg_stderr_in_runtime_error(tmp_path) -> None:
 def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
     """parent_id=None builds a GOAL root from goal_summary plus TASK children."""
     from milknado.domains.common import NodeKind
-    from milknado.mcp_server import open_graph
+    from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     result = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
@@ -382,7 +382,7 @@ def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
 def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeypatch) -> None:
     """A valid TASK-accepting parent_id attaches TASK children and creates no GOAL root."""
     from milknado.domains.common import NodeKind
-    from milknado.mcp_server import open_graph
+    from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     # First apply creates a GOAL root we can attach a second batch of tasks under.
@@ -429,7 +429,7 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None
     This pins the tool's own ValueError path, not only the bridge's.
     """
     from milknado.domains.common import NodeKind, NodeSpec
-    from milknado.mcp_server import open_graph
+    from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     graph, _ = open_graph(tmp_path)
@@ -445,7 +445,7 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None
 
 def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) -> None:
     """graph_summary mirrors graph state: GOAL root + node fields round-trip faithfully."""
-    from milknado.mcp_server import open_graph
+    from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     result = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
@@ -501,7 +501,7 @@ def test_plan_apply_mega_batch_aborts(tmp_path, monkeypatch) -> None:
 
 def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch) -> None:
     """force_single_batch=True lands the nodes despite exceeding the mega-batch threshold."""
-    from milknado.mcp_server import open_graph
+    from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     monkeypatch.setattr("milknado.domains.batching.change.MEGA_BATCH_THRESHOLD", 2)

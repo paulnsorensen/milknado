@@ -14,17 +14,17 @@ from threading import Barrier
 
 import pytest
 
-from milknado._mcp_core import open_graph
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
-from milknado.mcp_node import (
+from milknado.mcp._core import open_graph
+from milknado.mcp.node import (
     GOAL_OWNER_ENV_VAR,
     milknado_goal_claim,
     milknado_goal_release,
     milknado_node_verify,
     milknado_todo_claim,
 )
-from milknado.mcp_todo_mutate import milknado_set_subtree_status, milknado_todo_set_status
+from milknado.mcp.todo_mutate import milknado_set_subtree_status, milknado_todo_set_status
 
 _DEAD_PID = 2**31 - 1  # no process can hold this; os.kill(_, 0) -> ProcessLookupError
 
@@ -473,7 +473,7 @@ def test_claim_rolls_back_claim_when_worktree_creation_fails(
     def _boom(*_a, **_k):
         raise RuntimeError("worktree boom")
 
-    monkeypatch.setattr("milknado.mcp_node.create_isolated_worktree", _boom)
+    monkeypatch.setattr("milknado.mcp.node.create_isolated_worktree", _boom)
     with pytest.raises(RuntimeError, match="worktree boom"):
         _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
@@ -550,7 +550,7 @@ def test_node_verify_in_place_artifact_missing_fails(repo: Path) -> None:
 
 
 def test_resolve_model_extracts_flag_and_defaults() -> None:
-    from milknado.mcp_node import _resolve_model
+    from milknado.mcp.node import _resolve_model
 
     assert _resolve_model("claude --model opus -p") == "opus"
     assert _resolve_model("claude --model=sonnet -p") == "sonnet"

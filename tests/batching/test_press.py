@@ -477,7 +477,7 @@ class TestDictToNewRelationship:
     def test_empty_new_relationships_list_accepted(self, tmp_path, monkeypatch):
         """An empty new_relationships list at the MCP boundary is accepted."""
         from milknado.adapters import crg as crg_mod
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         class StubAdapter:
             def __init__(self, project_root) -> None:
@@ -504,7 +504,7 @@ class TestDictToNewRelationship:
     def test_none_new_relationships_treated_as_empty(self, tmp_path, monkeypatch):
         """None passed as new_relationships is equivalent to an empty list."""
         from milknado.adapters import crg as crg_mod
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         class StubAdapter:
             def __init__(self, project_root) -> None:

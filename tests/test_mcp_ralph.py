@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
-from milknado.mcp_server import open_graph
-from milknado.mcp_todo import milknado_todo_tree
-from milknado.mcp_todo_mutate import milknado_todo_add
+from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
+from milknado.mcp.server import open_graph
+from milknado.mcp.todo import milknado_todo_tree
+from milknado.mcp.todo_mutate import milknado_todo_add
 
 
 @pytest.fixture(autouse=True)
@@ -33,13 +33,13 @@ def _initialize_git_repository(tmp_path: Path) -> None:
     )
 
 
-# A stub runner standing in for `python -m milknado._ralph_node_runner`: it honors
+# A stub runner standing in for `python -m milknado.mcp._ralph_node_runner`: it honors
 # the same argv the MCP tool appends and writes the requested terminal state,
 # letting us exercise the start->spawn->poll plumbing without a real ralph loop.
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
-from milknado._mcp_core import open_graph
+from milknado.mcp._core import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
@@ -72,7 +72,7 @@ finally:
 _ENV_CAPTURE_RUNNER = """
 import argparse, os
 from pathlib import Path
-from milknado._mcp_core import open_graph
+from milknado.mcp._core import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
@@ -374,7 +374,7 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
 ) -> None:
     import logging
 
-    from milknado.mcp_ralph import RalphClaim, _remove_reclaimed_worktree
+    from milknado.mcp.ralph import RalphClaim, _remove_reclaimed_worktree
 
     worktree = tmp_path / "orphan"
     worktree.mkdir()
@@ -402,7 +402,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
     import logging
 
     from milknado.domains.common import NodeStatus
-    from milknado.mcp_ralph import RalphClaim, _record_spawn_failure
+    from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
 
     class Graph:
         def __init__(self) -> None:
@@ -446,7 +446,7 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     """When the detached runner crashes mid-execution it must finalize the run row
     'failed' with the error under the documented 'detail' field."""
     import milknado.adapters as adapters
-    from milknado import _ralph_node_runner
+    from milknado.mcp import _ralph_node_runner
 
     def _boom(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("boom")
@@ -489,7 +489,7 @@ def test_runner_crash_writes_detail_and_keeps_schema(
 def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
     """When quality_gates is absent from config, the runner fails closed immediately
     before building adapters — the run row records the fail-closed message."""
-    from milknado import _ralph_node_runner
+    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 
     # No milknado.toml → quality_gates=None (fail-closed)
@@ -521,10 +521,10 @@ def test_runner_writes_done_on_successful_outcome(
     """The detached runner's happy path: open the graph, build adapters, run the
     node to completion, then overwrite the state file with a terminal 'done' the
     poll reads — preserving the base schema (log_path/timeout_seconds)."""
-    import milknado._mcp_core as mcp_core
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
-    from milknado import _ralph_node_runner
+    import milknado.mcp._core as mcp_core
+    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.headless import HeadlessOutcome
 
     class _Cfg:
@@ -611,10 +611,10 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     loop does not outlive its timeout as a zombie process. Exercises the full
     _ralph_node_runner.main path without monkeypatching run_node_to_completion,
     so the real CompletionTimeout handler is exercised end-to-end."""
-    import milknado._mcp_core as mcp_core
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
-    from milknado import _ralph_node_runner
+    import milknado.mcp._core as mcp_core
+    from milknado.mcp import _ralph_node_runner
     from milknado.domains.common.errors import CompletionTimeout
     from milknado.domains.execution.executor import DispatchResult
 
@@ -714,7 +714,7 @@ def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Runner resolution order: explicit arg > MILKNADO_RALPH_RUNNER_CMD > default."""
-    from milknado.mcp_ralph import _DEFAULT_RUNNER, _resolve_runner_cmd
+    from milknado.mcp.ralph import _DEFAULT_RUNNER, _resolve_runner_cmd
 
     monkeypatch.delenv("MILKNADO_RALPH_RUNNER_CMD", raising=False)
     assert _resolve_runner_cmd("/bin/run --flag") == ["/bin/run", "--flag"]

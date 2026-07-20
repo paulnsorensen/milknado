@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
-from milknado._cli_helpers import _ensure_db, _load_or_default
+from milknado.cli._helpers import _ensure_db, _load_or_default
 from milknado.domains.common import MilknadoConfig
 
 console = Console()

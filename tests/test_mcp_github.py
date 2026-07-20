@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from milknado.adapters.gh import GhProjectAdapter, GhTransportError
-from milknado.mcp_github import (
+from milknado.mcp.github import (
     milknado_github_roadmap_bind,
     milknado_github_roadmap_export,
     milknado_github_roadmap_import,
@@ -83,8 +83,8 @@ def test_import_tool_fails_fast(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_bind_tool_projects_roadmap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from milknado._mcp_core import open_graph, resolve_project_root
     from milknado.domains.wiki.importer import import_roadmap
+    from milknado.mcp._core import open_graph, resolve_project_root
 
     _seed_wiki(tmp_path)
     root = resolve_project_root(str(tmp_path))

@@ -761,8 +761,8 @@ def test_resolve_worker_cmd_empty_explicit_falls_back_to_profile() -> None:
 # AC7: milknado_todo_brief returns flavor brief_prepend when config has flavor entry
 def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
     """milknado_todo_brief uses flavor brief_prepend when the task has a matching flavor."""
-    from milknado.mcp_todo import milknado_todo_brief
-    from milknado.mcp_todo_mutate import milknado_todo_add
+    from milknado.mcp.todo import milknado_todo_brief
+    from milknado.mcp.todo_mutate import milknado_todo_add
 
     def _call(tool, **kwargs):
         fn = getattr(tool, "fn", tool)

@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort
     from milknado.domains.planning.manifest import PlanChangeManifest
 
-from milknado._mcp_core import (
+from milknado.domains.batching import DUMB_ZONE_BUDGET, BatchPlan
+from milknado.mcp._core import (
     Flavor,
     Kind,
     TodoStatus,
@@ -21,7 +22,6 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.batching import DUMB_ZONE_BUDGET, BatchPlan
 
 __all__ = ["main", "mcp", "open_graph", "resolve_project_root"]
 
@@ -202,14 +202,14 @@ def main() -> None:
     configure_stderr_logging()
 
     # Importing each tool module registers its @mcp.tool()s on the shared instance.
-    from milknado import (  # noqa: F401
-        mcp_github,
-        mcp_node,
-        mcp_ralph,
-        mcp_run,
-        mcp_todo,
-        mcp_todo_mutate,
-        mcp_wiki,
+    from milknado.mcp import (  # noqa: F401
+        github,
+        node,
+        ralph,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
     )
 
     mcp.run()

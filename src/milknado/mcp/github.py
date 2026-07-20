@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters.gh import GhProjectAdapter
 from milknado.domains.github import (
     bind_github_project,
@@ -18,6 +17,7 @@ from milknado.domains.github import (
     resolve_github_roadmap_node,
 )
 from milknado.domains.wiki import resolve_roadmap_node, wiki_root
+from milknado.mcp._core import mcp, open_graph, resolve_project_root
 
 
 def _roots(project_root: str) -> tuple[Path, Path]:

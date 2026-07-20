@@ -21,7 +21,7 @@ dependencies = [
 
 [project.scripts]
 milknado = "milknado.cli:app"
-milknado-mcp = "milknado.mcp_server:main"
+milknado-mcp = "milknado.mcp.server:main"
 
 
 [tool.hatch.build.targets.wheel]

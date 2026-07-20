@@ -8,27 +8,27 @@ from pathlib import Path
 
 import pytest
 
-from milknado._mcp_core import mcp
 from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
-from milknado.mcp_run import (
+from milknado.mcp._core import mcp
+from milknado.mcp.run import (
     milknado_run_inline,
     milknado_run_inline_poll,
     milknado_run_inline_start,
 )
-from milknado.mcp_server import (
+from milknado.mcp.server import (
     milknado_graph_summary,
     open_graph,
     resolve_project_root,
 )
-from milknado.mcp_todo import (
+from milknado.mcp.todo import (
     milknado_get_node,
     milknado_todo_brief,
     milknado_todo_next,
     milknado_todo_tree,
 )
-from milknado.mcp_todo_mutate import (
+from milknado.mcp.todo_mutate import (
     milknado_delete_node,
     milknado_edit_node,
     milknado_move_node,
@@ -2256,23 +2256,23 @@ class TestArtifactAndPrereqsMcp:
 def test_main_imports_all_tool_modules() -> None:
     """main() must import every tool module — registration is an @mcp.tool() import side effect.
 
-    Checks main()'s source for each module name (word-bounded, so mcp_todo does
-    not match inside mcp_todo_mutate): the suite imports the tool modules itself,
+    Checks main()'s source for each module name (word-bounded, so todo does
+    not match inside todo_mutate): the suite imports the tool modules itself,
     so registration-based checks cannot detect a module dropped from main().
     """
     import inspect
     import re
     from unittest.mock import patch
 
-    from milknado import mcp_server
+    from milknado.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.main)
-    for module in ("mcp_ralph", "mcp_run", "mcp_todo", "mcp_todo_mutate", "mcp_wiki"):
+    for module in ("ralph", "run", "todo", "todo_mutate", "wiki"):
         assert re.search(rf"\b{module}\b", src), (
             f"main() no longer imports {module}; its tools won't register on server startup"
         )
 
-    with patch("milknado.mcp_server.mcp") as mock_mcp:
+    with patch("milknado.mcp.server.mcp") as mock_mcp:
         mock_mcp.run.return_value = None
         mcp_server.main()
 
@@ -2291,16 +2291,16 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    from milknado import (  # noqa: F401
-        mcp_github,
-        mcp_node,
-        mcp_ralph,
-        mcp_run,
-        mcp_todo,
-        mcp_todo_mutate,
-        mcp_wiki,
+    from milknado.mcp import (  # noqa: F401
+        github,
+        node,
+        ralph,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
     )
-    from milknado._mcp_core import mcp
+    from milknado.mcp._core import mcp
 
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
@@ -2343,13 +2343,13 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
 
 def test_mcp_metadata_stays_succinct_and_accurate() -> None:
     """MCP listings should advertise tool families without implementation mechanics."""
-    from milknado import (  # noqa: F401
-        mcp_node,
-        mcp_ralph,
-        mcp_run,
-        mcp_todo,
-        mcp_todo_mutate,
-        mcp_wiki,
+    from milknado.mcp import (  # noqa: F401
+        node,
+        ralph,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
     )
 
     families = (

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import typer
 
-from milknado.cli_plan import (
+from milknado.cli.plan import (
     CriticVerdict,
     _exec_plan_non_interactive,
     _parse_critic_output,
@@ -90,7 +90,7 @@ class TestPlanningSubprocess:
         with pytest.raises(ValueError, match="within the project root"):
             _PlanningSubprocess().run_agent(context, "local-planner", project)
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_local_planner_uses_exact_interpreter_contract(
         self,
         mock_run: MagicMock,
@@ -410,7 +410,7 @@ class TestBuildPlanningContext:
 
 
 class TestPlanner:
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_writes_context_file(
         self,
         mock_run: MagicMock,
@@ -428,7 +428,7 @@ class TestPlanner:
         content = result.context_path.read_text()
         assert "my goal" in content
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_calls_agent(
         self,
         mock_run: MagicMock,
@@ -444,7 +444,7 @@ class TestPlanner:
         assert cmd[0] == "claude"
         assert cmd[-1] == "-"
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_uses_stdin_input(
         self,
         mock_run: MagicMock,
@@ -505,7 +505,7 @@ class TestPlanner:
             tmp_path,
         )
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_failure(
         self,
         mock_run: MagicMock,
@@ -520,7 +520,7 @@ class TestPlanner:
         assert result.exit_code == 1
 
     @patch("milknado.domains.planning.planner.run_batching")
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_propagates_mega_batch_change_count(
         self,
         mock_run: MagicMock,
@@ -552,7 +552,7 @@ class TestPlanner:
         assert result.mega_batch_change_count == 6
 
     @patch("milknado.domains.planning.planner.run_batching")
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_mega_batch_change_count_none_when_within_threshold(
         self,
         mock_run: MagicMock,
@@ -575,7 +575,7 @@ class TestPlanner:
         result = planner.launch("goal", tmp_path)
         assert result.mega_batch_change_count is None
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_custom_agent_command(
         self,
         mock_run: MagicMock,
@@ -591,7 +591,7 @@ class TestPlanner:
             planner.launch("goal", tmp_path)
         mock_run.assert_not_called()
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_runs_in_project_root(
         self,
         mock_run: MagicMock,
@@ -604,7 +604,7 @@ class TestPlanner:
         planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_launch_excludes_untrusted_repo_mcp_config(
         self,
         mock_run: MagicMock,
@@ -620,7 +620,7 @@ class TestPlanner:
         assert "--mcp-config" not in cmd
         assert str(tmp_path / ".mcp.json") not in cmd
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_validation_hook_accepts_manifest(
         self,
         mock_run: MagicMock,
@@ -656,7 +656,7 @@ class TestPlanner:
         assert '"manifest_version": "milknado.plan.v2"' in hook_payload
         assert '"id": "c1"' in hook_payload
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_validation_hook_rejects_manifest(
         self,
         mock_run: MagicMock,
@@ -739,7 +739,7 @@ def _make_v2_manifest_stdout(changes: list[dict]) -> str:  # type: ignore[type-a
 
 
 class TestPlannerSpecPath:
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_spec_path_read_and_passed(
         self,
         mock_run: MagicMock,
@@ -767,7 +767,7 @@ class TestPlannerSpecPath:
         with pytest.raises(FileNotFoundError, match="spec_path"):
             planner.launch("goal", tmp_path, spec_path=tmp_path / "nonexistent.md")
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_no_manifest_returns_no_manifest_status(
         self,
         mock_run: MagicMock,
@@ -782,7 +782,7 @@ class TestPlannerSpecPath:
         assert result.nodes_created == 0
         assert result.batch_count == 0
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_no_manifest_no_telemetry(
         self,
         mock_run: MagicMock,
@@ -795,7 +795,7 @@ class TestPlannerSpecPath:
         planner.launch("goal", tmp_path)
         assert not (tmp_path / ".milknado" / "calibration.jsonl").exists()
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_happy_path_creates_nodes_and_telemetry(
         self,
         mock_run: MagicMock,
@@ -814,7 +814,7 @@ class TestPlannerSpecPath:
         assert result.nodes_created > 0
         assert (tmp_path / ".milknado" / "calibration.jsonl").exists()
 
-    @patch("milknado.cli_plan.subprocess.run")
+    @patch("milknado.cli.plan.subprocess.run")
     def test_crg_failure_still_runs_batching(
         self,
         mock_run: MagicMock,
@@ -1458,7 +1458,7 @@ class TestParseCriticOutput:
 
 
 class TestRunPlanCritic:
-    @patch("milknado.cli_plan._spawn_plan_critic")
+    @patch("milknado.cli.plan._spawn_plan_critic")
     def test_returns_approved_verdict(self, mock_spawn: MagicMock, tmp_path: Path) -> None:
         mock_spawn.return_value = "<verdict>approve</verdict>"
         cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
@@ -1468,7 +1468,7 @@ class TestRunPlanCritic:
         assert verdict == CriticVerdict(approved=True, feedback="")
         mock_spawn.assert_called_once()
 
-    @patch("milknado.cli_plan._spawn_plan_critic")
+    @patch("milknado.cli.plan._spawn_plan_critic")
     def test_parses_revise_with_feedback(self, mock_spawn: MagicMock, tmp_path: Path) -> None:
         mock_spawn.return_value = (
             "<verdict>revise</verdict>\n<feedback>batch is too large</feedback>"
@@ -1479,7 +1479,7 @@ class TestRunPlanCritic:
 
         assert verdict == CriticVerdict(approved=False, feedback="batch is too large")
 
-    @patch("milknado.cli_plan._spawn_plan_critic")
+    @patch("milknado.cli.plan._spawn_plan_critic")
     def test_reprompts_once_then_raises_on_persistent_unparseable_output(
         self, mock_spawn: MagicMock, tmp_path: Path
     ) -> None:
@@ -1508,7 +1508,7 @@ class TestRunPlanWithCritic:
         assert result == _plan_result()
         planner.launch.assert_called_once()
 
-    @patch("milknado.cli_plan.run_plan_critic")
+    @patch("milknado.cli.plan.run_plan_critic")
     def test_returns_early_on_approve(self, mock_critic: MagicMock, tmp_path: Path) -> None:
         planner = MagicMock()
         planner.launch.return_value = _plan_result()
@@ -1528,7 +1528,7 @@ class TestRunPlanWithCritic:
         planner.launch.assert_called_once()
         mock_critic.assert_called_once()
 
-    @patch("milknado.cli_plan.run_plan_critic")
+    @patch("milknado.cli.plan.run_plan_critic")
     def test_loops_and_replans_on_revise(self, mock_critic: MagicMock, tmp_path: Path) -> None:
         first = _plan_result(change_count=1)
         second = _plan_result(change_count=2)
@@ -1554,7 +1554,7 @@ class TestRunPlanWithCritic:
         replan_goal = planner.launch.call_args_list[1].args[0]
         assert "add more detail" in replan_goal
 
-    @patch("milknado.cli_plan.run_plan_critic")
+    @patch("milknado.cli.plan.run_plan_critic")
     def test_stops_at_round_cap_returning_last_unapproved_verdict(
         self, mock_critic: MagicMock, tmp_path: Path
     ) -> None:
@@ -1578,7 +1578,7 @@ class TestRunPlanWithCritic:
 
 
 class TestExecPlanNonInteractive:
-    @patch("milknado.cli_plan.run_plan_critic")
+    @patch("milknado.cli.plan.run_plan_critic")
     def test_raises_when_critic_never_approves_within_cap(
         self, mock_critic: MagicMock, tmp_path: Path
     ) -> None:
@@ -1598,8 +1598,8 @@ class TestExecPlanNonInteractive:
 
 
 class TestExecPlanInteractive:
-    @patch("milknado.cli_plan._prompt_plan_action")
-    @patch("milknado.cli_plan.run_plan_critic")
+    @patch("milknado.cli.plan._prompt_plan_action")
+    @patch("milknado.cli.plan.run_plan_critic")
     def test_unapproved_critic_prints_fallback_and_continues_to_human_gate(
         self,
         mock_critic: MagicMock,
@@ -1607,7 +1607,7 @@ class TestExecPlanInteractive:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from milknado.cli_plan import _exec_plan_interactive
+        from milknado.cli.plan import _exec_plan_interactive
 
         planner = MagicMock()
         planner.launch.return_value = _plan_result()

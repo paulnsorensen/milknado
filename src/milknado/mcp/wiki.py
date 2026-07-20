@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado._mcp_core import mcp, open_graph, resolve_project_root
 from milknado.adapters.hallouminate import HallouminateIndexer
 from milknado.domains.wiki import (
     export_roadmap,
@@ -16,6 +15,7 @@ from milknado.domains.wiki import (
     resolve_roadmap_node,
     wiki_root,
 )
+from milknado.mcp._core import mcp, open_graph, resolve_project_root
 
 
 def _wiki_root_for(project_root: str) -> tuple[Path, Path]:

@@ -10,10 +10,10 @@ import pytest
 def test_main_logs_terminal_event_with_run_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import milknado._mcp_core as mcp_core
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
-    from milknado import _ralph_node_runner
+    import milknado.mcp._core as mcp_core
+    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.headless import HeadlessOutcome
 
     messages: list[tuple[str, tuple[object, ...]]] = []

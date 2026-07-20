@@ -28,11 +28,6 @@ import os
 import re
 from pathlib import Path
 
-from milknado._mcp_core import (
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
 from milknado.adapters import GitAdapter
 from milknado.domains.common import (
     FlavorProfile,
@@ -44,6 +39,11 @@ from milknado.domains.common import (
 from milknado.domains.dispatch import RUN_ID_RE, create_isolated_worktree, make_run_id, now_iso
 from milknado.domains.execution import build_completion_verifier
 from milknado.domains.graph import CLAIM_ROLE, VERIFY_ROLE
+from milknado.mcp._core import (
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 
 _logger = logging.getLogger(__name__)
 

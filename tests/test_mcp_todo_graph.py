@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from milknado.mcp_todo import milknado_todo_next
-from milknado.mcp_todo_mutate import milknado_todo_add, milknado_todo_set_status
+from milknado.mcp.todo import milknado_todo_next
+from milknado.mcp.todo_mutate import milknado_todo_add, milknado_todo_set_status
 
 
 def _call(tool, **kwargs):

@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import os
 
-from milknado._mcp_core import (
+from milknado.domains.common import MikadoNode, resolve_flavor_profile
+from milknado.domains.dispatch import render_brief
+from milknado.mcp._core import (
     Flavor,
     Kind,
     _parse_flavor,
@@ -14,8 +16,6 @@ from milknado._mcp_core import (
     open_graph,
     resolve_project_root,
 )
-from milknado.domains.common import MikadoNode, resolve_flavor_profile
-from milknado.domains.dispatch import render_brief
 
 _logger = logging.getLogger(__name__)
 

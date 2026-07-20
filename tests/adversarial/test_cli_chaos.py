@@ -59,7 +59,7 @@ class TestSpecFlagValidation:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli_plan._ensure_db"),
+            patch("milknado.cli.plan._ensure_db"),
         ):
             mock_planner = MagicMock()
             mock_planner_cls.return_value = mock_planner
@@ -80,7 +80,7 @@ class TestSpecFlagValidation:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli_plan._ensure_db") as mock_ensure_db,
+            patch("milknado.cli.plan._ensure_db") as mock_ensure_db,
         ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
@@ -104,7 +104,7 @@ class TestSolverStatusExitCodes:
         with (
             patch("milknado.domains.planning.Planner") as mock_planner_cls,
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli_plan._ensure_db") as mock_ensure_db,
+            patch("milknado.cli.plan._ensure_db") as mock_ensure_db,
         ):
             mock_graph = MagicMock()
             mock_ensure_db.return_value = mock_graph
@@ -204,14 +204,14 @@ class TestMegaBatchReport:
     """_plan_summary surfaces a mega-batch note only when one was detected."""
 
     def test_summary_includes_mega_batch_when_present(self) -> None:
-        from milknado.cli_plan import _plan_summary
+        from milknado.cli.plan import _plan_summary
 
         summary = _plan_summary(_make_plan_result(mega_batch_change_count=6))
         assert "mega-batch" in summary
         assert "6" in summary
 
     def test_summary_omits_mega_batch_when_none(self) -> None:
-        from milknado.cli_plan import _plan_summary
+        from milknado.cli.plan import _plan_summary
 
         summary = _plan_summary(_make_plan_result())
         assert "mega-batch" not in summary

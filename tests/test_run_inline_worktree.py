@@ -16,13 +16,13 @@ import pytest
 
 import milknado.adapters as adapters
 from milknado.domains.common import RebaseResult, WorktreeMode
-from milknado.mcp_run import (
+from milknado.mcp.run import (
     milknado_run_inline,
     milknado_run_inline_poll,
     milknado_run_inline_start,
 )
-from milknado.mcp_server import open_graph
-from milknado.mcp_todo_mutate import milknado_todo_add
+from milknado.mcp.server import open_graph
+from milknado.mcp.todo_mutate import milknado_todo_add
 
 
 def _call(tool, **kwargs):
