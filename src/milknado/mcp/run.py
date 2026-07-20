@@ -1,31 +1,24 @@
-"""Milknado MCP worker-run tools — sync and async headless dispatch."""
+"""Milknado MCP worker-run tools — thin registration over milknado.app.run."""
 
 from __future__ import annotations
 
 import logging
-import shlex
-from pathlib import Path
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
-from milknado.domains.common import NodeKind, NodeStatus, WorktreeMode, resolve_flavor_profile
+from milknado.app.run import (
+    InlineRunRequest,
+    run_inline,
+    run_inline_start,
+    validate_worker_cmd,
+)
+from milknado.domains.common import WorktreeMode
 from milknado.domains.dispatch import (
     RUN_ID_RE,
-    AsyncRunRequest,
-    GraphSessionPort,
-    SyncDispatchRequest,
     cancel_run,
-    dispatch_node_sync,
-    ensure_tmux_ready,
-    make_run_id,
     now_iso,
     poll_async_run,
-    reclaim_stale_node,
     reconcile_node_status,
     reconcile_run_window,
-    render_brief,
-    setup_isolated_worktree,
-    start_headless_async,
-    validate_worker_argv,
 )
 from milknado.mcp._core import (
     build_run_dict,
@@ -36,39 +29,6 @@ from milknado.mcp._core import (
 )
 
 _logger = logging.getLogger(__name__)
-
-
-class _GraphSessions(GraphSessionPort):
-    def open_graph(self, project_root: Path):  # noqa: ANN201
-        return open_graph(project_root)
-
-
-def _validate_worker_cmd(worker_cmd: str | None) -> None:
-    """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
-
-    Eager pre-check on the MCP arg; the env fallback and built-in default are
-    validated again where they're resolved (`runner._resolve_worker_cmd`). Both
-    routes share `validate_worker_argv`, so the allowlist lives in one place.
-    """
-    if not worker_cmd or not worker_cmd.strip():
-        return
-    validate_worker_argv(shlex.split(worker_cmd))
-
-
-def _prepare_isolation(
-    graph,  # noqa: ANN001
-    git: GitAdapter,
-    root: Path,
-    node,  # noqa: ANN001
-    run_id: str,
-    worktree: WorktreeMode,
-    merge_back: bool,
-    worktree_pattern: str,
-):  # noqa: ANN201
-    if worktree != WorktreeMode.ISOLATE:
-        return root, None
-    context = setup_isolated_worktree(graph, git, root, node, run_id, worktree_pattern)
-    return context.worktree_path, context if merge_back else None
 
 
 @mcp.tool()
@@ -96,40 +56,15 @@ def milknado_run_inline(
     `git worktree remove`). THIS_BRANCH runs the worker in the shared checkout —
     the diff lands in the current working tree — and ignores merge_back.
     """
-    _validate_worker_cmd(worker_cmd)
+    validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
-    _logger.info(
-        "milknado_run_inline: node=%d timeout=%ds worktree=%s merge_back=%s",
-        node_id,
-        timeout_seconds,
-        worktree.value,
-        merge_back,
-    )
     try:
-        node = graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"node {node_id} not found")
-        if node.kind != NodeKind.TASK:
-            raise ValueError(
-                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
-            )
-        profile = resolve_flavor_profile(cfg, node.flavor)
-        state = dispatch_node_sync(
+        state = run_inline(
             graph,
-            GitAdapter(root),
-            SyncDispatchRequest(
-                node_id=node_id,
-                project_root=root,
-                worker_cmd=worker_cmd,
-                timeout_seconds=timeout_seconds,
-                default_cmd=profile.execution_agent,
-                process=ProcessAdapter(),
-                brief_prepend=profile.brief_prepend,
-                worktree_mode=worktree,
-                merge_back=merge_back,
-                worktree_pattern=cfg.worktree_pattern,
-            ),
+            cfg,
+            root,
+            InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
         )
         return build_run_dict(state)
     finally:
@@ -161,93 +96,18 @@ def milknado_run_inline_start(
     merge_back=False worktree must be removed manually via `git worktree remove`).
     THIS_BRANCH runs in the shared checkout and ignores merge_back.
     """
-    _validate_worker_cmd(worker_cmd)
+    validate_worker_cmd(worker_cmd)
     root = resolve_project_root(project_root or None)
-    tmux: TmuxAdapter | None = None
-    if use_tmux:
-        # Fail closed BEFORE any claim: tmux was explicitly requested, so a
-        # missing binary or unstartable server fails the dispatch loudly —
-        # never a silent fallback to the in-process subprocess path.
-        tmux = TmuxAdapter(root)
-        ensure_tmux_ready(tmux)
     graph, cfg = open_graph(root)
-    git = GitAdapter(root)
     try:
-        node = graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"node {node_id} not found")
-        if node.kind != NodeKind.TASK:
-            raise ValueError(
-                f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
-            )
-        run_id = make_run_id(node_id)
-        if node.status == NodeStatus.RUNNING:
-            # Before the claim can succeed, reconcile any orphaned terminal runs
-            # for this node — a prior worker may have finished without anyone
-            # polling, leaving the node stuck on RUNNING. Also sweep runs stuck on
-            # "running" past their timeout: the worker thread vanished (e.g. server
-            # crash) without writing a terminal state, which would lock the node
-            # just as permanently. (The headless worker is an in-process thread
-            # with no pid, so there is no pid-liveness fast path here — it relies
-            # on this reconcile plus the stale-timeout backstop.)
-            reclaim_stale_node(graph, node_id, fence_run_id=node.run_id)
-        profile = resolve_flavor_profile(cfg, node.flavor)
-        brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
-        # Atomic optimistic claim: the cross-process mutual-exclusion point that
-        # replaces the in-process dispatch lock. The PENDING/FAILED/BLOCKED ->
-        # RUNNING transition and the run_id fence are written in one statement, so a
-        # second concurrent caller sees RUNNING and loses. The same run_id keys the
-        # run row, keeping the node row and the run row in agreement.
-        graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
-        try:
-            worker_cwd, merge_ctx = _prepare_isolation(
-                graph,
-                git,
-                root,
-                node,
-                run_id,
-                worktree,
-                merge_back,
-                cfg.worktree_pattern,
-            )
-            ref = start_headless_async(
-                AsyncRunRequest(
-                    project_root=root,
-                    node_id=node_id,
-                    brief=brief,
-                    worker_cmd=worker_cmd,
-                    timeout_seconds=timeout_seconds,
-                    run_id=run_id,
-                    default_cmd=profile.execution_agent,
-                    cwd=worker_cwd,
-                    merge_ctx=merge_ctx,
-                ),
-                _GraphSessions(),
-                git,
-                ProcessAdapter(),
-                tmux,
-            )
-        except Exception:
-            # Startup failed after the claim (bad worker cmd resolved in
-            # start_headless_async, or a state-file write): release the claim with a
-            # fenced terminal write so the node is not stranded RUNNING until the
-            # stale-timeout backstop, then re-raise for a clean caller failure.
-            graph.mark_terminal(node_id, run_id, NodeStatus.FAILED)
-            raise
-        _logger.info(
-            "milknado_run_inline_start: node=%d run_id=%s timeout=%ds",
-            node_id,
-            ref.run_id,
-            timeout_seconds,
+        state = run_inline_start(
+            graph,
+            cfg,
+            root,
+            InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
+            use_tmux,
         )
-        return build_run_dict(
-            {
-                "run_id": ref.run_id,
-                "node_id": node_id,
-                "status": "running",
-                "log_path": str(ref.log_path),
-            }
-        )
+        return build_run_dict(state)
     finally:
         graph.close()
 
@@ -289,13 +149,9 @@ def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        return [_state_to_run_dict(r) for r in graph.recent_runs(limit)]
+        return [build_run_dict(r) for r in graph.recent_runs(limit)]
     finally:
         graph.close()
-
-
-def _state_to_run_dict(state: dict) -> dict:
-    return build_run_dict(state)
 
 
 @mcp.tool()

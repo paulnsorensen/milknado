@@ -11,14 +11,15 @@ def test_main_logs_terminal_event_with_run_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import milknado.adapters as adapters
+    import milknado.app.project as app_project
+    import milknado.app.ralph as app_ralph
     import milknado.domains.execution as execution
-    import milknado.mcp._core as mcp_core
     from milknado.domains.execution.headless import HeadlessOutcome
     from milknado.mcp import _ralph_node_runner
 
     messages: list[tuple[str, tuple[object, ...]]] = []
     monkeypatch.setattr(
-        _ralph_node_runner._logger,
+        app_ralph._logger,
         "info",
         lambda message, *args: messages.append((message, args)),
     )
@@ -64,7 +65,7 @@ def test_main_logs_terminal_event_with_run_id(
             return []
 
     graph = _Graph()
-    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(app_project, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
     monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: _StubRalph())
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())

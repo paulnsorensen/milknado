@@ -8,8 +8,13 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.adapters import ProcessAdapter, TmuxAdapter
+
+if TYPE_CHECKING:
+    from milknado.adapters import GitAdapter
+
 from milknado.domains.common import NodeKind, NodeStatus, RunResult
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
@@ -179,6 +184,7 @@ def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # 
 
 def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001
     """Claim a node, remove stale worktree, start the run row, and spawn the subprocess."""
+    from milknado.adapters import GitAdapter
     from milknado.adapters.tmux import TmuxDispatchError
     from milknado.domains.dispatch import ensure_tmux_ready
 
@@ -233,7 +239,7 @@ class RunNodeRequest:
 
 def run_node_subprocess(request: RunNodeRequest) -> int:
     """Run a node to completion; called by the headless node runner process."""
-    from milknado.adapters import CrgAdapter, LoopAdapter
+    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.app.project import open_graph
     from milknado.domains.common import resolve_flavor_profile
     from milknado.domains.execution import (

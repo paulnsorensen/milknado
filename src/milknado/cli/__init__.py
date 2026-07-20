@@ -9,10 +9,10 @@ from typing import Annotated
 
 import typer
 
+from milknado.app.todo import maybe_block_parent as _maybe_block_parent
 from milknado.cli._helpers import (
     _find_config,
     _load_or_default,
-    _maybe_block_parent,
     _open_project,
     console,
 )

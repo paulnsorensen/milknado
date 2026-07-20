@@ -523,6 +523,39 @@ class TestIsolateWorkerFailure:
         assert _node(root, task["id"]).status.value == "failed"
 
 
+class TestAsyncStartFailure:
+    """A startup failure AFTER the node is claimed must finalize the node FAILED
+    (never strand it RUNNING) and re-raise — the app-layer claim-release seam in
+    milknado.app.run.run_inline_start."""
+
+    def test_start_headless_failure_releases_claim_as_failed(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        import milknado.domains.dispatch as dispatch_mod
+
+        root = tmp_path / "repo"
+        _init_repo(root)
+        task = _call(milknado_todo_add, description="boom", kind="task", project_root=str(root))
+
+        def _explode(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            raise RuntimeError("spawn exploded")
+
+        monkeypatch.setattr(dispatch_mod, "start_headless_async", _explode)
+
+        with pytest.raises(RuntimeError, match="spawn exploded"):
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd="claude sh -c 'true'",
+                worktree=WorktreeMode.THIS_BRANCH,
+                merge_back=False,
+                project_root=str(root),
+            )
+
+        # The claim was released with a fenced terminal write — not stranded RUNNING.
+        assert _node(root, task["id"]).status.value == "failed"
+
+
 def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> None:
     from milknado.domains.common.errors import GitOperationError
     from milknado.domains.dispatch.isolate import create_isolated_worktree

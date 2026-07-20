@@ -1,4 +1,4 @@
-"""run and attach commands, plus execution helpers."""
+"""run and attach commands — thin I/O parsing over milknado.app.run."""
 
 from __future__ import annotations
 
@@ -7,14 +7,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
-    from milknado.domains.execution import ExecutionConfig
     from milknado.domains.execution.run_loop import RunLoopResult
 
 import typer
 from rich.console import Console
 
 from milknado.cli._helpers import _ensure_db, _load_or_default
-from milknado.domains.common import MilknadoConfig
 
 console = Console()
 
@@ -32,20 +30,6 @@ AllowProtectedOption = Annotated[
         help="Permit execution on a protected branch (e.g. main).",
     ),
 ]
-
-
-def _build_exec_config(
-    config: MilknadoConfig,
-    project_root: Path,
-) -> ExecutionConfig:
-    from milknado.domains.execution import ExecutionConfig
-
-    return ExecutionConfig(
-        execution_agent=config.execution_agent,
-        quality_gates=config.quality_gates,
-        worktree_pattern=config.worktree_pattern,
-        project_root=project_root,
-    )
 
 
 def _print_run_result(result: RunLoopResult) -> None:
@@ -87,14 +71,13 @@ def attach(
     ] = Path("."),
 ) -> None:
     """Attach to a running tmux-dispatched run's window."""
-    from milknado.adapters.tmux import TmuxAdapter
-    from milknado.domains.dispatch import resolve_attach_target
+    from milknado.app.run import resolve_run_attach_target
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
     try:
-        target = resolve_attach_target(graph, TmuxAdapter(project_root), run_id)
+        target = resolve_run_attach_target(graph, project_root, run_id)
     except ValueError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -112,16 +95,18 @@ def run(
     allow_protected: AllowProtectedOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
-    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
-    from milknado.app.run_command import check_protected_branch
-    from milknado.domains.execution import Executor, RunLoop, get_dispatchable_nodes
+    from milknado.app.run import (
+        check_protected_branch,
+        resolve_feature_branch,
+        run_execution_loop,
+    )
+    from milknado.domains.execution import get_dispatchable_nodes
     from milknado.domains.graph import validate_runnable_roots
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
 
-    git = GitAdapter(project_root)
-    feature_branch = git.current_branch()
+    feature_branch = resolve_feature_branch(project_root)
     check_protected_branch(config, feature_branch, allow_protected)
 
     graph = _ensure_db(config, plugins)
@@ -142,17 +127,8 @@ def run(
             console.print("No nodes ready for execution.")
             return
 
-        ralph = LoopAdapter()
-        crg = CrgAdapter(project_root)
-        executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
-        result = loop.run(
-            config=_build_exec_config(config, project_root),
-            feature_branch=feature_branch,
-            concurrency_limit=config.concurrency_limit,
-            strict=strict,
-        )
+        result = run_execution_loop(graph, config, project_root, feature_branch, strict)
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)

@@ -473,7 +473,7 @@ def test_claim_rolls_back_claim_when_worktree_creation_fails(
     def _boom(*_a, **_k):
         raise RuntimeError("worktree boom")
 
-    monkeypatch.setattr("milknado.mcp.node.create_isolated_worktree", _boom)
+    monkeypatch.setattr("milknado.app.node.create_isolated_worktree", _boom)
     with pytest.raises(RuntimeError, match="worktree boom"):
         _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
