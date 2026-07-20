@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from pathlib import Path
 
-from milknado.app.todo import CreateTodoRequest
-from milknado.app.todo import create_todo as _app_create_todo
 from milknado.domains.common import (
     NodeKind,
+    NodeSpec,
     NodeStatus,
     normalize_hint_paths,
     validate_hint_path,
@@ -34,37 +35,39 @@ from milknado.mcp.todo import follow_up_parent_id, node_to_summary
 _logger = logging.getLogger(__name__)
 
 
-def _create_todo(  # noqa: PLR0913
-    graph,  # noqa: ANN001
-    cfg,  # noqa: ANN001
-    parent_id: int | None,
-    description: str,
-    kind: Kind,
-    files: list[str] | None,
-    flavor: Flavor | None,
-    artifact: str | None,
-    prereqs: list[int] | None,
-    root,  # noqa: ANN001
-) -> dict:
-    """Parse MCP strings then delegate to app-layer create_todo."""
-    from pathlib import Path
+@dataclass(frozen=True)
+class _CreateTodo:
+    description: str
+    kind: Kind
+    files: list[str] | None
+    flavor: Flavor | None
+    artifact: str | None
+    prereqs: list[int] | None
+    root: Path
 
-    parsed_kind = _parse_kind(kind)
-    parsed_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
-    node = _app_create_todo(
-        graph,
-        cfg,
-        parent_id,
-        CreateTodoRequest(
-            description=description,
-            kind=parsed_kind,
-            files=files,
-            flavor=parsed_flavor,
-            artifact=artifact,
-            prereqs=prereqs,
-            root=Path(root) if not hasattr(root, "__fspath__") else root,
+
+def _create_todo(graph, cfg, parent_id: int | None, request: _CreateTodo) -> dict:  # noqa: ANN001
+    if request.artifact is not None:
+        validate_hint_path(request.artifact, request.root, label="artifact")
+    files = (
+        normalize_hint_paths(request.files, request.root) if request.files is not None else None
+    )
+    flavor = (
+        _parse_flavor(request.flavor, cfg.flavor_registry) if request.flavor is not None else None
+    )
+    node = graph.add_node(
+        request.description,
+        parent_id=parent_id,
+        spec=NodeSpec(
+            kind=_parse_kind(request.kind),
+            flavor=flavor,
+            artifact_path=request.artifact,
+            prereqs=request.prereqs or (),
+            flavor_registry=cfg.flavor_registry,
         ),
     )
+    if files is not None:
+        graph.set_file_ownership(node.id, files)
     return node_to_summary(node)
 
 
@@ -90,9 +93,8 @@ def milknado_todo_add(
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        return _create_todo(
-            graph, cfg, parent_id, description, kind, files, flavor, artifact, prereqs, root
-        )
+        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        return _create_todo(graph, cfg, parent_id, request)
     finally:
         graph.close()
 
@@ -173,9 +175,8 @@ def milknado_track_follow_up(
     graph, cfg = open_graph(root)
     try:
         resolved_parent = parent_id if parent_id is not None else follow_up_parent_id(graph)
-        return _create_todo(
-            graph, cfg, resolved_parent, description, kind, files, flavor, artifact, prereqs, root
-        )
+        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        return _create_todo(graph, cfg, resolved_parent, request)
     finally:
         graph.close()
 
@@ -255,6 +256,7 @@ def milknado_edit_node(
                 "flavor is only valid for task nodes; cannot set flavor with non-task kind"
             )
         if node_flavor is not None and node_kind is None:
+            # Check existing node kind before setting flavor
             existing = graph.get_node(node_id)
             if existing is None:
                 raise ValueError(f"node {node_id} not found")

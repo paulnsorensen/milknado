@@ -1,4 +1,10 @@
-"""Application-layer plan-batches composition: decode, solve, format."""
+"""Application-layer policy for MCP batch planning.
+
+The ``milknado_plan_batches`` / ``milknado_plan_apply`` MCP tools stay thin and
+call the functions here, which decode the request manifest, wire the CRG adapter,
+solve the batch plan, and serialize the result. The entry module constructs no
+adapter and holds no batching policy inline.
+"""
 
 from __future__ import annotations
 
@@ -6,8 +12,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.batching import BatchPlan
+
 if TYPE_CHECKING:
-    from milknado.domains.batching import BatchPlan
     from milknado.domains.common.protocols import CrgPort
     from milknado.domains.planning.manifest import PlanChangeManifest
 
@@ -34,6 +41,7 @@ def _plan_to_dict(plan: BatchPlan) -> dict:
 
 
 def _try_crg(project_root: Path) -> CrgPort | None:
+    # #71: log CRG failures instead of swallowing them silently
     from milknado.adapters.crg import CrgAdapter
 
     try:
@@ -96,7 +104,12 @@ def plan_batches(
     *,
     force_single_batch: bool = False,
 ) -> dict:
-    """Decode, solve, and format changes into a batch plan dict."""
+    """Decode, solve, and serialize a batch plan from an MCP planning request."""
     manifest = _decode_mcp_changes(changes, new_relationships)
-    plan = _solve_manifest(manifest, budget, project_root, force_single_batch=force_single_batch)
+    plan = _solve_manifest(
+        manifest,
+        budget,
+        project_root,
+        force_single_batch=force_single_batch,
+    )
     return _plan_to_dict(plan)

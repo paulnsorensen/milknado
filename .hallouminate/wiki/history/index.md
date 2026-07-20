@@ -9,5 +9,6 @@
 - [review-lessons](./review-lessons.md) — Review Lessons — Recurring Findings & Gotchas
 - [sliced-bread-crust-001](./sliced-bread-crust-001.md) — ADR — Sibling cli/mcp packages (sliced-bread-crust-001)
 - [sliced-bread-crust-002](./sliced-bread-crust-002.md) — ADR — Ordered curds for crust redesign (sliced-bread-crust-002)
+- [sliced-bread-crust-003](./sliced-bread-crust-003.md) — ADR — App owns policy; entrypoints thin I/O (sliced-bread-crust-003)
 - [workflow-executor-decision](./workflow-executor-decision.md) — Decision — Native Dynamic-Workflow ("ultracode") Execution Backend
 <!-- HALLOUMINATE:INDEX-END -->

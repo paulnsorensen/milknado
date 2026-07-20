@@ -1,4 +1,10 @@
-"""Application-layer node claim provisioning and tool/model resolution."""
+"""Application-layer policy for native (in-session Workflow) node claiming.
+
+The MCP ``milknado_goal_*`` / ``milknado_todo_claim`` / ``milknado_node_verify``
+tools stay thin registration veneers; the model/tool resolution, session-owner
+token resolution, and worktree provisioning (the policy + adapter wiring) live
+here so the entry module constructs no adapters and holds no policy inline.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +12,31 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from milknado.domains.common import FlavorProfile, MilknadoConfig
-
-from milknado.domains.common import NodeStatus, resolve_flavor_profile, resolve_worker_tools
+from milknado.domains.common import (
+    FlavorProfile,
+    NodeStatus,
+    resolve_flavor_profile,
+    resolve_worker_tools,
+)
 from milknado.domains.dispatch import create_isolated_worktree, now_iso
 from milknado.domains.graph import CLAIM_ROLE
 
 _logger = logging.getLogger(__name__)
 
+# Native claims carry CLAIM_ROLE so domain completion transitions can distinguish
+# them from subprocess runs that use the same run table.
+_MODEL_FLAG_RE = re.compile(r"--model[= ]+(\S+)")
+
+# Session owner-token env var (ADR-003): a coordinator claiming a GOAL passes an
+# explicit `owner`, but sub-agents it dispatches inherit process env (subprocess
+# semantics, MILKNADO_NODE_ID precedent) rather than being told the token
+# out-of-band. Reading it as a fallback lets a sub-agent call milknado_goal_release
+# (or re-claim) without the coordinator threading `owner` through every dispatch.
 GOAL_OWNER_ENV_VAR = "MILKNADO_GOAL_OWNER"
 
-_MODEL_FLAG_RE = re.compile(r"--model[= ]+(\S+)")
+# Family-specific tool name the worker uses to self-verify in loop_mode="single".
+# claude allowlists use the mcp__server__ prefix; gemini uses bare MCP tool names.
 _NODE_VERIFY_TOOL_BY_FAMILY: dict[str, str] = {
     "claude": "mcp__milknado__milknado_node_verify",
     "gemini": "milknado_node_verify",
@@ -27,17 +44,26 @@ _NODE_VERIFY_TOOL_BY_FAMILY: dict[str, str] = {
 
 
 def _resolve_model(execution_agent: str) -> str:
-    """Extract the model from the resolved execution command, defaulting to sonnet."""
+    """Extract the model from the resolved execution command, defaulting to sonnet.
+
+    The native backend returns `model` as a structured field so the Workflow can
+    route `agent({model: ...})` correctly instead of inferring it — closing the
+    per-flavor model-routing gap.
+    """
     match = _MODEL_FLAG_RE.search(execution_agent)
     return match.group(1) if match else "sonnet"
 
 
-def _resolve_node_tools(
-    cfg: MilknadoConfig,
-    profile: FlavorProfile,
-    override,  # noqa: ANN001
-) -> tuple[str, ...]:
-    """Resolve the worker tool allowlist for a native-backend node."""
+def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...]:  # noqa: ANN001
+    """Resolve the worker tool allowlist for a native-backend node.
+
+    Mirrors the subprocess execution_agent precedence (resolve_flavor_profile):
+    a per-flavor ``override.tools`` (built from the family default) wins, else the
+    GLOBAL ``[milknado.worker.tools]`` for the family, else the family default. An
+    ``override.tools`` of ``[]`` is intentional (empty allowlist) and is honored —
+    only ``None`` inherits. In loop_mode="single" the worker self-verifies, so
+    ``milknado_node_verify`` is appended when the family exposes it.
+    """
     if override is not None and override.tools is not None:
         tools = resolve_worker_tools(cfg.agent_family, list(override.tools))
     else:
@@ -53,7 +79,7 @@ def _resolve_node_tools(
 
 
 def _resolve_owner(owner: str) -> str:
-    """Resolve the session owner token: explicit owner wins, else GOAL_OWNER_ENV_VAR."""
+    """Resolve the session owner token: explicit `owner` wins, else GOAL_OWNER_ENV_VAR."""
     explicit = owner.strip()
     if explicit:
         return explicit
@@ -61,14 +87,13 @@ def _resolve_owner(owner: str) -> str:
 
 
 def _provision_claim_run(
-    graph,  # noqa: ANN001
-    root: Path,
-    node,  # noqa: ANN001
-    run_id: str,
-    worktree: bool | None,
-    cfg,  # noqa: ANN001
-) -> Path | None:
-    """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE."""
+    graph, root, node, run_id: str, worktree: bool | None, cfg
+) -> Path | None:  # noqa: ANN001
+    """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE.
+
+    On any failure the claim is released with a fenced terminal write so the
+    node is not stranded RUNNING; the exception is re-raised for the caller.
+    """
     from milknado.adapters import GitAdapter
 
     profile = resolve_flavor_profile(cfg, node.flavor)
@@ -84,8 +109,13 @@ def _provision_claim_run(
             graph.start_run(run_id, node.id, str(wt_path), now_iso(), None)
         else:
             graph.start_run(run_id, node.id, str(root), now_iso(), None)
+        # Stamp the native-backend marker so the done-transition gate fires
+        # for this run even before its first verify (fail-closed), while
+        # leaving subprocess runs — which never carry it — exempt.
         graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
     except Exception:
+        # Claim succeeded but worktree/run setup failed: release the claim with a
+        # fenced terminal write so the node is not stranded RUNNING.
         graph.mark_terminal(node.id, run_id, NodeStatus.FAILED)
         raise
     return wt_path

@@ -1,53 +1,18 @@
-"""Application layer — project open: root resolution and graph/session opening."""
+"""Application layer — project open: root resolution and graph/session opening.
+
+Hosts the project-open policy the CLI and MCP entry surfaces both invoke: turning
+a project_root argument (explicit, injected, or cwd) into a canonical path, and
+opening the graph/config session. Entry modules import these so "project open"
+routes through ``milknado.app.*`` rather than living inline at the boundary.
+"""
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import (
-    MilknadoConfig,
-    PluginHook,
-    default_config,
-    load_config,
-)
-from milknado.domains.graph import MikadoGraph
-from milknado.plugins import discover_entry_point_plugins, load_plugins
-
 _logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class OpenProject:
-    graph: MikadoGraph
-    config: MilknadoConfig
-    plugins: tuple[PluginHook, ...]
-
-
-def load_project_config(root: Path) -> MilknadoConfig:
-    root = root.resolve()
-    config_path = root / "milknado.toml"
-    return load_config(config_path) if config_path.exists() else default_config(root)
-
-
-def load_project_plugins(config: MilknadoConfig) -> tuple[PluginHook, ...]:
-    return (*load_plugins(config.plugins), *discover_entry_point_plugins())
-
-
-def open_project_graph(
-    config: MilknadoConfig,
-    plugins: tuple[PluginHook, ...] = (),
-) -> MikadoGraph:
-    config.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return MikadoGraph(config.db_path, plugins=plugins)
-
-
-def open_project(root: Path, config: MilknadoConfig | None = None) -> OpenProject:
-    config = config or load_project_config(root)
-    plugins = load_project_plugins(config)
-    return OpenProject(open_project_graph(config, plugins), config, plugins)
 
 
 def _bounded(text: str, limit: int = 500) -> str:
@@ -83,7 +48,9 @@ def _worktree_main_checkout(cwd: Path) -> Path | None:
         )
         return None
     common_dir = result.stdout.strip()
-    # An absolute path means we're in a linked worktree.
+    # An absolute path means we're in a linked worktree: the common dir lives
+    # inside the main checkout's .git. The main checkout root is its parent
+    # (common_dir ends in .git, so parent is the main checkout).
     if not os.path.isabs(common_dir):
         return None  # relative == main checkout (e.g. ".git") — no hop needed
     return Path(common_dir).parent.resolve()
@@ -119,6 +86,8 @@ def require_worker_run(run_id: str) -> None:
         raise ValueError(f"worker run {run_id!r} does not match injected run {injected!r}")
 
 
-def open_graph(root: Path):  # noqa: ANN201
+def open_graph(root: Path):
+    from milknado.project import open_project
+
     project = open_project(root)
     return project.graph, project.config

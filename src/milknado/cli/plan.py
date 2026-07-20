@@ -166,7 +166,6 @@ def plan(
 
     try:
         planner = build_planner(graph, project_root, config)
-        console.print(f"[bold]Planning:[/bold] {goal}")
         execute_plan(
             planner, goal, project_root, effective_spec, interactive, max_iterations, config
         )

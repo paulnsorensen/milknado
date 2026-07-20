@@ -522,8 +522,8 @@ def test_runner_writes_done_on_successful_outcome(
     node to completion, then overwrite the state file with a terminal 'done' the
     poll reads — preserving the base schema (log_path/timeout_seconds)."""
     import milknado.adapters as adapters
-    import milknado.app.project as app_project
     import milknado.domains.execution as execution
+    import milknado.mcp._core as mcp_core
     from milknado.domains.execution.headless import HeadlessOutcome
     from milknado.mcp import _ralph_node_runner
 
@@ -564,7 +564,7 @@ def test_runner_writes_done_on_successful_outcome(
             return "main"
 
     graph = _Graph()
-    monkeypatch.setattr(app_project, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
     class _StubRalph:
@@ -613,6 +613,7 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     so the real CompletionTimeout handler is exercised end-to-end."""
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
+    import milknado.mcp._core as mcp_core
     from milknado.domains.common.errors import CompletionTimeout
     from milknado.domains.execution.executor import DispatchResult
     from milknado.mcp import _ralph_node_runner
@@ -676,11 +677,9 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def fail(self, node_id: int) -> None:
             pass
 
-    import milknado.app.project as app_project
-
     stub_ralph = _StubRalph()
     graph = _Graph()
-    monkeypatch.setattr(app_project, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
     monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: stub_ralph)
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())

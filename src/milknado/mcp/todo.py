@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
 
-from milknado.app.todo import follow_up_parent_id  # noqa: F401 — re-exported for mcp callers
 from milknado.domains.common import MikadoNode, resolve_flavor_profile
 from milknado.domains.dispatch import render_brief
 from milknado.mcp._core import (
@@ -135,3 +135,28 @@ def milknado_get_node(node_id: int, project_root: str = "") -> dict:
         }
     finally:
         graph.close()
+
+
+def _worker_node_id() -> int | None:
+    """Read the worker's current node id from MILKNADO_NODE_ID, or None if unset."""
+    raw = os.environ.get("MILKNADO_NODE_ID", "").strip()
+    return int(raw) if raw else None
+
+
+def follow_up_parent_id(graph) -> int | None:  # noqa: ANN001
+    """Parent for an auto-parented follow-up: the worker node's own parent.
+
+    The worker's exit-0 reconcile drives MILKNADO_NODE_ID's node to done, and
+    children are prerequisites — so parenting the follow-up under the worker
+    node would leave a done node holding unmet work (#124). Attaching it to
+    the node's parent keeps it a sibling: it still gates the same goal but
+    never gates the completing node. Fails loud on a stale MILKNADO_NODE_ID
+    before anything is inserted.
+    """
+    worker_id = _worker_node_id()
+    if worker_id is None:
+        return None
+    node = graph.get_node(worker_id)
+    if node is None:
+        raise ValueError(f"MILKNADO_NODE_ID {worker_id} not found")
+    return node.parent_id

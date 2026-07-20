@@ -7,15 +7,15 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
-from milknado.app.project import (
+from milknado.domains.common import MilknadoConfig
+from milknado.domains.graph import MikadoGraph
+from milknado.project import (
     OpenProject,
     load_project_config,
     load_project_plugins,
     open_project,
     open_project_graph,
 )
-from milknado.domains.common import MilknadoConfig
-from milknado.domains.graph import MikadoGraph
 
 if TYPE_CHECKING:
     from milknado.domains.common.plugin import PluginHook
@@ -56,3 +56,12 @@ def _load_or_default(
 
 def _ensure_db(config: MilknadoConfig, plugins: list[PluginHook] | None = None) -> MikadoGraph:
     return open_project_graph(config, tuple(plugins or ()))
+
+
+def _maybe_block_parent(graph: MikadoGraph, parent: int | None) -> None:
+    if parent is None:
+        return
+    parent_node = graph.get_node(parent)
+    if parent_node and parent_node.status.value == "running":
+        graph.mark_blocked(parent)
+        console.print(f"Parent node {parent} marked as blocked.")

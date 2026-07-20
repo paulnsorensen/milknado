@@ -1,4 +1,10 @@
-"""Application-layer ralph dispatch: claim, spawn, and subprocess node runner."""
+"""Application-layer policy for detached, worktree-isolated ralph runs.
+
+The MCP ``milknado_run_loop_start`` tool is a thin registration veneer over
+``start_ralph_run`` here, which owns the claim/spawn policy and constructs the
+git / process / tmux adapters. Entry modules therefore build no adapters and
+hold no dispatch policy inline.
+"""
 
 from __future__ import annotations
 
@@ -8,20 +14,15 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from milknado.adapters import ProcessAdapter, TmuxAdapter
-
-if TYPE_CHECKING:
-    from milknado.adapters import GitAdapter
-
+from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus, RunResult
 from milknado.domains.common.errors import UnlandedWorkError
 from milknado.domains.dispatch import (
-    RUN_ID_RE,  # noqa: F401 — re-exported for tests
     ProcessPort,
     RunWindow,
     build_worker_env,
+    ensure_tmux_ready,
     exit_code_path,
     fail_stale_running_runs,
     find_terminal_runs_for_node,
@@ -35,6 +36,15 @@ from milknado.domains.dispatch import (
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNNER = (sys.executable, "-m", "milknado.mcp._ralph_node_runner")
+
+
+def _resolve_runner_cmd(explicit: str | None) -> list[str]:
+    if explicit and explicit.strip():
+        return shlex.split(explicit)
+    env = os.environ.get("MILKNADO_RALPH_RUNNER_CMD", "").strip()
+    if env:
+        return shlex.split(env)
+    return list(_DEFAULT_RUNNER)
 
 
 @dataclass(frozen=True)
@@ -55,15 +65,6 @@ class RalphClaim:
     stale_worktree: Path | None
 
 
-def _resolve_runner_cmd(explicit: str | None) -> list[str]:
-    if explicit and explicit.strip():
-        return shlex.split(explicit)
-    env = os.environ.get("MILKNADO_RALPH_RUNNER_CMD", "").strip()
-    if env:
-        return shlex.split(env)
-    return list(_DEFAULT_RUNNER)
-
-
 def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:  # noqa: ANN001
     node = graph.get_node(request.node_id)
     if node is None:
@@ -80,7 +81,10 @@ def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphCla
         )
         if winner is not None:
             reconcile_node_status(
-                graph, request.node_id, winner["status"], run_id=winner.get("run_id")
+                graph,
+                request.node_id,
+                winner["status"],
+                run_id=winner.get("run_id"),
             )
         graph.try_reclaim(request.node_id, now=now_iso())
     run_id = make_run_id(request.node_id)
@@ -132,7 +136,7 @@ def _runner_argv(request: RalphStartRequest, claim: RalphClaim) -> list[str]:
 
 def _spawn_ralph(
     process: ProcessPort,
-    tmux,  # noqa: ANN001
+    tmux: TmuxAdapter | None,
     request: RalphStartRequest,
     claim: RalphClaim,
     log_path: Path,
@@ -183,16 +187,15 @@ def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # 
 
 
 def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001
-    """Claim a node, remove stale worktree, start the run row, and spawn the subprocess."""
-    from milknado.adapters import GitAdapter
-    from milknado.adapters.tmux import TmuxDispatchError
-    from milknado.domains.dispatch import ensure_tmux_ready
+    """Claim a task node and spawn its detached ralph loop; return the run state dict.
 
-    git = GitAdapter(request.root)
+    Owns the adapter composition (git, process, tmux) and the claim/spawn policy
+    so the MCP tool never constructs an adapter or holds this policy inline.
+    """
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)
-
+    git = GitAdapter(request.root)
     claim = _claim_ralph(graph, git, request)
     _remove_reclaimed_worktree(git, claim)
     log_path = runs_dir(request.root) / f"{claim.run_id}.log"
@@ -225,116 +228,3 @@ def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001
         "pid": pid,
         "log_path": str(log_path),
     }
-
-
-@dataclass(frozen=True)
-class RunNodeRequest:
-    root: Path
-    node_id: int
-    run_id: str
-    timeout: float
-    target_branch: str
-    base_oid: str
-
-
-def run_node_subprocess(request: RunNodeRequest) -> int:
-    """Run a node to completion; called by the headless node runner process."""
-    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
-    from milknado.app.project import open_graph
-    from milknado.domains.common import resolve_flavor_profile
-    from milknado.domains.execution import (
-        NO_GATES_CONFIGURED_MESSAGE,
-        ExecutionConfig,
-        Executor,
-        run_node_to_completion,
-    )
-
-    _logger.info(
-        "ralph runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
-        request.run_id,
-        request.node_id,
-        request.target_branch,
-        request.base_oid,
-    )
-    graph, cfg = open_graph(request.root)
-    try:
-        node = graph.get_node(request.node_id)
-        profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
-        if profile.quality_gates is None:
-            _logger.error(
-                "ralph preflight failed: run_id=%s node_id=%d error=%s",
-                request.run_id,
-                request.node_id,
-                NO_GATES_CONFIGURED_MESSAGE,
-            )
-            graph.finish_run(
-                request.run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=NO_GATES_CONFIGURED_MESSAGE,
-                ),
-            )
-            return 1
-        git = GitAdapter(request.root)
-        ralph = LoopAdapter()
-        crg = CrgAdapter(request.root)
-        executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-        exec_config = ExecutionConfig(
-            execution_agent=profile.execution_agent,
-            quality_gates=profile.quality_gates,
-            worktree_pattern=cfg.worktree_pattern,
-            project_root=request.root,
-            commit_footer=cfg.commit_footer,
-        )
-        outcome = run_node_to_completion(
-            executor,
-            ralph,
-            request.node_id,
-            exec_config,
-            request.target_branch,
-            request.timeout,
-            base_oid=request.base_oid,
-        )
-        graph.finish_run(
-            request.run_id,
-            RunResult(
-                status="done" if outcome.success else "failed",
-                exit_code=0 if outcome.success else 1,
-                timed_out=False,
-                ended_at=now_iso(),
-                rebased=outcome.success,
-                detail=outcome.detail,
-            ),
-        )
-        _logger.info(
-            "ralph runner terminal: run_id=%s node_id=%d success=%s detail=%s",
-            request.run_id,
-            request.node_id,
-            outcome.success,
-            outcome.detail,
-        )
-        return 0 if outcome.success else 1
-    except Exception as exc:
-        _logger.exception(
-            "ralph runner failed: run_id=%s node_id=%d",
-            request.run_id,
-            request.node_id,
-        )
-        graph.finish_run(
-            request.run_id,
-            RunResult(
-                status="failed",
-                exit_code=1,
-                timed_out=False,
-                ended_at=now_iso(),
-                rebased=False,
-                detail=f"{type(exc).__name__}: {exc}",
-            ),
-        )
-        return 1
-    finally:
-        graph.close()
