@@ -26,6 +26,11 @@ class FlavorOverride:
     max_iterations: int | None = None
     max_turns: int | None = None
     worktree: bool | None = None
+    session_mode: str = "fresh"
+    review: bool | None = None
+    review_agent: str | None = None
+    review_max_rounds: int = 2
+    on_reject: str = "block"
 
 
 def serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
@@ -96,6 +101,20 @@ def validate_loop_mode(value: Any, ctx: str) -> str:
     return mode
 
 
+def validate_session_mode(value: Any, ctx: str) -> str:
+    mode = str(value)
+    if mode not in ("fresh", "resume"):
+        raise ValueError(f"{ctx} session_mode must be one of ['fresh', 'resume']; got {mode!r}")
+    return mode
+
+
+def validate_on_reject(value: Any, ctx: str) -> str:
+    policy = str(value)
+    if policy not in ("block", "warn"):
+        raise ValueError(f"{ctx} on_reject must be one of ['block', 'warn']; got {policy!r}")
+    return policy
+
+
 def validate_positive_int(value: Any, ctx: str) -> int | None:
     if value is None:
         return None
@@ -145,6 +164,28 @@ def _parse_flavor_entry(entry: dict[str, Any], name: str, project_root: Path) ->
     worktree = entry.get("worktree")
     if worktree is not None and not isinstance(worktree, bool):
         raise ValueError(f"{ctx} worktree must be a boolean")
+    session_mode = validate_session_mode(entry.get("session_mode", "fresh"), ctx)
+    review = entry.get("review")
+    if review is not None and not isinstance(review, bool):
+        raise ValueError(f"{ctx} review must be a boolean")
+    review_agent = entry.get("review_agent")
+    if review_agent is not None and not isinstance(review_agent, str):
+        raise ValueError(f"{ctx} review_agent must be a string")
+    if session_mode == "resume":
+        agent_for_check = review_agent if review_agent is not None else execution_agent
+        if agent_for_check is not None:
+            argv_check = shlex.split(agent_for_check)
+            if argv_check and Path(argv_check[0]).name == "cursor-agent":
+                raise ValueError(
+                    f"{ctx} session_mode 'resume' is not supported for the cursor-agent "
+                    "family (headless resume mechanics are unverified — see "
+                    "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+                    "different agent"
+                )
+    review_max_rounds = validate_positive_int(
+        entry.get("review_max_rounds", 2), f"{ctx} review_max_rounds"
+    )
+    on_reject = validate_on_reject(entry.get("on_reject", "block"), ctx)
     return FlavorOverride(
         execution_agent=execution_agent,
         tools=tools,
@@ -155,6 +196,11 @@ def _parse_flavor_entry(entry: dict[str, Any], name: str, project_root: Path) ->
         max_iterations=validate_positive_int(entry.get("max_iterations"), f"{ctx} max_iterations"),
         max_turns=validate_positive_int(entry.get("max_turns"), f"{ctx} max_turns"),
         worktree=worktree,
+        session_mode=session_mode,
+        review=review,
+        review_agent=review_agent,
+        review_max_rounds=review_max_rounds if review_max_rounds is not None else 2,
+        on_reject=on_reject,
     )
 
 
@@ -208,6 +254,11 @@ def serialize_flavor_tables(
                 ("max_iterations", flavor.max_iterations),
                 ("max_turns", flavor.max_turns),
                 ("worktree", flavor.worktree),
+                ("session_mode", flavor.session_mode),
+                ("review", flavor.review),
+                ("review_agent", flavor.review_agent),
+                ("review_max_rounds", flavor.review_max_rounds),
+                ("on_reject", flavor.on_reject),
             )
             if value is not None
         }
