@@ -12,9 +12,9 @@ import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import (
     create_tables,
-    get_goal_claim,
     get_spec_hash,
     set_dispatched_at,
     set_spec_hash,

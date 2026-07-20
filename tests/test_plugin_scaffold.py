@@ -267,6 +267,35 @@ class TestPluginDispatch:
         assert node is not None
         assert node.status == NodeStatus.RUNNING
 
+    def test_lost_claim_race_does_not_dispatch_plugin(self, tmp_path: Path) -> None:
+        """claim_node's mutate is a conditional UPDATE that can lose a race (the
+        node is no longer pending/failed/blocked). A lost claim must not tell
+        plugins a transition happened that never landed."""
+        from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
+        from milknado.domains.graph import MikadoGraph
+
+        calls: list[tuple[int, NodeStatus, NodeStatus]] = []
+
+        class RecordingPlugin:
+            @property
+            def meta(self) -> PluginMeta:
+                return PluginMeta(name="recorder", version="0.1.0", description="")
+
+            def on_node_status_change(
+                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+            ) -> None:
+                calls.append((node.id, old_status, new_status))
+
+        graph = MikadoGraph(tmp_path / "test.db", plugins=[RecordingPlugin()])
+        node = graph.add_node("claimable")
+
+        assert graph.claim_node(node.id, "run-A", now="2024-01-01T00:00:00") is True
+        calls.clear()
+
+        # run-B loses: the node is already RUNNING under run-A.
+        assert graph.claim_node(node.id, "run-B", now="2024-01-01T00:00:01") is False
+        assert calls == [], "a lost claim race must not notify plugins"
+
 
 class TestPluginInitCli:
     def test_plugin_init_creates_directory(self, tmp_path: Path) -> None:
