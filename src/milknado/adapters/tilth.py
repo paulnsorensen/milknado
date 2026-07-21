@@ -6,8 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from milknado.domains.common.protocols import SymbolLocation
-from milknado.domains.common.types import DegradationMarker, TilthMap
+from milknado.domains.common import DegradationMarker, SymbolLocation, TilthMap
 
 _MATCH_HEADER = re.compile(r"^## (.+):(\d+)(?:-(\d+))? \[")
 

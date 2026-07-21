@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from milknado.domains.wiki.ports import WikiIndexResult, WikiIndexStatus
+from milknado.domains.wiki import WikiIndexResult, WikiIndexStatus
 
 _MAX_DETAIL = 2_000
 

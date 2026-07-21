@@ -17,6 +17,26 @@ server exposes the same engine as tools so an agent in another harness can drive
 in-loop — adding nodes, polling detached runs, walking the todo tree — without shelling out.
 They share the domain layer; they do not share a process or import each other.
 
+## Boundary ownership
+
+Project-root resolution and graph/config opening are shared application policy in
+`src/milknado/app/project.py`; `milknado.project` supplies the presentation-free
+`OpenProject` bootstrap. CLI helpers may render plugin and parent-block messages, but they
+route project loading through that shared bootstrap rather than discovering policy separately.
+
+Application policy modules are presentation-free: `app/plan.py` returns planning results and
+application errors, and `app/run.py` returns typed protected-branch refusals. Rich rendering,
+interactive prompts, and Typer exit-code mapping belong to `cli/plan.py` and `cli/run.py`.
+MCP handlers use the parsers in `mcp/_core.py` for external enum normalization and return
+structured values/errors without writing to stdout or stderr.
+
+The `lint-imports` gate enforces these directions: domains cannot import app/cli/mcp; app
+cannot import cli/mcp; adapters cannot import application policy; and boundary modules use
+owning domain barrels instead of direct domain submodules. Adapter dependencies on domain
+ports and types are allowed. Internal domain modules are not a public import surface, so a
+new direct bypass must be removed or documented as a narrow architectural exception before
+it is admitted.
+
 ## CLI surface (`milknado`)
 
 `cli.py` is the facade: it builds the `typer.Typer` app and mounts sub-apps + commands. The

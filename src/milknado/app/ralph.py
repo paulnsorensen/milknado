@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
-from milknado.domains.common import NodeKind, NodeStatus, RunResult
-from milknado.domains.common.errors import UnlandedWorkError
+from milknado.domains.common import NodeKind, NodeStatus, RunResult, UnlandedWorkError
 from milknado.domains.dispatch import (
     ProcessPort,
     RunWindow,

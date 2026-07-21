@@ -18,7 +18,7 @@ from milknado.project import (
 )
 
 if TYPE_CHECKING:
-    from milknado.domains.common.plugin import PluginHook
+    from milknado.domains.common import PluginHook
 
 console = Console()
 

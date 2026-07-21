@@ -1486,7 +1486,7 @@ class TestRunPlanCritic:
         mock_spawn.return_value = "garbage, no verdict tag"
         cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
 
-        with pytest.raises(typer.Exit):
+        with pytest.raises(ValueError, match="unparseable <verdict>"):
             run_plan_critic("goal", "manifest summary", cfg)
 
         assert mock_spawn.call_count == 2
@@ -1615,6 +1615,17 @@ class TestRunPlanWithCritic:
         assert planner.launch.call_count == 1 + cfg.plan_review_max_rounds
         assert mock_critic.call_count == cfg.plan_review_max_rounds
 
+    def test_repeated_noninteractive_policy_runs_are_equivalent(self, tmp_path: Path) -> None:
+        planner = MagicMock()
+        planner.launch.return_value = _plan_result()
+        cfg = _cfg(tmp_path, plan_reviewer_agent=None)
+
+        first = _run_plan_with_critic(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
+        second = _run_plan_with_critic(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
+
+        assert second == first
+        assert planner.launch.call_count == 2
+
 
 class TestExecPlanNonInteractive:
     @patch("milknado.app.plan.run_plan_critic")
@@ -1637,7 +1648,7 @@ class TestExecPlanNonInteractive:
 
 
 class TestExecPlanInteractive:
-    @patch("milknado.app.plan._prompt_plan_action")
+    @patch("milknado.cli.plan._prompt_plan_action")
     @patch("milknado.app.plan.run_plan_critic")
     def test_unapproved_critic_prints_fallback_and_continues_to_human_gate(
         self,

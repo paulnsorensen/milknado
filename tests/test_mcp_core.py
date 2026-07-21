@@ -11,7 +11,21 @@ from milknado.app.project import (
     require_worker_run,
     resolve_project_root,
 )
-from milknado.mcp._core import RunDict, build_run_dict
+from milknado.domains.common import BUILTIN_FLAVORS, NodeKind, NodeStatus
+from milknado.mcp._core import (
+    RunDict,
+    _parse_flavor,
+    _parse_kind,
+    _parse_todo_status,
+    build_run_dict,
+)
+from milknado.mcp.todo import milknado_todo_next
+from milknado.mcp.todo_mutate import milknado_todo_set_status
+
+
+def _call(tool, **kwargs):
+    fn = getattr(tool, "fn", tool)
+    return fn(**kwargs)
 
 
 def test_run_dict_builder_is_the_canonical_superset() -> None:
@@ -33,6 +47,78 @@ def test_run_dict_builder_is_the_canonical_superset() -> None:
         "error": None,
         "detail": None,
     }
+
+
+@pytest.mark.parametrize("value", [kind.value for kind in NodeKind])
+def test_parse_kind_accepts_every_node_kind(
+    value: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _parse_kind(value) is NodeKind(value)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("pending", NodeStatus.PENDING),
+        ("in_progress", NodeStatus.RUNNING),
+        ("blocked", NodeStatus.BLOCKED),
+        ("done", NodeStatus.DONE),
+    ],
+)
+def test_parse_todo_status_accepts_every_mcp_status(
+    value: str, expected: NodeStatus, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert _parse_todo_status(value) is expected
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_parse_todo_status_rejects_running_without_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(ValueError, match="invalid status 'running'"):
+        _parse_todo_status("running")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_parse_flavor_accepts_every_builtin_flavor_without_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = frozenset(BUILTIN_FLAVORS)
+    for flavor in registry:
+        assert _parse_flavor(flavor, registry) == flavor
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_parse_flavor_rejects_unknown_name_without_output(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(ValueError, match="invalid flavor 'not-a-flavor'"):
+        _parse_flavor("not-a-flavor", frozenset(BUILTIN_FLAVORS))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_invalid_mcp_handler_inputs_raise_without_stdout_or_stderr(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(ValueError, match="invalid kind 'not-a-kind'"):
+        _call(milknado_todo_next, kind="not-a-kind", project_root=str(tmp_path))
+    with pytest.raises(ValueError, match="invalid status 'running'"):
+        _call(milknado_todo_set_status, node_id=1, status="running", project_root=str(tmp_path))
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_worker_cannot_select_different_project_root(

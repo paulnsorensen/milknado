@@ -50,32 +50,47 @@ type = "forbidden"
 source_modules = ["milknado.app"]
 forbidden_modules = ["milknado.cli", "milknado.mcp"]
 
-# Adapters are infrastructure below the core: no new domain/app coupling.
-# The listed ignores are the pre-existing port/type imports; tightening these
-# (barrel bypass, adapter edge cases) is deferred to follow-up F002 (#251).
+# Adapters implement domain ports but must not depend on application policy.
 [[tool.importlinter.contracts]]
-name = "adapters must not import domains or app"
+name = "adapters must not import application policy"
 type = "forbidden"
 source_modules = ["milknado.adapters"]
-forbidden_modules = ["milknado.domains", "milknado.app"]
-ignore_imports = [
-    "milknado.adapters.git -> milknado.domains.common.errors",
-    "milknado.adapters.git -> milknado.domains.common.types",
-    "milknado.adapters.hallouminate -> milknado.domains.wiki.ports",
-    "milknado.adapters.loop -> milknado.domains.common",
-    "milknado.adapters.loop -> milknado.domains.common.config",
-    "milknado.adapters.loop -> milknado.domains.common.errors",
-    "milknado.adapters.loop -> milknado.domains.common.protocols",
-    "milknado.adapters.loop -> milknado.domains.common.types",
-    "milknado.adapters.loop -> milknado.domains.execution",
-    "milknado.adapters.process -> milknado.domains.common",
-    "milknado.adapters.process -> milknado.domains.dispatch.ports",
-    "milknado.adapters.tilth -> milknado.domains.common.protocols",
-    "milknado.adapters.tilth -> milknado.domains.common.types",
+forbidden_modules = ["milknado.app"]
+[[tool.importlinter.contracts]]
+name = "boundary modules must use domain barrels"
+type = "forbidden"
+source_modules = [
+    "milknado.app",
+    "milknado.cli",
+    "milknado.mcp",
+    "milknado.adapters",
 ]
+forbidden_modules = [
+    "milknado.domains.batching._model",
+    "milknado.domains.batching._tarjan",
+    "milknado.domains.dispatch._runstate",
+    "milknado.domains.execution._context",
+    "milknado.domains.execution.run_loop._completion",
+    "milknado.domains.execution.run_loop._logging",
+    "milknado.domains.execution.run_loop._result",
+    "milknado.domains.github._fields",
+    "milknado.domains.github._intent",
+    "milknado.domains.graph._analytics_facade",
+    "milknado.domains.graph._creation",
+    "milknado.domains.graph._goal_claims",
+    "milknado.domains.graph._mutations",
+    "milknado.domains.graph._persistence",
+    "milknado.domains.graph._pipeline",
+    "milknado.domains.graph._reads",
+    "milknado.domains.graph._status",
+    "milknado.domains.graph._transitions",
+    "milknado.domains.wiki._locate",
+    "milknado.domains.wiki._serialize",
+]
+allow_indirect_imports = true
+
 
 [tool.ruff]
-target-version = "py311"
 line-length = 99
 
 [tool.ruff.lint]
@@ -88,7 +103,7 @@ dev = [
     "pytest-cov>=7.1.0",
     "pytest-asyncio>=1.3.0",
     "ruff>=0.15.13",
+    "import-linter>=2.13",
     "ty>=0.0.38",
     "watchfiles>=1.2.0",
-    "import-linter>=2.13",
 ]

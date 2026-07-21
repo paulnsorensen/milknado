@@ -15,9 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import typer
-from rich.console import Console
-
 from milknado.adapters import ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
     MilknadoConfig,
@@ -28,41 +25,36 @@ from milknado.domains.common import (
 )
 
 if TYPE_CHECKING:
-    from milknado.domains.execution import ExecutionConfig
-    from milknado.domains.execution.run_loop import RunLoopResult
+    from milknado.domains.execution import ExecutionConfig, RunLoopResult
     from milknado.domains.graph import MikadoGraph
 
-console = Console()
 _logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ProtectedBranchRefusal:
+    """Structured refusal returned before graph/log setup can create side effects."""
+
+    branch: str
+    reason: str
 
 
 def check_protected_branch(
     cfg: MilknadoConfig,
     branch: str,
     allow_protected: bool,
-) -> None:
-    """Refuse to run on a protected or invalid branch with exit code 2.
+) -> ProtectedBranchRefusal | None:
+    """Return a typed refusal for detached or protected branches.
 
-    Called before the graph DB, executor, or run log is built, so a refused run
-    leaves no side effects (US-102.2). Refusal is loud — the user is told which
-    branch was refused and how to override. ``--allow-protected`` is the explicit
-    opt-in for a protected *named* branch; a detached HEAD (``current_branch()``
-    returns ``"HEAD"`` or ``""``) is refused unconditionally, since the run loop
-    has no valid branch to rebase-merge completed nodes back onto (mirrors the
-    headless guard in ``execution/headless.py``).
+    The caller owns presentation and exit-code mapping. This keeps the policy
+    reusable by MCP and other non-CLI entry points without importing Typer or
+    Rich.
     """
     if branch in ("", "HEAD"):
-        console.print(
-            f"[red]Refusing to run on detached HEAD (branch {branch!r}); "
-            "check out a named branch first.[/red]"
-        )
-        raise typer.Exit(code=2)
+        return ProtectedBranchRefusal(branch=branch, reason="detached")
     if not allow_protected and branch in cfg.protected_branches:
-        console.print(
-            f"[red]Refusing to run on protected branch '{branch}'. "
-            "Pass --allow-protected to override.[/red]"
-        )
-        raise typer.Exit(code=2)
+        return ProtectedBranchRefusal(branch=branch, reason="protected")
+    return None
 
 
 def build_exec_config(config: MilknadoConfig, project_root: Path) -> ExecutionConfig:

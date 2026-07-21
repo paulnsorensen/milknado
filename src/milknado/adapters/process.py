@@ -10,7 +10,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from milknado.domains.common import pid_alive
-from milknado.domains.dispatch.ports import ProcessOutcome
+from milknado.domains.dispatch import ProcessOutcome
 
 
 class ProcessAdapter:
