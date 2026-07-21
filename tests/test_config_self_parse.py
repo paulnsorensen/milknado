@@ -1,11 +1,10 @@
 """The repo's own milknado.toml must load through the real config loader.
 
-A shipped config that the loader cannot parse is a CI-invisible defect: nothing
-in the suite loads `milknado.toml` itself, so an unparseable worker-tools grammar
-(e.g. the unsupported `[milknado.worker.tools.claude]` / `extend=` form) sails
-through green. These tests close that gap — they load the actual file and assert
-the supported single-list grammar resolves, and they pin the old form as a hard
-parse error so the regression cannot silently return.
+A shipped config that the loader cannot parse can sail through green because no
+test in the suite loads `milknado.toml` itself. These tests close that gap by
+loading the actual file and asserting its supported codex/OMP configuration
+contract. Separate fixture tests below keep the supported single-list grammar
+and the rejected legacy form covered independently.
 """
 
 from __future__ import annotations
@@ -15,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import load_config
-from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS
 
 # tests/ lives directly under the repo root; the shipped config sits beside it.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -37,26 +35,17 @@ def test_shipped_config_parses_through_real_loader() -> None:
     # ~/.config/milknado/milknado.toml — we are asserting about the repo file only.
     cfg = load_config(SHIPPED_CONFIG, include_global=False)
 
-    assert cfg.agent_family == "claude"
-    # The worker-tools table must have parsed into the structured form.
-    assert "claude" in cfg.worker_tools
+    assert cfg.agent_family == "codex"
+    assert cfg.worker_tools == {}
 
 
-def test_shipped_config_worker_tools_extend_family_baseline() -> None:
-    """The `"..."` sentinel must expand to the family default plus the extra tool.
-
-    This is the behavioural payload of the fix: `claude = ["...", "Bash(just:*)"]`
-    keeps every default worker tool and adds the just-runner. A bare replacement
-    list (no sentinel) would drop the baseline — assert we did not do that.
-    """
+def test_shipped_config_preserves_explicit_omp_execution_agent() -> None:
+    """The shipped codex config uses OMP's explicit worker command."""
     cfg = load_config(SHIPPED_CONFIG, include_global=False)
 
-    claude_tools = cfg.worker_tools["claude"]
-    # Stored tuple is the raw list (sentinel un-expanded); resolution happens later.
-    assert claude_tools == ("...", "Bash(just:*)")
-
-    # And the family baseline is genuinely non-empty, so the sentinel carries weight.
-    assert WORKER_ALLOWED_TOOLS["claude"], "family baseline must be non-empty"
+    assert cfg.execution_agent == (
+        "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
+    )
 
 
 def test_old_extend_grammar_fails_to_parse(tmp_path: Path) -> None:

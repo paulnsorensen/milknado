@@ -67,6 +67,12 @@ def _resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
     return argv
 
 
+def _worker_invocation(argv: list[str], brief: str) -> tuple[tuple[str, ...], bytes]:
+    if Path(argv[0]).name == "omp":
+        return (*argv, brief), b""
+    return tuple(argv), brief.encode()
+
+
 def _log_path(project_root: Path, node_id: int) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return _runs_dir(project_root) / f"node-{node_id}-{stamp}-{secrets.token_hex(4)}.log"
@@ -145,11 +151,12 @@ def _execute(
     }
     if run_id is not None:
         extra["MILKNADO_RUN_ID"] = run_id
+    command, stdin = _worker_invocation(argv, brief)
     outcome = process.run(
-        tuple(argv),
+        command,
         project_root,
         log_path,
-        brief.encode(),
+        stdin,
         build_worker_env(extra),
         timeout,
     )
@@ -170,11 +177,12 @@ def _execute_cancellable(
     process: ProcessPort,
     on_started: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
+    command, stdin = _worker_invocation(argv, brief)
     outcome = process.run(
-        tuple(argv),
+        command,
         cwd,
         log_path,
-        brief.encode(),
+        stdin,
         build_worker_env(
             {
                 "MILKNADO_NODE_ID": str(node_id),

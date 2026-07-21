@@ -1,12 +1,49 @@
 [milknado]
-agent_family = "claude"
+agent_family = "codex"
 planning_agent = "claude --model opus -p --dangerously-skip-permissions"
-# execution_agent intentionally absent — let worker_tools derive it.
+# OMP's non-interactive worker command. Flavor profiles refine its tool scope.
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
 quality_gates = ['just check-llm']
 worktree_pattern = "milknado-{node_id}-{slug}"
 concurrency_limit = 4
-db_path = ".milknado/milknado.db"
 plugins = []
+db_path = ".milknado/milknado.db"
+worker_agent_type = "milknado:milknado-worker"
 
-[milknado.worker.tools]
-claude = ["...", "Bash(just:*)"]
+
+[milknado.flavor.implement]
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
+brief_prepend = "Implement the scoped production change in the worktree, then prove it with the required quality gate."
+
+[milknado.flavor.spec]
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-sol --thinking xhigh"
+quality_gates = []
+brief_prepend = "Write a concrete, testable design or specification. Do not modify production code outside the requested spec artifact."
+
+[milknado.flavor.spike]
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking high"
+quality_gates = []
+brief_prepend = "Run a time-boxed spike. Optimize for answering the question, record evidence and a recommendation, and identify follow-up work."
+
+[milknado.flavor.prototype]
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking high"
+quality_gates = ["just lint"]
+brief_prepend = "Build a working prototype end to end. Keep the scope narrow; production hardening and exhaustive edge cases are not required."
+
+[milknado.flavor.research]
+execution_agent = "omp -p --auto-approve --no-session --tools=read,grep,glob,lsp --model openai-codex/gpt-5.6-luna --thinking xhigh"
+quality_gates = []
+brief_prepend = "Research only. Do not modify files. Report evidence, options, a recommendation, and confidence."
+
+[milknado.flavor.review]
+execution_agent = "omp -p --auto-approve --no-session --tools=read,grep,glob,lsp --model openai-codex/gpt-5.6-sol --thinking xhigh"
+quality_gates = []
+brief_prepend = "Review only. Do not modify files. Report severity-ranked, evidence-backed findings and a clear merge recommendation."
+
+[milknado.flavor.triage]
+quality_gates = []
+brief_prepend = "Single-issue rennet-style triage. Use evidence first from code, tests, decisions, and upstream facts; do not edit code. Apply idempotent GitHub triage/* labels and evidence comments. Never close an issue without a human gate. Deposit one structured result with verdict, confidence, evidence, actions, and implementation-ready next steps."
+
+[milknado.flavor.plate]
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
+brief_prepend = "Prepare the finished change for publication. Preserve the scoped work, run the required gate, and make no unrelated edits."

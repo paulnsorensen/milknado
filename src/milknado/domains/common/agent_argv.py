@@ -80,7 +80,7 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
 # executable name (basename of argv[0]) so neither a prefix trick
 # (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
 ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "cursor-agent", "gemini"}
+    {"claude", "codex", "cursor-agent", "gemini", "omp"}
 )
 
 

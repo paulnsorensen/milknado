@@ -561,6 +561,20 @@ def test_load_config_flavor_valid_execution_agent(tmp_path: Path) -> None:
     assert fo.execution_agent == "claude -p --model opus"
 
 
+def test_load_config_flavor_omp_execution_agent(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.spike]\n"
+        'execution_agent = "omp -p --auto-approve --no-session"\n',
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cfg_path)
+
+    assert cfg.flavors["spike"].execution_agent == "omp -p --auto-approve --no-session"
+
+
 def test_save_config_preserves_flavor_execution_agent(tmp_path: Path) -> None:
     """save_config round-trips a flavor with execution_agent set."""
     cfg = MilknadoConfig(
@@ -782,6 +796,38 @@ def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
     )
     result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
     assert "RESEARCH_MARKER: go deep." in result["brief"]
+
+
+def test_todo_brief_resolves_custom_flavor_brief_path(tmp_path: Path) -> None:
+    """A registry flavor's file-backed prepend reaches the worker brief."""
+    from milknado.mcp.todo import milknado_todo_brief
+    from milknado.mcp.todo_mutate import milknado_todo_add
+
+    def _call(tool, **kwargs):
+        fn = getattr(tool, "fn", tool)
+        return fn(**kwargs)
+
+    marker = "TRIAGE_MARKER: evidence first."
+    brief_file = tmp_path / "triage.md"
+    brief_file.write_text(marker, encoding="utf-8")
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.triage]\n"
+        "quality_gates = []\n"
+        'brief_prepend_path = "triage.md"\n',
+        encoding="utf-8",
+    )
+
+    task = _call(
+        milknado_todo_add,
+        description="triage issue 42",
+        flavor="triage",
+        project_root=str(tmp_path),
+    )
+    result = _call(milknado_todo_brief, node_id=task["id"], project_root=str(tmp_path))
+
+    assert result["brief"].startswith(marker)
 
 
 # ── adversarial-review-loops: session_mode/review config contract ───────────
