@@ -1,7 +1,7 @@
 """Native Workflow ("ultracode") backend MCP tools — coordinator-only.
 
 These tools back the in-session Claude Code dynamic-Workflow driver. They run
-ALONGSIDE the subprocess dispatcher in `mcp_run.py` and never spawn a process:
+ALONGSIDE the subprocess dispatcher in `mcp.run` and never spawn a process:
 the harness-side Workflow is the driver, milknado is the graph/state backend.
 
 - `milknado_goal_claim` / `milknado_goal_release`: claim/release a GOAL node's
@@ -14,7 +14,7 @@ the harness-side Workflow is the driver, milknado is the graph/state backend.
 - `milknado_node_verify`: run the node's resolved quality_gates in its
   worktree_path or the project_root (ADR-005/006) and return the existing
   `CompletionVerdict` shape. The verdict is persisted as a `run_messages` row
-  (role="verify") so the server-side completion gate in `mcp_todo_mutate` can
+  (role="verify") so the server-side completion gate in `mcp.todo_mutate` can
   reject a "done" transition that was never verified.
 
 Coordinator-only: none of these tools belong in WORKER_ALLOWED_TOOLS.
@@ -28,11 +28,6 @@ import os
 import re
 from pathlib import Path
 
-from milknado._mcp_core import (
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
 from milknado.adapters import GitAdapter
 from milknado.domains.common import (
     FlavorProfile,
@@ -44,6 +39,11 @@ from milknado.domains.common import (
 from milknado.domains.dispatch import RUN_ID_RE, create_isolated_worktree, make_run_id, now_iso
 from milknado.domains.execution import build_completion_verifier
 from milknado.domains.graph import CLAIM_ROLE, VERIFY_ROLE
+from milknado.mcp._core import (
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 
 _logger = logging.getLogger(__name__)
 

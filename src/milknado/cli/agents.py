@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from milknado._cli_helpers import _load_or_default
+from milknado.cli._helpers import _load_or_default
 from milknado.domains.common import build_planning_subprocess
 
 console = Console()

@@ -140,7 +140,7 @@ class TestRunStartRefusal:
         """milknado_run_inline_start on a goal node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -148,8 +148,8 @@ class TestRunStartRefusal:
         g.close()
 
         with (
-            patch("milknado.mcp_run.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_run.open_graph") as mock_open,
+            patch("milknado.mcp.run.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.run.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -163,7 +163,7 @@ class TestRunStartRefusal:
         """milknado_run_loop_start on a roadmap node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_ralph import milknado_run_loop_start
+        from milknado.mcp.ralph import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -171,8 +171,8 @@ class TestRunStartRefusal:
         g.close()
 
         with (
-            patch("milknado.mcp_ralph.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_ralph.open_graph") as mock_open,
+            patch("milknado.mcp.ralph.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.ralph.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -365,7 +365,7 @@ class TestApplyBatchesKinds:
 class TestCoverageBranches:
     def test_parse_flavor_invalid_raises(self) -> None:
         """_parse_flavor raises ValueError for unknown flavor strings."""
-        from milknado._mcp_core import _parse_flavor
+        from milknado.mcp._core import _parse_flavor
 
         with pytest.raises(ValueError, match="invalid flavor"):
             _parse_flavor("unknown-flavor", BUILTIN_FLAVORS)
@@ -386,7 +386,7 @@ class TestCoverageBranches:
         """milknado_run_inline on a goal node raises ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -394,8 +394,8 @@ class TestCoverageBranches:
         g.close()
 
         with (
-            patch("milknado.mcp_run.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_run.open_graph") as mock_open,
+            patch("milknado.mcp.run.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.run.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -409,7 +409,7 @@ class TestCoverageBranches:
         """milknado_todo_next returns None when the next node doesn't match the flavor filter."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo import milknado_todo_next
+        from milknado.mcp.todo import milknado_todo_next
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -420,8 +420,8 @@ class TestCoverageBranches:
         g.close()
 
         with (
-            patch("milknado.mcp_todo.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo.open_graph") as mock_open,
+            patch("milknado.mcp.todo.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -440,7 +440,7 @@ class TestEditNodeFlavor:
         """Flavor can be set on a task node via milknado_edit_node."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -449,8 +449,8 @@ class TestEditNodeFlavor:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -464,7 +464,7 @@ class TestEditNodeFlavor:
         """Setting flavor on a non-task node raises ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -472,8 +472,8 @@ class TestEditNodeFlavor:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -487,7 +487,7 @@ class TestEditNodeFlavor:
         """Changing kind from task to goal clears the flavor (invariant enforced)."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -499,8 +499,8 @@ class TestEditNodeFlavor:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -516,7 +516,7 @@ class TestEditNodeFlavor:
         """Passing kind=goal and flavor together raises ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -526,8 +526,8 @@ class TestEditNodeFlavor:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -547,7 +547,7 @@ class TestGraphSummaryFlavorFilter:
         """flavor param filters nodes to only those with the matching flavor."""
         from unittest.mock import patch
 
-        from milknado.mcp_server import milknado_graph_summary
+        from milknado.mcp.server import milknado_graph_summary
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -557,8 +557,8 @@ class TestGraphSummaryFlavorFilter:
         g.close()
 
         with (
-            patch("milknado.mcp_server.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_server.open_graph") as mock_open,
+            patch("milknado.mcp.server.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.server.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -573,7 +573,7 @@ class TestGraphSummaryFlavorFilter:
         """Omitting flavor returns all nodes (no filter applied)."""
         from unittest.mock import patch
 
-        from milknado.mcp_server import milknado_graph_summary
+        from milknado.mcp.server import milknado_graph_summary
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -583,8 +583,8 @@ class TestGraphSummaryFlavorFilter:
         g.close()
 
         with (
-            patch("milknado.mcp_server.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_server.open_graph") as mock_open,
+            patch("milknado.mcp.server.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.server.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -610,7 +610,7 @@ class TestKindEditClearsFlavor:
         """Editing a task to kind=goal NULLs the flavor in the DB; reload returns None."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -624,8 +624,8 @@ class TestKindEditClearsFlavor:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -684,7 +684,7 @@ class TestRalphRunStartRefusesGoal:
         """milknado_run_loop_start on a GOAL node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp_ralph import milknado_run_loop_start
+        from milknado.mcp.ralph import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -693,8 +693,8 @@ class TestRalphRunStartRefusesGoal:
         g.close()
 
         with (
-            patch("milknado.mcp_ralph.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_ralph.open_graph") as mock_open,
+            patch("milknado.mcp.ralph.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.ralph.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -780,7 +780,7 @@ class TestEditNodeFlavorPersistence:
         """Flavor set via milknado_edit_node persists when the DB is closed and reopened."""
         from unittest.mock import patch
 
-        from milknado.mcp_todo_mutate import milknado_edit_node
+        from milknado.mcp.todo_mutate import milknado_edit_node
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -792,8 +792,8 @@ class TestEditNodeFlavorPersistence:
         g.close()
 
         with (
-            patch("milknado.mcp_todo_mutate.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp_todo_mutate.open_graph") as mock_open,
+            patch("milknado.mcp.todo_mutate.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.todo_mutate.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 

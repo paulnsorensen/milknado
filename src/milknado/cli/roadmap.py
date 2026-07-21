@@ -7,8 +7,8 @@ from typing import Annotated
 
 import typer
 
-from milknado._cli_helpers import _ensure_db, _load_or_default, console
 from milknado.adapters.hallouminate import HallouminateIndexer
+from milknado.cli._helpers import _ensure_db, _load_or_default, console
 from milknado.domains.wiki import (
     export_roadmap,
     import_roadmap,

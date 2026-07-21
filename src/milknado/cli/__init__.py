@@ -9,21 +9,21 @@ from typing import Annotated
 
 import typer
 
-from milknado._cli_helpers import (
+from milknado.cli._helpers import (
     _find_config,
     _load_or_default,
     _maybe_block_parent,
     _open_project,
     console,
 )
-from milknado.cli_agents import agents_app
-from milknado.cli_github_roadmap import github_roadmap_app
-from milknado.cli_graph import edge_app
-from milknado.cli_plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
-from milknado.cli_plan import plan
-from milknado.cli_roadmap import roadmap_app
-from milknado.cli_run import attach, run
-from milknado.cli_tools import (
+from milknado.cli.agents import agents_app
+from milknado.cli.github_roadmap import github_roadmap_app
+from milknado.cli.graph import edge_app
+from milknado.cli.plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
+from milknado.cli.plan import plan
+from milknado.cli.roadmap import roadmap_app
+from milknado.cli.run import attach, run
+from milknado.cli.tools import (
     _install_rust_tools_or_exit,
     _write_worker_hooks,
     plugin_app,

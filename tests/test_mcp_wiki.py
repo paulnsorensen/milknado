@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp_wiki import milknado_roadmap_export, milknado_roadmap_import
+from milknado.mcp.wiki import milknado_roadmap_export, milknado_roadmap_import
 
 INDEX_MD = """---
 kind: roadmap

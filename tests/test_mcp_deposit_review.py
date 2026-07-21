@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import RunResult
-from milknado.mcp_run import milknado_deposit_review
-from milknado.mcp_server import open_graph
+from milknado.mcp.run import milknado_deposit_review
+from milknado.mcp.server import open_graph
 
 
 def _call(tool, **kwargs):

@@ -6,17 +6,6 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado._mcp_core import (
-    Flavor,
-    Kind,
-    TodoStatus,
-    _parse_flavor,
-    _parse_kind,
-    _parse_todo_status,
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
 from milknado.domains.common import (
     NodeKind,
     NodeSpec,
@@ -30,7 +19,18 @@ from milknado.domains.graph import (
     subtree_post_order,
     validate_todo_status,
 )
-from milknado.mcp_todo import follow_up_parent_id, node_to_summary
+from milknado.mcp._core import (
+    Flavor,
+    Kind,
+    TodoStatus,
+    _parse_flavor,
+    _parse_kind,
+    _parse_todo_status,
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
+from milknado.mcp.todo import follow_up_parent_id, node_to_summary
 
 _logger = logging.getLogger(__name__)
 

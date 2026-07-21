@@ -22,12 +22,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado._mcp_core import (
-    build_run_dict,
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus, RunResult
 from milknado.domains.common.errors import UnlandedWorkError
@@ -48,10 +42,16 @@ from milknado.domains.dispatch import (
     runs_dir,
     tail,
 )
+from milknado.mcp._core import (
+    build_run_dict,
+    mcp,
+    open_graph,
+    resolve_project_root,
+)
 
 _logger = logging.getLogger(__name__)
 
-_DEFAULT_RUNNER = (sys.executable, "-m", "milknado._ralph_node_runner")
+_DEFAULT_RUNNER = (sys.executable, "-m", "milknado.mcp._ralph_node_runner")
 
 
 def _resolve_runner_cmd(explicit: str | None) -> list[str]:

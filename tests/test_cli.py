@@ -10,7 +10,7 @@ import typer
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.cli_tools import (
+from milknado.cli.tools import (
     _write_claude_worker_settings,
     _write_gemini_worker_settings,
     _write_worker_hooks,
@@ -725,7 +725,7 @@ class TestPlanInteractive:
 class TestIssueHelpers:
     @patch("milknado.adapters.gh.subprocess.run")
     def test_fetch_issue_invalid_json_exits(self, mock_run: MagicMock) -> None:
-        from milknado.cli_plan import _fetch_issue
+        from milknado.cli.plan import _fetch_issue
 
         mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
         with pytest.raises(typer.Exit) as exc:
@@ -1220,7 +1220,7 @@ class TestPlanIssueOption:
 
 
 class TestToolsCheck:
-    @patch("milknado.cli_tools.get_required_tool_status")
+    @patch("milknado.cli.tools.get_required_tool_status")
     def test_all_installed_exits_zero(self, mock_status: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -1233,7 +1233,7 @@ class TestToolsCheck:
         assert "tilth" in result.output
         assert "mergiraf" in result.output
 
-    @patch("milknado.cli_tools.get_required_tool_status")
+    @patch("milknado.cli.tools.get_required_tool_status")
     def test_missing_tool_exits_nonzero(self, mock_status: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -1247,8 +1247,8 @@ class TestToolsCheck:
 
 
 class TestToolsInstall:
-    @patch("milknado.cli_tools.install_missing_rust_tools")
-    @patch("milknado.cli_tools.get_required_tool_status")
+    @patch("milknado.cli.tools.install_missing_rust_tools")
+    @patch("milknado.cli.tools.get_required_tool_status")
     def test_success_exits_zero(self, mock_status: MagicMock, mock_install: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
@@ -1260,7 +1260,7 @@ class TestToolsInstall:
         assert result.exit_code == 0
         assert "tilth" in result.output
 
-    @patch("milknado.cli_tools.install_missing_rust_tools")
+    @patch("milknado.cli.tools.install_missing_rust_tools")
     def test_failure_exits_nonzero(self, mock_install: MagicMock) -> None:
         mock_install.return_value = ([], ["mergiraf"])
         result = runner.invoke(app, ["tools", "install"])
@@ -1269,8 +1269,8 @@ class TestToolsInstall:
 
 
 class TestInitWithInstallRustTools:
-    @patch("milknado.cli_tools.install_missing_rust_tools")
-    @patch("milknado.cli_tools.get_required_tool_status")
+    @patch("milknado.cli.tools.install_missing_rust_tools")
+    @patch("milknado.cli.tools.get_required_tool_status")
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_flag_triggers_install_on_success(
         self,
@@ -1289,7 +1289,7 @@ class TestInitWithInstallRustTools:
         assert result.exit_code == 0
         mock_install.assert_called_once()
 
-    @patch("milknado.cli_tools.install_missing_rust_tools")
+    @patch("milknado.cli.tools.install_missing_rust_tools")
     @patch("milknado.adapters.crg.CrgAdapter")
     def test_flag_exits_nonzero_on_install_failure(
         self,
@@ -1752,7 +1752,7 @@ def test_write_worker_hooks_dispatches_to_family_writer(tmp_path: Path) -> None:
     # With rtk present and a default claude config, the dispatcher resolves the
     # family allowlist and routes to the claude writer.
     config = default_config(tmp_path)
-    with patch("milknado.cli_tools.shutil.which", return_value="/usr/bin/rtk"):
+    with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"]["allow"] == list(WORKER_ALLOWED_TOOLS["claude"])
@@ -1761,14 +1761,14 @@ def test_write_worker_hooks_dispatches_to_family_writer(tmp_path: Path) -> None:
 def test_write_worker_hooks_skips_when_rtk_missing(tmp_path: Path) -> None:
     # No rtk on PATH → early return, no settings file written.
     config = default_config(tmp_path)
-    with patch("milknado.cli_tools.shutil.which", return_value=None):
+    with patch("milknado.cli.tools.shutil.which", return_value=None):
         _write_worker_hooks(tmp_path, config)
     assert not (tmp_path / ".claude").exists()
 
 
 def test_write_worker_hooks_dispatches_to_gemini(tmp_path: Path) -> None:
     config = replace(default_config(tmp_path), agent_family="gemini")
-    with patch("milknado.cli_tools.shutil.which", return_value="/usr/bin/rtk"):
+    with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
     assert settings["includeTools"] == list(WORKER_ALLOWED_TOOLS["gemini"])
@@ -1776,7 +1776,7 @@ def test_write_worker_hooks_dispatches_to_gemini(tmp_path: Path) -> None:
 
 def test_write_worker_hooks_dispatches_to_cursor(tmp_path: Path) -> None:
     config = replace(default_config(tmp_path), agent_family="cursor")
-    with patch("milknado.cli_tools.shutil.which", return_value="/usr/bin/rtk"):
+    with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     hooks = json.loads((tmp_path / "hooks" / "hooks.json").read_text(encoding="utf-8"))
     assert hooks["hooks"][0]["command"] == "rtk hook cursor"
@@ -1784,7 +1784,7 @@ def test_write_worker_hooks_dispatches_to_cursor(tmp_path: Path) -> None:
 
 class TestPrintRunResult:
     def test_root_done_prints_success(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from milknado.cli_run import _print_run_result
+        from milknado.cli.run import _print_run_result
         from milknado.domains.execution.run_loop import RunLoopResult
 
         _print_run_result(
@@ -1798,7 +1798,7 @@ class TestPrintRunResult:
         assert "Root goal achieved" in capsys.readouterr().out
 
     def test_rebase_conflicts_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
-        from milknado.cli_run import _print_run_result
+        from milknado.cli.run import _print_run_result
         from milknado.domains.execution.executor import RebaseConflict
         from milknado.domains.execution.run_loop import RunLoopResult
 
@@ -1829,14 +1829,14 @@ def test_write_worker_hooks_unknown_family_skips(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = replace(default_config(tmp_path), agent_family="acme")
-    with patch("milknado.cli_tools.shutil.which", return_value="/usr/bin/rtk"):
+    with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     assert "No hook template for family 'acme'" in capsys.readouterr().out
     assert not (tmp_path / ".claude").exists()
 
 
 def test_merge_json_recovers_from_corrupt_file(tmp_path: Path) -> None:
-    from milknado.cli_tools import _merge_json
+    from milknado.cli.tools import _merge_json
 
     target = tmp_path / "settings.json"
     target.write_text("{not valid json", encoding="utf-8")
@@ -1847,7 +1847,7 @@ def test_merge_json_recovers_from_corrupt_file(tmp_path: Path) -> None:
 def test_ensure_plugins_loaded_announces_each_plugin(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from milknado._cli_helpers import _ensure_plugins_loaded
+    from milknado.cli._helpers import _ensure_plugins_loaded
 
     config = default_config(tmp_path)
     local_plugin = MagicMock()
@@ -1856,7 +1856,7 @@ def test_ensure_plugins_loaded_announces_each_plugin(
     ep_plugin.meta.name = "entry-hook"
 
     with patch(
-        "milknado._cli_helpers.load_project_plugins",
+        "milknado.cli._helpers.load_project_plugins",
         return_value=(local_plugin, ep_plugin),
     ):
         loaded = _ensure_plugins_loaded(config)
@@ -1870,14 +1870,14 @@ def test_ensure_plugins_loaded_announces_each_plugin(
 def test_open_project_announces_loaded_plugins(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    from milknado._cli_helpers import _open_project
+    from milknado.cli._helpers import _open_project
 
     plugin = MagicMock()
     plugin.meta.name = "loaded-hook"
     opened = MagicMock()
     opened.plugins = (plugin,)
 
-    with patch("milknado._cli_helpers.open_project", return_value=opened) as open_mock:
+    with patch("milknado.cli._helpers.open_project", return_value=opened) as open_mock:
         result = _open_project(tmp_path)
 
     assert result is opened
@@ -1886,7 +1886,7 @@ def test_open_project_announces_loaded_plugins(
 
 
 def test_plan_exit_code_default_fallthrough() -> None:
-    from milknado.cli_plan import _plan_exit_code
+    from milknado.cli.plan import _plan_exit_code
 
     # solver_status not in any special case, success True → final return 0.
     result = _make_plan_result(solver_status="UNKNOWN", batch_count=0, success=True)

@@ -12,27 +12,27 @@ from pathlib import Path
 
 import pytest
 
-from milknado._mcp_core import RunDict
 from milknado.adapters import ProcessAdapter
 from milknado.domains.common import NodeKind, RunResult, WorktreeMode
 from milknado.domains.dispatch import ProcessOutcome
-from milknado.mcp_ralph import milknado_run_loop_poll, milknado_run_loop_start
-from milknado.mcp_run import (
+from milknado.mcp._core import RunDict
+from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
+from milknado.mcp.run import (
     milknado_deposit_result,
     milknado_run_cancel,
     milknado_run_inline_poll,
     milknado_run_inline_start,
     milknado_run_list,
 )
-from milknado.mcp_server import open_graph
-from milknado.mcp_todo_mutate import milknado_todo_add
+from milknado.mcp.server import open_graph
+from milknado.mcp.todo_mutate import milknado_todo_add
 
 _SUPERSET_KEYS = frozenset(RunDict.__annotations__)
 
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
-from milknado._mcp_core import open_graph
+from milknado.mcp._core import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
@@ -188,7 +188,7 @@ def _wait_for_terminal(run_id: str, root: str, tool, timeout: float = 5.0) -> di
 # ---------------------------------------------------------------------------
 # #83 — Unified RunDict superset schema
 def test_run_dict_schema_matches_annotations() -> None:
-    from milknado._mcp_core import build_run_dict
+    from milknado.mcp._core import build_run_dict
 
     assert set(build_run_dict({})) == set(RunDict.__annotations__)
 
@@ -295,7 +295,7 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-schema", kind="task", project_root=root)
@@ -318,7 +318,7 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-state", kind="task", project_root=root)
@@ -340,7 +340,7 @@ class TestSyncRunSchema:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(
@@ -383,7 +383,7 @@ class TestSyncRunOrphanRescue:
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
@@ -415,7 +415,7 @@ class TestSyncRunOrphanRescue:
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="crash", kind="task", project_root=root)
@@ -464,7 +464,7 @@ class TestSyncRunOrphanRescue:
 
         monkeypatch.setattr(ProcessAdapter, "run", _capture_run)
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="rerun-env", kind="task", project_root=root)

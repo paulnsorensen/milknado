@@ -6,13 +6,6 @@ import logging
 import shlex
 from pathlib import Path
 
-from milknado._mcp_core import (
-    build_run_dict,
-    mcp,
-    open_graph,
-    require_worker_run,
-    resolve_project_root,
-)
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
 from milknado.domains.common import NodeKind, NodeStatus, WorktreeMode, resolve_flavor_profile
 from milknado.domains.dispatch import (
@@ -33,6 +26,13 @@ from milknado.domains.dispatch import (
     setup_isolated_worktree,
     start_headless_async,
     validate_worker_argv,
+)
+from milknado.mcp._core import (
+    build_run_dict,
+    mcp,
+    open_graph,
+    require_worker_run,
+    resolve_project_root,
 )
 
 _logger = logging.getLogger(__name__)

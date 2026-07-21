@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado._mcp_core import (
+from milknado.mcp._core import (
     RunDict,
     _worktree_main_checkout,
     build_run_dict,
@@ -77,7 +77,7 @@ def test_git_root_discovery_warns_before_fallback(
     )
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: failed)
 
-    with caplog.at_level(logging.WARNING, logger="milknado._mcp_core"):
+    with caplog.at_level(logging.WARNING, logger="milknado.mcp._core"):
         assert _worktree_main_checkout(tmp_path) is None
 
     assert caplog.messages == [

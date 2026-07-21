@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado._mcp_core import resolve_project_root
 from milknado.domains.common import NodeKind, NodeSpec, WorktreeMode
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import MikadoGraph
+from milknado.mcp._core import resolve_project_root
 
 _DEAD_PID = 2**31 - 1  # no process can hold this; os.kill(_, 0) -> ProcessLookupError
 
@@ -200,7 +200,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_run import milknado_run_inline
+        from milknado.mcp.run import milknado_run_inline
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             milknado_run_inline(task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root))
@@ -211,7 +211,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             milknado_run_inline_start(
@@ -224,7 +224,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         graph.set_goal_pid(goal_id, "run-coord-A", os.getppid())  # different live pid
         graph.close()
 
-        from milknado.mcp_ralph import milknado_run_loop_start
+        from milknado.mcp.ralph import milknado_run_loop_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             milknado_run_loop_start(task_id, project_root=str(root))
@@ -234,7 +234,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         root, graph, goal_id, task_id = self._seed(tmp_path)
         graph.close()
 
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         # Should NOT raise a goal-claimed error; may raise other validation errors
         try:
@@ -253,7 +253,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         graph.set_goal_pid(goal_id, "run-coord-A", _DEAD_PID)
         graph.close()
 
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         # Should NOT raise a goal-claimed error; dead claimant is reclaimed on dispatch
         try:
@@ -430,7 +430,7 @@ class TestWorktreeHopEdgeCases:
         """When git raises OSError (not installed), the cwd fallback applies unchanged."""
         import subprocess
 
-        from milknado._mcp_core import _worktree_main_checkout
+        from milknado.mcp._core import _worktree_main_checkout
 
         def _raise_oserror(*args, **kwargs):
             raise OSError("git not found")
@@ -449,7 +449,7 @@ class TestWorktreeHopEdgeCases:
         import subprocess
         from unittest.mock import MagicMock
 
-        from milknado._mcp_core import _worktree_main_checkout
+        from milknado.mcp._core import _worktree_main_checkout
 
         fake = MagicMock()
         fake.returncode = 0
@@ -552,7 +552,7 @@ class TestWorktreeHopAdditionalEdgeCases:
         """subprocess.TimeoutExpired is caught and treated as 'no hop'."""
         import subprocess
 
-        from milknado._mcp_core import _worktree_main_checkout
+        from milknado.mcp._core import _worktree_main_checkout
 
         monkeypatch.setattr(
             subprocess,
@@ -575,7 +575,7 @@ class TestWorktreeHopAdditionalEdgeCases:
         import subprocess
         from unittest.mock import MagicMock
 
-        from milknado._mcp_core import _worktree_main_checkout
+        from milknado.mcp._core import _worktree_main_checkout
 
         fake = MagicMock()
         fake.returncode = 0
@@ -637,7 +637,7 @@ class TestProductionClaimPath:
         graph.close()
 
         # Run B (different process pid) tries to dispatch — must be refused by _check.
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             milknado_run_inline_start(
@@ -655,7 +655,7 @@ class TestProductionClaimPath:
         graph.close()
 
         # Run B's dispatch should no longer be blocked (dead pid → inline reclaim).
-        from milknado.mcp_run import milknado_run_inline_start
+        from milknado.mcp.run import milknado_run_inline_start
 
         try:
             milknado_run_inline_start(
@@ -802,7 +802,7 @@ class TestUnicodeDecodeErrorCaught:
         """A non-UTF8 byte in subprocess output raises UnicodeDecodeError, not a crash."""
         import subprocess
 
-        from milknado._mcp_core import _worktree_main_checkout
+        from milknado.mcp._core import _worktree_main_checkout
 
         monkeypatch.setattr(
             subprocess,

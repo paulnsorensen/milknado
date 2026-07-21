@@ -21,7 +21,7 @@ _logger = logging.getLogger("milknado")
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="milknado._ralph_node_runner")
+    parser = argparse.ArgumentParser(prog="milknado.mcp._ralph_node_runner")
     parser.add_argument("--node-id", type=int, required=True)
     parser.add_argument("--project-root", required=True)
     parser.add_argument("--run-id", required=True)
@@ -30,7 +30,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-oid", required=True)
     args = parser.parse_args(argv)
 
-    from milknado._mcp_core import open_graph
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.common import resolve_flavor_profile
     from milknado.domains.execution import (
@@ -38,6 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         Executor,
         run_node_to_completion,
     )
+    from milknado.mcp._core import open_graph
 
     root = Path(args.project_root)
     from milknado.domains.execution import NO_GATES_CONFIGURED_MESSAGE

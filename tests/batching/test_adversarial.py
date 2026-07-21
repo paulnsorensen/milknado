@@ -388,19 +388,19 @@ class TestPlanBatchesImpl:
         monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
 
     def test_missing_id_raises_value_error(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl([{"path": "a.py", "description": "missing id"}], 70_000, tmp_path)
 
     def test_missing_path_raises_value_error(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl([{"id": "1", "description": "missing path"}], 70_000, tmp_path)
 
     def test_extra_keys_ignored(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         result = _plan_batches_impl(
             [
@@ -418,7 +418,7 @@ class TestPlanBatchesImpl:
         assert result["solver_status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
 
     def test_symbol_missing_name_raises(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl(
@@ -435,7 +435,7 @@ class TestPlanBatchesImpl:
             )
 
     def test_symbol_missing_file_raises(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
             _plan_batches_impl(
@@ -452,7 +452,7 @@ class TestPlanBatchesImpl:
             )
 
     def test_nonexistent_project_root_no_crash(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         nonexistent = tmp_path / "ghost_dir"
         result = _plan_batches_impl(
@@ -470,7 +470,7 @@ class TestPlanBatchesImpl:
         assert result["solver_status"] in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
 
     def test_empty_changes_returns_optimal(self, tmp_path):
-        from milknado.mcp_server import _plan_batches_impl
+        from milknado.mcp.server import _plan_batches_impl
 
         result = _plan_batches_impl([], 70_000, tmp_path)
         assert result["solver_status"] == "OPTIMAL"

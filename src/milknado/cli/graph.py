@@ -7,7 +7,7 @@ from typing import Annotated
 
 import typer
 
-from milknado._cli_helpers import _ensure_db, _load_or_default, console
+from milknado.cli._helpers import _ensure_db, _load_or_default, console
 
 edge_app = typer.Typer(name="edge", help="Direct edge operations on the Mikado graph")
 

@@ -170,7 +170,7 @@ plan-mock keep="0":
 
 # Run the MCP server
 mcp-server:
-    uv run python -m milknado.mcp_server
+    uv run python -m milknado.mcp.server
 
 # Run the MCP server under a file watcher that restarts it on src/ changes
 mcp-dev:
