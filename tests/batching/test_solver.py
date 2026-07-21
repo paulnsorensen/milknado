@@ -164,16 +164,30 @@ def test_independent_changes_co_batch(tmp_path) -> None:
     assert _all_change_ids(plan) == {"a", "b"}
 
 
-def test_lexicographic_prefers_fewer_batches(tmp_path) -> None:
-    """Chain a->b plus independent c: two batches (not three) when budget fits."""
+def test_total_cost_prefers_balanced_batches_over_one(tmp_path) -> None:
+    """Composite cost can prefer two batches even when one fits the budget.
+
+    Ten independent deletes total 800 estimated tokens, so one batch is
+    budget-feasible at 10,000.  The size-dependent context multiplier makes
+    two balanced batches cheaper than one oversized normal batch.
+    """
+    changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete") for i in range(10)]
+    plan = plan_batches(changes, budget=10_000, time_limit_s=10.0, root=tmp_path)
+    assert plan.solver_status == "OPTIMAL"
+    assert len(plan.batches) == 2
+    assert sorted(len(batch.change_ids) for batch in plan.batches) == [5, 5]
+    assert _all_change_ids(plan) == {str(i) for i in range(10)}
+
+
+def test_total_cost_keeps_dependency_batches_compact(tmp_path) -> None:
+    """Composite cost keeps a dependency chain and independent work compact."""
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
     c = FileChange(id="c", path="c.py", edit_kind="delete")
     plan = plan_batches([a, b, c], budget=70_000, root=tmp_path)
     assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
-    # a and c can co-batch (no ordering constraint between them)
-    # b must come after a; c and b can co-batch if they have no ordering conflict
-    # Expect at most 2 batches: {a, c} and {b}  OR  {a} and {b, c}
+    # The three changes fit together, but precedence can require at most two
+    # batches; this checks the observable result without asserting a tie-break.
     assert len(plan.batches) <= 2
     assert _all_change_ids(plan) == {"a", "b", "c"}
 
