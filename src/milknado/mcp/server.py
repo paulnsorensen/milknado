@@ -198,7 +198,7 @@ def milknado_plan_apply(
 def main() -> None:
     from milknado.process_logging import configure_stderr_logging
 
-    # mcp_server speaks stdio — logging must never write to stdout, only stderr/file.
+    # the MCP server speaks stdio — logging must never write to stdout, only stderr/file.
     configure_stderr_logging()
 
     # Importing each tool module registers its @mcp.tool()s on the shared instance.

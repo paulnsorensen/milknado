@@ -1,6 +1,6 @@
 """Shared FastMCP instance and project-root/graph helpers for the MCP tools.
 
-Lives in its own module so the tool modules (`mcp_server`, `mcp_todo`) can both
+Lives in its own module so the tool modules (`mcp.server`, `mcp.todo`) can both
 register against the same `mcp` instance without importing each other — which
 would form an import cycle.
 """

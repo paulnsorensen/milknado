@@ -1,6 +1,6 @@
 """MCP tools for the GitHub Projects v2 <-> milknado roadmap crossover.
 
-Thin veneers over the tested github slice, mirroring mcp_wiki: import seeds the
+Thin veneers over the tested github slice, mirroring mcp.wiki: import seeds the
 graph from a Project, bind projects a wiki-origin roadmap, export harvests state
 onto the Project item fields.
 """

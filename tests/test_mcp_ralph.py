@@ -489,8 +489,8 @@ def test_runner_crash_writes_detail_and_keeps_schema(
 def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
     """When quality_gates is absent from config, the runner fails closed immediately
     before building adapters — the run row records the fail-closed message."""
-    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
+    from milknado.mcp import _ralph_node_runner
 
     # No milknado.toml → quality_gates=None (fail-closed)
     run_id = "node-1-20260101T000000Z-pref"
@@ -524,8 +524,8 @@ def test_runner_writes_done_on_successful_outcome(
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
     import milknado.mcp._core as mcp_core
-    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.headless import HeadlessOutcome
+    from milknado.mcp import _ralph_node_runner
 
     class _Cfg:
         execution_agent = "claude"
@@ -614,9 +614,9 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
     import milknado.mcp._core as mcp_core
-    from milknado.mcp import _ralph_node_runner
     from milknado.domains.common.errors import CompletionTimeout
     from milknado.domains.execution.executor import DispatchResult
+    from milknado.mcp import _ralph_node_runner
 
     class _Cfg:
         execution_agent = "claude"

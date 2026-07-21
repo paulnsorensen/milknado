@@ -13,8 +13,8 @@ def test_main_logs_terminal_event_with_run_id(
     import milknado.adapters as adapters
     import milknado.domains.execution as execution
     import milknado.mcp._core as mcp_core
-    from milknado.mcp import _ralph_node_runner
     from milknado.domains.execution.headless import HeadlessOutcome
+    from milknado.mcp import _ralph_node_runner
 
     messages: list[tuple[str, tuple[object, ...]]] = []
     monkeypatch.setattr(
