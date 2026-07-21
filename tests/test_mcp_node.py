@@ -707,3 +707,33 @@ def test_goal_claim_refuses_non_goal_node(repo: Path) -> None:
     task_id = _add_task(repo)
     with pytest.raises(ValueError, match="only goal nodes can be claimed"):
         _call(milknado_goal_claim, goal_id=task_id, owner="sess-1", project_root=str(repo))
+
+
+def test_provision_claim_run_fails_loudly_when_terminal_release_loses_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from milknado.app import node as node_app
+
+    class Graph:
+        def start_run(self, *_args) -> None:
+            raise RuntimeError("startup failed")
+
+        def mark_terminal(self, *_args) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        node_app,
+        "resolve_flavor_profile",
+        lambda *_args: SimpleNamespace(worktree=False),
+    )
+    with pytest.raises(RuntimeError, match="startup terminal node write lost its fence"):
+        node_app._provision_claim_run(
+            Graph(),
+            tmp_path,
+            SimpleNamespace(id=4, description="task", flavor=None),
+            "run-4",
+            False,
+            SimpleNamespace(worktree_pattern="milknado-{node_id}"),
+        )

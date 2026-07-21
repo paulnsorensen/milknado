@@ -164,8 +164,11 @@ def _spawn_ralph(
 
 
 def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # noqa: ANN001
+    run_written = False
+    node_written = False
+    persistence_error: Exception | None = None
     try:
-        graph.finish_run(
+        run_written = graph.finish_run(
             claim.run_id,
             RunResult(
                 status="failed",
@@ -176,13 +179,29 @@ def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # 
                 detail=f"spawn failed: {type(exc).__name__}: {exc}",
             ),
         )
-    except Exception:
+    except Exception as error:
+        persistence_error = error
         _logger.exception(
-            "spawn failure persistence failed: run_id=%s node_id=%d",
+            "spawn failure run terminal write failed: run_id=%s node_id=%d",
             claim.run_id,
             claim.node_id,
         )
-    graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
+    try:
+        node_written = graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
+    except Exception as error:
+        persistence_error = persistence_error or error
+        _logger.exception(
+            "spawn failure node terminal write failed: run_id=%s node_id=%d",
+            claim.run_id,
+            claim.node_id,
+        )
+    if run_written is False or node_written is False:
+        detail = (
+            f"spawn failure persistence failed: terminal writes incomplete: "
+            f"run_written={run_written} node_written={node_written}"
+        )
+        _logger.error("%s run_id=%s node_id=%d", detail, claim.run_id, claim.node_id)
+        raise RuntimeError(detail) from persistence_error
 
 
 def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001

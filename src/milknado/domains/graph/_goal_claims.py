@@ -12,21 +12,60 @@ from milknado.domains.common import NodeKind, pid_alive
 
 
 def claim_goal_row(
-    conn: sqlite3.Connection, goal_id: int, run_id: str, now: str, *, pid: int | None = None
+    conn: sqlite3.Connection, goal_id: int, run_id: str, now: str, *, pid: int
 ) -> bool:
-    """INSERT a goal claim if none exists; returns True iff this caller won.
+    """Acquire a goal claim with a non-null PID in one conditional write.
 
-    INSERT OR IGNORE is the mutual-exclusion point: a single conditional write
-    that either inserts (this caller wins) or finds the row already there (loses).
-    Pass pid to write it atomically in the same INSERT, eliminating the NULL-pid
-    window that would otherwise allow a concurrent reclaim before set_goal_claim_pid.
+    The write lock covers both the liveness decision and the replacement CAS.
+    A caller without a PID cannot create a claim: a PID-less owner is unsafe to
+    reclaim and therefore cannot be a successful owner.
     """
-    cur = conn.execute(
-        "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?)",
-        (goal_id, run_id, pid, now),
+    if pid is None:
+        return False
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        inserted = conn.execute(
+            "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) "
+            "VALUES (?, ?, ?, ?)",
+            (goal_id, run_id, pid, now),
+        ).rowcount
+        if inserted == 1:
+            conn.commit()
+            return True
+        claim = conn.execute(
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,)
+        ).fetchone()
+        if claim is None:
+            conn.rollback()
+            return False
+        if claim["run_id"] == run_id:
+            updated = 0
+        elif claim["pid"] is not None and not pid_alive(claim["pid"]):
+            updated = conn.execute(
+                "UPDATE goal_claims SET run_id = ?, pid = ?, claimed_at = ? "
+                "WHERE goal_id = ? AND run_id = ? AND pid = ?",
+                (run_id, pid, now, goal_id, claim["run_id"], claim["pid"]),
+            ).rowcount
+        else:
+            updated = 0
+        if updated == 1:
+            conn.commit()
+            return True
+        conn.rollback()
+        return False
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def set_goal_claim_pid(conn: sqlite3.Connection, goal_id: int, run_id: str, pid: int) -> None:
+    """Update a legacy claim's PID without creating or replacing the claim."""
+    conn.execute(
+        "UPDATE goal_claims SET pid = ? WHERE goal_id = ? AND run_id = ?",
+        (pid, goal_id, run_id),
     )
     conn.commit()
-    return cur.rowcount == 1
 
 
 def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> bool:
@@ -47,15 +86,6 @@ def release_goal_row_unconditional(conn: sqlite3.Connection, goal_id: int) -> No
     of which run held it.
     """
     conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
-    conn.commit()
-
-
-def set_goal_claim_pid(conn: sqlite3.Connection, goal_id: int, run_id: str, pid: int) -> None:
-    """Record the coordinator pid on a goal claim, gated on the owning run_id."""
-    conn.execute(
-        "UPDATE goal_claims SET pid = ? WHERE goal_id = ? AND run_id = ?",
-        (pid, goal_id, run_id),
-    )
     conn.commit()
 
 
@@ -128,7 +158,9 @@ def release_goal_claim_on_terminal(conn: sqlite3.Connection, node_id: int) -> No
 def claim_or_reclaim_goal(
     conn: sqlite3.Connection, goal_id: int, owner: str, pid: int, *, now: str
 ) -> bool:
-    """Atomically acquire a goal claim, replacing a provably dead owner."""
+    """Acquire a goal claim, replacing only a specifically observed dead owner."""
+    if pid is None:
+        return False
     conn.execute("BEGIN IMMEDIATE")
     try:
         row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
@@ -138,58 +170,74 @@ def claim_or_reclaim_goal(
             raise ValueError(
                 f"node {goal_id} has kind={row['kind']}; only goal nodes can be claimed"
             )
-        claim = get_goal_claim(conn, goal_id)
-        if claim is not None and claim["run_id"] != owner:
-            prior_pid = claim["pid"]
-            if prior_pid is None or pid_alive(prior_pid):
-                conn.rollback()
-                return False
-            conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
-        conn.execute(
-            "INSERT INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(goal_id) DO UPDATE SET pid=excluded.pid, "
-            "claimed_at=excluded.claimed_at "
-            "WHERE goal_claims.run_id=excluded.run_id",
+        inserted = conn.execute(
+            "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) "
+            "VALUES (?, ?, ?, ?)",
             (goal_id, owner, pid, now),
-        )
+        ).rowcount
+        if inserted == 1:
+            conn.commit()
+            return True
+        claim = conn.execute(
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,)
+        ).fetchone()
+        if claim is None:
+            conn.rollback()
+            return False
+        if claim["run_id"] == owner:
+            updated = 0
+        elif claim["pid"] is not None and not pid_alive(claim["pid"]):
+            updated = conn.execute(
+                "UPDATE goal_claims SET run_id = ?, pid = ?, claimed_at = ? "
+                "WHERE goal_id = ? AND run_id = ? AND pid = ?",
+                (owner, pid, now, goal_id, claim["run_id"], claim["pid"]),
+            ).rowcount
+        else:
+            updated = 0
+        if updated == 1:
+            conn.commit()
+            return True
+        conn.rollback()
+        return False
     except Exception:
         conn.rollback()
         raise
-    conn.commit()
-    return True
 
 
 def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:  # noqa: ARG001
-    """Free a goal claim whose owner pid is provably dead.
-
-    Returns True iff a dead owner was released so a new claimant can win.
-    A live or pid-unknown owner is left intact.
-    """
-    claim = get_goal_claim(conn, goal_id)
-    if claim is None:
-        return False
-    pid = claim["pid"]
-    if pid is None or pid_alive(pid):
-        return False
-    # Dead pid: delete the stale claim so a fresh claimant can win.
-    return release_goal_row(conn, goal_id, claim["run_id"])
+    """Free a claim only when its non-null PID is provably dead."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        claim = get_goal_claim(conn, goal_id)
+        if claim is None or claim["pid"] is None or pid_alive(claim["pid"]):
+            conn.rollback()
+            return False
+        deleted = conn.execute(
+            "DELETE FROM goal_claims WHERE goal_id = ? AND run_id = ? AND pid = ?",
+            (goal_id, claim["run_id"], claim["pid"]),
+        ).rowcount
+        conn.commit()
+        return deleted == 1
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def ancestor_goal_claimed_by_other(
     conn: sqlite3.Connection, node_id: int, *, caller_run_id: str | None = None
 ) -> dict | None:
-    """Return a blocking goal claim dict if an ancestor goal is owned by a different run.
+    """Return a blocking goal claim dict when an ancestor has another live owner.
 
-    Performs pid-liveness reclaim in-line: a dead foreign claimant is freed
-    and the check returns None (allowed), mirroring claim_node's dead-owner reclaim.
-    Returns None when dispatch is allowed; returns the claim dict when blocked.
+    A dead owner is reclaimed only after a non-null PID is positively proven
+    dead. An unknown PID remains blocking because it cannot be safely reclaimed.
     """
     claim = ancestor_goal_claim(conn, node_id, caller_run_id)
     if claim is None:
         return None
     pid = claim["pid"]
-    if pid is None or not pid_alive(pid):
-        # NULL or dead pid: reclaim and allow dispatch.
+    if pid is None:
+        return claim
+    if not pid_alive(pid):
         release_goal_row(conn, claim["goal_id"], claim["run_id"])
         return None
     return claim

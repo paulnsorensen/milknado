@@ -69,12 +69,17 @@ def latest_results_for_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) 
         chunk = ids[start : start + 500]
         placeholders = ",".join("?" for _ in chunk)
         rows = conn.execute(
-            "SELECT node_id, body FROM ("
-            "SELECT r.node_id, m.body, ROW_NUMBER() OVER ("
-            "PARTITION BY r.node_id ORDER BY m.created_at DESC, m.seq DESC"
-            ") AS ordinal FROM runs r JOIN run_messages m ON m.run_id = r.run_id "
-            f"WHERE m.role = 'result' AND r.node_id IN ({placeholders})"  # noqa: S608
-            ") WHERE ordinal = 1",
+            "SELECT r.node_id, m.body "
+            "FROM runs r CROSS JOIN run_messages m "
+            "WHERE m.run_id = r.run_id AND m.role = 'result' "
+            f"AND r.node_id IN ({placeholders}) "  # noqa: S608
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM runs newer_r CROSS JOIN run_messages newer_m "
+            "WHERE newer_r.node_id = r.node_id "
+            "AND newer_m.run_id = newer_r.run_id AND newer_m.role = 'result' "
+            "AND (newer_m.created_at > m.created_at OR ("
+            "newer_m.created_at = m.created_at AND newer_m.seq > m.seq))"
+            ")",
             chunk,
         ).fetchall()
         results.update((row["node_id"], row["body"]) for row in rows)

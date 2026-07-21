@@ -227,16 +227,20 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
         if cancelled:
-            graph.finish_run(
-                run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=timed_out,
-                    ended_at=_now_iso(),
-                    error="cancelled",
-                ),
-            )
+            if (
+                graph.finish_run(
+                    run_id,
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=timed_out,
+                        ended_at=_now_iso(),
+                        error="cancelled",
+                    ),
+                )
+                is False
+            ):
+                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
             merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
@@ -248,17 +252,21 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # Persist a preserved (un-torn-down) worktree via the run row's `detail`
             # column so milknado_run_inline_poll surfaces `worktree_preserved`,
             # matching the sync dispatch path and milknado_run_cancel.
-            graph.finish_run(
-                run_id,
-                RunResult(
-                    status=terminal,
-                    exit_code=exit_code,
-                    timed_out=timed_out,
-                    ended_at=_now_iso(),
-                    rebased=merge.rebased if merge is not None else None,
-                    detail=merge.worktree_preserved if merge is not None else None,
-                ),
-            )
+            if (
+                graph.finish_run(
+                    run_id,
+                    RunResult(
+                        status=terminal,
+                        exit_code=exit_code,
+                        timed_out=timed_out,
+                        ended_at=_now_iso(),
+                        rebased=merge.rebased if merge is not None else None,
+                        detail=merge.worktree_preserved if merge is not None else None,
+                    ),
+                )
+                is False
+            ):
+                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
             _logger.info(
                 "async dispatch terminal: run_id=%s node_id=%d status=%s "
                 "exit_code=%d timed_out=%s cancelled=%s rebased=%s",
@@ -271,6 +279,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 merge.rebased if merge is not None else None,
             )
     except Exception as exc:
+        original_detail = f"{type(exc).__name__}: {exc}"
         _logger.warning(
             "async worker for run %s raised %s: %s", run_id, type(exc).__name__, exc, exc_info=True
         )
@@ -280,23 +289,40 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # subprocess output that did make it to disk is preserved.
         try:
             with log_path.open("a", encoding="utf-8") as log_fh:
-                log_fh.write(f"\n--- async worker raised: {type(exc).__name__}: {exc} ---\n")
+                log_fh.write(f"\n--- async worker raised: {original_detail} ---\n")
         except OSError:
             # Annotating the log is best-effort; the terminal run write below is
             # what actually releases the node, so a log-write failure here is
             # deliberately ignored.
             pass
         if graph is not None:
-            graph.finish_run(
-                run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=_now_iso(),
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
-            )
+            terminal_detail = original_detail
+            try:
+                written = graph.finish_run(
+                    run_id,
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=False,
+                        ended_at=_now_iso(),
+                        error=original_detail,
+                    ),
+                )
+            except Exception as persist_exc:
+                written = False
+                terminal_detail = (
+                    f"{original_detail}; terminal persistence raised: "
+                    f"{type(persist_exc).__name__}: {persist_exc}"
+                )
+            if written is False:
+                with suppress(OSError):
+                    (rdir / f"{run_id}.terminal-error").write_text(
+                        f"run_id={run_id}\n"
+                        f"node_id={request.node_id}\n"
+                        f"log_path={log_path}\n"
+                        f"{terminal_detail}\n",
+                        encoding="utf-8",
+                    )
     finally:
         if graph is not None:
             graph.close()
@@ -340,12 +366,13 @@ def start_headless_async(
         process=process,
         tmux=tmux,
     )
-    threading.Thread(
+    thread = threading.Thread(
         target=_async_worker,
         args=(context,),
-        name=f"milknado-{request.run_id}",
         daemon=True,
-    ).start()
+        name=f"milknado-async-{request.run_id}",
+    )
+    thread.start()
     return AsyncStartRef(run_id=request.run_id, log_path=log_path)
 
 
@@ -360,4 +387,8 @@ def poll_async_run(graph, project_root: Path, run_id: str) -> dict:  # noqa: ANN
     log_path = _runs_dir(project_root) / f"{run_id}.log"
     state["log_path"] = str(log_path)
     state["summary"] = _tail(log_path, _SUMMARY_TAIL_BYTES)
+    terminal_error = _runs_dir(project_root) / f"{run_id}.terminal-error"
+    if terminal_error.exists():
+        state["error"] = terminal_error.read_text(encoding="utf-8").strip()
+        state["terminal_persistence"] = "degraded"
     return state

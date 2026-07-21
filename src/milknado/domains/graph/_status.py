@@ -96,18 +96,19 @@ def complete_root(pipeline: StatusPipeline, conn: sqlite3.Connection) -> bool:
 
 
 def claim_node(
-    pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, run_id: str, *, now: str
+    pipeline: StatusPipeline,
+    conn: sqlite3.Connection,
+    node_id: int,
+    run_id: str,
+    *,
+    now: str,
+    pid: int | None = None,
 ) -> bool:
-    """Atomically claim a claimable (pending/failed/blocked) node as RUNNING.
-
-    The cross-process mutual-exclusion point: a single conditional UPDATE that
-    either wins (returns True) or loses to a concurrent claimant (False). The
-    run_id written becomes the fence guarding later ownership-gated writes.
-    """
+    """Atomically claim a claimable node, including its dispatch PID fence."""
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
-        return _transitions.claim_node(conn, node_id, run_id, now)
+        return _transitions.claim_node(conn, node_id, run_id, now, pid=pid)
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.RUNNING, mutate

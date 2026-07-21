@@ -62,6 +62,91 @@ class TestCreateTables:
         }
         assert "idx_runs_node_status" in indexes
 
+    def test_run_message_indexes_match_latest_lookups(self, conn: sqlite3.Connection) -> None:
+        indexes = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        }
+        assert {
+            "idx_run_messages_latest_role",
+            "idx_run_messages_result_latest",
+        } <= indexes
+
+    def test_populated_latest_result_query_uses_covering_index_without_temp_sort(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        conn.executemany(
+            "INSERT INTO runs (run_id, node_id, status, log_path, started_at) "
+            "VALUES (?, ?, 'completed', '', ?)",
+            [
+                ("node-1-old", 1, "2026-01-01T00:00:00+00:00"),
+                ("node-1-new", 1, "2026-01-02T00:00:00+00:00"),
+                ("node-2-old", 2, "2026-01-03T00:00:00+00:00"),
+                ("node-2-new", 2, "2026-01-04T00:00:00+00:00"),
+                ("node-3-old", 3, "2026-01-05T00:00:00+00:00"),
+                ("node-3-new", 3, "2026-01-06T00:00:00+00:00"),
+            ],
+        )
+        body = "result-body-" + ("x" * 1024)
+        conn.executemany(
+            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                ("node-1-old", 1, "stdout", "ignored", "2026-01-01T00:00:01+00:00"),
+                ("node-1-old", 2, "result", body + "-1-old", "2026-01-01T00:00:02+00:00"),
+                ("node-1-new", 1, "result", body + "-1-new", "2026-01-02T00:00:02+00:00"),
+                ("node-2-old", 1, "result", body + "-2-old", "2026-01-03T00:00:02+00:00"),
+                ("node-2-new", 1, "stdout", "ignored", "2026-01-04T00:00:01+00:00"),
+                ("node-2-new", 2, "result", body + "-2-new", "2026-01-04T00:00:02+00:00"),
+                ("node-3-old", 1, "result", body + "-3-old", "2026-01-05T00:00:02+00:00"),
+                ("node-3-new", 1, "result", body + "-3-new", "2026-01-06T00:00:02+00:00"),
+            ],
+        )
+        conn.commit()
+
+        from milknado.domains.graph._reads import latest_results_for_nodes
+
+        traced: list[str] = []
+        conn.set_trace_callback(traced.append)
+        try:
+            results = latest_results_for_nodes(conn, [1, 2, 3, 2, 999])
+        finally:
+            conn.set_trace_callback(None)
+        assert results == {
+            1: body + "-1-new",
+            2: body + "-2-new",
+            3: body + "-3-new",
+        }
+        assert sum(statement.lstrip().upper().startswith("SELECT") for statement in traced) == 1
+
+        query = (
+            "SELECT r.node_id, m.body "
+            "FROM runs r CROSS JOIN run_messages m "
+            "WHERE m.run_id = r.run_id AND m.role = 'result' "
+            "AND r.node_id IN (1, 2, 3) "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM runs newer_r CROSS JOIN run_messages newer_m "
+            "WHERE newer_r.node_id = r.node_id "
+            "AND newer_m.run_id = newer_r.run_id AND newer_m.role = 'result' "
+            "AND (newer_m.created_at > m.created_at OR ("
+            "newer_m.created_at = m.created_at AND newer_m.seq > m.seq))"
+            ")"
+        )
+        plan = "\n".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + query))
+        assert "USING COVERING INDEX idx_run_messages_result_latest" in plan
+        assert "USE TEMP B-TREE" not in plan
+
+    def test_candidate_ownership_loader_deduplicates_and_ignores_missing(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        conn.executemany(
+            "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
+            [(1, "a.py"), (2, "b.py")],
+        )
+        from milknado.domains.graph._persistence import get_file_ownership_map
+
+        assert get_file_ownership_map(conn, [1, 1, 999]) == {1: ["a.py"]}
+
 
 class TestPlanState:
     def test_set_and_get_spec_hash(self, conn: sqlite3.Connection) -> None:
@@ -163,6 +248,31 @@ class TestRunsRepo:
         assert row["exit_code"] == 0
         assert row["ended_at"] == "2026-01-01T00:01:00+00:00"
         assert row["detail"] == "all-green"
+
+    def test_finish_run_second_terminal_write_loses_fence(self, graph: MikadoGraph) -> None:
+        nid = self._node(graph)
+        graph.start_run("r-fenced", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        first = graph.finish_run(
+            "r-fenced",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:01:00+00:00",
+            ),
+        )
+        second = graph.finish_run(
+            "r-fenced",
+            RunResult(
+                status="failed",
+                exit_code=1,
+                timed_out=False,
+                ended_at="2026-01-01T00:02:00+00:00",
+            ),
+        )
+        assert first is True
+        assert second is False
+        assert graph.get_run("r-fenced")["status"] == "done"
 
     def test_finish_run_rehydrates_timed_out_and_rebased_bools(self, graph: MikadoGraph) -> None:
         """timed_out/rebased are stored as INTEGER; _run_row_to_dict must return

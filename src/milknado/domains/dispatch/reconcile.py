@@ -80,16 +80,20 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
             else "worker vanished before writing terminal state (stale running run)"
         )
         ended_at = _now_iso()
-        graph.finish_run(
-            state["run_id"],
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=ended_at,
-                error=error,
-            ),
-        )
+        if (
+            graph.finish_run(
+                state["run_id"],
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=ended_at,
+                    error=error,
+                ),
+            )
+            is False
+        ):
+            raise RuntimeError(f"stale terminal write lost its fence for {state['run_id']}")
         flipped.append(
             {
                 **state,

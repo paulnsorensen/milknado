@@ -642,3 +642,42 @@ class TestMergeBackLock:
         # The flock forces the second critical section to start only after the
         # first has released — the intervals must not overlap.
         assert intervals[0][1] <= intervals[1][0]
+
+
+def test_async_start_reports_lost_terminal_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.domains.dispatch as dispatch_mod
+    from milknado.app.run import InlineRunRequest, run_inline_start
+
+    root = tmp_path / "repo"
+    _init_repo(root)
+    task = _call(milknado_todo_add, description="async fence", kind="task", project_root=str(root))
+    graph, cfg = open_graph(root)
+    try:
+        monkeypatch.setattr(
+            dispatch_mod,
+            "start_headless_async",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+        )
+        monkeypatch.setattr(
+            type(graph),
+            "mark_terminal",
+            lambda *_args, **_kwargs: False,
+        )
+        with pytest.raises(RuntimeError, match="startup terminal node write lost its fence"):
+            run_inline_start(
+                graph,
+                cfg,
+                root,
+                InlineRunRequest(
+                    node_id=task["id"],
+                    worker_cmd=None,
+                    timeout_seconds=1,
+                    worktree=WorktreeMode.THIS_BRANCH,
+                    merge_back=False,
+                ),
+                use_tmux=False,
+            )
+    finally:
+        graph.close()

@@ -116,6 +116,7 @@ def _provision_claim_run(
     except Exception:
         # Claim succeeded but worktree/run setup failed: release the claim with a
         # fenced terminal write so the node is not stranded RUNNING.
-        graph.mark_terminal(node.id, run_id, NodeStatus.FAILED)
+        if not graph.mark_terminal(node.id, run_id, NodeStatus.FAILED):
+            raise RuntimeError(f"startup terminal node write lost its fence for node {node.id}")
         raise
     return wt_path

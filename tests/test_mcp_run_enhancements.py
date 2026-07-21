@@ -1462,3 +1462,292 @@ class TestDepositResult:
         final = _call(milknado_run_inline_poll, run_id=run_id, project_root=str(tmp_path))
         assert final["result"] == payload
         assert final["result"].count("\n") == 39, "every line of the deliverable must survive"
+
+
+def test_finish_dispatch_rejects_lost_run_fence() -> None:
+    from types import SimpleNamespace
+
+    from milknado.domains.dispatch import lifecycle
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            return False
+
+    with pytest.raises(RuntimeError, match="terminal run write lost its fence"):
+        lifecycle._finish_dispatch(
+            Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+        )
+
+
+def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
+    from types import SimpleNamespace
+
+    from milknado.domains.dispatch import lifecycle
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            return True
+
+        def mark_terminal(self, *_args) -> bool:
+            return False
+
+        def get_node(self, _node_id: int) -> None:
+            return None
+
+    lifecycle._finish_dispatch(
+        Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+    )
+
+
+def test_sync_dispatch_reports_terminal_persistence_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from milknado.domains.dispatch import lifecycle
+    from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
+
+    class Graph:
+        def get_node(self, _node_id: int):
+            return SimpleNamespace(kind=NodeKind.TASK)
+
+        def claim_node_for_dispatch(self, *_args, **_kwargs) -> None:
+            return None
+
+        def start_run(self, *_args, **_kwargs) -> None:
+            return None
+
+        def finish_run(self, *_args, **_kwargs) -> bool:
+            return False
+
+        def mark_terminal(self, *_args, **_kwargs) -> bool:
+            return True
+
+    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        lifecycle,
+        "run_headless",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+    )
+    request = SyncDispatchRequest(
+        node_id=1,
+        project_root=tmp_path,
+        worker_cmd=None,
+        timeout_seconds=1,
+        default_cmd="claude",
+        process=object(),  # type: ignore[arg-type]
+        worktree_mode=WorktreeMode.THIS_BRANCH,
+    )
+    with pytest.raises(RuntimeError, match="terminal persistence lost its fence"):
+        lifecycle.dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+
+
+def test_cancel_finalize_surfaces_late_write_loss() -> None:
+    from milknado.domains.dispatch import cancel
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            return False
+
+        def get_run(self, _run_id: str) -> dict:
+            return {"run_id": _run_id, "status": "done"}
+
+    result = cancel._finalize_cancelled(Graph(), "run-1")
+    assert result["terminal_persistence"] == "late-write-lost"
+
+
+def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from milknado.domains.dispatch import reconcile
+
+    class Graph:
+        def runs_for_node(self, _node_id: int) -> list[dict]:
+            return [
+                {
+                    "run_id": "run-stale",
+                    "status": "running",
+                    "started_at": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+                    "timeout_seconds": 1,
+                }
+            ]
+
+        def finish_run(self, *_args) -> bool:
+            return False
+
+    with pytest.raises(RuntimeError, match="stale terminal write lost"):
+        reconcile.fail_stale_running_runs(Graph(), 1)
+
+
+def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.domains.dispatch.async_run as async_run
+
+    request = async_run.AsyncRunRequest(
+        project_root=tmp_path,
+        node_id=1,
+        brief="brief",
+        worker_cmd=None,
+        timeout_seconds=1,
+        run_id="node-1-20260101T000000Z-async",
+        default_cmd="claude",
+        cwd=tmp_path,
+    )
+    log_path = tmp_path / ".milknado" / "runs" / f"{request.run_id}.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.touch()
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            raise RuntimeError("database unavailable")
+
+        def close(self) -> None:
+            return None
+
+    class Sessions:
+        def open_graph(self, _project_root: Path):
+            return Graph(), None
+
+    monkeypatch.setattr(
+        async_run,
+        "_run_worker_process",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+    )
+    context = async_run.AsyncWorkerContext(
+        request=request,
+        log_path=log_path,
+        argv=("claude",),
+        graph_sessions=Sessions(),
+        git=object(),  # type: ignore[arg-type]
+        process=object(),  # type: ignore[arg-type]
+    )
+    async_run._async_worker(context)
+    sidecar = tmp_path / ".milknado" / "runs" / f"{request.run_id}.terminal-error"
+    assert "terminal persistence raised" in sidecar.read_text(encoding="utf-8")
+
+
+def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
+    from milknado.domains.dispatch._runstate import runs_dir
+    from milknado.domains.dispatch.async_run import poll_async_run
+
+    run_id = "node-1-20260101T000000Z-abcd"
+    rdir = runs_dir(tmp_path)
+    rdir.mkdir(parents=True, exist_ok=True)
+    (rdir / f"{run_id}.terminal-error").write_text("persistence failed", encoding="utf-8")
+
+    class Graph:
+        def get_run(self, _run_id: str) -> dict:
+            return {"run_id": _run_id, "status": "failed", "log_path": "tampered"}
+
+    result = poll_async_run(Graph(), tmp_path, run_id)
+    assert result["terminal_persistence"] == "degraded"
+    assert result["error"] == "persistence failed"
+
+
+def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
+    from types import SimpleNamespace
+
+    from milknado.domains.dispatch import lifecycle
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            return True
+
+        def mark_terminal(self, *_args) -> bool:
+            return False
+
+        def get_node(self, _node_id: int):
+            return SimpleNamespace(id=_node_id)
+
+    with pytest.raises(RuntimeError, match="terminal node write lost its fence"):
+        lifecycle._finish_dispatch(
+            Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+        )
+
+
+def test_sync_dispatch_preserves_terminal_persistence_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from milknado.domains.dispatch import lifecycle
+    from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
+
+    class Graph:
+        def get_node(self, _node_id: int):
+            return SimpleNamespace(kind=NodeKind.TASK)
+
+        def claim_node_for_dispatch(self, *_args, **_kwargs) -> None:
+            return None
+
+        def start_run(self, *_args, **_kwargs) -> None:
+            return None
+
+        def finish_run(self, *_args, **_kwargs) -> bool:
+            return True
+
+        def mark_terminal(self, *_args, **_kwargs) -> bool:
+            raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(
+        lifecycle,
+        "run_headless",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+    )
+    request = SyncDispatchRequest(
+        node_id=1,
+        project_root=tmp_path,
+        worker_cmd=None,
+        timeout_seconds=1,
+        default_cmd="claude",
+        process=object(),  # type: ignore[arg-type]
+        worktree_mode=WorktreeMode.THIS_BRANCH,
+    )
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        lifecycle.dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+
+
+def test_async_worker_reports_cancelled_run_fence_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.domains.dispatch.async_run as async_run
+
+    request = async_run.AsyncRunRequest(
+        project_root=tmp_path,
+        node_id=1,
+        brief="brief",
+        worker_cmd=None,
+        timeout_seconds=1,
+        run_id="node-1-20260101T000000Z-cafe",
+        default_cmd="claude",
+        cwd=tmp_path,
+    )
+    log_path = tmp_path / ".milknado" / "runs" / f"{request.run_id}.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.touch()
+
+    class Graph:
+        def finish_run(self, *_args) -> bool:
+            return False
+
+        def close(self) -> None:
+            return None
+
+    class Sessions:
+        def open_graph(self, _project_root: Path):
+            return Graph(), None
+
+    monkeypatch.setattr(
+        async_run, "_run_worker_process", lambda *_args, **_kwargs: (0, False, True)
+    )
+    context = async_run.AsyncWorkerContext(
+        request=request,
+        log_path=log_path,
+        argv=("claude",),
+        graph_sessions=Sessions(),
+        git=object(),  # type: ignore[arg-type]
+        process=object(),  # type: ignore[arg-type]
+    )
+    async_run._async_worker(context)

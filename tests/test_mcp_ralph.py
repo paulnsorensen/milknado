@@ -399,7 +399,6 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
 def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    import logging
 
     from milknado.domains.common import NodeStatus
     from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
@@ -422,10 +421,32 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         stale_worktree=None,
     )
     graph = Graph()
-    with caplog.at_level(logging.ERROR):
+    with pytest.raises(RuntimeError, match="spawn failure persistence failed"):
         _record_spawn_failure(graph, claim, OSError("missing runner"))
     assert graph.terminal == (6, claim.run_id, NodeStatus.FAILED)
     assert "spawn failure persistence failed" in caplog.text
+
+
+def test_spawn_failure_preserves_node_persistence_exception() -> None:
+    from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
+
+    class Graph:
+        def finish_run(self, _run_id: str, _result: object) -> bool:
+            return True
+
+        def mark_terminal(self, _node_id: int, _run_id: str, _status: object) -> bool:
+            raise RuntimeError("node database unavailable")
+
+    claim = RalphClaim(
+        run_id="node-7-20260101T000000Z-spwn",
+        node_id=7,
+        target_branch="main",
+        base_oid="abc123",
+        stale_worktree=None,
+    )
+    with pytest.raises(RuntimeError, match="spawn failure persistence failed") as error:
+        _record_spawn_failure(Graph(), claim, OSError("missing runner"))
+    assert isinstance(error.value.__cause__, RuntimeError)
 
 
 def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
@@ -669,7 +690,9 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
             return []
 
     class _StubExecutor:
-        def dispatch(self, node_id: int, config, *, base_oid=None) -> DispatchResult:  # noqa: ANN001, ARG002
+        def dispatch(
+            self, node_id: int, config, *, base_oid=None, parent_run_id=None
+        ) -> DispatchResult:  # noqa: ANN001, ARG002
             return DispatchResult(
                 node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
             )
