@@ -430,7 +430,7 @@ class TestWorktreeHopEdgeCases:
         """When git raises OSError (not installed), the cwd fallback applies unchanged."""
         import subprocess
 
-        from milknado.mcp._core import _worktree_main_checkout
+        from milknado.app.project import _worktree_main_checkout
 
         def _raise_oserror(*args, **kwargs):
             raise OSError("git not found")
@@ -449,7 +449,7 @@ class TestWorktreeHopEdgeCases:
         import subprocess
         from unittest.mock import MagicMock
 
-        from milknado.mcp._core import _worktree_main_checkout
+        from milknado.app.project import _worktree_main_checkout
 
         fake = MagicMock()
         fake.returncode = 0
@@ -552,7 +552,7 @@ class TestWorktreeHopAdditionalEdgeCases:
         """subprocess.TimeoutExpired is caught and treated as 'no hop'."""
         import subprocess
 
-        from milknado.mcp._core import _worktree_main_checkout
+        from milknado.app.project import _worktree_main_checkout
 
         monkeypatch.setattr(
             subprocess,
@@ -575,7 +575,7 @@ class TestWorktreeHopAdditionalEdgeCases:
         import subprocess
         from unittest.mock import MagicMock
 
-        from milknado.mcp._core import _worktree_main_checkout
+        from milknado.app.project import _worktree_main_checkout
 
         fake = MagicMock()
         fake.returncode = 0
@@ -802,7 +802,7 @@ class TestUnicodeDecodeErrorCaught:
         """A non-UTF8 byte in subprocess output raises UnicodeDecodeError, not a crash."""
         import subprocess
 
-        from milknado.mcp._core import _worktree_main_checkout
+        from milknado.app.project import _worktree_main_checkout
 
         monkeypatch.setattr(
             subprocess,

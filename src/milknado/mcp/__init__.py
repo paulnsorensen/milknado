@@ -1,1 +1,1 @@
-"""MCP delivery package."""
+"""Milknado MCP delivery package — FastMCP server and tool modules."""

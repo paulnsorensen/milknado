@@ -857,7 +857,7 @@ class TestProtectedBranchGuard:
     def test_protected_branch_raises_exit_2_before_log_created(self, tmp_path: Path) -> None:
         import typer
 
-        from milknado.app.run_command import check_protected_branch
+        from milknado.app.run import check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -874,7 +874,7 @@ class TestProtectedBranchGuard:
         assert not any(log_dir.glob("run-*.log"))
 
     def test_protected_branch_with_allow_protected_does_not_raise(self, tmp_path: Path) -> None:
-        from milknado.app.run_command import check_protected_branch
+        from milknado.app.run import check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -887,7 +887,7 @@ class TestProtectedBranchGuard:
         assert check_protected_branch(cfg, "main", allow_protected=True) is None
 
     def test_unprotected_branch_does_not_raise(self, tmp_path: Path) -> None:
-        from milknado.app.run_command import check_protected_branch
+        from milknado.app.run import check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -901,7 +901,7 @@ class TestProtectedBranchGuard:
     def test_second_protected_branch_also_raises_exit_2(self, tmp_path: Path) -> None:
         import typer
 
-        from milknado.app.run_command import check_protected_branch
+        from milknado.app.run import check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -918,7 +918,7 @@ class TestProtectedBranchGuard:
     def test_detached_head_refused_even_with_allow_protected(self, tmp_path: Path) -> None:
         import typer
 
-        from milknado.app.run_command import check_protected_branch
+        from milknado.app.run import check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(

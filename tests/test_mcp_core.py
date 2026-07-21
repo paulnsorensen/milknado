@@ -6,13 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp._core import (
-    RunDict,
+from milknado.app.project import (
     _worktree_main_checkout,
-    build_run_dict,
     require_worker_run,
     resolve_project_root,
 )
+from milknado.mcp._core import RunDict, build_run_dict
 
 
 def test_run_dict_builder_is_the_canonical_superset() -> None:
@@ -77,7 +76,7 @@ def test_git_root_discovery_warns_before_fallback(
     )
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: failed)
 
-    with caplog.at_level(logging.WARNING, logger="milknado.mcp._core"):
+    with caplog.at_level(logging.WARNING, logger="milknado.app.project"):
         assert _worktree_main_checkout(tmp_path) is None
 
     assert caplog.messages == [
