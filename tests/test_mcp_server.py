@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -715,17 +716,29 @@ class TestTodoAsyncRun:
         assert immediate["exit_code"] is None
         _wait_for_terminal(started["run_id"], root, timeout=5.0)
 
-    def test_async_worker_spawn_failure_reaches_failed(self, tmp_path: Path) -> None:
-        """A worker_cmd that passes the allowlist but can't be spawned (binary
-        missing on disk) must not leave the state file stuck on 'running'. Uses
-        an allowlisted basename (`claude`) at a path that does not exist, so the
-        FileNotFoundError surfaces in the async worker thread, not at validation."""
+    def test_async_worker_spawn_failure_reaches_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        """A missing bare allowlisted binary must fail in the async worker thread
+        rather than leave the state file stuck on ``running``."""
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
         root = str(tmp_path)
+        subprocess.run(["git", "init", "-q", root], check=True)
+        subprocess.run(["git", "-C", root, "config", "user.email", "test@example.com"], check=True)
+        subprocess.run(["git", "-C", root, "config", "user.name", "Test"], check=True)
+        Path(root, ".gitkeep").touch()
+        subprocess.run(["git", "-C", root, "add", ".gitkeep"], check=True)
+        subprocess.run(
+            ["git", "-C", root, "commit", "-qm", "init"],
+            check=True,
+        )
         task = _call(milknado_todo_add, description="bad-cmd", kind="task", project_root=root)
-        started = _call_this_branch(
+        started = _call(
             milknado_run_inline_start,
             node_id=task["id"],
-            worker_cmd=str(tmp_path / "nonexistent" / "claude"),
+            worker_cmd="claude",
             timeout_seconds=10,
             project_root=root,
         )

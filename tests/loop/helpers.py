@@ -76,7 +76,7 @@ def make_config(tmp_path: Path, ralph_content: str = "test prompt", **overrides)
     ralph_file.write_text(ralph_content)
 
     defaults = dict(
-        agent="echo",
+        agent="omp",
         ralph_dir=ralph_dir,
         ralph_file=ralph_file,
         max_iterations=1,

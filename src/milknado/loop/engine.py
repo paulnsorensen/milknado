@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.loop._agent import AgentRunSpec, execute_agent
 from milknado.loop._events import (
     AgentActivityData,
@@ -193,13 +194,14 @@ class _AgentCallbacks(NamedTuple):
 
 
 def _resolve_agent_command(config: RunConfig) -> tuple[list[str], Any]:
-    """Parse the agent command string and select its adapter."""
+    """Parse and validate the worker command before selecting its adapter."""
     try:
         cmd = shlex.split(config.agent)
     except ValueError as exc:
         raise ValueError(
             f"Invalid agent command syntax: {config.agent!r}. {_field_hint(FIELD_AGENT)}"
         ) from exc
+    validate_worker_argv(cmd)
     return cmd, select_adapter(cmd)
 
 
@@ -265,6 +267,9 @@ def _launch_agent(
                 on_output_line=callbacks.on_output_line,
                 capture_result_text=True,
                 capture_stdout=capture_stdout,
+                completion_signal=(
+                    config.completion_signal if config.stop_on_completion_signal else None
+                ),
                 max_turns=config.max_turns,
                 max_turns_grace=config.max_turns_grace,
                 on_tool_use=callbacks.on_tool_use,
@@ -279,9 +284,12 @@ def _launch_agent(
 
 def _promise_completed(agent: Any, adapter: Any, config: RunConfig) -> bool:
     """Return whether the agent's exit + output satisfy the completion signal."""
+    if not agent.success:
+        return False
+    if config.stop_on_completion_signal and agent.completion_detected:
+        return True
     return bool(
-        agent.success
-        and adapter.extract_completion_signal(
+        adapter.extract_completion_signal(
             result_text=agent.result_text,
             stdout=agent.captured_stdout,
             user_signal=config.completion_signal,

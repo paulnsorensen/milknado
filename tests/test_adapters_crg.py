@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -122,8 +123,13 @@ class TestEnsureGraph:
     ) -> None:
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0] == ["code-review-graph", "build"]
+        mock_run.assert_called_once_with(
+            ["code-review-graph", "build"],
+            cwd=tmp_path,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
 
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")
@@ -142,8 +148,13 @@ class TestEnsureGraph:
 
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0] == ["code-review-graph", "update"]
+        mock_run.assert_called_once_with(
+            ["code-review-graph", "update"],
+            cwd=tmp_path,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
 
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")

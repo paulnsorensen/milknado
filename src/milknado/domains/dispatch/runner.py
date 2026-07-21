@@ -16,8 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from milknado.domains.common.agent_argv import (
-    ALLOWED_WORKER_EXECUTABLES,
     POSITIONAL_BRIEF_EXECUTABLES,
+    validate_worker_argv,
 )
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
@@ -26,20 +26,6 @@ from milknado.domains.dispatch._runstate import tail as _tail
 from milknado.domains.dispatch.ports import ProcessPort
 
 _logger = logging.getLogger(__name__)
-
-
-def validate_worker_argv(argv: list[str]) -> None:
-    """Reject a resolved worker argv whose executable isn't an allowed agent CLI.
-
-    Guards every worker_cmd source — the explicit MCP arg and the resolved
-    profile default — by checking the basename of argv[0] against the allowlist.
-    """
-    executable = Path(argv[0]).name if argv else ""
-    if executable not in ALLOWED_WORKER_EXECUTABLES:
-        raise ValueError(
-            "worker_cmd must start with one of "
-            f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {executable!r}"
-        )
 
 
 @dataclass(frozen=True)

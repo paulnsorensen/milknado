@@ -126,6 +126,20 @@ class TestPlanningSubprocess:
             )
         )
 
+    @patch("milknado.app.plan.subprocess.run")
+    def test_rejects_path_spoof_before_subprocess(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        context = tmp_path / "context.md"
+        context.write_text("plan context", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="worker_cmd"):
+            _PlanningSubprocess().run_agent(context, "/tmp/claude -p", tmp_path)
+
+        mock_run.assert_not_called()
+
 
 class TestBuildPlanningContext:
     def test_includes_goal(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:

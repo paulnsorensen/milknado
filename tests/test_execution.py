@@ -8,6 +8,7 @@ import pytest
 
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
+    GitOperationError,
     InvalidTransition,
     RebaseAbortError,
     TransientDispatchError,
@@ -23,6 +24,7 @@ from milknado.domains.execution import (
     DispatchResult,
     ExecutionConfig,
     Executor,
+    WorktreeManager,
     get_dispatchable_nodes,
 )
 from milknado.domains.graph import MikadoGraph
@@ -45,6 +47,8 @@ class FakeGit:
         self.force_removed: list[Path] = []
         self.remove_targets: list[str] = []
         self.commits: list[tuple[Path, str]] = []
+        self.rebases: list[tuple[Path, str]] = []
+        self.fast_forwards: list[str] = []
         self.rebase_result: RebaseResult = RebaseResult(success=True)
 
     def branch_exists(self, branch: str) -> bool:
@@ -63,6 +67,7 @@ class FakeGit:
         self.removed.append(path)
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
+        self.rebases.append((worktree, onto))
         return self.rebase_result
 
     def current_branch(self) -> str:
@@ -76,6 +81,9 @@ class FakeGit:
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
         self.commits.append((worktree, msg))
+
+    def fast_forward(self, branch: str) -> None:
+        self.fast_forwards.append(branch)
 
 
 class FakeRalph:
@@ -594,6 +602,58 @@ class TestExecutorDispatch:
 
 
 class TestExecutorComplete:
+    def test_merge_back_rejects_mismatched_checkout_before_git_mutation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        target_before = fake_git.current_branch()
+
+        with pytest.raises(GitOperationError, match="merge-back target"):
+            WorktreeManager(fake_git).rebase_and_merge(
+                worktree,
+                "feature",
+                node_id=1,
+                description="task",
+            )
+
+        assert fake_git.current_branch() == target_before
+        assert fake_git.commits == []
+        assert fake_git.rebases == []
+        assert fake_git.fast_forwards == []
+        assert fake_git.removed == []
+
+    def test_completion_rejects_dispatch_target_switch_before_merge_mutation(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_git = FakeGit()
+        checked_out = ["main"]
+        fake_git.current_branch = lambda: checked_out[0]  # type: ignore[method-assign]
+        ex = Executor(
+            graph=graph,
+            git=fake_git,
+            ralph=FakeRalph(),
+            crg=FakeCrg(),
+        )
+        graph.add_node("task")
+        ex.dispatch(1, config)
+        checked_out[0] = "other"
+
+        with pytest.raises(GitOperationError, match="dispatch-time merge target"):
+            ex.complete(1, "other")
+
+        assert fake_git.commits == []
+        assert fake_git.rebases == []
+        assert fake_git.fast_forwards == []
+        assert fake_git.removed == []
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status is NodeStatus.RUNNING
+
     def test_marks_done_on_success(
         self,
         graph: MikadoGraph,

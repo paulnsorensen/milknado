@@ -41,6 +41,7 @@ from milknado.loop._output import (
     collect_output,
     warn,
 )
+from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
 
 _log = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ _THREAD_JOIN_TIMEOUT = 5.0
 # Seconds to wait for the agent process to exit after a kill signal.
 _PROCESS_WAIT_TIMEOUT = 5.0
 _OUTPUT_TAIL_CHARS = 64 * 1024
+_STREAM_QUEUE_MAX_LINES = 256
 
 
 @dataclass(slots=True)
@@ -124,6 +126,66 @@ class _BoundedOutput:
 
     def __iter__(self):
         return iter(self._lines)
+
+    @property
+    def text(self) -> str:
+        return "".join(self._lines)
+
+
+@dataclass(slots=True)
+class _FileSink:
+    """Serialize complete output to a file without retaining it in memory."""
+
+    handle: IO[str]
+    path: Path | None = None
+
+    def write(self, line: str) -> None:
+        self.handle.write(line)
+        self.handle.flush()
+
+    def close(self) -> None:
+        self.handle.close()
+
+
+@dataclass(slots=True)
+class _OutputCapture:
+    """Bounded tail plus an optional file-backed complete-output sink."""
+
+    tail: _BoundedOutput | None = None
+    sink: _FileSink | None = None
+    mirror: _FileSink | None = None
+
+    def append(self, line: str) -> None:
+        if self.tail is not None:
+            self.tail.append(line)
+        if self.sink is not None:
+            self.sink.write(line)
+        if self.mirror is not None:
+            self.mirror.write(line)
+
+    @property
+    def text(self) -> str | None:
+        return self.tail.text if self.tail is not None else None
+
+    def iter_complete_lines(self):
+        if self.sink is None:
+            return ()
+        self.sink.handle.flush()
+        self.sink.handle.seek(0)
+        return iter(self.sink.handle.readline, "")
+
+    def close(self) -> None:
+        if self.sink is not None:
+            self.sink.close()
+
+
+def _new_output_sink(log_dir: Path | None, iteration: int) -> _FileSink | None:
+    if log_dir is None:
+        return _FileSink(tempfile.TemporaryFile(mode="w+", encoding="utf-8"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime(_LOG_TIMESTAMP_FORMAT)
+    path = log_dir / f"{iteration:0{_LOG_ITERATION_PAD_WIDTH}d}_{timestamp}.log"
+    return _FileSink(path.open("w", encoding="utf-8"), path)
 
 
 # Tempdir prefix for per-iteration wind-down hook config.  Surfaces in
@@ -294,7 +356,8 @@ def _deliver_prompt(proc: subprocess.Popen[Any], prompt: str) -> None:
     consuming the full prompt, which is a normal (if uncommon) lifecycle
     event.
     """
-    assert proc.stdin is not None
+    if proc.stdin is None:
+        raise RuntimeError("subprocess.Popen did not provide stdin for prompt delivery")
     try:
         proc.stdin.write(prompt)
     except BrokenPipeError:
@@ -314,6 +377,7 @@ class AgentResult(ProcessResult):
     log_file: Path | None = None
     result_text: str | None = None
     captured_stdout: str | None = None
+    completion_detected: bool = False
     captured_stderr: str | None = None
     # Tool-use events the adapter reported for this iteration; ``0`` when
     # no adapter was active or the adapter's ``counts_what != "tool_use"``.
@@ -354,6 +418,7 @@ class _StreamResult:
     timed_out: bool
     tool_use_count: int = 0
     turn_capped: bool = False
+    completion_detected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -372,6 +437,7 @@ class AgentRunSpec:
     capture_stdout: bool | None = None
     max_turns: int | None = None
     max_turns_grace: int = 0
+    completion_signal: str | None = None
     on_tool_use: ToolUseCallback | None = None
     cwd: Path | None = None
 
@@ -394,6 +460,7 @@ class _ResolvedAgentRun:
     max_turns: int | None = None
     on_tool_use: ToolUseCallback | None = None
     env: dict[str, str] | None = None
+    completion_signal: str | None = None
     cwd: Path | None = None
 
 
@@ -418,29 +485,39 @@ def _write_log(
 def _readline_pump(
     stdout: IO[str],
     line_queue: queue.Queue[str | None],
+    stop_event: threading.Event | None = None,
 ) -> None:
-    """Read *stdout* line-by-line and put each line into *line_queue*.
-
-    Sends a ``None`` sentinel on EOF or pipe error so the consumer can
-    distinguish "no more data" from "still waiting".  Runs on a daemon
-    thread started by :func:`_read_agent_stream`.
-    """
+    """Read stdout into a bounded queue without losing complete log output."""
     try:
         for line in iter(stdout.readline, ""):
-            line_queue.put(line)
+            while True:
+                if stop_event is not None and stop_event.is_set():
+                    return
+                try:
+                    line_queue.put(line, timeout=0.1)
+                    break
+                except queue.Full:
+                    continue
     except (ValueError, OSError):
-        # Pipe closed concurrently (e.g. after timeout kill) — exit cleanly.
         pass
     finally:
-        line_queue.put(None)  # EOF sentinel
+        while stop_event is None or not stop_event.is_set():
+            try:
+                line_queue.put(None, timeout=0.1)
+                break
+            except queue.Full:
+                continue
 
 
 @dataclass(slots=True)
 class _StreamState:
     stdout_lines: _BoundedOutput | None
+    output_capture: _OutputCapture | None = None
+    completion_signal: str | None = None
     result_text: str | None = None
     tool_use_count: int = 0
     turn_capped: bool = False
+    completion_detected: bool = False
 
     def to_result(self, *, timed_out: bool) -> _StreamResult:
         return _StreamResult(
@@ -449,6 +526,7 @@ class _StreamState:
             timed_out=timed_out,
             tool_use_count=self.tool_use_count,
             turn_capped=self.turn_capped,
+            completion_detected=self.completion_detected,
         )
 
 
@@ -458,8 +536,12 @@ def _record_stream_line(
     on_output_line: OutputLineCallback | None,
     correlation: str,
 ) -> None:
-    if state.stdout_lines is not None:
+    if state.output_capture is not None:
+        state.output_capture.append(line)
+    elif state.stdout_lines is not None:
         state.stdout_lines.append(line)
+    if state.completion_signal and has_promise_completion(line, state.completion_signal):
+        state.completion_detected = True
     _call_safely(on_output_line, line.rstrip("\r\n"), _STDOUT, correlation=correlation)
 
 
@@ -489,21 +571,41 @@ def _read_agent_stream(
     on_output_line: OutputLineCallback | None = None,
     *,
     capture_stdout: bool = True,
+    output_capture: _OutputCapture | None = None,
+    completion_signal: str | None = None,
     adapter: CLIAdapter | None = None,
     max_turns: int | None = None,
     on_tool_use: ToolUseCallback | None = None,
     correlation: str = "unknown",
+    pump_threads: list[threading.Thread] | None = None,
 ) -> _StreamResult:
-    state = _StreamState(stdout_lines=_BoundedOutput() if capture_stdout else None)
+    state = _StreamState(
+        stdout_lines=(
+            output_capture.tail
+            if output_capture is not None
+            else (_BoundedOutput() if capture_stdout else None)
+        ),
+        output_capture=output_capture,
+        completion_signal=completion_signal,
+    )
     count_tool_use = adapter is not None and adapter.counts_what == "tool_use"
-    line_q: queue.Queue[str | None] = queue.Queue()
-    threading.Thread(target=_readline_pump, args=(stdout, line_q), daemon=True).start()
+    line_q: queue.Queue[str | None] = queue.Queue(maxsize=_STREAM_QUEUE_MAX_LINES)
+    stop_event = threading.Event()
+    pump_thread = threading.Thread(
+        target=_readline_pump,
+        args=(stdout, line_q, stop_event),
+        daemon=True,
+    )
+    pump_thread.start()
+    if pump_threads is not None:
+        pump_threads.append(pump_thread)
 
     while True:
         get_timeout = max(deadline - time.monotonic(), 0) if deadline is not None else None
         try:
             line = line_q.get(timeout=get_timeout)
         except queue.Empty:
+            stop_event.set()
             return state.to_result(timed_out=True)
         if line is None:
             return state.to_result(timed_out=False)
@@ -531,8 +633,10 @@ def _read_agent_stream(
                     stripped,
                     correlation,
                 ):
+                    stop_event.set()
                     return state.to_result(timed_out=False)
         if deadline is not None and time.monotonic() > deadline:
+            stop_event.set()
             return state.to_result(timed_out=True)
 
 
@@ -544,20 +648,37 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     capture_stderr_text = run.log_dir is not None
     pipe_stdin = run.stdin_text is not None
     writer_thread: threading.Thread | None = None
-    stderr_lines = _BoundedOutput() if capture_stderr_text else None
     stderr_thread: threading.Thread | None = None
+    pump_threads: list[threading.Thread] = []
     correlation = f"iteration={run.iteration}"
-
-    proc = subprocess.Popen(
-        run.cmd,
-        stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE if pipe_stderr else None,
-        env=_build_spawn_env(run.env),
-        cwd=run.cwd,
-        **SUBPROCESS_TEXT_KWARGS,
-        **SESSION_KWARGS,
+    log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
+    stdout_capture = _OutputCapture(
+        tail=_BoundedOutput() if capture_stdout_text else None,
+        sink=_new_output_sink(None, run.iteration) if capture_stdout_text else None,
+        mirror=log_sink,
     )
+    stderr_capture = _OutputCapture(
+        tail=_BoundedOutput() if capture_stderr_text else None,
+        mirror=log_sink,
+    )
+
+    try:
+        proc = subprocess.Popen(
+            run.cmd,
+            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE if pipe_stderr else None,
+            env=_build_spawn_env(run.env),
+            cwd=run.cwd,
+            **SUBPROCESS_TEXT_KWARGS,
+            **SESSION_KWARGS,
+        )
+    except Exception:
+        stdout_capture.close()
+        if log_sink is not None:
+            log_sink.close()
+        raise
+
     try:
         if proc.stdout is None:
             raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
@@ -568,11 +689,12 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
         if proc.stderr is not None:
             stderr_thread = _start_pump_thread(
                 proc.stderr,
-                stderr_lines,
+                stderr_capture,
                 _STDERR,
                 run.on_output_line,
                 correlation,
             )
+            pump_threads.append(stderr_thread)
         if run.stdin_text is not None:
             writer_thread = _start_writer_thread(proc, run.stdin_text)
         stream = _read_agent_stream(
@@ -581,30 +703,36 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             run.on_activity,
             run.on_output_line,
             capture_stdout=capture_stdout_text,
+            output_capture=stdout_capture,
+            completion_signal=run.completion_signal,
             adapter=run.adapter,
             max_turns=run.max_turns,
             on_tool_use=run.on_tool_use,
             correlation=correlation,
+            pump_threads=pump_threads,
         )
         if stream.timed_out or stream.turn_capped:
             _kill_process_group(proc)
         proc.wait()
     finally:
-        _cleanup_agent(proc, stderr_thread, writer_thread)
+        _cleanup_agent(proc, *pump_threads, writer_thread)
 
-    stdout = "".join(stream.stdout_lines) if stream.stdout_lines is not None else None
-    stderr = "".join(stderr_lines) if stderr_lines is not None else None
-    log_file = _write_log(run.log_dir, run.iteration, stdout, stderr)
+    stdout = stdout_capture.text
+    stderr = stderr_capture.text
+    stdout_capture.close()
+    if log_sink is not None:
+        log_sink.close()
     return AgentResult(
         returncode=None if stream.timed_out else proc.returncode,
         elapsed=time.monotonic() - start,
-        log_file=log_file,
+        log_file=log_sink.path if log_sink is not None else None,
         result_text=stream.result_text,
         timed_out=stream.timed_out,
         captured_stdout=stdout if capture_stdout_text else None,
         captured_stderr=stderr if capture_stderr_text else None,
         tool_use_count=stream.tool_use_count,
         turn_capped=stream.turn_capped,
+        completion_detected=stream.completion_detected,
     )
 
 
@@ -712,39 +840,8 @@ def _cleanup_agent(
 
 
 def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
-    """Run the agent subprocess and return the result.
-
-    ``run.stdin_text`` is the adapter-resolved prompt payload: a string when
-    the agent reads its prompt from stdin (the writer thread delivers it), or
-    ``None`` for arg-delivery agents whose prompt already lives in ``run.cmd``.
-    When ``None``, stdin is wired to ``DEVNULL`` and no writer thread runs.
-
-    Conditionally pipes stdout/stderr based on whether any subscriber
-    needs the output:
-
-    - **Inherit** (``run.on_output_line is None and run.log_dir is None``) —
-      stdout/stderr are not piped; the child writes directly to the
-      parent's file descriptors.  No reader threads, no buffering.
-    - **Callback only** (``run.on_output_line`` set, no log dir) — reader
-      threads forward lines to the callback without accumulating them,
-      avoiding unbounded memory growth.
-    - **Buffered capture** (``run.log_dir`` or ``run.capture_stdout`` set) —
-       reader threads accumulate lines for log writing or later completion
-       parsing; lines are also forwarded to the callback if provided.
-
-    The subprocess is started in its own process group so that on
-    ``KeyboardInterrupt`` or timeout the entire child tree can be killed
-    via :func:`_kill_process_group`.
-
-    Returns ``returncode=None`` when the process times out.
-    Raises ``FileNotFoundError`` if the command binary does not exist.
-    """
+    """Run a non-streaming agent with bounded tails and file-backed output."""
     start = time.monotonic()
-    # Blocking-path adapters count tool uses post-hoc by re-scanning the
-    # captured stdout (see _count_tool_uses_post_hoc), so a cap is only
-    # enforceable when the bytes are buffered.  Force buffering when a cap
-    # is set on a tool-use-counting adapter, otherwise tool_use_count would
-    # always be 0 and turn_capped would never fire.
     needs_post_hoc_count = (
         run.max_turns is not None
         and run.adapter is not None
@@ -756,27 +853,33 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     pipe_stderr = capture_stderr_text or run.on_output_line is not None
     pipe_stdin = run.stdin_text is not None
 
-    # When no subscriber needs the bytes, stdout/stderr are left
-    # un-piped so the child writes directly to the terminal.  When
-    # capture is needed, reader threads drain stdout/stderr
-    # concurrently.  Lines are only accumulated into buffers when a
-    # log file will be written; otherwise the callback alone observes
-    # them, avoiding unbounded memory growth.
     returncode: int | None = None
     timed_out = False
     writer_thread: threading.Thread | None = None
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
-    stdout_lines = _BoundedOutput() if capture_stdout_text else None
-    stderr_lines = _BoundedOutput() if capture_stderr_text else None
+    log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
+    stdout_capture = _OutputCapture(
+        tail=_BoundedOutput() if capture_stdout_text else None,
+        sink=_new_output_sink(None, run.iteration) if capture_stdout_text else None,
+        mirror=log_sink,
+    )
+    stderr_capture = _OutputCapture(
+        tail=_BoundedOutput() if capture_stderr_text else None,
+        mirror=log_sink,
+    )
     result_text: str | None = None
+    completion_detected = False
 
     def _on_output_line(line: str, stream_name: OutputStream) -> None:
-        nonlocal result_text
-        if run.capture_result_text and stream_name == _STDOUT:
-            extracted = _extract_result_text_from_line(line)
-            if extracted is not None:
-                result_text = extracted
+        nonlocal result_text, completion_detected
+        if stream_name == _STDOUT:
+            if run.capture_result_text:
+                extracted = _extract_result_text_from_line(line)
+                if extracted is not None:
+                    result_text = extracted
+            if run.completion_signal and has_promise_completion(line, run.completion_signal):
+                completion_detected = True
         _call_safely(
             run.on_output_line,
             line,
@@ -784,31 +887,38 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             correlation=f"iteration={run.iteration}",
         )
 
-    spawn_env = _build_spawn_env(run.env)
-    proc = subprocess.Popen(
-        run.cmd,
-        stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-        stdout=subprocess.PIPE if pipe_stdout else None,
-        stderr=subprocess.PIPE if pipe_stderr else None,
-        env=spawn_env,
-        cwd=run.cwd,
-        **SUBPROCESS_TEXT_KWARGS,
-        **SESSION_KWARGS,
-    )
+    try:
+        proc = subprocess.Popen(
+            run.cmd,
+            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
+            stdout=subprocess.PIPE if pipe_stdout else None,
+            stderr=subprocess.PIPE if pipe_stderr else None,
+            env=_build_spawn_env(run.env),
+            cwd=run.cwd,
+            **SUBPROCESS_TEXT_KWARGS,
+            **SESSION_KWARGS,
+        )
+    except Exception:
+        stdout_capture.close()
+        if log_sink is not None:
+            log_sink.close()
+        raise
+
     try:
         if pipe_stdin and proc.stdin is None:
             raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
         if pipe_stdout:
             if proc.stdout is None:
                 raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
-            stdout_thread = _start_pump_thread(proc.stdout, stdout_lines, _STDOUT, _on_output_line)
+            stdout_thread = _start_pump_thread(
+                proc.stdout, stdout_capture, _STDOUT, _on_output_line
+            )
         if pipe_stderr:
             if proc.stderr is None:
                 raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-            stderr_thread = _start_pump_thread(proc.stderr, stderr_lines, _STDERR, _on_output_line)
-
-        # Arg-delivery agents (stdin_text is None) get DEVNULL stdin and no
-        # writer thread; the prompt already lives in the spawned argv.
+            stderr_thread = _start_pump_thread(
+                proc.stderr, stderr_capture, _STDERR, _on_output_line
+            )
         if run.stdin_text is not None:
             writer_thread = _start_writer_thread(proc, run.stdin_text)
 
@@ -820,27 +930,30 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     finally:
         _cleanup_agent(proc, stdout_thread, stderr_thread, writer_thread)
 
-    stdout = "".join(stdout_lines) if stdout_lines is not None else None
-    stderr = "".join(stderr_lines) if stderr_lines is not None else None
-    log_file = _write_log(run.log_dir, run.iteration, stdout, stderr)
-
+    stdout = stdout_capture.text
+    stderr = stderr_capture.text
     tool_use_count, turn_capped = _count_tool_uses_post_hoc(
         adapter=run.adapter,
-        stdout_lines=stdout_lines,
+        stdout_lines=stdout_capture.tail,
+        stdout_capture=stdout_capture,
         max_turns=run.max_turns,
         on_tool_use=run.on_tool_use,
     )
+    stdout_capture.close()
+    if log_sink is not None:
+        log_sink.close()
 
     return AgentResult(
         returncode=None if timed_out else returncode,
         elapsed=time.monotonic() - start,
-        log_file=log_file,
-        result_text=result_text or _extract_result_text_from_lines(stdout_lines),
+        log_file=log_sink.path if log_sink is not None else None,
+        result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
         timed_out=timed_out,
         captured_stdout=stdout if capture_stdout_text else None,
         captured_stderr=stderr if capture_stderr_text else None,
         tool_use_count=tool_use_count,
         turn_capped=turn_capped,
+        completion_detected=completion_detected,
     )
 
 
@@ -876,6 +989,7 @@ def _prepare_agent_run(
         on_tool_use=on_tool_use,
         env=env,
         cwd=spec.cwd,
+        completion_signal=spec.completion_signal,
     )
 
 
@@ -1068,21 +1182,20 @@ def _count_tool_uses_post_hoc(
     *,
     adapter: CLIAdapter | None,
     stdout_lines: _BoundedOutput | None,
+    stdout_capture: _OutputCapture | None = None,
     max_turns: int | None,
     on_tool_use: ToolUseCallback | None,
 ) -> tuple[int, bool]:
-    """Re-scan captured stdout for tool-use events when the blocking path runs.
-
-    Blocking-path adapters (no structured event stream) cannot preempt the
-    subprocess, so the cap is reported — not enforced — by scanning the
-    accumulated stdout after the child exits.  ``turn_capped`` is ``True``
-    when the post-hoc count reached *max_turns*, so the engine can emit the
-    same ``ITERATION_TURN_CAPPED`` event either way.
-    """
-    if adapter is None or adapter.counts_what != "tool_use" or not stdout_lines:
+    """Scan complete file-backed stdout while retaining only a bounded tail."""
+    if adapter is None or adapter.counts_what != "tool_use":
         return 0, False
+    lines = (
+        stdout_capture.iter_complete_lines()
+        if stdout_capture is not None and stdout_capture.sink is not None
+        else iter(stdout_lines or ())
+    )
     count = 0
-    for line in stdout_lines:
+    for line in lines:
         event = adapter.parse_event(line)
         if event is None or event.kind != "tool_use":
             continue

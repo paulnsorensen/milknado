@@ -1,13 +1,10 @@
 """ISOLATE-mode worktree creation + merge-back for one-shot run_inline dispatch.
 
-run_inline's ISOLATE mode runs a worker in its own git worktree/branch and, when
-``merge_back`` is set, rebase-merges the branch back into the caller's dispatch
-branch on exit 0. The merge-back REUSES the executor's
-``WorktreeManager.rebase_and_merge`` — the same squash → rebase → fast-forward →
-fail-closed-teardown machinery the ralph loop uses — rather than reimplementing
-it. WorktreeManager and the git adapter are imported lazily so importing the
-dispatch slice does not drag in the execution slice's TUI dependencies (the same
-lazy pattern ``cancel.py`` uses).
+ISOLATE mode runs a worker in its own git worktree/branch. When ``merge_back``
+is enabled, this module performs the direct GitPort merge-back on exit 0:
+squash, rebase, compare-and-swap the captured target ref, and remove the
+worktree only after the landing succeeds. Failed or mismatched operations
+preserve the worktree for inspection.
 """
 
 from __future__ import annotations
@@ -112,6 +109,12 @@ def merge_back_isolated(git: GitPort, root: Path, ctx: IsolateContext) -> MergeB
     target_ref = f"refs/heads/{ctx.target_branch}"
     with _merge_back_lock(root):
         try:
+            current_target = git.current_branch()
+            if current_target != ctx.target_branch:
+                raise GitOperationError(
+                    "merge-back target",
+                    f"caller requested {ctx.target_branch!r}, checkout is {current_target!r}",
+                )
             git.squash_and_commit(
                 ctx.worktree_path,
                 ctx.base_oid,

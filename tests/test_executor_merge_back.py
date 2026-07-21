@@ -516,6 +516,9 @@ class _RecordingGit:
         self.removed: list[Path] = []
         self.remove_targets: list[str] = []
 
+    def current_branch(self) -> str:
+        return "feature"
+
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         return self._committed
 
