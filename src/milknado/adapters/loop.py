@@ -3,8 +3,11 @@ from __future__ import annotations
 import logging
 import queue
 import re
+import shlex
+import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -14,6 +17,7 @@ from milknado.domains.common import (
     MikadoNode,
     ProgressEvent,
     VerifySpecResult,
+    build_resume_command,
 )
 from milknado.domains.execution import build_completion_verifier
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
@@ -43,16 +47,20 @@ class LoopAdapter:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
+        runtime_policy: Any | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
+        session = getattr(runtime_policy, "session", None)
+        if session is not None:
+            agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
         if mcp_config and mcp_config.exists():
-            agent_cmd = f"{agent} --mcp-config {mcp_config}"
+            agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
         config = RunConfig(
             agent=agent_cmd,
             ralph_dir=ralph_dir,
             ralph_file=ralph_file,
-            project_root=ralph_dir,
+            project_root=project_root or ralph_dir,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             log_dir=ralph_dir / ".ralph-logs",
@@ -79,11 +87,19 @@ class LoopAdapter:
         run = self._manager.get_run(run_id)
         if run is None:
             return []
-        stdout = getattr(run, "stdout", None)
-        if isinstance(stdout, list):
-            return stdout
-        if isinstance(stdout, str):
-            return stdout.splitlines()
+        direct = getattr(run, "stdout", None)
+        if isinstance(direct, str):
+            return direct.splitlines()
+        if isinstance(direct, list):
+            return [str(line) for line in direct]
+        state = run.state
+        text = getattr(state, "last_captured_stdout", None)
+        if text is None:
+            text = getattr(state, "last_result_text", None)
+        if isinstance(text, str):
+            return text.splitlines()
+        if isinstance(text, list):
+            return [str(line) for line in text]
         return []
 
     def wait_for_next_completion(
@@ -163,6 +179,38 @@ class LoopAdapter:
             local_manager.start_run(run_id)
             return _drain_verify_run(local_manager, run_id, ev_queue)
 
+    def run_node_review(
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+    ) -> ReviewVerdict:
+        """Run one bounded, read-only reviewer turn in the pinned worktree."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="milknado-review-") as tmpdir:
+            temp_root = Path(tmpdir)
+            ralph_file = temp_root / "review.md"
+            local_manager = RunManager()
+            local_queue: queue.Queue[Any] = queue.Queue()
+            local_emitter = QueueEmitter(local_queue)
+            ralph_file.write_text(prompt, encoding="utf-8")
+            config = RunConfig(
+                agent=agent,
+                ralph_dir=temp_root,
+                ralph_file=ralph_file,
+                project_root=worktree,
+                completion_signal="MILKNADO_NODE_REVIEW_COMPLETE",
+                stop_on_completion_signal=True,
+                max_iterations=1,
+                timeout=1800,
+                log_dir=temp_root / ".ralph-logs",
+            )
+            run = local_manager.create_run(config, emitter=local_emitter)
+            local_manager.start_run(run.state.run_id)
+            return _drain_review_run(local_manager, run.state.run_id, local_queue)
+
     def generate_ralph_md(
         self,
         node: MikadoNode,
@@ -241,6 +289,51 @@ def _drain_verify_run(
     return _parse_verify_output("\n".join(output_parts))
 
 
+def _drain_review_run(
+    local_manager: RunManager,
+    run_id: str,
+    ev_queue: queue.Queue[Any],
+) -> ReviewVerdict:
+    """Drain one reviewer run and convert its final output into a verdict."""
+    output_parts: list[str] = []
+    deadline = time.monotonic() + 1800.0
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                local_manager.stop_and_join(run_id, timeout=5.0)
+                return ReviewVerdict(
+                    approved=False,
+                    findings_md="reviewer timed out before producing a verdict",
+                )
+            try:
+                event = ev_queue.get(timeout=remaining)
+            except queue.Empty:
+                local_manager.stop_and_join(run_id, timeout=5.0)
+                return ReviewVerdict(
+                    approved=False,
+                    findings_md="reviewer timed out before producing a verdict",
+                )
+            if event.type in {
+                EventType.ITERATION_COMPLETED,
+                EventType.ITERATION_FAILED,
+            }:
+                text = event.data.get("result_text") or event.data.get("echo_stdout") or ""
+                if text:
+                    output_parts.append(str(text))
+            elif event.type == EventType.RUN_STOPPED:
+                break
+    except Exception as exc:
+        _logger.exception("node review drain failed for run_id=%s", run_id)
+        try:
+            local_manager.stop_and_join(run_id, timeout=5.0)
+        except Exception:
+            _logger.exception("node review stop failed for run_id=%s", run_id)
+        return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}")
+    approved, findings_md = _parse_review_output("\n".join(output_parts))
+    return ReviewVerdict(approved=approved, findings_md=findings_md)
+
+
 def _parse_verify_output(output: str) -> VerifySpecResult:
 
     if "<result>done</result>" in output:
@@ -288,3 +381,73 @@ def _build_ralph_content(
         f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
         "so the run can stop before the iteration budget.\n"
     )
+
+
+@dataclass(frozen=True)
+class ReviewVerdict:
+    approved: bool
+    findings_md: str
+
+
+def run_node_review(
+    node: MikadoNode,
+    worktree: Path,
+    diff: str,
+    brief: str,
+    spec_path: str | None,
+    profile: Any,
+) -> ReviewVerdict:
+    """Run the configured reviewer in the pinned node worktree."""
+    if not profile.review_agent:
+        raise ValueError(f"node {node.id} resolved review=true but no review_agent is configured")
+    result = subprocess.run(
+        shlex.split(profile.review_agent),
+        cwd=worktree,
+        input=_build_review_prompt(node, diff, brief, spec_path),
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        check=False,
+    )
+    output = f"{result.stdout}\n{result.stderr}"
+    approved, findings_md = _parse_review_output(output)
+    _persist_review_findings(worktree, node, findings_md)
+    return ReviewVerdict(approved=approved, findings_md=findings_md)
+
+
+def _build_review_prompt(
+    node: MikadoNode,
+    diff: str,
+    brief: str,
+    spec_path: str | None,
+) -> str:
+    spec_section = f"## Spec\n\n{spec_path}\n\n" if spec_path else ""
+    return (
+        f"# Review: {node.description}\n\n"
+        f"## Brief\n\n{brief}\n\n"
+        f"{spec_section}"
+        f"## Diff\n\n```diff\n{diff}\n```\n\n"
+        "Review the node worktree against the brief and spec. Emit findings "
+        "in easy-cheese severity/dimension bullet form, then exactly one of:\n\n"
+        "<verdict>approve</verdict>\n\nor\n\n"
+        "<verdict>reject</verdict>\n"
+    )
+
+
+def _parse_review_output(output: str) -> tuple[bool, str]:
+    match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
+    findings_md = output[: match.start()].strip() if match else output.strip()
+    if match and match.group(1).lower() == "approve":
+        return True, findings_md
+    if match:
+        return False, findings_md
+    _logger.warning("run_node_review: unparseable reviewer output; treating as revise")
+    return False, findings_md or "reviewer produced no parseable <verdict> tag"
+
+
+def _persist_review_findings(worktree: Path, node: MikadoNode, findings_md: str) -> Path:
+    slug = re.sub(r"[^a-z0-9]+", "-", node.description.lower()).strip("-") or str(node.id)
+    path = worktree / ".cheese" / "age" / f"{slug}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
+    return path

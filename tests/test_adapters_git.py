@@ -77,6 +77,42 @@ def repo(tmp_path: Path) -> Path:
     return root
 
 
+def test_diff_for_review_includes_committed_and_untracked_changes(repo: Path) -> None:
+    (repo / "committed.py").write_text("committed = True\n")
+    _git(repo, "add", "committed.py")
+    _git(repo, "commit", "-qm", "committed change")
+    base_oid = _git(repo, "rev-parse", "HEAD^").strip()
+    (repo / "README.md").write_text("unstaged change\n")
+    (repo / "untracked.py").write_text("untracked = True\n")
+
+    diff = GitAdapter(repo).diff_for_review(repo, base_oid)
+
+    assert "committed.py" in diff
+    assert "committed = True" in diff
+    assert "README.md" in diff
+    assert "unstaged change" in diff
+    assert "untracked.py" in diff
+    assert "untracked = True" in diff
+
+
+def test_diff_for_review_rejects_unexpected_untracked_diff_status(
+    adapter: GitAdapter,
+) -> None:
+    adapter._run = MagicMock(side_effect=[_ok(), _ok("new.txt\n")])  # type: ignore[method-assign]
+    with patch(
+        "milknado.adapters.git.subprocess.run",
+        return_value=_fail(2, stderr="diff failed"),
+    ):
+        with pytest.raises(GitOperationError, match="diff --no-index failed"):
+            adapter.diff_for_review(adapter._root, "base")
+
+
+def test_diff_for_review_translates_os_error(adapter: GitAdapter) -> None:
+    adapter._run = MagicMock(side_effect=OSError("git unavailable"))  # type: ignore[method-assign]
+    with pytest.raises(GitOperationError, match="diff for review failed"):
+        adapter.diff_for_review(adapter._root, "base")
+
+
 def _worktree_with_commit(repo: Path, name: str) -> Path:
     """A worktree on its own branch with one committed (unlanded) change."""
     wt = repo.parent / name

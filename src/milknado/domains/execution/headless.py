@@ -82,31 +82,41 @@ def run_node_to_completion(
         dispatch = executor.dispatch(
             node_id, exec_config, base_oid=base_oid, parent_run_id=parent_run_id
         )
-    try:
-        _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
-    except CompletionTimeout:
-        if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+    while True:
+        try:
+            _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
+        except CompletionTimeout:
+            if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+                return HeadlessOutcome(
+                    node_id,
+                    success=False,
+                    detail="completion timeout; worker did not exit, ownership preserved",
+                )
+            executor.fail(node_id)
+            return HeadlessOutcome(node_id, success=False, detail="completion timeout")
+
+        if not completed:
+            if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+                return HeadlessOutcome(
+                    node_id,
+                    success=False,
+                    detail="worker run did not complete or exit; ownership preserved",
+                )
+            executor.fail(node_id)
+            return HeadlessOutcome(node_id, success=False, detail="worker run did not complete")
+
+        result = executor.complete(node_id, feature_branch)
+        if result.redispatch is not None:
+            dispatch = result.redispatch
+            continue
+        if result.blocked:
             return HeadlessOutcome(
                 node_id,
                 success=False,
-                detail="completion timeout; worker did not exit, ownership preserved",
+                detail="adversarial review blocked the node",
             )
-        executor.fail(node_id)
-        return HeadlessOutcome(node_id, success=False, detail="completion timeout")
-
-    if not completed:
-        if not ralph.stop_run(dispatch.run_id, timeout=10.0):
-            return HeadlessOutcome(
-                node_id,
-                success=False,
-                detail="worker run did not complete or exit; ownership preserved",
-            )
-        executor.fail(node_id)
-        return HeadlessOutcome(node_id, success=False, detail="worker run did not complete")
-
-    result = executor.complete(node_id, feature_branch)
-    if result.rebase_conflict is not None:
-        rc = result.rebase_conflict
-        detail = rc.detail or ("conflicts: " + ", ".join(rc.conflicting_files))
-        return HeadlessOutcome(node_id, success=False, detail=detail)
-    return HeadlessOutcome(node_id, success=result.rebased)
+        if result.rebase_conflict is not None:
+            rc = result.rebase_conflict
+            detail = rc.detail or ("conflicts: " + ", ".join(rc.conflicting_files))
+            return HeadlessOutcome(node_id, success=False, detail=detail)
+        return HeadlessOutcome(node_id, success=result.rebased)

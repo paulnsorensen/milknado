@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     GitOperationError,
@@ -51,6 +53,17 @@ class ExecutionConfig:
     dispatch_max_retries: int = 2
     dispatch_backoff_seconds: float = 5.0
     commit_footer: str | None = None
+    agent_family: str = "claude"
+    review: bool = False
+    review_agent: str | None = None
+    review_max_rounds: int = 0
+    on_reject: str = "warn"
+    session_mode: str = "fresh"
+
+
+@dataclass(frozen=True)
+class RuntimePolicy:
+    session: NodeAgentSession | None = None
 
 
 @dataclass(frozen=True)
@@ -66,6 +79,9 @@ class CompletionResult:
     rebased: bool
     newly_ready: list[int]
     rebase_conflict: RebaseConflict | None = None
+    redispatch: DispatchResult | None = None
+    blocked: bool = False
+    review_notification_failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -354,7 +370,11 @@ class Executor:
         ralph: LoopPort,
         crg: CrgPort,
     ) -> None:
+        
         self._base_oid_by_node: dict[int, str | None] = {}
+        self._worker_run_id_by_node: dict[int, str] = {}
+        self._owner_fence_by_node: dict[int, str] = {}
+        self._git = git
         self._target_branch_by_node: dict[int, str] = {}
         self._target_oid_by_node: dict[int, str] = {}
         self._graph = graph
@@ -371,6 +391,7 @@ class Executor:
         base_oid: str | None = None,
         parent_run_id: str | None = None,
     ) -> DispatchResult:
+        self._review_enabled(config)
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
         last_exc: BaseException | None = None
@@ -385,6 +406,9 @@ class Executor:
                     parent_run_id=parent_run_id,
                 )
                 self._base_oid_by_node[node_id] = target_oid
+                self._worker_run_id_by_node[node_id] = result.run_id
+                if parent_run_id is not None:
+                    self._owner_fence_by_node[node_id] = parent_run_id
                 self._target_branch_by_node[node_id] = target_branch
                 self._target_oid_by_node[node_id] = target_oid
                 self._attempts_by_node[node_id] = attempt
@@ -492,6 +516,8 @@ class Executor:
         config: ExecutionConfig,
         wt_path: Path,
         base_oid: str,
+        *,
+        session: NodeAgentSession | None = None,
     ) -> str:
         context = build_node_context(node, self._graph, self._crg)
         ralph_path = self._ralph.generate_ralph_md(
@@ -500,19 +526,200 @@ class Executor:
             config.quality_gates,
             wt_path / "RALPH.md",
         )
-        run = self._ralph.create_run(
-            agent=config.execution_agent,
-            ralph_dir=wt_path,
-            ralph_file=ralph_path,
-            commands=[],
-            quality_gates=config.quality_gates,
-            project_root=wt_path,
-            commit_footer=config.commit_footer,
-            base_oid=base_oid,
-        )
+        create_kwargs: dict[str, Any] = {
+            "agent": config.execution_agent,
+            "ralph_dir": wt_path,
+            "ralph_file": ralph_path,
+            "commands": [],
+            "quality_gates": config.quality_gates,
+            "project_root": wt_path,
+            "commit_footer": config.commit_footer,
+            "base_oid": base_oid,
+        }
+        if session is not None:
+            create_kwargs["runtime_policy"] = RuntimePolicy(session=session)
+        run = self._ralph.create_run(**create_kwargs)
         run_id = run.state.run_id
         self._ralph.start_run(run_id)
         return run_id
+
+    def _review_enabled(self, config: ExecutionConfig) -> bool:
+        if not config.review:
+            return False
+        if not config.review_agent or not config.review_agent.strip():
+            raise ValueError("review=true requires a non-empty review_agent")
+        return config.review_max_rounds > 0
+
+    def _capture_session(
+        self,
+        node: MikadoNode,
+        config: ExecutionConfig,
+    ) -> NodeAgentSession | None:
+        if config.session_mode != "resume":
+            return None
+        existing = self._session_by_node.get(node.id)
+        if existing is not None:
+            return existing
+        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        if not worker_run_id:
+            raise ValueError(f"node {node.id} has no worker run id to resume")
+        lines = self._ralph.get_run_stdout(worker_run_id)
+        output = "\n".join(lines)
+        session_id: str | None = None
+        try:
+            session_id = capture_session_id(config.agent_family, output)
+        except ValueError:
+            for line in reversed(lines):
+                try:
+                    session_id = capture_session_id(config.agent_family, line)
+                    break
+                except ValueError:
+                    continue
+        if session_id is None:
+            raise ValueError(
+                f"node {node.id} worker output did not contain a resumable session id"
+            )
+        worktree = Path(node.worktree_path or config.project_root).resolve()
+        session = NodeAgentSession(
+            node_id=node.id,
+            family=config.agent_family,
+            session_id=session_id,
+            worktree_path=str(worktree),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        path = config.project_root / ".milknado" / "sessions" / f"node-{node.id}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
+        self._session_by_node[node.id] = session
+        return session
+
+    def _review_prompt(self, node: MikadoNode, worktree: Path, config: ExecutionConfig) -> str:
+        base_oid = self._base_oid_by_node.get(node.id)
+        if not base_oid:
+            raise ValueError(f"node {node.id} has no dispatch base oid for review")
+        diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
+        try:
+            brief = (worktree / "RALPH.md").read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            brief = node.description
+        spec_path = node.artifact_path
+        if spec_path:
+            candidate = Path(spec_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = (config.project_root / candidate).resolve()
+            spec_path = str(candidate)
+        return (
+            f"# Adversarial review: {node.description}\n\n"
+            "## Generated node brief/context\n\n"
+            f"{brief.rstrip()}\n\n"
+            f"## Spec\n\n{spec_path or '(no spec path)'}\n\n"
+            "Review the pinned worktree against the brief and spec. Report "
+            "easy-cheese severity/dimension findings with evidence and fixes, "
+            "then emit exactly one verdict tag:\n\n"
+            "<verdict>approve</verdict>\n\nor\n\n"
+            "<verdict>reject</verdict>\n\n"
+            f"## Full base-to-worktree diff\n\n```diff\n{diff}\n```\n"
+        )
+
+    def _persist_review_findings(
+        self,
+        node: MikadoNode,
+        worktree: Path,
+        findings_md: str,
+    ) -> None:
+        slug = _slugify(node.description) or str(node.id)
+        path = worktree / ".cheese" / "age" / f"{slug}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
+
+    def _notify_review(
+        self,
+        node: MikadoNode,
+        *,
+        verdict: str,
+        findings_md: str,
+    ) -> bool:
+        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        if not worker_run_id:
+            _logger.error("node_review_notification_missing_run node_id=%d", node.id)
+            return False
+        body = json.dumps(
+            {"node_id": node.id, "verdict": verdict, "findings": findings_md},
+            sort_keys=True,
+        )
+        try:
+            self._graph.deposit_run_message(
+                worker_run_id,
+                "node_review",
+                body,
+                datetime.now(UTC).isoformat(),
+            )
+        except Exception:
+            _logger.exception(
+                "node_review_notification_failed node_id=%d run_id=%s",
+                node.id,
+                worker_run_id,
+            )
+            return False
+        return True
+
+    def _run_review(
+        self,
+        node: MikadoNode,
+        worktree: Path,
+        config: ExecutionConfig,
+    ) -> tuple[bool, str]:
+        self._capture_session(node, config)
+        reviewer = getattr(self._ralph, "run_node_review", None)
+        if reviewer is None:
+            raise ValueError("configured adversarial review requires a LoopPort reviewer")
+        result = reviewer(
+            config.review_agent,
+            self._review_prompt(node, worktree, config),
+            worktree,
+            config.project_root,
+        )
+        approved = bool(getattr(result, "approved", False))
+        findings = str(getattr(result, "findings_md", "")).strip()
+        self._persist_review_findings(node, worktree, findings or "reviewer returned no findings")
+        return approved, findings
+
+    def _redispatch_review_round(
+        self,
+        node: MikadoNode,
+        config: ExecutionConfig,
+        worktree: Path,
+    ) -> DispatchResult:
+        owner_fence = self._owner_fence_by_node.get(node.id)
+        old_worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        if not old_worker_run_id:
+            raise ValueError(
+                f"node {node.id} has no run fence/worker run id for review redispatch"
+            )
+        base_oid = self._base_oid_by_node.get(node.id)
+        if base_oid is None:
+            base_oid = self._wt.resolve_ref(self._wt.current_branch())
+        session = self._session_by_node.get(node.id)
+        run_id = self._create_ralph_run(
+            node,
+            config,
+            worktree,
+            base_oid,
+            session=session if config.session_mode == "resume" else None,
+        )
+        if owner_fence is None:
+            if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
+                with contextlib.suppress(Exception):
+                    self._ralph.stop_run(run_id, timeout=5.0)
+                raise ValueError(f"review redispatch fence lost for node {node.id}")
+        else:
+            current = self._graph.get_node(node.id)
+            if current is None or current.run_id != owner_fence:
+                with contextlib.suppress(Exception):
+                    self._ralph.stop_run(run_id, timeout=5.0)
+                raise ValueError(f"adopted owner fence lost for node {node.id}")
+        self._worker_run_id_by_node[node.id] = run_id
+        return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
     def _cleanup_failed_dispatch(
         self,
@@ -614,13 +821,6 @@ class Executor:
         if node is None:
             raise ValueError(f"Node {node_id} not found")
 
-        # A terminal node (DONE/FAILED) reaching complete() again is a legitimate
-        # duplicate — the same run reported done twice, or a re-run of an already-
-        # finished node. Short-circuit *before* rebase_and_merge so its
-        # squash/rebase/worktree-remove side effects are not re-run: mark_done
-        # leaves worktree_path set, so without this guard a node whose prior
-        # worktree cleanup failed would re-run the workflow. The prior result
-        # stands; mirrors reconcile_node_status — the first completion wins.
         if node.status in (NodeStatus.DONE, NodeStatus.FAILED):
             return CompletionResult(
                 node_id=node_id,
@@ -629,10 +829,6 @@ class Executor:
                 rebase_conflict=None,
             )
 
-        # Any other non-RUNNING status (PENDING/BLOCKED) is not a valid completion
-        # target. Silently treating it as a no-op would hide a real state-machine
-        # bug — and in the run loop a worker-reported success would print a false
-        # completion — so fail loud, exactly as the unguarded mark_done once did.
         if node.status != NodeStatus.RUNNING:
             raise InvalidTransition(
                 node_id,
@@ -643,9 +839,81 @@ class Executor:
 
         self._validate_completion_target(node_id, feature_branch)
         worktree = Path(node.worktree_path) if node.worktree_path else None
+        config = self._config_by_node.get(node_id)
+        notification_failed = False
+        if worktree is not None and config is not None and self._review_enabled(config):
+            review_error = False
+            try:
+                approved, findings = self._run_review(node, worktree, config)
+            except Exception as exc:
+                review_error = True
+                approved = False
+                findings = f"reviewer failed: {type(exc).__name__}: {exc}"
+                _logger.exception("adversarial review failed for node %d", node_id)
+            if not approved:
+                notification_failed = not self._notify_review(
+                    node, verdict="reject", findings_md=findings
+                )
+                if notification_failed:
+                    _logger.error(
+                        "node_review_notification_degraded node_id=%d policy=%s",
+                        node_id,
+                        config.on_reject,
+                    )
+                round_number = self._review_round_by_node.get(node_id, 0)
+                if not review_error and round_number < config.review_max_rounds:
+                    self._review_round_by_node[node_id] = round_number + 1
+                    redispatch = self._redispatch_review_round(node, config, worktree)
+                    _logger.warning(
+                        "node_review_rejected node_id=%d round=%d/%d; redispatching",
+                        node_id,
+                        round_number + 1,
+                        config.review_max_rounds,
+                    )
+                    return CompletionResult(
+                        node_id=node_id,
+                        rebased=False,
+                        newly_ready=[],
+                        redispatch=redispatch,
+                        review_notification_failed=notification_failed,
+                    )
+                if notification_failed and config.on_reject == "block":
+                    return CompletionResult(
+                        node_id=node_id,
+                        rebased=False,
+                        newly_ready=[],
+                        review_notification_failed=True,
+                    )
+                if review_error or config.on_reject == "block":
+                    if node.run_id:
+                        blocked = self._graph.mark_blocked_fenced(node.id, node.run_id)
+                    else:
+                        self._graph.mark_blocked(node.id)
+                        blocked = True
+                    if not blocked:
+                        raise ValueError(f"review block fence lost for node {node_id}")
+                    _logger.warning(
+                        "node_review_blocked node_id=%d worktree=%s", node_id, worktree
+                    )
+                    return CompletionResult(
+                        node_id=node_id,
+                        rebased=False,
+                        newly_ready=[],
+                        blocked=True,
+                        review_notification_failed=notification_failed,
+                    )
+                _logger.warning(
+                    "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
+                    node_id,
+                    config.review_max_rounds,
+                )
+
         target_branch = self._target_branch_by_node.get(node_id)
         rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
-        return self._finalize_completion(node, rebase_result)
+        result = self._finalize_completion(node, rebase_result)
+        if notification_failed:
+            return replace(result, review_notification_failed=True)
+        return result
 
     def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:
         """Write a node's terminal status, fenced on its run_id so a run that was

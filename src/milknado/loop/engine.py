@@ -407,6 +407,8 @@ def _run_agent_phase(
     cmd, adapter = _resolve_agent_command(config)
     callbacks = _build_agent_callbacks(config, state, emit, hooks)
     agent = _launch_agent(cmd, adapter, prompt, config, state, callbacks)
+    state.last_result_text = agent.result_text
+    state.last_captured_stdout = agent.captured_stdout
 
     duration = format_duration(agent.elapsed)
     promise_completed = _promise_completed(agent, adapter, config)

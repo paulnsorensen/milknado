@@ -161,6 +161,10 @@ class RunState:
     failed: int = 0
     timed_out_count: int = 0
     started_at: datetime | None = None
+    # Last agent turn output, retained so coordinators can capture a resumable
+    # session id before the worker run is replaced by a review round.
+    last_result_text: str | None = None
+    last_captured_stdout: str | None = None
     promise_completed: bool = False
 
     _stop_event: threading.Event = field(

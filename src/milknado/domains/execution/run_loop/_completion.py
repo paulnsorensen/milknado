@@ -34,8 +34,31 @@ def handle_completion(
 
     if success:
         result = loop._executor.complete(node_id, feature_branch)
+        if getattr(result, "redispatch", None) is not None:
+            redispatch = result.redispatch
+            loop._active[redispatch.run_id] = node_id
+            loop._dispatched_at[redispatch.run_id] = time.monotonic()
+            live.console.print(
+                f"[yellow]↻[/yellow] [{node_id}] {desc} — "
+                "adversarial review requested another round"
+            )
+            _logger.info(
+                "node_review_redispatch node_id=%d run_id=%s",
+                node_id,
+                redispatch.run_id,
+            )
+            loop._logs.append(f"[{ts()}] ↻ node {node_id} review round")
+            return completed, failed, conflicts
         loop._completion_durations.append(duration)
-        if result.rebase_conflict:
+        if getattr(result, "blocked", False):
+            live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
+            _logger.warning("node_review_blocked node_id=%d", node_id)
+            loop._logs.append(f"[{ts()}] ■ node {node_id} review blocked")
+            loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
+            if loop._strict:
+                loop._failure_triggered = True
+            failed += 1
+        elif getattr(result, "rebase_conflict", None):
             conflicts.append(result.rebase_conflict)
             files = ", ".join(result.rebase_conflict.conflicting_files)
             live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")

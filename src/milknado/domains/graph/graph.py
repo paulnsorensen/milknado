@@ -193,6 +193,10 @@ class MikadoGraph(_AnalyticsFacade):
     def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool:
         return _status.mark_terminal(self._pipeline, self._conn, node_id, run_id, status)
 
+    def mark_blocked_fenced(self, node_id: int, run_id: str) -> bool:
+        """Block the owning run without releasing its pinned worktree."""
+        return _status.mark_blocked_fenced(self._pipeline, self._conn, node_id, run_id)
+
     def try_reclaim(self, node_id: int, *, now: str) -> bool:
         return _status.try_reclaim(self._pipeline, self._conn, node_id, now=now)
 

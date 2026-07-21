@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -257,3 +259,77 @@ def build_minimal_mcp_env() -> dict[str, str]:
     """Return only process essentials; never forward coordinator credentials."""
     allowed = ("HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR")
     return {key: os.environ[key] for key in allowed if key in os.environ}
+
+
+@dataclass(frozen=True)
+class NodeAgentSession:
+    """Node-scoped agent session retained across review/redispatch rounds."""
+
+    node_id: int
+    family: str
+    session_id: str
+    worktree_path: str
+    created_at: str
+
+
+def capture_session_id(family: str, first_turn_json: str) -> str:
+    """Extract a resumable session id from one adapter's first-turn JSON."""
+    try:
+        payload: Any = json.loads(first_turn_json)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{family}: could not parse first-turn JSON output for session id"
+        ) from exc
+    candidates: list[Any] = []
+    if isinstance(payload, dict):
+        candidates.append(payload.get("session_id"))
+        if family == "codex":
+            for key in ("msg", "event", "data"):
+                nested = payload.get(key)
+                if isinstance(nested, dict):
+                    candidates.append(nested.get("session_id"))
+    elif isinstance(payload, list):
+        candidates.extend(item.get("session_id") for item in payload if isinstance(item, dict))
+    session_id = next(
+        (value for value in candidates if isinstance(value, str) and value.strip()),
+        None,
+    )
+    if session_id is None:
+        raise ValueError(f"{family}: first-turn JSON output carried no session_id; cannot resume")
+    return session_id.strip()
+
+
+def build_resume_argv(
+    family: str,
+    session_id: str,
+    prompt: str,
+    model_flags: Sequence[str],
+) -> list[str]:
+    """Build adapter-specific resume argv with launch controls re-applied."""
+    if not session_id:
+        raise ValueError("session_id must not be empty")
+    if family == "claude":
+        return ["claude", "-p", "--resume", session_id, *model_flags, prompt]
+    if family == "codex":
+        return ["codex", "exec", "resume", session_id, "--json", *model_flags, prompt]
+    if family == "gemini":
+        return ["gemini", "--resume", session_id, *model_flags, "--prompt", prompt]
+    raise ValueError(f"unsupported resume family: {family!r}")
+
+
+def build_resume_command(command: str, family: str, session_id: str) -> str:
+    """Add a session resume selector without dropping model/effort flags."""
+    argv = shlex.split(command)
+    if not argv:
+        raise ValueError("agent command must not be empty")
+    if family in {"claude", "gemini"}:
+        argv.extend(["--resume", session_id])
+    elif family == "codex":
+        try:
+            exec_index = argv.index("exec")
+        except ValueError:
+            exec_index = len(argv) - 1
+        argv[exec_index + 1 : exec_index + 1] = ["resume", session_id]
+    else:
+        raise ValueError(f"unsupported resume family: {family!r}")
+    return shlex.join(argv)
