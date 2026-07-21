@@ -52,6 +52,13 @@ key it cares about. If a global flavor table sets a field you want *unset*
 locally, there is no way to express that (`None` in TOML doesn't exist; omitting
 the key inherits). Tracked as a design gap in the issue tracker.
 
+
+### Path confinement and worktree fallback
+
+Prompt and flavor `brief_prepend_path` values from the project layer resolve under `project_root`; absolute values that escape it raise `ValueError` naming the config key and root. Global-layer path values are resolved against the global config directory before merging and are explicitly trusted.
+
+`[milknado] worktree` is the config-level fallback for every flavor and defaults to `true`. A flavor's `worktree` value overrides that fallback only when explicitly set; an omitted flavor value inherits the config-level default.
+
 ## Preset packs (the "reasonable defaults" story)
 
 - Milknado's own worked global config:

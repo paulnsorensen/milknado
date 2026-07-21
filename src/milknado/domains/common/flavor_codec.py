@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
+from milknado.domains.common.paths import (
+    TrustedGlobalPath,
+    resolve_project_path,
+    trust_global_path,
+)
 
 
 @dataclass(frozen=True)
@@ -223,9 +228,12 @@ def _load_flavor_brief(entry: dict[str, Any], name: str, project_root: Path) -> 
     for value in paths:
         if not isinstance(value, str):
             raise ValueError(f"{ctx} brief_prepend_path entries must be strings")
-        path = Path(value)
-        if not path.is_absolute():
-            path = project_root / path
+        path = resolve_project_path(
+            value,
+            project_root,
+            label=f"{ctx} brief_prepend_path",
+            allow_outside=isinstance(value, TrustedGlobalPath),
+        )
         if not path.exists():
             raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {path}")
         parts.append(path.read_text(encoding="utf-8").strip())
@@ -275,12 +283,10 @@ def absolutize_global_flavor_paths(raw: dict[str, Any], base_dir: Path) -> None:
         if not isinstance(entry, dict):
             continue
         value = entry.get("brief_prepend_path")
-        if isinstance(value, str) and not Path(value).is_absolute():
-            entry["brief_prepend_path"] = str((base_dir / value).resolve())
+        if isinstance(value, str):
+            entry["brief_prepend_path"] = trust_global_path(value, base_dir)
         elif isinstance(value, list):
             entry["brief_prepend_path"] = [
-                str((base_dir / item).resolve())
-                if isinstance(item, str) and not Path(item).is_absolute()
-                else item
+                trust_global_path(item, base_dir) if isinstance(item, str) else item
                 for item in value
             ]

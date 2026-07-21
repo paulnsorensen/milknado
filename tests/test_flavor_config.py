@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -432,6 +434,17 @@ def test_resolve_flavor_profile_worktree_false_override(tmp_path: Path) -> None:
     )
     profile = resolve_flavor_profile(cfg, "spec")
     assert profile.worktree is False
+
+
+def test_resolve_flavor_profile_uses_config_worktree_default(tmp_path: Path) -> None:
+    cfg = MilknadoConfig(
+        agent_family="claude",
+        project_root=tmp_path,
+        db_path=tmp_path / ".milknado" / "milknado.db",
+        worktree=False,
+        flavors={"research": FlavorOverride()},
+    )
+    assert resolve_flavor_profile(cfg, "research").worktree is False
 
 
 def test_resolve_flavor_profile_worktree_true_override(tmp_path: Path) -> None:
@@ -1026,3 +1039,23 @@ def test_resolve_flavor_profile_review_config_resolves_from_override(tmp_path: P
     assert profile.review_agent == "claude -p --model opus"
     assert profile.review_max_rounds == 7
     assert profile.on_reject == "warn"
+
+
+def test_flavor_preset_toml_examples_parse_and_use_codec_vocabulary() -> None:
+    doc_path = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "milknado"
+        / "skills"
+        / "milknado-config"
+        / "references"
+        / "flavor-presets.md"
+    )
+    snippets = re.findall(r"```toml\n(.*?)\n```", doc_path.read_text(encoding="utf-8"), re.DOTALL)
+    assert snippets
+    for snippet in snippets:
+        raw = tomllib.loads(snippet)
+        flavor_tables = raw.get("milknado", {}).get("flavor", {}).values()
+        for flavor in flavor_tables:
+            if "on_reject" in flavor:
+                assert flavor["on_reject"] in {"block", "warn"}

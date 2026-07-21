@@ -23,6 +23,32 @@ def validate_hint_path(
         raise ValueError(f"{label} {path!r} escapes project root {project_root}")
 
 
+class TrustedGlobalPath(str):
+    """Absolute path originating in the trusted user-global config."""
+
+
+def trust_global_path(path: str, base_dir: Path) -> TrustedGlobalPath:
+    candidate = Path(path)
+    resolved = (base_dir / candidate if not candidate.is_absolute() else candidate).resolve()
+    return TrustedGlobalPath(str(resolved))
+
+
+def resolve_project_path(
+    path: str,
+    project_root: Path,
+    *,
+    label: str,
+    allow_outside: bool = False,
+) -> Path:
+    """Resolve a config path and confine untrusted values to ``project_root``."""
+    root = project_root.resolve()
+    candidate = Path(path)
+    resolved = (root / candidate if not candidate.is_absolute() else candidate).resolve()
+    if not allow_outside and not resolved.is_relative_to(root):
+        raise ValueError(f"{label} {path!r} escapes project_root '{project_root}'")
+    return resolved
+
+
 def normalize_hint_paths(files: list[str], project_root: Path) -> list[str]:
     """Absolute -> relative when under project_root; relative paths resolved against root.
 
