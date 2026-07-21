@@ -33,6 +33,47 @@ markers = [
     "e2e: live-API end-to-end tests (claude CLI + ANTHROPIC_API_KEY required; slow)",
 ]
 
+[tool.importlinter]
+root_package = "milknado"
+
+# Domains are the pure core: they must never import a delivery or application layer.
+[[tool.importlinter.contracts]]
+name = "domains must not import app, cli, or mcp"
+type = "forbidden"
+source_modules = ["milknado.domains"]
+forbidden_modules = ["milknado.app", "milknado.cli", "milknado.mcp"]
+
+# The application layer wires domains to delivery; it must not depend on delivery.
+[[tool.importlinter.contracts]]
+name = "app must not import cli or mcp"
+type = "forbidden"
+source_modules = ["milknado.app"]
+forbidden_modules = ["milknado.cli", "milknado.mcp"]
+
+# Adapters are infrastructure below the core: no new domain/app coupling.
+# The listed ignores are the pre-existing port/type imports; tightening these
+# (barrel bypass, adapter edge cases) is deferred to follow-up F002 (#251).
+[[tool.importlinter.contracts]]
+name = "adapters must not import domains or app"
+type = "forbidden"
+source_modules = ["milknado.adapters"]
+forbidden_modules = ["milknado.domains", "milknado.app"]
+ignore_imports = [
+    "milknado.adapters.git -> milknado.domains.common.errors",
+    "milknado.adapters.git -> milknado.domains.common.types",
+    "milknado.adapters.hallouminate -> milknado.domains.wiki.ports",
+    "milknado.adapters.loop -> milknado.domains.common",
+    "milknado.adapters.loop -> milknado.domains.common.config",
+    "milknado.adapters.loop -> milknado.domains.common.errors",
+    "milknado.adapters.loop -> milknado.domains.common.protocols",
+    "milknado.adapters.loop -> milknado.domains.common.types",
+    "milknado.adapters.loop -> milknado.domains.execution",
+    "milknado.adapters.process -> milknado.domains.common",
+    "milknado.adapters.process -> milknado.domains.dispatch.ports",
+    "milknado.adapters.tilth -> milknado.domains.common.protocols",
+    "milknado.adapters.tilth -> milknado.domains.common.types",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 99
@@ -49,4 +90,5 @@ dev = [
     "ruff>=0.15.13",
     "ty>=0.0.38",
     "watchfiles>=1.2.0",
+    "import-linter>=2.13",
 ]

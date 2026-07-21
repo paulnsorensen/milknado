@@ -86,6 +86,7 @@ check-llm:
     steps = [
         ("lint", ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"]),
         ("format", ["uv", "run", "ruff", "format", "--check", "src/", "tests/"]),
+        ("import-contracts", ["uv", "run", "lint-imports"]),
         (
             "tests+coverage",
             [
