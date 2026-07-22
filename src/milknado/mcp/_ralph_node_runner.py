@@ -15,9 +15,29 @@ import logging
 from pathlib import Path
 
 from milknado.domains.common import RunResult
-from milknado.domains.dispatch import now_iso
+from milknado.domains.dispatch import now_iso, runs_dir
 
 _logger = logging.getLogger("milknado")
+
+
+def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:  # noqa: ANN001
+    try:
+        written = graph.finish_run(run_id, result)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+    else:
+        if written is not False:
+            return True
+        detail = "finish_run lost its running-row fence"
+    _logger.error("ralph terminal persistence failed: run_id=%s detail=%s", run_id, detail)
+    try:
+        runs_dir(root).joinpath(f"{run_id}.terminal-error").write_text(
+            detail + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        _logger.exception("ralph terminal error sidecar write failed: run_id=%s", run_id)
+    return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,7 +80,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.node_id,
                 NO_GATES_CONFIGURED_MESSAGE,
             )
-            graph.finish_run(
+            _finish_run(
+                graph,
+                root,
                 args.run_id,
                 RunResult(
                     status="failed",
@@ -91,8 +113,11 @@ def main(argv: list[str] | None = None) -> int:
             args.target_branch,
             args.timeout,
             base_oid=args.base_oid,
+            parent_run_id=args.run_id,
         )
-        graph.finish_run(
+        terminal_written = _finish_run(
+            graph,
+            root,
             args.run_id,
             RunResult(
                 status="done" if outcome.success else "failed",
@@ -103,6 +128,8 @@ def main(argv: list[str] | None = None) -> int:
                 detail=outcome.detail,
             ),
         )
+        if not terminal_written:
+            return 2
         _logger.info(
             "ralph runner terminal: run_id=%s node_id=%d success=%s detail=%s",
             args.run_id,
@@ -117,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
             args.run_id,
             args.node_id,
         )
-        graph.finish_run(
+        _finish_run(
+            graph,
+            root,
             args.run_id,
             RunResult(
                 status="failed",

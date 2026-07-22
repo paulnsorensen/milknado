@@ -27,7 +27,7 @@ def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
     The direct-finalize path (pid run, or the fallback when the async worker never
     responds within the bound).
     """
-    graph.finish_run(
+    written = graph.finish_run(
         run_id,
         RunResult(
             status="failed",
@@ -37,7 +37,10 @@ def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
             error="cancelled",
         ),
     )
-    return graph.get_run(run_id)
+    state = graph.get_run(run_id)
+    if state is not None and not written:
+        state["terminal_persistence"] = "late-write-lost"
+    return state
 
 
 def _reconcile_cancel(

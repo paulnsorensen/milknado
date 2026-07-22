@@ -1674,3 +1674,25 @@ class TestExecPlanInteractive:
         captured = capsys.readouterr()
         assert "falling back to manual review" in captured.out
         assert "needs more detail" in captured.out
+
+
+def test_cli_plan_surfaces_critic_failures_in_both_modes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    cli_plan = importlib.import_module("milknado.cli.plan")
+
+    cfg = default_config(tmp_path)
+    monkeypatch.setattr(
+        cli_plan,
+        "_run_plan_with_critic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli_plan.PlanCriticError("critic failed")),
+    )
+    with pytest.raises(typer.Exit) as non_interactive:
+        cli_plan._exec_plan_non_interactive(None, "goal", tmp_path, tmp_path / "spec", cfg)
+    assert non_interactive.value.exit_code == 1
+
+    with pytest.raises(typer.Exit) as interactive:
+        cli_plan._exec_plan_interactive(None, "goal", tmp_path, tmp_path / "spec", 1, cfg)
+    assert interactive.value.exit_code == 1

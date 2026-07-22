@@ -1,19 +1,15 @@
 """Project a wiki-origin roadmap onto a GitHub Project (one-time bind, ADR-6).
 
-Creates one Issue per goal (body = the wiki-authored Intent), links each as a
-Project item, records the project/item node ids on the roadmap + goal nodes, and
-bootstraps the two milknado-owned fields (Status single-select + harvest text)
-create-once. Distinct from the idempotent-repeatable export: bind is the scaffold
-step and skips any goal already bound.
-
-Binding never infers identity from mutable Issue titles. Goals without a stored
-Project item id always create a fresh Issue + item; goals with a stored id are
-skipped. This avoids attaching an unrelated same-title item to the roadmap.
+Binding uses a durable, immutable correlation marker in each Issue body. The
+marker lets retries recover an Issue/Project item after any remote call or
+local-ref write may have succeeded without ever inferring identity from a
+mutable title.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from milknado.domains.common import NodeKind
@@ -65,15 +61,57 @@ def bind_github_project(
     _bind_roadmap_ref(graph, roadmap_node_id, roadmap.github_ref, project["id"])
     issues_created = 0
     items_added = 0
+    items = github.item_list(owner, number)
     for goal in graph.get_children(roadmap_node_id):
         if goal.kind != NodeKind.GOAL or goal.github_ref is not None:
             continue
         intent = goal_intent(goal, file_map, wiki_root)
-        url = github.issue_create(issue_owner, issue_repo, goal.description, intent)
+        marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+        matches = _correlated_items(items, marker)
+        attempt = graph.get_github_bind_attempt(goal.id)
+
+        if attempt is not None:
+            if len(matches) > 1:
+                raise RuntimeError(
+                    f"cannot safely recover goal {goal.id}: correlation marker "
+                    f"matched {len(matches)} project items"
+                )
+            if len(matches) == 1:
+                graph.set_github_ref(goal.id, matches[0]["id"])
+                graph.clear_github_bind_attempt(goal.id)
+                continue
+            issue_url = attempt.get("issue_url")
+            if not issue_url:
+                raise RuntimeError(
+                    f"cannot safely recover goal {goal.id}: issue creation outcome "
+                    "is unknown and no project item carries its correlation marker"
+                )
+            item_id = github.item_add(owner, number, issue_url)
+            graph.set_github_ref(goal.id, item_id)
+            graph.clear_github_bind_attempt(goal.id)
+            items_added += 1
+            items.append({"id": item_id, "body": f"{marker}\n", "url": issue_url})
+            continue
+        if matches:
+            if len(matches) != 1:
+                raise RuntimeError(
+                    f"cannot safely recover goal {goal.id}: correlation marker "
+                    f"matched {len(matches)} project items"
+                )
+            graph.set_github_ref(goal.id, matches[0]["id"])
+            continue
+
+        graph.set_github_bind_attempt(goal.id, marker, None, datetime.now(UTC).isoformat())
+        body = f"{intent.rstrip()}\n\n{marker}\n"
+        url = github.issue_create(issue_owner, issue_repo, goal.description, body)
+        graph.set_github_bind_attempt(goal.id, marker, url, datetime.now(UTC).isoformat())
         item_id = github.item_add(owner, number, url)
         graph.set_github_ref(goal.id, item_id)
+        graph.clear_github_bind_attempt(goal.id)
         issues_created += 1
         items_added += 1
+        items.append({"id": item_id, "body": body, "url": url})
+
     field_created = _ensure_fields(github, owner, number)
     return GithubBindResult(
         roadmap_node_id=roadmap_node_id,
@@ -95,6 +133,14 @@ def _bind_roadmap_ref(
             f"roadmap node {roadmap_node_id} is already bound to github_ref "
             f"{current_ref!r}, cannot rebind to {project_id!r}"
         )
+
+
+def _correlation_marker(roadmap_ref: str, goal_ref: str) -> str:
+    return f"<!-- milknado-bind:roadmap={roadmap_ref};goal={goal_ref} -->"
+
+
+def _correlated_items(items: list[dict], marker: str) -> list[dict]:
+    return [item for item in items if marker in str(item.get("body", ""))]
 
 
 def _resolve_project(owner: str | None, number: int | None, frontmatter: dict) -> tuple[str, int]:

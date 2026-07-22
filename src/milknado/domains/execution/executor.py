@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
 )
+from milknado.domains.dispatch._runstate import make_run_id
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
@@ -311,26 +313,7 @@ class WorktreeManager:
         description: str,
         worker_branch: str | None = None,
     ) -> RebaseResult:
-        """Squash-commit, rebase onto feature_branch, fast-forward the feature
-        branch onto the rebased worker branch, then preserve logs and remove the
-        worktree.
-
-        The fast-forward is what actually lands the worker's commit on the feature
-        branch — without it the rebased work is stranded on the worker branch. It
-        runs only when the squash produced a commit (a no-commit squash has nothing
-        to merge) and the rebase succeeded. A fast-forward failure raises: a dirty
-        or diverged project root overlapping the merge is a loud failure, not a
-        silent skip.
-
-        Teardown is fail-closed. Removal happens only when the rebase reported
-        success, and its landed check runs against `feature_branch` and the
-        worktree's HEAD *as it is then* — post-squash, post-rebase, post-ff —
-        so the happy path (ff-only made HEAD equal the feature tip) removes
-        cleanly while a merged-but-never-fast-forwarded HEAD refuses
-        (`UnlandedWorkError` hard-fails the caller). A conflicting rebase or an
-        in-flight exception (e.g. `RebaseAbortError`) skips removal outright:
-        that work is by definition unlanded, and the worktree is the evidence.
-        """
+        """Squash, rebase, fast-forward, and remove only landed worktrees."""
         if not worktree or not worktree.exists():
             return RebaseResult(success=True)
         landed = False
@@ -374,13 +357,16 @@ class Executor:
         config: ExecutionConfig,
         *,
         base_oid: str | None = None,
+        parent_run_id: str | None = None,
     ) -> DispatchResult:
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
         last_exc: BaseException | None = None
         for attempt in range(max_retries + 1):
             try:
-                result = self._dispatch_once(node_id, config, base_oid=base_oid)
+                result = self._dispatch_once(
+                    node_id, config, base_oid=base_oid, parent_run_id=parent_run_id
+                )
                 self._attempts_by_node[node_id] = attempt
                 return result
             except (InvalidTransition, ValueError):
@@ -417,52 +403,49 @@ class Executor:
             )
         return wt_path, f"milknado/{node_id}-{slug}"
 
-    def _claim_or_mark_running(
-        self,
-        node: MikadoNode,
-        node_id: int,
-        config: ExecutionConfig,
-        wt_path: Path,
-        branch: str,
-        base_oid: str,
-        *,
-        already_claimed: bool,
-    ) -> str:
-        if already_claimed:
-            self._graph.set_worktree(node_id, node.run_id, str(wt_path), branch)
-            return self._create_ralph_run(node, config, wt_path, base_oid)
-        self._graph.mark_running(node_id, worktree_path=str(wt_path), branch_name=branch)
-        run_id = self._create_ralph_run(node, config, wt_path, base_oid)
-        self._graph.set_run_id(node_id, run_id)
-        return run_id
-
     def _dispatch_once(
         self,
         node_id: int,
         config: ExecutionConfig,
         *,
         base_oid: str | None = None,
+        parent_run_id: str | None = None,
     ) -> DispatchResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
-        self._wt.ensure_clean(node_id)
+
+        adopted = parent_run_id is not None
+        if adopted:
+            if node.status is not NodeStatus.RUNNING or node.run_id != parent_run_id:
+                raise InvalidTransition(
+                    node_id,
+                    node.status,
+                    NodeStatus.RUNNING,
+                    tuple(VALID_TRANSITIONS[node.status]),
+                )
+            owner_run_id = parent_run_id
+        else:
+            owner_run_id = make_run_id(node_id)
+            if not self._graph.claim_node(
+                node_id, owner_run_id, now=datetime.now(UTC).isoformat(), pid=os.getpid()
+            ):
+                raise ValueError(f"node {node_id} is already claimed; dispatch refused")
+
+        create_attempted = False
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
-        target_branch = self._wt.current_branch()
-        dispatch_base_oid = base_oid or self._wt.resolve_ref(target_branch)
-        wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
-        already_claimed = node.status == NodeStatus.RUNNING and node.run_id is not None
-        self._wt.create(node_id, wt_path, branch)
         try:
-            run_id = self._claim_or_mark_running(
-                node,
-                node_id,
-                config,
-                wt_path,
-                branch,
-                dispatch_base_oid,
-                already_claimed=already_claimed,
-            )
+            # Every filesystem mutation follows the fenced graph claim. A losing
+            # contender exits above and cannot clean, relocate, or create anything.
+            self._wt.ensure_clean(node_id)
+            wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
+            self._graph.set_worktree(node_id, owner_run_id, str(wt_path), branch)
+            create_attempted = True
+            self._wt.create(node_id, wt_path, branch)
+            dispatch_base_oid = base_oid or self._wt.resolve_ref(self._wt.current_branch())
+            run_id = self._create_ralph_run(node, config, wt_path, dispatch_base_oid)
+            if not adopted and not self._graph.replace_run_id(node_id, owner_run_id, run_id):
+                raise ValueError(f"dispatch fence lost for node {node_id}")
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -473,7 +456,13 @@ class Executor:
                 str(exc)[:200],
                 exc_info=True,
             )
-            self._cleanup_failed_dispatch(node_id, wt_path)
+            self._cleanup_failed_dispatch(
+                node_id,
+                wt_path,
+                owner_run_id=owner_run_id,
+                release_claim=not adopted,
+                discard_worktree=create_attempted,
+            )
             raise
         return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
 
@@ -505,14 +494,18 @@ class Executor:
         self._ralph.start_run(run_id)
         return run_id
 
-    def _cleanup_failed_dispatch(self, node_id: int, wt_path: Path) -> None:
+    def _cleanup_failed_dispatch(
+        self,
+        node_id: int,
+        wt_path: Path,
+        *,
+        owner_run_id: str,
+        release_claim: bool,
+        discard_worktree: bool,
+    ) -> None:
         try:
-            current = self._graph.get_node(node_id)
-            if current and current.status == NodeStatus.RUNNING:
-                if current.run_id is not None:
-                    self._graph.release(node_id, current.run_id)
-                else:
-                    self._graph.mark_pending(node_id)
+            if release_claim:
+                self._graph.release(node_id, owner_run_id)
         except Exception:
             _logger.exception(
                 "state reset failed during cleanup node_id=%d worktree=%s",
@@ -520,7 +513,8 @@ class Executor:
                 wt_path,
             )
         finally:
-            self._wt.discard(node_id, wt_path)
+            if discard_worktree:
+                self._wt.discard(node_id, wt_path)
 
     def _rebase_or_fail(
         self, worktree: Path | None, feature_branch: str, node: MikadoNode

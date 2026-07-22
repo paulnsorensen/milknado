@@ -417,7 +417,7 @@ class TestExecutorDispatch:
         claim_run_id = "node-1-20260101T000000Z-claim"
         assert graph.claim_node(1, claim_run_id, now=now_iso()) is True
 
-        result = ex.dispatch(1, config)  # must not raise InvalidTransition
+        result = ex.dispatch(1, config, parent_run_id=claim_run_id)
 
         node = graph.get_node(1)
         assert node is not None
@@ -1460,3 +1460,33 @@ class TestBuildNodeContext:
         assert "## Impact Radius" in result
         assert "CRG unavailable" in result
         assert "CRG exploded" in result
+
+
+def test_dispatch_refuses_claimed_node_before_worktree_mutation(
+    executor: Executor, graph: MikadoGraph, config: ExecutionConfig
+) -> None:
+    graph.add_node("already claimed")
+    assert graph.claim_node(1, "other-run", now="2026-01-01T00:00:00+00:00", pid=2**31 - 1)
+    with pytest.raises(ValueError, match="already claimed; dispatch refused"):
+        executor.dispatch(1, config)
+
+
+def test_dispatch_rejects_parent_run_id_that_does_not_fence_node(
+    executor: Executor, graph: MikadoGraph, config: ExecutionConfig
+) -> None:
+    graph.add_node("wrong parent")
+    assert graph.claim_node(1, "parent-run", now="2026-01-01T00:00:00+00:00")
+    with pytest.raises(InvalidTransition):
+        executor.dispatch(1, config, parent_run_id="different-run")
+
+
+def test_dispatch_rejects_lost_run_id_fence(
+    executor: Executor,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph.add_node("lost fence")
+    monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
+    with pytest.raises(ValueError, match="dispatch fence lost"):
+        executor.dispatch(1, config)

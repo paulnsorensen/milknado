@@ -63,10 +63,15 @@ class FakeGh:
     """Records bind operations and exposes the injected GitHub port."""
 
     def __init__(
-        self, fields: list[dict] | None = None, existing_items: list[dict] | None = None
+        self,
+        fields: list[dict] | None = None,
+        existing_items: list[dict] | None = None,
+        *,
+        fail_item_add_once: bool = False,
     ) -> None:
         self.fields = fields or []
         self.existing_items = existing_items or []
+        self.fail_item_add_once = fail_item_add_once
         self.issues: list[tuple[str, str, str, str]] = []
         self.items: list[str] = []
         self.created_fields: list[tuple[str, list[str]]] = []
@@ -85,6 +90,9 @@ class FakeGh:
         return f"https://github.com/{owner}/{repo}/issues/{self._counter}"
 
     def item_add(self, _owner: str, _number: int, url: str) -> str:
+        if self.fail_item_add_once:
+            self.fail_item_add_once = False
+            raise RuntimeError("simulated item_add failure")
         self.items.append(url)
         return f"PVTI_{len(self.items)}"
 
@@ -122,13 +130,14 @@ def test_bind_creates_issue_and_item_per_goal(tmp_path: Path, graph: MikadoGraph
     github = FakeGh()
 
     result = bind_github_project(graph, rid, root, github)
-
     assert result.issues_created == 2
     assert result.items_added == 2
-    assert {body for *_head, body in github.issues} == {
+    bodies = [body for *_head, body in github.issues]
+    assert [body.splitlines()[0] for body in bodies] == [
         "build the first goal",
         "build the second goal",
-    }
+    ]
+    assert all("milknado-bind:roadmap=" in body for body in bodies)
     assert graph.get_node(rid).github_ref == "PVT_1"
     assert all(goal.github_ref for goal in graph.get_children(rid))
 
@@ -246,6 +255,99 @@ def test_same_title_unrelated_item_is_never_adopted(tmp_path: Path, graph: Mikad
     assert {title for *_prefix, title, _body in github.issues} == {"Goal one", "Goal two"}
     assert result.issues_created == 2
     assert result.items_added == 2
+
+
+def test_bind_recovers_item_add_after_issue_creation(tmp_path: Path, graph: MikadoGraph) -> None:
+    rid, root = _import(tmp_path, graph)
+    github = FakeGh(fail_item_add_once=True)
+
+    with pytest.raises(RuntimeError, match="simulated item_add failure"):
+        bind_github_project(graph, rid, root, github)
+
+    first_goal = next(goal for goal in graph.get_children(rid) if goal.description == "Goal one")
+    attempt = graph.get_github_bind_attempt(first_goal.id)
+    assert attempt is not None
+    assert attempt["issue_url"].endswith("/issues/1")
+    assert first_goal.github_ref is None
+    assert len(github.issues) == 1
+
+    result = bind_github_project(graph, rid, root, github)
+
+    assert result.issues_created == 1
+    assert result.items_added == 2
+    assert len(github.issues) == 2
+    assert graph.get_github_bind_attempt(first_goal.id) is None
+    assert graph.get_node(first_goal.id).github_ref == "PVTI_1"
+
+
+def test_bind_recovers_pending_attempt_from_existing_marker(
+    tmp_path: Path, graph: MikadoGraph
+) -> None:
+    from milknado.domains.github.bind import _correlation_marker
+
+    rid, root = _import(tmp_path, graph)
+    goal = graph.get_children(rid)[0]
+    roadmap = graph.get_node(rid)
+    marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+    graph.set_github_bind_attempt(goal.id, marker, "https://example/issues/9", "now")
+    github = FakeGh(existing_items=[{"id": "PVTI_recovered", "body": marker}])
+
+    result = bind_github_project(graph, rid, root, github)
+
+    assert graph.get_node(goal.id).github_ref == "PVTI_recovered"
+    assert result.issues_created == 1
+
+
+def test_bind_rejects_unknown_issue_creation_outcome(tmp_path: Path, graph: MikadoGraph) -> None:
+    from milknado.domains.github.bind import _correlation_marker
+
+    rid, root = _import(tmp_path, graph)
+    goal = graph.get_children(rid)[0]
+    roadmap = graph.get_node(rid)
+    marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+    graph.set_github_bind_attempt(goal.id, marker, None, "now")
+
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        bind_github_project(graph, rid, root, FakeGh())
+
+
+@pytest.mark.parametrize("with_attempt", [False, True])
+def test_bind_rejects_ambiguous_marker_matches(
+    tmp_path: Path, graph: MikadoGraph, with_attempt: bool
+) -> None:
+    from milknado.domains.github.bind import _correlation_marker
+
+    rid, root = _import(tmp_path, graph)
+    goal = graph.get_children(rid)[0]
+    roadmap = graph.get_node(rid)
+    marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+    if with_attempt:
+        graph.set_github_bind_attempt(goal.id, marker, "https://example/issues/9", "now")
+    github = FakeGh(
+        existing_items=[
+            {"id": "PVTI_a", "body": marker},
+            {"id": "PVTI_b", "body": marker},
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="matched 2 project items"):
+        bind_github_project(graph, rid, root, github)
+
+
+def test_bind_recovers_existing_marker_without_pending_attempt(
+    tmp_path: Path, graph: MikadoGraph
+) -> None:
+    from milknado.domains.github.bind import _correlation_marker
+
+    rid, root = _import(tmp_path, graph)
+    roadmap = graph.get_node(rid)
+    goal = graph.get_children(rid)[0]
+    marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+    github = FakeGh(existing_items=[{"id": "PVTI_existing", "body": marker}])
+
+    bind_github_project(graph, rid, root, github)
+
+    assert graph.get_node(goal.id).github_ref == "PVTI_existing"
 
 
 class TestGoalIntent:

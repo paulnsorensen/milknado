@@ -6,6 +6,7 @@ import itertools
 import json
 import logging
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -62,6 +63,20 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_nodes_ready
             ON nodes(status, kind, flavor, id);
         CREATE INDEX IF NOT EXISTS idx_edges_child ON edges(child_id);
+        CREATE INDEX IF NOT EXISTS idx_file_ownership_path
+            ON file_ownership(file_path, node_id);
+        CREATE INDEX IF NOT EXISTS idx_run_messages_latest_role
+            ON run_messages(run_id, role, seq DESC);
+        CREATE INDEX IF NOT EXISTS idx_run_messages_result_latest
+            ON run_messages(role, run_id, created_at DESC, seq DESC, body);
+        CREATE TABLE IF NOT EXISTS github_bind_attempts (
+            goal_id INTEGER PRIMARY KEY REFERENCES nodes(id),
+            marker TEXT NOT NULL,
+            issue_url TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_bind_attempts_marker
+            ON github_bind_attempts(marker);
         """
     )
     conn.commit()
@@ -118,6 +133,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (node_id, file_path),
             FOREIGN KEY (node_id) REFERENCES nodes(id)
         );
+        CREATE INDEX IF NOT EXISTS idx_file_ownership_path
+            ON file_ownership(file_path, node_id);
         CREATE TABLE IF NOT EXISTS plan_state (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             spec_hash TEXT NOT NULL,
@@ -156,12 +173,24 @@ def create_tables(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             PRIMARY KEY (run_id, seq)
         );
+        CREATE INDEX IF NOT EXISTS idx_run_messages_latest_role
+            ON run_messages(run_id, role, seq DESC);
+        CREATE INDEX IF NOT EXISTS idx_run_messages_result_latest
+            ON run_messages(role, run_id, created_at DESC, seq DESC, body);
         CREATE TABLE IF NOT EXISTS goal_claims (
             goal_id     INTEGER PRIMARY KEY REFERENCES nodes(id),
             run_id      TEXT NOT NULL,
             pid         INTEGER,
             claimed_at  TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS github_bind_attempts (
+            goal_id INTEGER PRIMARY KEY REFERENCES nodes(id),
+            marker TEXT NOT NULL,
+            issue_url TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_github_bind_attempts_marker
+            ON github_bind_attempts(marker);
     """)
     conn.commit()
 
@@ -223,14 +252,59 @@ def get_file_ownership(conn: sqlite3.Connection, node_id: int) -> list[str]:
     return [r[0] for r in rows]
 
 
-def get_file_ownership_map(conn: sqlite3.Connection) -> dict[int, list[str]]:
-    """node_id -> owned file paths from a single file_ownership scan."""
+def get_file_ownership_map(
+    conn: sqlite3.Connection, node_ids: Iterable[int] | None = None
+) -> dict[int, list[str]]:
+    """Return owned paths for the requested nodes from one candidate-set scan."""
+    if node_ids is None:
+        rows = conn.execute(
+            "SELECT node_id, file_path FROM file_ownership ORDER BY node_id, file_path"
+        ).fetchall()
+    else:
+        ids = list(dict.fromkeys(node_ids))
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"SELECT node_id, file_path FROM file_ownership "  # noqa: S608
+            f"WHERE node_id IN ({placeholders}) ORDER BY node_id, file_path",
+            ids,
+        ).fetchall()
     mapping: dict[int, list[str]] = {}
-    for node_id, file_path in conn.execute(
-        "SELECT node_id, file_path FROM file_ownership"
-    ).fetchall():
+    for node_id, file_path in rows:
         mapping.setdefault(node_id, []).append(file_path)
     return mapping
+
+
+def get_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT goal_id, marker, issue_url, created_at "
+        "FROM github_bind_attempts WHERE goal_id = ?",
+        (goal_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def set_github_bind_attempt(
+    conn: sqlite3.Connection,
+    goal_id: int,
+    marker: str,
+    issue_url: str | None,
+    created_at: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO github_bind_attempts (goal_id, marker, issue_url, created_at) "
+        "VALUES (?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET "
+        "marker = excluded.marker, issue_url = excluded.issue_url, "
+        "created_at = excluded.created_at",
+        (goal_id, marker, issue_url, created_at),
+    )
+    conn.commit()
+
+
+def clear_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> None:
+    conn.execute("DELETE FROM github_bind_attempts WHERE goal_id = ?", (goal_id,))
+    conn.commit()
 
 
 def check_parallel_safety(
@@ -437,13 +511,8 @@ def start_run(
     conn.commit()
 
 
-def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None:
-    """UPDATE a running run to a terminal status; first terminal write wins.
-
-    Gated on status = 'running' so a late terminal write (e.g. a wedged worker
-    finishing after milknado_run_cancel already finalized the run) cannot
-    clobber an already-terminal row back to a different outcome.
-    """
+def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool:
+    """Write one terminal result; return whether this fenced write won."""
     cur = conn.execute(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
         "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = 'running'",
@@ -459,10 +528,14 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None
         ),
     )
     conn.commit()
-    if cur.rowcount == 0:
+    won = cur.rowcount == 1
+    if not won:
         _logger.warning(
-            "finish_run dropped late terminal write for run %s (status=%s)", run_id, result.status
+            "finish_run dropped late terminal write for run %s (status=%s)",
+            run_id,
+            result.status,
         )
+    return won
 
 
 def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:

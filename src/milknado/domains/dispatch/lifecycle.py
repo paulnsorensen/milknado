@@ -69,18 +69,29 @@ def _finish_dispatch(
     terminal: str,
     merge: MergeBackResult | None,
 ) -> None:
-    graph.finish_run(
-        run_id,
-        RunResult(
-            status=terminal,
-            exit_code=result.exit_code,
-            timed_out=result.timed_out,
-            ended_at=now_iso(),
-            rebased=merge.rebased if merge is not None else None,
-        ),
-    )
-    status = NodeStatus.DONE if terminal == "done" else NodeStatus.FAILED
-    graph.mark_terminal(node_id, run_id, status)
+    if (
+        graph.finish_run(
+            run_id,
+            RunResult(
+                status=terminal,
+                exit_code=result.exit_code,
+                timed_out=result.timed_out,
+                ended_at=now_iso(),
+                rebased=merge.rebased if merge is not None else None,
+            ),
+        )
+        is False
+    ):
+        raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+    if (
+        graph.mark_terminal(
+            node_id, run_id, NodeStatus.DONE if terminal == "done" else NodeStatus.FAILED
+        )
+        is False
+    ):
+        if graph.get_node(node_id) is None:
+            return
+        raise RuntimeError(f"terminal node write lost its fence for node {node_id}")
 
 
 def dispatch_node_sync(
@@ -127,18 +138,29 @@ def dispatch_node_sync(
             terminal = "failed"
         _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
     except Exception as exc:
-        if started:
-            graph.finish_run(
-                run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    error=f"{type(exc).__name__}: {exc}",
-                ),
-            )
-        graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
+        terminal_error: BaseException | None = None
+        try:
+            run_written = True
+            if started:
+                run_written = graph.finish_run(
+                    run_id,
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=False,
+                        ended_at=now_iso(),
+                        error=f"{type(exc).__name__}: {exc}",
+                    ),
+                )
+            node_written = graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
+            if run_written is False or node_written is False:
+                terminal_error = RuntimeError(
+                    f"terminal persistence lost its fence for run {run_id}"
+                )
+        except Exception as persist_exc:
+            terminal_error = persist_exc
+        if terminal_error is not None:
+            raise terminal_error from exc
         raise
     final = graph.get_node(request.node_id)
     if final is None:

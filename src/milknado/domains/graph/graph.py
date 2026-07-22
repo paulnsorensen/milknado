@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from milknado.domains.batching import BatchPlan
 from milknado.domains.common import (
     MikadoEdge,
     MikadoNode,
@@ -183,8 +184,8 @@ class MikadoGraph(_AnalyticsFacade):
     def complete_root(self) -> bool:
         return _status.complete_root(self._pipeline, self._conn)
 
-    def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool:
-        return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now)
+    def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
+        return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now, pid=pid)
 
     def release(self, node_id: int, run_id: str) -> bool:
         return _status.release(self._pipeline, self._conn, node_id, run_id)
@@ -198,32 +199,32 @@ class MikadoGraph(_AnalyticsFacade):
     # ── Dispatch orchestration ───────────────────────────────────────────────
 
     def claim_ancestor_goal_for_dispatch(
-        self, node_id: int, run_id: str, *, now: str | None = None
+        self,
+        node_id: int,
+        run_id: str,
+        *,
+        now: str | None = None,
+        pid: int | None = None,
     ) -> None:
-        """Enforce and claim the ancestor-goal subtree fence before dispatch.
-
-        Raises ValueError if an ancestor goal is claimed by a different live
-        coordinator (a different pid). Same-process dispatch (same pid) is exempt;
-        no-op when there is no ancestor goal.
-        """
+        """Enforce and claim the ancestor-goal subtree fence before dispatch."""
+        owner_pid = os.getpid() if pid is None else pid
         claim = self.ancestor_goal_claimed_by_other(node_id)
-        if claim is not None and claim["pid"] != os.getpid():
+        if claim is not None and claim["pid"] != owner_pid:
             raise ValueError(
                 f"node {node_id}'s ancestor goal is claimed by a different run "
                 f"({claim['run_id']!r}); dispatch refused"
             )
         self.claim_ancestor_goal(
-            node_id, run_id, os.getpid(), now=now or datetime.now(UTC).isoformat()
+            node_id, run_id, owner_pid, now=now or datetime.now(UTC).isoformat()
         )
 
-    def claim_node_for_dispatch(self, node_id: int, run_id: str, *, now: str) -> None:
-        """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING.
-
-        Raises ValueError if blocked by a foreign ancestor-goal claim, or if
-        node_id itself could not be claimed.
-        """
-        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now)
-        if not self.claim_node(node_id, run_id, now=now):
+    def claim_node_for_dispatch(
+        self, node_id: int, run_id: str, *, now: str, pid: int | None = None
+    ) -> None:
+        """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING."""
+        owner_pid = os.getpid() if pid is None else pid
+        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now, pid=owner_pid)
+        if not self.claim_node(node_id, run_id, now=now, pid=owner_pid):
             current = self.get_node(node_id)
             status = current.status.value if current is not None else "gone"
             raise ValueError(
@@ -231,6 +232,15 @@ class MikadoGraph(_AnalyticsFacade):
             )
 
     # ── Node fields (refs, pid, worktree) ────────────────────────────────────
+
+    def _update_node_field(self, column: str, value: str, node_id: int) -> None:
+        cur = self._conn.execute(
+            f"UPDATE nodes SET {column} = ? WHERE id = ?",  # noqa: S608
+            (value, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+        self._conn.commit()
 
     def set_wiki_ref(self, node_id: int, wiki_ref: str) -> None:
         """Set the deterministic wiki key so an orphan goal node round-trips on export."""
@@ -243,15 +253,14 @@ class MikadoGraph(_AnalyticsFacade):
     def set_run_id(self, node_id: int, run_id: str) -> None:
         self._update_node_field("run_id", run_id, node_id)
 
-    def _update_node_field(self, column: str, value: str, node_id: int) -> None:
-        # column is an internal literal (never user input) — safe to interpolate.
+    def replace_run_id(self, node_id: int, expected_run_id: str, run_id: str) -> bool:
+        """Replace a provisional dispatch fence without crossing an owner."""
         cur = self._conn.execute(
-            f"UPDATE nodes SET {column} = ? WHERE id = ?",  # noqa: S608
-            (value, node_id),
+            "UPDATE nodes SET run_id = ? WHERE id = ? AND status = 'running' AND run_id = ?",
+            (run_id, node_id, expected_run_id),
         )
-        if cur.rowcount == 0:
-            raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
+        return cur.rowcount == 1
 
     def set_pid(self, node_id: int, run_id: str, pid: int) -> None:
         _persistence.set_pid(self._conn, node_id, run_id, pid)
@@ -260,6 +269,33 @@ class MikadoGraph(_AnalyticsFacade):
         self, node_id: int, run_id: str, worktree_path: str, branch_name: str
     ) -> None:
         _persistence.set_worktree(self._conn, node_id, run_id, worktree_path, branch_name)
+
+    def set_dispatched_at(self, node_id: int) -> None:
+        _persistence.set_dispatched_at(self._conn, node_id)
+
+    def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
+        return _persistence.check_parallel_safety(self._conn, node_ids)
+
+    def record_batch_plan(self, plan: BatchPlan) -> int:
+        return _persistence.record_batch_plan(self._conn, plan)
+
+    def get_latest_batch_plan(self) -> dict | None:
+        return _persistence.get_latest_batch_plan(self._conn)
+
+    def set_spec_hash(self, spec_hash: str) -> None:
+        _persistence.set_spec_hash(self._conn, spec_hash)
+
+    def get_spec_hash(self) -> str | None:
+        return _persistence.get_spec_hash(self._conn)
+
+    def drop_all(self) -> int:
+        return _persistence.drop_all(self._conn)
+
+    def record_completion_duration(self, node_id: int, duration: float) -> None:
+        _persistence.record_completion_duration(self._conn, node_id, duration)
+
+    def recent_completion_durations(self, limit: int) -> list[float]:
+        return _persistence.recent_completion_durations(self._conn, limit)
 
     # ── Run repository ───────────────────────────────────────────────────────
 
@@ -276,8 +312,8 @@ class MikadoGraph(_AnalyticsFacade):
             self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid
         )
 
-    def finish_run(self, run_id: str, result: RunResult) -> None:
-        _persistence.finish_run(self._conn, run_id, result)
+    def finish_run(self, run_id: str, result: RunResult) -> bool:
+        return _persistence.finish_run(self._conn, run_id, result)
 
     def set_run_pid(self, run_id: str, pid: int) -> None:
         _persistence.set_run_pid(self._conn, run_id, pid)
@@ -309,21 +345,30 @@ class MikadoGraph(_AnalyticsFacade):
     def get_file_ownership(self, node_id: int) -> list[str]:
         return _persistence.get_file_ownership(self._conn, node_id)
 
-    def get_file_ownership_map(self) -> dict[int, list[str]]:
-        return _persistence.get_file_ownership_map(self._conn)
+    def get_file_ownership_map(
+        self, node_ids: Iterable[int] | None = None
+    ) -> dict[int, list[str]]:
+        return _persistence.get_file_ownership_map(self._conn, node_ids)
 
-    def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
-        return _persistence.check_parallel_safety(self._conn, node_ids)
+    def get_github_bind_attempt(self, goal_id: int) -> dict | None:
+        return _persistence.get_github_bind_attempt(self._conn, goal_id)
 
-    def drop_all(self) -> int:
-        return _persistence.drop_all(self._conn)
+    def set_github_bind_attempt(
+        self,
+        goal_id: int,
+        marker: str,
+        issue_url: str | None,
+        created_at: str,
+    ) -> None:
+        _persistence.set_github_bind_attempt(self._conn, goal_id, marker, issue_url, created_at)
+
+    def clear_github_bind_attempt(self, goal_id: int) -> None:
+        _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
     # ── Goal-claim fencing ───────────────────────────────────────────────────
 
-    def claim_or_reclaim_goal(self, goal_id: int, owner: str, pid: int, *, now: str) -> bool:
-        return _goal_claims.claim_or_reclaim_goal(self._conn, goal_id, owner, pid, now=now)
-
-    def claim_goal(self, goal_id: int, run_id: str, *, now: str) -> bool:
+    def claim_goal(self, goal_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
+        owner_pid = os.getpid() if pid is None else pid
         node = self.get_node(goal_id)
         if node is None:
             raise ValueError(f"node {goal_id} not found")
@@ -331,7 +376,23 @@ class MikadoGraph(_AnalyticsFacade):
             raise ValueError(
                 f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
             )
-        return _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now)
+        return _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=owner_pid)
+
+    def claim_or_reclaim_goal(
+        self, goal_id: int, owner: str, pid: int | None = None, *, now: str
+    ) -> bool:
+        owner_pid = os.getpid() if pid is None else pid
+        node = self.get_node(goal_id)
+        if node is None:
+            raise ValueError(f"node {goal_id} not found")
+        if node.kind != NodeKind.GOAL:
+            raise ValueError(
+                f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
+            )
+        return _goal_claims.claim_or_reclaim_goal(self._conn, goal_id, owner, owner_pid, now=now)
+
+    def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
+        _goal_claims.set_goal_claim_pid(self._conn, goal_id, run_id, pid)
 
     def release_goal(self, goal_id: int, run_id: str) -> bool:
         return _goal_claims.release_goal_row(self._conn, goal_id, run_id)
@@ -340,11 +401,11 @@ class MikadoGraph(_AnalyticsFacade):
         goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
         if goal_id is None:
             return None
-        _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid)
+        if not _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid):
+            existing = _goal_claims.get_goal_claim(self._conn, goal_id)
+            if existing is None or existing["pid"] != pid:
+                raise ValueError(f"ancestor goal {goal_id} is already claimed; dispatch refused")
         return goal_id
-
-    def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
-        _goal_claims.set_goal_claim_pid(self._conn, goal_id, run_id, pid)
 
     def try_reclaim_goal(self, goal_id: int, *, now: str) -> bool:
         return _goal_claims.try_reclaim_goal(self._conn, goal_id, now=now)

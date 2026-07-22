@@ -36,6 +36,7 @@ class _ExecutorLike(Protocol):
         config: ExecutionConfig,
         *,
         base_oid: str | None = None,
+        parent_run_id: str | None = None,
     ) -> DispatchResult: ...
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
     def fail(self, node_id: int) -> None: ...
@@ -57,6 +58,7 @@ def run_node_to_completion(
     timeout: float,
     *,
     base_oid: str | None = None,
+    parent_run_id: str | None = None,
 ) -> HeadlessOutcome:
     """Dispatch one node into its worktree, wait for the ralph run to finish, then
     rebase-merge it back. Returns success only when the run completed AND the
@@ -74,7 +76,12 @@ def run_node_to_completion(
             success=False,
             detail=f"invalid feature branch {feature_branch!r}; refusing to dispatch",
         )
-    dispatch = executor.dispatch(node_id, exec_config, base_oid=base_oid)
+    if parent_run_id is None:
+        dispatch = executor.dispatch(node_id, exec_config, base_oid=base_oid)
+    else:
+        dispatch = executor.dispatch(
+            node_id, exec_config, base_oid=base_oid, parent_run_id=parent_run_id
+        )
     try:
         _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
     except CompletionTimeout:

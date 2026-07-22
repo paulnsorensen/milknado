@@ -93,13 +93,24 @@ def _build_title(active: dict[str, int], graph: MikadoGraph) -> str:
     )
 
 
-def _worker_stats(run_id: str, state: TuiState, graph: MikadoGraph, now: float) -> _WorkerStats:
+def _worker_stats(
+    run_id: str,
+    state: TuiState,
+    graph: MikadoGraph,
+    now: float,
+    *,
+    ownership_map: dict[int, list[str]] | None = None,
+) -> _WorkerStats:
     node_id = state.active[run_id]
     elapsed = now - state.dispatched_at.get(run_id, now)
     ev = state.progress_by_run.get(run_id)
     pct = ev.work / ev.total * 100 if ev and ev.total > 0 else None
     attempts = state.attempts.get(node_id, 0)
-    files = graph.get_file_ownership(node_id)
+    files = (
+        ownership_map.get(node_id, [])
+        if ownership_map is not None
+        else graph.get_file_ownership(node_id)
+    )
     return _WorkerStats(elapsed=elapsed, pct=pct, attempts=attempts, files=files)
 
 
@@ -110,6 +121,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
     now = time.monotonic()
     durations = list(state.completion_durations)
     avg_dur = sum(durations) / len(durations) if len(durations) >= 3 else None
+    ownership_map = graph.get_file_ownership_map(state.active.values())
 
     table = Table(title=_build_title(state.active, graph), show_header=True, header_style="bold")
     table.add_column("", width=12, no_wrap=True)
@@ -124,7 +136,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
         node = graph.get_node(node_id)
         if not node:
             continue
-        stats = _worker_stats(run_id, state, graph, now)
+        stats = _worker_stats(run_id, state, graph, now, ownership_map=ownership_map)
         table.add_row(
             _render_progress_bar(frame, stats.elapsed, stats.pct, state.stall_threshold),
             str(node_id),

@@ -2003,3 +2003,24 @@ def test_add_node_accepts_custom_flavor_artifact_and_repeatable_prereqs(
         assert [child.id for child in graph.get_children(3)] == [1, 2]
     finally:
         graph.close()
+
+
+def test_run_cli_reports_detached_head_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib
+
+    cli_run = importlib.import_module("milknado.cli.run")
+    from milknado.app.run import ProtectedBranchRefusal
+    from milknado.domains.common import default_config
+
+    cfg = default_config(tmp_path)
+    monkeypatch.setattr(cli_run, "_load_or_default", lambda _root: (cfg, None))
+    monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda _root: "HEAD")
+    monkeypatch.setattr(
+        "milknado.app.run.check_protected_branch",
+        lambda *_args: ProtectedBranchRefusal(branch="HEAD", reason="detached"),
+    )
+    with pytest.raises(typer.Exit) as error:
+        cli_run.run(tmp_path)
+    assert error.value.exit_code == 2

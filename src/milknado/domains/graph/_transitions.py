@@ -126,24 +126,14 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
 _CLAIMABLE = ("pending", "failed", "blocked")
 
 
-def claim_node(conn: sqlite3.Connection, node_id: int, run_id: str, now: str) -> bool:
-    """Atomically claim a claimable node, returning True iff this caller won.
-
-    The PENDING/FAILED/BLOCKED -> RUNNING transition, the run_id fence, and the
-    dispatch timestamp are written in one statement; a concurrent caller (another
-    thread OR another process sharing the db) sees RUNNING and gets rowcount 0.
-
-    `pid` is reset to NULL: a FAILED node carries the dead prior run's pid
-    (mark_terminal clears run_id but not pid), so without this reset a freshly
-    re-claimed node would advertise a stale-and-dead pid in the window before
-    set_pid records the real one — and a concurrent try_reclaim would read that
-    dead pid and release this legitimate claim. NULL means "pid-unknown", which
-    try_reclaim correctly refuses to reclaim.
-    """
+def claim_node(
+    conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
+) -> bool:
+    """Atomically claim a claimable node, including its dispatch PID fence."""
     cur = conn.execute(
-        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = NULL, "  # noqa: S608 — fixed tuple
+        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "  # noqa: S608 — fixed tuple
         f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
-        (run_id, now, node_id),
+        (run_id, now, pid, node_id),
     )
     conn.commit()
     return cur.rowcount == 1

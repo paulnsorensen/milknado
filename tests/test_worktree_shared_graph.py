@@ -770,27 +770,20 @@ class TestDeleteOneClearsRuns:
         assert graph.get_node(task_id) is None
 
 
-class TestNullPidClaimReclaimable:
-    """A goal claim with pid=NULL is treated as reclaimable (medium finding).
+class TestNullPidClaimPreserved:
+    """A legacy goal claim with pid=NULL is unknown, not safely reclaimable."""
 
-    A coordinator that crashes between claim_goal and set_goal_pid leaves
-    pid=NULL. Without this fix that claim blocks all foreign dispatch forever.
-    """
-
-    def test_null_pid_claim_is_reclaimable_inline(self, graph: MikadoGraph) -> None:
-        """ancestor_goal_claimed_by_other reclaims NULL-pid claims inline."""
+    def test_null_pid_claim_blocks_foreign_dispatch(self, graph: MikadoGraph) -> None:
         goal_id, task_id = _make_goal_with_task(graph)
-        # Claim without setting pid — simulates crash between claim and set_goal_pid.
-        graph.claim_goal(goal_id, "run-crashed", now=now_iso())
-        # pid is NULL; must be treated as reclaimable, not permanently live.
+        graph._conn.execute(
+            "INSERT INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, NULL, ?)",
+            (goal_id, "run-crashed", now_iso()),
+        )
+        graph._conn.commit()
         result = graph.ancestor_goal_claimed_by_other(task_id, caller_run_id="run-new")
-        assert result is None, (
-            "a NULL-pid claim must be reclaimed inline so a crashed coordinator "
-            "does not wedge the subtree forever"
-        )
-        assert graph.get_node(goal_id).goal_run_id is None, (
-            "goal_claims row must be deleted after NULL-pid reclaim"
-        )
+        assert result is not None
+        assert result["run_id"] == "run-crashed"
+        assert graph.get_node(goal_id).goal_run_id == "run-crashed"
 
 
 class TestUnicodeDecodeErrorCaught:

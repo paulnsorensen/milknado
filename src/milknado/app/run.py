@@ -259,7 +259,10 @@ def run_inline_start(graph, cfg, root: Path, request: InlineRunRequest, use_tmux
     except Exception:
         # Startup failed after the claim: release the claim with a fenced terminal
         # write so the node is not stranded RUNNING, then re-raise.
-        graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
+        if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):
+            raise RuntimeError(
+                f"startup terminal node write lost its fence for node {request.node_id}"
+            )
         raise
     _logger.info(
         "milknado_run_inline_start: node=%d run_id=%s timeout=%ds",
