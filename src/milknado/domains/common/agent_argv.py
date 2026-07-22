@@ -197,6 +197,10 @@ def _replace_option(parts: list[str], option: str, value: str) -> None:
 
 def _sandbox_planning_argv(parts: list[str]) -> list[str]:
     executable = parts[0] if parts else ""
+    # Bare non-allowlisted tokens get a planning-specific message before the
+    # shared validator runs; the distinct wording is intentional and pinned by
+    # test_custom_agent_command. validate_worker_argv below is the authority for
+    # path-bearing/prefix-spoofed tokens.
     if (
         executable not in ALLOWED_WORKER_EXECUTABLES
         and "/" not in executable

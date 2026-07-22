@@ -146,7 +146,7 @@ class TestTwoPassStatusDowngrade:
             from ortools.sat.python import cp_model as cpm
 
             solver = cpm.CpSolver()
-            bundle.model.minimize(bundle.max_batch_idx)
+            bundle.model.minimize(bundle.total_cost)
             status1 = solver_mod._status_name(solver.solve(bundle.model))
             snapshot = solver_mod._take_snapshot(solver, bundle.batch_of, bundle.spread_vars)
             # Simulate pass-2 degrading to UNKNOWN after pass 1 succeeded.

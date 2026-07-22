@@ -192,28 +192,37 @@ Each `NewRelationship` declares that `source_change_id` must be batched before
 The solver uses a **lexicographic two-pass** strategy. BIG constants and ALPHA
 weights are not used.
 
-**Pass 1 — minimise batch count:**
+**Pass 1 — minimise composite total cost:**
 
-- Objective: `minimise max_batch_idx`
-- Time budget: `time_limit_s / 2`
-- Captures `K* = solver.value(max_batch_idx)` from the solution.
+- Objective: `minimise total_cost`.
+- For each non-empty batch, `total_cost` combines the fixed 2,000-token Ralph
+  startup charge with that batch's token mass multiplied by a
+  size-dependent multiplier `(100 + (k*12 - 1)*10)`, where `k` is the number
+  of normal SCCs in the batch.  CP-SAT values are scaled by 100.
+- Time budget: `time_limit_s / 2`.
+- When the result is `OPTIMAL` or `FEASIBLE`, records the pass-1 objective
+  value `C` and its assignment.
 
-**Pass 2 — minimise symbol spread:**
+**Pass 2 — minimise symbol spread at fixed cost:**
 
-- Additional constraint: `max_batch_idx == K*`  (batch count is now fixed)
-- Objective: `minimise sum(spread_vars.values())`
-- Time budget: remaining half of `time_limit_s`
+- Additional constraint: `total_cost == C`.
+- Objective: `minimise sum(spread_vars.values())`.
+- Time budget: remaining half of `time_limit_s`.
+
+Batch count is an outcome of the composite cost objective, not a
+lexicographically dominant criterion.  The startup charge discourages needless
+batches while the size-dependent multiplier discourages over-packed contexts.
 
 **Status resolution:**
 
 - If pass 1 is `INFEASIBLE` → return `INFEASIBLE`.
 - If pass 1 is `UNKNOWN` → return `UNKNOWN`.
-- Otherwise: `solver_status` = worse of the two passes' statuses. Pass 2 can
-  only relax (it adds a constraint and changes the objective), so it may
-  downgrade `OPTIMAL` → `FEASIBLE` but never upgrade.
+- Otherwise, if pass 2 is `INFEASIBLE` or `UNKNOWN`, return the valid pass-1
+  assignment and pass-1 status.
+- Otherwise: `solver_status` = worse of the two passes' statuses.
 
-This guarantees that reducing the batch count by 1 always takes strict
-precedence over any improvement in symbol spread, regardless of graph size.
+The fixed-cost constraint means pass 2 can improve symbol spread only among
+plans selected by the pass-1 total-cost objective.
 
 | Status | Meaning |
 |--------|---------|

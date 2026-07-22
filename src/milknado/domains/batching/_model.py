@@ -24,7 +24,6 @@ class ModelBundle:
     model: cp_model.CpModel
     batch_of: dict[str, cp_model.IntVar]
     spread_vars: dict[str, cp_model.IntVar] = field(default_factory=dict)
-    max_batch_idx: cp_model.IntVar | None = None
     total_cost: cp_model.IntVar | None = None
 
 
@@ -46,14 +45,11 @@ def build_model(inputs: ModelInputs) -> ModelBundle:
     _add_budget_constraints(model, normal_sccs, in_batch, inputs)
     _add_ordering_constraints(model, inputs.dag_edges, batch_of)
     spread_vars = _build_spread_vars(model, batch_of, inputs.sym_by_scc, normal_sccs, K)
-    max_batch_idx = model.new_int_var(0, K - 1, "max_batch_idx")
-    model.add_max_equality(max_batch_idx, list(batch_of.values()))
     total_cost = _build_total_cost(model, normal_sccs, in_batch, inputs, K)
     return ModelBundle(
         model=model,
         batch_of=batch_of,
         spread_vars=spread_vars,
-        max_batch_idx=max_batch_idx,
         total_cost=total_cost,
     )
 

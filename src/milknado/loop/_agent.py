@@ -842,7 +842,7 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
         tail=_BoundedOutput() if capture_stdout_text else None,
-        sink=_new_output_sink(None, run.iteration) if capture_stdout_text else None,
+        sink=_new_output_sink(None, run.iteration) if needs_post_hoc_count else None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(
