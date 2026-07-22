@@ -15,6 +15,7 @@ from milknado.domains.common import (
     Gate,
     MikadoNode,
     ProgressEvent,
+    TerminalRunOutcome,
     VerifySpecResult,
     build_resume_command,
 )
@@ -73,6 +74,15 @@ class LoopAdapter:
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)
 
+
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        return self._manager._require_run(run_id).state.queue_guidance(text)
+
+    def request_stop_run(self, run_id: str) -> None:
+        self._manager.stop_run(run_id)
+
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return self._manager.force_stop_and_join(run_id, timeout)
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.stop_and_join(run_id, timeout)
 
@@ -101,11 +111,36 @@ class LoopAdapter:
             return [str(line) for line in text]
         return []
 
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        """Return at most ``max_lines`` of output without splitting the whole text."""
+        if max_lines <= 0:
+            return []
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return []
+        direct = getattr(run, "stdout", None)
+        if isinstance(direct, list):
+            return [str(line) for line in direct[-max_lines:]]
+        text = direct if isinstance(direct, str) else getattr(run.state, "last_captured_stdout", None)
+        if text is None:
+            text = getattr(run.state, "last_result_text", None)
+        if isinstance(text, str):
+            if not text:
+                return []
+            return [line.rstrip("\r") for line in text.rstrip("\r\n").rsplit("\n", max_lines)[-max_lines:]]
+        if isinstance(text, list):
+            return [str(line) for line in text[-max_lines:]]
+        return []
+
+    def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
+        run = self._manager.get_run(run_id)
+        return () if run is None else run.state.pending_guidance
+
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         start = time.monotonic()
         deadline = start + timeout if timeout is not None else None
         while True:
@@ -124,25 +159,28 @@ class LoopAdapter:
                     active_run_ids=active_run_ids,
                     waited_seconds=time.monotonic() - start,
                 ) from None
-            _PROGRESS = getattr(EventType, "PROGRESS", None)
-            if _PROGRESS is not None and event.type == _PROGRESS:
-                with self._progress_lock:
-                    self._progress_buffer.append(
-                        ProgressEvent(
-                            run_id=event.run_id,
-                            work=getattr(event, "work", 0),
-                            total=getattr(event, "total", 0),
-                            message=getattr(event, "message", ""),
-                        )
-                    )
-                continue
-            if event.type != EventType.RUN_STOPPED:
-                continue
             if event.run_id not in active_run_ids:
                 continue
+            if event.type == EventType.ITERATION_STARTED:
+                data = event.data
+                iteration = data.get("iteration", 0) if isinstance(data, dict) else 0
+                return event.run_id, ProgressEvent(
+                    run_id=event.run_id,
+                    work=iteration,
+                    total=0,
+                    message=f"iteration {iteration} started",
+                )
+            if event.type != EventType.RUN_STOPPED:
+                continue
             run = self._manager.get_run(event.run_id)
-            success = run is not None and run.state.status == RunStatus.COMPLETED
-            return event.run_id, success
+            if run is None:
+                return event.run_id, "failed"
+            status = run.state.status
+            if status is RunStatus.COMPLETED:
+                return event.run_id, "completed"
+            if status is RunStatus.STOPPED:
+                return event.run_id, "stopped"
+            return event.run_id, "failed"
 
     def poll_progress_events(self) -> list[ProgressEvent]:
         with self._progress_lock:

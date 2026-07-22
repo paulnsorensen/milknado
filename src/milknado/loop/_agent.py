@@ -378,6 +378,7 @@ class AgentResult(ProcessResult):
     captured_stdout: str | None = None
     completion_detected: bool = False
     captured_stderr: str | None = None
+    force_stopped: bool = False
     # Tool-use events the adapter reported for this iteration; ``0`` when
     # no adapter was active or the adapter's ``counts_what != "tool_use"``.
     tool_use_count: int = 0
@@ -415,6 +416,7 @@ class _StreamResult:
     stdout_lines: tuple[str, ...] | None
     result_text: str | None
     timed_out: bool
+    force_stopped: bool = False
     tool_use_count: int = 0
     turn_capped: bool = False
     completion_detected: bool = False
@@ -438,6 +440,7 @@ class AgentRunSpec:
     max_turns_grace: int = 0
     completion_signal: str | None = None
     on_tool_use: ToolUseCallback | None = None
+    force_stop_event: threading.Event | None = None
     cwd: Path | None = None
 
 
@@ -460,6 +463,7 @@ class _ResolvedAgentRun:
     on_tool_use: ToolUseCallback | None = None
     env: dict[str, str] | None = None
     completion_signal: str | None = None
+    force_stop_event: threading.Event | None = None
     cwd: Path | None = None
 
 
@@ -558,6 +562,7 @@ def _read_agent_stream(
     max_turns: int | None = None,
     on_tool_use: ToolUseCallback | None = None,
     correlation: str = "unknown",
+    force_stop_event: threading.Event | None = None,
     pump_threads: list[threading.Thread] | None = None,
 ) -> _StreamResult:
     state = _StreamState(
@@ -581,13 +586,31 @@ def _read_agent_stream(
     if pump_threads is not None:
         pump_threads.append(pump_thread)
 
+    def stopped() -> _StreamResult:
+        stop_event.set()
+        return _StreamResult(
+            stdout_lines=state.stdout_lines.lines if state.stdout_lines else None,
+            result_text=state.result_text,
+            timed_out=False,
+            force_stopped=True,
+            tool_use_count=state.tool_use_count,
+            turn_capped=state.turn_capped,
+            completion_detected=state.completion_detected,
+        )
+
     while True:
-        get_timeout = max(deadline - time.monotonic(), 0) if deadline is not None else None
+        if force_stop_event is not None and force_stop_event.is_set():
+            return stopped()
+        wait = min(max(deadline - time.monotonic(), 0), 0.1) if deadline is not None else 0.1
         try:
-            line = line_q.get(timeout=get_timeout)
+            line = line_q.get(timeout=wait)
         except queue.Empty:
-            stop_event.set()
-            return state.to_result(timed_out=True)
+            if force_stop_event is not None and force_stop_event.is_set():
+                return stopped()
+            if deadline is not None and time.monotonic() >= deadline:
+                stop_event.set()
+                return state.to_result(timed_out=True)
+            continue
         if line is None:
             return state.to_result(timed_out=False)
 
@@ -607,12 +630,7 @@ def _read_agent_stream(
                     _call_safely(on_activity, parsed, correlation=correlation)
             if count_tool_use and adapter is not None:
                 if _update_tool_use(
-                    state,
-                    adapter,
-                    on_tool_use,
-                    max_turns,
-                    stripped,
-                    correlation,
+                    state, adapter, on_tool_use, max_turns, stripped, correlation
                 ):
                     stop_event.set()
                     return state.to_result(timed_out=False)
@@ -690,11 +708,13 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             max_turns=run.max_turns,
             on_tool_use=run.on_tool_use,
             correlation=correlation,
+            force_stop_event=run.force_stop_event,
             pump_threads=pump_threads,
         )
-        if stream.timed_out or stream.turn_capped:
-            _kill_process_group(proc)
-        proc.wait()
+        if stream.timed_out or stream.turn_capped or stream.force_stopped:
+            _ensure_process_dead(proc)
+        else:
+            proc.wait()
     finally:
         _cleanup_agent(proc, *pump_threads, writer_thread)
 
@@ -704,11 +724,12 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     if log_sink is not None:
         log_sink.close()
     return AgentResult(
-        returncode=None if stream.timed_out else proc.returncode,
+        returncode=None if stream.timed_out or stream.force_stopped else proc.returncode,
         elapsed=time.monotonic() - start,
         log_file=log_sink.path if log_sink is not None else None,
         result_text=stream.result_text,
         timed_out=stream.timed_out,
+        force_stopped=stream.force_stopped,
         captured_stdout=stdout if capture_stdout_text else None,
         captured_stderr=stderr if capture_stderr_text else None,
         tool_use_count=stream.tool_use_count,
@@ -834,6 +855,7 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     pipe_stderr = capture_stderr_text or run.on_output_line is not None
     pipe_stdin = run.stdin_text is not None
 
+    force_stopped = False
     returncode: int | None = None
     timed_out = False
     writer_thread: threading.Thread | None = None
@@ -903,11 +925,28 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
         if run.stdin_text is not None:
             writer_thread = _start_writer_thread(proc, run.stdin_text)
 
-        try:
-            returncode = proc.wait(timeout=run.timeout)
-        except subprocess.TimeoutExpired:
-            _ensure_process_dead(proc)
-            timed_out = True
+        deadline = time.monotonic() + run.timeout if run.timeout is not None else None
+        while proc.poll() is None:
+            if run.force_stop_event is not None and run.force_stop_event.is_set():
+                _kill_process_group(proc)
+                force_stopped = True
+                break
+            remaining = max(deadline - time.monotonic(), 0) if deadline is not None else 0.1
+            if deadline is not None and remaining == 0:
+                _ensure_process_dead(proc)
+                timed_out = True
+                break
+            wait_for = min(remaining, 0.1)
+            try:
+                returncode = proc.wait(timeout=wait_for)
+            except subprocess.TimeoutExpired as exc:
+                if exc.timeout != wait_for:
+                    _ensure_process_dead(proc)
+                    timed_out = True
+                    break
+                continue
+        if returncode is None and not timed_out and not force_stopped:
+            returncode = proc.wait()
     finally:
         _cleanup_agent(proc, stdout_thread, stderr_thread, writer_thread)
 
@@ -925,11 +964,12 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
         log_sink.close()
 
     return AgentResult(
-        returncode=None if timed_out else returncode,
+        returncode=None if timed_out or force_stopped else returncode,
         elapsed=time.monotonic() - start,
         log_file=log_sink.path if log_sink is not None else None,
         result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
         timed_out=timed_out,
+        force_stopped=force_stopped,
         captured_stdout=stdout if capture_stdout_text else None,
         captured_stderr=stderr if capture_stderr_text else None,
         tool_use_count=tool_use_count,
@@ -971,6 +1011,7 @@ def _prepare_agent_run(
         env=env,
         cwd=spec.cwd,
         completion_signal=spec.completion_signal,
+        force_stop_event=spec.force_stop_event,
     )
 
 

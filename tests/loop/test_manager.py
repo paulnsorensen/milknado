@@ -212,6 +212,18 @@ class TestRunManagerPauseResume:
         assert managed.state.completed == 3
 
 
+
+class TestRunManagerForceStop:
+    def test_force_stop_closes_guidance_and_reports_unstarted_cleanup(self, tmp_path):
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path))
+
+        assert managed.state.queue_guidance("stop after this turn") is True
+        assert manager.force_stop_and_join(managed.state.run_id, timeout=0) is True
+        assert managed.state.force_stop_requested is True
+        assert managed.state.take_guidance() == ("stop after this turn",)
+        assert managed.state.queue_guidance("later") is False
+
 class TestRunManagerListAndGet:
     def test_list_runs_returns_all_runs(self, tmp_path):
         manager = RunManager()

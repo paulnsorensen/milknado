@@ -12,16 +12,23 @@ from milknado.domains.execution.executor import (
     get_dispatchable_nodes,
 )
 from milknado.domains.execution.headless import HeadlessOutcome, run_node_to_completion
-from milknado.domains.execution.run_loop import RunLoop, RunLoopResult
+from milknado.domains.execution.run_loop import (
+    ActiveRunSnapshot,
+    ExecutionSnapshot,
+    RunLoop,
+    RunLoopResult,
+)
 
 __all__ = [
     "NO_GATES_CONFIGURED_MESSAGE",
+    "ActiveRunSnapshot",
     "CompletionResult",
     "DispatchResult",
     "ExecutionConfig",
     "Executor",
     "HeadlessOutcome",
     "RebaseConflict",
+    "ExecutionSnapshot",
     "RunLoop",
     "RunLoopResult",
     "WorktreeManager",

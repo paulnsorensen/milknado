@@ -1,7 +1,7 @@
 import collections
 import io
 import time
-from dataclasses import dataclass, field
+from dataclasses import FrozenInstanceError, dataclass, field
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -16,7 +16,9 @@ from milknado.domains.common.types import (
     RebaseResult,
 )
 from milknado.domains.execution import (
+    ActiveRunSnapshot,
     ExecutionConfig,
+    ExecutionSnapshot,
     Executor,
     RunLoop,
 )
@@ -29,11 +31,17 @@ from milknado.domains.execution.run_loop.display import (
     _render_progress_bar,
 )
 from milknado.domains.graph import MikadoGraph
+from milknado.domains.common import ProgressEvent
+from milknado.loop import RunStatus
+
 
 
 @dataclass
 class FakeRunState:
     run_id: str = "run-1"
+    status: RunStatus = RunStatus.RUNNING
+    stop_requested: bool = False
+    force_stop_requested: bool = False
 
 
 @dataclass
@@ -112,8 +120,12 @@ class FakeRalph:
     def __init__(self) -> None:
         self._run_counter = 0
         self._success: dict[str, bool] = {}
-        self._pending_completions: list[tuple[str, bool]] = []
-
+        self._outcomes: dict[str, str] = {}
+        self._pending_completions: list[tuple[str, str]] = []
+        self._runs: dict[str, FakeRun] = {}
+        self.output: dict[str, list[str]] = {}
+        self.guidance: dict[str, tuple[str, ...]] = {}
+        self._progress_before_completion: list[ProgressEvent] = []
     def create_run(
         self,
         agent: str,
@@ -127,9 +139,13 @@ class FakeRalph:
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
-        success = self._success.get(run_id, True)
-        self._pending_completions.append((run_id, success))
-        return FakeRun(state=FakeRunState(run_id=run_id))
+        outcome = self._outcomes.get(
+            run_id, "completed" if self._success.get(run_id, True) else "failed"
+        )
+        self._pending_completions.append((run_id, outcome))
+        run = FakeRun(state=FakeRunState(run_id=run_id))
+        self._runs[run_id] = run
+        return run
 
     def start_run(self, run_id: str) -> None:
         pass
@@ -141,20 +157,34 @@ class FakeRalph:
         return []
 
     def get_run(self, run_id: str) -> Any | None:
-        return None
+        return self._runs.get(run_id)
 
     def get_run_stdout(self, run_id: str) -> list[str]:
-        return []
+        return self.output.get(run_id, [])
+
+
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        return self.output.get(run_id, [])[-max_lines:]
+    def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
+        return self.guidance.get(run_id, ())
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        self.guidance[run_id] = (*self.guidance.get(run_id, ()), text)
+        return True
+
 
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, bool]:
-        for i, (run_id, success) in enumerate(self._pending_completions):
+    ) -> tuple[str, str]:
+        if self._progress_before_completion:
+            event = self._progress_before_completion.pop(0)
+            if event.run_id in active_run_ids:
+                return event.run_id, event
+        for i, (run_id, outcome) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
                 self._pending_completions.pop(i)
-                return run_id, success
+                return run_id, outcome
         raise RuntimeError("No pending completions for active runs")
 
     def poll_progress_events(self) -> list[Any]:
@@ -176,6 +206,9 @@ class FakeRalph:
 
     def set_run_fails(self, run_id: str) -> None:
         self._success[run_id] = False
+
+    def set_run_stopped(self, run_id: str) -> None:
+        self._outcomes[run_id] = "stopped"
 
 
 @pytest.fixture()
@@ -215,6 +248,148 @@ def executor(
     return Executor(graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg)
 
 
+def test_snapshot_is_immutable_bounded_and_unsubscribable(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    fake_ralph: FakeRalph,
+) -> None:
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    graph.mark_running(leaf.id)
+    fake_ralph._runs["run-1"] = FakeRun(
+        state=FakeRunState(run_id="run-1", stop_requested=True)
+    )
+    fake_ralph.output["run-1"] = [f"line {index}" for index in range(35)]
+    fake_ralph.guidance["run-1"] = ("use domain barrels",)
+    run_loop._active["run-1"] = leaf.id
+    run_loop._progress_by_run["run-1"] = ProgressEvent(
+        run_id="run-1", work=1, total=2, message="building"
+    )
+    received = []
+    unsubscribe = run_loop.subscribe(received.append)
+    run_loop._publish_snapshot()
+    unsubscribe()
+    fake_ralph.output["run-1"].append("later")
+    run_loop._publish_snapshot()
+
+    snapshot = received[0]
+    active = snapshot.active_runs[0]
+    assert snapshot.goal == "ship controller"
+    assert snapshot.active_runs == (active,)
+    assert active.status is RunStatus.RUNNING
+    assert active.progress == "building"
+    assert active.stop_requested is True
+    assert active.force_stop_available is True
+    assert active.unavailable_action_reasons == (
+        ("cancel", "stop already requested"),
+        ("guidance", "run is stopping"),
+    )
+    assert active.output == tuple(f"line {index}" for index in range(5, 35))
+    assert active.pending_guidance == ("use domain barrels",)
+    assert received == [snapshot]
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (RunStatus.COMPLETED, "run has completed"),
+        (RunStatus.FAILED, "run has failed"),
+    ],
+)
+def test_terminal_active_run_disables_all_controls(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    fake_ralph: FakeRalph,
+    status: RunStatus,
+    reason: str,
+) -> None:
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    fake_ralph._runs["run-1"] = FakeRun(
+        state=FakeRunState(run_id="run-1", status=status)
+    )
+    run_loop._active["run-1"] = leaf.id
+
+    active = run_loop.snapshot().active_runs[0]
+
+    assert active.force_stop_available is False
+    assert active.unavailable_action_reasons == (
+        ("cancel", reason),
+        ("guidance", reason),
+        ("force_stop", reason),
+    )
+
+
+def test_progress_snapshot_is_published_before_terminal_completion(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_ralph: FakeRalph,
+) -> None:
+    root = graph.add_node("ship controller")
+    graph.add_node("build snapshots", parent_id=root.id)
+    fake_ralph._progress_before_completion.append(
+        ProgressEvent(run_id="run-1", work=1, total=2, message="building")
+    )
+    received: list[ExecutionSnapshot] = []
+    run_loop.subscribe(received.append)
+
+    run_loop.run(config, "main")
+
+    assert any(
+        snapshot.active_runs
+        and snapshot.active_runs[0].progress == "building"
+        for snapshot in received
+    )
+
+
+def test_snapshot_models_reject_mutation() -> None:
+    active = ActiveRunSnapshot(
+        run_id="run-1",
+        node_id=1,
+        description="build snapshots",
+        status=RunStatus.RUNNING,
+        progress=None,
+        stop_requested=False,
+        force_stop_available=True,
+        unavailable_action_reasons=(),
+        output=("line",),
+        pending_guidance=(),
+    )
+    snapshot = ExecutionSnapshot(
+        goal="ship controller",
+        active_runs=(active,),
+        completed=0,
+        failed=0,
+        available=1,
+        event_lines=(),
+    )
+
+    with pytest.raises(FrozenInstanceError):
+        snapshot.goal = "mutated"  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        active.output = ()  # type: ignore[misc]
+
+
+def test_subscription_is_idempotent_and_isolates_failing_listener(
+    run_loop: RunLoop,
+) -> None:
+    received = []
+
+    def failing_listener(_snapshot: object) -> None:
+        raise RuntimeError("listener failed")
+
+    run_loop.subscribe(failing_listener)
+    unsubscribe = run_loop.subscribe(received.append)
+
+    assert run_loop.queue_guidance("run-1", "use domain barrels") is True
+    unsubscribe()
+    unsubscribe()
+    assert run_loop.queue_guidance("run-1", "do not publish") is True
+
+    assert len(received) == 1
+    assert received[0].active_runs == ()
+
 @pytest.fixture()
 def run_loop(
     executor: Executor,
@@ -222,6 +397,47 @@ def run_loop(
     fake_ralph: FakeRalph,
 ) -> RunLoop:
     return RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+
+
+
+def test_initial_dispatch_respects_a_preexisting_scheduling_stop(
+    run_loop: RunLoop,
+    config: ExecutionConfig,
+) -> None:
+    dispatch = MagicMock()
+    run_loop._dispatch_batch = dispatch
+    run_loop.admit_stop_scheduling()
+
+    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0)
+
+    dispatch.assert_not_called()
+
+def test_initial_dispatch_drains_pending_controls_before_scheduling(
+    run_loop: RunLoop,
+    config: ExecutionConfig,
+) -> None:
+    dispatch = MagicMock()
+    run_loop._dispatch_batch = dispatch
+    dispatch.return_value = (0, 0)
+    run_loop._process_controls = run_loop.stop_scheduling
+
+    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0)
+
+    dispatch.assert_not_called()
+
+
+def test_stop_latched_before_run_skips_terminal_spec_verification(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+) -> None:
+    root = graph.add_node("root goal")
+    run_loop.stop_scheduling()
+
+    result = run_loop.run(config, "main", spec_text="spec: do the thing")
+
+    assert result.verify_outcome is None
+    assert graph.get_node(root.id).status == NodeStatus.PENDING
 
 
 class TestRunLoopSingleNode:
@@ -292,6 +508,31 @@ class TestRunLoopParentChild:
         root_node = graph.get_node(root.id)
         assert root_node is not None
         assert root_node.status == NodeStatus.PENDING
+
+
+class TestRunLoopStoppedOutcome:
+    def test_stopped_run_resets_node_without_counting_or_redispatch(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        ralph.set_run_stopped("run-1")
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+
+        result = loop.run(config, "main")
+
+        node = graph.get_node(leaf.id)
+        assert node is not None
+        assert node.status is NodeStatus.PENDING
+        assert (result.dispatched_total, result.completed_total, result.failed_total) == (1, 0, 0)
+        assert loop._stopped_nodes == {leaf.id}
+        assert loop._active == {}
 
 
 class TestRunLoopParallelLeaves:
@@ -757,6 +998,9 @@ class _RalphWithStdout(FakeRalph):
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         return self._lines
+
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        return self._lines[-max_lines:]
 
 
 class TestRenderOverlayLogLines:

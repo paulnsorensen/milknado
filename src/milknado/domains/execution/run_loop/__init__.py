@@ -5,10 +5,12 @@ import json
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import ProgressEvent, resolve_flavor_profile
+from milknado.domains.common import ProgressEvent, TerminalRunOutcome, resolve_flavor_profile
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution.executor import RebaseConflict, get_dispatchable_nodes
@@ -16,6 +18,8 @@ from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
 from milknado.domains.execution.run_loop.display import (
+    ActiveRunSnapshot,
+    ExecutionSnapshot,
     TuiState,
     _build_layout,
     _render_overlay,
@@ -27,6 +31,10 @@ from milknado.domains.execution.run_loop.input import (
     start_input_thread,
     stop_input_thread,
 )
+from milknado.loop import RunStatus
+
+
+__all__ = ["ActiveRunSnapshot", "ExecutionSnapshot", "RunLoop", "RunLoopResult"]
 
 if TYPE_CHECKING:
     from rich.layout import Layout
@@ -70,6 +78,132 @@ class RunLoop:
         self._completion_durations: deque[float] = deque(maxlen=eta_n)
         self._input: InputState = InputState()
         self._exec_config: ExecutionConfig | None = None
+        self._stopped_nodes: set[int] = set()
+        self._completed = 0
+        self._failed = 0
+        self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
+        self._listeners_lock = Lock()
+        self._process_controls: Callable[[], None] | None = None
+        self._completion_wait_started = 0.0
+        self._scheduling_stopped = False
+        self._scheduling_lock = Lock()
+
+
+
+
+    def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        """Register a UI-neutral observer and return its idempotent removal callback."""
+        with self._listeners_lock:
+            self._listeners.add(listener)
+
+        def unsubscribe() -> None:
+            with self._listeners_lock:
+                self._listeners.discard(listener)
+
+        return unsubscribe
+
+    def snapshot(self) -> ExecutionSnapshot:
+        """Build a bounded immutable view without exposing loop-owned collections."""
+        with self._graph.read_locked():
+            root = self._graph.get_root()
+            active_runs = tuple(
+                self._active_snapshot(run_id, node_id)
+                for run_id, node_id in sorted(self._active.items(), key=lambda item: item[1])
+            )
+            available = sum(
+                node_id not in self._stopped_nodes
+                for node_id in get_dispatchable_nodes(self._graph)
+            )
+        return ExecutionSnapshot(
+            goal=root.description if root else "",
+            active_runs=active_runs,
+            completed=self._completed,
+            failed=self._failed,
+            available=available,
+            event_lines=tuple(self._logs),
+        )
+
+    def _active_snapshot(self, run_id: str, node_id: int) -> ActiveRunSnapshot:
+        run = self._ralph.get_run(run_id)
+        state = run.state if run is not None else None
+        status = getattr(state, "status", RunStatus.RUNNING)
+        progress_event = self._progress_by_run.get(run_id)
+        progress = None
+        if progress_event is not None:
+            progress = progress_event.message or f"{progress_event.work}/{progress_event.total}"
+        reasons: list[tuple[str, str]] = []
+        stop_requested = bool(getattr(state, "stop_requested", False))
+        terminal_reasons = {
+            RunStatus.COMPLETED: "run has completed",
+            RunStatus.FAILED: "run has failed",
+            RunStatus.STOPPED: "run has stopped",
+        }
+        terminal_reason = terminal_reasons.get(status)
+        force_stop_available = not bool(getattr(state, "force_stop_requested", False))
+        if terminal_reason is not None:
+            force_stop_available = False
+            reasons.extend(
+                (
+                    ("cancel", terminal_reason),
+                    ("guidance", terminal_reason),
+                    ("force_stop", terminal_reason),
+                )
+            )
+        elif stop_requested:
+            reasons.append(("cancel", "stop already requested"))
+            reasons.append(("guidance", "run is stopping"))
+        if not force_stop_available and terminal_reason is None:
+            reasons.append(("force_stop", "force stop already requested"))
+        node = self._graph.get_node(node_id)
+        return ActiveRunSnapshot(
+            run_id=run_id,
+            node_id=node_id,
+            description=_summarize_description(node.description) if node else str(node_id),
+            status=status,
+            progress=progress,
+            stop_requested=stop_requested,
+            force_stop_available=force_stop_available,
+            unavailable_action_reasons=tuple(reasons),
+            output=tuple(self._ralph.get_run_output_tail(run_id, 30)),
+            pending_guidance=self._ralph.get_run_guidance(run_id),
+        )
+
+    def _publish_snapshot(self) -> None:
+        snapshot = self.snapshot()
+        with self._listeners_lock:
+            listeners = tuple(self._listeners)
+        for listener in listeners:
+            try:
+                listener(snapshot)
+            except Exception:
+                _logger.exception("execution snapshot listener failed")
+
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        accepted = self._ralph.queue_guidance(run_id, text)
+        self._publish_snapshot()
+        return accepted
+
+    def cancel(self, run_id: str) -> None:
+        self._ralph.request_stop_run(run_id)
+        self._publish_snapshot()
+
+    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
+        stopped = self._ralph.force_stop_run(run_id, timeout)
+        self._publish_snapshot()
+        return stopped
+
+    def admit_stop_scheduling(self) -> None:
+        """Atomically close scheduling admission before a control is queued."""
+        with self._scheduling_lock:
+            self._scheduling_stopped = True
+
+    def stop_scheduling(self) -> None:
+        """Prevent redispatch and ask every currently active run to stop."""
+        self.admit_stop_scheduling()
+        for run_id in self._active:
+            self._ralph.request_stop_run(run_id)
+        self._publish_snapshot()
+
 
     def run(
         self,
@@ -79,11 +213,19 @@ class RunLoop:
         strict: bool = False,
         spec_text: str | None = None,
         spec_path: Path | None = None,
+        process_controls: Callable[[], None] | None = None,
     ) -> RunLoopResult:
         from rich.console import Console
 
         self._strict = strict
         self._exec_config = config
+        self._process_controls = process_controls
+        self._stopped_nodes.clear()
+        self._completed = 0
+        self._failed = 0
+        if self._process_controls is not None:
+            self._process_controls()
+        self._publish_snapshot()
         timeout = (
             self._milknado_config.completion_timeout_seconds if self._milknado_config else 1800.0
         )
@@ -98,7 +240,7 @@ class RunLoop:
             )
 
         self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
-        verify_outcome = self._maybe_verify_spec(spec_text, spec_path, config)
+        verify_outcome = self._verify_if_scheduling_open(spec_text, spec_path, config)
         root = self._graph.get_root()
         return RunLoopResult(
             root_done=root is not None and root.status == NodeStatus.DONE,
@@ -124,11 +266,14 @@ class RunLoop:
         interrupted = False
         try:
             with Live(self._build_layout(), refresh_per_second=2) as live:
-                d, f = self._dispatch_batch(config, concurrency_limit, live)
+                drain_input(self._input, self._active)
+                if self._process_controls is not None:
+                    self._process_controls()
+                d, f = self._dispatch_if_scheduling_open(config, concurrency_limit, live)
                 dispatched += d
                 failed += f
-                drain_input(self._input, self._active)
-                self._render_live_frame(live)
+                self._failed = failed
+                self._publish_snapshot()
                 while self._active:
                     d, c, f, cs, timed_out = self._poll_and_complete(
                         config, feature_branch, concurrency_limit, timeout, live
@@ -137,6 +282,9 @@ class RunLoop:
                     completed += c
                     failed += f
                     conflicts.extend(cs)
+                    self._completed = completed
+                    self._failed = failed
+                    self._publish_snapshot()
                     if timed_out:
                         break
         except KeyboardInterrupt:
@@ -145,6 +293,7 @@ class RunLoop:
             raise
         finally:
             stop_input_thread(self._input)
+            self._publish_snapshot()
         return dispatched, completed, failed, conflicts, interrupted
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
@@ -183,23 +332,39 @@ class RunLoop:
 
         Returns (dispatched, completed, failed, conflicts, timed_out).
         """
+        if self._process_controls is not None:
+            self._process_controls()
+        wait_timeout = min(timeout, 0.1) if self._process_controls is not None else timeout
         try:
-            run_id, success = self._ralph.wait_for_next_completion(
-                set(self._active.keys()), timeout=timeout
+            run_id, outcome = self._ralph.wait_for_next_completion(
+                set(self._active.keys()), timeout=wait_timeout
             )
         except CompletionTimeout as ct:
+            if (
+                self._process_controls is not None
+                and time.monotonic() - self._completion_wait_started < timeout
+            ):
+                self._process_controls()
+                return 0, 0, 0, [], False
             return 0, 0, self._handle_completion_timeout(ct), [], True
+        if isinstance(outcome, ProgressEvent):
+            self._progress_by_run[outcome.run_id] = outcome
+            if self._process_controls is not None:
+                self._process_controls()
+            self._publish_snapshot()
+            self._render_live_frame(live)
+            return 0, 0, 0, [], False
+        self._completion_wait_started = time.monotonic()
         self._absorb_progress()
         drain_input(self._input, self._active)
-        c, f, cs = handle_completion(self, run_id, success, feature_branch, live)
+        c, f, cs = handle_completion(self, run_id, outcome, feature_branch, live)
         completed = c
         failed = f
         conflicts: list[RebaseConflict] = list(cs)
         dispatched = 0
-        if not (self._strict and self._failure_triggered):
-            d, f2 = self._dispatch_batch(config, concurrency_limit, live)
-            dispatched += d
-            failed += f2
+        d, f2 = self._dispatch_if_scheduling_open(config, concurrency_limit, live)
+        dispatched += d
+        failed += f2
         self._render_live_frame(live)
         return dispatched, completed, failed, conflicts, False
 
@@ -261,6 +426,28 @@ class RunLoop:
     def _render_overlay(self, run_id: str) -> Panel:
         return _render_overlay(run_id, self._tui_state(), self._graph, self._ralph)
 
+    def _dispatch_if_scheduling_open(
+        self,
+        config: ExecutionConfig,
+        concurrency_limit: int,
+        live: Live,
+    ) -> tuple[int, int]:
+        with self._scheduling_lock:
+            if self._scheduling_stopped:
+                return 0, 0
+            return self._dispatch_batch(config, concurrency_limit, live)
+
+    def _verify_if_scheduling_open(
+        self,
+        spec_text: str | None,
+        spec_path: Path | None,
+        config: ExecutionConfig,
+    ) -> VerifyOutcome | None:
+        with self._scheduling_lock:
+            if self._scheduling_stopped:
+                return None
+            return self._maybe_verify_spec(spec_text, spec_path, config)
+
     def _maybe_verify_spec(
         self,
         spec_text: str | None,
@@ -297,7 +484,9 @@ class RunLoop:
         available = concurrency_limit - len(self._active)
         if available <= 0:
             return 0, 0
-        dispatchable = get_dispatchable_nodes(self._graph)
+        dispatchable = [
+            node_id for node_id in get_dispatchable_nodes(self._graph) if node_id not in self._stopped_nodes
+        ]
         dispatched = 0
         failed = 0
         for node_id in dispatchable[:available]:

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop.display import _summarize_description
+from milknado.domains.common import TerminalRunOutcome
 
 if TYPE_CHECKING:
     from rich.live import Live
@@ -17,7 +18,7 @@ _logger = logging.getLogger("milknado")
 def handle_completion(
     loop: Any,
     run_id: str,
-    success: bool,
+    outcome: TerminalRunOutcome,
     feature_branch: str,
     live: Live,
 ) -> tuple[int, int, list[RebaseConflict]]:
@@ -32,7 +33,7 @@ def handle_completion(
     start = loop._dispatched_at.pop(run_id, time.monotonic())
     duration = time.monotonic() - start
 
-    if success:
+    if outcome == "completed":
         result = loop._executor.complete(node_id, feature_branch)
         if getattr(result, "redispatch", None) is not None:
             redispatch = result.redispatch
@@ -77,6 +78,11 @@ def handle_completion(
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
             loop._logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
+    elif outcome == "stopped":
+        loop._executor.cancel(node_id)
+        loop._stopped_nodes.add(node_id)
+        live.console.print(f"[yellow]■[/yellow] [{node_id}] {desc} — stopped")
+        loop._logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
         loop._executor.fail(node_id)
         live.console.print(f"[red]✗[/red] [{node_id}] {desc}")

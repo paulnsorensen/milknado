@@ -251,6 +251,24 @@ class TestRunState:
         assert result is True
         stopped.wait(timeout=1.0)
 
+    def test_guidance_wins_soft_completion_once_then_closes_admission(self):
+        state = RunState(run_id="r1")
+
+        assert state.queue_guidance("check the failing test") is True
+        assert state.try_commit_soft_completion() is False
+        assert state.take_guidance() == ("check the failing test",)
+        assert state.try_commit_soft_completion() is True
+        assert state.queue_guidance("too late") is False
+
+    def test_stop_closes_pending_guidance(self):
+        state = RunState(run_id="r1")
+
+        assert state.queue_guidance("finish the docs") is True
+        state.request_stop()
+
+        assert state.take_guidance() == ("finish the docs",)
+        assert state.queue_guidance("not accepted") is False
+
 
 class TestRunStatus:
     @pytest.mark.parametrize(

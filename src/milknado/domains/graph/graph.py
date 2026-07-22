@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
 from typing import TYPE_CHECKING
 
 from milknado.domains.batching import BatchPlan
@@ -43,8 +44,26 @@ class MikadoGraph(_AnalyticsFacade):
     observe before/after each change. Rich docstrings live on the free functions.
     """
 
+    def __getattribute__(self, name: str):  # noqa: ANN204
+        """Serialize public graph operations around the shared SQLite connection."""
+        attribute = super().__getattribute__(name)
+        if name.startswith("_") or not callable(attribute):
+            return attribute
+
+        def synchronized(*args, **kwargs):  # noqa: ANN202, ANN003
+            with super(MikadoGraph, self).__getattribute__("_lock"):
+                return attribute(*args, **kwargs)
+
+        return synchronized
+
+
+    def read_locked(self):  # noqa: ANN201
+        """Return the re-entrant graph lock for one internally consistent read."""
+        return self._lock
+
     def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
-        self._conn = sqlite3.connect(str(db_path))
+        self._lock = RLock()
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")

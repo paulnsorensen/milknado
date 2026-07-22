@@ -173,6 +173,65 @@ class RunState:
     _resume_event: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
+    _force_stop_event: threading.Event = field(
+        default_factory=threading.Event, init=False, repr=False, compare=False
+    )
+    _guidance: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+    _guidance_open: bool = field(default=True, init=False, repr=False, compare=False)
+    _guidance_lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False, compare=False
+    )
+
+    def queue_guidance(self, text: str) -> bool:
+        """Queue non-empty operator guidance for one later prompt."""
+        if not text.strip():
+            return False
+        with self._guidance_lock:
+            if not self._guidance_open:
+                return False
+            self._guidance.append(text)
+            return True
+
+    def take_guidance(self) -> tuple[str, ...]:
+        """Consume the guidance admitted for the next prompt exactly once."""
+        with self._guidance_lock:
+            guidance = tuple(self._guidance)
+            self._guidance.clear()
+            return guidance
+
+    @property
+    def pending_guidance(self) -> tuple[str, ...]:
+        """Return a stable view of guidance awaiting the next agent prompt."""
+        with self._guidance_lock:
+            return tuple(self._guidance)
+
+
+    def try_commit_soft_completion(self) -> bool:
+        """Commit soft completion unless admitted guidance requires one more turn."""
+        with self._guidance_lock:
+            if self._guidance:
+                return False
+            self._guidance_open = False
+            return True
+
+    def close_guidance(self) -> None:
+        """Reject later guidance while retaining accepted undelivered text."""
+        with self._guidance_lock:
+            self._guidance_open = False
+
+    @property
+    def force_stop_requested(self) -> bool:
+        return self._force_stop_event.is_set()
+
+    def request_force_stop(self) -> None:
+        self.close_guidance()
+        self._force_stop_event.set()
+        self.request_stop()
+
+    @property
+    def force_stop_event(self) -> threading.Event:
+        return self._force_stop_event
+
 
     @property
     def total(self) -> int:
@@ -181,8 +240,8 @@ class RunState:
 
     def __post_init__(self) -> None:
         self._resume_event.set()
-
     def request_stop(self) -> None:
+        self.close_guidance()
         self._stop_event.set()
         self._resume_event.set()
 
