@@ -1,35 +1,35 @@
-"""Plan command — thin I/O parsing over milknado.app.plan.
+"""Plan command: CLI parsing, presentation, and exit-code mapping.
 
-Parses --spec/--issue, resolves the goal, then hands off to the application-layer
-planning policy in ``milknado.app.plan``. The critic, interactive/non-interactive
-runners, planner subprocess port, and planner adapter wiring all live there; the
-symbols the test-suite exercises directly are re-exported below.
+Planning policy and adapter wiring live in ``milknado.app.plan``. This module
+owns all human-facing summaries, prompts, Rich rendering, and Typer exits.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.console import Console
 
-from milknado.app.plan import (
-    CriticVerdict,
-    _exec_plan_interactive,
-    _exec_plan_non_interactive,
-    _parse_critic_output,
-    _plan_exit_code,
-    _plan_summary,
-    _PlanningSubprocess,
-    _run_plan_with_critic,
-    build_planner,
-    execute_plan,
-    run_plan_critic,
-)
+import milknado.app.plan as plan_policy
 from milknado.cli._helpers import _ensure_db, _load_or_default
 
+if TYPE_CHECKING:
+    from milknado.domains.common import MilknadoConfig
+    from milknado.domains.planning import Planner, PlanResult
+
 console = Console()
+
+CriticVerdict = plan_policy.CriticVerdict
+PlanCriticError = plan_policy.PlanCriticError
+_PlanningSubprocess = plan_policy._PlanningSubprocess
+_parse_critic_output = plan_policy._parse_critic_output
+_plan_exit_code = plan_policy._plan_exit_code
+_plan_summary = plan_policy._plan_summary
+_run_plan_with_critic = plan_policy._run_plan_with_critic
+build_planner = plan_policy.build_planner
+run_plan_critic = plan_policy.run_plan_critic
 
 __all__ = [
     "CriticVerdict",
@@ -42,9 +42,123 @@ __all__ = [
     "_plan_exit_code",
     "_plan_summary",
     "_run_plan_with_critic",
+    "execute_plan",
     "plan",
     "run_plan_critic",
 ]
+
+
+def _plan_iteration_summary(iteration: int, result: PlanResult) -> str:
+    return f"[bold]Plan iteration {iteration}[/bold]: {_plan_summary(result)}"
+
+
+def _prompt_plan_action() -> str:
+    console.print("\n[bold]Choose next step:[/bold]")
+    console.print("  1) Accept plan")
+    console.print("  2) Revise with feedback")
+    console.print("  3) Cancel")
+    while True:
+        choice = typer.prompt("Selection", show_choices=False).strip()
+        if choice in {"1", "2", "3"}:
+            return choice
+        console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
+
+
+def _exec_plan_non_interactive(
+    planner: Planner,
+    goal: str,
+    project_root: Path,
+    effective_spec: Path,
+    cfg: MilknadoConfig,
+) -> None:
+    try:
+        result, verdict = _run_plan_with_critic(planner, goal, project_root, effective_spec, cfg)
+    except PlanCriticError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(_plan_summary(result))
+    if verdict is not None and not verdict.approved:
+        console.print(
+            f"[red]Plan critic did not approve within {cfg.plan_review_max_rounds} "
+            f"round(s):[/red] {verdict.feedback}"
+        )
+        raise typer.Exit(code=1)
+    exit_code = _plan_exit_code(result)
+    if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+        Console(stderr=True).print(
+            "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
+        )
+    if exit_code != 0:
+        raise typer.Exit(code=exit_code)
+
+
+def _exec_plan_interactive(
+    planner: Planner,
+    goal: str,
+    project_root: Path,
+    effective_spec: Path,
+    max_iterations: int,
+    cfg: MilknadoConfig,
+) -> None:
+    current_goal = goal
+    for iteration in range(1, max_iterations + 1):
+        try:
+            result, verdict = _run_plan_with_critic(
+                planner, current_goal, project_root, effective_spec, cfg
+            )
+        except PlanCriticError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+        console.print(_plan_iteration_summary(iteration, result))
+        if result.context_path is not None:
+            console.print(f"[dim]Planner context: {result.context_path}[/dim]")
+        if verdict is not None and not verdict.approved:
+            console.print(
+                f"[yellow]Plan critic did not approve within {cfg.plan_review_max_rounds} "
+                f"round(s); falling back to manual review:[/yellow] {verdict.feedback}"
+            )
+        exit_code = _plan_exit_code(result)
+        if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
+            Console(stderr=True).print(
+                "[yellow]Warning: solver returned UNKNOWN — results may be suboptimal[/yellow]"
+            )
+        if exit_code != 0:
+            console.print("[red]Planner output was invalid for execution.[/red]")
+        action = _prompt_plan_action()
+        if action == "1":
+            if exit_code != 0:
+                console.print(
+                    "[yellow]Accepting current plan despite invalid planner status.[/yellow]"
+                )
+            return
+        if action == "3":
+            raise typer.Exit(code=1)
+        feedback = typer.prompt("What should change in the plan?").strip()
+        if not feedback:
+            console.print(
+                "[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]"
+            )
+            continue
+        current_goal = plan_policy._build_replan_goal(goal, feedback, result)
+    console.print(f"[red]Reached max iterations ({max_iterations}) without acceptance.[/red]")
+    raise typer.Exit(code=1)
+
+
+def execute_plan(
+    planner: Planner,
+    goal: str,
+    project_root: Path,
+    effective_spec: Path,
+    interactive: bool,
+    max_iterations: int,
+    cfg: MilknadoConfig,
+) -> None:
+    """Render the planning banner and drive the CLI planning session."""
+    console.print(f"[bold]Planning:[/bold] {goal}")
+    if interactive:
+        _exec_plan_interactive(planner, goal, project_root, effective_spec, max_iterations, cfg)
+    else:
+        _exec_plan_non_interactive(planner, goal, project_root, effective_spec, cfg)
 
 
 # ── CSV helpers ───────────────────────────────────────────────────────────────
@@ -91,13 +205,13 @@ def _resolve_plan_spec(
     issue_refs: list[str],
     project_root: Path,
 ) -> Path:
-    from milknado.domains.planning.source_material import resolve_plan_spec
+    from milknado.domains.planning import resolve_plan_spec
 
     return resolve_plan_spec(spec_paths, issue_refs, project_root, _fetch_issue)
 
 
 def _derive_goal(spec_path: Path) -> str:
-    from milknado.domains.planning.source_material import derive_goal
+    from milknado.domains.planning import derive_goal
 
     try:
         return derive_goal(spec_path)

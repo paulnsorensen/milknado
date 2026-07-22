@@ -854,10 +854,10 @@ class TestStrictDrain:
 
 
 class TestProtectedBranchGuard:
-    def test_protected_branch_raises_exit_2_before_log_created(self, tmp_path: Path) -> None:
-        import typer
-
-        from milknado.app.run import check_protected_branch
+    def test_protected_branch_returns_typed_refusal_before_log_created(
+        self, tmp_path: Path
+    ) -> None:
+        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -865,13 +865,10 @@ class TestProtectedBranchGuard:
             db_path=tmp_path / ".milknado" / "milknado.db",
             protected_branches=("main", "master"),
         )
-        log_dir = tmp_path / ".milknado"
+        refusal = check_protected_branch(cfg, "main", allow_protected=False)
 
-        with pytest.raises(typer.Exit) as exc_info:
-            check_protected_branch(cfg, "main", allow_protected=False)
-
-        assert exc_info.value.exit_code == 2
-        assert not any(log_dir.glob("run-*.log"))
+        assert refusal == ProtectedBranchRefusal(branch="main", reason="protected")
+        assert not any((tmp_path / ".milknado").glob("run-*.log"))
 
     def test_protected_branch_with_allow_protected_does_not_raise(self, tmp_path: Path) -> None:
         from milknado.app.run import check_protected_branch
@@ -898,10 +895,8 @@ class TestProtectedBranchGuard:
 
         assert check_protected_branch(cfg, "feature-x", allow_protected=False) is None
 
-    def test_second_protected_branch_also_raises_exit_2(self, tmp_path: Path) -> None:
-        import typer
-
-        from milknado.app.run import check_protected_branch
+    def test_second_protected_branch_also_returns_typed_refusal(self, tmp_path: Path) -> None:
+        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -910,15 +905,12 @@ class TestProtectedBranchGuard:
             protected_branches=("main", "master"),
         )
 
-        with pytest.raises(typer.Exit) as exc_info:
-            check_protected_branch(cfg, "master", allow_protected=False)
-
-        assert exc_info.value.exit_code == 2
+        assert check_protected_branch(cfg, "master", allow_protected=False) == (
+            ProtectedBranchRefusal(branch="master", reason="protected")
+        )
 
     def test_detached_head_refused_even_with_allow_protected(self, tmp_path: Path) -> None:
-        import typer
-
-        from milknado.app.run import check_protected_branch
+        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -927,14 +919,10 @@ class TestProtectedBranchGuard:
             protected_branches=("main", "master"),
         )
 
-        # current_branch() returns "HEAD" on a detached HEAD (and "" if rev-parse
-        # yields nothing) — neither is a valid rebase-merge target, so the run is
-        # refused with exit 2 even when --allow-protected is passed. The opt-in only
-        # waives the protected-*named*-branch check, not an invalid branch state.
         for branch in ("HEAD", ""):
-            with pytest.raises(typer.Exit) as exc_info:
-                check_protected_branch(cfg, branch, allow_protected=True)
-            assert exc_info.value.exit_code == 2
+            assert check_protected_branch(cfg, branch, allow_protected=True) == (
+                ProtectedBranchRefusal(branch=branch, reason="detached")
+            )
 
 
 class TestStalledWorkerGlyph:

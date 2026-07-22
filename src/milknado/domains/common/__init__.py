@@ -1,6 +1,7 @@
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
     build_planning_subprocess,
+    resolve_planning_agent_command,
     resolve_worker_tools,
 )
 from milknado.domains.common.config import (
@@ -13,12 +14,15 @@ from milknado.domains.common.config import (
     load_config,
     save_config,
 )
-from milknado.domains.common.doctor import run_doctor
+from milknado.domains.common.doctor import render_report, run_doctor
 from milknado.domains.common.errors import (
+    CompletionTimeout,
     GitOperationError,
     InvalidContainment,
     InvalidTransition,
     MegaBatchAborted,
+    RalphMarkdownWriteError,
+    RebaseAbortError,
     UnlandedWorkError,
 )
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
@@ -26,12 +30,21 @@ from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.paths import normalize_hint_paths, slugify, validate_hint_path
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
-from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort, ProgressEvent, TilthPort
+from milknado.domains.common.protocols import (
+    CrgPort,
+    GitPort,
+    LoopPort,
+    ProgressEvent,
+    SymbolLocation,
+    TilthPort,
+    VerifySpecResult,
+)
 from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
 from milknado.domains.common.types import (
     BUILTIN_FLAVORS,
     VALID_CHILD_KINDS,
     VALID_TRANSITIONS,
+    DegradationMarker,
     MikadoEdge,
     MikadoNode,
     NodeKind,
@@ -39,17 +52,23 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
     RunResult,
+    TilthMap,
     WorktreeMode,
 )
 
 __all__ = [
+    "resolve_planning_agent_command",
     "BUILTIN_FLAVORS",
+    "Gate",
+    "CompletionTimeout",
+    "DegradationMarker",
     "CrgPort",
     "GitPort",
     "GitOperationError",
-    "Gate",
     "InvalidContainment",
     "InvalidTransition",
+    "RalphMarkdownWriteError",
+    "RebaseAbortError",
     "MikadoEdge",
     "MikadoNode",
     "MilknadoConfig",
@@ -82,9 +101,13 @@ __all__ = [
     "get_required_tool_status",
     "install_missing_rust_tools",
     "run_doctor",
+    "render_report",
     "normalize_hint_paths",
     "UnlandedWorkError",
     "MegaBatchAborted",
     "TilthPort",
     "ProgressEvent",
+    "SymbolLocation",
+    "TilthMap",
+    "VerifySpecResult",
 ]

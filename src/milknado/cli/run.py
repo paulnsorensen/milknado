@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
-    from milknado.domains.execution.run_loop import RunLoopResult
+    from milknado.domains.execution import RunLoopResult
 
 import typer
 from rich.console import Console
@@ -107,7 +107,19 @@ def run(
     config, plugins = _load_or_default(project_root)
 
     feature_branch = resolve_feature_branch(project_root)
-    check_protected_branch(config, feature_branch, allow_protected)
+    refusal = check_protected_branch(config, feature_branch, allow_protected)
+    if refusal is not None:
+        if refusal.reason == "detached":
+            console.print(
+                f"[red]Refusing to run on detached HEAD (branch {refusal.branch!r}); "
+                "check out a named branch first.[/red]"
+            )
+        else:
+            console.print(
+                f"[red]Refusing to run on protected branch '{refusal.branch}'. "
+                "Pass --allow-protected to override.[/red]"
+            )
+        raise typer.Exit(code=2)
 
     graph = _ensure_db(config, plugins)
 

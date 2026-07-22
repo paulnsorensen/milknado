@@ -7,12 +7,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from milknado.domains.common.errors import (
+from milknado.domains.common import (
     GitOperationError,
     RebaseAbortError,
+    RebaseResult,
     UnlandedWorkError,
 )
-from milknado.domains.common.types import RebaseResult
 
 _CONFLICT_FILE_RE = re.compile(
     r"^CONFLICT \(.*?\): (?:Merge conflict in |.*? -> )(.+)$",

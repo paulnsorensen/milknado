@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 from milknado.domains.batching import BatchPlan
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort
-    from milknado.domains.planning.manifest import PlanChangeManifest
+    from milknado.domains.common import CrgPort
+    from milknado.domains.planning import PlanChangeManifest
 
 _logger = logging.getLogger(__name__)
 

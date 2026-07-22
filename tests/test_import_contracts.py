@@ -1,19 +1,14 @@
-"""Hardening for the import-linter contracts wired in curd 3 of sliced-bread-crust.
-
-The layering rules (domains ↛ app/cli/mcp, app ↛ cli/mcp, adapters ↛ domains/app)
-are both DECLARED in pyproject and currently HELD by the codebase. If a contract
-is deleted or weakened the first test fails; if a forbidden import is introduced
-the second fails — the same signal `just check-llm`'s import-contracts step gives,
-pinned into the test suite so a regression cannot slip past a local run.
-"""
+"""Regression coverage for the sliced-bread import boundaries."""
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
+from typing import Any
 
-_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+ROOT = Path(__file__).parents[1]
+_PYPROJECT = ROOT / "pyproject.toml"
 
-# name -> (source_modules, forbidden_modules)
 _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
     "domains must not import app, cli, or mcp": (
         ["milknado.domains"],
@@ -23,42 +18,90 @@ _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
         ["milknado.app"],
         ["milknado.cli", "milknado.mcp"],
     ),
-    "adapters must not import domains or app": (
+    "adapters must not import application policy": (
         ["milknado.adapters"],
-        ["milknado.domains", "milknado.app"],
+        ["milknado.app"],
     ),
 }
 
 
+def _contracts() -> dict[str, dict[str, Any]]:
+    with _PYPROJECT.open("rb") as config_file:
+        raw = tomllib.load(config_file)
+    return {contract["name"]: contract for contract in raw["tool"]["importlinter"]["contracts"]}
+
+
 def test_layering_contracts_are_declared() -> None:
-    """Every layering contract is present in pyproject with its exact edges — so
-    removing a contract or narrowing its forbidden set is caught here."""
-    import importlinter.api as importlinter_api
+    contracts = _contracts()
+    for name, (source_modules, forbidden_modules) in _EXPECTED_CONTRACTS.items():
+        assert contracts[name]["source_modules"] == source_modules
+        assert contracts[name]["forbidden_modules"] == forbidden_modules
 
-    config = importlinter_api.read_configuration(config_filename=str(_PYPROJECT))
-    declared = {
-        contract["name"]: (
-            list(contract["source_modules"]),
-            list(contract["forbidden_modules"]),
-        )
-        for contract in config["contracts_options"]
-        if contract["type"] == "forbidden"
-    }
-
-    for name, edges in _EXPECTED_CONTRACTS.items():
-        assert name in declared, f"missing import-linter contract: {name!r}"
-        assert declared[name] == edges, (
-            f"contract {name!r} edges drifted from spec: {declared[name]!r}"
-        )
+    barrel_contract = contracts["boundary modules must use domain barrels"]
+    assert barrel_contract["source_modules"] == [
+        "milknado.app",
+        "milknado.cli",
+        "milknado.mcp",
+        "milknado.adapters",
+    ]
+    assert barrel_contract["forbidden_modules"] == [
+        "milknado.domains.batching._model",
+        "milknado.domains.batching._tarjan",
+        "milknado.domains.dispatch._runstate",
+        "milknado.domains.execution._context",
+        "milknado.domains.execution.run_loop._completion",
+        "milknado.domains.execution.run_loop._logging",
+        "milknado.domains.execution.run_loop._result",
+        "milknado.domains.github._fields",
+        "milknado.domains.github._intent",
+        "milknado.domains.graph._analytics_facade",
+        "milknado.domains.graph._creation",
+        "milknado.domains.graph._goal_claims",
+        "milknado.domains.graph._mutations",
+        "milknado.domains.graph._persistence",
+        "milknado.domains.graph._pipeline",
+        "milknado.domains.graph._reads",
+        "milknado.domains.graph._status",
+        "milknado.domains.graph._transitions",
+        "milknado.domains.wiki._locate",
+        "milknado.domains.wiki._serialize",
+    ]
+    assert barrel_contract["allow_indirect_imports"] is True
 
 
 def test_layering_contracts_hold() -> None:
-    """The declared contracts are actually kept — introducing a forbidden import
-    (e.g. domains importing app) turns this red, mirroring `lint-imports`."""
     from importlinter import configuration
     from importlinter.application import use_cases
 
     configuration.configure()
-    kept = use_cases.lint_imports(config_filename=str(_PYPROJECT))
+    assert use_cases.lint_imports(config_filename=str(_PYPROJECT)) is True
 
-    assert kept is True, "import-linter reported a broken layering contract"
+
+def test_representative_boundary_modules_do_not_import_domain_submodules() -> None:
+    source_root = ROOT / "src" / "milknado"
+    domain_packages = (
+        "batching",
+        "common",
+        "dispatch",
+        "execution",
+        "github",
+        "graph",
+        "planning",
+        "reporting",
+        "wiki",
+    )
+    for boundary in ("app", "cli", "mcp", "adapters"):
+        for path in (source_root / boundary).rglob("*.py"):
+            text = path.read_text()
+            for package in domain_packages:
+                assert f"from milknado.domains.{package}." not in text
+                assert f"import milknado.domains.{package}." not in text
+
+
+def test_application_policy_has_no_cli_presentation_dependencies() -> None:
+    for module in ("plan.py", "run.py"):
+        text = (ROOT / "src" / "milknado" / "app" / module).read_text()
+        assert "import typer" not in text
+        assert "from typer" not in text
+        assert "from rich" not in text
+        assert "Console(" not in text

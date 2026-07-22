@@ -84,6 +84,7 @@ check-llm:
     subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, text=True)
 
     steps = [
+        ("import-contracts", ["uv", "run", "lint-imports"]),
         ("lint", ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"]),
         ("format", ["uv", "run", "ruff", "format", "--check", "src/", "tests/"]),
         ("import-contracts", ["uv", "run", "lint-imports"]),
