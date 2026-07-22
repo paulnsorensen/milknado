@@ -85,7 +85,7 @@ class RunLoop:
         self._strict = strict
         self._exec_config = config
         timeout = (
-            self._milknado_config.completion_timeout_seconds if self._milknado_config else 1800.0
+            self._milknado_config.completion_timeout_seconds if self._milknado_config else None
         )
 
         with configure_run_logging(config.project_root) as log_path:
@@ -115,7 +115,7 @@ class RunLoop:
         config: ExecutionConfig,
         feature_branch: str,
         concurrency_limit: int,
-        timeout: float,
+        timeout: float | None,
     ) -> tuple[int, int, int, list[RebaseConflict], bool]:
         from rich.live import Live
 
@@ -176,7 +176,7 @@ class RunLoop:
         config: ExecutionConfig,
         feature_branch: str,
         concurrency_limit: int,
-        timeout: float,
+        timeout: float | None,
         live: Live,
     ) -> tuple[int, int, int, list[RebaseConflict], bool]:
         """One poll-and-handle iteration.
