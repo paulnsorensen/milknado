@@ -136,3 +136,32 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
     assert brief_marker in log_text, (
         "brief must reach worker stdin under a multi-flag execution_agent command"
     )
+
+
+def test_run_headless_delivers_omp_brief_as_positional_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "omp"
+    stub.write_text(
+        '#!/bin/sh\nprintf "argv=<%s>\\n" "$*"\nprintf "stdin=<%s>\\n" "$(cat)"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+    brief_marker = "OMP_BRIEF_MARKER_XYZ_12345"
+    result = run_headless(
+        tmp_path,
+        node_id=1,
+        brief=brief_marker,
+        timeout_seconds=10,
+        default_cmd="omp -p --auto-approve --no-session",
+        process=ProcessAdapter(),
+    )
+
+    assert result.exit_code == 0
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert f"argv=<-p --auto-approve --no-session {brief_marker}>" in log_text
+    assert "stdin=<>" in log_text

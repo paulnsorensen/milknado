@@ -15,7 +15,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
+from milknado.domains.common.agent_argv import (
+    ALLOWED_WORKER_EXECUTABLES,
+    POSITIONAL_BRIEF_EXECUTABLES,
+)
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
@@ -65,6 +68,12 @@ def _resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
         argv = shlex.split(default)
     validate_worker_argv(argv)
     return argv
+
+
+def _worker_invocation(argv: list[str], brief: str) -> tuple[tuple[str, ...], bytes]:
+    if Path(argv[0]).name in POSITIONAL_BRIEF_EXECUTABLES:
+        return (*argv, brief), b""
+    return tuple(argv), brief.encode()
 
 
 def _log_path(project_root: Path, node_id: int) -> Path:
@@ -145,11 +154,12 @@ def _execute(
     }
     if run_id is not None:
         extra["MILKNADO_RUN_ID"] = run_id
+    command, stdin = _worker_invocation(argv, brief)
     outcome = process.run(
-        tuple(argv),
+        command,
         project_root,
         log_path,
-        brief.encode(),
+        stdin,
         build_worker_env(extra),
         timeout,
     )
@@ -170,11 +180,12 @@ def _execute_cancellable(
     process: ProcessPort,
     on_started: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
+    command, stdin = _worker_invocation(argv, brief)
     outcome = process.run(
-        tuple(argv),
+        command,
         cwd,
         log_path,
-        brief.encode(),
+        stdin,
         build_worker_env(
             {
                 "MILKNADO_NODE_ID": str(node_id),

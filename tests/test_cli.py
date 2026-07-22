@@ -1947,3 +1947,59 @@ class TestEdgeAdd:
         )
         assert result.exit_code == 1
         assert "does not exist" in result.output
+
+
+def test_add_node_accepts_custom_flavor_artifact_and_repeatable_prereqs(
+    project_dir: Path,
+) -> None:
+    from milknado.domains.common import load_config, save_config
+    from milknado.domains.graph import MikadoGraph
+
+    config_path = project_dir / "milknado.toml"
+    save_config(default_config(project_dir), config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[milknado.flavor.triage]\nquality_gates = []\n",
+        encoding="utf-8",
+    )
+
+    first = runner.invoke(
+        app,
+        ["add-node", "first prerequisite", "--project-root", str(project_dir)],
+    )
+    second = runner.invoke(
+        app,
+        ["add-node", "second prerequisite", "--project-root", str(project_dir)],
+    )
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+
+    result = runner.invoke(
+        app,
+        [
+            "add-node",
+            "triage issue 42",
+            "--flavor",
+            "triage",
+            "--artifact",
+            "results/issue-42.md",
+            "--prereq",
+            "1",
+            "--prereq",
+            "2",
+            "--project-root",
+            str(project_dir),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    cfg = load_config(config_path, include_global=False)
+    graph = MikadoGraph(cfg.db_path)
+    try:
+        node = graph.get_node(3)
+        assert node is not None
+        assert node.flavor == "triage"
+        assert node.artifact_path == "results/issue-42.md"
+        assert [child.id for child in graph.get_children(3)] == [1, 2]
+    finally:
+        graph.close()

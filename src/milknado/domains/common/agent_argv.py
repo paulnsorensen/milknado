@@ -80,8 +80,14 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
 # executable name (basename of argv[0]) so neither a prefix trick
 # (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
 ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "cursor-agent", "gemini"}
+    {"claude", "codex", "cursor-agent", "gemini", "omp"}
 )
+
+# Agents in this set receive the node brief as a trailing positional argument
+# rather than on stdin. Kept alongside ALLOWED_WORKER_EXECUTABLES so the brief-
+# delivery trait lives with the executable identities it keys off, not as a
+# magic string in the dispatch runner.
+POSITIONAL_BRIEF_EXECUTABLES: frozenset[str] = frozenset({"omp"})
 
 
 def resolve_worker_tools(

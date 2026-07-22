@@ -38,6 +38,7 @@ from milknado.domains.common import (
     load_config,
     normalize_hint_paths,
     save_config,
+    validate_hint_path,
 )
 from milknado.domains.common.config import detect_project_gates
 from milknado.domains.graph import render_tree
@@ -214,6 +215,18 @@ def add_node(
         NodeKind,
         typer.Option("--kind", "-k", help="Node kind"),
     ] = NodeKind.TASK,
+    flavor: Annotated[
+        str | None,
+        typer.Option("--flavor", help="Task flavor, including config-registered names"),
+    ] = None,
+    artifact: Annotated[
+        str | None,
+        typer.Option("--artifact", help="Artifact path associated with this node"),
+    ] = None,
+    prereq: Annotated[
+        list[int] | None,
+        typer.Option("--prereq", help="Prerequisite node ID; repeatable"),
+    ] = None,
     files: Annotated[
         list[str] | None,
         typer.Option("--files", "-f", help="Files this node will touch"),
@@ -228,7 +241,19 @@ def add_node(
     graph = project.graph
 
     try:
-        node = graph.add_node(description, parent_id=parent, spec=NodeSpec(kind=kind))
+        if artifact is not None:
+            validate_hint_path(artifact, project_root, label="artifact")
+        node = graph.add_node(
+            description,
+            parent_id=parent,
+            spec=NodeSpec(
+                kind=kind,
+                flavor=flavor,
+                artifact_path=artifact,
+                prereqs=tuple(prereq or ()),
+                flavor_registry=project.config.flavor_registry,
+            ),
+        )
         if files:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
         _maybe_block_parent(graph, parent)
