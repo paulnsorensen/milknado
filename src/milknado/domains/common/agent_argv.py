@@ -76,12 +76,33 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
-# Worker subprocesses may only invoke a known AI-agent CLI. Match on the bare
-# executable name (basename of argv[0]) so neither a prefix trick
-# (`claude-evil`) nor an absolute path (`/usr/bin/claude`) slips the check.
+# Worker subprocesses may only invoke a known AI-agent CLI. Matching the exact
+# bare token rejects both prefix tricks (`claude-evil`) and absolute/relative
+# paths (`/usr/bin/claude`, `./claude`).
 ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "cursor-agent", "gemini", "omp"}
+    {"claude", "codex", "copilot", "crush", "cursor-agent", "gemini", "omp", "opencode"}
 )
+
+
+def validate_worker_argv(argv: Sequence[str]) -> None:
+    """Reject worker argv unless its executable is an allowed bare token.
+
+    Path-bearing tokens are rejected instead of being normalized to a basename:
+    the exact token that passes validation is the token the subprocess executes.
+    """
+    executable = argv[0] if argv else ""
+    if (
+        not executable
+        or executable not in ALLOWED_WORKER_EXECUTABLES
+        or "/" in executable
+        or "\\" in executable
+    ):
+        shown = Path(executable).name if executable else ""
+        raise ValueError(
+            "worker_cmd must start with one of "
+            f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {shown!r}"
+        )
+
 
 # Agents in this set receive the node brief as a trailing positional argument
 # rather than on stdin. Kept alongside ALLOWED_WORKER_EXECUTABLES so the brief-
@@ -155,13 +176,10 @@ def resolve_execution_agent_command(
     execution_agent: str | None = None,
     tools: Sequence[str] | None = None,
 ) -> str:
-    """Return execution agent command for ralph loop workers.
+    """Return the execution agent command for ralph loop workers.
 
-    Precedence:
-      1. ``execution_agent`` (explicit full CLI string) — opt out of the
-         allowlist machinery entirely.
-      2. Family default command, built around ``tools`` (or the family default
-         allowlist when ``tools`` is None).
+    Explicit commands remain configurable, but every consuming subprocess
+    boundary validates their executable with :func:`validate_worker_argv`.
     """
     override = (execution_agent or "").strip()
     if override:
@@ -178,9 +196,14 @@ def _replace_option(parts: list[str], option: str, value: str) -> None:
 
 
 def _sandbox_planning_argv(parts: list[str]) -> list[str]:
-    executable = Path(parts[0]).name
-    if executable not in ALLOWED_WORKER_EXECUTABLES:
+    executable = parts[0] if parts else ""
+    if (
+        executable not in ALLOWED_WORKER_EXECUTABLES
+        and "/" not in executable
+        and "\\" not in executable
+    ):
         raise ValueError(f"unsupported planning agent executable: {executable!r}")
+    validate_worker_argv(parts)
     unsafe_flags = {
         "--dangerously-skip-permissions",
         "--dangerously-bypass-approvals-and-sandbox",

@@ -1,5 +1,6 @@
 """Tests for the run engine."""
 
+import os
 import sys
 import threading
 import time
@@ -938,7 +939,7 @@ class TestAgentCommandParsing:
 
     def test_malformed_agent_command_raises_value_error(self, tmp_path):
         """shlex.split on an agent with unmatched quotes produces a clear error."""
-        config = make_config(tmp_path, max_iterations=1, agent="echo 'unterminated")
+        config = make_config(tmp_path, max_iterations=1, agent="omp 'unterminated")
         state = make_state()
         q = QueueEmitter()
 
@@ -950,12 +951,23 @@ class TestAgentCommandParsing:
         assert any("Invalid agent command syntax" in e.data["message"] for e in log_events)
 
     @patch(MOCK_SUBPROCESS)
+    def test_agent_path_spoof_fails_before_popen(self, mock_popen, tmp_path):
+        config = make_config(tmp_path, max_iterations=1, agent="/tmp/claude")
+        state = make_state()
+        q = QueueEmitter()
+
+        run_loop(config, state, q)
+
+        assert state.status == RunStatus.FAILED
+        mock_popen.assert_not_called()
+
+    @patch(MOCK_SUBPROCESS)
     def test_agent_not_found_raises_file_not_found_error(self, mock_run, tmp_path):
         """FileNotFoundError from the agent subprocess is re-raised with a helpful message."""
         mock_run.side_effect = FileNotFoundError("No such file or directory: 'nonexistent'")
-        config = make_config(tmp_path, max_iterations=1, agent="nonexistent")
-        state = make_state()
+        config = make_config(tmp_path, max_iterations=1, agent="omp")
         q = QueueEmitter()
+        state = make_state()
 
         run_loop(config, state, q)
 
@@ -1555,7 +1567,7 @@ class TestInMemoryPrompt:
 
     def test_assemble_uses_prompt_body_without_reading_file(self, tmp_path):
         config = RunConfig(
-            agent="echo",
+            agent="omp",
             ralph_dir=tmp_path,
             prompt="Search {{ args.dir }} now",
             args={"dir": "./src"},
@@ -1574,7 +1586,7 @@ class TestInMemoryPrompt:
         # A leading '---' block stays verbatim — it is the body, not frontmatter.
         body = "---\nnot: parsed\n---\nreal prompt"
         config = RunConfig(
-            agent="echo",
+            agent="omp",
             ralph_dir=tmp_path,
             prompt=body,
             max_iterations=1,
@@ -1587,7 +1599,7 @@ class TestInMemoryPrompt:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_run_loop_with_in_memory_prompt(self, mock_run, tmp_path):
         config = RunConfig(
-            agent="echo",
+            agent="omp",
             ralph_dir=tmp_path,
             prompt="do work",
             max_iterations=1,
@@ -1678,10 +1690,11 @@ class TestOpenCodeEndToEnd:
         opencode_adapter = select_adapter(["opencode", "run"])
         monkeypatch.setattr(opencode_adapter, "supports_streaming", True)
 
-        stub = _write_opencode_stub(tmp_path)
+        _write_opencode_stub(tmp_path)
+        monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ.get('PATH', '')}")
         config = make_config(
             tmp_path,
-            agent=f"{stub} run",
+            agent="opencode run",
             max_iterations=3,
             stop_on_completion_signal=True,
         )

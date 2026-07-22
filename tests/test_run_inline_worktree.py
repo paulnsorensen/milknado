@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -297,10 +298,10 @@ class TestMergeBackReuse:
             worker_cmd=f"claude {sys.executable} {worker}",
             project_root=str(root),
         )
-        assert result["status"] == "done"
+        assert result["status"] == "failed"
         assert _git(root, "branch", "--show-current").strip() == "diversion"
-        assert _git(root, "show", "main:landed.txt") == "immutable-target"
         assert not (root / "landed.txt").exists()
+        assert result["worktree_preserved"]
 
 
 class TestIsolateAsync:
@@ -449,6 +450,37 @@ class TestFailClosedPreservation:
             node_id=1,
             description="x",
         )
+
+    def test_target_mismatch_preserves_refs_before_merge_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        from milknado.domains.dispatch.isolate import merge_back_isolated
+
+        root = tmp_path / "repo"
+        _init_repo(root)
+        git, ctx = self._ctx(root)
+        before = _git(root, "rev-parse", "refs/heads/main")
+        squash = MagicMock()
+        rebase = MagicMock()
+        compare_and_swap = MagicMock()
+        remove = MagicMock()
+        monkeypatch.setattr(git, "current_branch", lambda: "other")
+        monkeypatch.setattr(git, "squash_and_commit", squash)
+        monkeypatch.setattr(git, "rebase", rebase)
+        monkeypatch.setattr(git, "compare_and_swap_ref", compare_and_swap)
+        monkeypatch.setattr(git, "remove_worktree", remove)
+
+        result = merge_back_isolated(git, root, ctx)
+
+        assert result.rebased is False
+        assert result.worktree_preserved == str(ctx.worktree_path)
+        assert _git(root, "rev-parse", "refs/heads/main") == before
+        squash.assert_not_called()
+        rebase.assert_not_called()
+        compare_and_swap.assert_not_called()
+        remove.assert_not_called()
 
     def test_unlanded_work_error_preserves_worktree(self, tmp_path: Path, monkeypatch) -> None:
         """A teardown refusal (UnlandedWorkError) preserves the worktree and reports
@@ -600,6 +632,9 @@ class TestMergeBackLock:
         record_lock = threading.Lock()
 
         class _Git:
+            def current_branch(self) -> str:
+                return "main"
+
             def squash_and_commit(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
                 start = time.monotonic()
                 time.sleep(0.05)

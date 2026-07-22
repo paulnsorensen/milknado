@@ -13,6 +13,8 @@ from unittest.mock import ANY, MagicMock, call, patch
 import pytest
 
 from milknado.loop._agent import (
+    _OUTPUT_TAIL_CHARS,
+    _STREAM_QUEUE_MAX_LINES,
     AgentResult,
     AgentRunSpec,
     _BoundedOutput,
@@ -23,46 +25,11 @@ from milknado.loop._agent import (
     _run_agent_blocking,
     _run_agent_streaming,
     _terminate_lingering_group,
-    _write_log,
     execute_agent,
 )
 from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
-
-
-class TestWriteLog:
-    def test_creates_log_file(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, "stdout output", "stderr output")
-
-        assert log_file.exists()
-        assert log_file.parent == tmp_path
-        content = log_file.read_text()
-        assert "stdout output" in content
-        assert "stderr output" in content
-
-    def test_log_filename_format(self, tmp_path):
-        log_file = _write_log(tmp_path, 5, "out", "")
-
-        assert log_file.name.startswith("005_")
-        assert log_file.suffix == ".log"
-
-    def test_none_outputs(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, None, None)
-
-        assert log_file.exists()
-        assert log_file.read_text() == ""
-
-    def test_bytes_outputs(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, b"binary out\n", b"binary err\n")
-
-        content = log_file.read_text()
-        assert "binary out" in content
-        assert "binary err" in content
-
-    def test_iteration_zero_padding(self, tmp_path):
-        log_file = _write_log(tmp_path, 42, "out", "")
-        assert log_file.name.startswith("042_")
 
 
 class TestReadAgentStream:
@@ -374,6 +341,72 @@ class TestExecuteAgentBlocking:
         )
 
         assert result.log_file is None
+
+    @patch(MOCK_SUBPROCESS)
+    def test_bounded_capture_keeps_complete_log_and_detects_early_marker(
+        self,
+        mock_popen,
+        tmp_path: Path,
+    ) -> None:
+        lines = ["<promise>done</promise>\n"] + [
+            f"line-{index}-{'x' * 80}\n" for index in range(_STREAM_QUEUE_MAX_LINES * 3)
+        ]
+        callbacks: list[str] = []
+        mock_popen.return_value = ok_proc(stdout_text="".join(lines))
+
+        result = execute_agent(
+            AgentRunSpec(
+                ["omp"],
+                "prompt",
+                timeout=None,
+                log_dir=tmp_path,
+                iteration=1,
+                capture_stdout=True,
+                completion_signal="done",
+                on_output_line=lambda line, _stream: (time.sleep(0.0001), callbacks.append(line)),
+            )
+        )
+
+        assert result.completion_detected is True
+        assert result.captured_stdout is not None
+        assert len(result.captured_stdout) <= _OUTPUT_TAIL_CHARS
+        assert len(callbacks) == len(lines)
+        assert result.log_file is not None
+        complete_log = result.log_file.read_text(encoding="utf-8")
+        assert complete_log.startswith("<promise>done</promise>\n")
+        assert f"line-{len(lines) - 2}-" in complete_log
+        assert len(complete_log) > _OUTPUT_TAIL_CHARS
+
+    @pytest.mark.parametrize(
+        ("missing", "expected"),
+        [
+            ("stdin", "PIPE stdin"),
+            ("stdout", "PIPE stdout"),
+            ("stderr", "PIPE stderr"),
+        ],
+    )
+    @patch(MOCK_SUBPROCESS)
+    def test_missing_subprocess_pipes_raise_runtime_error(
+        self,
+        mock_popen,
+        tmp_path: Path,
+        missing: str,
+        expected: str,
+    ) -> None:
+        proc = ok_proc()
+        setattr(proc, missing, None)
+        mock_popen.return_value = proc
+        run = _ResolvedAgentRun(
+            ["omp"],
+            "prompt",
+            timeout=None,
+            log_dir=tmp_path if missing == "stderr" else None,
+            iteration=1,
+            capture_stdout=missing == "stdout",
+        )
+
+        with pytest.raises(RuntimeError, match=expected):
+            _run_agent_blocking(run)
 
     @patch(MOCK_SUBPROCESS)
     def test_file_not_found_propagates(self, mock_popen):

@@ -312,15 +312,24 @@ class WorktreeManager:
         node_id: int,
         description: str,
         worker_branch: str | None = None,
+        target_branch: str | None = None,
     ) -> RebaseResult:
         """Squash, rebase, fast-forward, and remove only landed worktrees."""
+        merge_target = target_branch or feature_branch
+        current_target = self._git.current_branch()
+        if feature_branch != merge_target or current_target != merge_target:
+            raise GitOperationError(
+                "merge-back target",
+                f"dispatch target is {merge_target!r}; caller requested "
+                f"{feature_branch!r}, checkout is {current_target!r}",
+            )
         if not worktree or not worktree.exists():
             return RebaseResult(success=True)
         landed = False
         try:
             msg = _build_commit_message(node_id, description)
-            committed = self._git.squash_and_commit(worktree, feature_branch, msg)
-            rebase_result = self._git.rebase(worktree, feature_branch)
+            committed = self._git.squash_and_commit(worktree, merge_target, msg)
+            rebase_result = self._git.rebase(worktree, merge_target)
             if rebase_result.success and committed and worker_branch:
                 self._git.fast_forward(worker_branch)
             landed = rebase_result.success
@@ -328,7 +337,7 @@ class WorktreeManager:
         finally:
             _preserve_run_logs(worktree, node_id)
             if landed:
-                self.remove(node_id, worktree, target=feature_branch)
+                self.remove(node_id, worktree, target=merge_target)
             else:
                 _logger.error(
                     "Merge-back for node %d did not land; keeping worktree %s for inspection",
@@ -345,6 +354,9 @@ class Executor:
         ralph: LoopPort,
         crg: CrgPort,
     ) -> None:
+        self._base_oid_by_node: dict[int, str | None] = {}
+        self._target_branch_by_node: dict[int, str] = {}
+        self._target_oid_by_node: dict[int, str] = {}
         self._graph = graph
         self._wt = WorktreeManager(git)
         self._ralph = ralph
@@ -362,11 +374,19 @@ class Executor:
         max_retries = config.dispatch_max_retries
         backoff = config.dispatch_backoff_seconds
         last_exc: BaseException | None = None
+        target_branch = self._wt.current_branch()
+        target_oid = base_oid or self._wt.resolve_ref(target_branch)
         for attempt in range(max_retries + 1):
             try:
                 result = self._dispatch_once(
-                    node_id, config, base_oid=base_oid, parent_run_id=parent_run_id
+                    node_id,
+                    config,
+                    base_oid=target_oid,
+                    parent_run_id=parent_run_id,
                 )
+                self._base_oid_by_node[node_id] = target_oid
+                self._target_branch_by_node[node_id] = target_branch
+                self._target_oid_by_node[node_id] = target_oid
                 self._attempts_by_node[node_id] = attempt
                 return result
             except (InvalidTransition, ValueError):
@@ -516,8 +536,25 @@ class Executor:
             if discard_worktree:
                 self._wt.discard(node_id, wt_path)
 
+    def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
+        target_branch = self._target_branch_by_node.get(node_id)
+        if target_branch is None:
+            return
+        current_branch = self._wt.current_branch()
+        if feature_branch != target_branch or current_branch != target_branch:
+            target_oid = self._target_oid_by_node.get(node_id, "(unknown)")
+            raise GitOperationError(
+                "dispatch-time merge target",
+                f"dispatch captured {target_branch!r} at {target_oid}; "
+                f"caller requested {feature_branch!r}, checkout is {current_branch!r}",
+            )
+
     def _rebase_or_fail(
-        self, worktree: Path | None, feature_branch: str, node: MikadoNode
+        self,
+        worktree: Path | None,
+        feature_branch: str,
+        node: MikadoNode,
+        target_branch: str | None = None,
     ) -> RebaseResult:
         try:
             return self._wt.rebase_and_merge(
@@ -526,6 +563,7 @@ class Executor:
                 node.id,
                 node.description,
                 worker_branch=node.branch_name,
+                target_branch=target_branch,
             )
         except RebaseAbortError:
             raise
@@ -603,8 +641,10 @@ class Executor:
                 tuple(VALID_TRANSITIONS[node.status]),
             )
 
+        self._validate_completion_target(node_id, feature_branch)
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        rebase_result = self._rebase_or_fail(worktree, feature_branch, node)
+        target_branch = self._target_branch_by_node.get(node_id)
+        rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
         return self._finalize_completion(node, rebase_result)
 
     def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:

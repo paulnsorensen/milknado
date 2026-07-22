@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -13,8 +13,43 @@ from milknado.domains.common.agent_argv import (
     resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+    validate_worker_argv,
 )
 from milknado.domains.common.config import load_config, save_config
+from milknado.domains.dispatch.runner import run_headless
+
+
+@pytest.mark.parametrize(
+    "executable",
+    ["/usr/bin/claude", "./claude", "../claude", "claude-evil", r"claude\evil"],
+)
+def test_validate_worker_argv_rejects_path_and_prefix_spoofs(executable: str) -> None:
+    with pytest.raises(ValueError, match="worker_cmd"):
+        validate_worker_argv([executable, "--prompt"])
+
+
+def test_validate_worker_argv_rejects_symlink_alias(tmp_path: Path) -> None:
+    alias = tmp_path / "claude"
+    alias.symlink_to("/usr/bin/claude")
+
+    with pytest.raises(ValueError, match="worker_cmd"):
+        validate_worker_argv([str(alias)])
+
+
+def test_validate_worker_argv_accepts_only_exact_bare_executables() -> None:
+    for executable in (
+        "claude",
+        "codex",
+        "copilot",
+        "crush",
+        "cursor-agent",
+        "gemini",
+        "omp",
+        "opencode",
+    ):
+        argv = [executable, "--prompt"]
+        assert validate_worker_argv(argv) is None
+        assert argv == [executable, "--prompt"]
 
 
 def test_worker_allowlist_grants_track_follow_up_not_delete_or_edit() -> None:
@@ -23,6 +58,20 @@ def test_worker_allowlist_grants_track_follow_up_not_delete_or_edit() -> None:
     joined = ",".join(claude)
     assert "delete_node" not in joined
     assert "edit_node" not in joined
+
+
+def test_dispatch_rejects_path_spoof_before_process_spawn(tmp_path: Path) -> None:
+    process = MagicMock()
+    with pytest.raises(ValueError, match="worker_cmd"):
+        run_headless(
+            tmp_path,
+            node_id=1,
+            brief="brief",
+            worker_cmd="/tmp/claude",
+            default_cmd="omp",
+            process=process,
+        )
+    process.assert_not_called()
 
 
 def test_worker_allowlist_cannot_invoke_rtk_run() -> None:

@@ -18,19 +18,18 @@ default**:
 A second, orthogonal argument `merge_back: bool = True` decides the ISOLATE
 branch's fate on a clean (exit 0) run:
 
-- **`True` (default)** — rebase-merge the isolated branch back into the caller's
-  dispatch branch, then tear the worktree down. This REUSES the executor's
-  `WorktreeManager.rebase_and_merge` (`execution/executor.py:288`) — the same
-  squash → rebase → fast-forward → fail-closed-teardown machinery the ralph loop
-  uses — rather than reimplementing it. A teardown that refuses (dirty/unlanded
-  work) preserves the worktree on disk and surfaces its path as
-  `worktree_preserved`. Net: "safely isolated during the run, result merged back
-  to my branch on success" — the safe successor to old `run_once`'s
-  diff-lands-here.
-- **`False`** — leave the isolated branch/worktree for the caller to review or PR.
-  Teardown while the run is active happens via `milknado_run_cancel`; once the run
-  is terminal, `milknado_run_cancel` no-ops, so a completed `merge_back=False`
-  worktree must be removed manually (`git worktree remove`).
+- **`True` (default)** — perform the direct `GitPort` merge-back in
+  `dispatch/isolate.py`: squash the isolated branch, rebase it onto the
+  captured base, compare-and-swap the caller's target ref, then tear the
+  worktree down. A teardown that refuses (dirty/unlanded work) preserves the
+  worktree on disk and surfaces its path as `worktree_preserved`. Net:
+  "safely isolated during the run, result merged back to my branch on
+  success" — the safe successor to old `run_once`'s diff-lands-here.
+- **`False`** — leave the isolated branch/worktree for the caller to review or
+  PR. Teardown while the run is active happens via
+  `milknado_run_cancel`; once the run is terminal, `milknado_run_cancel` no-ops,
+  so a completed `merge_back=False` worktree must be removed manually (`git
+  worktree remove`).
 
 `THIS_BRANCH` ignores `merge_back` (there is nothing to merge). The dispatch
 branch a merge-back lands on is the caller's current branch
@@ -41,6 +40,29 @@ the async path (`_async_worker`) defers the merge-back to the worker thread, aft
 the worker process exits, since the start tool returns immediately. On exit 0 the
 node is marked terminal DONE and a second dispatch is refused (reset the node's
 status to retry).
+
+## Worker process boundaries
+
+Worker command resolution is fail-closed at every subprocess boundary:
+dispatch, planning, and the ralph loop share the same exact-token validator.
+The first argv token must be a known bare worker executable; absolute paths,
+relative paths, and prefix spoofs are rejected rather than normalized to a
+basename. This keeps the command that passes validation identical to the
+command that is spawned.
+
+Worker output has two representations. In-memory stdout/stderr are bounded
+tails, while configured iteration logs retain complete output in a file-backed
+sink. The stream reader uses a bounded producer queue, so a slow callback
+back-pressures the reader instead of growing memory without limit. Completion
+markers are checked line-by-line before retention trimming, so a marker emitted
+before the retained tail still terminates the run.
+
+Merge-back verifies that the checkout is still on the target branch captured
+for the dispatch before squash, rebase, compare-and-swap, fast-forward, or
+worktree teardown. A mismatch preserves the isolated worktree and leaves the
+target ref untouched. Missing subprocess stdin/stdout/stderr pipes are
+explicit runtime failures, not assertions that disappear under optimized
+execution.
 
 ## Why ISOLATE is the default (2026-07-04 incident)
 
