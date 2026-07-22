@@ -38,7 +38,6 @@ from milknado.loop._output import (
     SESSION_KWARGS,
     SUBPROCESS_TEXT_KWARGS,
     ProcessResult,
-    collect_output,
     warn,
 )
 from milknado.loop._promise import has_promise_completion
@@ -464,24 +463,6 @@ class _ResolvedAgentRun:
     cwd: Path | None = None
 
 
-def _write_log(
-    log_dir: Path | None,
-    iteration: int,
-    stdout: str | bytes | None,
-    stderr: str | bytes | None,
-) -> Path | None:
-    """Write iteration output to a timestamped log file if logging is configured.
-
-    Returns the log file path, or ``None`` when *log_dir* is not set.
-    """
-    if log_dir is None:
-        return None
-    timestamp = datetime.now(UTC).strftime(_LOG_TIMESTAMP_FORMAT)
-    log_file = log_dir / f"{iteration:0{_LOG_ITERATION_PAD_WIDTH}d}_{timestamp}.log"
-    log_file.write_text(collect_output(stdout, stderr), encoding="utf-8")
-    return log_file
-
-
 def _readline_pump(
     stdout: IO[str],
     line_queue: queue.Queue[str | None],
@@ -654,7 +635,7 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
         tail=_BoundedOutput() if capture_stdout_text else None,
-        sink=_new_output_sink(None, run.iteration) if capture_stdout_text else None,
+        sink=None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(

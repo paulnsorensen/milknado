@@ -354,9 +354,6 @@ class Executor:
         ralph: LoopPort,
         crg: CrgPort,
     ) -> None:
-        self._config_by_node: dict[int, ExecutionConfig] = {}
-        self._review_round_by_node: dict[int, int] = {}
-        self._session_by_node: dict[int, NodeAgentSession] = {}
         self._base_oid_by_node: dict[int, str | None] = {}
         self._target_branch_by_node: dict[int, str] = {}
         self._target_oid_by_node: dict[int, str] = {}
@@ -387,8 +384,6 @@ class Executor:
                     base_oid=target_oid,
                     parent_run_id=parent_run_id,
                 )
-                self._config_by_node[node_id] = config
-                self._review_round_by_node.setdefault(node_id, 0)
                 self._base_oid_by_node[node_id] = target_oid
                 self._target_branch_by_node[node_id] = target_branch
                 self._target_oid_by_node[node_id] = target_oid
@@ -412,7 +407,6 @@ class Executor:
                 )
                 time.sleep(wait)
         raise last_exc or RuntimeError("dispatch exhausted retries")
-
 
     def _resolve_worktree_path(
         self, node_id: int, node: MikadoNode, config: ExecutionConfig

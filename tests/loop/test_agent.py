@@ -25,46 +25,11 @@ from milknado.loop._agent import (
     _run_agent_blocking,
     _run_agent_streaming,
     _terminate_lingering_group,
-    _write_log,
     execute_agent,
 )
 from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
-
-
-class TestWriteLog:
-    def test_creates_log_file(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, "stdout output", "stderr output")
-
-        assert log_file.exists()
-        assert log_file.parent == tmp_path
-        content = log_file.read_text()
-        assert "stdout output" in content
-        assert "stderr output" in content
-
-    def test_log_filename_format(self, tmp_path):
-        log_file = _write_log(tmp_path, 5, "out", "")
-
-        assert log_file.name.startswith("005_")
-        assert log_file.suffix == ".log"
-
-    def test_none_outputs(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, None, None)
-
-        assert log_file.exists()
-        assert log_file.read_text() == ""
-
-    def test_bytes_outputs(self, tmp_path):
-        log_file = _write_log(tmp_path, 1, b"binary out\n", b"binary err\n")
-
-        content = log_file.read_text()
-        assert "binary out" in content
-        assert "binary err" in content
-
-    def test_iteration_zero_padding(self, tmp_path):
-        log_file = _write_log(tmp_path, 42, "out", "")
-        assert log_file.name.startswith("042_")
 
 
 class TestReadAgentStream:
