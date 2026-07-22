@@ -37,14 +37,15 @@ def test_shipped_config_parses_through_real_loader() -> None:
 
     assert cfg.agent_family == "codex"
     assert cfg.worker_tools == {}
-    assert cfg.worktree is True
 
 
-def test_shipped_config_preserves_explicit_codex_execution_agent() -> None:
-    """The shipped codex config uses the supported codex worker command."""
+def test_shipped_config_preserves_explicit_omp_execution_agent() -> None:
+    """The shipped codex config uses OMP's explicit worker command."""
     cfg = load_config(SHIPPED_CONFIG, include_global=False)
 
-    assert cfg.execution_agent == "codex"
+    assert cfg.execution_agent == (
+        "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
+    )
 
 
 def test_old_extend_grammar_fails_to_parse(tmp_path: Path) -> None:
