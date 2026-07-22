@@ -44,6 +44,11 @@ from milknado.domains.common.flavor_codec import (
     validate_positive_int as _validated_positive_int,
 )
 from milknado.domains.common.merge import deep_merge
+from milknado.domains.common.paths import (
+    TrustedGlobalPath,
+    resolve_project_path,
+    trust_global_path,
+)
 from milknado.domains.common.types import BUILTIN_FLAVORS
 
 _logger = logging.getLogger(__name__)
@@ -72,6 +77,7 @@ class MilknadoConfig:
     plan_review_max_rounds: int = 3
     execution_agent: str = resolve_execution_agent_command("claude")
     quality_gates: tuple[Gate, ...] | None = None
+    worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
     project_root: Path = Path(".")
@@ -191,6 +197,7 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
         milknado["quality_gates"] = _serialize_gates(config.quality_gates)
     milknado.update(
         {
+            "worktree": config.worktree,
             "worktree_pattern": config.worktree_pattern,
             "concurrency_limit": config.concurrency_limit,
             "db_path": os.path.relpath(config.db_path, config.project_root),
@@ -296,8 +303,8 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
     for slot in _PROMPT_PREPEND_SLOTS:
         key = f"{slot}_path"
         value = prompts.get(key)
-        if isinstance(value, str) and not Path(value).is_absolute():
-            prompts[key] = str((base_dir / value).resolve())
+        if isinstance(value, str):
+            prompts[key] = trust_global_path(value, base_dir)
 
 
 def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
@@ -366,6 +373,7 @@ def _scalar_config_kwargs(raw: dict[str, Any], project_root: Path) -> dict[str, 
             str(planning_validation_hook_raw).strip() if planning_validation_hook_raw else None
         ),
         "quality_gates": _parse_gates(raw.get("quality_gates"), "[milknado] quality_gates"),
+        "worktree": _validated_bool(raw.get("worktree"), True, "[milknado] worktree"),
         "worktree_pattern": raw.get("worktree_pattern", "milknado-{node_id}-{slug}"),
         "concurrency_limit": raw.get("concurrency_limit", 4),
         "project_root": project_root,
@@ -421,6 +429,14 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
         ),
     )
     return MilknadoConfig(**kwargs)
+
+
+def _validated_bool(value: Any, default: bool, ctx: str) -> bool:
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise ValueError(f"{ctx} must be a boolean; got {type(value).__name__}")
+    return value
 
 
 def _validated_str(value: Any, default: str, ctx: str) -> str:
@@ -487,9 +503,12 @@ def _load_prompt_prepend(
         text = str(inline).strip()
         return text or None
     if path_value:
-        resolved = Path(str(path_value))
-        if not resolved.is_absolute():
-            resolved = project_root / resolved
+        resolved = resolve_project_path(
+            str(path_value),
+            project_root,
+            label=f"[milknado.prompts] {base_key}_path",
+            allow_outside=isinstance(path_value, TrustedGlobalPath),
+        )
         if not resolved.exists():
             raise FileNotFoundError(
                 f"[milknado.prompts] {base_key}_path does not exist: {resolved}"

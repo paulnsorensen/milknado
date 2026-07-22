@@ -147,6 +147,14 @@ class TestLoadConfig:
         with pytest.raises(ValueError, match="escapes project_root"):
             load_config(path)
 
+    def test_worktree_config_requires_boolean(self, tmp_path: Path) -> None:
+        path = self._write_toml(
+            tmp_path,
+            '[milknado]\nagent_family = "claude"\nworktree = "nope"\n',
+        )
+        with pytest.raises(ValueError, match=r"\[milknado\] worktree must be a boolean"):
+            load_config(path)
+
 
 class TestSaveConfig:
     def test_writes_toml_file(self, tmp_path: Path) -> None:
@@ -165,6 +173,7 @@ class TestSaveConfig:
         loaded = load_config(path)
         assert loaded.agent_family == cfg.agent_family
         assert loaded.concurrency_limit == cfg.concurrency_limit
+        assert loaded.worktree is True
         assert loaded.planning_validation_hook is None
 
     def test_escapes_backslashes(self, tmp_path: Path) -> None:

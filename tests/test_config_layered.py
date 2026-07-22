@@ -14,6 +14,7 @@ from milknado.domains.common import (
     save_config,
 )
 from milknado.domains.common.config import _parse_worker_tools
+from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 
 def _write(path: Path, body: str) -> Path:
@@ -58,6 +59,23 @@ def test_local_overrides_global(xdg: Path, tmp_path: Path) -> None:
     )
     cfg = load_config(local)
     assert cfg.concurrency_limit == 12
+
+
+def test_local_worktree_overrides_global_default(xdg: Path, tmp_path: Path) -> None:
+    _write(
+        xdg / "milknado" / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\nworktree = false\n',
+    )
+    local = _write(
+        tmp_path / "milknado.toml",
+        '[milknado]\nagent_family = "claude"\nworktree = true\n',
+    )
+    assert load_config(local).worktree is True
+
+
+def test_missing_worktree_uses_true_default(tmp_path: Path) -> None:
+    local = _write(tmp_path / "milknado.toml", '[milknado]\nagent_family = "claude"\n')
+    assert load_config(local, include_global=False).worktree is True
 
 
 def test_global_fills_unset_local_keys(xdg: Path, tmp_path: Path) -> None:
@@ -154,6 +172,55 @@ def test_local_worker_tools_single_list_replaces_global(xdg: Path, tmp_path: Pat
     assert "Read,Edit" in cfg.execution_agent
 
 
+def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path: Path) -> None:
+    _write(
+        xdg / "milknado" / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.flavor.research]\n"
+            'quality_gates = ["echo global"]\n'
+            'brief_prepend = "global brief"\n'
+            "worktree = false\n"
+            "max_turns = 7\n"
+        ),
+    )
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.flavor.research]\n"
+            'tools = ["Read"]\n'
+            'brief_prepend = "local brief"\n'
+        ),
+    )
+
+    cfg = load_config(local)
+    profile = resolve_flavor_profile(cfg, "research")
+    assert profile.quality_gates[0].command == "echo global"
+    assert profile.brief_prepend == "local brief"
+    assert profile.worktree is False
+    assert profile.max_turns == 7
+    assert "Read" in profile.execution_agent
+
+
+def test_global_flavor_brief_path_resolves_against_global_dir(xdg: Path, tmp_path: Path) -> None:
+    global_dir = xdg / "milknado"
+    (global_dir / "briefs").mkdir(parents=True)
+    (global_dir / "briefs" / "research.md").write_text("global research brief\n", encoding="utf-8")
+    _write(
+        global_dir / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.flavor.research]\n"
+            'brief_prepend_path = "briefs/research.md"\n'
+        ),
+    )
+    local = _write(tmp_path / "milknado.toml", '[milknado]\nagent_family = "claude"\n')
+
+    profile = resolve_flavor_profile(load_config(local), "research")
+    assert profile.brief_prepend == "global research brief"
+
+
 # ── prompt prepends ───────────────────────────────────────────────────────────
 
 
@@ -228,6 +295,74 @@ def test_prompt_prepend_path_missing_raises(tmp_path: Path) -> None:
     )
     with pytest.raises(FileNotFoundError):
         load_config(local)
+
+
+@pytest.mark.parametrize("key", ("planning_prepend_path", "worker_brief_prepend_path"))
+def test_local_prompt_path_cannot_escape_project_root(tmp_path: Path, key: str) -> None:
+    absolute_outside = tmp_path.parent / "outside.md"
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            f'[milknado]\nagent_family = "claude"\n\n[milknado.prompts]\n'
+            f'{key} = "{absolute_outside}"\n'
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match=rf"\[milknado\.prompts\] {key} .*escapes project_root",
+    ):
+        load_config(local, include_global=False)
+
+
+def test_local_flavor_brief_path_cannot_escape_project_root(tmp_path: Path) -> None:
+    absolute_outside = tmp_path.parent / "outside.md"
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.flavor.research]\n"
+            f'brief_prepend_path = "{absolute_outside}"\n'
+        ),
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.flavor\.research\] brief_prepend_path .*escapes project_root",
+    ):
+        load_config(local, include_global=False)
+
+
+def test_local_prompt_symlink_cannot_escape_project_root(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    link = tmp_path / "linked.md"
+    link.symlink_to(outside)
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.prompts]\n"
+            f'worker_brief_prepend_path = "{link}"\n'
+        ),
+    )
+    with pytest.raises(ValueError, match=r"worker_brief_prepend_path .*escapes project_root"):
+        load_config(local, include_global=False)
+
+
+def test_local_flavor_symlink_cannot_escape_project_root(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    link = tmp_path / "linked.md"
+    link.symlink_to(outside)
+    local = _write(
+        tmp_path / "milknado.toml",
+        (
+            '[milknado]\nagent_family = "claude"\n\n'
+            "[milknado.flavor.research]\n"
+            f'brief_prepend_path = "{link}"\n'
+        ),
+    )
+    with pytest.raises(ValueError, match=r"brief_prepend_path .*escapes project_root"):
+        load_config(local, include_global=False)
 
 
 def test_prompt_prepend_empty_string_plus_path_still_rejected(tmp_path: Path) -> None:

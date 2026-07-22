@@ -3,7 +3,7 @@ name: milknado-config
 description: >
   Configure milknado's per-flavor worker execution by interviewing the user and
   writing milknado.toml — agent_family, [milknado.worker.tools] allowlists, and
-  [milknado.flavor.*] tables for each TaskFlavor (implement, spec, spike,
+  [milknado.flavor.*] tables for named flavor presets (implement, spec, spike,
   prototype, research). Use when the user wants to set up or tune how milknado
   runs workers — phrases like "configure milknado flavors", "set up
   milknado.toml", "tune the research/spec/spike agent", "which model should
@@ -17,8 +17,9 @@ description: >
 
 # milknado-config
 
-Set up `milknado.toml` so each **task flavor** runs with the right agent, tools,
-quality gates, and briefing. Interview the user, write the tables, validate.
+Set up `milknado.toml` so each **task flavor name** runs with the right agent, tools,
+quality gates, briefing, and worktree policy. Interview the user, write the tables,
+validate.
 
 ## When to use
 
@@ -32,12 +33,12 @@ graph/node edits. This skill only writes config.
 
 ## The model in 60 seconds
 
-A milknado **task** node carries a `TaskFlavor`: `implement` (the default),
-`spec`, `spike`, `prototype`, `research`. At dispatch time milknado resolves a
-**flavor profile** — `execution_agent`, `quality_gates`, `brief_prepend` — and
-runs the worker with it. The profile comes from `[milknado.flavor.<flavor>]` in
-`milknado.toml`, falling back to the global worker config when a flavor sets
-nothing.
+A milknado **task** node carries a string `flavor` name: `implement` (the default),
+`spec`, `spike`, `prototype`, or `research`. Custom names are also valid. At dispatch
+time milknado resolves a **flavor profile** — `execution_agent`, `quality_gates`,
+`brief_prepend`, and `worktree` — and runs the worker with it. The profile comes
+from `[milknado.flavor.<flavor>]` in `milknado.toml`, falling back to the global
+worker config when a flavor sets nothing.
 
 Resolution precedence (per field — see `flavor_profile.py`):
 
@@ -48,6 +49,7 @@ Resolution precedence (per field — see `flavor_profile.py`):
   default.
 - **brief_prepend**: flavor value if set (**replaces**, not concatenates) → else
   config `prompts.worker_brief_prepend`.
+- **worktree**: flavor value if set → else `[milknado] worktree` (default `true`).
 
 `agent_family` is one of `claude | cursor | gemini | codex`; it picks the default
 planning + execution commands and (for `claude`/`gemini`) the tool allowlist.
@@ -58,8 +60,10 @@ planning + execution commands and (for `claude`/`gemini`) the tool allowlist.
   default if missing).
 - Optional user-global: `$XDG_CONFIG_HOME/milknado/milknado.toml` (else
   `~/.config/milknado/milknado.toml`), merged **under** the project file
-  (project wins). Global `brief_prepend_path` is resolved against the global
-  config dir; `project_root`, `db_path`, `plugins` are ignored if set globally.
+  (project wins). Global `brief_prepend_path` is resolved against the global config
+  dir. Local `brief_prepend_path` and prompt `*_prepend_path` values are confined
+  to `project_root`; an absolute path that escapes it raises a clear `ValueError`.
+  `project_root`, `db_path`, `plugins` are ignored if set globally.
 
 Decide with the user whether a flavor preset is **project-specific** (most cases
 — gates are project commands) or a **personal default** for the global file.
@@ -150,13 +154,16 @@ uv run python - <<'PY'
 from pathlib import Path
 from milknado.domains.common.config import load_config
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
-from milknado.domains.common.types import TaskFlavor
+from milknado.domains.common.types import BUILTIN_FLAVORS
 
 cfg = load_config(Path("milknado.toml"))
-for f in TaskFlavor:
-    p = resolve_flavor_profile(cfg, f)
-    print(f"{f.value:10} agent={p.execution_agent!r}")
-    print(f"{'':10} gates={list(p.quality_gates)}  brief={'set' if p.brief_prepend else 'none'}")
+for name in [*sorted(BUILTIN_FLAVORS), "custom"]:
+    p = resolve_flavor_profile(cfg, name)
+    print(f"{name:10} agent={p.execution_agent!r}")
+    print(
+        f"{'':10} gates={list(p.quality_gates)} "
+        f"brief={'set' if p.brief_prepend else 'none'} worktree={p.worktree}"
+    )
 PY
 ```
 
@@ -170,6 +177,9 @@ the offending table, re-run.
 - **`execution_agent` opts out of the allowlist.** A full CLI string is run
   verbatim; the `tools` allowlist no longer applies. Must start with one of
   `claude`, `codex`, `cursor-agent`, `gemini` (basename checked).
+- **Use flavor names, not a retired enum.** The runtime accepts the string registry
+  (`BUILTIN_FLAVORS`) plus project-specific names; documentation and probes should
+  iterate names and call `resolve_flavor_profile`.
 - **`tools`-derived model is the family default**, not opus — derivation uses the
   built-in family command (sonnet for claude, flash for gemini). Want a bigger
   model *and* a tool list? You must spell the whole command in `execution_agent`.
@@ -184,6 +194,9 @@ the offending table, re-run.
   = []` to intentionally skip; never leave the key absent expecting a skip.
 - **`brief_prepend` replaces**, it does not append to the config-level
   `worker_brief_prepend`.
+- **Worktree fallback is config-level.** `[milknado] worktree = false` disables
+  worktrees for flavors that do not override it; set `worktree = true` or `false`
+  in a flavor table for an explicit per-flavor policy.
 - **At most one `"..."` sentinel** per tool list.
 - **A flavor's `"..."` expands the BUILT-IN family allowlist, not your
   `[milknado.worker.tools]` override.** So if you added `"Bash(just:*)"`

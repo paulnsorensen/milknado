@@ -31,6 +31,13 @@ one of `{claude, codex, cursor-agent, gemini}` (`agent_argv.py`). Default
 `milknado_node_verify`/`milknado_deposit_result`/`milknado_track_follow_up` —
 no coordinator tools).
 
+
+### Path provenance
+
+The two file-backed prompt loaders share the dependency-neutral `resolve_project_path` helper. Project-local prompt and flavor prepend paths are confined to `project_root`, including absolute paths and symlink-resolved targets. Global paths are resolved against the global config directory before the layered merge and carry trusted provenance, so a deliberate global path may live outside the project root.
+
+The resolved flavor profile also carries `worktree`: an explicit flavor value wins, otherwise `[milknado] worktree` supplies the default (`true`).
+
 ## Two prompt pipelines (they do not share a brief-builder)
 
 **Path A — native/MCP** (`milknado_todo_claim`, `milknado_todo_brief`,

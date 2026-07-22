@@ -186,6 +186,15 @@ class TestSkillFilesExist:
         preset = self.SKILL_DIR / "references" / "flavor-presets.md"
         assert preset.exists(), f"Missing skill reference: {preset}"
 
+    def test_flavor_docs_use_string_registry(self) -> None:
+        docs = (
+            (self.SKILL_DIR / "SKILL.md").read_text(),
+            (self.SKILL_DIR / "references" / "flavor-presets.md").read_text(),
+        )
+        assert all("TaskFlavor" not in text for text in docs)
+        assert "BUILTIN_FLAVORS" in docs[0]
+        assert "worktree" in docs[1]
+
 
 class TestPluginJsonNoSkillsField:
     """plugin.json must NOT have a 'skills' field.

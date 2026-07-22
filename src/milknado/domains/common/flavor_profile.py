@@ -47,8 +47,7 @@ def resolve_flavor_profile(
         (replace, not concat).
       - worker_agent_type / loop_mode / max_iterations / max_turns: flavor value
         if not None, else the cfg global default (native Workflow backend).
-      - worktree: flavor value if not None, else True (defaults -> global ->
-        local precedence is already resolved into cfg.flavors by config load).
+      - worktree: flavor value if not None, else cfg.worktree.
     """
     from milknado.domains.common.agent_argv import (
         resolve_execution_agent_command,
@@ -56,6 +55,7 @@ def resolve_flavor_profile(
     )
 
     override = cfg.flavors.get(flavor) if flavor is not None else None
+    config_worktree = getattr(cfg, "worktree", True)
     default_review = flavor in ("implement", "spec")
 
     if override is None:
@@ -68,7 +68,7 @@ def resolve_flavor_profile(
             loop_mode=cfg.loop_mode,
             max_iterations=cfg.max_iterations,
             max_turns=cfg.max_turns,
-            worktree=True,
+            worktree=config_worktree,
             session_mode="fresh",
             review=default_review,
             review_agent=None,
@@ -99,7 +99,7 @@ def resolve_flavor_profile(
         override.max_iterations if override.max_iterations is not None else cfg.max_iterations
     )
     max_turns = override.max_turns if override.max_turns is not None else cfg.max_turns
-    worktree = override.worktree if override.worktree is not None else True
+    worktree = override.worktree if override.worktree is not None else config_worktree
     session_mode = override.session_mode
     review = override.review if override.review is not None else default_review
     review_agent = override.review_agent
