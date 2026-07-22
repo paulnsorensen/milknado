@@ -4,7 +4,6 @@ import logging
 import queue
 import re
 import shlex
-import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -389,51 +388,6 @@ class ReviewVerdict:
     findings_md: str
 
 
-def run_node_review(
-    node: MikadoNode,
-    worktree: Path,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-    profile: Any,
-) -> ReviewVerdict:
-    """Run the configured reviewer in the pinned node worktree."""
-    if not profile.review_agent:
-        raise ValueError(f"node {node.id} resolved review=true but no review_agent is configured")
-    result = subprocess.run(
-        shlex.split(profile.review_agent),
-        cwd=worktree,
-        input=_build_review_prompt(node, diff, brief, spec_path),
-        capture_output=True,
-        text=True,
-        timeout=1800,
-        check=False,
-    )
-    output = f"{result.stdout}\n{result.stderr}"
-    approved, findings_md = _parse_review_output(output)
-    _persist_review_findings(worktree, node, findings_md)
-    return ReviewVerdict(approved=approved, findings_md=findings_md)
-
-
-def _build_review_prompt(
-    node: MikadoNode,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-) -> str:
-    spec_section = f"## Spec\n\n{spec_path}\n\n" if spec_path else ""
-    return (
-        f"# Review: {node.description}\n\n"
-        f"## Brief\n\n{brief}\n\n"
-        f"{spec_section}"
-        f"## Diff\n\n```diff\n{diff}\n```\n\n"
-        "Review the node worktree against the brief and spec. Emit findings "
-        "in easy-cheese severity/dimension bullet form, then exactly one of:\n\n"
-        "<verdict>approve</verdict>\n\nor\n\n"
-        "<verdict>reject</verdict>\n"
-    )
-
-
 def _parse_review_output(output: str) -> tuple[bool, str]:
     match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
     findings_md = output[: match.start()].strip() if match else output.strip()
@@ -443,11 +397,3 @@ def _parse_review_output(output: str) -> tuple[bool, str]:
         return False, findings_md
     _logger.warning("run_node_review: unparseable reviewer output; treating as revise")
     return False, findings_md or "reviewer produced no parseable <verdict> tag"
-
-
-def _persist_review_findings(worktree: Path, node: MikadoNode, findings_md: str) -> Path:
-    slug = re.sub(r"[^a-z0-9]+", "-", node.description.lower()).strip("-") or str(node.id)
-    path = worktree / ".cheese" / "age" / f"{slug}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
-    return path
