@@ -124,7 +124,7 @@ def test_main_logs_terminal_event_with_run_id(
 
 def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) -> None:
     from milknado.domains.common import RunResult
-    from milknado.mcp._ralph_node_runner import _finish_run
+    from milknado.mcp import _ralph_node_runner
 
     class Graph:
         def finish_run(self, *_args) -> bool:
@@ -136,14 +136,14 @@ def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) 
         timed_out=False,
         ended_at="2026-01-01T00:00:00+00:00",
     )
-    assert _finish_run(Graph(), tmp_path, "run-1", result) is False
+    assert _ralph_node_runner._finish_run(Graph(), tmp_path, "run-1", result) is False
     sidecar = tmp_path / ".milknado" / "runs" / "run-1.terminal-error"
     assert "finish_run lost its running-row fence" in sidecar.read_text(encoding="utf-8")
 
 
 def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) -> None:
     from milknado.domains.common import RunResult
-    from milknado.mcp._ralph_node_runner import _finish_run
+    from milknado.mcp import _ralph_node_runner
 
     class Graph:
         def finish_run(self, *_args) -> bool:
@@ -155,7 +155,7 @@ def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) ->
         timed_out=False,
         ended_at="2026-01-01T00:00:00+00:00",
     )
-    assert _finish_run(Graph(), tmp_path, "run-raise", result) is False
+    assert _ralph_node_runner._finish_run(Graph(), tmp_path, "run-raise", result) is False
     assert "database unavailable" in (
         tmp_path / ".milknado" / "runs" / "run-raise.terminal-error"
     ).read_text(encoding="utf-8")
@@ -164,9 +164,8 @@ def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) ->
 def test_finish_run_logs_sidecar_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import milknado.mcp._ralph_node_runner as runner
     from milknado.domains.common import RunResult
-    from milknado.mcp._ralph_node_runner import _finish_run
+    from milknado.mcp import _ralph_node_runner
 
     class Graph:
         def finish_run(self, *_args) -> bool:
@@ -180,11 +179,11 @@ def test_finish_run_logs_sidecar_write_failure(
         def joinpath(self, _name: str) -> Sidecar:
             return Sidecar()
 
-    monkeypatch.setattr(runner, "runs_dir", lambda _root: RunDirectory())
+    monkeypatch.setattr(_ralph_node_runner, "runs_dir", lambda _root: RunDirectory())
     result = RunResult(
         status="failed",
         exit_code=1,
         timed_out=False,
         ended_at="2026-01-01T00:00:00+00:00",
     )
-    assert _finish_run(Graph(), tmp_path, "run-sidecar", result) is False
+    assert _ralph_node_runner._finish_run(Graph(), tmp_path, "run-sidecar", result) is False

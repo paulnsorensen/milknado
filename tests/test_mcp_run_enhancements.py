@@ -1628,8 +1628,8 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
 
 
 def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
+    import milknado.domains.dispatch.async_run as async_run
     from milknado.domains.dispatch._runstate import runs_dir
-    from milknado.domains.dispatch.async_run import poll_async_run
 
     run_id = "node-1-20260101T000000Z-abcd"
     rdir = runs_dir(tmp_path)
@@ -1640,7 +1640,7 @@ def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
         def get_run(self, _run_id: str) -> dict:
             return {"run_id": _run_id, "status": "failed", "log_path": "tampered"}
 
-    result = poll_async_run(Graph(), tmp_path, run_id)
+    result = async_run.poll_async_run(Graph(), tmp_path, run_id)
     assert result["terminal_persistence"] == "degraded"
     assert result["error"] == "persistence failed"
 

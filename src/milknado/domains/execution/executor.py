@@ -26,7 +26,7 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
 )
-from milknado.domains.dispatch import make_run_id
+from milknado.domains.dispatch._runstate import make_run_id
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
