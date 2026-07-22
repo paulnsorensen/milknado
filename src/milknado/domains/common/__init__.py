@@ -1,6 +1,9 @@
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
+    NodeAgentSession,
     build_planning_subprocess,
+    build_resume_command,
+    capture_session_id,
     resolve_planning_agent_command,
     resolve_worker_tools,
 )
@@ -93,6 +96,9 @@ __all__ = [
     "validate_hint_path",
     "save_config",
     "resolve_flavor_profile",
+    "NodeAgentSession",
+    "build_resume_command",
+    "capture_session_id",
     "FlavorProfile",
     "resolve_worker_tools",
     "WORKER_ALLOWED_TOOLS",

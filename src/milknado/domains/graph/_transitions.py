@@ -190,3 +190,14 @@ def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: N
         raise ValueError(f"mark_terminal status must be DONE or FAILED, got {status}")
     conn.commit()
     return cur.rowcount == 1
+
+
+def mark_blocked(conn: sqlite3.Connection, node_id: int, run_id: str) -> bool:
+    """Fence a RUNNING node into BLOCKED without clearing its worktree pin."""
+    cur = conn.execute(
+        "UPDATE nodes SET status = ?, completed_at = NULL "
+        "WHERE id = ? AND run_id = ? AND status = ?",
+        (NodeStatus.BLOCKED.value, node_id, run_id, NodeStatus.RUNNING.value),
+    )
+    conn.commit()
+    return cur.rowcount == 1

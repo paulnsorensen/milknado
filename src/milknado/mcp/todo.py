@@ -108,7 +108,12 @@ def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
         node_for_brief = graph.get_node(node_id)
         flavor = node_for_brief.flavor if node_for_brief is not None else None
         profile = resolve_flavor_profile(cfg, flavor)
-        brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
+        brief = render_brief(
+            graph,
+            node_id,
+            prepend=profile.brief_prepend,
+            project_root=root,
+        )
         files = graph.get_file_ownership(node_id)
         return {"node_id": node_id, "brief": brief, "files": files}
     finally:

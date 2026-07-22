@@ -161,6 +161,22 @@ def mark_terminal(
     return ok
 
 
+def mark_blocked_fenced(
+    pipeline: StatusPipeline,
+    conn: sqlite3.Connection,
+    node_id: int,
+    run_id: str,
+) -> bool:
+    """Fence a running node into BLOCKED while retaining its pinned worktree."""
+    return pipeline.run(
+        lambda nid: _reads.get_node(conn, nid),
+        node_id,
+        NodeStatus.RUNNING,
+        NodeStatus.BLOCKED,
+        lambda: _transitions.mark_blocked(conn, node_id, run_id),
+    )
+
+
 def try_reclaim(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, *, now: str
 ) -> bool:

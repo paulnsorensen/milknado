@@ -226,7 +226,12 @@ def run_inline_start(graph, cfg, root: Path, request: InlineRunRequest, use_tmux
     if node.status == NodeStatus.RUNNING:
         reclaim_stale_node(graph, request.node_id, fence_run_id=node.run_id)
     profile = resolve_flavor_profile(cfg, node.flavor)
-    brief = render_brief(graph, request.node_id, prepend=profile.brief_prepend)
+    brief = render_brief(
+        graph,
+        request.node_id,
+        prepend=profile.brief_prepend,
+        project_root=root,
+    )
     graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
     try:
         worker_cwd, merge_ctx = prepare_isolation(

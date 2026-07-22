@@ -140,7 +140,12 @@ def milknado_todo_claim(
         run_id = make_run_id(node_id)
 
         profile = resolve_flavor_profile(cfg, node.flavor)
-        brief = render_brief(graph, node_id, prepend=profile.brief_prepend)
+        brief = render_brief(
+            graph,
+            node_id,
+            prepend=profile.brief_prepend,
+            project_root=root,
+        )
 
         graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
 

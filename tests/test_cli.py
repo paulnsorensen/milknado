@@ -59,6 +59,11 @@ def _configure_ralph_mocks(
     ralph_cls.return_value.poll_progress_events.return_value = []
 
 
+def _disable_review_for_test(project_dir: Path) -> None:
+    with (project_dir / "milknado.toml").open("a", encoding="utf-8") as config:
+        config.write("\n[milknado.flavor.implement]\nreview = false\n")
+
+
 @pytest.fixture()
 def project_dir(tmp_path: Path) -> Path:
     return tmp_path
@@ -1376,6 +1381,7 @@ class TestRunCommand:
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
+        _disable_review_for_test(project_dir)
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         root = graph.add_node("root goal")
@@ -1403,6 +1409,7 @@ class TestRunCommand:
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
+        _disable_review_for_test(project_dir)
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         root = graph.add_node("root")
@@ -1430,6 +1437,7 @@ class TestRunCommand:
         mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         runner.invoke(app, ["init", str(project_dir)])
+        _disable_review_for_test(project_dir)
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
         root = graph.add_node("root")

@@ -111,7 +111,12 @@ def dispatch_node_sync(
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
     try:
-        brief = render_brief(graph, request.node_id, prepend=request.brief_prepend)
+        brief = render_brief(
+            graph,
+            request.node_id,
+            prepend=request.brief_prepend,
+            project_root=request.project_root,
+        )
         cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         graph.start_run(
             run_id,

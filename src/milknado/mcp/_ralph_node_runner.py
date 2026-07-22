@@ -104,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
             worktree_pattern=cfg.worktree_pattern,
             project_root=root,
             commit_footer=cfg.commit_footer,
+            review=profile.review,
+            review_agent=profile.review_agent,
+            review_max_rounds=profile.review_max_rounds,
+            on_reject=profile.on_reject,
+            session_mode=profile.session_mode,
         )
         outcome = run_node_to_completion(
             executor,

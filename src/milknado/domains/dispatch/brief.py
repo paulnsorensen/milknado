@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph import MikadoGraph, walk_ancestors
 
@@ -23,20 +26,43 @@ def _format_goal_context(chain: list[MikadoNode]) -> list[str]:
     ] or ["(no parent goal)"]
 
 
-def _resolve_spec_path(node: MikadoNode, chain: list[MikadoNode]) -> str | None:
-    """Nearest spec markdown reference: the node's own, else the closest ancestor's.
+def _resolve_spec_path(
+    node: MikadoNode,
+    chain: list[MikadoNode],
+    project_root: Path | None = None,
+) -> str | None:
+    """Return the nearest durable spec as an absolute path when possible."""
+    raw: str | None = node.artifact_path
+    if raw is None:
+        for ancestor in reversed(chain):
+            if ancestor.artifact_path:
+                raw = ancestor.artifact_path
+                break
+    if raw is None:
+        return None
+    path = Path(raw).expanduser()
+    if project_root is None or path.is_absolute():
+        return str(path.resolve()) if path.is_absolute() else str(path)
 
-    Returns whatever `artifact_path` the node (or ancestor) was created with
-    verbatim; no durable-corpus-first / .cheese/specs fallback resolution
-    happens here or anywhere upstream in this codebase today — the caller is
-    responsible for populating `artifact_path` with the value it wants embedded.
-    """
-    if node.artifact_path:
-        return node.artifact_path
-    for ancestor in reversed(chain):
-        if ancestor.artifact_path:
-            return ancestor.artifact_path
-    return None
+    root = project_root.resolve()
+    data_home = Path(os.environ.get("XDG_DATA_HOME", "~/.local/share")).expanduser()
+    project_name = root.name
+    candidates: list[Path] = []
+    if path.parts[:2] == (".cheese", "specs"):
+        candidates.append(root / path)
+    else:
+        candidates.extend(
+            [
+                data_home / "cheese" / project_name / "specs" / path,
+                root / path,
+                root / ".cheese" / "specs" / path,
+            ]
+        )
+    unique = list(dict.fromkeys(candidates))
+    for candidate in unique:
+        if candidate.exists():
+            return str(candidate.resolve())
+    return str(unique[0].resolve())
 
 
 def _brief_header(
@@ -104,7 +130,13 @@ _PLATE_INSTRUCTIONS = (
 )
 
 
-def render_brief(graph: MikadoGraph, node_id: int, *, prepend: str | None = None) -> str:
+def render_brief(
+    graph: MikadoGraph,
+    node_id: int,
+    *,
+    prepend: str | None = None,
+    project_root: Path | None = None,
+) -> str:
     node = graph.get_node(node_id)
     if node is None:
         raise ValueError(f"node {node_id} not found")
@@ -131,7 +163,7 @@ def render_brief(graph: MikadoGraph, node_id: int, *, prepend: str | None = None
         lines.append("(no file hints registered)")
     lines.append("")
 
-    spec_path = _resolve_spec_path(node, chain)
+    spec_path = _resolve_spec_path(node, chain, project_root)
     if spec_path:
         lines.append("## Spec")
         lines.append(f"- {spec_path}")

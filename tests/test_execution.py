@@ -76,6 +76,9 @@ class FakeGit:
     def resolve_ref(self, ref: str) -> str:
         return f"{ref}-oid"
 
+    def diff_for_review(self, worktree: Path, base_oid: str) -> str:
+        return f"diff from {base_oid}"
+
     def commit_all(self, worktree: Path, message: str) -> None:
         self.commits.append((worktree, message))
 

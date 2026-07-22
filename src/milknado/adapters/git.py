@@ -206,6 +206,34 @@ class GitAdapter:
     def resolve_ref(self, ref: str) -> str:
         return self._run(["rev-parse", "--verify", ref]).stdout.strip()
 
+    def diff_for_review(self, worktree: Path, base_oid: str) -> str:
+        """Return the full base-to-worktree patch, including untracked files."""
+        try:
+            tracked = self._run(
+                ["diff", "--no-ext-diff", base_oid, "--"],
+                cwd=worktree,
+            ).stdout
+            untracked = self._run(
+                ["ls-files", "--others", "--exclude-standard"],
+                cwd=worktree,
+            ).stdout.splitlines()
+            parts = [tracked]
+            for path in untracked:
+                result = subprocess.run(
+                    ["git", "diff", "--no-ext-diff", "--no-index", "--", "/dev/null", path],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode not in (0, 1):
+                    detail = (result.stderr or result.stdout).strip()
+                    raise GitOperationError("diff --no-index", detail)
+                parts.append(result.stdout)
+            return "\n".join(part.rstrip("\n") for part in parts if part)
+        except OSError as exc:
+            raise GitOperationError("diff for review", str(exc)) from exc
+
     def compare_and_swap_ref(
         self,
         ref: str,
