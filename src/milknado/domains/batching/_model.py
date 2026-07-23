@@ -44,6 +44,8 @@ def build_model(inputs: ModelInputs) -> ModelBundle:
     in_batch = _build_in_batch_vars(model, normal_sccs, batch_of, K)
     _add_budget_constraints(model, normal_sccs, in_batch, inputs)
     _add_ordering_constraints(model, inputs.dag_edges, batch_of)
+    _add_batch_compactness(model, inputs.sccs, batch_of)
+
     spread_vars = _build_spread_vars(model, batch_of, inputs.sym_by_scc, normal_sccs, K)
     total_cost = _build_total_cost(model, normal_sccs, in_batch, inputs, K)
     return ModelBundle(
@@ -61,6 +63,29 @@ def _add_ordering_constraints(
 ) -> None:
     for src, dst in dag_edges:
         model.add(batch_of[src] <= batch_of[dst])
+
+
+def _add_batch_compactness(
+    model: cp_model.CpModel,
+    sccs: list[str],
+    batch_of: dict[str, cp_model.IntVar],
+) -> None:
+    """Remove equivalent assignments that leave gaps between active batches."""
+    active_by_batch: list[cp_model.BoolVar] = []
+    for batch in range(len(sccs)):
+        active = model.new_bool_var(f"active_b{batch}")
+        active_by_batch.append(active)
+        members = []
+        for scc in sccs:
+            in_batch = model.new_bool_var(f"in_b{batch}_{scc}")
+            model.add(batch_of[scc] == batch).only_enforce_if(in_batch)
+            model.add(batch_of[scc] != batch).only_enforce_if(in_batch.negated())
+            model.add_implication(in_batch, active)
+            members.append(in_batch)
+        model.add_bool_or(members).only_enforce_if(active)
+
+    for batch in range(1, len(active_by_batch)):
+        model.add_implication(active_by_batch[batch], active_by_batch[batch - 1])
 
 
 def _isolate_oversized(
