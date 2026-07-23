@@ -94,6 +94,56 @@ class TestRunLoop:
         stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
         assert stop_event.data["reason"] == "error"
 
+    @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
+    def test_max_consecutive_failures_stops_run(self, mock_run, tmp_path):
+        """The cap turns a would-be-infinite crash loop into a bounded FAILED run."""
+        config = make_config(tmp_path, max_iterations=10, max_consecutive_failures=3)
+        state = make_state()
+        q = QueueEmitter()
+
+        run_loop(config, state, q)
+
+        assert mock_run.call_count == 3
+        assert state.failed == 3
+        assert state.status == RunStatus.FAILED
+        events = drain_events(q)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
+
+    @patch(MOCK_SUBPROCESS)
+    def test_consecutive_failure_count_resets_on_success(self, mock_run, tmp_path):
+        """Sporadic failures below the cap never end the run."""
+        mock_run.side_effect = [
+            fail_proc(),
+            fail_proc(),
+            ok_proc(),
+            fail_proc(),
+            fail_proc(),
+            ok_proc(),
+        ]
+        config = make_config(tmp_path, max_iterations=6, max_consecutive_failures=3)
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_run.call_count == 6
+        assert state.completed == 2
+        assert state.failed == 4
+        assert state.status == RunStatus.COMPLETED
+
+    @patch(MOCK_SUBPROCESS)
+    def test_last_captured_stderr_stored_for_failure_reporting(self, mock_run, tmp_path):
+        """Captured stderr survives on state so coordinators can log the failure cause."""
+        mock_run.side_effect = lambda *a, **k: fail_proc(
+            stderr_text="Error: unknown flag: --mcp-config\n"
+        )
+        config = make_config(tmp_path, max_iterations=1, log_dir=tmp_path / "logs")
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        assert "unknown flag: --mcp-config" in (state.last_captured_stderr or "")
+
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
     def test_timeout_counted(self, mock_run, tmp_path):
         config = make_config(tmp_path, max_iterations=1, timeout=5)

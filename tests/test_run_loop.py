@@ -146,6 +146,9 @@ class FakeRalph:
     def get_run_stdout(self, run_id: str) -> list[str]:
         return []
 
+    def get_run_failure_detail(self, run_id: str) -> str | None:
+        return None
+
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],

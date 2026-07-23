@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.adapters.loop import (
+    MAX_CONSECUTIVE_AGENT_FAILURES,
     MILKNADO_COMPLETION_SIGNAL,
     LoopAdapter,
     _build_ralph_content,
@@ -68,6 +69,7 @@ class TestCreateRun:
             stop_on_completion_signal=True,
             log_dir=Path("/project") / ".ralph-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
+            max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
         mock_manager.create_run.assert_called_once_with(mock_config, emitter=adapter._emitter)
         assert result.id == "run-1"
@@ -693,3 +695,69 @@ class TestNoGatesConfiguredMessage:
         """The fail-closed message must tell the user exactly where to add gates."""
         assert "milknado.toml" in NO_GATES_CONFIGURED_MESSAGE
         assert "quality_gates" in NO_GATES_CONFIGURED_MESSAGE
+
+
+class TestGetRunFailureDetail:
+    @staticmethod
+    def _run(stderr=None, stdout=None, result_text=None) -> MagicMock:
+        run = MagicMock()
+        run.state.last_captured_stderr = stderr
+        run.state.last_captured_stdout = stdout
+        run.state.last_result_text = result_text
+        return run
+
+    def test_prefers_stderr(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
+        mock_manager.get_run.return_value = self._run(
+            stderr="Error: unknown flag: --mcp-config\n", stdout="noise"
+        )
+
+        assert adapter.get_run_failure_detail("r1") == "Error: unknown flag: --mcp-config"
+
+    def test_falls_back_to_stdout_then_result_text(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = self._run(stdout="boom on stdout")
+        assert adapter.get_run_failure_detail("r1") == "boom on stdout"
+
+        mock_manager.get_run.return_value = self._run(result_text="final text")
+        assert adapter.get_run_failure_detail("r1") == "final text"
+
+    def test_none_when_run_missing_or_output_blank(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = None
+        assert adapter.get_run_failure_detail("r1") is None
+
+        mock_manager.get_run.return_value = self._run(stderr="   ")
+        assert adapter.get_run_failure_detail("r1") is None
+
+    def test_flattens_and_bounds_long_output(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.get_run.return_value = self._run(stderr="line1\nline2\n" + "x" * 400)
+
+        detail = adapter.get_run_failure_detail("r1")
+
+        assert detail is not None
+        assert "\n" not in detail
+        assert len(detail) <= 300
+
+
+class TestWorkerFailureCap:
+    @patch("milknado.adapters.loop.RunConfig")
+    def test_create_run_caps_consecutive_failures(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+    ) -> None:
+        adapter.create_run(
+            agent="claude",
+            ralph_dir=Path("/project"),
+            ralph_file=Path("/project/RALPH.md"),
+            commands=[],
+            quality_gates=None,
+        )
+
+        kwargs = mock_config_cls.call_args.kwargs
+        assert kwargs["max_consecutive_failures"] == MAX_CONSECUTIVE_AGENT_FAILURES
