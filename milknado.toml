@@ -13,6 +13,7 @@ worker_agent_type = "milknado:milknado-worker"
 
 [milknado.flavor.implement]
 execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
+review_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
 brief_prepend = "Implement the scoped production change in the worktree, then prove it with the required quality gate."
 
 [milknado.flavor.spec]
