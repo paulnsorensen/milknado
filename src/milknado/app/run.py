@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import logging
 import shlex
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from queue import Queue
+from threading import Event, Lock, Thread
+from typing import TYPE_CHECKING, Any
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
@@ -25,10 +29,77 @@ from milknado.domains.common import (
 )
 
 if TYPE_CHECKING:
-    from milknado.domains.execution import ExecutionConfig, RunLoopResult
+    from milknado.domains.execution import ExecutionConfig, RunLoop, RunLoopResult, RunLoopState
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
+
+
+class ExecutionRunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    STOPPED = "stopped"
+
+
+@dataclass(frozen=True, slots=True)
+class RunActionAvailability:
+    cancel_reason: str | None = None
+    guidance_reason: str | None = None
+    force_stop_reason: str | None = None
+
+    @property
+    def can_cancel(self) -> bool:
+        return self.cancel_reason is None
+
+    @property
+    def can_queue_guidance(self) -> bool:
+        return self.guidance_reason is None
+
+    @property
+    def can_force_stop(self) -> bool:
+        return self.force_stop_reason is None
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveRunSnapshot:
+    """Application-owned immutable read model for one active agent run."""
+
+    run_id: str
+    node_id: int
+    description: str
+    status: ExecutionRunStatus
+    progress: str | None
+    stop_requested: bool
+    actions: RunActionAvailability
+    output: tuple[str, ...]
+    pending_guidance: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalRunSnapshot:
+    """Bounded terminal record retained after an active run exits."""
+
+    run_id: str
+    node_id: int
+    description: str
+    status: ExecutionRunStatus
+    output: tuple[str, ...]
+    pending_guidance: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionSnapshot:
+    """Immutable presentation state published by the application controller."""
+
+    goal: str
+    active_runs: tuple[ActiveRunSnapshot, ...]
+    terminal_runs: tuple[TerminalRunSnapshot, ...]
+    completed: int
+    failed: int
+    stopped: int
+    available: int
+    event_lines: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -73,6 +144,219 @@ def resolve_feature_branch(project_root: Path) -> str:
     from milknado.adapters import GitAdapter
 
     return GitAdapter(project_root).current_branch()
+
+
+@dataclass
+class _ControlRequest:
+    operation: str
+    args: tuple[Any, ...]
+    done: Event = field(default_factory=Event)
+    result: Any = None
+    error: BaseException | None = None
+
+
+class ExecutionController:
+    """UI-neutral application boundary for one execution run."""
+
+    def __init__(
+        self,
+        loop: RunLoop,
+        execution_config: ExecutionConfig,
+        concurrency_limit: int,
+    ) -> None:
+        self._loop = loop
+        self._execution_config = execution_config
+        self._concurrency_limit = concurrency_limit
+        self._controls: Queue[_ControlRequest] = Queue()
+        self._state_lock = Lock()
+        self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
+        self._snapshot = self._project_snapshot(loop.state())
+        self._running = False
+        loop.set_state_listener(self._receive_state)
+
+    def run(
+        self,
+        *,
+        feature_branch: str,
+        strict: bool = False,
+        spec_text: str | None = None,
+        spec_path: Path | None = None,
+    ) -> RunLoopResult:
+        with self._state_lock:
+            if self._running:
+                raise RuntimeError("execution controller is already running")
+            self._running = True
+        result: RunLoopResult | None = None
+        error: BaseException | None = None
+
+        def execute() -> None:
+            nonlocal result, error
+            try:
+                result = self._loop.run(
+                    config=self._execution_config,
+                    feature_branch=feature_branch,
+                    concurrency_limit=self._concurrency_limit,
+                    strict=strict,
+                    spec_text=spec_text,
+                    spec_path=spec_path,
+                    process_controls=self._drain_controls,
+                    interactive=False,
+                )
+            except BaseException as exc:
+                error = exc
+            finally:
+                with self._state_lock:
+                    self._running = False
+                    self._reject_pending_controls()
+
+        worker = Thread(target=execute, name="milknado-execution", daemon=True)
+        worker.start()
+        worker.join()
+        if error is not None:
+            raise error
+        return result  # type: ignore[return-value]
+
+    def snapshot(self) -> ExecutionSnapshot:
+        """Return the controller's current immutable presentation snapshot."""
+        with self._state_lock:
+            return self._snapshot
+
+    def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        """Subscribe to future snapshots and replay the current state once."""
+        with self._state_lock:
+            self._listeners.add(listener)
+            snapshot = self._snapshot
+        listener(snapshot)
+
+        def unsubscribe() -> None:
+            with self._state_lock:
+                self._listeners.discard(listener)
+
+        return unsubscribe
+
+    def _receive_state(self, state: RunLoopState) -> None:
+        snapshot = self._project_snapshot(state)
+        with self._state_lock:
+            self._snapshot = snapshot
+            listeners = tuple(self._listeners)
+        for listener in listeners:
+            try:
+                listener(snapshot)
+            except Exception:
+                _logger.exception(
+                    "execution snapshot listener failed listener=%s",
+                    getattr(listener, "__qualname__", type(listener).__qualname__),
+                )
+
+    @staticmethod
+    def _project_snapshot(state: RunLoopState) -> ExecutionSnapshot:
+        active_runs = tuple(
+            ActiveRunSnapshot(
+                run_id=run.run_id,
+                node_id=run.node_id,
+                description=run.description,
+                status=ExecutionRunStatus(run.status.value),
+                progress=run.progress,
+                stop_requested=run.stop_requested,
+                actions=RunActionAvailability(
+                    cancel_reason=run.actions.cancel_reason,
+                    guidance_reason=run.actions.guidance_reason,
+                    force_stop_reason=run.actions.force_stop_reason,
+                ),
+                output=run.output,
+                pending_guidance=run.pending_guidance,
+            )
+            for run in state.active_runs
+        )
+        terminal_runs = tuple(
+            TerminalRunSnapshot(
+                run_id=run.run_id,
+                node_id=run.node_id,
+                description=run.description,
+                status=ExecutionRunStatus(run.status.value),
+                output=run.output,
+                pending_guidance=run.pending_guidance,
+            )
+            for run in state.terminal_runs
+        )
+        return ExecutionSnapshot(
+            goal=state.goal,
+            active_runs=active_runs,
+            terminal_runs=terminal_runs,
+            completed=state.completed,
+            failed=state.failed,
+            stopped=state.stopped,
+            available=state.available,
+            event_lines=state.event_lines,
+        )
+
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        return bool(self._control("queue_guidance", run_id, text))
+
+    def cancel(self, run_id: str) -> None:
+        self._control("cancel", run_id)
+
+    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
+        return bool(self._control("force_stop", run_id, timeout))
+
+    def stop_scheduling(self) -> None:
+        """Stop admitting new work and request terminal completion of active runs."""
+        self._control("stop_scheduling")
+
+    def _control(self, operation: str, *args: Any) -> Any:
+        request: _ControlRequest | None = None
+        with self._state_lock:
+            if self._running:
+                if operation == "stop_scheduling":
+                    self._loop.admit_stop_scheduling()
+                request = _ControlRequest(operation=operation, args=args)
+                self._controls.put(request)
+        if request is None:
+            return getattr(self._loop, operation)(*args)
+        request.done.wait()
+        if request.error is not None:
+            raise request.error
+        return request.result
+
+    def _drain_controls(self) -> None:
+        while not self._controls.empty():
+            request = self._controls.get_nowait()
+            try:
+                request.result = getattr(self._loop, request.operation)(*request.args)
+            except BaseException as exc:
+                request.error = exc
+            finally:
+                request.done.set()
+
+    def _reject_pending_controls(self) -> None:
+        while not self._controls.empty():
+            request = self._controls.get_nowait()
+            request.error = RuntimeError("execution has finished")
+            request.done.set()
+
+
+def build_execution_controller(
+    graph: MikadoGraph,
+    config: MilknadoConfig,
+    project_root: Path,
+) -> ExecutionController:
+    """Compose the sole UI-facing execution API from application dependencies."""
+    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.domains.execution import Executor, RunLoop
+
+    ralph = LoopAdapter()
+    executor = Executor(
+        graph=graph,
+        git=GitAdapter(project_root),
+        ralph=ralph,
+        crg=CrgAdapter(project_root),
+    )
+    loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
+    return ExecutionController(
+        loop,
+        execution_config=build_exec_config(config, project_root),
+        concurrency_limit=config.concurrency_limit,
+    )
 
 
 def run_execution_loop(

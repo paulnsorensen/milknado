@@ -137,9 +137,23 @@ class RunManager:
             managed.thread = thread
             thread.start()
 
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        """Queue operator guidance for the run's next prompt."""
+        return self._require_run(run_id).state.queue_guidance(text)
+
     def stop_run(self, run_id: str) -> None:
         """Signal the run to stop after the current iteration finishes."""
         self._require_run(run_id).state.request_stop()
+
+    def force_stop_and_join(self, run_id: str, timeout: float | None = None) -> bool:
+        """Force the active subprocess group down and report bounded completion."""
+        managed = self._require_run(run_id)
+        managed.state.request_force_stop()
+        thread = managed.thread
+        if thread is None:
+            return True
+        thread.join(timeout=timeout)
+        return not thread.is_alive()
 
     def pause_run(self, run_id: str) -> None:
         """Pause the run between iterations until :meth:`resume_run` is called."""

@@ -17,6 +17,7 @@ dependencies = [
     "ortools>=9.15.6755",
     "tiktoken>=0.13.0",
     "tomli-w>=1.0.0",
+    "textual>=8.2.8",
 ]
 
 [project.scripts]
@@ -49,6 +50,12 @@ name = "app must not import cli or mcp"
 type = "forbidden"
 source_modules = ["milknado.app"]
 forbidden_modules = ["milknado.cli", "milknado.mcp"]
+
+[[tool.importlinter.contracts]]
+name = "execution controller must not import textual presentation"
+type = "forbidden"
+source_modules = ["milknado.app.run"]
+forbidden_modules = ["milknado.app.run_tui"]
 
 # Adapters implement domain ports but must not depend on application policy.
 [[tool.importlinter.contracts]]

@@ -2,16 +2,19 @@
 
 import io
 import itertools
+import logging
 import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
+import milknado.loop._agent as agent_module
 from milknado.loop._agent import (
     _OUTPUT_TAIL_CHARS,
     _STREAM_QUEUE_MAX_LINES,
@@ -885,6 +888,72 @@ class TestExecuteAgentStreaming:
 
         assert result.timed_out is True
         assert result.returncode is None
+
+
+class TestInterruptibleReap:
+    def test_force_stop_after_stdout_eof_uses_bounded_cleanup(self, monkeypatch, caplog):
+        force_stop = threading.Event()
+        proc = make_mock_popen(stdout_lines="", returncode=0)
+        proc.pid = 4242
+        proc.returncode = None
+        proc.poll.return_value = None
+
+        def wait_until_force_observed(timeout=None):
+            assert timeout is not None
+            force_stop.set()
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+
+        proc.wait.side_effect = wait_until_force_observed
+        claude_adapter = select_adapter(["claude"])
+        monkeypatch.setattr(claude_adapter, "supports_streaming", True)
+
+        with (
+            patch(MOCK_SUBPROCESS, return_value=proc),
+            patch("milknado.loop._agent._ensure_process_dead") as cleanup,
+            caplog.at_level(logging.WARNING, logger="milknado.loop._agent"),
+        ):
+            result = execute_agent(
+                AgentRunSpec(
+                    ["claude", "-p"],
+                    "prompt",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=7,
+                    force_stop_event=force_stop,
+                )
+            )
+
+        assert result.force_stopped is True
+        assert result.returncode is None
+        cleanup.assert_called()
+        assert "pid=4242 correlation=iteration=7" in caplog.text
+
+
+class TestWindowsJobContainment:
+    def test_force_stop_terminates_assigned_job_instead_of_parent_only(self, monkeypatch):
+        kernel32 = MagicMock()
+        kernel32.CreateJobObjectW.return_value = 123
+        kernel32.SetInformationJobObject.return_value = 1
+        kernel32.AssignProcessToJobObject.return_value = 1
+        kernel32.TerminateJobObject.return_value = 1
+        kernel32.CloseHandle.return_value = 1
+        proc = MagicMock(pid=42)
+        proc._handle = 456
+        resume_process = MagicMock()
+        monkeypatch.setattr(agent_module, "_resume_windows_process", resume_process)
+
+        monkeypatch.setattr(agent_module, "IS_WINDOWS", True)
+        monkeypatch.setattr(agent_module, "_load_kernel32", lambda: kernel32)
+
+        job = agent_module._WindowsJob.assign(proc)
+        assert job is not None
+        agent_module._kill_process_group(proc, job)
+        resume_process.assert_called_once_with(proc)
+
+        kernel32.AssignProcessToJobObject.assert_called_once_with(123, 456)
+        kernel32.TerminateJobObject.assert_called_once_with(123, 1)
+        kernel32.CloseHandle.assert_called_once_with(123)
+        proc.kill.assert_not_called()
 
 
 class TestProcessGroupCleanup:

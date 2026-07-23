@@ -9,17 +9,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rich.console import Console
 
+from milknado.domains.common import ProgressEvent
 from milknado.domains.common.types import (
     MikadoNode,
     NodeSpec,
     NodeStatus,
     RebaseResult,
 )
-from milknado.domains.execution import (
-    ExecutionConfig,
-    Executor,
-    RunLoop,
-)
+from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
 from milknado.domains.execution.run_loop.display import (
     TuiState,
     _build_log_panel,
@@ -28,12 +25,17 @@ from milknado.domains.execution.run_loop.display import (
     _render_overlay,
     _render_progress_bar,
 )
+from milknado.domains.execution.run_loop.state import RunLoopState
 from milknado.domains.graph import MikadoGraph
+from milknado.loop import RunStatus
 
 
 @dataclass
 class FakeRunState:
     run_id: str = "run-1"
+    status: RunStatus = RunStatus.RUNNING
+    stop_requested: bool = False
+    force_stop_requested: bool = False
 
 
 @dataclass
@@ -112,7 +114,14 @@ class FakeRalph:
     def __init__(self) -> None:
         self._run_counter = 0
         self._success: dict[str, bool] = {}
-        self._pending_completions: list[tuple[str, bool]] = []
+        self._outcomes: dict[str, str] = {}
+        self._pending_completions: list[tuple[str, str]] = []
+        self._runs: dict[str, FakeRun] = {}
+        self.output: dict[str, list[str]] = {}
+        self.guidance: dict[str, tuple[str, ...]] = {}
+        self._progress_before_completion: list[ProgressEvent] = []
+        self.requested_stops: list[str] = []
+        self.force_stops: list[tuple[str, float | None]] = []
 
     def create_run(
         self,
@@ -127,12 +136,25 @@ class FakeRalph:
     ) -> FakeRun:
         self._run_counter += 1
         run_id = f"run-{self._run_counter}"
-        success = self._success.get(run_id, True)
-        self._pending_completions.append((run_id, success))
-        return FakeRun(state=FakeRunState(run_id=run_id))
+        outcome = self._outcomes.get(
+            run_id, "completed" if self._success.get(run_id, True) else "failed"
+        )
+        self._pending_completions.append((run_id, outcome))
+        run = FakeRun(state=FakeRunState(run_id=run_id))
+        self._runs[run_id] = run
+        return run
 
     def start_run(self, run_id: str) -> None:
         pass
+
+    def request_stop_run(self, run_id: str) -> None:
+        self.requested_stops.append(run_id)
+        self._runs[run_id].state.stop_requested = True
+
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        self.force_stops.append((run_id, timeout))
+        self._runs[run_id].state.force_stop_requested = True
+        return True
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return True
@@ -141,24 +163,35 @@ class FakeRalph:
         return []
 
     def get_run(self, run_id: str) -> Any | None:
-        return None
+        return self._runs.get(run_id)
 
     def get_run_stdout(self, run_id: str) -> list[str]:
-        return []
+        return self.output.get(run_id, [])
+
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        return self.output.get(run_id, [])[-max_lines:]
+
+    def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
+        return self.guidance.get(run_id, ())
+
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        self.guidance[run_id] = (*self.guidance.get(run_id, ()), text)
+        return True
 
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, bool]:
-        for i, (run_id, success) in enumerate(self._pending_completions):
+    ) -> tuple[str, str]:
+        if self._progress_before_completion:
+            event = self._progress_before_completion.pop(0)
+            if event.run_id in active_run_ids:
+                return event.run_id, event
+        for i, (run_id, outcome) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
                 self._pending_completions.pop(i)
-                return run_id, success
+                return run_id, outcome
         raise RuntimeError("No pending completions for active runs")
-
-    def poll_progress_events(self) -> list[Any]:
-        return []
 
     def verify_spec(self, spec_text: str, graph_state: str) -> Any:
         from milknado.domains.common.protocols import VerifySpecResult
@@ -176,6 +209,9 @@ class FakeRalph:
 
     def set_run_fails(self, run_id: str) -> None:
         self._success[run_id] = False
+
+    def set_run_stopped(self, run_id: str) -> None:
+        self._outcomes[run_id] = "stopped"
 
 
 @pytest.fixture()
@@ -215,6 +251,123 @@ def executor(
     return Executor(graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg)
 
 
+def test_state_is_bounded_and_published(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    fake_ralph: FakeRalph,
+) -> None:
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    graph.mark_running(leaf.id)
+    fake_ralph._runs["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
+    fake_ralph.output["run-1"] = [f"line {index}" for index in range(35)]
+    fake_ralph.guidance["run-1"] = ("use domain barrels",)
+    run_loop._active["run-1"] = leaf.id
+    run_loop._progress_by_run["run-1"] = ProgressEvent(
+        run_id="run-1", work=1, total=2, message="building"
+    )
+    received: list[RunLoopState] = []
+    run_loop.set_state_listener(received.append)
+    run_loop._publish_state()
+
+    state = received[0]
+    active = state.active_runs[0]
+    assert state.goal == "ship controller"
+    assert state.active_runs == (active,)
+    assert active.status is RunStatus.RUNNING
+    assert active.progress == "building"
+    assert active.stop_requested is True
+    assert active.actions.cancel_reason == "stop already requested"
+    assert active.actions.guidance_reason == "run is stopping"
+    assert active.actions.force_stop_reason is None
+    assert active.output == tuple(f"line {index}" for index in range(5, 35))
+    assert active.pending_guidance == ("use domain barrels",)
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (RunStatus.COMPLETED, "run has completed"),
+        (RunStatus.FAILED, "run has failed"),
+    ],
+)
+def test_terminal_active_run_disables_all_controls(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    fake_ralph: FakeRalph,
+    status: RunStatus,
+    reason: str,
+) -> None:
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    fake_ralph._runs["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
+    run_loop._active["run-1"] = leaf.id
+
+    active = run_loop.state().active_runs[0]
+
+    assert active.actions.cancel_reason == reason
+    assert active.actions.guidance_reason == reason
+    assert active.actions.force_stop_reason == reason
+
+
+def test_control_queue_applies_cancel_and_force_stop(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    fake_ralph: FakeRalph,
+) -> None:
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("stop worker", parent_id=root.id)
+    graph.mark_running(leaf.id)
+    fake_ralph._runs["run-1"] = FakeRun()
+    run_loop._active["run-1"] = leaf.id
+
+    run_loop.cancel("run-1")
+    assert fake_ralph.requested_stops == ["run-1"]
+    assert run_loop.force_stop("run-1", timeout=2.5) is True
+    assert fake_ralph.force_stops == [("run-1", 2.5)]
+    assert run_loop.state().active_runs[0].actions.force_stop_reason == (
+        "force stop already requested"
+    )
+
+    run_loop.stop_scheduling()
+    assert fake_ralph.requested_stops == ["run-1", "run-1"]
+
+
+def test_progress_snapshot_is_published_before_terminal_completion(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_ralph: FakeRalph,
+) -> None:
+    root = graph.add_node("ship controller")
+    graph.add_node("build snapshots", parent_id=root.id)
+    fake_ralph._progress_before_completion.append(
+        ProgressEvent(run_id="run-1", work=1, total=2, message="building")
+    )
+    received: list[RunLoopState] = []
+    run_loop.set_state_listener(received.append)
+
+    run_loop.run(config, "main")
+
+    assert any(
+        snapshot.active_runs and snapshot.active_runs[0].progress == "building"
+        for snapshot in received
+    )
+
+
+def test_state_listener_failure_logs_listener_identity(
+    run_loop: RunLoop,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def failing_listener(_state: RunLoopState) -> None:
+        raise RuntimeError("listener failed")
+
+    run_loop.set_state_listener(failing_listener)
+
+    assert run_loop.queue_guidance("run-1", "use domain barrels") is True
+    assert "failing_listener" in caplog.text
+
+
 @pytest.fixture()
 def run_loop(
     executor: Executor,
@@ -222,6 +375,91 @@ def run_loop(
     fake_ralph: FakeRalph,
 ) -> RunLoop:
     return RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+
+
+def test_initial_dispatch_respects_a_preexisting_scheduling_stop(
+    run_loop: RunLoop,
+    config: ExecutionConfig,
+) -> None:
+    dispatch = MagicMock()
+    run_loop._dispatch_batch = dispatch
+    run_loop.admit_stop_scheduling()
+
+    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
+
+    dispatch.assert_not_called()
+
+
+def test_initial_dispatch_drains_pending_controls_before_scheduling(
+    run_loop: RunLoop,
+    config: ExecutionConfig,
+) -> None:
+    dispatch = MagicMock()
+    run_loop._dispatch_batch = dispatch
+    dispatch.return_value = (0, 0)
+    run_loop._process_controls = run_loop.stop_scheduling
+
+    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
+
+    dispatch.assert_not_called()
+
+
+def test_completion_deadline_starts_before_the_first_short_control_poll(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_ralph: FakeRalph,
+) -> None:
+    from milknado.domains.common.errors import CompletionTimeout
+
+    node = graph.add_node("active")
+    graph.mark_running(node.id)
+    run_loop._active["run-1"] = node.id
+    run_loop._dispatch_if_scheduling_open = MagicMock(return_value=(0, 0))
+    run_loop._handle_completion_timeout = MagicMock(return_value=1)
+    control_calls = 0
+
+    def process_controls() -> None:
+        nonlocal control_calls
+        control_calls += 1
+        if control_calls == 3:
+            run_loop._active.clear()
+
+    def short_poll_timeout(
+        active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, str]:
+        raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
+
+    fake_ralph.wait_for_next_completion = short_poll_timeout  # type: ignore[method-assign]
+    run_loop._process_controls = process_controls
+
+    with patch(
+        "milknado.domains.execution.run_loop.time.monotonic",
+        side_effect=(100.0, 100.01),
+    ):
+        run_loop._execute_run(
+            config,
+            "main",
+            concurrency_limit=1,
+            timeout=1.0,
+            interactive=False,
+        )
+
+    run_loop._handle_completion_timeout.assert_not_called()
+
+
+def test_stop_latched_before_run_skips_terminal_spec_verification(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+) -> None:
+    root = graph.add_node("root goal")
+    run_loop.stop_scheduling()
+
+    result = run_loop.run(config, "main", spec_text="spec: do the thing")
+
+    assert result.verify_outcome is None
+    assert graph.get_node(root.id).status == NodeStatus.PENDING
 
 
 class TestRunLoopSingleNode:
@@ -292,6 +530,77 @@ class TestRunLoopParentChild:
         root_node = graph.get_node(root.id)
         assert root_node is not None
         assert root_node.status == NodeStatus.PENDING
+
+
+class TestRunLoopStoppedOutcome:
+    def test_stopped_run_retains_output_guidance_and_telemetry_without_redispatch(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        ralph.set_run_stopped("run-1")
+        ralph.output["run-1"] = ["last worker output"]
+        ralph.guidance["run-1"] = ("not delivered",)
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        root = graph.add_node("root")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+
+        with patch("milknado.domains.execution.run_loop._logger.info") as log_info:
+            result = loop.run(config, "main", interactive=False)
+
+        node = graph.get_node(leaf.id)
+        assert node is not None
+        assert node.status is NodeStatus.PENDING
+        assert (result.dispatched_total, result.completed_total, result.failed_total) == (1, 0, 0)
+        assert loop._stopped_nodes == {leaf.id}
+        assert loop._active == {}
+        state = loop.state()
+        assert state.stopped == 1
+        assert state.available == 0
+        assert len(state.terminal_runs) == 1
+        terminal = state.terminal_runs[0]
+        assert terminal.run_id == "run-1"
+        assert terminal.status is RunStatus.STOPPED
+        assert terminal.output == ("last worker output",)
+        assert terminal.pending_guidance == ("not delivered",)
+        assert any(
+            call.args[0] == "node_stopped node_id=%d run_id=%s duration=%.1fs"
+            and call.args[1:3] == (leaf.id, "run-1")
+            for call in log_info.call_args_list
+        )
+        assert any(
+            call.args[0] == "FINAL_TELEMETRY %s" and '"stopped": 1' in call.args[1]
+            for call in log_info.call_args_list
+        )
+
+    def test_stopped_terminal_history_is_bounded_to_the_newest_twenty(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        for index in range(1, 22):
+            ralph.set_run_stopped(f"run-{index}")
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        root = graph.add_node("root")
+        for index in range(21):
+            graph.add_node(f"leaf-{index}", parent_id=root.id)
+
+        loop.run(config, "main", interactive=False)
+
+        state = loop.state()
+        assert state.stopped == 21
+        assert len(state.terminal_runs) == 20
+        assert tuple(run.run_id for run in state.terminal_runs) == tuple(
+            f"run-{index}" for index in range(2, 22)
+        )
 
 
 class TestRunLoopParallelLeaves:
@@ -757,6 +1066,9 @@ class _RalphWithStdout(FakeRalph):
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         return self._lines
+
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        return self._lines[-max_lines:]
 
 
 class TestRenderOverlayLogLines:
@@ -1253,26 +1565,6 @@ class TestRenderOverlayMissingRunId:
 # ---------------------------------------------------------------------------
 
 
-class TestAbsorbProgress:
-    def test_absorbs_progress_events_into_map(
-        self,
-        executor: Executor,
-        graph: MikadoGraph,
-        config: ExecutionConfig,
-    ) -> None:
-        from milknado.domains.common.protocols import ProgressEvent
-
-        ralph = FakeRalph()
-        ev = ProgressEvent(run_id="run-1", work=5, total=10, message="half")
-        ralph.poll_progress_events = lambda: [ev]  # type: ignore
-
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
-        loop._absorb_progress()
-
-        assert "run-1" in loop._progress_by_run
-        assert loop._progress_by_run["run-1"].work == 5
-
-
 class TestHandleCompletionTimeout:
     def test_default_wait_has_no_wall_clock_limit(
         self,
@@ -1319,7 +1611,7 @@ class TestHandleCompletionTimeout:
         ) as execute_run:
             loop.run(config, "main")
 
-        execute_run.assert_called_once_with(config, "main", 4, 60.0)
+        execute_run.assert_called_once_with(config, "main", 4, 60.0, True)
 
     def test_timeout_marks_active_nodes_failed(
         self,

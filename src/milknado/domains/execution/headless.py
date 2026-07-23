@@ -9,12 +9,15 @@ headless server process or a detached subprocess. This function reuses the same
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from milknado.domains.common import ProgressEvent
 from milknado.domains.common.errors import CompletionTimeout
 
 if TYPE_CHECKING:
+    from milknado.domains.common.protocols import TerminalRunOutcome
     from milknado.domains.execution.executor import (
         CompletionResult,
         DispatchResult,
@@ -38,6 +41,7 @@ class _ExecutorLike(Protocol):
         base_oid: str | None = None,
         parent_run_id: str | None = None,
     ) -> DispatchResult: ...
+    def cancel(self, node_id: int) -> None: ...
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
     def fail(self, node_id: int) -> None: ...
 
@@ -45,7 +49,7 @@ class _ExecutorLike(Protocol):
 class _RalphLike(Protocol):
     def wait_for_next_completion(
         self, active_run_ids: set[str], timeout: float | None = None
-    ) -> tuple[str, bool]: ...
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]: ...
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
 
 
@@ -62,8 +66,9 @@ def run_node_to_completion(
 ) -> HeadlessOutcome:
     """Dispatch one node into its worktree, wait for the ralph run to finish, then
     rebase-merge it back. Returns success only when the run completed AND the
-    rebase merged cleanly; a timeout, a non-completed run, or a rebase conflict
-    are all failures (the node is marked failed by `Executor.fail`/`complete`)."""
+    rebase merged cleanly; a stopped run is cancelled, while a timeout, failed
+    run, or rebase conflict marks the node failed.
+    """
     if feature_branch in ("", "HEAD"):
         # current_branch() returns "HEAD" on a detached HEAD — not a valid
         # rebase-onto target. Refuse before dispatching a worktree rather than
@@ -82,9 +87,13 @@ def run_node_to_completion(
         dispatch = executor.dispatch(
             node_id, exec_config, base_oid=base_oid, parent_run_id=parent_run_id
         )
+    deadline = time.monotonic() + timeout
     while True:
         try:
-            _run_id, completed = ralph.wait_for_next_completion({dispatch.run_id}, timeout=timeout)
+            remaining_timeout = deadline - time.monotonic()
+            _run_id, outcome = ralph.wait_for_next_completion(
+                {dispatch.run_id}, timeout=remaining_timeout
+            )
         except CompletionTimeout:
             if not ralph.stop_run(dispatch.run_id, timeout=10.0):
                 return HeadlessOutcome(
@@ -95,7 +104,13 @@ def run_node_to_completion(
             executor.fail(node_id)
             return HeadlessOutcome(node_id, success=False, detail="completion timeout")
 
-        if not completed:
+        if isinstance(outcome, ProgressEvent):
+            continue
+
+        if outcome == "stopped":
+            executor.cancel(node_id)
+            return HeadlessOutcome(node_id, success=False, detail="worker run stopped")
+        if outcome == "failed":
             if not ralph.stop_run(dispatch.run_id, timeout=10.0):
                 return HeadlessOutcome(
                     node_id,
@@ -108,6 +123,7 @@ def run_node_to_completion(
         result = executor.complete(node_id, feature_branch)
         if result.redispatch is not None:
             dispatch = result.redispatch
+            deadline = time.monotonic() + timeout
             continue
         if result.blocked:
             return HeadlessOutcome(

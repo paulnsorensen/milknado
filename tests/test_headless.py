@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
+import milknado.domains.execution.headless as headless
+from milknado.domains.common import ProgressEvent
 from milknado.domains.common.errors import CompletionTimeout
-from milknado.domains.execution import run_node_to_completion
+from milknado.domains.execution import HeadlessOutcome, run_node_to_completion
 from milknado.domains.execution.executor import (
     CompletionResult,
     DispatchResult,
@@ -24,6 +27,7 @@ class _FakeExecutor:
         self._completion = completion
         self.dispatched: list[int] = []
         self.completed: list[int] = []
+        self.cancelled: list[int] = []
         self.failed: list[int] = []
 
     def dispatch(
@@ -45,21 +49,47 @@ class _FakeExecutor:
     def fail(self, node_id: int) -> None:
         self.failed.append(node_id)
 
+    def cancel(self, node_id: int) -> None:
+        self.cancelled.append(node_id)
+
 
 class _FakeRalph:
-    def __init__(self, *, completed: bool = True, timeout: bool = False) -> None:
-        self._completed = completed
+    def __init__(
+        self,
+        *,
+        outcome: Literal["completed", "stopped", "failed"] = "completed",
+        timeout: bool = False,
+    ) -> None:
+        self._outcome = outcome
         self._timeout = timeout
         self.stopped: list[str] = []
 
     def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
         if self._timeout:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
-        return next(iter(active_run_ids)), self._completed
+        return next(iter(active_run_ids)), self._outcome
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         self.stopped.append(run_id)
         return True
+
+
+class _ProgressThenTerminalRalph(_FakeRalph):
+    def __init__(self) -> None:
+        super().__init__()
+        self._outcomes = iter(
+            (
+                ProgressEvent(run_id="run-13", work=1, total=0, message="iteration 1 started"),
+                "completed",
+            )
+        )
+        self.waits = 0
+        self.timeouts: list[float | None] = []
+
+    def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
+        self.timeouts.append(timeout)
+        self.waits += 1
+        return next(iter(active_run_ids)), next(self._outcomes)
 
 
 def _ok_completion(node_id: int) -> CompletionResult:
@@ -68,7 +98,9 @@ def _ok_completion(node_id: int) -> CompletionResult:
 
 def test_success_dispatches_waits_and_merges() -> None:
     ex = _FakeExecutor(completion=_ok_completion(1))
-    outcome = run_node_to_completion(ex, _FakeRalph(completed=True), 1, _EXEC_CONFIG, "main", 30.0)
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="completed"), 1, _EXEC_CONFIG, "main", 30.0
+    )
     assert outcome.success is True
     assert ex.dispatched == [1]
     assert ex.completed == [1]
@@ -78,7 +110,7 @@ def test_success_dispatches_waits_and_merges() -> None:
 def test_non_completed_run_fails_without_merging() -> None:
     ex = _FakeExecutor()
     outcome = run_node_to_completion(
-        ex, _FakeRalph(completed=False), 2, _EXEC_CONFIG, "main", 30.0
+        ex, _FakeRalph(outcome="failed"), 2, _EXEC_CONFIG, "main", 30.0
     )
     assert outcome.success is False
     assert "did not complete" in (outcome.detail or "")
@@ -97,7 +129,9 @@ def test_rebase_conflict_is_a_failure_with_detail() -> None:
         node_id=3, rebased=False, newly_ready=[], rebase_conflict=conflict
     )
     ex = _FakeExecutor(completion=completion)
-    outcome = run_node_to_completion(ex, _FakeRalph(completed=True), 3, _EXEC_CONFIG, "main", 30.0)
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="completed"), 3, _EXEC_CONFIG, "main", 30.0
+    )
     assert outcome.success is False
     assert outcome.detail == "CONFLICT in a.py"
     assert ex.completed == [3]
@@ -119,7 +153,9 @@ def test_detached_head_refuses_without_dispatching() -> None:
     marked failed for parity with the other failure branches (reset to pending to
     retry once a real branch is checked out)."""
     ex = _FakeExecutor()
-    outcome = run_node_to_completion(ex, _FakeRalph(completed=True), 5, _EXEC_CONFIG, "HEAD", 30.0)
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="completed"), 5, _EXEC_CONFIG, "HEAD", 30.0
+    )
     assert outcome.success is False
     assert "HEAD" in (outcome.detail or "")
     assert ex.dispatched == []  # never dispatched onto a detached HEAD
@@ -141,10 +177,47 @@ def test_non_completed_stops_the_ralph_run() -> None:
     """#56: A non-completed run must also stop the ralph loop before failing the
     node, same class of fix as #46."""
     ex = _FakeExecutor()
-    ralph = _FakeRalph(completed=False)
+    ralph = _FakeRalph(outcome="failed")
     outcome = run_node_to_completion(ex, ralph, 11, _EXEC_CONFIG, "main", 30.0)
     assert outcome.success is False
     assert ralph.stopped == ["run-11"], "non-completion must stop the ralph run"
+
+
+def test_stopped_run_cancels_without_merging() -> None:
+    ex = _FakeExecutor()
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="stopped"), 12, _EXEC_CONFIG, "main", 30.0
+    )
+
+    assert outcome == HeadlessOutcome(12, success=False, detail="worker run stopped")
+    assert ex.completed == []
+    assert ex.cancelled == [12]
+    assert ex.failed == []
+
+
+def test_progress_event_waits_for_terminal_outcome_before_merging() -> None:
+    ex = _FakeExecutor(completion=_ok_completion(13))
+    ralph = _ProgressThenTerminalRalph()
+
+    outcome = run_node_to_completion(ex, ralph, 13, _EXEC_CONFIG, "main", 30.0)
+
+    assert outcome.success is True
+    assert ralph.waits == 2
+    assert ex.completed == [13]
+
+
+def test_progress_event_uses_remaining_completion_deadline(
+    monkeypatch,
+) -> None:
+    ex = _FakeExecutor(completion=_ok_completion(13))
+    ralph = _ProgressThenTerminalRalph()
+    monotonic = iter((100.0, 101.0, 106.0))
+    monkeypatch.setattr(headless.time, "monotonic", lambda: next(monotonic))
+
+    outcome = run_node_to_completion(ex, ralph, 13, _EXEC_CONFIG, "main", 30.0)
+
+    assert outcome.success is True
+    assert ralph.timeouts == [29.0, 24.0]
 
 
 def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
@@ -161,7 +234,7 @@ def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
 
 def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
     ex = _FakeExecutor()
-    ralph = _FakeRalph(completed=False)
+    ralph = _FakeRalph(outcome="failed")
     ralph.stop_run = lambda run_id, timeout=None: False
 
     result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)

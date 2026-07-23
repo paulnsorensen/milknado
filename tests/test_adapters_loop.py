@@ -1,5 +1,4 @@
 import queue
-import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -31,8 +30,6 @@ def adapter(mock_manager: MagicMock) -> LoopAdapter:
     a._manager = mock_manager
     a._queue = queue.Queue()
     a._emitter = MagicMock()
-    a._progress_buffer = []
-    a._progress_lock = threading.Lock()
     a._agent = ""
     return a
 
@@ -83,6 +80,35 @@ class TestStartStopRun:
         assert adapter.stop_run("run-1", timeout=3.0) is True
         mock_manager.stop_and_join.assert_called_once_with("run-1", 3.0)
 
+    def test_queue_guidance_uses_public_manager_boundary(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        mock_manager.queue_guidance.return_value = True
+
+        assert adapter.queue_guidance("run-1", "check the result") is True
+        mock_manager.queue_guidance.assert_called_once_with("run-1", "check the result")
+
+    def test_control_and_state_ports_delegate_to_the_managed_run(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        run.state.last_captured_stdout = None
+        run.state.last_result_text = "result line"
+        run.state.pending_guidance = ("pending guidance",)
+        mock_manager.get_run.return_value = run
+        mock_manager.force_stop_and_join.return_value = True
+
+        assert adapter.request_stop_run("run-1") is None
+        assert adapter.force_stop_run("run-1") is True
+        assert adapter.get_run_output_tail("run-1", 5) == ["result line"]
+        assert adapter.get_run_guidance("run-1") == ("pending guidance",)
+        mock_manager.stop_run.assert_called_once_with("run-1")
+        mock_manager.force_stop_and_join.assert_called_once_with("run-1", None)
+
+        mock_manager.get_run.return_value = None
+        assert adapter.get_run_output_tail("missing", 5) == []
+        assert adapter.get_run_guidance("missing") == ()
+
 
 class TestListAndGetRuns:
     def test_list_runs(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
@@ -97,6 +123,52 @@ class TestListAndGetRuns:
     def test_get_run_not_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         mock_manager.get_run.return_value = None
         assert adapter.get_run("missing") is None
+
+    def test_extracts_large_stdout_tail_without_splitlines(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        class OutputWithoutSplitlines(str):
+            def splitlines(self, *args: object, **kwargs: object) -> list[str]:
+                raise AssertionError("full output materialization is forbidden")
+
+        run = MagicMock()
+        run.state.last_captured_stdout = OutputWithoutSplitlines(
+            "\n".join(f"line {index}" for index in range(10_000))
+        )
+        run.state.last_result_text = None
+        mock_manager.get_run.return_value = run
+
+        assert adapter.get_run_output_tail("run-1", 3) == [
+            "line 9997",
+            "line 9998",
+            "line 9999",
+        ]
+
+    def test_returns_no_tail_for_empty_output(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        run.state.last_captured_stdout = ""
+        run.state.last_result_text = "fallback is not used for empty captured output"
+        mock_manager.get_run.return_value = run
+
+        assert adapter.get_run_output_tail("run-1", 30) == []
+
+    def test_returns_iteration_progress_before_terminal_event(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        progress = MagicMock()
+        progress.type = EventType.ITERATION_STARTED
+        progress.run_id = "run-1"
+        progress.data = {"iteration": 2}
+        adapter._queue.put(progress)
+
+        run_id, event = adapter.wait_for_next_completion({"run-1"})
+
+        assert run_id == "run-1"
+        assert event.run_id == "run-1"
+        assert event.work == 2
+        assert event.message == "iteration 2 started"
 
 
 class TestWaitForNextCompletion:
@@ -117,7 +189,22 @@ class TestWaitForNextCompletion:
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
-        assert success is True
+        assert success == "completed"
+
+    def test_maps_stopped_status_to_exact_stopped_outcome(
+        self,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+    ) -> None:
+        from milknado.loop import RunStatus
+
+        event = MagicMock(type=EventType.RUN_STOPPED, run_id="run-1")
+        run = MagicMock()
+        run.state.status = RunStatus.STOPPED
+        mock_manager.get_run.return_value = run
+        adapter._queue.put(event)
+
+        assert adapter.wait_for_next_completion({"run-1"}) == ("run-1", "stopped")
 
     def test_returns_false_on_failed_run(
         self,
@@ -136,7 +223,7 @@ class TestWaitForNextCompletion:
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
-        assert success is False
+        assert success == "failed"
 
     def test_skips_non_stop_events(
         self,
@@ -155,13 +242,12 @@ class TestWaitForNextCompletion:
         run = MagicMock()
         run.state.status = RunStatus.COMPLETED
         mock_manager.get_run.return_value = run
-
         adapter._queue.put(noise)
         adapter._queue.put(stop)
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
-        assert success is True
+        assert success == "completed"
 
     def test_skips_events_for_inactive_runs(
         self,
@@ -187,7 +273,33 @@ class TestWaitForNextCompletion:
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
-        assert success is True
+        assert success == "completed"
+
+    def test_skips_iteration_progress_for_inactive_runs(
+        self,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+    ) -> None:
+        from milknado.loop import EventType, RunStatus
+
+        progress = MagicMock()
+        progress.type = EventType.ITERATION_STARTED
+        progress.run_id = "run-99"
+        progress.data = {"iteration": 2}
+
+        stopped = MagicMock()
+        stopped.type = EventType.RUN_STOPPED
+        stopped.run_id = "run-1"
+        run = MagicMock()
+        run.state.status = RunStatus.COMPLETED
+        mock_manager.get_run.return_value = run
+        adapter._queue.put(progress)
+        adapter._queue.put(stopped)
+
+        run_id, outcome = adapter.wait_for_next_completion({"run-1"})
+
+        assert run_id == "run-1"
+        assert outcome == "completed"
 
     def test_returns_false_when_run_missing(
         self,
@@ -204,7 +316,7 @@ class TestWaitForNextCompletion:
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
-        assert success is False
+        assert success == "failed"
 
 
 class TestGenerateRalphMd:
@@ -442,8 +554,8 @@ class TestLoopAdapterInit:
         mock_emitter_cls.return_value = MagicMock()
         adapter = LoopAdapter(agent="claude")
         assert adapter._agent == "claude"
-        assert adapter._progress_buffer == []
-        assert adapter._progress_lock is not None
+        assert adapter._manager is mock_manager_cls.return_value
+        assert adapter._emitter is mock_emitter_cls.return_value
 
     @patch("milknado.adapters.loop.RunManager")
     @patch("milknado.adapters.loop.QueueEmitter")
@@ -503,18 +615,7 @@ class TestDrainVerifyRunExceptionHandler:
         assert "verify_spec stop failed" in caplog.text
 
 
-class TestPollProgressEvents:
-    def test_returns_buffered_events_and_clears(self, adapter: LoopAdapter) -> None:
-        ev = ProgressEvent(run_id="run-1", work=5, total=10, message="doing stuff")
-        adapter._progress_buffer.append(ev)  # type: ignore[attr-defined]
-        result = adapter.poll_progress_events()
-        assert result == [ev]
-        # Buffer cleared after drain
-        assert adapter.poll_progress_events() == []
-
-    def test_returns_empty_when_no_events(self, adapter: LoopAdapter) -> None:
-        assert adapter.poll_progress_events() == []
-
+class TestProgressDelivery:
     def test_progress_events_collected_from_queue(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
@@ -542,11 +643,10 @@ class TestPollProgressEvents:
         adapter._queue.put(progress_ev)
         adapter._queue.put(stop_ev)
 
-        adapter.wait_for_next_completion({"run-1"})
-        events = adapter.poll_progress_events()
-        assert len(events) == 1
-        assert events[0].run_id == "run-1"
-        assert events[0].work == 3
+        run_id, event = adapter.wait_for_next_completion({"run-1"})
+        assert run_id == "run-1"
+        assert isinstance(event, ProgressEvent)
+        assert event.work == 3
 
 
 class TestGetRunStdout:
@@ -556,27 +656,30 @@ class TestGetRunStdout:
         mock_manager.get_run.return_value = None
         assert adapter.get_run_stdout("missing-run") == []
 
-    def test_returns_list_stdout_directly(
+    def test_returns_captured_stdout_lines(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.stdout = ["line 1", "line 2"]
+        run.state.last_captured_stdout = "line 1\nline 2"
+        run.state.last_result_text = "unused result"
         mock_manager.get_run.return_value = run
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2"]
 
-    def test_splits_string_stdout_into_lines(
+    def test_falls_back_to_result_text_when_stdout_was_not_captured(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.stdout = "line 1\nline 2\nline 3"
+        run.state.last_captured_stdout = None
+        run.state.last_result_text = "line 1\nline 2\nline 3"
         mock_manager.get_run.return_value = run
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2", "line 3"]
 
-    def test_returns_empty_when_stdout_is_none(
+    def test_returns_empty_when_output_is_none(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.stdout = None
+        run.state.last_captured_stdout = None
+        run.state.last_result_text = None
         mock_manager.get_run.return_value = run
         assert adapter.get_run_stdout("run-1") == []
 
