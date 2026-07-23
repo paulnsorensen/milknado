@@ -414,9 +414,11 @@ def _run_agent_phase(
     agent = _launch_agent(cmd, adapter, prompt, config, state, callbacks)
     state.last_result_text = agent.result_text
     state.last_captured_stdout = agent.captured_stdout
+    state.last_captured_stderr = agent.captured_stderr
     if getattr(agent, "force_stopped", False):
         state.status = RunStatus.STOPPED
         return False, False
+
     duration = format_duration(agent.elapsed)
     promise_completed = _promise_completed(agent, adapter, config)
     if promise_completed:
@@ -574,6 +576,14 @@ def _run_iteration(
             emit.log_error("Stopping due to --stop-on-error.")
         return False, promise_would_complete
 
+    cap = config.max_consecutive_failures
+    if not agent_succeeded and cap is not None and state.consecutive_failures >= cap:
+        state.status = RunStatus.FAILED
+        emit.log_error(
+            f"Stopping after {state.consecutive_failures} consecutive failed iterations "
+            "(max_consecutive_failures); the agent command may be unable to start."
+        )
+        return False, promise_would_complete
     return True, promise_would_complete
 
 

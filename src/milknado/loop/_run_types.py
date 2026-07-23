@@ -118,6 +118,10 @@ class RunConfig:
     delay: float = 0
     timeout: float | None = None
     stop_on_error: bool = False
+    # End the run as FAILED once this many iterations fail in a row; ``None``
+    # disables the cap. Guards against a permanently-broken agent command
+    # (e.g. an unknown CLI flag) crash-looping forever.
+    max_consecutive_failures: int | None = None
     log_dir: Path | None = None
     project_root: Path = field(default=Path("."))
     commit_footer: str | None = None
@@ -160,11 +164,14 @@ class RunState:
     completed: int = 0
     failed: int = 0
     timed_out_count: int = 0
+    # Failed iterations since the last completed one; reset by mark_completed.
+    consecutive_failures: int = 0
     started_at: datetime | None = None
     # Last agent turn output, retained so coordinators can capture a resumable
     # session id before the worker run is replaced by a review round.
     last_result_text: str | None = None
     last_captured_stdout: str | None = None
+    last_captured_stderr: str | None = None
     promise_completed: bool = False
 
     _stop_event: threading.Event = field(
@@ -295,9 +302,11 @@ class RunState:
 
     def mark_completed(self) -> None:
         self.completed += 1
+        self.consecutive_failures = 0
 
     def mark_failed(self) -> None:
         self.failed += 1
+        self.consecutive_failures += 1
 
     def mark_timed_out(self) -> None:
         """Record a timed-out iteration (also counts as failed)."""

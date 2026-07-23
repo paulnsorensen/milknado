@@ -114,7 +114,11 @@ def handle_completion(
         loop._executor.fail(node_id)
         if live is not None:
             live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
-        _logger.warning("node_failed node_id=%d", node_id)
+        detail = loop._ralph.get_run_failure_detail(run_id)
+        if detail:
+            _logger.warning("node_failed node_id=%d detail=%s", node_id, detail)
+        else:
+            _logger.warning("node_failed node_id=%d", node_id)
         loop._logs.append(f"[{ts()}] ✗ node {node_id} failed")
         loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
         if loop._strict:

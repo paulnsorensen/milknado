@@ -23,6 +23,11 @@ from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunSta
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
+# A worker that self-heals across iterations may fail a few times, but a
+# command that cannot start (e.g. an unknown CLI flag) fails identically
+# every ~1s forever. Three failures in a row ends the run loudly instead.
+MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3
+
 
 _logger = logging.getLogger(__name__)
 
@@ -66,6 +71,7 @@ class LoopAdapter:
             stop_on_error=True,
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
+            max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
         config.completion_verifier = build_completion_verifier(
             ralph_dir, quality_gates, base_oid=base_oid
@@ -101,6 +107,21 @@ class LoopAdapter:
         if text is None:
             text = run.state.last_result_text
         return text.splitlines() if text is not None else []
+
+    def get_run_failure_detail(self, run_id: str) -> str | None:
+        """Last captured agent output for a failed run, flattened to one log line."""
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return None
+        state = run.state
+        for text in (
+            getattr(state, "last_captured_stderr", None),
+            getattr(state, "last_captured_stdout", None),
+            getattr(state, "last_result_text", None),
+        ):
+            if isinstance(text, str) and text.strip():
+                return " ".join(text.split())[-300:]
+        return None
 
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         """Return at most ``max_lines`` of output without splitting the whole text."""
@@ -188,6 +209,7 @@ class LoopAdapter:
                 project_root=tmp_path,
                 completion_signal=MILKNADO_COMPLETION_SIGNAL,
                 stop_on_completion_signal=True,
+                max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id

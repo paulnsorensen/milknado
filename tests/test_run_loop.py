@@ -178,6 +178,9 @@ class FakeRalph:
         self.guidance[run_id] = (*self.guidance.get(run_id, ()), text)
         return True
 
+    def get_run_failure_detail(self, run_id: str) -> str | None:
+        return None
+
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
