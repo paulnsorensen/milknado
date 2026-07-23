@@ -22,6 +22,7 @@ class TestDefaultConfig:
         assert isinstance(cfg, MilknadoConfig)
         assert cfg.project_root == tmp_path
         assert cfg.agent_family == "claude"
+        assert cfg.completion_timeout_seconds is None
 
     def test_db_path_under_project_root(self, tmp_path: Path) -> None:
         cfg = default_config(tmp_path)
@@ -175,6 +176,19 @@ class TestSaveConfig:
         assert loaded.concurrency_limit == cfg.concurrency_limit
         assert loaded.worktree is True
         assert loaded.planning_validation_hook is None
+        assert loaded.completion_timeout_seconds is None
+
+    def test_roundtrip_preserves_explicit_completion_timeout(self, tmp_path: Path) -> None:
+        cfg = dataclasses.replace(
+            default_config(tmp_path),
+            completion_timeout_seconds=3600.0,
+        )
+        path = tmp_path / "milknado.toml"
+
+        save_config(cfg, path)
+
+        loaded = load_config(path)
+        assert loaded.completion_timeout_seconds == 3600.0
 
     def test_escapes_backslashes(self, tmp_path: Path) -> None:
         cfg = MilknadoConfig(

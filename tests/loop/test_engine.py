@@ -145,7 +145,7 @@ class TestRunLoop:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_run.return_value.stdin.write.call_args.args[0] == "my prompt text"
+        assert mock_run.call_args.args[0][-1] == "my prompt text"
 
     @patch(MOCK_SUBPROCESS)
     def test_log_dir_creates_files(self, mock_run, tmp_path):
@@ -828,8 +828,8 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_run.return_value.stdin.write.call_args.args[0]
-        assert call_input == "Research ./src focus: perf"
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert prompt_arg == "Research ./src focus: perf"
 
     @patch(MOCK_SUBPROCESS)
     def test_empty_args_clears_placeholders(self, mock_run, tmp_path):
@@ -843,8 +843,8 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_run.return_value.stdin.write.call_args.args[0]
-        assert call_input == "Before  after"
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert prompt_arg == "Before  after"
 
 
 class TestCommandExecution:
@@ -864,9 +864,9 @@ class TestCommandExecution:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_agent.return_value.stdin.write.call_args.args[0]
-        assert "test output" in call_input
-        assert "{{ commands.tests }}" not in call_input
+        prompt_arg = mock_agent.call_args.args[0][-1]
+        assert "test output" in prompt_arg
+        assert "{{ commands.tests }}" not in prompt_arg
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)
@@ -1661,8 +1661,8 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_run.return_value.stdin.write.call_args.args[0]
-        assert "Co-authored-by: Team <team@example.com>" in call_input
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert "Co-authored-by: Team <team@example.com>" in prompt_arg
 
     @patch(MOCK_SUBPROCESS)
     def test_no_footer_unset_no_trailer_in_agent_input(self, mock_run, tmp_path):
@@ -1671,8 +1671,8 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_run.return_value.stdin.write.call_args.args[0]
-        assert "Co-authored-by" not in call_input
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert "Co-authored-by" not in prompt_arg
 
 
 class TestAgentOutputLineFiltering:

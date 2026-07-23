@@ -1987,6 +1987,26 @@ class TestArgDeliveryStdin:
         assert spawn_cmd == ["opencode", "run", "--format", "json", "do the work"]
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
+    def test_execute_agent_threads_arg_delivery_through_omp(self):
+        with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
+            execute_agent(
+                AgentRunSpec(
+                    ["omp", "-p", "--auto-approve"],
+                    "do the work",
+                    timeout=None,
+                    log_dir=None,
+                    iteration=1,
+                )
+            )
+
+        assert mock_popen.call_args.args[0] == [
+            "omp",
+            "-p",
+            "--auto-approve",
+            "do the work",
+        ]
+        assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
+
     def test_arg_delivery_does_not_hang_when_child_ignores_stdin(self, tmp_path):
         """Real subprocess: an arg-delivery agent that never reads stdin must
         still complete and have its stdout parsed.

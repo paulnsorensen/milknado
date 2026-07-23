@@ -1566,6 +1566,53 @@ class TestRenderOverlayMissingRunId:
 
 
 class TestHandleCompletionTimeout:
+    def test_default_wait_has_no_wall_clock_limit(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        ralph.wait_for_next_completion = MagicMock(wraps=ralph.wait_for_next_completion)
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        root = graph.add_node("root")
+        graph.add_node("slow-leaf", parent_id=root.id)
+
+        result = loop.run(config, "main")
+
+        assert result.completed_total == 1
+        assert ralph.wait_for_next_completion.call_args.kwargs["timeout"] is None
+
+    def test_configured_wait_keeps_explicit_timeout(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        from milknado.domains.common.config import MilknadoConfig
+
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        milknado_config = MilknadoConfig(completion_timeout_seconds=60.0)
+        loop = RunLoop(
+            executor=executor,
+            graph=graph,
+            ralph=ralph,
+            config=milknado_config,
+        )
+
+        with patch.object(
+            loop,
+            "_execute_run",
+            return_value=(0, 0, 0, [], False),
+        ) as execute_run:
+            loop.run(config, "main")
+
+        execute_run.assert_called_once_with(config, "main", 4, 60.0)
+
     def test_timeout_marks_active_nodes_failed(
         self,
         graph: MikadoGraph,

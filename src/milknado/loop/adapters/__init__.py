@@ -57,6 +57,7 @@ def _register_builtin_adapters() -> None:
         codex,
         copilot,
         crush,
+        omp,
         opencode,
     )
 
