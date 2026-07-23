@@ -51,7 +51,10 @@ class LoopAdapter:
         session = getattr(runtime_policy, "session", None)
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
-        if mcp_config and mcp_config.exists():
+        # Only the claude CLI understands --mcp-config; omp/codex/gemini reject
+        # the flag at launch and the worker crash-loops without ever starting.
+        supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
+        if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
         config = RunConfig(
             agent=agent_cmd,
@@ -60,6 +63,7 @@ class LoopAdapter:
             project_root=project_root or ralph_dir,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
+            stop_on_error=True,
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
         )
