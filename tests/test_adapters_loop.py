@@ -66,6 +66,7 @@ class TestCreateRun:
             project_root=Path("/project"),
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
+            stop_on_error=True,
             log_dir=Path("/project") / ".ralph-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
         )
@@ -622,6 +623,29 @@ class TestCreateRunWithProjectRoot:
 
         call_kwargs = mock_config_cls.call_args[1]
         assert "--mcp-config" in call_kwargs["agent"]
+
+    @patch("milknado.adapters.loop.RunConfig")
+    def test_mcp_config_not_injected_for_omp(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+        mock_config_cls.return_value = MagicMock()
+        mock_manager.create_run.return_value = MagicMock(id="run-1")
+
+        adapter.create_run(
+            agent="omp",
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / "ralph.md",
+            commands=[],
+            quality_gates=(),
+            project_root=tmp_path,
+        )
+
+        assert mock_config_cls.call_args.kwargs["agent"] == "omp"
 
     @patch("milknado.adapters.loop.RunConfig")
     def test_no_mcp_config_when_file_missing(
