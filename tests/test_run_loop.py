@@ -448,6 +448,44 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
     run_loop._handle_completion_timeout.assert_not_called()
 
 
+def test_unset_completion_timeout_polls_controls_without_timing_out(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_ralph: FakeRalph,
+) -> None:
+    from milknado.domains.common.errors import CompletionTimeout
+
+    node = graph.add_node("active")
+    graph.mark_running(node.id)
+    run_loop._active["run-1"] = node.id
+    run_loop._dispatch_if_scheduling_open = MagicMock(return_value=(0, 0))
+    run_loop._handle_completion_timeout = MagicMock(return_value=1)
+    observed_timeouts: list[float | None] = []
+    control_calls = 0
+
+    def process_controls() -> None:
+        nonlocal control_calls
+        control_calls += 1
+        if control_calls >= 4:
+            run_loop._active.clear()
+
+    def short_poll_timeout(
+        active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, str]:
+        observed_timeouts.append(timeout)
+        raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
+
+    fake_ralph.wait_for_next_completion = short_poll_timeout  # type: ignore[method-assign]
+    run_loop._process_controls = process_controls
+
+    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=None, interactive=False)
+
+    run_loop._handle_completion_timeout.assert_not_called()
+    assert observed_timeouts
+    assert all(polled == 0.1 for polled in observed_timeouts)
+
+
 def test_stop_latched_before_run_skips_terminal_spec_verification(
     run_loop: RunLoop,
     graph: MikadoGraph,

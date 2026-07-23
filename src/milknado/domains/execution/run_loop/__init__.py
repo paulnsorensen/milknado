@@ -336,15 +336,16 @@ class RunLoop:
         """
         if self._process_controls is not None:
             self._process_controls()
-        wait_timeout = min(timeout, 0.1) if self._process_controls is not None else timeout
+        wait_timeout = timeout
+        if self._process_controls is not None:
+            wait_timeout = 0.1 if timeout is None else min(timeout, 0.1)
         try:
             run_id, outcome = self._ralph.wait_for_next_completion(
                 set(self._active.keys()), timeout=wait_timeout
             )
         except CompletionTimeout as ct:
-            if (
-                self._process_controls is not None
-                and time.monotonic() - self._completion_wait_started < timeout
+            if self._process_controls is not None and (
+                timeout is None or time.monotonic() - self._completion_wait_started < timeout
             ):
                 self._process_controls()
                 return 0, 0, 0, [], False
