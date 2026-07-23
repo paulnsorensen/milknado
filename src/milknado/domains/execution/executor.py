@@ -370,7 +370,7 @@ class Executor:
         ralph: LoopPort,
         crg: CrgPort,
     ) -> None:
-        
+
         self._base_oid_by_node: dict[int, str | None] = {}
         self._worker_run_id_by_node: dict[int, str] = {}
         self._owner_fence_by_node: dict[int, str] = {}
@@ -382,6 +382,9 @@ class Executor:
         self._ralph = ralph
         self._crg = crg
         self._attempts_by_node: dict[int, int] = {}
+        self._config_by_node: dict[int, ExecutionConfig] = {}
+        self._review_round_by_node: dict[int, int] = {}
+        self._session_by_node: dict[int, NodeAgentSession] = {}
 
     def dispatch(
         self,
@@ -412,6 +415,7 @@ class Executor:
                 self._target_branch_by_node[node_id] = target_branch
                 self._target_oid_by_node[node_id] = target_oid
                 self._attempts_by_node[node_id] = attempt
+                self._config_by_node[node_id] = config
                 return result
             except (InvalidTransition, ValueError):
                 raise

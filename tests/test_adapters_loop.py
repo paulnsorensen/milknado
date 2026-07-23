@@ -599,20 +599,20 @@ class TestWaitForNextCompletionTimeout:
 
 class TestCreateRunWithProjectRoot:
     @patch("milknado.adapters.loop.RunConfig")
-    def test_mcp_config_injected_when_exists(
+    def test_preserves_agent_when_project_mcp_config_exists(
         self,
         mock_config_cls: MagicMock,
         adapter: LoopAdapter,
         mock_manager: MagicMock,
         tmp_path: Path,
     ) -> None:
-        mcp_file = tmp_path / ".mcp.json"
-        mcp_file.write_text("{}", encoding="utf-8")
+        (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
         mock_config_cls.return_value = MagicMock()
         mock_manager.create_run.return_value = MagicMock(id="run-1")
 
+        agent = "omp -p --auto-approve"
         adapter.create_run(
-            agent="claude",
+            agent=agent,
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
             commands=[],
@@ -621,30 +621,7 @@ class TestCreateRunWithProjectRoot:
         )
 
         call_kwargs = mock_config_cls.call_args[1]
-        assert "--mcp-config" in call_kwargs["agent"]
-
-    @patch("milknado.adapters.loop.RunConfig")
-    def test_no_mcp_config_when_file_missing(
-        self,
-        mock_config_cls: MagicMock,
-        adapter: LoopAdapter,
-        mock_manager: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        mock_config_cls.return_value = MagicMock()
-        mock_manager.create_run.return_value = MagicMock(id="run-1")
-
-        adapter.create_run(
-            agent="claude",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / "ralph.md",
-            commands=[],
-            quality_gates=(),
-            project_root=tmp_path,  # .mcp.json does not exist
-        )
-
-        call_kwargs = mock_config_cls.call_args[1]
-        assert "--mcp-config" not in call_kwargs["agent"]
+        assert call_kwargs["agent"] == agent
 
     @patch("milknado.adapters.loop.RunConfig")
     def test_log_dir_routed_to_ralph_logs(

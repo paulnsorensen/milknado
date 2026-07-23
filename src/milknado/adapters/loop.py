@@ -49,13 +49,10 @@ class LoopAdapter:
         base_oid: str | None = None,
         runtime_policy: Any | None = None,
     ) -> Any:
-        mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
         session = getattr(runtime_policy, "session", None)
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
-        if mcp_config and mcp_config.exists():
-            agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
         config = RunConfig(
             agent=agent_cmd,
             ralph_dir=ralph_dir,

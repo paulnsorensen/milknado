@@ -8,6 +8,7 @@ from milknado.loop.adapters.claude import ClaudeAdapter
 from milknado.loop.adapters.codex import CodexAdapter
 from milknado.loop.adapters.copilot import CopilotAdapter
 from milknado.loop.adapters.crush import CrushAdapter
+from milknado.loop.adapters.omp import OmpAdapter
 from milknado.loop.adapters.opencode import OpenCodeAdapter
 
 
@@ -18,6 +19,7 @@ def test_registry_contains_builtin_adapters() -> None:
     assert CopilotAdapter in types
     assert CrushAdapter in types
     assert OpenCodeAdapter in types
+    assert OmpAdapter in types
 
 
 def test_select_adapter_dispatches_by_binary_stem() -> None:
@@ -26,6 +28,7 @@ def test_select_adapter_dispatches_by_binary_stem() -> None:
     assert isinstance(select_adapter(["copilot"]), CopilotAdapter)
     assert isinstance(select_adapter(["crush", "run"]), CrushAdapter)
     assert isinstance(select_adapter(["opencode", "run"]), OpenCodeAdapter)
+    assert isinstance(select_adapter(["omp", "-p"]), OmpAdapter)
 
 
 def test_select_adapter_falls_back_to_generic() -> None:
