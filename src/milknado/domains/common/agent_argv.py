@@ -299,24 +299,6 @@ def capture_session_id(family: str, first_turn_json: str) -> str:
     return session_id.strip()
 
 
-def build_resume_argv(
-    family: str,
-    session_id: str,
-    prompt: str,
-    model_flags: Sequence[str],
-) -> list[str]:
-    """Build adapter-specific resume argv with launch controls re-applied."""
-    if not session_id:
-        raise ValueError("session_id must not be empty")
-    if family == "claude":
-        return ["claude", "-p", "--resume", session_id, *model_flags, prompt]
-    if family == "codex":
-        return ["codex", "exec", "resume", session_id, "--json", *model_flags, prompt]
-    if family == "gemini":
-        return ["gemini", "--resume", session_id, *model_flags, "--prompt", prompt]
-    raise ValueError(f"unsupported resume family: {family!r}")
-
-
 def build_resume_command(command: str, family: str, session_id: str) -> str:
     """Add a session resume selector without dropping model/effort flags."""
     argv = shlex.split(command)

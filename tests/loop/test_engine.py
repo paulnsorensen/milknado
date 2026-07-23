@@ -94,6 +94,56 @@ class TestRunLoop:
         stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
         assert stop_event.data["reason"] == "error"
 
+    @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
+    def test_max_consecutive_failures_stops_run(self, mock_run, tmp_path):
+        """The cap turns a would-be-infinite crash loop into a bounded FAILED run."""
+        config = make_config(tmp_path, max_iterations=10, max_consecutive_failures=3)
+        state = make_state()
+        q = QueueEmitter()
+
+        run_loop(config, state, q)
+
+        assert mock_run.call_count == 3
+        assert state.failed == 3
+        assert state.status == RunStatus.FAILED
+        events = drain_events(q)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
+
+    @patch(MOCK_SUBPROCESS)
+    def test_consecutive_failure_count_resets_on_success(self, mock_run, tmp_path):
+        """Sporadic failures below the cap never end the run."""
+        mock_run.side_effect = [
+            fail_proc(),
+            fail_proc(),
+            ok_proc(),
+            fail_proc(),
+            fail_proc(),
+            ok_proc(),
+        ]
+        config = make_config(tmp_path, max_iterations=6, max_consecutive_failures=3)
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_run.call_count == 6
+        assert state.completed == 2
+        assert state.failed == 4
+        assert state.status == RunStatus.COMPLETED
+
+    @patch(MOCK_SUBPROCESS)
+    def test_last_captured_stderr_stored_for_failure_reporting(self, mock_run, tmp_path):
+        """Captured stderr survives on state so coordinators can log the failure cause."""
+        mock_run.side_effect = lambda *a, **k: fail_proc(
+            stderr_text="Error: unknown flag: --mcp-config\n"
+        )
+        config = make_config(tmp_path, max_iterations=1, log_dir=tmp_path / "logs")
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        assert "unknown flag: --mcp-config" in (state.last_captured_stderr or "")
+
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
     def test_timeout_counted(self, mock_run, tmp_path):
         config = make_config(tmp_path, max_iterations=1, timeout=5)
@@ -103,6 +153,39 @@ class TestRunLoop:
 
         assert state.timed_out_count == 1
         assert state.failed == 1
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_force_stop_remains_stopped_with_stop_on_error(self, mock_execute_agent, tmp_path):
+        config = make_config(tmp_path, max_iterations=2, stop_on_error=True)
+        state = make_state()
+        mock_execute_agent.return_value = AgentResult(returncode=-9, force_stopped=True)
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 1
+        assert state.status is RunStatus.STOPPED
+        assert state.failed == 0
+
+    @patch("milknado.loop.engine._delay_if_needed")
+    @patch("milknado.loop.engine.execute_agent")
+    def test_retriable_timeout_keeps_guidance_open(self, mock_execute_agent, mock_delay, tmp_path):
+        config = make_config(tmp_path, max_iterations=2)
+        state = make_state()
+        mock_execute_agent.side_effect = [
+            AgentResult(returncode=None, timed_out=True),
+            AgentResult(returncode=0),
+        ]
+
+        def admit_guidance(_config, observed_state, _emit):
+            assert observed_state.timed_out_count == 1
+            assert observed_state.queue_guidance("retry with the failing test") is True
+
+        mock_delay.side_effect = admit_guidance
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        assert state.status is RunStatus.COMPLETED
 
     @patch(MOCK_SUBPROCESS)
     def test_prompt_read_from_ralph_file(self, mock_run, tmp_path):
@@ -795,7 +878,8 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        assert mock_run.call_args.args[0][-1] == "Research ./src focus: perf"
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert prompt_arg == "Research ./src focus: perf"
 
     @patch(MOCK_SUBPROCESS)
     def test_empty_args_clears_placeholders(self, mock_run, tmp_path):
@@ -809,7 +893,8 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        assert mock_run.call_args.args[0][-1] == "Before  after"
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert prompt_arg == "Before  after"
 
 
 class TestCommandExecution:
@@ -829,9 +914,9 @@ class TestCommandExecution:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        call_input = mock_agent.call_args.args[0][-1]
-        assert "test output" in call_input
-        assert "{{ commands.tests }}" not in call_input
+        prompt_arg = mock_agent.call_args.args[0][-1]
+        assert "test output" in prompt_arg
+        assert "{{ commands.tests }}" not in prompt_arg
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)
@@ -1626,7 +1711,8 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        assert "Co-authored-by: Team <team@example.com>" in mock_run.call_args.args[0][-1]
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert "Co-authored-by: Team <team@example.com>" in prompt_arg
 
     @patch(MOCK_SUBPROCESS)
     def test_no_footer_unset_no_trailer_in_agent_input(self, mock_run, tmp_path):
@@ -1635,7 +1721,8 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        assert "Co-authored-by" not in mock_run.call_args.args[0][-1]
+        prompt_arg = mock_run.call_args.args[0][-1]
+        assert "Co-authored-by" not in prompt_arg
 
 
 class TestAgentOutputLineFiltering:

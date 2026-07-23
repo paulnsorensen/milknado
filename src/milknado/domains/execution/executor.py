@@ -383,8 +383,8 @@ class Executor:
         self._crg = crg
         self._attempts_by_node: dict[int, int] = {}
         self._config_by_node: dict[int, ExecutionConfig] = {}
-        self._review_round_by_node: dict[int, int] = {}
         self._session_by_node: dict[int, NodeAgentSession] = {}
+        self._review_round_by_node: dict[int, int] = {}
 
     def dispatch(
         self,
@@ -820,6 +820,86 @@ class Executor:
             rebase_conflict=conflict,
         )
 
+    def _handle_review_rejection(
+        self,
+        node: MikadoNode,
+        worktree: Path,
+        config: ExecutionConfig,
+        findings: str,
+        review_error: bool,
+    ) -> tuple[CompletionResult | None, bool]:
+        """Decide the outcome of a rejected review: redispatch, block, or (returning
+        None) fall through to a warn-policy merge. The bool is whether the
+        review-notification write itself failed, for the caller to propagate."""
+        node_id = node.id
+        notification_failed = not self._notify_review(node, verdict="reject", findings_md=findings)
+        if notification_failed:
+            _logger.error(
+                "node_review_notification_degraded node_id=%d policy=%s",
+                node_id,
+                config.on_reject,
+            )
+        round_number = self._review_round_by_node.get(node_id, 0)
+        if not review_error and round_number < config.review_max_rounds:
+            self._review_round_by_node[node_id] = round_number + 1
+            redispatch = self._redispatch_review_round(node, config, worktree)
+            _logger.warning(
+                "node_review_rejected node_id=%d round=%d/%d; redispatching",
+                node_id,
+                round_number + 1,
+                config.review_max_rounds,
+            )
+            return (
+                CompletionResult(
+                    node_id=node_id,
+                    rebased=False,
+                    newly_ready=[],
+                    redispatch=redispatch,
+                    review_notification_failed=notification_failed,
+                ),
+                notification_failed,
+            )
+        if review_error or config.on_reject == "block":
+            if node.run_id:
+                blocked = self._graph.mark_blocked_fenced(node.id, node.run_id)
+            else:
+                self._graph.mark_blocked(node.id)
+                blocked = True
+            if not blocked:
+                raise ValueError(f"review block fence lost for node {node_id}")
+            _logger.warning("node_review_blocked node_id=%d worktree=%s", node_id, worktree)
+            return (
+                CompletionResult(
+                    node_id=node_id,
+                    rebased=False,
+                    newly_ready=[],
+                    blocked=True,
+                    review_notification_failed=notification_failed,
+                ),
+                notification_failed,
+            )
+        _logger.warning(
+            "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
+            node_id,
+            config.review_max_rounds,
+        )
+        return None, notification_failed
+
+    def _gate_review(
+        self, node: MikadoNode, worktree: Path, config: ExecutionConfig
+    ) -> tuple[CompletionResult | None, bool]:
+        review_error = False
+        try:
+            approved, findings = self._run_review(node, worktree, config)
+        except Exception as exc:
+            review_error = True
+            approved = False
+            findings = f"reviewer failed: {type(exc).__name__}: {exc}"
+            _logger.exception("adversarial review failed for node %d", node.id)
+        if approved:
+            return None, False
+        return self._handle_review_rejection(node, worktree, config, findings, review_error)
+
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
@@ -846,71 +926,9 @@ class Executor:
         config = self._config_by_node.get(node_id)
         notification_failed = False
         if worktree is not None and config is not None and self._review_enabled(config):
-            review_error = False
-            try:
-                approved, findings = self._run_review(node, worktree, config)
-            except Exception as exc:
-                review_error = True
-                approved = False
-                findings = f"reviewer failed: {type(exc).__name__}: {exc}"
-                _logger.exception("adversarial review failed for node %d", node_id)
-            if not approved:
-                notification_failed = not self._notify_review(
-                    node, verdict="reject", findings_md=findings
-                )
-                if notification_failed:
-                    _logger.error(
-                        "node_review_notification_degraded node_id=%d policy=%s",
-                        node_id,
-                        config.on_reject,
-                    )
-                round_number = self._review_round_by_node.get(node_id, 0)
-                if not review_error and round_number < config.review_max_rounds:
-                    self._review_round_by_node[node_id] = round_number + 1
-                    redispatch = self._redispatch_review_round(node, config, worktree)
-                    _logger.warning(
-                        "node_review_rejected node_id=%d round=%d/%d; redispatching",
-                        node_id,
-                        round_number + 1,
-                        config.review_max_rounds,
-                    )
-                    return CompletionResult(
-                        node_id=node_id,
-                        rebased=False,
-                        newly_ready=[],
-                        redispatch=redispatch,
-                        review_notification_failed=notification_failed,
-                    )
-                if notification_failed and config.on_reject == "block":
-                    return CompletionResult(
-                        node_id=node_id,
-                        rebased=False,
-                        newly_ready=[],
-                        review_notification_failed=True,
-                    )
-                if review_error or config.on_reject == "block":
-                    if node.run_id:
-                        blocked = self._graph.mark_blocked_fenced(node.id, node.run_id)
-                    else:
-                        self._graph.mark_blocked(node.id)
-                        blocked = True
-                    if not blocked:
-                        raise ValueError(f"review block fence lost for node {node_id}")
-                    _logger.warning(
-                        "node_review_blocked node_id=%d worktree=%s", node_id, worktree
-                    )
-                    return CompletionResult(
-                        node_id=node_id,
-                        rebased=False,
-                        newly_ready=[],
-                        blocked=True,
-                        review_notification_failed=notification_failed,
-                    )
-                _logger.warning(
-                    "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
-                    node_id,
-                    config.review_max_rounds,
-                )
+            early, notification_failed = self._gate_review(node, worktree, config)
+            if early is not None:
+                return early
 
         target_branch = self._target_branch_by_node.get(node_id)
         rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
@@ -940,6 +958,28 @@ class Executor:
             if wt.exists():
                 self._wt.remove(node_id, wt)
         self._graph.mark_failed(node_id)
+
+    def cancel(self, node_id: int) -> None:
+        """Clean a stopped run and make its graph node schedulable next invocation."""
+        node = self._graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        if node.worktree_path:
+            worktree = Path(node.worktree_path)
+            if worktree.exists():
+                try:
+                    self._wt.remove(node_id, worktree)
+                except UnlandedWorkError as exc:
+                    _logger.warning(
+                        "Preserving stopped node %d worktree %s; releasing graph claim: %s",
+                        node_id,
+                        worktree,
+                        exc,
+                    )
+        if node.run_id:
+            self._graph.release(node_id, node.run_id)
+        else:
+            self._graph.mark_pending(node_id)
 
     def get_attempt_count(self, node_id: int) -> int:
         return self._attempts_by_node.get(node_id, 0)

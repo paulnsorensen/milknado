@@ -87,7 +87,7 @@ class MilknadoConfig:
     dispatch_max_retries: int = 2
     dispatch_backoff_seconds: float = 5.0
     protected_branches: tuple[str, ...] = ("main", "master")
-    completion_timeout_seconds: float = 1800.0
+    completion_timeout_seconds: float | None = None
     eta_sample_size: int = 10
     worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
     flavors: dict[str, FlavorOverride] = field(default_factory=dict)
@@ -206,7 +206,6 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
             "dispatch_max_retries": config.dispatch_max_retries,
             "dispatch_backoff_seconds": config.dispatch_backoff_seconds,
             "protected_branches": list(config.protected_branches),
-            "completion_timeout_seconds": config.completion_timeout_seconds,
             "eta_sample_size": config.eta_sample_size,
             "worker_agent_type": config.worker_agent_type,
             "loop_mode": config.loop_mode,
@@ -215,6 +214,8 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
             "plan_review_max_rounds": config.plan_review_max_rounds,
         }
     )
+    if config.completion_timeout_seconds is not None:
+        milknado["completion_timeout_seconds"] = config.completion_timeout_seconds
     if config.commit_footer is not None:
         milknado["commit_footer"] = config.commit_footer
     if config.plan_reviewer_agent is not None:
@@ -383,7 +384,11 @@ def _scalar_config_kwargs(raw: dict[str, Any], project_root: Path) -> dict[str, 
         "dispatch_max_retries": int(raw.get("dispatch_max_retries", 2)),
         "dispatch_backoff_seconds": float(raw.get("dispatch_backoff_seconds", 5.0)),
         "protected_branches": tuple(raw.get("protected_branches", ["main", "master"])),
-        "completion_timeout_seconds": float(raw.get("completion_timeout_seconds", 1800.0)),
+        "completion_timeout_seconds": (
+            float(raw["completion_timeout_seconds"])
+            if "completion_timeout_seconds" in raw
+            else None
+        ),
         "eta_sample_size": int(raw.get("eta_sample_size", 10)),
         "worker_agent_type": _validated_str(
             raw.get("worker_agent_type"), DEFAULT_WORKER_AGENT_TYPE, "[milknado] worker_agent_type"

@@ -4,8 +4,6 @@ import logging
 import queue
 import re
 import shlex
-import subprocess
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +14,7 @@ from milknado.domains.common import (
     Gate,
     MikadoNode,
     ProgressEvent,
+    TerminalRunOutcome,
     VerifySpecResult,
     build_resume_command,
 )
@@ -23,6 +22,11 @@ from milknado.domains.execution import build_completion_verifier
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
+
+# A worker that self-heals across iterations may fail a few times, but a
+# command that cannot start (e.g. an unknown CLI flag) fails identically
+# every ~1s forever. Three failures in a row ends the run loudly instead.
+MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3
 
 
 _logger = logging.getLogger(__name__)
@@ -34,8 +38,6 @@ class LoopAdapter:
         self._queue: queue.Queue[Any] = queue.Queue()
         self._emitter = QueueEmitter(self._queue)
         self._agent = agent
-        self._progress_buffer: list[ProgressEvent] = []
-        self._progress_lock = threading.Lock()
 
     def create_run(
         self,
@@ -49,10 +51,16 @@ class LoopAdapter:
         base_oid: str | None = None,
         runtime_policy: Any | None = None,
     ) -> Any:
+        mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
         session = getattr(runtime_policy, "session", None)
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
+        # Only the claude CLI understands --mcp-config; omp/codex/gemini reject
+        # the flag at launch and the worker crash-loops without ever starting.
+        supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
+        if mcp_config and mcp_config.exists() and supports_mcp_flag:
+            agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
         config = RunConfig(
             agent=agent_cmd,
             ralph_dir=ralph_dir,
@@ -60,8 +68,10 @@ class LoopAdapter:
             project_root=project_root or ralph_dir,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
+            stop_on_error=True,
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
+            max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
         config.completion_verifier = build_completion_verifier(
             ralph_dir, quality_gates, base_oid=base_oid
@@ -70,6 +80,15 @@ class LoopAdapter:
 
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)
+
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        return self._manager.queue_guidance(run_id, text)
+
+    def request_stop_run(self, run_id: str) -> None:
+        self._manager.stop_run(run_id)
+
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        return self._manager.force_stop_and_join(run_id, timeout)
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.stop_and_join(run_id, timeout)
@@ -84,26 +103,50 @@ class LoopAdapter:
         run = self._manager.get_run(run_id)
         if run is None:
             return []
-        direct = getattr(run, "stdout", None)
-        if isinstance(direct, str):
-            return direct.splitlines()
-        if isinstance(direct, list):
-            return [str(line) for line in direct]
-        state = run.state
-        text = getattr(state, "last_captured_stdout", None)
+        text = run.state.last_captured_stdout
         if text is None:
-            text = getattr(state, "last_result_text", None)
-        if isinstance(text, str):
-            return text.splitlines()
-        if isinstance(text, list):
-            return [str(line) for line in text]
-        return []
+            text = run.state.last_result_text
+        return text.splitlines() if text is not None else []
+
+    def get_run_failure_detail(self, run_id: str) -> str | None:
+        """Last captured agent output for a failed run, flattened to one log line."""
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return None
+        state = run.state
+        for text in (
+            getattr(state, "last_captured_stderr", None),
+            getattr(state, "last_captured_stdout", None),
+            getattr(state, "last_result_text", None),
+        ):
+            if isinstance(text, str) and text.strip():
+                return " ".join(text.split())[-300:]
+        return None
+
+    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
+        """Return at most ``max_lines`` of output without splitting the whole text."""
+        if max_lines <= 0:
+            return []
+        run = self._manager.get_run(run_id)
+        if run is None:
+            return []
+        text = run.state.last_captured_stdout
+        if text is None:
+            text = run.state.last_result_text
+        if not text:
+            return []
+        lines = text.rstrip("\r\n").rsplit("\n", max_lines)[-max_lines:]
+        return [line.rstrip("\r") for line in lines]
+
+    def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
+        run = self._manager.get_run(run_id)
+        return () if run is None else run.state.pending_guidance
 
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, bool]:
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         start = time.monotonic()
         deadline = start + timeout if timeout is not None else None
         while True:
@@ -122,31 +165,28 @@ class LoopAdapter:
                     active_run_ids=active_run_ids,
                     waited_seconds=time.monotonic() - start,
                 ) from None
-            _PROGRESS = getattr(EventType, "PROGRESS", None)
-            if _PROGRESS is not None and event.type == _PROGRESS:
-                with self._progress_lock:
-                    self._progress_buffer.append(
-                        ProgressEvent(
-                            run_id=event.run_id,
-                            work=getattr(event, "work", 0),
-                            total=getattr(event, "total", 0),
-                            message=getattr(event, "message", ""),
-                        )
-                    )
-                continue
-            if event.type != EventType.RUN_STOPPED:
-                continue
             if event.run_id not in active_run_ids:
                 continue
+            if event.type == EventType.ITERATION_STARTED:
+                data = event.data
+                iteration = data.get("iteration", 0) if isinstance(data, dict) else 0
+                return event.run_id, ProgressEvent(
+                    run_id=event.run_id,
+                    work=iteration,
+                    total=0,
+                    message=f"iteration {iteration} started",
+                )
+            if event.type != EventType.RUN_STOPPED:
+                continue
             run = self._manager.get_run(event.run_id)
-            success = run is not None and run.state.status == RunStatus.COMPLETED
-            return event.run_id, success
-
-    def poll_progress_events(self) -> list[ProgressEvent]:
-        with self._progress_lock:
-            result = list(self._progress_buffer)
-            self._progress_buffer.clear()
-        return result
+            if run is None:
+                return event.run_id, "failed"
+            status = run.state.status
+            if status is RunStatus.COMPLETED:
+                return event.run_id, "completed"
+            if status is RunStatus.STOPPED:
+                return event.run_id, "stopped"
+            return event.run_id, "failed"
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
         if not self._agent:
@@ -169,6 +209,7 @@ class LoopAdapter:
                 project_root=tmp_path,
                 completion_signal=MILKNADO_COMPLETION_SIGNAL,
                 stop_on_completion_signal=True,
+                max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id
@@ -386,51 +427,6 @@ class ReviewVerdict:
     findings_md: str
 
 
-def run_node_review(
-    node: MikadoNode,
-    worktree: Path,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-    profile: Any,
-) -> ReviewVerdict:
-    """Run the configured reviewer in the pinned node worktree."""
-    if not profile.review_agent:
-        raise ValueError(f"node {node.id} resolved review=true but no review_agent is configured")
-    result = subprocess.run(
-        shlex.split(profile.review_agent),
-        cwd=worktree,
-        input=_build_review_prompt(node, diff, brief, spec_path),
-        capture_output=True,
-        text=True,
-        timeout=1800,
-        check=False,
-    )
-    output = f"{result.stdout}\n{result.stderr}"
-    approved, findings_md = _parse_review_output(output)
-    _persist_review_findings(worktree, node, findings_md)
-    return ReviewVerdict(approved=approved, findings_md=findings_md)
-
-
-def _build_review_prompt(
-    node: MikadoNode,
-    diff: str,
-    brief: str,
-    spec_path: str | None,
-) -> str:
-    spec_section = f"## Spec\n\n{spec_path}\n\n" if spec_path else ""
-    return (
-        f"# Review: {node.description}\n\n"
-        f"## Brief\n\n{brief}\n\n"
-        f"{spec_section}"
-        f"## Diff\n\n```diff\n{diff}\n```\n\n"
-        "Review the node worktree against the brief and spec. Emit findings "
-        "in easy-cheese severity/dimension bullet form, then exactly one of:\n\n"
-        "<verdict>approve</verdict>\n\nor\n\n"
-        "<verdict>reject</verdict>\n"
-    )
-
-
 def _parse_review_output(output: str) -> tuple[bool, str]:
     match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
     findings_md = output[: match.start()].strip() if match else output.strip()
@@ -440,11 +436,3 @@ def _parse_review_output(output: str) -> tuple[bool, str]:
         return False, findings_md
     _logger.warning("run_node_review: unparseable reviewer output; treating as revise")
     return False, findings_md or "reviewer produced no parseable <verdict> tag"
-
-
-def _persist_review_findings(worktree: Path, node: MikadoNode, findings_md: str) -> Path:
-    slug = re.sub(r"[^a-z0-9]+", "-", node.description.lower()).strip("-") or str(node.id)
-    path = worktree / ".cheese" / "age" / f"{slug}.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
-    return path

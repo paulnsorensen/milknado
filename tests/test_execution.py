@@ -1200,6 +1200,58 @@ class TestExecutorFail:
         ex.fail(1)
         assert wt in fake_git.removed
 
+    def test_cancel_releases_running_node_without_recording_failure(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        fake_git = FakeGit()
+        executor = Executor(graph=graph, git=fake_git, ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        graph.mark_running(1, worktree_path=str(worktree), branch_name="milknado/1-task")
+
+        executor.cancel(1)
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status is NodeStatus.PENDING
+        assert node.worktree_path is None
+        assert node.branch_name is None
+        assert worktree in fake_git.removed
+        assert executor.get_attempt_count(1) == 0
+
+    def test_cancel_releases_node_when_worktree_cleanup_preserves_unlanded_work(
+        self,
+        graph: MikadoGraph,
+        tmp_path: Path,
+    ) -> None:
+        class RefusingGit(FakeGit):
+            def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+                raise UnlandedWorkError(path, "unlanded commits (not on main):\nabc123 wip")
+
+        executor = Executor(graph=graph, git=RefusingGit(), ralph=FakeRalph(), crg=FakeCrg())
+        graph.add_node("task")
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        graph.mark_running(
+            1,
+            worktree_path=str(worktree),
+            branch_name="milknado/1-task",
+            run_id="run-1",
+        )
+
+        executor.cancel(1)
+
+        node = graph.get_node(1)
+        assert node is not None
+        assert node.status is NodeStatus.PENDING
+        assert node.worktree_path is None
+        assert node.branch_name is None
+        assert node.run_id is None
+        assert worktree.exists()
+
     def test_refusal_propagates_and_aborts_the_transition(
         self,
         graph: MikadoGraph,

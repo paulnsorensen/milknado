@@ -18,6 +18,10 @@ _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
         ["milknado.app"],
         ["milknado.cli", "milknado.mcp"],
     ),
+    "execution controller must not import textual presentation": (
+        ["milknado.app.run"],
+        ["milknado.app.run_tui"],
+    ),
     "adapters must not import application policy": (
         ["milknado.adapters"],
         ["milknado.app"],

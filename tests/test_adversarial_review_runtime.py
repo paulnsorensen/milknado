@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import queue
-import shlex
-import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,12 +15,10 @@ from milknado.adapters.loop import (
     ReviewVerdict,
     _drain_review_run,
     _parse_review_output,
-    run_node_review,
 )
 from milknado.domains.common import Gate, MikadoNode
 from milknado.domains.common.agent_argv import (
     NodeAgentSession,
-    build_resume_argv,
     build_resume_command,
     capture_session_id,
 )
@@ -183,49 +179,6 @@ def test_block_policy_retains_pinned_worktree(
     assert not git.removed
 
 
-def test_resume_argv_preserves_adapter_controls() -> None:
-    assert build_resume_argv("claude", "s1", "prompt", ["--model", "opus"]) == [
-        "claude",
-        "-p",
-        "--resume",
-        "s1",
-        "--model",
-        "opus",
-        "prompt",
-    ]
-    assert build_resume_argv("codex", "s1", "prompt", ["--model", "o3"]) == [
-        "codex",
-        "exec",
-        "resume",
-        "s1",
-        "--json",
-        "--model",
-        "o3",
-        "prompt",
-    ]
-    assert build_resume_argv("gemini", "s1", "prompt", ["--model", "pro"]) == [
-        "gemini",
-        "--resume",
-        "s1",
-        "--model",
-        "pro",
-        "--prompt",
-        "prompt",
-    ]
-    assert build_resume_command("codex exec --model o3", "codex", "s1") == (
-        "codex exec resume s1 --model o3"
-    )
-    with pytest.raises(ValueError, match="review=true"):
-        run_node_review(
-            MikadoNode(id=17, description="missing reviewer"),
-            Path("/tmp"),
-            "",
-            "",
-            None,
-            SimpleNamespace(review_agent=None),
-        )
-
-
 def test_durable_spec_path_prefers_xdg_corpus(tmp_path: Path, monkeypatch) -> None:
     xdg = tmp_path / "xdg"
     durable = xdg / "cheese" / tmp_path.name / "specs" / "accepted.md"
@@ -365,8 +318,8 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
         assert result.review_notification_failed is True
         if policy == "block":
             assert result.rebased is False
-            assert result.blocked is False
-            assert graph.get_node(node_id).status.value == "running"
+            assert result.blocked is True
+            assert graph.get_node(node_id).status.value == "blocked"
         else:
             assert result.rebased is True
             assert graph.get_node(node_id).status.value == "done"
@@ -477,10 +430,6 @@ def test_agent_session_parser_rejects_bad_shapes() -> None:
         capture_session_id("claude", "not-json")
     with pytest.raises(ValueError, match="no session_id"):
         capture_session_id("claude", "{}")
-    with pytest.raises(ValueError, match="unsupported"):
-        build_resume_argv("unknown", "s", "p", [])
-    with pytest.raises(ValueError, match="empty"):
-        build_resume_argv("claude", "", "p", [])
     with pytest.raises(ValueError, match="empty"):
         build_resume_command("", "claude", "s")
     with pytest.raises(ValueError, match="unsupported"):
@@ -505,33 +454,23 @@ def test_adapter_stdout_and_review_parser_paths(tmp_path: Path) -> None:
     adapter._manager = cast(Any, SimpleNamespace(get_run=lambda run_id: None))
     assert adapter.get_run_stdout("missing") == []
     runs = [
-        (SimpleNamespace(stdout="a\nb"), ["a", "b"]),
-        (SimpleNamespace(stdout=["a", "b"]), ["a", "b"]),
-        (SimpleNamespace(state=SimpleNamespace(last_captured_stdout="c")), ["c"]),
-        (SimpleNamespace(state=SimpleNamespace(last_result_text=["d"])), ["d"]),
+        (
+            SimpleNamespace(
+                state=SimpleNamespace(last_captured_stdout="a\nb", last_result_text="unused")
+            ),
+            ["a", "b"],
+        ),
+        (
+            SimpleNamespace(
+                state=SimpleNamespace(last_captured_stdout=None, last_result_text="c")
+            ),
+            ["c"],
+        ),
     ]
     for run, expected in runs:
         adapter._manager = cast(Any, SimpleNamespace(get_run=lambda run_id, run=run: run))
         assert adapter.get_run_stdout("run") == expected
 
-    node = MikadoNode(id=16, description="adapter review")
-    command = shlex.join(
-        [
-            sys.executable,
-            "-c",
-            "print('finding\\n<verdict>approve</verdict>')",
-        ]
-    )
-    verdict = run_node_review(
-        node,
-        tmp_path,
-        "diff",
-        "brief",
-        str(tmp_path / "spec.md"),
-        SimpleNamespace(review_agent=command),
-    )
-    assert verdict.approved is True
-    assert (tmp_path / ".cheese" / "age" / "adapter-review.md").read_text() == "finding\n"
     assert _parse_review_output("no tag")[0] is False
     assert _parse_review_output("<verdict>reject</verdict>")[0] is False
 
@@ -600,7 +539,7 @@ class _HeadlessRoundExecutor:
 
 class _HeadlessRoundRalph:
     def wait_for_next_completion(self, run_ids, timeout=None):
-        return next(iter(run_ids)), True
+        return next(iter(run_ids)), "completed"
 
 
 def test_headless_follows_review_redispatch() -> None:
@@ -621,6 +560,7 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         return SimpleNamespace(
             _active={"run-1": 1},
             _dispatched_at={"run-1": 0.0},
+            _progress_by_run={},
             _input=SimpleNamespace(overlay_state=None),
             _graph=SimpleNamespace(get_node=lambda node_id: MikadoNode(node_id, "handler node")),
             _executor=SimpleNamespace(complete=lambda node_id, branch: result),
@@ -639,15 +579,15 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = make_loop(redispatch)
-    assert handle_completion(loop, "run-1", True, "main", live) == (0, 0, [])
+    assert handle_completion(loop, "run-1", "completed", "main", live) == (0, 0, [])
     assert "run-2" in loop._active
 
     blocked = make_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", True, "main", live)[1] == 1
+    assert handle_completion(blocked, "run-1", "completed", "main", live)[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = make_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", True, "main", live)[2] == [conflict]
+    assert handle_completion(failed, "run-1", "completed", "main", live)[2] == [conflict]
     passed = make_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", True, "main", live)[0] == 1
+    assert handle_completion(passed, "run-1", "completed", "main", live)[0] == 1

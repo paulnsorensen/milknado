@@ -251,6 +251,52 @@ class TestRunState:
         assert result is True
         stopped.wait(timeout=1.0)
 
+    def test_guidance_wins_soft_completion_once_then_closes_admission(self):
+        state = RunState(run_id="r1")
+
+        assert state.queue_guidance("check the failing test") is True
+        assert state.try_commit_soft_completion() is False
+        assert state.take_guidance() == ("check the failing test",)
+        assert state.try_commit_soft_completion() is True
+        assert state.queue_guidance("too late") is False
+
+    def test_guidance_and_soft_completion_commit_atomically(self):
+        state = RunState(run_id="r1")
+        barrier = threading.Barrier(3)
+        outcomes: dict[str, bool] = {}
+
+        def queue_guidance() -> None:
+            barrier.wait()
+            outcomes["guidance"] = state.queue_guidance("inspect the final output")
+
+        def commit_completion() -> None:
+            barrier.wait()
+            outcomes["completion"] = state.try_commit_soft_completion()
+
+        guidance_thread = threading.Thread(target=queue_guidance)
+        completion_thread = threading.Thread(target=commit_completion)
+        guidance_thread.start()
+        completion_thread.start()
+        barrier.wait()
+        guidance_thread.join(timeout=1)
+        completion_thread.join(timeout=1)
+
+        assert not guidance_thread.is_alive()
+        assert not completion_thread.is_alive()
+        assert (outcomes["guidance"], outcomes["completion"]) in {
+            (True, False),
+            (False, True),
+        }
+
+    def test_stop_closes_pending_guidance(self):
+        state = RunState(run_id="r1")
+
+        assert state.queue_guidance("finish the docs") is True
+        state.request_stop()
+
+        assert state.take_guidance() == ("finish the docs",)
+        assert state.queue_guidance("not accepted") is False
+
 
 class TestRunStatus:
     @pytest.mark.parametrize(

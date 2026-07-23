@@ -51,6 +51,7 @@ def _make_loop(node_id: int, run_id: str, executor: _FakeExecutor) -> Any:
 
     loop = MagicMock()
     loop._active = {run_id: node_id}
+    loop._progress_by_run = {}
     loop._input = InputState()
     loop._graph = graph
     loop._executor = executor
@@ -69,7 +70,7 @@ class TestHandleCompletionSuccess:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", True, "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "completed", "main", live)
 
         assert c == 1
         assert f == 0
@@ -80,7 +81,7 @@ class TestHandleCompletionSuccess:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        handle_completion(loop, "run-1", True, "main", live)
+        handle_completion(loop, "run-1", "completed", "main", live)
 
         assert "run-1" not in loop._active
 
@@ -89,7 +90,7 @@ class TestHandleCompletionSuccess:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        handle_completion(loop, "run-1", True, "main", live)
+        handle_completion(loop, "run-1", "completed", "main", live)
 
         assert len(loop._completion_durations) == 1
 
@@ -99,7 +100,7 @@ class TestHandleCompletionSuccess:
         loop._input.overlay_state = "run-1"
         live = MagicMock()
 
-        handle_completion(loop, "run-1", True, "main", live)
+        handle_completion(loop, "run-1", "completed", "main", live)
 
         assert loop._input.overlay_state is None
 
@@ -110,7 +111,7 @@ class TestHandleCompletionFailure:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", False, "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "failed", "main", live)
 
         assert c == 0
         assert f == 1
@@ -121,7 +122,7 @@ class TestHandleCompletionFailure:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        handle_completion(loop, "run-1", False, "main", live)
+        handle_completion(loop, "run-1", "failed", "main", live)
 
         assert 1 in exec_.failed_ids
 
@@ -131,7 +132,7 @@ class TestHandleCompletionFailure:
         loop._strict = True
         live = MagicMock()
 
-        handle_completion(loop, "run-1", False, "main", live)
+        handle_completion(loop, "run-1", "failed", "main", live)
 
         assert loop._failure_triggered is True
 
@@ -141,9 +142,32 @@ class TestHandleCompletionFailure:
         loop._strict = False
         live = MagicMock()
 
-        handle_completion(loop, "run-1", False, "main", live)
+        handle_completion(loop, "run-1", "failed", "main", live)
 
         assert loop._failure_triggered is False
+
+    def test_failure_log_includes_last_agent_output(self, caplog) -> None:
+        exec_ = _FakeExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._ralph.get_run_failure_detail.return_value = "Error: unknown flag: --mcp-config"
+        live = MagicMock()
+        caplog.set_level("WARNING", logger="milknado")
+
+        handle_completion(loop, "run-1", False, "main", live)
+
+        assert "unknown flag: --mcp-config" in caplog.text
+
+    def test_failure_log_bare_when_no_detail(self, caplog) -> None:
+        exec_ = _FakeExecutor()
+        loop = _make_loop(1, "run-1", exec_)
+        loop._ralph.get_run_failure_detail.return_value = None
+        live = MagicMock()
+        caplog.set_level("WARNING", logger="milknado")
+
+        handle_completion(loop, "run-1", False, "main", live)
+
+        assert "node_failed node_id=1" in caplog.text
+        assert "detail=" not in caplog.text
 
 
 class TestHandleCompletionRebaseConflict:
@@ -159,7 +183,7 @@ class TestHandleCompletionRebaseConflict:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", True, "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "completed", "main", live)
 
         assert c == 0
         assert f == 1
@@ -176,7 +200,7 @@ class TestHandleCompletionRebaseConflict:
         loop._strict = True
         live = MagicMock()
 
-        handle_completion(loop, "run-1", True, "main", live)
+        handle_completion(loop, "run-1", "completed", "main", live)
 
         assert loop._failure_triggered is True
 
@@ -185,6 +209,6 @@ class TestHandleCompletionRebaseConflict:
         loop = _make_loop(1, "run-1", exec_)
         live = MagicMock()
 
-        _, _, cs = handle_completion(loop, "run-1", True, "main", live)
+        _, _, cs = handle_completion(loop, "run-1", "completed", "main", live)
 
         assert cs == []
