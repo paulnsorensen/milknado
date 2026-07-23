@@ -1611,7 +1611,7 @@ class TestHandleCompletionTimeout:
         ) as execute_run:
             loop.run(config, "main")
 
-        execute_run.assert_called_once_with(config, "main", 4, 60.0)
+        execute_run.assert_called_once_with(config, "main", 4, 60.0, True)
 
     def test_timeout_marks_active_nodes_failed(
         self,

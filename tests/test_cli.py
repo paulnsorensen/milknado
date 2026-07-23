@@ -1669,7 +1669,7 @@ class TestRunRunnabilityGate:
         )
         assert "Starting execution loop" in result.output
 
-    def test_run_uses_textual_controller_on_an_interactive_terminal(
+    def test_run_returns_when_interactive_tui_exits_without_result(
         self,
         project_dir: Path,
         mock_adapters,
@@ -1687,14 +1687,7 @@ class TestRunRunnabilityGate:
         graph.add_node("Render run", parent_id=root.id)
         graph.close()
         controller = object()
-        result = MagicMock(
-            root_done=False,
-            dispatched_total=0,
-            completed_total=0,
-            failed_total=0,
-            rebase_conflicts=(),
-            strict_exit=False,
-        )
+        result = None
 
         with (
             patch("milknado.cli.run._is_interactive_terminal", return_value=True),
@@ -1707,6 +1700,7 @@ class TestRunRunnabilityGate:
                 return_value=result,
             ) as run_tui,
             patch("milknado.app.run.run_execution_loop") as run_legacy,
+            patch("milknado.cli.run._print_run_result") as print_result,
         ):
             run_module = importlib.import_module("milknado.cli.run")
             run_module.run(
@@ -1721,6 +1715,7 @@ class TestRunRunnabilityGate:
             strict=False,
         )
         run_legacy.assert_not_called()
+        print_result.assert_not_called()
 
     def test_run_bare_task_root_graph_skips_validation(
         self,

@@ -319,6 +319,23 @@ def test_controller_marshals_run_and_controls_to_one_graph_safe_thread(
     assert {thread_id for _, thread_id in loop.calls} == {loop.calls[0][1]}
 
 
+def test_controller_propagates_control_failure_from_execution_thread(graph: Any) -> None:
+    graph.add_node("root")
+    loop = ThreadBoundLoop(graph)
+    loop.cancel = MagicMock(side_effect=RuntimeError("cancel failed"))  # type: ignore[method-assign]
+    controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
+    runner = Thread(target=lambda: controller.run(feature_branch="feature"))
+    runner.start()
+    assert loop.started.wait(timeout=1)
+
+    with pytest.raises(RuntimeError, match="cancel failed"):
+        controller.cancel("run-1")
+
+    loop.release.set()
+    runner.join(timeout=1)
+    assert not runner.is_alive()
+
+
 def test_controller_rejects_a_second_concurrent_run(graph: Any) -> None:
     graph.add_node("root")
     loop = ThreadBoundLoop(graph)
