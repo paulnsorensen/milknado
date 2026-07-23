@@ -118,9 +118,7 @@ class TestRunLoop:
 
     @patch("milknado.loop.engine._delay_if_needed")
     @patch("milknado.loop.engine.execute_agent")
-    def test_retriable_timeout_keeps_guidance_open(
-        self, mock_execute_agent, mock_delay, tmp_path
-    ):
+    def test_retriable_timeout_keeps_guidance_open(self, mock_execute_agent, mock_delay, tmp_path):
         config = make_config(tmp_path, max_iterations=2)
         state = make_state()
         mock_execute_agent.side_effect = [

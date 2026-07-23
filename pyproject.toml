@@ -51,6 +51,12 @@ type = "forbidden"
 source_modules = ["milknado.app"]
 forbidden_modules = ["milknado.cli", "milknado.mcp"]
 
+[[tool.importlinter.contracts]]
+name = "execution controller must not import textual presentation"
+type = "forbidden"
+source_modules = ["milknado.app.run"]
+forbidden_modules = ["milknado.app.run_tui"]
+
 # Adapters implement domain ports but must not depend on application policy.
 [[tool.importlinter.contracts]]
 name = "adapters must not import application policy"

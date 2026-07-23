@@ -4,7 +4,6 @@ import logging
 import queue
 import re
 import shlex
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,8 +33,6 @@ class LoopAdapter:
         self._queue: queue.Queue[Any] = queue.Queue()
         self._emitter = QueueEmitter(self._queue)
         self._agent = agent
-        self._progress_buffer: list[ProgressEvent] = []
-        self._progress_lock = threading.Lock()
 
     def create_run(
         self,
@@ -74,15 +71,15 @@ class LoopAdapter:
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)
 
-
     def queue_guidance(self, run_id: str, text: str) -> bool:
-        return self._manager._require_run(run_id).state.queue_guidance(text)
+        return self._manager.queue_guidance(run_id, text)
 
     def request_stop_run(self, run_id: str) -> None:
         self._manager.stop_run(run_id)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.force_stop_and_join(run_id, timeout)
+
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.stop_and_join(run_id, timeout)
 
@@ -96,20 +93,10 @@ class LoopAdapter:
         run = self._manager.get_run(run_id)
         if run is None:
             return []
-        direct = getattr(run, "stdout", None)
-        if isinstance(direct, str):
-            return direct.splitlines()
-        if isinstance(direct, list):
-            return [str(line) for line in direct]
-        state = run.state
-        text = getattr(state, "last_captured_stdout", None)
+        text = run.state.last_captured_stdout
         if text is None:
-            text = getattr(state, "last_result_text", None)
-        if isinstance(text, str):
-            return text.splitlines()
-        if isinstance(text, list):
-            return [str(line) for line in text]
-        return []
+            text = run.state.last_result_text
+        return text.splitlines() if text is not None else []
 
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         """Return at most ``max_lines`` of output without splitting the whole text."""
@@ -118,19 +105,13 @@ class LoopAdapter:
         run = self._manager.get_run(run_id)
         if run is None:
             return []
-        direct = getattr(run, "stdout", None)
-        if isinstance(direct, list):
-            return [str(line) for line in direct[-max_lines:]]
-        text = direct if isinstance(direct, str) else getattr(run.state, "last_captured_stdout", None)
+        text = run.state.last_captured_stdout
         if text is None:
-            text = getattr(run.state, "last_result_text", None)
-        if isinstance(text, str):
-            if not text:
-                return []
-            return [line.rstrip("\r") for line in text.rstrip("\r\n").rsplit("\n", max_lines)[-max_lines:]]
-        if isinstance(text, list):
-            return [str(line) for line in text[-max_lines:]]
-        return []
+            text = run.state.last_result_text
+        if not text:
+            return []
+        lines = text.rstrip("\r\n").rsplit("\n", max_lines)[-max_lines:]
+        return [line.rstrip("\r") for line in lines]
 
     def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
         run = self._manager.get_run(run_id)
@@ -181,12 +162,6 @@ class LoopAdapter:
             if status is RunStatus.STOPPED:
                 return event.run_id, "stopped"
             return event.run_id, "failed"
-
-    def poll_progress_events(self) -> list[ProgressEvent]:
-        with self._progress_lock:
-            result = list(self._progress_buffer)
-            self._progress_buffer.clear()
-        return result
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
         if not self._agent:

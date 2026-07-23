@@ -137,6 +137,10 @@ class RunManager:
             managed.thread = thread
             thread.start()
 
+    def queue_guidance(self, run_id: str, text: str) -> bool:
+        """Queue operator guidance for the run's next prompt."""
+        return self._require_run(run_id).state.queue_guidance(text)
+
     def stop_run(self, run_id: str) -> None:
         """Signal the run to stop after the current iteration finishes."""
         self._require_run(run_id).state.request_stop()

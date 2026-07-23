@@ -1,3 +1,4 @@
+import importlib
 import itertools
 import json
 import subprocess
@@ -52,11 +53,10 @@ def _configure_ralph_mocks(
     def _wait_for_next_completion(
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, bool]:
-        return next(iter(active_run_ids)), True
+    ) -> tuple[str, str]:
+        return next(iter(active_run_ids)), "completed"
 
     ralph_cls.return_value.wait_for_next_completion.side_effect = _wait_for_next_completion
-    ralph_cls.return_value.poll_progress_events.return_value = []
 
 
 def _disable_review_for_test(project_dir: Path) -> None:
@@ -1668,6 +1668,59 @@ class TestRunRunnabilityGate:
             f"expected exit 0; got {result.exit_code}; output:\n{result.output}"
         )
         assert "Starting execution loop" in result.output
+
+    def test_run_uses_textual_controller_on_an_interactive_terminal(
+        self,
+        project_dir: Path,
+        mock_adapters,
+    ) -> None:
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        _mock_ralph, mock_git, _mock_crg = mock_adapters
+        mock_git.return_value.current_branch.return_value = "feature/tui"
+
+        runner.invoke(app, ["init", str(project_dir)])
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("Build TUI")
+        graph.add_node("Render run", parent_id=root.id)
+        graph.close()
+        controller = object()
+        result = MagicMock(
+            root_done=False,
+            dispatched_total=0,
+            completed_total=0,
+            failed_total=0,
+            rebase_conflicts=(),
+            strict_exit=False,
+        )
+
+        with (
+            patch("milknado.cli.run._is_interactive_terminal", return_value=True),
+            patch(
+                "milknado.app.run.build_execution_controller",
+                return_value=controller,
+            ) as build_controller,
+            patch(
+                "milknado.app.run_tui.run_execution_tui",
+                return_value=result,
+            ) as run_tui,
+            patch("milknado.app.run.run_execution_loop") as run_legacy,
+        ):
+            run_module = importlib.import_module("milknado.cli.run")
+            run_module.run(
+                project_root=project_dir,
+                strict=False,
+                allow_protected=False,
+            )
+        build_controller.assert_called_once()
+        run_tui.assert_called_once_with(
+            controller,
+            feature_branch="feature/tui",
+            strict=False,
+        )
+        run_legacy.assert_not_called()
 
     def test_run_bare_task_root_graph_skips_validation(
         self,

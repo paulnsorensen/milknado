@@ -37,9 +37,9 @@ from milknado.domains.common.protocols import (
     CrgPort,
     GitPort,
     LoopPort,
-    TerminalRunOutcome,
     ProgressEvent,
     SymbolLocation,
+    TerminalRunOutcome,
     TilthPort,
     VerifySpecResult,
 )

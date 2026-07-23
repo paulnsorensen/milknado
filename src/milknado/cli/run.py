@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -87,6 +88,10 @@ def attach(
     os.execvp(argv[0], argv)
 
 
+def _is_interactive_terminal() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
 def run(
     project_root: Annotated[
         Path, typer.Option("--project-root", help="Project root directory")
@@ -96,10 +101,12 @@ def run(
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.app.run import (
+        build_execution_controller,
         check_protected_branch,
         resolve_feature_branch,
         run_execution_loop,
     )
+    from milknado.app.run_tui import run_execution_tui
     from milknado.domains.execution import get_dispatchable_nodes
     from milknado.domains.graph import validate_runnable_roots
 
@@ -140,7 +147,17 @@ def run(
             return
 
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
-        result = run_execution_loop(graph, config, project_root, feature_branch, strict)
+        if _is_interactive_terminal():
+            controller = build_execution_controller(graph, config, project_root)
+            result = run_execution_tui(
+                controller,
+                feature_branch=feature_branch,
+                strict=strict,
+            )
+            if result is None:
+                return
+        else:
+            result = run_execution_loop(graph, config, project_root, feature_branch, strict)
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)

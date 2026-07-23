@@ -8,17 +8,23 @@ from typing import TYPE_CHECKING
 
 from textual import on, work
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Horizontal, VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp, Resize
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
-from milknado.app.run import ExecutionController
-from milknado.domains.execution import ActiveRunSnapshot, ExecutionSnapshot, RunLoopResult
+from milknado.app.run import (
+    ActiveRunSnapshot,
+    ExecutionController,
+    ExecutionSnapshot,
+    TerminalRunSnapshot,
+)
+from milknado.domains.execution import RunLoopResult
 
 if TYPE_CHECKING:
     from textual.worker import Worker
 
 WIDE_MIN_COLUMNS = 100
+RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
 
 class DetailPane(VerticalScroll):
@@ -47,7 +53,7 @@ class ExecutionApp(App[RunLoopResult | None]):
     #runs { width: 38; min-width: 30; height: 1fr; }
     #detail { width: 1fr; height: 1fr; }
     #output, #events, #actions, #help, #confirmation { margin: 0 1; }
-    #output { height: 1fr; border: round $primary; }
+    #output { height: 1fr; overflow-y: auto; border: round $primary; }
     #events { height: 5; border: round $secondary; }
     #guidance { margin: 0 1 1 1; }
     #confirmation { display: none; color: $warning; }
@@ -87,9 +93,8 @@ class ExecutionApp(App[RunLoopResult | None]):
         self.strict = strict
         self.spec_text = spec_text
         self.spec_path = spec_path
-        self.selected_run_id = (
-            self.snapshot.active_runs[0].run_id if self.snapshot.active_runs else None
-        )
+        runs = self._runs()
+        self.selected_run_id = runs[0].run_id if runs else None
         self.route = "list"
         self.compact = False
         self.auto_follow = True
@@ -103,12 +108,13 @@ class ExecutionApp(App[RunLoopResult | None]):
         with Horizontal(id="workspace"):
             yield RunTable(id="runs", cursor_type="row")
             with DetailPane(id="detail"):
-                yield Static(id="summary")
-                yield Static(id="output")
-                yield Static(id="events")
-                yield Static(id="actions")
-                yield Static(id="help")
-                yield Static(id="confirmation")
+                yield Static(id="summary", markup=False)
+                with VerticalScroll(id="output"):
+                    yield Static(id="output-text", markup=False)
+                yield Static(id="events", markup=False)
+                yield Static(id="actions", markup=False)
+                yield Static(id="help", markup=False)
+                yield Static(id="confirmation", markup=False)
                 yield Input(placeholder="Queue guidance for the selected run", id="guidance")
         yield Footer()
 
@@ -117,7 +123,6 @@ class ExecutionApp(App[RunLoopResult | None]):
         table.add_columns("Run", "Status", "Progress")
         self._ui_thread_id = get_ident()
         self._unsubscribe = self.controller.subscribe(self._receive_snapshot)
-        self._apply_snapshot(self.snapshot)
         self._set_layout(self.size.width < WIDE_MIN_COLUMNS)
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()
@@ -139,14 +144,15 @@ class ExecutionApp(App[RunLoopResult | None]):
 
     def _apply_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         self.snapshot = snapshot
-        if self.selected_run_id not in {run.run_id for run in snapshot.active_runs}:
-            self.selected_run_id = snapshot.active_runs[0].run_id if snapshot.active_runs else None
+        runs = self._runs()
+        if self.selected_run_id not in {run.run_id for run in runs}:
+            self.selected_run_id = runs[0].run_id if runs else None
         self._refresh_view()
+
     def _sync_compact_route_to_focus(self) -> None:
         focused = self.screen.focused
         if focused is not None and focused.id == "guidance":
             self.route = "detail"
-
 
     def _set_layout(self, compact: bool) -> None:
         if compact:
@@ -159,40 +165,65 @@ class ExecutionApp(App[RunLoopResult | None]):
     def _refresh_view(self) -> None:
         table = self.query_one("#runs", DataTable)
         table.clear(columns=False)
-        for run in self.snapshot.active_runs:
-            table.add_row(run.run_id, run.status.value, run.progress or "—", key=run.run_id)
+        for run in self._runs():
+            progress = run.progress if isinstance(run, ActiveRunSnapshot) else None
+            table.add_row(run.run_id, run.status.value, progress or "—", key=run.run_id)
         if self.selected_run_id is not None:
             table.move_cursor(row=self._run_index())
         selected = self._selected_run()
         self.query_one("#summary", Static).update(self._summary(selected))
-        self.query_one("#output", Static).update(self._output(selected))
+        self.query_one("#output-text", Static).update(self._output(selected))
         self.query_one("#events", Static).update(self._events())
         self.query_one("#actions", Static).update(self._actions(selected))
         self.query_one("#help", Static).update(self._help_text(selected))
+        active = selected if isinstance(selected, ActiveRunSnapshot) else None
+        self.query_one("#guidance", Input).disabled = (
+            active is None or not active.actions.can_queue_guidance
+        )
         if self.auto_follow:
-            self.query_one("#detail", VerticalScroll).scroll_end(animate=False)
+            self.query_one("#output", VerticalScroll).scroll_end(animate=False)
 
-    def _selected_run(self) -> ActiveRunSnapshot | None:
-        return next((run for run in self.snapshot.active_runs if run.run_id == self.selected_run_id), None)
+    def _runs(self) -> tuple[RunSnapshot, ...]:
+        return (*self.snapshot.active_runs, *reversed(self.snapshot.terminal_runs))
+
+    def _selected_run(self) -> RunSnapshot | None:
+        return next((run for run in self._runs() if run.run_id == self.selected_run_id), None)
+
+    def _selected_active_run(self) -> ActiveRunSnapshot | None:
+        run = self._selected_run()
+        return run if isinstance(run, ActiveRunSnapshot) else None
 
     def _run_index(self) -> int:
         return next(
-            (index for index, run in enumerate(self.snapshot.active_runs) if run.run_id == self.selected_run_id),
+            (
+                index
+                for index, run in enumerate(self._runs())
+                if run.run_id == self.selected_run_id
+            ),
             0,
         )
 
-    def _summary(self, run: ActiveRunSnapshot | None) -> str:
+    def _summary(self, run: RunSnapshot | None) -> str:
+        totals = (
+            f"{self.snapshot.completed} complete · {self.snapshot.failed} failed · "
+            f"{self.snapshot.stopped} stopped"
+        )
         if run is None:
-            return f"{self.snapshot.goal}\nNo active runs."
-        stopping = " (stopping)" if run.stop_requested else ""
-        pending = ", ".join(run.pending_guidance) or "none"
+            return f"{self.snapshot.goal} · {totals}\nNo runs."
+        guidance = ", ".join(run.pending_guidance) or "none"
+        if isinstance(run, ActiveRunSnapshot):
+            stopping = " (stopping)" if run.stop_requested else ""
+            status = f"{run.status.value}{stopping} · {run.progress or 'progress unavailable'}"
+            guidance_label = "Pending guidance"
+        else:
+            status = run.status.value
+            guidance_label = "Undelivered guidance"
         return (
-            f"{self.snapshot.goal} · node {run.node_id}\n{run.description}\n"
-            f"{run.status.value}{stopping} · {run.progress or 'progress unavailable'}\n"
-            f"Pending guidance: {pending}"
+            f"{self.snapshot.goal} · {totals} · node {run.node_id}\n{run.description}\n"
+            f"{status}\n{guidance_label}: {guidance}"
         )
 
-    def _output(self, run: ActiveRunSnapshot | None) -> str:
+    def _output(self, run: RunSnapshot | None) -> str:
         lines = "\n".join(run.output) if run and run.output else "No output yet."
         suffix = "following newest output" if self.auto_follow else "paused; press r to resume"
         return f"Output ({suffix})\n{lines}"
@@ -201,26 +232,27 @@ class ExecutionApp(App[RunLoopResult | None]):
         events = "\n".join(self.snapshot.event_lines) or "No events yet."
         return f"Events\n{events}"
 
-    def _actions(self, run: ActiveRunSnapshot | None) -> str:
+    def _actions(self, run: RunSnapshot | None) -> str:
         if run is None:
             return "Actions\nNo run selected."
-        reasons = dict(run.unavailable_action_reasons)
-        force = "available" if run.force_stop_available else reasons.get("force_stop", "unavailable")
-        cancel = reasons.get("cancel", "available")
-        guidance = reasons.get("guidance", "available")
+        if not isinstance(run, ActiveRunSnapshot):
+            return "Actions\nRun has stopped; output retained for inspection."
+        actions = run.actions
+        force = actions.force_stop_reason or "available"
+        cancel = actions.cancel_reason or "available"
+        guidance = actions.guidance_reason or "available"
         return f"Actions\n[c] Cancel: {cancel}\n[f] Force stop: {force}\n[g] Guidance: {guidance}"
 
-    def _help_text(self, run: ActiveRunSnapshot | None) -> str:
+    def _help_text(self, run: RunSnapshot | None) -> str:
         actions = ["↑/↓ select", "h close help", "q quit"]
         if self.compact:
             actions.append("enter open" if self.route == "list" else "escape back")
-        if run is not None:
-            reasons = dict(run.unavailable_action_reasons)
-            if "guidance" not in reasons:
+        if isinstance(run, ActiveRunSnapshot):
+            if run.actions.can_queue_guidance:
                 actions.append("g queue guidance")
-            if "cancel" not in reasons:
+            if run.actions.can_cancel:
                 actions.append("c cancel")
-            if run.force_stop_available:
+            if run.actions.can_force_stop:
                 actions.append("f force stop")
         if not self.auto_follow:
             actions.append("r resume output")
@@ -229,10 +261,13 @@ class ExecutionApp(App[RunLoopResult | None]):
     def _set_confirmation(self, action: str, run_id: str | None) -> None:
         self._confirmation = (action, run_id)
         count = len(self.snapshot.active_runs)
+        run_label = "active run" if count == 1 else "active runs"
         message = (
             f"Force stop {run_id}? [y] confirm [n] cancel"
             if action == "force"
-            else f"Quit and cancel {count} active run{'s' if count != 1 else ''}? [y] confirm [n] cancel"
+            else (
+                f"Stop scheduling and gracefully stop {count} {run_label}? [y] confirm [n] cancel"
+            )
         )
         confirmation = self.query_one("#confirmation", Static)
         confirmation.update(message)
@@ -255,8 +290,8 @@ class ExecutionApp(App[RunLoopResult | None]):
     def submit_guidance(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         self.set_focus(None)
-        run = self._selected_run()
-        if text and run is not None:
+        run = self._selected_active_run()
+        if text and run is not None and run.actions.can_queue_guidance:
             self._queue_guidance(run.run_id, text)
 
     @work(thread=True, group="execution", exclusive=True)
@@ -278,7 +313,9 @@ class ExecutionApp(App[RunLoopResult | None]):
         if accepted:
             self.call_from_thread(self._clear_guidance_if_unchanged, text)
         else:
-            self.call_from_thread(self.notify, "This run no longer accepts guidance.", severity="warning")
+            self.call_from_thread(
+                self.notify, "This run no longer accepts guidance.", severity="warning"
+            )
 
     def _clear_guidance_if_unchanged(self, submitted: str) -> None:
         guidance = self.query_one("#guidance", Input)
@@ -302,7 +339,9 @@ class ExecutionApp(App[RunLoopResult | None]):
                 raise
             return
         if not completed:
-            self.call_from_thread(self.notify, "Force-stop cleanup did not finish in time.", severity="warning")
+            self.call_from_thread(
+                self.notify, "Force-stop cleanup did not finish in time.", severity="warning"
+            )
 
     @work(thread=True, group="controls", exclusive=False)
     def _stop_scheduling(self) -> None:
@@ -319,11 +358,10 @@ class ExecutionApp(App[RunLoopResult | None]):
         self._move_selection(1)
 
     def _move_selection(self, offset: int) -> None:
-        if not self.snapshot.active_runs:
+        runs = self._runs()
+        if not runs:
             return
-        self.selected_run_id = self.snapshot.active_runs[
-            (self._run_index() + offset) % len(self.snapshot.active_runs)
-        ].run_id
+        self.selected_run_id = runs[(self._run_index() + offset) % len(runs)].run_id
         self._refresh_view()
 
     def action_open_detail(self) -> None:
@@ -341,17 +379,18 @@ class ExecutionApp(App[RunLoopResult | None]):
             self.query_one("#help", Static).remove_class("visible")
 
     def action_focus_guidance(self) -> None:
-        if self._selected_run() is not None:
+        run = self._selected_active_run()
+        if run is not None and run.actions.can_queue_guidance:
             self.query_one("#guidance", Input).focus()
 
     def action_cancel(self) -> None:
-        run = self._selected_run()
-        if run is not None and "cancel" not in dict(run.unavailable_action_reasons):
+        run = self._selected_active_run()
+        if run is not None and run.actions.can_cancel:
             self._cancel(run.run_id)
 
     def action_force(self) -> None:
-        run = self._selected_run()
-        if run is not None and run.force_stop_available:
+        run = self._selected_active_run()
+        if run is not None and run.actions.can_force_stop:
             self._set_confirmation("force", run.run_id)
 
     def action_resume_output(self) -> None:

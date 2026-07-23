@@ -245,3 +245,100 @@ def test_ancestor_claim_refuses_foreign_pid(graph: MikadoGraph) -> None:
     assert graph.claim_goal(goal.id, "run-a", now="now", pid=os.getpid())
     with pytest.raises(ValueError, match="ancestor goal"):
         graph.claim_ancestor_goal(task.id, "run-b", 456, now="now")
+
+
+def test_execution_overview_returns_one_public_atomic_projection(graph: MikadoGraph) -> None:
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    first = graph.add_node("first", parent_id=goal.id)
+    second = graph.add_node("second", parent_id=goal.id)
+
+    assert graph.get_execution_overview([goal.id, first.id, 999]) == (
+        "goal",
+        {goal.id: "goal", first.id: "first"},
+        2,
+    )
+    assert graph.get_execution_overview([second.id], excluded_node_ids=[first.id]) == (
+        "goal",
+        {second.id: "second"},
+        1,
+    )
+    assert not hasattr(graph, "read_locked")
+
+
+def test_execution_overview_holds_one_lock_across_projection(
+    graph: MikadoGraph, monkeypatch
+) -> None:
+    from milknado.domains.execution import executor
+    from milknado.domains.graph import _reads
+
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    task = graph.add_node("task", parent_id=goal.id)
+    original_get_root = _reads.get_root
+    original_get_nodes = _reads.get_nodes
+    observed = []
+
+    def locked_get_root(conn):
+        observed.append(("root", graph._lock._is_owned()))
+        return original_get_root(conn)
+
+    def locked_get_nodes(conn, node_ids):
+        observed.append(("nodes", graph._lock._is_owned()))
+        return original_get_nodes(conn, node_ids)
+
+    def locked_get_dispatchable_nodes(_graph):
+        observed.append(("available", graph._lock._is_owned()))
+        return [task.id]
+
+    monkeypatch.setattr(_reads, "get_root", locked_get_root)
+    monkeypatch.setattr(_reads, "get_nodes", locked_get_nodes)
+    monkeypatch.setattr(executor, "get_dispatchable_nodes", locked_get_dispatchable_nodes)
+
+    assert graph.get_execution_overview([task.id]) == (
+        "goal",
+        {task.id: "task"},
+        1,
+    )
+    assert observed == [("root", True), ("nodes", True), ("available", True)]
+
+
+def test_execution_overview_uses_one_cross_connection_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from milknado.domains.graph import _reads
+
+    db_path = tmp_path / "overview.db"
+    reader = MikadoGraph(db_path)
+    writer = MikadoGraph(db_path)
+    try:
+        goal = reader.add_node("before", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = reader.add_node("task", parent_id=goal.id)
+        original_get_nodes = _reads.get_nodes
+
+        def update_between_reads(conn, node_ids):
+            writer.update_node(goal.id, description="after")
+            writer.add_node("new task", parent_id=goal.id)
+            return original_get_nodes(conn, node_ids)
+
+        monkeypatch.setattr(_reads, "get_nodes", update_between_reads)
+
+        assert reader.get_execution_overview([goal.id, task.id]) == (
+            "before",
+            {goal.id: "before", task.id: "task"},
+            1,
+        )
+        assert writer.get_root().description == "after"
+    finally:
+        reader.close()
+        writer.close()
+
+
+def test_inherited_analytics_operations_hold_graph_lock(graph: MikadoGraph, monkeypatch) -> None:
+    from milknado.domains.graph import _analytics_facade
+
+    def locked_get_spec_hash(_conn):
+        assert graph._lock._is_owned()
+        return "locked"
+
+    monkeypatch.setattr(_analytics_facade, "get_spec_hash", locked_get_spec_hash)
+
+    assert graph.get_spec_hash() == "locked"

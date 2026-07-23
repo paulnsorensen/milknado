@@ -4,10 +4,12 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop.display import _summarize_description
-from milknado.domains.common import TerminalRunOutcome
+from milknado.domains.execution.run_loop.state import TerminalRunState
+from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
     from rich.live import Live
@@ -20,12 +22,13 @@ def handle_completion(
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,
-    live: Live,
+    live: Live | None,
 ) -> tuple[int, int, list[RebaseConflict]]:
     completed = failed = 0
     conflicts: list[RebaseConflict] = []
 
     node_id = loop._active.pop(run_id)
+    loop._progress_by_run.pop(run_id, None)
     if loop._input.overlay_state == run_id:
         loop._input.overlay_state = None
     node = loop._graph.get_node(node_id)
@@ -39,10 +42,11 @@ def handle_completion(
             redispatch = result.redispatch
             loop._active[redispatch.run_id] = node_id
             loop._dispatched_at[redispatch.run_id] = time.monotonic()
-            live.console.print(
-                f"[yellow]↻[/yellow] [{node_id}] {desc} — "
-                "adversarial review requested another round"
-            )
+            if live is not None:
+                live.console.print(
+                    f"[yellow]↻[/yellow] [{node_id}] {desc} — "
+                    "adversarial review requested another round"
+                )
             _logger.info(
                 "node_review_redispatch node_id=%d run_id=%s",
                 node_id,
@@ -52,7 +56,8 @@ def handle_completion(
             return completed, failed, conflicts
         loop._completion_durations.append(duration)
         if getattr(result, "blocked", False):
-            live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
+            if live is not None:
+                live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
             _logger.warning("node_review_blocked node_id=%d", node_id)
             loop._logs.append(f"[{ts()}] ■ node {node_id} review blocked")
             loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
@@ -62,7 +67,8 @@ def handle_completion(
         elif getattr(result, "rebase_conflict", None):
             conflicts.append(result.rebase_conflict)
             files = ", ".join(result.rebase_conflict.conflicting_files)
-            live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")
+            if live is not None:
+                live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")
             _logger.warning(
                 "node_conflict node_id=%d files=%s",
                 node_id,
@@ -74,18 +80,40 @@ def handle_completion(
                 loop._failure_triggered = True
             failed += 1
         else:
-            live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
+            if live is not None:
+                live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
             loop._logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
     elif outcome == "stopped":
+        output = tuple(loop._ralph.get_run_output_tail(run_id, 30))
+        pending_guidance = tuple(loop._ralph.get_run_guidance(run_id))
         loop._executor.cancel(node_id)
         loop._stopped_nodes.add(node_id)
-        live.console.print(f"[yellow]■[/yellow] [{node_id}] {desc} — stopped")
+        loop._stopped += 1
+        loop._terminal_runs.append(
+            TerminalRunState(
+                run_id=run_id,
+                node_id=node_id,
+                description=desc,
+                status=RunStatus.STOPPED,
+                output=output,
+                pending_guidance=pending_guidance,
+            )
+        )
+        if live is not None:
+            live.console.print(f"[yellow]■[/yellow] [{node_id}] {desc} — stopped")
+        _logger.info(
+            "node_stopped node_id=%d run_id=%s duration=%.1fs",
+            node_id,
+            run_id,
+            duration,
+        )
         loop._logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
         loop._executor.fail(node_id)
-        live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
+        if live is not None:
+            live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
         _logger.warning("node_failed node_id=%d", node_id)
         loop._logs.append(f"[{ts()}] ✗ node {node_id} failed")
         loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1

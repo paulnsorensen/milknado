@@ -569,10 +569,9 @@ def _run_iteration(
     if state.status is RunStatus.STOPPED:
         return False, promise_would_complete
 
-
     if not agent_succeeded and config.stop_on_error:
-        state.status = RunStatus.FAILED
-        emit.log_error("Stopping due to --stop-on-error.")
+        if state.try_commit_failure():
+            emit.log_error("Stopping due to --stop-on-error.")
         return False, promise_would_complete
 
     return True, promise_would_complete
@@ -634,8 +633,7 @@ def run_loop(
 
             if config.max_iterations is not None and state.iteration >= config.max_iterations:
                 state.close_guidance()
-                if verifier_rejected:
-                    state.status = RunStatus.FAILED
+                if verifier_rejected and state.try_commit_failure():
                     emit.log_error(
                         "Completion verifier never accepted within the "
                         f"{config.max_iterations}-iteration budget."
@@ -647,10 +645,14 @@ def run_loop(
                 config, state, emit, hooks, pending_feedback
             )
             pending_feedback = None
+            if state.stop_requested:
+                state.status = RunStatus.STOPPED
+                break
             if promise_would_complete:
                 verdict = config.completion_verifier() if config.completion_verifier else None
                 if (verdict is None or verdict.ok) and state.try_commit_soft_completion():
-                    state.status = RunStatus.COMPLETED
+                    break
+                if state.status is RunStatus.STOPPED:
                     break
                 if verdict is not None and not verdict.ok:
                     verifier_rejected = True
@@ -664,12 +666,12 @@ def run_loop(
     except KeyboardInterrupt:
         state.status = RunStatus.STOPPED
     except Exception as exc:
-        state.status = RunStatus.FAILED
-        tb = traceback.format_exc()
-        emit.log_error(f"Run crashed: {exc}", traceback=tb)
+        if state.try_commit_failure():
+            tb = traceback.format_exc()
+            emit.log_error(f"Run crashed: {exc}", traceback=tb)
 
     if state.status == RunStatus.RUNNING:
-        state.status = RunStatus.COMPLETED
+        state.try_commit_completion()
     state.close_guidance()
 
     emit(

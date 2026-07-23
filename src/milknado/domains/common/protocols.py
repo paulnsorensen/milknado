@@ -134,7 +134,6 @@ class LoopPort(Protocol):
         worktree: Path,
         project_root: Path,
     ) -> Any: ...
-    def poll_progress_events(self) -> list[ProgressEvent]: ...
     def verify_spec(
         self,
         spec_text: str,

@@ -1,54 +1,65 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from inspect import getsource
 from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, get_ident
-from time import sleep, monotonic
+from time import monotonic, sleep
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
-from milknado.app.run import ExecutionController, build_execution_controller
+from milknado.app.run import (
+    ActiveRunSnapshot,
+    ExecutionController,
+    ExecutionRunStatus,
+    ExecutionSnapshot,
+    RunActionAvailability,
+    build_execution_controller,
+)
 from milknado.domains.common import MilknadoConfig
-from milknado.domains.execution import ActiveRunSnapshot, ExecutionConfig, ExecutionSnapshot
+from milknado.domains.execution import ExecutionConfig
+from milknado.domains.execution.run_loop.state import (
+    ActiveRunState,
+    RunActionState,
+    RunLoopState,
+)
 from milknado.loop import RunStatus
 
 
 @dataclass
 class FakeLoop:
-    current_snapshot: ExecutionSnapshot
+    current_state: RunLoopState
 
     def __post_init__(self) -> None:
-        self.listeners: list[object] = []
+        self.listener: object | None = None
         self.run_calls: list[dict[str, object]] = []
         self.guidance: list[tuple[str, str]] = []
         self.cancelled: list[str] = []
         self.force_stops: list[tuple[str, float]] = []
         self.stop_scheduling_calls = 0
 
-    def snapshot(self) -> ExecutionSnapshot:
-        return self.current_snapshot
+    def state(self) -> RunLoopState:
+        return self.current_state
 
     def stop_scheduling(self) -> None:
         self.stop_scheduling_calls += 1
+
     def admit_stop_scheduling(self) -> None:
         pass
 
-
+    def set_state_listener(self, listener: object) -> None:
+        self.listener = listener
 
     def run(self, **kwargs: object) -> str:
         self.run_calls.append(kwargs)
         return "result"
 
-    def subscribe(self, listener: object) -> object:
-        self.listeners.append(listener)
-
-        def unsubscribe() -> None:
-            self.listeners.remove(listener)
-
-        return unsubscribe
+    def publish(self, state: RunLoopState) -> None:
+        self.current_state = state
+        assert callable(self.listener)
+        self.listener(state)
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
         self.guidance.append((run_id, text))
@@ -62,6 +73,31 @@ class FakeLoop:
         return True
 
 
+def loop_state(*, output: tuple[str, ...] = ("last line",)) -> RunLoopState:
+    return RunLoopState(
+        goal="Ship controller",
+        active_runs=(
+            ActiveRunState(
+                run_id="run-1",
+                node_id=7,
+                description="Build snapshots",
+                status=RunStatus.RUNNING,
+                progress="1/2",
+                stop_requested=False,
+                actions=RunActionState(cancel_reason="already stopping"),
+                output=output,
+                pending_guidance=("use domain barrels",),
+            ),
+        ),
+        terminal_runs=(),
+        completed=3,
+        failed=1,
+        stopped=0,
+        available=2,
+        event_lines=("dispatched run-1",),
+    )
+
+
 def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
     return ExecutionSnapshot(
         goal="Ship controller",
@@ -70,30 +106,32 @@ def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
                 run_id="run-1",
                 node_id=7,
                 description="Build snapshots",
-                status=RunStatus.RUNNING,
+                status=ExecutionRunStatus.RUNNING,
                 progress="1/2",
                 stop_requested=False,
-                force_stop_available=True,
-                unavailable_action_reasons=(("cancel", "already stopping"),),
+                actions=RunActionAvailability(cancel_reason="already stopping"),
                 output=output,
                 pending_guidance=("use domain barrels",),
             ),
         ),
+        terminal_runs=(),
         completed=3,
         failed=1,
+        stopped=0,
         available=2,
         event_lines=("dispatched run-1",),
     )
 
 
 def test_controller_delegates_run_and_control_ports() -> None:
-    loop = FakeLoop(snapshot())
+    loop = FakeLoop(loop_state())
     controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
 
     assert controller.run(feature_branch="feature", strict=True, spec_text="spec") == "result"
     assert len(loop.run_calls) == 1
     run_call = loop.run_calls[0]
-    assert callable(run_call.pop("process_controls"))
+    process_controls = run_call.pop("process_controls")
+    assert callable(process_controls)
     assert run_call == {
         "config": None,
         "feature_branch": "feature",
@@ -101,6 +139,7 @@ def test_controller_delegates_run_and_control_ports() -> None:
         "strict": True,
         "spec_text": "spec",
         "spec_path": None,
+        "interactive": False,
     }
     assert controller.queue_guidance("run-1", "accepted") is True
     assert controller.queue_guidance("run-1", "rejected") is False
@@ -114,19 +153,57 @@ def test_controller_delegates_run_and_control_ports() -> None:
 
 
 def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes() -> None:
-    loop = FakeLoop(snapshot())
+    loop = FakeLoop(loop_state())
     controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
     received: list[ExecutionSnapshot] = []
 
     unsubscribe = controller.subscribe(received.append)
-    listener = loop.listeners[0]
-    assert callable(listener)
-    listener(snapshot(output=("new line",)))
+    loop.publish(loop_state(output=("new line",)))
     unsubscribe()
-
+    loop.publish(loop_state(output=("ignored",)))
     assert received == [snapshot(), snapshot(output=("new line",))]
-    assert loop.listeners == []
     assert received[1].active_runs[0].output == ("new line",)
+
+
+def test_controller_snapshot_reads_the_latest_projected_state() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
+
+    loop.publish(loop_state(output=("replacement",)))
+
+    assert controller.snapshot() == snapshot(output=("replacement",))
+
+
+def test_controller_listener_failure_does_not_block_other_listeners(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
+    received: list[ExecutionSnapshot] = []
+
+    listener_calls = 0
+
+    def failing_listener(_snapshot: ExecutionSnapshot) -> None:
+        nonlocal listener_calls
+        listener_calls += 1
+        if listener_calls > 1:
+            raise RuntimeError("listener failed")
+
+    controller.subscribe(failing_listener)
+    controller.subscribe(received.append)
+    loop.publish(loop_state(output=("replacement",)))
+
+    assert received[-1] == snapshot(output=("replacement",))
+    assert "failing_listener" in caplog.text
+
+
+def test_controller_reraises_execution_failure() -> None:
+    loop = FakeLoop(loop_state())
+    loop.run = MagicMock(side_effect=RuntimeError("worker failed"))  # type: ignore[method-assign]
+    controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
+
+    with pytest.raises(RuntimeError, match="worker failed"):
+        controller.run(feature_branch="feature")
 
 
 def test_controller_builder_composes_runtime_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,7 +220,7 @@ def test_controller_builder_composes_runtime_dependencies(monkeypatch: pytest.Mo
     class FakeRunLoop(FakeLoop):
         def __init__(self, **kwargs: object) -> None:
             constructed["loop"] = kwargs
-            super().__init__(snapshot())
+            super().__init__(loop_state())
 
     monkeypatch.setattr(adapters, "GitAdapter", lambda root: ("git", root))
     monkeypatch.setattr(adapters, "CrgAdapter", lambda root: ("crg", root))
@@ -173,18 +250,19 @@ def test_controller_builder_composes_runtime_dependencies(monkeypatch: pytest.Mo
     assert controller._concurrency_limit == 3
 
 
-def test_controller_is_ui_neutral() -> None:
-    import milknado.app.run as run_module
-
-    assert "textual" not in getsource(run_module).lower()
-
-
 class ThreadBoundLoop:
     def __init__(self, graph: Any) -> None:
         self._graph = graph
         self.started = Event()
         self.release = Event()
         self.calls: list[tuple[str, int]] = []
+        self.listener: object | None = None
+
+    def state(self) -> RunLoopState:
+        return loop_state()
+
+    def set_state_listener(self, listener: object) -> None:
+        self.listener = listener
 
     def run(self, *, process_controls: Any = None, **_kwargs: object) -> str:
         self.calls.append(("run", get_ident()))
@@ -212,8 +290,9 @@ class ThreadBoundLoop:
     def admit_stop_scheduling(self) -> None:
         pass
 
-    def subscribe(self, _listener: object) -> object:
-        return lambda: None
+    def publish(self, state: RunLoopState) -> None:
+        assert callable(self.listener)
+        self.listener(state)
 
 
 def test_controller_marshals_run_and_controls_to_one_graph_safe_thread(
@@ -239,11 +318,35 @@ def test_controller_marshals_run_and_controls_to_one_graph_safe_thread(
     assert result == ["result"]
     assert {thread_id for _, thread_id in loop.calls} == {loop.calls[0][1]}
 
+
+def test_controller_rejects_a_second_concurrent_run(graph: Any) -> None:
+    graph.add_node("root")
+    loop = ThreadBoundLoop(graph)
+    controller = ExecutionController(loop, cast(ExecutionConfig, None), cast(int, None))
+    runner = Thread(target=lambda: controller.run(feature_branch="feature"))
+    runner.start()
+    assert loop.started.wait(timeout=1)
+
+    with pytest.raises(RuntimeError, match="already running"):
+        controller.run(feature_branch="feature")
+
+    loop.release.set()
+    runner.join(timeout=1)
+    assert not runner.is_alive()
+
+
 class StopAdmissionLoop:
     def __init__(self) -> None:
         self.started = Event()
         self.admitted = Event()
         self.stopped = Event()
+        self.listener: object | None = None
+
+    def state(self) -> RunLoopState:
+        return loop_state()
+
+    def set_state_listener(self, listener: object) -> None:
+        self.listener = listener
 
     def run(self, *, process_controls: Any = None, **_kwargs: object) -> str:
         self.started.set()
@@ -275,7 +378,6 @@ def test_controller_admits_stop_before_queuing_control() -> None:
     assert not stop.is_alive()
     assert result == ["result"]
     assert loop.stopped.is_set()
-
 
 
 class _ShutdownGateQueue(Queue[Any]):

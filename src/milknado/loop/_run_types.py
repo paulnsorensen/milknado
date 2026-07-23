@@ -205,13 +205,34 @@ class RunState:
         with self._guidance_lock:
             return tuple(self._guidance)
 
+    def _try_commit_completion(self, *, require_empty_guidance: bool) -> bool:
+        if self._stop_event.is_set() or self._force_stop_event.is_set():
+            self.status = RunStatus.STOPPED
+            return False
+        if require_empty_guidance and self._guidance:
+            return False
+        self._guidance_open = False
+        self.status = RunStatus.COMPLETED
+        return True
 
     def try_commit_soft_completion(self) -> bool:
-        """Commit soft completion unless admitted guidance requires one more turn."""
+        """Atomically commit soft completion unless guidance or a stop won first."""
         with self._guidance_lock:
-            if self._guidance:
+            return self._try_commit_completion(require_empty_guidance=True)
+
+    def try_commit_completion(self) -> bool:
+        """Atomically commit terminal completion unless a stop won first."""
+        with self._guidance_lock:
+            return self._try_commit_completion(require_empty_guidance=False)
+
+    def try_commit_failure(self) -> bool:
+        """Atomically commit failure unless a stop won first."""
+        with self._guidance_lock:
+            if self._stop_event.is_set() or self._force_stop_event.is_set():
+                self.status = RunStatus.STOPPED
                 return False
             self._guidance_open = False
+            self.status = RunStatus.FAILED
             return True
 
     def close_guidance(self) -> None:
@@ -224,14 +245,15 @@ class RunState:
         return self._force_stop_event.is_set()
 
     def request_force_stop(self) -> None:
-        self.close_guidance()
-        self._force_stop_event.set()
-        self.request_stop()
+        with self._guidance_lock:
+            self._guidance_open = False
+            self._force_stop_event.set()
+            self._stop_event.set()
+            self._resume_event.set()
 
     @property
     def force_stop_event(self) -> threading.Event:
         return self._force_stop_event
-
 
     @property
     def total(self) -> int:
@@ -240,10 +262,12 @@ class RunState:
 
     def __post_init__(self) -> None:
         self._resume_event.set()
+
     def request_stop(self) -> None:
-        self.close_guidance()
-        self._stop_event.set()
-        self._resume_event.set()
+        with self._guidance_lock:
+            self._guidance_open = False
+            self._stop_event.set()
+            self._resume_event.set()
 
     def request_pause(self) -> None:
         self.status = RunStatus.PAUSED

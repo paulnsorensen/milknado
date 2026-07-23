@@ -6,9 +6,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from milknado.loop import RunStatus
-
-
 if TYPE_CHECKING:
     from rich.layout import Layout
     from rich.panel import Panel
@@ -33,34 +30,6 @@ class TuiState:
     stall_threshold: float
     max_retries: int
     exec_agent: str
-
-
-@dataclass(frozen=True, slots=True)
-class ActiveRunSnapshot:
-    """Bounded immutable read model for one active agent run."""
-
-    run_id: str
-    node_id: int
-    description: str
-    status: RunStatus
-    progress: str | None
-    stop_requested: bool
-    force_stop_available: bool
-    unavailable_action_reasons: tuple[tuple[str, str], ...]
-    output: tuple[str, ...]
-    pending_guidance: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionSnapshot:
-    """Bounded immutable read model published to execution observers."""
-
-    goal: str
-    active_runs: tuple[ActiveRunSnapshot, ...]
-    completed: int
-    failed: int
-    available: int
-    event_lines: tuple[str, ...]
 
 
 @dataclass(frozen=True)

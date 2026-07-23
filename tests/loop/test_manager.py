@@ -1,5 +1,6 @@
 """Tests for the multi-run manager."""
 
+import sys
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -7,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.loop._events import EventType, FanoutEmitter, QueueEmitter
-from milknado.loop._run_types import RUN_ID_LENGTH, RunResult, RunStatus
+from milknado.loop._run_types import RUN_ID_LENGTH, CompletionVerdict, RunResult, RunStatus
 from milknado.loop.manager import ManagedRun, RunManager
 from tests.loop.helpers import MOCK_SUBPROCESS, drain_events, event_types, make_config, ok_proc
 
@@ -138,6 +139,11 @@ class TestRunManagerInvalidRunId:
         with pytest.raises(KeyError, match="No run with ID 'nonexistent'"):
             manager.resume_run("nonexistent")
 
+    def test_queue_guidance_raises_key_error_for_unknown_id(self):
+        manager = RunManager()
+        with pytest.raises(KeyError, match="No run with ID 'nonexistent'"):
+            manager.queue_guidance("nonexistent", "check this")
+
 
 class TestRunManagerStopRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
@@ -155,6 +161,77 @@ class TestRunManagerStopRun:
         managed.thread.join(timeout=5)
 
         assert managed.state.status == RunStatus.STOPPED
+
+    @patch("milknado.loop.engine._run_iteration")
+    def test_graceful_stop_wins_before_soft_completion(self, mock_iteration, tmp_path):
+        verifier = MagicMock()
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path, completion_verifier=verifier))
+
+        def simultaneous_stop(_config, state, *_args):
+            state.mark_completed()
+            state.request_stop()
+            return False, True
+
+        mock_iteration.side_effect = simultaneous_stop
+        manager.start_run(managed.state.run_id)
+        assert managed.thread is not None
+        managed.thread.join(timeout=1)
+
+        assert not managed.thread.is_alive()
+        assert managed.state.status is RunStatus.STOPPED
+        assert managed.state.completed == 1
+        verifier.assert_not_called()
+
+    @patch("milknado.loop.engine._run_iteration", return_value=(True, True))
+    def test_graceful_stop_wins_while_completion_verifier_is_running(
+        self, _mock_iteration, tmp_path
+    ):
+        verifier_started = threading.Event()
+        release_verifier = threading.Event()
+
+        def blocking_verifier():
+            verifier_started.set()
+            assert release_verifier.wait(timeout=1)
+            return CompletionVerdict(ok=True, feedback="")
+
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path, completion_verifier=blocking_verifier))
+        manager.start_run(managed.state.run_id)
+        assert verifier_started.wait(timeout=1)
+
+        manager.stop_run(managed.state.run_id)
+        release_verifier.set()
+        assert managed.thread is not None
+        managed.thread.join(timeout=1)
+
+        assert not managed.thread.is_alive()
+        assert managed.state.status is RunStatus.STOPPED
+
+    @patch("milknado.loop.engine._run_iteration", return_value=(True, True))
+    def test_graceful_stop_wins_when_blocked_completion_verifier_raises(
+        self, _mock_iteration, tmp_path
+    ):
+        verifier_started = threading.Event()
+        release_verifier = threading.Event()
+
+        def failing_verifier():
+            verifier_started.set()
+            assert release_verifier.wait(timeout=1)
+            raise RuntimeError("verifier failed")
+
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path, completion_verifier=failing_verifier))
+        manager.start_run(managed.state.run_id)
+        assert verifier_started.wait(timeout=1)
+
+        manager.stop_run(managed.state.run_id)
+        release_verifier.set()
+        assert managed.thread is not None
+        managed.thread.join(timeout=1)
+
+        assert not managed.thread.is_alive()
+        assert managed.state.status is RunStatus.STOPPED
 
     def test_stop_and_join_without_started_thread_proves_exit(self, tmp_path) -> None:
         manager = RunManager()
@@ -212,7 +289,6 @@ class TestRunManagerPauseResume:
         assert managed.state.completed == 3
 
 
-
 class TestRunManagerForceStop:
     def test_force_stop_closes_guidance_and_reports_unstarted_cleanup(self, tmp_path):
         manager = RunManager()
@@ -223,6 +299,56 @@ class TestRunManagerForceStop:
         assert managed.state.force_stop_requested is True
         assert managed.state.take_guidance() == ("stop after this turn",)
         assert managed.state.queue_guidance("later") is False
+
+    def test_public_queue_guidance_delegates_to_run_state(self, tmp_path):
+        manager = RunManager()
+        managed = manager.create_run(make_config(tmp_path))
+
+        assert manager.queue_guidance(managed.state.run_id, "check the output") is True
+        assert managed.state.pending_guidance == ("check the output",)
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+    def test_force_stop_reaps_live_worker_tree_and_classifies_stopped(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)
+        ready = tmp_path / "child-ready"
+        stopped = tmp_path / "child-stopped"
+        script = tmp_path / "worker.py"
+        script.write_text(
+            "import subprocess, sys, time\n"
+            "child = '''import os, signal, sys, time\\n"
+            "from pathlib import Path\\n"
+            "def stop(*_):\\n"
+            "    Path(sys.argv[2]).write_text('stopped')\\n"
+            "    raise SystemExit(0)\\n"
+            "signal.signal(signal.SIGTERM, stop)\\n"
+            "Path(sys.argv[1]).write_text(str(os.getpid()))\\n"
+            "while True: time.sleep(1)\\n'''\n"
+            "subprocess.Popen([sys.executable, '-c', child, sys.argv[1], sys.argv[2]])\n"
+            "while True: time.sleep(1)\n",
+            encoding="utf-8",
+        )
+        manager = RunManager()
+        managed = manager.create_run(
+            make_config(
+                tmp_path,
+                agent=f"{sys.executable} {script} {ready} {stopped}",
+                max_iterations=1,
+            )
+        )
+        manager.start_run(managed.state.run_id)
+
+        deadline = time.monotonic() + 5
+        while not ready.exists() and time.monotonic() < deadline:
+            managed.state.wait_for_stop(timeout=0.01)
+        assert ready.exists(), "descendant never reached its controllable ready point"
+
+        assert manager.force_stop_and_join(managed.state.run_id, timeout=5) is True
+        assert managed.thread is not None
+        assert not managed.thread.is_alive()
+        assert managed.state.status is RunStatus.STOPPED
+        assert managed.state.completed == 0
+        assert stopped.read_text(encoding="utf-8") == "stopped"
+
 
 class TestRunManagerListAndGet:
     def test_list_runs_returns_all_runs(self, tmp_path):

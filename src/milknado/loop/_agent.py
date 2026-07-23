@@ -15,6 +15,7 @@ Two execution modes are supported:
 
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import os
@@ -44,6 +45,13 @@ from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
 
 _log = logging.getLogger(__name__)
+if IS_WINDOWS:
+    SESSION_KWARGS = {
+        **SESSION_KWARGS,
+        "creationflags": SESSION_KWARGS.get("creationflags", 0)
+        | getattr(subprocess, "CREATE_SUSPENDED", 0x00000004),
+    }
+
 
 _counter_write_failure_logged = False
 """Module-level latch so the wind-down counter write failure logs only once."""
@@ -107,6 +115,122 @@ _THREAD_JOIN_TIMEOUT = 5.0
 _PROCESS_WAIT_TIMEOUT = 5.0
 _OUTPUT_TAIL_CHARS = 64 * 1024
 _STREAM_QUEUE_MAX_LINES = 256
+
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+
+class _JobObjectBasicLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class _JobObjectExtendedLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _JobObjectBasicLimitInformation),
+        ("IoInfo", _IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def _load_kernel32() -> Any:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.SetInformationJobObject.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    ]
+    kernel32.SetInformationJobObject.restype = ctypes.c_int
+    kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    kernel32.AssignProcessToJobObject.restype = ctypes.c_int
+    kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+    kernel32.TerminateJobObject.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    return kernel32
+
+
+def _resume_windows_process(proc: subprocess.Popen[Any]) -> None:
+    ntdll = ctypes.WinDLL("ntdll")
+    ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
+    ntdll.NtResumeProcess.restype = ctypes.c_long
+    status = ntdll.NtResumeProcess(getattr(proc, "_handle"))
+    if status < 0:
+        raise OSError(f"NtResumeProcess failed with status {status:#x}")
+
+
+@dataclass(slots=True)
+class _WindowsJob:
+    """Kill-on-close Job Object containing one Windows agent process tree."""
+
+    handle: Any
+    kernel32: Any
+    closed: bool = False
+
+    @classmethod
+    def assign(cls, proc: subprocess.Popen[Any]) -> _WindowsJob | None:
+        if not IS_WINDOWS:
+            return None
+        kernel32 = _load_kernel32()
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise OSError("CreateJobObjectW failed")
+        job = cls(handle=handle, kernel32=kernel32)
+        info = _JobObjectExtendedLimitInformation()
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            handle,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            job.close()
+            raise OSError("SetInformationJobObject failed")
+        if not kernel32.AssignProcessToJobObject(handle, getattr(proc, "_handle")):
+            job.close()
+            raise OSError("AssignProcessToJobObject failed")
+        try:
+            _resume_windows_process(proc)
+        except Exception:
+            job.terminate()
+            raise
+        return job
+
+    def terminate(self) -> None:
+        if not self.closed:
+            self.kernel32.TerminateJobObject(self.handle, 1)
+            self.close()
+
+    def close(self) -> None:
+        if not self.closed:
+            self.kernel32.CloseHandle(self.handle)
+            self.closed = True
 
 
 @dataclass(slots=True)
@@ -263,19 +387,15 @@ def _try_graceful_group_kill(proc: subprocess.Popen[Any]) -> bool:
         return False
 
 
-def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
-    """Kill the agent process and its entire process group.
-
-    On POSIX, attempts a graceful group kill (SIGTERM → SIGKILL) via
-    :func:`_try_graceful_group_kill`.  Falls back to ``proc.kill()``
-    on Windows, when the process already exited, or if the group kill fails.
-
-    Short-circuits when ``proc.pid`` is ``None`` or non-positive — these
-    are sentinel values used by test mocks.  A non-positive pid would also
-    be dangerous to pass to ``os.getpgid`` / ``os.killpg`` (pid 0 means
-    the caller's own process group).
-    """
+def _kill_process_group(
+    proc: subprocess.Popen[Any],
+    windows_job: _WindowsJob | None = None,
+) -> None:
+    """Kill the agent process and its entire contained process tree."""
     if proc.pid is None or proc.pid <= 0:
+        return
+    if windows_job is not None:
+        windows_job.terminate()
         return
     if not IS_WINDOWS and proc.poll() is None:
         if _try_graceful_group_kill(proc):
@@ -283,22 +403,50 @@ def _kill_process_group(proc: subprocess.Popen[Any]) -> None:
     proc.kill()
 
 
-def _ensure_process_dead(proc: subprocess.Popen[Any]) -> None:
-    """Kill the agent process if still running, then wait for exit.
-
-    Safe to call multiple times — no-ops when the process has already
-    exited.  Used in ``finally`` and exception-handler blocks to
-    guarantee the child is reaped before we move on.
-
-    The wait is bounded so that a stuck process (e.g. grandchild holding
-    a session) cannot hang the CLI forever.
-    """
+def _ensure_process_dead(
+    proc: subprocess.Popen[Any],
+    windows_job: _WindowsJob | None = None,
+) -> None:
+    """Kill the contained process tree if needed, then reap the worker."""
     if proc.poll() is None:
-        _kill_process_group(proc)
+        _kill_process_group(proc, windows_job)
     try:
         proc.wait(timeout=_PROCESS_WAIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         warn(f"agent process did not exit within {_PROCESS_WAIT_TIMEOUT}s after kill")
+
+
+def _wait_for_process(
+    proc: subprocess.Popen[Any],
+    *,
+    deadline: float | None,
+    force_stop_event: threading.Event | None,
+    windows_job: _WindowsJob | None,
+    correlation: str,
+) -> tuple[int | None, bool, bool]:
+    """Interruptibly reap a worker, returning (returncode, timed_out, force_stopped)."""
+    while proc.poll() is None:
+        if force_stop_event is not None and force_stop_event.is_set():
+            _log.warning(
+                "force-stopping agent process pid=%s correlation=%s",
+                proc.pid,
+                correlation,
+            )
+            _ensure_process_dead(proc, windows_job)
+            return None, False, True
+        remaining = max(deadline - time.monotonic(), 0) if deadline is not None else 0.1
+        if deadline is not None and remaining == 0:
+            _ensure_process_dead(proc, windows_job)
+            return None, True, False
+        wait_for = min(remaining, 0.1)
+        try:
+            return proc.wait(timeout=wait_for), False, False
+        except subprocess.TimeoutExpired as exc:
+            if exc.timeout != wait_for:
+                _ensure_process_dead(proc, windows_job)
+                return None, True, False
+            continue
+    return proc.returncode, False, False
 
 
 def _close_pipes(proc: subprocess.Popen[Any]) -> None:
@@ -629,9 +777,7 @@ def _read_agent_stream(
                         state.result_text = parsed[_RESULT_FIELD]
                     _call_safely(on_activity, parsed, correlation=correlation)
             if count_tool_use and adapter is not None:
-                if _update_tool_use(
-                    state, adapter, on_tool_use, max_turns, stripped, correlation
-                ):
+                if _update_tool_use(state, adapter, on_tool_use, max_turns, stripped, correlation):
                     stop_event.set()
                     return state.to_result(timed_out=False)
         if deadline is not None and time.monotonic() > deadline:
@@ -650,6 +796,7 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     stderr_thread: threading.Thread | None = None
     pump_threads: list[threading.Thread] = []
     correlation = f"iteration={run.iteration}"
+    windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
         tail=_BoundedOutput() if capture_stdout_text else None,
@@ -672,6 +819,11 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             **SUBPROCESS_TEXT_KWARGS,
             **SESSION_KWARGS,
         )
+        try:
+            windows_job = _WindowsJob.assign(proc)
+        except Exception:
+            _ensure_process_dead(proc)
+            raise
     except Exception:
         stdout_capture.close()
         if log_sink is not None:
@@ -712,11 +864,27 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             pump_threads=pump_threads,
         )
         if stream.timed_out or stream.turn_capped or stream.force_stopped:
-            _ensure_process_dead(proc)
+            _ensure_process_dead(proc, windows_job)
         else:
-            proc.wait()
+            _, reaped_timeout, reaped_force_stop = _wait_for_process(
+                proc,
+                deadline=deadline,
+                force_stop_event=run.force_stop_event,
+                windows_job=windows_job,
+                correlation=correlation,
+            )
+            if reaped_timeout or reaped_force_stop:
+                stream = _StreamResult(
+                    stdout_lines=stream.stdout_lines,
+                    result_text=stream.result_text,
+                    timed_out=reaped_timeout,
+                    force_stopped=reaped_force_stop,
+                    tool_use_count=stream.tool_use_count,
+                    turn_capped=stream.turn_capped,
+                    completion_detected=stream.completion_detected,
+                )
     finally:
-        _cleanup_agent(proc, *pump_threads, writer_thread)
+        _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text
@@ -788,14 +956,7 @@ def _drain_readers(
     *threads: threading.Thread | None,
     timeout: float = _THREAD_JOIN_TIMEOUT,
 ) -> None:
-    """Join reader threads, skipping any that are ``None``.
-
-    Used in ``finally`` blocks to ensure background pump threads finish
-    draining before the caller continues.  Logs a warning to stderr for
-    any thread that fails to exit within the timeout — this is visible
-    feedback that a grandchild may be holding a pipe open and the log
-    may be incomplete.
-    """
+    """Join reader threads and warn if any cannot drain within the bound."""
     for thread in threads:
         if thread is not None:
             thread.join(timeout=timeout)
@@ -822,18 +983,12 @@ def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
 def _cleanup_agent(
     proc: subprocess.Popen[Any],
     *threads: threading.Thread | None,
+    windows_job: _WindowsJob | None = None,
 ) -> None:
-    """Perform the full four-step shutdown for a piped agent subprocess.
-
-    1. Kill the process if still running and wait for exit.
-    2. Close parent-side pipe fds to unblock reader threads.
-    3. Join reader/writer threads to drain remaining output.
-    4. Finalize Python pipe objects to suppress GC warnings.
-
-    Used in ``finally`` blocks of the streaming and blocking capture
-    paths, which previously duplicated this exact sequence inline.
-    """
-    _ensure_process_dead(proc)
+    """Reap the worker, release its process-tree container, and drain pipes."""
+    _ensure_process_dead(proc, windows_job)
+    if windows_job is not None:
+        windows_job.close()
     if proc.poll() is not None:
         _terminate_lingering_group(proc)
     _close_pipes(proc)
@@ -861,6 +1016,7 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     writer_thread: threading.Thread | None = None
     stdout_thread: threading.Thread | None = None
     stderr_thread: threading.Thread | None = None
+    windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
         tail=_BoundedOutput() if capture_stdout_text else None,
@@ -901,6 +1057,11 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             **SUBPROCESS_TEXT_KWARGS,
             **SESSION_KWARGS,
         )
+        try:
+            windows_job = _WindowsJob.assign(proc)
+        except Exception:
+            _ensure_process_dead(proc)
+            raise
     except Exception:
         stdout_capture.close()
         if log_sink is not None:
@@ -926,29 +1087,21 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             writer_thread = _start_writer_thread(proc, run.stdin_text)
 
         deadline = time.monotonic() + run.timeout if run.timeout is not None else None
-        while proc.poll() is None:
-            if run.force_stop_event is not None and run.force_stop_event.is_set():
-                _kill_process_group(proc)
-                force_stopped = True
-                break
-            remaining = max(deadline - time.monotonic(), 0) if deadline is not None else 0.1
-            if deadline is not None and remaining == 0:
-                _ensure_process_dead(proc)
-                timed_out = True
-                break
-            wait_for = min(remaining, 0.1)
-            try:
-                returncode = proc.wait(timeout=wait_for)
-            except subprocess.TimeoutExpired as exc:
-                if exc.timeout != wait_for:
-                    _ensure_process_dead(proc)
-                    timed_out = True
-                    break
-                continue
-        if returncode is None and not timed_out and not force_stopped:
-            returncode = proc.wait()
+        returncode, timed_out, force_stopped = _wait_for_process(
+            proc,
+            deadline=deadline,
+            force_stop_event=run.force_stop_event,
+            windows_job=windows_job,
+            correlation=f"iteration={run.iteration}",
+        )
     finally:
-        _cleanup_agent(proc, stdout_thread, stderr_thread, writer_thread)
+        _cleanup_agent(
+            proc,
+            stdout_thread,
+            stderr_thread,
+            writer_thread,
+            windows_job=windows_job,
+        )
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text

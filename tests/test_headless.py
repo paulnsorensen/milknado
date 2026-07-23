@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Literal
-import milknado.domains.execution.headless as headless
 
+import milknado.domains.execution.headless as headless
 from milknado.domains.common import ProgressEvent
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.execution import HeadlessOutcome, run_node_to_completion
@@ -55,7 +55,10 @@ class _FakeExecutor:
 
 class _FakeRalph:
     def __init__(
-        self, *, outcome: Literal["completed", "stopped", "failed"] = "completed", timeout: bool = False
+        self,
+        *,
+        outcome: Literal["completed", "stopped", "failed"] = "completed",
+        timeout: bool = False,
     ) -> None:
         self._outcome = outcome
         self._timeout = timeout
@@ -95,7 +98,9 @@ def _ok_completion(node_id: int) -> CompletionResult:
 
 def test_success_dispatches_waits_and_merges() -> None:
     ex = _FakeExecutor(completion=_ok_completion(1))
-    outcome = run_node_to_completion(ex, _FakeRalph(outcome="completed"), 1, _EXEC_CONFIG, "main", 30.0)
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="completed"), 1, _EXEC_CONFIG, "main", 30.0
+    )
     assert outcome.success is True
     assert ex.dispatched == [1]
     assert ex.completed == [1]
@@ -180,7 +185,9 @@ def test_non_completed_stops_the_ralph_run() -> None:
 
 def test_stopped_run_cancels_without_merging() -> None:
     ex = _FakeExecutor()
-    outcome = run_node_to_completion(ex, _FakeRalph(outcome="stopped"), 12, _EXEC_CONFIG, "main", 30.0)
+    outcome = run_node_to_completion(
+        ex, _FakeRalph(outcome="stopped"), 12, _EXEC_CONFIG, "main", 30.0
+    )
 
     assert outcome == HeadlessOutcome(12, success=False, detail="worker run stopped")
     assert ex.completed == []
@@ -197,6 +204,7 @@ def test_progress_event_waits_for_terminal_outcome_before_merging() -> None:
     assert outcome.success is True
     assert ralph.waits == 2
     assert ex.completed == [13]
+
 
 def test_progress_event_uses_remaining_completion_deadline(
     monkeypatch,
