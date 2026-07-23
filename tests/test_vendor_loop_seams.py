@@ -159,7 +159,6 @@ class TestSeamRename:
             "get_run",
             "get_run_stdout",
             "wait_for_next_completion",
-            "poll_progress_events",
             "verify_spec",
             "generate_ralph_md",
         }

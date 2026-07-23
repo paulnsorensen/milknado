@@ -959,5 +959,27 @@ class Executor:
                 self._wt.remove(node_id, wt)
         self._graph.mark_failed(node_id)
 
+    def cancel(self, node_id: int) -> None:
+        """Clean a stopped run and make its graph node schedulable next invocation."""
+        node = self._graph.get_node(node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        if node.worktree_path:
+            worktree = Path(node.worktree_path)
+            if worktree.exists():
+                try:
+                    self._wt.remove(node_id, worktree)
+                except UnlandedWorkError as exc:
+                    _logger.warning(
+                        "Preserving stopped node %d worktree %s; releasing graph claim: %s",
+                        node_id,
+                        worktree,
+                        exc,
+                    )
+        if node.run_id:
+            self._graph.release(node_id, node.run_id)
+        else:
+            self._graph.mark_pending(node_id)
+
     def get_attempt_count(self, node_id: int) -> int:
         return self._attempts_by_node.get(node_id, 0)

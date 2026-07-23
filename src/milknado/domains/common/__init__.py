@@ -39,6 +39,7 @@ from milknado.domains.common.protocols import (
     LoopPort,
     ProgressEvent,
     SymbolLocation,
+    TerminalRunOutcome,
     TilthPort,
     VerifySpecResult,
 )
@@ -84,6 +85,7 @@ __all__ = [
     "PluginHook",
     "PluginMeta",
     "LoopPort",
+    "TerminalRunOutcome",
     "VALID_CHILD_KINDS",
     "VALID_TRANSITIONS",
     "pid_alive",

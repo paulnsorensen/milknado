@@ -74,6 +74,7 @@ _VERIFIER_FEEDBACK_HEADER = (
     "The previous iteration reported completion, but the completion check "
     "rejected it. Address this feedback before reporting completion again:\n\n"
 )
+_GUIDANCE_HEADER = "\n\n## Operator guidance\n\n"
 
 
 def _wait_for_resume(state: RunState, emit: BoundEmitter) -> bool:
@@ -161,7 +162,8 @@ def _assemble_prompt(
     state: RunState,
     command_outputs: dict[str, str],
     verifier_feedback: str | None = None,
-) -> str:
+    guidance: tuple[str, ...] = (),
+):
     """Build the full prompt for one iteration.
 
     Uses ``config.prompt`` as the body when set (no file read, no
@@ -182,6 +184,8 @@ def _assemble_prompt(
     prompt = resolve_all(prompt, command_outputs, config.args, ralph_context)
     if verifier_feedback:
         prompt += _VERIFIER_FEEDBACK_HEADER + verifier_feedback
+    if guidance:
+        prompt += _GUIDANCE_HEADER + "\n\n".join(guidance)
     if config.commit_footer:
         prompt += _footer_instruction(config.commit_footer)
     return prompt
@@ -273,6 +277,7 @@ def _launch_agent(
                 max_turns=config.max_turns,
                 max_turns_grace=config.max_turns_grace,
                 on_tool_use=callbacks.on_tool_use,
+                force_stop_event=state.force_stop_event,
                 cwd=config.project_root,
             )
         )
@@ -314,7 +319,7 @@ def _classify_iteration_outcome(
     agent: Any,
     state: RunState,
     promise_completed: bool,
-    completion_signal: str | None,
+    completion_signal: str,
     duration: str,
 ) -> tuple[EventType, str]:
     """Mark the state counter for this outcome and derive its (event_type, detail)."""
@@ -410,6 +415,9 @@ def _run_agent_phase(
     state.last_result_text = agent.result_text
     state.last_captured_stdout = agent.captured_stdout
     state.last_captured_stderr = agent.captured_stderr
+    if getattr(agent, "force_stopped", False):
+        state.status = RunStatus.STOPPED
+        return False, False
 
     duration = format_duration(agent.elapsed)
     promise_completed = _promise_completed(agent, adapter, config)
@@ -549,7 +557,9 @@ def _run_iteration(
         if hooks is not None:
             hooks.on_commands_completed(iteration=iteration, outputs=command_outputs)
 
-    prompt = _assemble_prompt(config, state, command_outputs, verifier_feedback)
+    prompt = _assemble_prompt(
+        config, state, command_outputs, verifier_feedback, state.take_guidance()
+    )
     emit(
         EventType.PROMPT_ASSEMBLED,
         PromptAssembledData(iteration=iteration, prompt_length=len(prompt)),
@@ -558,10 +568,12 @@ def _run_iteration(
         hooks.on_prompt_assembled(iteration=iteration, prompt=prompt)
 
     agent_succeeded, promise_would_complete = _run_agent_phase(prompt, config, state, emit, hooks)
+    if state.status is RunStatus.STOPPED:
+        return False, promise_would_complete
 
     if not agent_succeeded and config.stop_on_error:
-        state.status = RunStatus.FAILED
-        emit.log_error("Stopping due to --stop-on-error.")
+        if state.try_commit_failure():
+            emit.log_error("Stopping due to --stop-on-error.")
         return False, promise_would_complete
 
     cap = config.max_consecutive_failures
@@ -630,8 +642,8 @@ def run_loop(
                 break
 
             if config.max_iterations is not None and state.iteration >= config.max_iterations:
-                if verifier_rejected:
-                    state.status = RunStatus.FAILED
+                state.close_guidance()
+                if verifier_rejected and state.try_commit_failure():
                     emit.log_error(
                         "Completion verifier never accepted within the "
                         f"{config.max_iterations}-iteration budget."
@@ -643,14 +655,19 @@ def run_loop(
                 config, state, emit, hooks, pending_feedback
             )
             pending_feedback = None
+            if state.stop_requested:
+                state.status = RunStatus.STOPPED
+                break
             if promise_would_complete:
                 verdict = config.completion_verifier() if config.completion_verifier else None
-                if verdict is None or verdict.ok:
-                    state.status = RunStatus.COMPLETED
+                if (verdict is None or verdict.ok) and state.try_commit_soft_completion():
                     break
-                verifier_rejected = True
-                pending_feedback = verdict.feedback
-                emit.log_info(f"Completion verifier rejected: {verdict.feedback}")
+                if state.status is RunStatus.STOPPED:
+                    break
+                if verdict is not None and not verdict.ok:
+                    verifier_rejected = True
+                    pending_feedback = verdict.feedback
+                    emit.log_info(f"Completion verifier rejected: {verdict.feedback}")
             if not should_continue:
                 break
 
@@ -659,12 +676,13 @@ def run_loop(
     except KeyboardInterrupt:
         state.status = RunStatus.STOPPED
     except Exception as exc:
-        state.status = RunStatus.FAILED
-        tb = traceback.format_exc()
-        emit.log_error(f"Run crashed: {exc}", traceback=tb)
+        if state.try_commit_failure():
+            tb = traceback.format_exc()
+            emit.log_error(f"Run crashed: {exc}", traceback=tb)
 
     if state.status == RunStatus.RUNNING:
-        state.status = RunStatus.COMPLETED
+        state.try_commit_completion()
+    state.close_guidance()
 
     emit(
         EventType.RUN_STOPPED,

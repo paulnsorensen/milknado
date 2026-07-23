@@ -454,10 +454,18 @@ def test_adapter_stdout_and_review_parser_paths(tmp_path: Path) -> None:
     adapter._manager = cast(Any, SimpleNamespace(get_run=lambda run_id: None))
     assert adapter.get_run_stdout("missing") == []
     runs = [
-        (SimpleNamespace(stdout="a\nb"), ["a", "b"]),
-        (SimpleNamespace(stdout=["a", "b"]), ["a", "b"]),
-        (SimpleNamespace(state=SimpleNamespace(last_captured_stdout="c")), ["c"]),
-        (SimpleNamespace(state=SimpleNamespace(last_result_text=["d"])), ["d"]),
+        (
+            SimpleNamespace(
+                state=SimpleNamespace(last_captured_stdout="a\nb", last_result_text="unused")
+            ),
+            ["a", "b"],
+        ),
+        (
+            SimpleNamespace(
+                state=SimpleNamespace(last_captured_stdout=None, last_result_text="c")
+            ),
+            ["c"],
+        ),
     ]
     for run, expected in runs:
         adapter._manager = cast(Any, SimpleNamespace(get_run=lambda run_id, run=run: run))
@@ -531,7 +539,7 @@ class _HeadlessRoundExecutor:
 
 class _HeadlessRoundRalph:
     def wait_for_next_completion(self, run_ids, timeout=None):
-        return next(iter(run_ids)), True
+        return next(iter(run_ids)), "completed"
 
 
 def test_headless_follows_review_redispatch() -> None:
@@ -552,6 +560,7 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         return SimpleNamespace(
             _active={"run-1": 1},
             _dispatched_at={"run-1": 0.0},
+            _progress_by_run={},
             _input=SimpleNamespace(overlay_state=None),
             _graph=SimpleNamespace(get_node=lambda node_id: MikadoNode(node_id, "handler node")),
             _executor=SimpleNamespace(complete=lambda node_id, branch: result),
@@ -570,15 +579,15 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = make_loop(redispatch)
-    assert handle_completion(loop, "run-1", True, "main", live) == (0, 0, [])
+    assert handle_completion(loop, "run-1", "completed", "main", live) == (0, 0, [])
     assert "run-2" in loop._active
 
     blocked = make_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", True, "main", live)[1] == 1
+    assert handle_completion(blocked, "run-1", "completed", "main", live)[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = make_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", True, "main", live)[2] == [conflict]
+    assert handle_completion(failed, "run-1", "completed", "main", live)[2] == [conflict]
     passed = make_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", True, "main", live)[0] == 1
+    assert handle_completion(passed, "run-1", "completed", "main", live)[0] == 1

@@ -154,6 +154,39 @@ class TestRunLoop:
         assert state.timed_out_count == 1
         assert state.failed == 1
 
+    @patch("milknado.loop.engine.execute_agent")
+    def test_force_stop_remains_stopped_with_stop_on_error(self, mock_execute_agent, tmp_path):
+        config = make_config(tmp_path, max_iterations=2, stop_on_error=True)
+        state = make_state()
+        mock_execute_agent.return_value = AgentResult(returncode=-9, force_stopped=True)
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 1
+        assert state.status is RunStatus.STOPPED
+        assert state.failed == 0
+
+    @patch("milknado.loop.engine._delay_if_needed")
+    @patch("milknado.loop.engine.execute_agent")
+    def test_retriable_timeout_keeps_guidance_open(self, mock_execute_agent, mock_delay, tmp_path):
+        config = make_config(tmp_path, max_iterations=2)
+        state = make_state()
+        mock_execute_agent.side_effect = [
+            AgentResult(returncode=None, timed_out=True),
+            AgentResult(returncode=0),
+        ]
+
+        def admit_guidance(_config, observed_state, _emit):
+            assert observed_state.timed_out_count == 1
+            assert observed_state.queue_guidance("retry with the failing test") is True
+
+        mock_delay.side_effect = admit_guidance
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        assert state.status is RunStatus.COMPLETED
+
     @patch(MOCK_SUBPROCESS)
     def test_prompt_read_from_ralph_file(self, mock_run, tmp_path):
         mock_run.return_value = ok_proc()
