@@ -48,9 +48,9 @@ def test_capabilities_match_json_event_output() -> None:
 
 
 def test_parses_omp_tool_events_for_turn_counting() -> None:
-    raw = {"type": "tool_execution_start", "tool_name": "Bash", "args": {"command": "pwd"}}
+    raw = {"type": "tool_execution_start", "toolName": "Bash", "args": {"command": "pwd"}}
     event = OmpAdapter().parse_event(
-        '{"type":"tool_execution_start","tool_name":"Bash","args":{"command":"pwd"}}'
+        '{"type":"tool_execution_start","toolName":"Bash","args":{"command":"pwd"}}'
     )
     assert event is not None
     assert event.kind == "tool_use"
@@ -64,7 +64,7 @@ def test_parses_omp_tool_events_for_turn_counting() -> None:
         "not JSON",
         '["tool_execution_start"]',
         '{"type":"message_update"}',
-        '{"type":"tool_execution_start","tool_name":42}',
+        '{"type":"tool_execution_start","toolName":42}',
     ],
 )
 def test_ignores_non_tool_events_and_malformed_tool_events(line: str) -> None:

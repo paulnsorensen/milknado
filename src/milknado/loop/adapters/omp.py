@@ -51,7 +51,7 @@ class OmpAdapter(GenericAdapter):
             return None
         if not isinstance(raw, dict) or raw.get("type") != "tool_execution_start":
             return None
-        tool_name = raw.get("tool_name")
+        tool_name = raw.get("toolName")
         if not isinstance(tool_name, str):
             return None
         return AdapterEvent(kind="tool_use", name=tool_name, raw=raw)
