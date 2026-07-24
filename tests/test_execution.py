@@ -162,9 +162,7 @@ class FakeRalph:
                 "base_oid": base_oid,
             }
         )
-        run = FakeRun(
-            state=FakeRunState(run_id=f"{self._id_prefix}-{len(self.runs_created)}")
-        )
+        run = FakeRun(state=FakeRunState(run_id=f"{self._id_prefix}-{len(self.runs_created)}"))
         self.runs[run.state.run_id] = run
         if self._live:
             self.make_live(run.state.run_id)
@@ -494,9 +492,7 @@ class TestExecutorDispatch:
         worktree, gated on the fence."""
         from milknado.domains.dispatch._runstate import now_iso
 
-        ex = Executor(
-            graph=graph, git=FakeGit(), ralph=FakeRalph(id_prefix="run"), crg=FakeCrg()
-        )
+        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(id_prefix="run"), crg=FakeCrg())
         graph.add_node("claimed upstream")
         claim_run_id = "node-1-20260101T000000Z-claim"
         assert graph.claim_node(1, claim_run_id, now=now_iso()) is True
@@ -1932,6 +1928,11 @@ def test_default_fake_ralph_id_prefixes_are_unique() -> None:
     """Default-constructed fakes must namespace their run ids per instance,
     so watcher thread names can never collide across tests."""
     first, second = FakeRalph(), FakeRalph()
-    cfg = {"agent": "a", "ralph_dir": Path("/x"), "ralph_file": Path("/x/RALPH.md"),
-           "commands": [], "quality_gates": None}
+    cfg = {
+        "agent": "a",
+        "ralph_dir": Path("/x"),
+        "ralph_file": Path("/x/RALPH.md"),
+        "commands": [],
+        "quality_gates": None,
+    }
     assert first.create_run(**cfg).state.run_id != second.create_run(**cfg).state.run_id

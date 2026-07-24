@@ -267,9 +267,7 @@ def test_runs_row_insert_failure_does_not_kill_dispatch(
     is best-effort (findings thread in memory, never through the DB), so a
     failed insert logs loud and the dispatch still returns its run_id."""
     graph.add_node("resilient dispatch")
-    monkeypatch.setattr(
-        graph, "start_run", MagicMock(side_effect=RuntimeError("db down"))
-    )
+    monkeypatch.setattr(graph, "start_run", MagicMock(side_effect=RuntimeError("db down")))
 
     with caplog.at_level(logging.ERROR):
         result = _executor(graph).dispatch(1, _config(tmp_path))

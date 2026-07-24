@@ -727,9 +727,7 @@ class Executor:
                 )
                 return
 
-        threading.Thread(
-            target=watch, name=f"ralph-cancel-watch-{run_id}", daemon=True
-        ).start()
+        threading.Thread(target=watch, name=f"ralph-cancel-watch-{run_id}", daemon=True).start()
 
     def _review_enabled(self, config: ExecutionConfig) -> bool:
         if not config.review:
@@ -1030,9 +1028,7 @@ class Executor:
         error names the run id for manual recovery.
         """
         try:
-            stopped = self._ralph.force_stop_run(
-                run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS
-            )
+            stopped = self._ralph.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for aborted ralph run %s (%s); row left running",
