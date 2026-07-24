@@ -16,9 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import ArchiveIneligible, MikadoNode, NodeStatus
+from milknado.domains.common import ArchiveIneligible, MikadoNode, NodeKind, NodeSpec, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.graph import MikadoGraph, _mutations, _status
+from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import SCHEMA_VERSION
 from milknado.domains.graph._pipeline import StatusPipeline
 
@@ -294,6 +295,33 @@ class TestSetSubtreeStatusSkipsArchived:
             node = _node(graph, nid)
             assert node.status == NodeStatus.DONE
             assert node.archived_at == datetime.fromisoformat(STAMP)
+
+    def test_cascade_to_done_releases_goal_claim(self, graph: MikadoGraph) -> None:
+        """Regression (post-merge F2): a GOAL cascaded to DONE releases its
+        goal_claims row, mirroring mark_done/mark_terminal."""
+        goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        graph.add_node("task", parent_id=goal.id)
+        assert graph.claim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00")
+
+        pipeline = StatusPipeline([])
+        _status.set_subtree_status(pipeline, graph._conn, goal.id, NodeStatus.DONE)
+
+        assert get_goal_claim(graph._conn, goal.id) is None
+
+    def test_cascade_to_pending_clears_worktree_and_run_pins(self, graph: MikadoGraph) -> None:
+        """Regression (post-merge F3): resetting a subtree to PENDING clears
+        worktree_path/branch_name/run_id exactly as mark_pending does."""
+        node = graph.add_node("task")
+        graph.mark_running(node.id, worktree_path="/wt/x", branch_name="br/x", run_id="run-1")
+
+        pipeline = StatusPipeline([])
+        _status.set_subtree_status(pipeline, graph._conn, node.id, NodeStatus.PENDING)
+
+        node = _node(graph, node.id)
+        assert node.status == NodeStatus.PENDING
+        assert node.worktree_path is None
+        assert node.branch_name is None
+        assert node.run_id is None
 
     def test_missing_root_raises(self, graph: MikadoGraph) -> None:
         pipeline = StatusPipeline([])

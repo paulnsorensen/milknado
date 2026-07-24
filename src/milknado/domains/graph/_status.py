@@ -120,7 +120,18 @@ def set_subtree_status(
         if node.status == target:
             continue
         for step in todo_status_steps(node.status, target):
-            transition_status(pipeline, conn, node.id, step)
+            if step is NodeStatus.PENDING:
+                # Dispatch through the same field-clearing write as mark_pending:
+                # a bare status flip would strand stale worktree/run pins whose
+                # run_id a later terminal step could mistake for authoritative.
+                mark_pending(pipeline, conn, node.id)
+            else:
+                transition_status(pipeline, conn, node.id, step)
+            if step is NodeStatus.DONE or step is NodeStatus.FAILED:
+                # Mirror mark_terminal: a terminal transition releases the goal
+                # claim so the sweep and foreign claimants are not fenced out
+                # by a row belonging to completed work.
+                release_goal_claim_on_terminal(conn, node.id)
         updated += 1
     return updated
 

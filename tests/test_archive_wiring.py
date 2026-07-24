@@ -180,8 +180,9 @@ class TestMcpRebalanceRestructure:
 
     def test_diamond_orphans_move_exactly_once_under_inbox(self, tmp_path: Path) -> None:
         """Two root tasks sharing one prerequisite (a diamond): every orphan is
-        reparented exactly once, and the rendered forest stays a well-formed
-        single-parent tree (the shared node appears exactly once)."""
+        reparented exactly once under the Inbox, and the prereq edges onto the
+        shared node survive the move (the tree render traverses prereq edges,
+        so the shared node appears once as Inbox child and once per dependent)."""
         root = str(tmp_path)
         shared = _call(milknado_todo_add, description="shared prereq", project_root=root)
         left = _call(
@@ -205,7 +206,13 @@ class TestMcpRebalanceRestructure:
             return (node["id"] == target) + sum(_count(c, target) for c in node["children"])
 
         tree = _call(milknado_todo_tree, project_root=root)
-        assert sum(_count(n, shared["id"]) for n in tree) == 1
+        inbox = next(n for n in tree if n["id"] == inbox_id)
+        # Parentage: each orphan is a direct Inbox child exactly once.
+        assert sorted(c["id"] for c in inbox["children"]) == sorted(
+            t["id"] for t in (shared, left, right)
+        )
+        # Prereq edges survived: both dependents still list the shared node.
+        assert sum(_count(n, shared["id"]) for n in tree) == 3
 
 
 class TestMcpRebalance:
@@ -370,3 +377,30 @@ class TestCliSweepThenUnarchive:
         visible = runner.invoke(app, ["status", str(tmp_path)])
         assert "goal" in visible.output
         assert "[archived]" not in visible.output
+
+
+class TestCliStatusEmptyGraphHint:
+    """Regression (post-merge F4): when every node is archived, the default
+    `status` view must say so instead of implying the project is unstarted."""
+
+    def test_all_archived_default_status_prints_archived_hint(self, tmp_path: Path) -> None:
+        goal_id, _ = _init_and_seed_done_goal(tmp_path)
+        result = runner.invoke(
+            app, ["graph", "archive", str(goal_id), "--project-root", str(tmp_path)]
+        )
+        assert result.exit_code == 0
+
+        shown = runner.invoke(app, ["status", str(tmp_path)])
+
+        assert shown.exit_code == 0
+        assert "No nodes in graph" in shown.output
+        assert "archived node(s) — use --all" in shown.output
+
+    def test_truly_empty_graph_keeps_original_status_message(self, tmp_path: Path) -> None:
+        runner.invoke(app, ["init", str(tmp_path)])
+
+        shown = runner.invoke(app, ["status", str(tmp_path)])
+
+        assert shown.exit_code == 0
+        assert "No nodes in graph. Run milknado plan to start." in shown.output
+        assert "archived" not in shown.output

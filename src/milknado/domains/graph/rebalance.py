@@ -187,7 +187,8 @@ def find_inbox_id(conn: Connection) -> int | None:
     """
     row = conn.execute(
         "SELECT id FROM nodes WHERE parent_id IS NULL AND kind = 'goal' "
-        "AND description = ? AND archived_at IS NULL",
+        "AND description = ? AND archived_at IS NULL "
+        "ORDER BY id LIMIT 1",
         (INBOX_DESCRIPTION,),
     ).fetchone()
     return row[0] if row is not None else None
@@ -206,6 +207,30 @@ def _find_or_create_inbox(conn: Connection) -> int:
     inbox_id = cur.lastrowid
     assert inbox_id is not None  # lastrowid is set after a successful INSERT
     return inbox_id
+
+
+def _claimed_subtree_ids(conn: Connection) -> set[int]:
+    """Ids fenced by a live goal claim: each claimed goal plus its edge-closure.
+
+    One recursive CTE over goal_claims + edges replaces a per-candidate
+    `is_claimed` probe; semantics are identical (a node is claimed iff it sits
+    in the subtree of any goal holding a goal_claims row).
+    """
+    return {
+        row[0]
+        for row in conn.execute(
+            """
+            WITH RECURSIVE claimed(id) AS (
+                SELECT goal_id FROM goal_claims
+                UNION
+                SELECT e.child_id
+                FROM edges e
+                JOIN claimed c ON e.parent_id = c.id
+            )
+            SELECT id FROM claimed
+            """,
+        ).fetchall()
+    }
 
 
 def orphan_candidates(conn: Connection) -> list[int]:
@@ -230,7 +255,8 @@ def orphan_candidates(conn: Connection) -> list[int]:
         ORDER BY n.id
         """,
     ).fetchall()
-    return [node_id for (node_id,) in rows if not is_claimed(conn, node_id)]
+    claimed = _claimed_subtree_ids(conn)
+    return [node_id for (node_id,) in rows if node_id not in claimed]
 
 
 def group_orphans(conn: Connection) -> int:
@@ -246,8 +272,18 @@ def group_orphans(conn: Connection) -> int:
         return 0
     inbox_id = _find_or_create_inbox(conn)
     for node_id in candidates:
+        row = conn.execute("SELECT parent_id FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        assert row is not None  # candidates are selected from nodes in this same pass
+        old_parent_id = row[0]
+        if old_parent_id is not None:
+            # Sever only the parentage edge. Every other inbound edge is a
+            # prereq declared by some dependent node — deleting it would
+            # silently corrupt that node's dependency metadata.
+            conn.execute(
+                "DELETE FROM edges WHERE child_id = ? AND parent_id = ?",
+                (node_id, old_parent_id),
+            )
         conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (inbox_id, node_id))
-        conn.execute("DELETE FROM edges WHERE child_id = ?", (node_id,))
         conn.execute(
             "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
             (inbox_id, node_id),

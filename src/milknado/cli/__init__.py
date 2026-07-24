@@ -177,7 +177,14 @@ def status(
     try:
         nodes = graph.get_all_nodes(include_archived=show_all)
         if not nodes:
-            console.print("No nodes in graph. Run [bold]milknado plan[/bold] to start.")
+            message = "No nodes in graph. Run [bold]milknado plan[/bold] to start."
+            if not show_all:
+                archived = sum(
+                    1 for n in graph.get_all_nodes(include_archived=True) if n.archived_at
+                )
+                if archived:
+                    message += f" ({archived} archived node(s) — use --all)"
+            console.print(message)
             return
 
         run_states, failures = _fetch_run_states(nodes)

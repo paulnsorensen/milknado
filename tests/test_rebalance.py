@@ -16,7 +16,9 @@ import pytest
 import milknado.app.rebalance as app_rebalance
 from milknado.adapters.git import GitAdapter
 from milknado.app.rebalance import rebalance
+from milknado.domains.common import NodeSpec
 from milknado.domains.common.errors import GitOperationError
+from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._persistence import create_tables
 from milknado.domains.graph.rebalance import (
     INBOX_DESCRIPTION,
@@ -484,6 +486,29 @@ class TestReap:
         report = rebalance(tmp_path, sweep=False, restructure=False, git=git)
         assert git.removed == [] and git.deleted_branches == [] and git.pruned == 1
         assert report.reaped == () and report.branches_deleted == () and report.preserved == ()
+
+    def test_archived_worktree_without_run_record_is_named_in_notes(self, tmp_path: Path) -> None:
+        """A worktree with no terminal run record is skipped fail-closed AND
+        named in the report notes — never silently dropped."""
+        conn = _project_with_db(tmp_path)
+        _insert_node(
+            conn,
+            "archived stray",
+            "done",
+            archived_at=NOW,
+            worktree_path=str(tmp_path / "elsewhere"),
+            branch_name="stray",
+        )
+        conn.commit()
+        conn.close()
+
+        git = FakeGit()
+        report = rebalance(tmp_path, sweep=False, restructure=False, git=git)
+
+        assert git.removed == []
+        assert report.reaped == ()
+        assert report.notes == ("skipped 1 worktree(s) with no run record",)
+        assert "Note: skipped 1 worktree(s) with no run record" in render_report(report)
 
     def test_teardown_failure_is_preserved_and_pass_continues(self, tmp_path: Path) -> None:
         conn = _project_with_db(tmp_path)
@@ -1075,3 +1100,34 @@ class TestDeleteBranchAdapter:
         with pytest.raises(GitOperationError):
             adapter.delete_branch("unmerged-branch")
         assert adapter.branch_exists("unmerged-branch")  # refusal never forces
+
+
+class TestGroupOrphansPreservesPrereqEdges:
+    """Regression (post-merge F1): reparenting an orphan severs ONLY the
+    parentage edge — prereq edges other nodes declared onto it survive."""
+
+    def test_rebalance_preserves_dependent_prereq_edge_on_orphan(self, tmp_path: Path) -> None:
+        db_path = tmp_path / ".milknado" / "milknado.db"
+        db_path.parent.mkdir()
+        graph = MikadoGraph(db_path)
+        orphan = graph.add_node("root-level orphan task")
+        dependent = graph.add_node("dependent", spec=NodeSpec(prereqs=(orphan.id,)))
+        graph.close()
+
+        report = rebalance(tmp_path, reap=False)
+
+        graph = MikadoGraph(db_path)
+        try:
+            assert report.inbox_id is not None
+            assert report.moved_tasks == 2  # both root-level tasks attach
+            # The prereq edge survived the move: the dependent still lists the orphan.
+            assert [n.id for n in graph.get_children(dependent.id)] == [orphan.id]
+            # The dependent is NOT ready while its prereq is undone.
+            assert dependent.id not in {n.id for n in graph.get_ready_nodes()}
+            # The orphan now sits under the Inbox (diamond well-formedness).
+            orphan_node = graph.get_node(orphan.id)
+            assert orphan_node is not None
+            assert orphan_node.parent_id == report.inbox_id
+            assert orphan.id in {n.id for n in graph.get_children(report.inbox_id)}
+        finally:
+            graph.close()

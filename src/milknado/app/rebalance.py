@@ -59,6 +59,31 @@ def _reap_candidates(conn: sqlite3.Connection, eligible_ids: set[int]) -> list[s
     ).fetchall()
 
 
+def _no_run_worktree_count(conn: sqlite3.Connection, eligible_ids: set[int]) -> int:
+    """Eligible nodes carrying a worktree but no terminal run record.
+
+    `_reap_candidates` skips these (no evidence the worktree is
+    milknado-managed and complete); the count lets the report name them
+    instead of letting them vanish silently.
+    """
+    if not eligible_ids:
+        return 0
+    placeholders = ",".join("?" for _ in eligible_ids)
+    row = conn.execute(
+        f"""
+        SELECT COUNT(*) FROM nodes n
+        WHERE n.worktree_path IS NOT NULL
+          AND n.id IN ({placeholders})
+          AND NOT EXISTS (
+              SELECT 1 FROM runs r
+              WHERE r.node_id = n.id AND r.status != 'running'
+          )
+        """,  # noqa: S608
+        sorted(eligible_ids),
+    ).fetchone()
+    return int(row[0])
+
+
 def _reap(
     conn: sqlite3.Connection,
     git: GitPort,
@@ -180,6 +205,7 @@ def rebalance(
         branches: tuple[str, ...] = ()
         preserved: tuple[str, ...] = ()
         kept: tuple[str, ...] = ()
+        notes: tuple[str, ...] = ()
         if reap:
             if not dry_run:
                 eligible = reap_eligible_ids(conn, sweep_pending=False)
@@ -189,6 +215,9 @@ def rebalance(
                 eligible_ids=eligible,
                 dry_run=dry_run,
             )
+            skipped = _no_run_worktree_count(conn, eligible)
+            if skipped:
+                notes = (f"skipped {skipped} worktree(s) with no run record",)
         return RebalanceReport(
             archived_roots=archived_roots,
             inbox_id=inbox_id,
@@ -199,6 +228,7 @@ def rebalance(
             branches_deleted=branches,
             preserved=preserved,
             branches_kept=kept,
+            notes=notes,
         )
     finally:
         conn.close()
