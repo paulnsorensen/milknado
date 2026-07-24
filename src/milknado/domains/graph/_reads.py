@@ -135,36 +135,26 @@ def get_children(
 def get_children_map(
     conn: sqlite3.Connection, *, include_archived: bool = False
 ) -> dict[int, list[MikadoNode]]:
-    """Map parent_id -> child nodes, reusing the persistence id-scan.
-
-    Lets callers materialise an entire subtree without issuing one
-    get_children query per node (the N+1 pattern).
-
-    With ``include_archived=False`` an archived node hides its whole subtree:
-    the cascade invariant (*archived ⇒ subtree archived*) is enforced at
-    mutation time, but the prune below walks descendants regardless so a
-    partially-archived tree still projects as hidden below the archived node.
-    """
-    nodes = {n.id: n for n in get_all_nodes(conn, include_archived=True)}
-    id_map = children_id_map(conn)
-    hidden: set[int] = set()
-    if not include_archived:
-        # Invariant: archived ⇒ subtree archived, enforced at the mutation
-        # layer; the BFS prune below is defense-in-depth against a violation.
-        stack = [n.id for n in nodes.values() if n.archived_at is not None]
-        while stack:
-            nid = stack.pop()
-            if nid in hidden:
-                continue
-            hidden.add(nid)
-            stack.extend(id_map.get(nid, ()))
+    """Map parent ids to child nodes with archive filtering performed in SQL."""
     mapping: dict[int, list[MikadoNode]] = {}
-    for parent_id, child_ids in id_map.items():
-        if parent_id in hidden:
-            continue
-        kids = [nodes[cid] for cid in child_ids if cid in nodes and cid not in hidden]
-        if kids:
-            mapping[parent_id] = kids
+    if not include_archived:
+        rows = conn.execute(
+            """
+            SELECT e.parent_id AS edge_parent_id, n.*
+            FROM edges e
+            JOIN nodes p ON p.id = e.parent_id
+            JOIN nodes n ON n.id = e.child_id
+            WHERE p.archived_at IS NULL AND n.archived_at IS NULL
+            """
+        ).fetchall()
+        for row in rows:
+            mapping.setdefault(row["edge_parent_id"], []).append(row_to_node(row))
+        return mapping
+    nodes = {node.id: node for node in get_all_nodes(conn, include_archived=True)}
+    for parent_id, child_ids in children_id_map(conn).items():
+        children = [nodes[child_id] for child_id in child_ids if child_id in nodes]
+        if children:
+            mapping[parent_id] = children
     return mapping
 
 

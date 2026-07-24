@@ -173,6 +173,26 @@ def test_harvest_text_written_per_goal(
     assert all(e["text"] is not None for e in text_edits)
 
 
+def test_archived_goal_still_exports_status_and_harvest(
+    tmp_path: Path, graph: MikadoGraph
+) -> None:
+    rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
+    graph.mark_running(wiki_goal_id)
+    graph.mark_done(wiki_goal_id)
+    graph.archive_subtree(wiki_goal_id)
+    fake = _full_fake()
+
+    result = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
+
+    wiki_edits = [edit for edit in fake.item_edits if edit["item_id"] == "PVTI_wiki"]
+    assert result.goals_exported == 2
+    assert [(edit["field_id"], edit["option"]) for edit in wiki_edits] == [
+        ("F_status", "opt-done"),
+        ("F_harvest", None),
+    ]
+    assert wiki_edits[1]["text"] == "result: done · tasks: 0 done / 0 failed"
+
+
 def test_blocked_status_skips_option_but_writes_harvest(
     tmp_path: Path,
     graph: MikadoGraph,

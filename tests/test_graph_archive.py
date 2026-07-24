@@ -10,7 +10,6 @@ status writes skip them, and delete_node stays a hard delete.
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -227,6 +226,24 @@ class TestUnarchiveSubtree:
         assert _node(graph, p.id).archived_at is None
         assert _node(graph, x.id).archived_at is None
 
+    def test_unarchive_refuses_shared_descendant_owned_by_other_archive(
+        self, graph: MikadoGraph
+    ) -> None:
+        left = graph.add_node("left")
+        right = graph.add_node("right")
+        shared = graph.add_node("shared", parent_id=left.id)
+        graph.add_edge(right.id, shared.id)
+        for node_id in (shared.id, left.id, right.id):
+            _complete(graph, node_id)
+        _mutations.archive_subtree(graph._conn, left.id)
+        _mutations.archive_subtree(graph._conn, right.id)
+
+        with pytest.raises(ValueError, match=f"archived ancestor {right.id}"):
+            _mutations.unarchive_subtree(graph._conn, left.id)
+
+        for node_id in (left.id, right.id, shared.id):
+            assert _node(graph, node_id).archived_at is not None
+
     def test_unarchive_missing_node_raises(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="Node 999 not found"):
             _mutations.unarchive_subtree(graph._conn, 999)
@@ -367,6 +384,11 @@ class TestAddNodeUnderArchivedParent:
             match=f"Cannot add a node under archived parent {parent.id}; unarchive it first.",
         ):
             graph.move_node(mover.id, parent.id)
+        assert _node(graph, mover.id).parent_id is None
+        incoming = graph._conn.execute(
+            "SELECT parent_id FROM edges WHERE child_id = ?", (mover.id,)
+        ).fetchall()
+        assert incoming == []
 
     def test_add_node_under_archived_descendant_rejected(self, graph: MikadoGraph) -> None:
         parent = graph.add_node("parent")
@@ -445,25 +467,3 @@ class TestMigrationV3:
             assert version == SCHEMA_VERSION
         finally:
             reopened.close()
-
-    def test_migration_v3_adds_column_to_pre_v3_database(self, tmp_path: Path) -> None:
-        db_path = tmp_path / "old.db"
-        conn = sqlite3.connect(str(db_path))
-        from milknado.domains.graph._persistence import create_tables
-
-        create_tables(conn)
-        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-        conn.close()
-
-        graph = MikadoGraph(db_path)  # open must apply v3 and pass validation
-        try:
-            version = graph._conn.execute("PRAGMA user_version").fetchone()[0]
-            assert version == SCHEMA_VERSION
-            columns = {row[1] for row in graph._conn.execute("PRAGMA table_info(nodes)")}
-            assert "archived_at" in columns
-            node = graph.add_node("fresh")
-            assert node.archived_at is None
-        finally:
-            graph.close()

@@ -6,16 +6,15 @@
 #10: display renders archived nodes with an ``[archived]`` marker when
     ``include_archived=True``.
 
-Archive mutations (curd 1) are not in this worktree, so tests set the seed
-``archived_at`` column directly via SQL — the read layer keys off the column,
-not the mutation path.
+Read-projection tests seed ``archived_at`` directly so failures stay isolated
+from archive-mutation behavior.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.domains.graph import _reads, render_tree, summarize
 from milknado.domains.graph.display import format_node
 from milknado.domains.reporting.harvest import build_harvest_summary
@@ -30,7 +29,7 @@ def _archive(graph, *node_ids: int) -> None:
 
 def _done_graph(graph):
     """Root goal with two done tasks; returns (root, task1, task2)."""
-    root = graph.add_node("Root goal")
+    root = graph.add_node("Root goal", spec=NodeSpec(kind=NodeKind.GOAL))
     t1 = graph.add_node("Task 1", parent_id=root.id)
     t2 = graph.add_node("Task 2", parent_id=root.id)
     for task in (t1, t2):
@@ -158,7 +157,7 @@ class TestIncludeArchivedRestores:
     def test_get_leaves_includes_archived(self, graph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id)
-        leaves = _reads.get_leaves(graph._conn, include_archived=True)
+        leaves = graph.get_leaves(include_archived=True)
         assert {n.id for n in leaves} == {t1.id, t2.id}
 
     def test_node_summaries_include_archived(self, graph):
@@ -284,6 +283,15 @@ class TestSummariesCombinedFilters:
         )
         assert done == []
 
+    def test_summarize_uses_entire_forest(self, graph):
+        done = graph.add_node("Done root")
+        graph.add_node("Pending root")
+        graph.mark_running(done.id)
+        graph.mark_done(done.id)
+
+        summary = summarize(graph)
+        assert (summary.total, summary.done) == (2, 1)
+
 
 class TestEmptyAndNoArchiveRegressions:
     """include_archived on an empty DB or a DB with no archived rows must
@@ -301,7 +309,7 @@ class TestEmptyAndNoArchiveRegressions:
         assert s.total == 0 and s.done == 0
 
     def test_no_archived_rows_include_archived_matches_default(self, graph):
-        root, t1, t2 = _done_graph(graph)
+        _done_graph(graph)
         default = graph.get_all_nodes()
         included = _reads.get_all_nodes(graph._conn, include_archived=True)
         assert [n.id for n in included] == [n.id for n in default]

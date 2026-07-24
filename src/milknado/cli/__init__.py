@@ -179,9 +179,7 @@ def status(
         if not nodes:
             message = "No nodes in graph. Run [bold]milknado plan[/bold] to start."
             if not show_all:
-                archived = sum(
-                    1 for n in graph.get_all_nodes(include_archived=True) if n.archived_at
-                )
+                archived = graph.count_archived()
                 if archived:
                     message += f" ({archived} archived node(s) — use --all)"
             console.print(message)
@@ -220,16 +218,17 @@ def rebalance(
     ] = False,
 ) -> None:
     """Rebalance the working tree: sweep finished work, regroup orphans, reap worktrees."""
+    from milknado.app.rebalance import RebalanceOptions
     from milknado.app.rebalance import rebalance as run_rebalance
     from milknado.domains.graph import render_report
 
-    report = run_rebalance(
-        project_root.resolve(),
+    options = RebalanceOptions(
         dry_run=dry_run,
         sweep=not no_sweep,
         restructure=not no_restructure,
         reap=not no_reap,
     )
+    report = run_rebalance(project_root.resolve(), options)
     # markup=False: the report's literal "[dry-run]" prefix is not rich markup.
     console.print(render_report(report, dry_run=dry_run), markup=False)
 

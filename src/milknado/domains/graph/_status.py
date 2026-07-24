@@ -7,16 +7,21 @@ write, in the original log-then-notify order.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 
-from milknado.domains.common import NodeStatus, pid_alive
+from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
 from milknado.domains.graph import _reads, _transitions
 from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
-from milknado.domains.graph._mutations import _collect_subtree_post_order
-from milknado.domains.graph._persistence import children_id_map
 from milknado.domains.graph._pipeline import StatusPipeline
-from milknado.domains.graph.status_flow import todo_status_steps, validate_todo_status
+from milknado.domains.graph.status_flow import (
+    CLAIM_ROLE,
+    VERIFY_ROLE,
+    subtree_post_order,
+    todo_status_steps,
+    validate_todo_status,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -26,6 +31,61 @@ def _reject_archived(conn: sqlite3.Connection, node_id: int) -> None:
     row = conn.execute("SELECT archived_at FROM nodes WHERE id = ?", (node_id,)).fetchone()
     if row is not None and row[0] is not None:
         raise ValueError(f"Node {node_id} is archived; unarchive it first.")
+
+
+def _validate_done_verification(
+    conn: sqlite3.Connection, root_id: int, nodes: list[MikadoNode]
+) -> None:
+    rows = conn.execute(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT ?
+            UNION
+            SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
+        )
+        SELECT n.id, r.run_id, m.role, m.body, m.seq
+        FROM subtree s
+        JOIN nodes n ON n.id = s.id
+        JOIN runs r ON r.run_id = n.run_id
+        LEFT JOIN run_messages m ON m.run_id = r.run_id
+        ORDER BY m.seq
+        """,
+        (root_id,),
+    ).fetchall()
+    existing: set[int] = set()
+    messages: dict[int, dict[str, str]] = {}
+    for node_id, _run_id, role, body, _seq in rows:
+        existing.add(node_id)
+        if role is not None:
+            messages.setdefault(node_id, {})[role] = body
+    for node in nodes:
+        latest = messages.get(node.id, {})
+        if node.id not in existing or not ({CLAIM_ROLE, VERIFY_ROLE} & latest.keys()):
+            continue
+        try:
+            verified = json.loads(latest.get(VERIFY_ROLE, "")).get("ok") is True
+        except (ValueError, TypeError, AttributeError):
+            verified = False
+        if not verified:
+            raise ValueError(
+                f"node {node.id} cannot be marked done: milknado_node_verify(run_id="
+                f"{node.run_id!r}) has not returned ok=True. Run milknado_node_verify first."
+            )
+
+
+def _apply_subtree_status(
+    pipeline: StatusPipeline, conn: sqlite3.Connection, node: MikadoNode, target: NodeStatus
+) -> bool:
+    if node.status == target:
+        return False
+    for step in todo_status_steps(node.status, target):
+        if step is NodeStatus.PENDING:
+            mark_pending(pipeline, conn, node.id)
+        else:
+            transition_status(pipeline, conn, node.id, step)
+        if step is NodeStatus.DONE or step is NodeStatus.FAILED:
+            release_goal_claim_on_terminal(conn, node.id)
+    return True
 
 
 def transition_status(
@@ -95,45 +155,20 @@ def mark_blocked(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: in
 def set_subtree_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, root_id: int, target: NodeStatus
 ) -> int:
-    """Set `target` on every non-archived node in root_id's subtree, children first.
-
-    Archived nodes are SKIPPED — neither stamped nor errored — so bulk
-    reconciliation never resurrects shelved work. The live set is validated
-    before any write, so an illegal transition leaves the subtree unchanged.
-    Returns the number of nodes whose status changed.
-    """
+    """Validate once, then update each live subtree node children-first."""
     root = _reads.get_node(conn, root_id)
     if root is None:
         raise ValueError(f"Node {root_id} not found")
-    ordered = _collect_subtree_post_order(children_id_map(conn), root_id)
-    live = []
-    for nid in ordered:
-        node = _reads.get_node(conn, nid)
-        if node is None:
-            raise ValueError(f"Node {nid} not found")
-        if node.archived_at is None:
-            live.append(node)
+    ordered = subtree_post_order(
+        _reads.get_children_map(conn, include_archived=True),
+        root,
+    )
+    live = [node for node in ordered if node.archived_at is None]
+    if target is NodeStatus.DONE:
+        _validate_done_verification(conn, root_id, live)
     for node in live:
         validate_todo_status(node, target)
-    updated = 0
-    for node in live:
-        if node.status == target:
-            continue
-        for step in todo_status_steps(node.status, target):
-            if step is NodeStatus.PENDING:
-                # Dispatch through the same field-clearing write as mark_pending:
-                # a bare status flip would strand stale worktree/run pins whose
-                # run_id a later terminal step could mistake for authoritative.
-                mark_pending(pipeline, conn, node.id)
-            else:
-                transition_status(pipeline, conn, node.id, step)
-            if step is NodeStatus.DONE or step is NodeStatus.FAILED:
-                # Mirror mark_terminal: a terminal transition releases the goal
-                # claim so the sweep and foreign claimants are not fenced out
-                # by a row belonging to completed work.
-                release_goal_claim_on_terminal(conn, node.id)
-        updated += 1
-    return updated
+    return sum(_apply_subtree_status(pipeline, conn, node, target) for node in live)
 
 
 def complete_root(pipeline: StatusPipeline, conn: sqlite3.Connection) -> bool:

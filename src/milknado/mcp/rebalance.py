@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 
+from milknado.app.rebalance import RebalanceOptions
 from milknado.app.rebalance import rebalance as _rebalance_impl
 from milknado.domains.graph import render_report
 from milknado.mcp._core import mcp, resolve_project_root
@@ -29,13 +30,13 @@ def milknado_rebalance(
     Returns the RebalanceReport fields plus a rendered `report` string.
     """
     root = resolve_project_root(project_root or None)
-    report = _rebalance_impl(
-        root,
+    options = RebalanceOptions(
         dry_run=dry_run,
         sweep=sweep,
         restructure=restructure,
         reap=reap,
     )
+    report = _rebalance_impl(root, options)
     _logger.info(
         "milknado_rebalance: dry_run=%s archived=%d moved=%d reaped=%d preserved=%d",
         dry_run,

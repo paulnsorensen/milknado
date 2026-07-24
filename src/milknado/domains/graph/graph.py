@@ -4,7 +4,7 @@ import logging
 import os
 import sqlite3
 import traceback
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -25,6 +25,7 @@ from milknado.domains.graph import (
     _mutations,
     _persistence,
     _reads,
+    _rebalance,
     _status,
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, _synchronized
@@ -32,7 +33,7 @@ from milknado.domains.graph._pipeline import StatusPipeline, _PluginAsMiddleware
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
-
+    from milknado.domains.graph.rebalance import ReapOutcome, ReapTarget, RebalanceState
 _logger = logging.getLogger(__name__)
 
 
@@ -51,6 +52,34 @@ class MikadoGraph(_AnalyticsFacade):
         self._close_stack: list[str] | None = None
         self._raw_conn = self._open(db_path)
         self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
+
+    @classmethod
+    def open_snapshot(cls, db_path: Path) -> MikadoGraph:
+        """Open a migrated in-memory copy without writing to the project database."""
+        uri = f"{db_path.resolve().as_uri()}?mode=ro"
+        source = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        snapshot = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            if source.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError(f"database failed PRAGMA quick_check: {db_path}")
+            source.backup(snapshot)
+            snapshot.row_factory = sqlite3.Row
+            snapshot.execute("PRAGMA foreign_keys=ON")
+            _persistence.create_tables(snapshot)
+            _persistence.migrate(snapshot)
+        except Exception:
+            snapshot.close()
+            raise
+        finally:
+            source.close()
+        graph = cls.__new__(cls)
+        graph._lock = RLock()
+        graph._db_path = db_path
+        graph._closed = False
+        graph._close_stack = None
+        graph._raw_conn = snapshot
+        graph._pipeline = StatusPipeline([])
+        return graph
 
     # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────
 
@@ -147,6 +176,8 @@ class MikadoGraph(_AnalyticsFacade):
                 raw.execute("SELECT 1")
             except sqlite3.ProgrammingError:
                 self._heal_conn("connection died without close()")
+        if self._raw_conn is None:
+            raise RuntimeError("graph connection healing did not produce a connection")
         return self._raw_conn
 
     # ── Creation ─────────────────────────────────────────────────────────────
@@ -211,6 +242,27 @@ class MikadoGraph(_AnalyticsFacade):
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         _mutations.reparent(self._conn, node_id, new_parent_id)
 
+    @_synchronized
+    def rebalance(self, *, sweep: bool = True, restructure: bool = True) -> RebalanceState:
+        """Apply graph-only rebalance passes in one database transaction."""
+        return _rebalance.rebalance_graph(self._conn, sweep=sweep, restructure=restructure)
+
+    @_synchronized
+    def get_reap_targets(self) -> tuple[ReapTarget, ...]:
+        """Return archived worktrees that have no running run."""
+        return _rebalance.get_reap_targets(self._conn)
+
+    @_synchronized
+    def reap_archived(
+        self, processor: Callable[[ReapTarget], ReapOutcome]
+    ) -> tuple[ReapOutcome, ...]:
+        """Process eligible worktrees while archive eligibility is write-fenced."""
+        return _rebalance.reap_archived(self._conn, processor)
+
+    @_synchronized
+    def count_archived(self) -> int:
+        return _rebalance.count_archived(self._conn)
+
     # ── Reads ────────────────────────────────────────────────────────────────
 
     @_synchronized
@@ -246,8 +298,8 @@ class MikadoGraph(_AnalyticsFacade):
         return _reads.get_children_map(self._conn, include_archived=include_archived)
 
     @_synchronized
-    def get_leaves(self) -> list[MikadoNode]:
-        return _reads.get_leaves(self._conn)
+    def get_leaves(self, *, include_archived: bool = False) -> list[MikadoNode]:
+        return _reads.get_leaves(self._conn, include_archived=include_archived)
 
     @_synchronized
     def get_ready_nodes(

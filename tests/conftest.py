@@ -9,6 +9,8 @@ import pytest
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.graph import MikadoGraph
 
+pytest_plugins = ("tests.rebalance_helpers",)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_global_milknado_config(

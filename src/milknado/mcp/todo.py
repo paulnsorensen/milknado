@@ -69,6 +69,8 @@ def milknado_todo_tree(
             node = graph.get_node(root_id)
             if node is None:
                 raise ValueError(f"node {root_id} not found")
+            if node.archived_at is not None and not include_archived:
+                return []
             return [_build_subtree(node, children_map, max_depth)]
         return [
             _build_subtree(n, children_map, max_depth)

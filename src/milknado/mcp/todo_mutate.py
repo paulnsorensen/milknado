@@ -9,15 +9,10 @@ from pathlib import Path
 from milknado.domains.common import (
     NodeKind,
     NodeSpec,
-    NodeStatus,
     normalize_hint_paths,
     validate_hint_path,
 )
-from milknado.domains.graph import (
-    apply_todo_status,
-    assert_done_verified,
-    subtree_post_order,
-)
+from milknado.domains.graph import apply_todo_status
 from milknado.mcp._core import (
     Flavor,
     Kind,
@@ -135,11 +130,6 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
         node = graph.get_node(root_id)
         if node is None:
             raise ValueError(f"node {root_id} not found")
-        if target == NodeStatus.DONE:
-            children_map = graph.get_children_map(include_archived=True)
-            for n in subtree_post_order(children_map, node):
-                if n.archived_at is None:
-                    assert_done_verified(graph, n)
         updated = graph.set_subtree_status(root_id, target)
         _logger.info(
             "milknado_set_subtree_status: root=%d status=%s updated=%d", root_id, status, updated

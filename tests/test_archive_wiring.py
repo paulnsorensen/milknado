@@ -63,6 +63,14 @@ class TestMcpArchiveTools:
         assert tree == []
         full = _call(milknado_todo_tree, project_root=root, include_archived=True)
         assert [n["id"] for n in full] == [goal_id]
+        assert _call(milknado_todo_tree, root_id=goal_id, project_root=root) == []
+        explicit = _call(
+            milknado_todo_tree,
+            root_id=goal_id,
+            project_root=root,
+            include_archived=True,
+        )
+        assert [node["id"] for node in explicit] == [goal_id]
 
         restored = _call(milknado_unarchive_node, node_id=goal_id, project_root=root)
         assert restored == {"unarchived": 2}
@@ -272,13 +280,16 @@ class TestCliGraphArchive:
         config = default_config(tmp_path)
         graph = MikadoGraph(config.db_path)
         goal = graph.add_node("goal")
-        graph.add_node("task", parent_id=goal.id)
+        task = graph.add_node("task", parent_id=goal.id)
         graph.close()
 
         result = runner.invoke(
             app, ["graph", "archive", str(goal.id), "--project-root", str(tmp_path)]
         )
         assert result.exit_code == 1
+        assert "nodes not eligible for archive" in result.output
+        assert str(goal.id) in result.output
+        assert str(task.id) in result.output
 
     def test_archive_missing_node_exit_1(self, tmp_path: Path) -> None:
         runner.invoke(app, ["init", str(tmp_path)])

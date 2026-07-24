@@ -84,18 +84,16 @@ def render_tree(
     from rich.console import Console
     from rich.tree import Tree
 
-    root_node = graph.get_root(include_archived=include_archived)
-    if root_node is None:
+    roots = graph.get_roots(include_archived=include_archived)
+    if not roots:
         return "[dim]No nodes in graph[/dim]"
-
-    summary = summarize(graph, include_archived=include_archived)
-    tree = Tree(format_node(root_node))
-    _build_subtree(graph, root_node.id, tree, include_archived=include_archived)
-
     console = Console(record=True, width=120)
-    console.print(tree)
+    for root_node in roots:
+        tree = Tree(format_node(root_node))
+        _build_subtree(graph, root_node.id, tree, include_archived=include_archived)
+        console.print(tree)
     console.print()
-    _print_summary(console, summary, run_states)
+    _print_summary(console, summarize(graph, include_archived=include_archived), run_states)
     return console.export_text()
 
 
