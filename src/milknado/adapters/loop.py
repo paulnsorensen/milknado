@@ -415,8 +415,7 @@ def _build_ralph_content(
     if prior_findings.strip():
         round_label = f" (round {findings_round})" if findings_round is not None else ""
         findings_section = (
-            f"## Prior review findings{round_label}\n\n"
-            f"{prior_findings.rstrip()}\n\n"
+            f"## Prior review findings{round_label}\n\n{prior_findings.rstrip()}\n\n"
         )
     return (
         f"# {node.description}\n\n"

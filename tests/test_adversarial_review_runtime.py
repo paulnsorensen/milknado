@@ -154,9 +154,7 @@ def test_redispatch_threads_findings_into_ralph_regeneration(graph, tmp_path: Pa
     assert ralph.ralph_md_calls[1]["findings_round"] == 1
 
 
-def test_notify_review_dual_writes_node_reviews_and_run_messages(
-    graph, tmp_path: Path
-) -> None:
+def test_notify_review_dual_writes_node_reviews_and_run_messages(graph, tmp_path: Path) -> None:
     """#298: every notified verdict lands in node_reviews (audit trail, no runs
     dependency) AND in run_messages (FK satisfied by the curd-A runs row)."""
     ralph = _ReviewRalph([False, True])
