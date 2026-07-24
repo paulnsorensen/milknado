@@ -494,9 +494,11 @@ class _DispatchRalph:
         return output_path
 
     def create_run(self, **_kw):  # noqa: ANN003, ANN201
+        resolved_run_id = _kw.get("run_id") or "run-1"
+
         class _Run:
             class state:  # noqa: N801
-                run_id = "run-1"
+                run_id = resolved_run_id
 
         return _Run()
 

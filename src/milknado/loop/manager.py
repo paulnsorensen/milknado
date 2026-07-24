@@ -89,9 +89,11 @@ class RunManager:
         self,
         config: RunConfig,
         emitter: EventEmitter | None = None,
+        *,
+        run_id: str | None = None,
     ) -> ManagedRun:
         """Create and register a run, using a queue only when no emitter is supplied."""
-        run_id = generate_run_id()
+        run_id = run_id or generate_run_id()
         state = RunState(run_id=run_id)
         managed = ManagedRun(
             config=config,

@@ -72,8 +72,10 @@ class _FakeRalph:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
+        runtime_policy: Any | None = None,
+        run_id: str | None = None,
     ) -> _FakeRun:
-        return _FakeRun()
+        return _FakeRun(state=_FakeRunState(run_id=run_id or "run-dur-1"))
 
     def start_run(self, run_id: str) -> None:
         pass

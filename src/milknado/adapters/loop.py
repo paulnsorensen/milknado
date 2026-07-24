@@ -50,6 +50,7 @@ class LoopAdapter:
         commit_footer: str | None = None,
         base_oid: str | None = None,
         runtime_policy: Any | None = None,
+        run_id: str | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
@@ -76,7 +77,7 @@ class LoopAdapter:
         config.completion_verifier = build_completion_verifier(
             ralph_dir, quality_gates, base_oid=base_oid
         )
-        return self._manager.create_run(config, emitter=self._emitter)
+        return self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
 
     def start_run(self, run_id: str) -> None:
         self._manager.start_run(run_id)

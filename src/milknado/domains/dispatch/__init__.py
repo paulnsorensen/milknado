@@ -9,6 +9,7 @@ from milknado.domains.dispatch._runstate import (
     request_cancel,
     runs_dir,
     tail,
+    tail_latest_iteration_log,
 )
 from milknado.domains.dispatch.async_run import (
     AsyncRunRequest,
@@ -96,6 +97,7 @@ __all__ = [
     "run_headless",
     "runs_dir",
     "tail",
+    "tail_latest_iteration_log",
     "start_headless_async",
     "validate_worker_argv",
 ]

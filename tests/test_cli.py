@@ -27,9 +27,9 @@ runner = CliRunner()
 def _unique_run_factory() -> MagicMock:
     counter = itertools.count(1)
 
-    def _create_run(*_args: object, **_kwargs: object) -> MagicMock:
+    def _create_run(*_args: object, **kwargs: object) -> MagicMock:
         run = MagicMock()
-        run.state.run_id = f"run-{next(counter)}"
+        run.state.run_id = kwargs.get("run_id") or f"run-{next(counter)}"
         return run
 
     mock = MagicMock(side_effect=_create_run)
@@ -45,9 +45,13 @@ def _configure_ralph_mocks(
     if unique:
         ralph_cls.return_value.create_run = _unique_run_factory()
     else:
-        fake_run = MagicMock()
-        fake_run.state.run_id = "run-1"
-        ralph_cls.return_value.create_run.return_value = fake_run
+
+        def _create_run(*_args: object, **kwargs: object) -> MagicMock:
+            run = MagicMock()
+            run.state.run_id = kwargs.get("run_id") or "run-1"
+            return run
+
+        ralph_cls.return_value.create_run.side_effect = _create_run
     ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"
 
     def _wait_for_next_completion(

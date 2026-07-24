@@ -109,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             review_max_rounds=profile.review_max_rounds,
             on_reject=profile.on_reject,
             session_mode=profile.session_mode,
+            completion_timeout_seconds=int(args.timeout),
         )
         outcome = run_node_to_completion(
             executor,
