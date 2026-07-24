@@ -137,9 +137,7 @@ def test_migration_failure_rolls_back_and_fails_loud(
         MikadoGraph(db)
     conn = sqlite3.connect(str(db))
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    probe = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE name = 'migration_probe'"
-    ).fetchone()
+    probe = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'migration_probe'").fetchone()
     conn.close()
     assert version == 0, "a failed batch must not stamp user_version"
     assert probe is None, "the earlier statement in the failed batch must roll back"
@@ -196,3 +194,69 @@ def test_reopen_of_current_db_is_noop_migration(tmp_path: Path) -> None:
     rows = reopened.node_reviews_for_node(node.id)
     assert [r["verdict"] for r in rows] == ["reject"]
     reopened.close()
+
+
+def _review_count(db: Path) -> int:
+    conn = sqlite3.connect(str(db))
+    count = conn.execute("SELECT COUNT(*) FROM node_reviews").fetchone()[0]
+    conn.close()
+    return count
+
+
+def test_delete_node_cleans_node_reviews(tmp_path: Path) -> None:
+    """node_reviews.node_id is a bare REFERENCES FK (no ON DELETE action) with
+    PRAGMA foreign_keys=ON: delete_node must remove the dependent review rows
+    itself or the delete raises IntegrityError."""
+    db = tmp_path / "g.db"
+    graph = MikadoGraph(db)
+    node = graph.add_node("reviewed")
+    graph.insert_node_review(node.id, 1, "reject", "findings", "2026-07-23T00:00:00Z")
+
+    deleted = graph.delete_node(node.id)
+
+    assert deleted == 1
+    assert _review_count(db) == 0, "delete_node must clear the node's review rows"
+    graph.close()
+
+
+def test_drop_all_cleans_node_reviews(tmp_path: Path) -> None:
+    """drop_all wipes every table; node_reviews must be cleared before nodes or
+    the FK blocks the bulk delete."""
+    db = tmp_path / "g.db"
+    graph = MikadoGraph(db)
+    node = graph.add_node("reviewed")
+    graph.insert_node_review(node.id, 1, "approve", "", "2026-07-23T00:00:00Z")
+
+    count = graph.drop_all()
+
+    assert count == 1
+    assert _review_count(db) == 0, "drop_all must clear node_reviews"
+    graph.close()
+
+
+def test_open_failure_closes_connection_before_reraising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If create_tables/migrate raises during _open, the fresh handle must be
+    closed (best-effort) and the ORIGINAL exception propagate unchanged."""
+    original = RuntimeError("schema boom")
+
+    def _boom(conn: sqlite3.Connection) -> None:
+        raise original
+
+    monkeypatch.setattr(_persistence, "create_tables", _boom)
+    opened: list[sqlite3.Connection] = []
+    real_connect = sqlite3.connect
+
+    def _tracking_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        conn = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", _tracking_connect)
+    with pytest.raises(RuntimeError) as exc_info:
+        MikadoGraph(tmp_path / "g.db")
+    assert exc_info.value is original
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        opened[0].execute("SELECT 1")

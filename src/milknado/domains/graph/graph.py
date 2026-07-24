@@ -84,6 +84,9 @@ class MikadoGraph(_AnalyticsFacade):
             try:
                 conn.close()
             except sqlite3.Error:
+                # Best-effort close: the db was already renamed aside by the
+                # quarantine, so this handle to the moved file is abandoned
+                # either way — a close failure changes nothing.
                 pass
             _logger.warning(
                 "database failed PRAGMA quick_check (%s); quarantined %s to %s; recreating fresh",
@@ -98,8 +101,17 @@ class MikadoGraph(_AnalyticsFacade):
         # Explicit so the concurrent-writer wait window (detached runner + server
         # both writing the same db) is documented, not implicit in connect()'s default.
         conn.execute("PRAGMA busy_timeout=5000")
-        _persistence.create_tables(conn)
-        _persistence.migrate(conn)
+        try:
+            _persistence.create_tables(conn)
+            _persistence.migrate(conn)
+        except Exception:
+            # Never leak the handle on a schema/migration failure — close
+            # best-effort, then re-raise the original error unchanged.
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            raise
         return conn
 
     def _heal_conn(self, reason: str) -> None:

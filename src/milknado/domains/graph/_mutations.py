@@ -38,8 +38,9 @@ def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int
 def _delete_one(conn: sqlite3.Connection, node_id: int) -> None:
     """Delete one node and every row referencing it, without committing.
 
-    The edges/file_ownership/goal_claims/runs FKs lack ON DELETE CASCADE, so
-    dependent rows go first — run_messages before its parent runs row, and both
+    The edges/file_ownership/goal_claims/node_reviews/runs FKs lack ON DELETE
+    CASCADE, so dependent rows go first — run_messages before its parent runs
+    row, and both
     before the node whose runs.node_id FK would otherwise abort the delete.
     `nodes.parent_id` carries no FK, so a `set_parent_id` link (no edge) would
     otherwise dangle once its target is gone — null those references here.
@@ -51,6 +52,7 @@ def _delete_one(conn: sqlite3.Connection, node_id: int) -> None:
         "DELETE FROM run_messages WHERE run_id IN (SELECT run_id FROM runs WHERE node_id = ?)",
         (node_id,),
     )
+    conn.execute("DELETE FROM node_reviews WHERE node_id = ?", (node_id,))
     conn.execute("DELETE FROM runs WHERE node_id = ?", (node_id,))
     conn.execute("UPDATE nodes SET parent_id = NULL WHERE parent_id = ?", (node_id,))
     conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
