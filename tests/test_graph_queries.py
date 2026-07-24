@@ -24,6 +24,9 @@ def test_node_summaries_filter_and_page_in_sql(tmp_path: Path) -> None:
     )
     graph._conn.set_trace_callback(None)
 
+    # Filter the self-heal chokepoint's SELECT 1 health probes (#297); the
+    # contract under test is that the domain read is a single SQL query.
+    queries = [q for q in queries if q != "SELECT 1"]
     assert summaries == [
         {"id": second.id, "status": NodeStatus.PENDING.value, "description": "second"}
     ]
