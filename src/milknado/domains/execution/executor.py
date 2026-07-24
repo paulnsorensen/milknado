@@ -551,6 +551,8 @@ class Executor:
         base_oid: str,
         *,
         session: NodeAgentSession | None = None,
+        prior_findings: str = "",
+        findings_round: int | None = None,
     ) -> str:
         context = build_node_context(node, self._graph, self._crg)
         ralph_path = self._ralph.generate_ralph_md(
@@ -558,6 +560,8 @@ class Executor:
             context,
             config.quality_gates,
             wt_path / "RALPH.md",
+            prior_findings=prior_findings,
+            findings_round=findings_round,
         )
         ralph_run_id = make_run_id(node.id)
         create_kwargs: dict[str, Any] = {
@@ -863,11 +867,21 @@ class Executor:
         *,
         verdict: str,
         findings_md: str,
+        round_number: int,
     ) -> bool:
         worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
         if not worker_run_id:
             _logger.error("node_review_notification_missing_run node_id=%d", node.id)
             return False
+        now = datetime.now(UTC).isoformat()
+        # Durable audit trail keyed by (node_id, round); deliberately has no FK
+        # to runs, so this write cannot fail the way the #296 run_messages one did.
+        try:
+            self._graph.insert_node_review(node.id, round_number, verdict, findings_md, now)
+        except Exception:
+            _logger.exception(
+                "node_review_table_write_failed node_id=%d round=%d", node.id, round_number
+            )
         body = json.dumps(
             {"node_id": node.id, "verdict": verdict, "findings": findings_md},
             sort_keys=True,
@@ -877,7 +891,7 @@ class Executor:
                 worker_run_id,
                 "node_review",
                 body,
-                datetime.now(UTC).isoformat(),
+                now,
             )
         except Exception:
             _logger.exception(
@@ -914,6 +928,9 @@ class Executor:
         node: MikadoNode,
         config: ExecutionConfig,
         worktree: Path,
+        *,
+        prior_findings: str = "",
+        findings_round: int | None = None,
     ) -> DispatchResult:
         owner_fence = self._owner_fence_by_node.get(node.id)
         prior_worker_run_id = self._worker_run_id_by_node.get(node.id)
@@ -950,6 +967,8 @@ class Executor:
             worktree,
             base_oid,
             session=session if config.session_mode == "resume" else None,
+            prior_findings=prior_findings,
+            findings_round=findings_round,
         )
         if owner_fence is None:
             if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
@@ -965,6 +984,7 @@ class Executor:
                 )
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
         self._worker_run_id_by_node[node.id] = run_id
+
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
     def _cleanup_failed_dispatch(
@@ -1197,17 +1217,26 @@ class Executor:
         None) fall through to a warn-policy merge. The bool is whether the
         review-notification write itself failed, for the caller to propagate."""
         node_id = node.id
-        notification_failed = not self._notify_review(node, verdict="reject", findings_md=findings)
+        round_number = self._review_round_by_node.get(node_id, 0)
+        review_round = round_number + 1
+        notification_failed = not self._notify_review(
+            node, verdict="reject", findings_md=findings, round_number=review_round
+        )
         if notification_failed:
             _logger.error(
                 "node_review_notification_degraded node_id=%d policy=%s",
                 node_id,
                 config.on_reject,
             )
-        round_number = self._review_round_by_node.get(node_id, 0)
         if not review_error and round_number < config.review_max_rounds:
-            self._review_round_by_node[node_id] = round_number + 1
-            redispatch = self._redispatch_review_round(node, config, worktree)
+            self._review_round_by_node[node_id] = review_round
+            redispatch = self._redispatch_review_round(
+                node,
+                config,
+                worktree,
+                prior_findings=findings,
+                findings_round=review_round,
+            )
             _logger.warning(
                 "node_review_rejected node_id=%d round=%d/%d; redispatching",
                 node_id,
@@ -1239,7 +1268,7 @@ class Executor:
                     exit_code=None,
                     timed_out=False,
                     ended_at=datetime.now(UTC).isoformat(),
-                    detail=f"review blocked after round {round_number + 1}",
+                    detail=f"review blocked after round {review_round}",
                 ),
             )
             _logger.warning("node_review_blocked node_id=%d worktree=%s", node_id, worktree)

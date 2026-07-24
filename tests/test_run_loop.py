@@ -237,6 +237,8 @@ class FakeRalph:
         context: str,
         quality_gates: list[str],
         output_path: Path,
+        prior_findings: str = "",
+        findings_round: int | None = None,
     ) -> Path:
         return output_path
 

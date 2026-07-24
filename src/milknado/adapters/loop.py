@@ -256,10 +256,18 @@ class LoopAdapter:
         context: str,
         quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
+        prior_findings: str = "",
+        findings_round: int | None = None,
     ) -> Path:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            content = _build_ralph_content(node, context, quality_gates)
+            content = _build_ralph_content(
+                node,
+                context,
+                quality_gates,
+                prior_findings=prior_findings,
+                findings_round=findings_round,
+            )
             output_path.write_text(content, encoding="utf-8")
         except OSError as exc:
             from milknado.domains.common import RalphMarkdownWriteError
@@ -389,6 +397,8 @@ def _build_ralph_content(
     node: MikadoNode,
     context: str,
     quality_gates: tuple[Gate, ...] | None,
+    prior_findings: str = "",
+    findings_round: int | None = None,
 ) -> str:
     if quality_gates is None:
         gates_section = (
@@ -401,8 +411,16 @@ def _build_ralph_content(
     else:
         gate_lines = "\n".join(f"- `{g.command}`" for g in quality_gates)
         gates_section = f"## Quality Gates\n\n{gate_lines}"
+    findings_section = ""
+    if prior_findings.strip():
+        round_label = f" (round {findings_round})" if findings_round is not None else ""
+        findings_section = (
+            f"## Prior review findings{round_label}\n\n"
+            f"{prior_findings.rstrip()}\n\n"
+        )
     return (
         f"# {node.description}\n\n"
+        f"{findings_section}"
         f"## Context\n\n{context}\n\n"
         f"{gates_section}\n\n"
         "## Proposing follow-up work\n\n"
