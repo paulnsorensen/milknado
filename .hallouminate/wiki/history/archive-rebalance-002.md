@@ -1,0 +1,8 @@
+# ADR-002: archive gates destruction; reap is fail-closed only  [status: accepted]
+
+Rebalance's reap pass only tears down worktrees of *archived* nodes, using only fail-closed teardown — force removal stays reachable solely via `WorktreeManager.discard`. Spec: archive-rebalance (2026-07-23).
+
+- **Context:** Worktrees accumulate from completed `merge_back=False` runs (documented as manual `git worktree remove`, `src/milknado/mcp/run.py:55`), preserved dirty/unlanded teardowns, and orphaned dispatch relocations (`src/milknado/app/ralph.py:105`). The house rule is that destroying work must be an explicitly named act (`src/milknado/domains/common/errors.py:34`); `GitPort.remove_worktree` already refuses dirty or unlanded worktrees (`src/milknado/adapters/git.py:82`).
+- **Decision:** Archiving is the gate before destruction: reap targets archived nodes' extant worktrees via `remove_worktree`, deletes branches with a new fail-closed `GitPort.delete_branch` (`git branch -d`, refuses unmerged), then runs `git worktree prune`. Dirty/unlanded worktrees are reported as preserved, never forced. No auto-archive in `mark_done` — sweep is an explicit act and the status pipeline stays pure.
+- **Alternatives:** Reap any DONE node's worktree — destroys reviewable state before the user has shelved it. Auto-archive on completion — couples the status pipeline to hygiene and mutates without an explicit act.
+- **Consequences:** Worktrees of unarchived DONE nodes linger by design and surface as reap candidates in `--dry-run` output. `delete_branch` is a new GitPort method; `node.worktree_path`/`branch_name` are cleared on successful reap so later runs skip cleanly.
