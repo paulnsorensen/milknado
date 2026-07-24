@@ -1936,3 +1936,81 @@ def test_default_fake_ralph_id_prefixes_are_unique() -> None:
         "quality_gates": None,
     }
     assert first.create_run(**cfg).state.run_id != second.create_run(**cfg).state.run_id
+
+
+def test_finalize_worker_run_swallows_finish_run_failure(
+    graph: MikadoGraph,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,  # noqa: ANN001
+) -> None:
+    """A failed finalize must not kill node completion: the finish_run raise
+    is swallowed and logged loud, like the dispatch insert."""
+    from milknado.domains.common.types import RunResult
+
+    executor = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
+    monkeypatch.setattr(graph, "get_run", lambda run_id: {"status": "running"})
+
+    def _boom(run_id: str, result: Any) -> bool:
+        raise RuntimeError("db wedged")
+
+    monkeypatch.setattr(graph, "finish_run", _boom)
+    result = RunResult(
+        status="failed",
+        exit_code=None,
+        timed_out=False,
+        ended_at="2026-07-24T00:00:00Z",
+        error="x",
+    )
+    with caplog.at_level(logging.ERROR, logger="milknado.domains.execution.executor"):
+        executor._finalize_worker_run("run-x", result)
+    assert any("runs-row finalize failed" in r.message for r in caplog.records)
+
+
+def test_watcher_retries_after_force_stop_raise(
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,  # noqa: ANN001
+) -> None:
+    """force_stop_run raising must be retried with backoff: the failure is
+    logged, the row stays running (fail-closed), and once the raise clears
+    the watcher stops the loop and finalizes the row cancelled."""
+    import milknado.domains.execution.executor as executor_module
+    from milknado.domains.dispatch._runstate import request_cancel, runs_dir
+
+    graph.add_node("force stop raise retries")
+    ralph = FakeRalph(live=True, id_prefix="fstopraise")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    result = executor.dispatch(1, config)
+
+    real_sleep = time.sleep
+    monkeypatch.setattr(executor_module.time, "sleep", lambda secs: real_sleep(0.001))
+    ralph.force_stop_raises = RuntimeError("stop boom")
+
+    with caplog.at_level(logging.ERROR, logger="milknado.domains.execution.executor"):
+        request_cancel(runs_dir(tmp_path), result.run_id)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(ralph.force_stopped) < 3:
+            real_sleep(0.01)
+    assert len(ralph.force_stopped) >= 3, "watcher must retry the raising force-stop"
+    assert any("force-stop raised for cancelled ralph run" in r.message for r in caplog.records), (
+        "the raise must be logged loud"
+    )
+    row = graph.get_run(result.run_id)
+    assert row is not None and row["status"] == "running", (
+        "fail-closed: a raising force-stop must not leave a falsely-terminal row"
+    )
+
+    # The transient failure clears: the retry stops the loop and finalizes cancelled.
+    ralph.force_stop_raises = None
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        row = graph.get_run(result.run_id)
+        if row is not None and row["status"] != "running":
+            break
+        real_sleep(0.05)
+    row = graph.get_run(result.run_id)
+    assert row is not None and row["error"] == "cancelled", (
+        "watcher must retry the force-stop and finalize cancelled"
+    )
