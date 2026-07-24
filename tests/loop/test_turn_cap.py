@@ -3,7 +3,7 @@
 Covers the behaviours that distinguish how each adapter participates in
 ``max_turns``:
 
-- Streaming adapters that count tool uses (claude / codex / opencode) are
+- Streaming adapters that count tool uses (claude / codex / opencode / omp) are
   preempted at the cap.
 - Adapters that count nothing (crush) treat ``max_turns`` as a no-op.
 - Adapters with no hook system (copilot / crush / opencode / generic)
@@ -36,6 +36,7 @@ from milknado.loop.adapters.claude import ClaudeAdapter
 from milknado.loop.adapters.codex import CodexAdapter
 from milknado.loop.adapters.copilot import CopilotAdapter
 from milknado.loop.adapters.crush import CrushAdapter
+from milknado.loop.adapters.omp import OmpAdapter
 from milknado.loop.adapters.opencode import OpenCodeAdapter
 from milknado.loop.engine import run_loop
 from milknado.loop.hooks import NoOpAgentHook
@@ -80,6 +81,31 @@ def test_opencode_tool_use_events_count_toward_cap() -> None:
     )
 
     # The third tool_use is never reached: the cap fires at 2.
+    assert result.turn_capped is True
+    assert result.tool_use_count == 2
+    assert seen == [("read", 1), ("edit", 2)]
+
+
+def test_omp_tool_execution_start_events_count_toward_cap() -> None:
+    """OMP camelCase tool events are counted and preempt at the cap."""
+    adapter = OmpAdapter()
+    stream = io.StringIO(
+        '{"type":"tool_execution_start","toolName":"read","args":{}}\n'
+        '{"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}\n'
+        '{"type":"tool_execution_start","toolName":"edit","args":{}}\n'
+        '{"type":"tool_execution_start","toolName":"bash","args":{}}\n'
+    )
+    seen: list[tuple[str, int]] = []
+
+    result = _read_agent_stream(
+        stream,
+        deadline=None,
+        on_activity=None,
+        adapter=adapter,
+        max_turns=2,
+        on_tool_use=lambda name, count: seen.append((name, count)),
+    )
+
     assert result.turn_capped is True
     assert result.tool_use_count == 2
     assert seen == [("read", 1), ("edit", 2)]
