@@ -6,11 +6,13 @@ import logging
 import shutil
 import sqlite3
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
+from milknado.domains.common.errors import ArchiveIneligible
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import (
@@ -501,3 +503,51 @@ class TestWalDurability:
         with caplog.at_level(logging.WARNING):
             graph.close()  # must not raise
         assert "WAL checkpoint on close failed" in caplog.text
+
+
+class TestArchiveSeed:
+    """Seed contract for spec archive-rebalance: archived_at column, migration v3,
+    row round-trip, and the ArchiveIneligible error shape."""
+
+    def test_fresh_db_archived_at_defaults_to_none(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("fresh task")
+        assert node.archived_at is None
+        reread = graph.get_node(node.id)
+        assert reread is not None
+        assert reread.archived_at is None
+
+    def test_archived_at_round_trips_as_datetime(self, graph: MikadoGraph) -> None:
+        node = graph.add_node("stamp me")
+        stamp = datetime(2026, 7, 24, 12, 0, 0, tzinfo=UTC)
+        graph._conn.execute(
+            "UPDATE nodes SET archived_at = ? WHERE id = ?", (stamp.isoformat(), node.id)
+        )
+        graph._conn.commit()
+        reread = graph.get_node(node.id)
+        assert reread is not None
+        assert reread.archived_at == stamp
+
+    def test_migration_v3_adds_archived_at_to_pre_v3_db(self, tmp_path: Path) -> None:
+        """A pre-v3 database (user_version=2, no archived_at column) must gain the
+        column via the v3 ALTER on open, validate cleanly, and read/write nodes."""
+        db = tmp_path / "g.db"
+        conn = sqlite3.connect(str(db))
+        create_tables(conn)
+        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+        conn.close()
+
+        graph = MikadoGraph(db)
+        version = graph._conn.execute("PRAGMA user_version").fetchone()[0]
+        assert version == 3
+        node = graph.add_node("migrated task")
+        assert node.archived_at is None
+        graph.close()
+
+    def test_archive_ineligible_carries_node_ids(self) -> None:
+        err = ArchiveIneligible((7, 3))
+        assert err.node_ids == (7, 3)
+        assert isinstance(err, ValueError)
+        message = str(err)
+        assert "7" in message and "3" in message

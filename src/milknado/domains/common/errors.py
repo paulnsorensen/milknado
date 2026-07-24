@@ -133,6 +133,15 @@ class InsufficientTestCoverageError(MilknadoError):
         )
 
 
+class ArchiveIneligible(MilknadoError, ValueError):
+    """Refusal to archive nodes that are not DONE or block other work."""
+
+    def __init__(self, node_ids: tuple[int, ...]) -> None:
+        self.node_ids = node_ids
+        ids_str = ", ".join(str(node_id) for node_id in node_ids)
+        super().__init__(f"nodes not eligible for archive (non-DONE or blocking): {ids_str}")
+
+
 class InvalidContainment(MilknadoError, ValueError):
     def __init__(self, parent_kind: object, child_kind: object) -> None:
         self.parent_kind = parent_kind

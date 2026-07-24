@@ -82,6 +82,8 @@ class MikadoNode:
     github_ref: str | None = None
     # opaque repo-relative markdown reference (wiki_ref precedent); no existence enforcement
     artifact_path: str | None = None
+    # when the node was archived out of the active graph; None = active
+    archived_at: datetime | None = None
 
     def __post_init__(self) -> None:
         if self.kind == NodeKind.TASK:
