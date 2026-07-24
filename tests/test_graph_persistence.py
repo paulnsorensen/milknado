@@ -545,6 +545,32 @@ class TestArchiveSeed:
         assert node.archived_at is None
         graph.close()
 
+    def test_migration_v3_preserves_preexisting_rows(self, tmp_path: Path) -> None:
+        """Data written before v3 survives the ALTER: row content is intact,
+        archived_at reads back NULL, and user_version is stamped to 3."""
+        db = tmp_path / "g.db"
+        conn = sqlite3.connect(str(db))
+        create_tables(conn)
+        conn.execute(
+            "INSERT INTO nodes (description, status, kind, created_at) "
+            "VALUES ('pre-v3 done task', 'done', 'task', '2026-07-20T00:00:00+00:00')"
+        )
+        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+        conn.close()
+
+        graph = MikadoGraph(db)
+        try:
+            assert graph._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+            node = graph.get_node(1)
+            assert node is not None
+            assert node.description == "pre-v3 done task"
+            assert node.status.value == "done"
+            assert node.archived_at is None
+        finally:
+            graph.close()
+
     def test_archive_ineligible_carries_node_ids(self) -> None:
         err = ArchiveIneligible((7, 3))
         assert err.node_ids == (7, 3)

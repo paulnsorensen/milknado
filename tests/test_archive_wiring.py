@@ -18,7 +18,7 @@ from milknado.domains.common import default_config
 from milknado.domains.graph import MikadoGraph
 from milknado.mcp.rebalance import milknado_rebalance
 from milknado.mcp.server import milknado_graph_summary
-from milknado.mcp.todo import milknado_todo_tree
+from milknado.mcp.todo import milknado_get_node, milknado_todo_tree
 from milknado.mcp.todo_mutate import (
     milknado_archive_node,
     milknado_set_subtree_status,
@@ -130,6 +130,84 @@ class TestMcpIncludeArchived:
         assert by_id[live["id"]]["status"] == "blocked"
 
 
+class TestMcpSetStatusGuard:
+    """Cross-layer: the archived-node status guard must bite through the MCP
+    todo_set_status surface, not just the domain (spec: 'WHEN a status
+    transition would change an archived node's status THE SYSTEM SHALL raise')."""
+
+    def test_status_change_on_archived_node_raises_and_leaves_it_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        root = str(tmp_path)
+        goal_id, task_id = _seed_done_subtree(root)
+        _call(milknado_archive_node, node_id=goal_id, project_root=root)
+
+        with pytest.raises(ValueError, match="is archived"):
+            _call(milknado_todo_set_status, node_id=task_id, status="blocked", project_root=root)
+
+        full = _call(milknado_todo_tree, project_root=root, include_archived=True)
+        by_id = {n["id"]: n for n in full[0]["children"]}
+        assert by_id[task_id]["status"] == "done"
+
+
+class TestMcpRebalanceRestructure:
+    """Cross-curd: restructure (curd 3) observable through the MCP rebalance
+    surface — per-curd presses only exercised sweep/dry-run at this layer."""
+
+    def test_orphans_grouped_under_find_or_create_inbox_and_inbox_reused(
+        self, tmp_path: Path
+    ) -> None:
+        root = str(tmp_path)
+        first = _call(milknado_todo_add, description="orphan one", project_root=root)
+        second = _call(milknado_todo_add, description="orphan two", project_root=root)
+        goal_id, _ = _seed_done_subtree(root)
+
+        result = _call(milknado_rebalance, project_root=root, reap=False)
+        # Sweep archived the DONE subtree before grouping; only live work moved.
+        assert goal_id in result["archived_roots"]
+        assert result["moved_tasks"] == 2
+        inbox_id = result["inbox_id"]
+        assert inbox_id is not None
+
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert [n["id"] for n in tree] == [inbox_id]
+        assert {c["id"] for c in tree[0]["children"]} == {first["id"], second["id"]}
+
+        # A second run find-or-creates nothing: the Inbox is reused, no orphans remain.
+        again = _call(milknado_rebalance, project_root=root, reap=False)
+        assert again["inbox_id"] == inbox_id
+        assert again["moved_tasks"] == 0
+
+    def test_diamond_orphans_move_exactly_once_under_inbox(self, tmp_path: Path) -> None:
+        """Two root tasks sharing one prerequisite (a diamond): every orphan is
+        reparented exactly once, and the rendered forest stays a well-formed
+        single-parent tree (the shared node appears exactly once)."""
+        root = str(tmp_path)
+        shared = _call(milknado_todo_add, description="shared prereq", project_root=root)
+        left = _call(
+            milknado_todo_add, description="left", prereqs=[shared["id"]], project_root=root
+        )
+        right = _call(
+            milknado_todo_add, description="right", prereqs=[shared["id"]], project_root=root
+        )
+
+        result = _call(milknado_rebalance, project_root=root, reap=False)
+        assert result["moved_tasks"] == 3
+        inbox_id = result["inbox_id"]
+
+        for task in (shared, left, right):
+            assert (
+                _call(milknado_get_node, node_id=task["id"], project_root=root)["parent_id"]
+                == inbox_id
+            )
+
+        def _count(node: dict, target: int) -> int:
+            return (node["id"] == target) + sum(_count(c, target) for c in node["children"])
+
+        tree = _call(milknado_todo_tree, project_root=root)
+        assert sum(_count(n, shared["id"]) for n in tree) == 1
+
+
 class TestMcpRebalance:
     def test_dry_run_predicts_without_mutating(self, tmp_path: Path) -> None:
         root = str(tmp_path)
@@ -195,6 +273,12 @@ class TestCliGraphArchive:
         )
         assert result.exit_code == 1
 
+    def test_archive_missing_node_exit_1(self, tmp_path: Path) -> None:
+        runner.invoke(app, ["init", str(tmp_path)])
+        result = runner.invoke(app, ["graph", "archive", "999", "--project-root", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "999" in result.output
+
     def test_unarchive_under_archived_ancestor_refused(self, tmp_path: Path) -> None:
         goal_id, task_id = _init_and_seed_done_goal(tmp_path)
         runner.invoke(app, ["graph", "archive", str(goal_id), "--project-root", str(tmp_path)])
@@ -230,6 +314,24 @@ class TestCliRebalance:
         assert graph.get_node(goal_id).archived_at is None  # type: ignore[union-attr]
         graph.close()
 
+    def test_dry_run_plan_matches_apply(self, tmp_path: Path) -> None:
+        """CLI dry-run/apply parity: the plan names exactly the roots the real
+        run archives, and a post-apply dry-run has nothing left to sweep."""
+        goal_id, _ = _init_and_seed_done_goal(tmp_path)
+
+        dry = runner.invoke(app, ["rebalance", str(tmp_path), "--dry-run"])
+        assert dry.exit_code == 0
+        assert f"roots: {goal_id}" in dry.output
+
+        applied = runner.invoke(app, ["rebalance", str(tmp_path), "--no-reap"])
+        assert applied.exit_code == 0
+        assert "[dry-run]" not in applied.output
+        assert f"roots: {goal_id}" in applied.output
+
+        after = runner.invoke(app, ["rebalance", str(tmp_path), "--dry-run"])
+        assert after.exit_code == 0
+        assert "roots: none" in after.output
+
     def test_real_run_sweeps(self, tmp_path: Path) -> None:
         goal_id, _ = _init_and_seed_done_goal(tmp_path)
         result = runner.invoke(app, ["rebalance", str(tmp_path), "--no-reap"])
@@ -239,3 +341,32 @@ class TestCliRebalance:
         graph = MikadoGraph(config.db_path)
         assert graph.get_node(goal_id).archived_at is not None  # type: ignore[union-attr]
         graph.close()
+
+
+class TestCliSweepThenUnarchive:
+    """Cross-curd interaction: a subtree shelved by `rebalance` (curd 3) must be
+    restorable through `graph unarchive` (curd 1 wiring), and `status --all`
+    must render the swept tree with the archived marker in between."""
+
+    def test_swept_subtree_marked_by_status_all_and_restored_by_unarchive(
+        self, tmp_path: Path
+    ) -> None:
+        goal_id, _ = _init_and_seed_done_goal(tmp_path)
+
+        swept = runner.invoke(app, ["rebalance", str(tmp_path), "--no-reap"])
+        assert swept.exit_code == 0
+
+        hidden = runner.invoke(app, ["status", str(tmp_path)])
+        assert "goal" not in hidden.output
+        shown = runner.invoke(app, ["status", str(tmp_path), "--all"])
+        assert "goal" in shown.output
+        assert "[archived]" in shown.output
+
+        restored = runner.invoke(
+            app, ["graph", "unarchive", str(goal_id), "--project-root", str(tmp_path)]
+        )
+        assert restored.exit_code == 0
+
+        visible = runner.invoke(app, ["status", str(tmp_path)])
+        assert "goal" in visible.output
+        assert "[archived]" not in visible.output
