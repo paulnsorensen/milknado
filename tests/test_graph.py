@@ -375,6 +375,7 @@ class TestGetReadyNodes:
         g._conn.set_trace_callback(None)
         g.close()
 
+        queries = [q for q in queries if q != "SELECT 1"]  # self-heal probes (#297)
         assert len(queries) == 1
         assert "NOT EXISTS" in queries[0]
         assert "LIMIT 100" in queries[0]
@@ -581,6 +582,7 @@ class TestParallelSafety:
         graph._conn.set_trace_callback(queries.append)
         conflicts = graph.check_parallel_safety([n1.id, n2.id, n3.id])
         graph._conn.set_trace_callback(None)
+        queries = [q for q in queries if q != "SELECT 1"]  # self-heal probes (#297)
         assert conflicts == [
             (n1.id, n2.id, ["shared.py"]),
             (n1.id, n3.id, ["shared.py"]),
@@ -591,15 +593,27 @@ class TestParallelSafety:
 
 
 class TestClose:
-    def test_close_prevents_further_ops(self, tmp_path: Path) -> None:
+    def test_close_heals_on_next_op(self, tmp_path: Path) -> None:
+        """#297: a closed connection reopens on next access (loud warning logged
+        with the close stack), and previously-committed data survives."""
         g = MikadoGraph(tmp_path / "test.db")
         g.add_node("before close")
         g.close()
-        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
-            g.add_node("after close")
-        reopened = MikadoGraph(tmp_path / "test.db")
-        assert [node.description for node in reopened.get_all_nodes()] == ["before close"]
-        reopened.close()
+        healed = g.add_node("after close")
+        assert [node.description for node in g.get_all_nodes()] == [
+            "before close",
+            "after close",
+        ]
+        assert healed.id == 2
+        g.close()
+
+    def test_inflight_statement_on_closed_handle_fails_loud(self, tmp_path: Path) -> None:
+        """#297: no transparent retry — a statement on the dead handle raises."""
+        g = MikadoGraph(tmp_path / "test.db")
+        raw = g._raw_conn
+        g.close()
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            raw.execute("SELECT 1")
 
 
 class TestBatchMetadata:

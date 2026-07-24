@@ -43,6 +43,53 @@ _REQUIRED_NODE_COLUMNS = frozenset(
 )
 
 
+# Ordered (user_version, single-statement SQL) migrations, applied by migrate().
+# v1 is the create_tables schema; entries start at 2. Each statement must be a
+# single SQL statement — migrate() executes them inside one transaction, and
+# executescript() would COMMIT behind its back.
+MIGRATIONS: list[tuple[int, str]] = [
+    (
+        2,
+        "CREATE TABLE IF NOT EXISTS node_reviews ("
+        "node_id INTEGER NOT NULL REFERENCES nodes(id), "
+        "round INTEGER NOT NULL, "
+        "verdict TEXT NOT NULL, "
+        "findings TEXT NOT NULL, "
+        "created_at TEXT NOT NULL, "
+        "PRIMARY KEY (node_id, round))",
+    ),
+]
+
+SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Apply pending MIGRATIONS in version order inside one transaction.
+
+    Stamps PRAGMA user_version after each version. Any failure rolls the whole
+    batch back and re-raises — a half-migrated database must never be stamped.
+    """
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    pending = [(v, sql) for v, sql in MIGRATIONS if v > current]
+    if not pending:
+        return
+    try:
+        conn.execute("BEGIN")
+        for version, sql in pending:
+            conn.execute(sql)
+            conn.execute(f"PRAGMA user_version = {version}")  # noqa: S608
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        _logger.exception(
+            "migration failed at user_version=%d; rolled back pending %s",
+            current,
+            [v for v, _ in pending],
+        )
+        raise
+    _logger.info("migrated database user_version %d -> %d", current, pending[-1][0])
+
+
 def _validate_schema(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
     missing = sorted(_REQUIRED_NODE_COLUMNS - columns)
@@ -398,6 +445,7 @@ def drop_all(conn: sqlite3.Connection) -> int:
     conn.execute("DELETE FROM file_ownership")
     conn.execute("DELETE FROM edges")
     conn.execute("DELETE FROM goal_claims")
+    conn.execute("DELETE FROM node_reviews")
     conn.execute("DELETE FROM nodes")
     conn.execute("DELETE FROM plan_state")
     conn.execute("DELETE FROM batch_plans")
@@ -606,6 +654,33 @@ def deposit_run_message(
     ).fetchone()
     conn.commit()
     return row[0]
+
+
+def insert_node_review(
+    conn: sqlite3.Connection,
+    node_id: int,
+    round_number: int,
+    verdict: str,
+    findings: str,
+    created_at: str,
+) -> None:
+    """Persist one review verdict keyed by (node_id, round); no dependency on runs."""
+    conn.execute(
+        "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (node_id, round_number, verdict, findings, created_at),
+    )
+    conn.commit()
+
+
+def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[dict]:
+    """Return all recorded review verdicts for a node, round order."""
+    rows = conn.execute(
+        "SELECT node_id, round, verdict, findings, created_at FROM node_reviews "
+        "WHERE node_id = ? ORDER BY round",
+        (node_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:

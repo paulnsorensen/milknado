@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import traceback
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -45,15 +46,108 @@ class MikadoGraph(_AnalyticsFacade):
 
     def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
         self._lock = RLock()
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._db_path = db_path
+        self._closed = False
+        self._close_stack: list[str] | None = None
+        self._raw_conn = self._open(db_path)
+        self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
+
+    # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────
+
+    @staticmethod
+    def _quarantine(db_path: Path) -> list[Path]:
+        """Move db + -wal/-shm sidecars aside to *.corrupt-<ts>; return moved paths."""
+        # Microsecond resolution: two quarantines of the same db within one
+        # second must not collide and silently overwrite forensic evidence.
+        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%f")
+        moved: list[Path] = []
+        for suffix in ("", "-wal", "-shm"):
+            candidate = Path(f"{db_path}{suffix}")
+            if candidate.exists():
+                target = Path(f"{candidate}.corrupt-{ts}")
+                candidate.rename(target)
+                moved.append(target)
+        return moved
+
+    def _open(self, db_path: Path) -> sqlite3.Connection:
+        """Open the database, quarantining a corrupt file and healing schema drift."""
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            quick_check = conn.execute("PRAGMA quick_check").fetchone()[0]
+        except sqlite3.DatabaseError:
+            quick_check = "error"
+        if quick_check != "ok":
+            # Quarantine BEFORE closing: close() on the last connection makes
+            # sqlite delete the -wal/-shm sidecars, destroying the very
+            # evidence (and data) the quarantine exists to preserve.
+            moved = self._quarantine(db_path)
+            try:
+                conn.close()
+            except sqlite3.Error:
+                # Best-effort close: the db was already renamed aside by the
+                # quarantine, so this handle to the moved file is abandoned
+                # either way — a close failure changes nothing.
+                pass
+            _logger.warning(
+                "database failed PRAGMA quick_check (%s); quarantined %s to %s; recreating fresh",
+                quick_check,
+                db_path,
+                [str(p) for p in moved],
+            )
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
         # Explicit so the concurrent-writer wait window (detached runner + server
         # both writing the same db) is documented, not implicit in connect()'s default.
-        self._conn.execute("PRAGMA busy_timeout=5000")
-        self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
-        _persistence.create_tables(self._conn)
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            _persistence.create_tables(conn)
+            _persistence.migrate(conn)
+        except Exception:
+            # Never leak the handle on a schema/migration failure — close
+            # best-effort, then re-raise the original error unchanged.
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+            raise
+        return conn
+
+    def _heal_conn(self, reason: str) -> None:
+        """Reopen an unexpectedly-closed connection, logging both stacks.
+
+        The recorded close stack names who closed it; the heal stack names who
+        tripped over it — the pair is the audit trail for the lifetime bug.
+        """
+        heal_stack = traceback.format_stack()
+        _logger.warning(
+            "graph connection reopened unexpectedly (%s); db=%s"
+            "\nclose stack:\n%s\nheal stack:\n%s",
+            reason,
+            self._db_path,
+            "".join(self._close_stack) if self._close_stack else "(no close() recorded)",
+            "".join(heal_stack),
+        )
+        self._raw_conn = self._open(self._db_path)
+        self._closed = False
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """Health-checked connection access: reopen on unexpected close.
+
+        Healing happens on the NEXT access; a statement already in flight on the
+        dead connection raises its original error — no transparent retry.
+        """
+        raw = self._raw_conn
+        if self._closed or raw is None:
+            self._heal_conn("closed" if self._closed else "missing")
+        else:
+            try:
+                raw.execute("SELECT 1")
+            except sqlite3.ProgrammingError:
+                self._heal_conn("connection died without close()")
+        return self._raw_conn
 
     # ── Creation ─────────────────────────────────────────────────────────────
 
@@ -391,6 +485,23 @@ class MikadoGraph(_AnalyticsFacade):
     def latest_run_message(self, run_id: str, role: str) -> str | None:
         return _persistence.latest_run_message(self._conn, run_id, role)
 
+    @_synchronized
+    def insert_node_review(
+        self,
+        node_id: int,
+        round_number: int,
+        verdict: str,
+        findings: str,
+        created_at: str,
+    ) -> None:
+        _persistence.insert_node_review(
+            self._conn, node_id, round_number, verdict, findings, created_at
+        )
+
+    @_synchronized
+    def node_reviews_for_node(self, node_id: int) -> list[dict]:
+        return _persistence.node_reviews_for_node(self._conn, node_id)
+
     # ── File ownership ───────────────────────────────────────────────────────
 
     @_synchronized
@@ -486,14 +597,27 @@ class MikadoGraph(_AnalyticsFacade):
 
     @_synchronized
     def close(self) -> None:
+        # Already closed: no-op WITHOUT touching _close_stack — the recorded
+        # stack names the close that actually closed, and a redundant close
+        # must not clobber the forensic pair the heal warning relies on.
+        if self._closed:
+            return
+        # Record the calling stack BEFORE closing: an unexpected reopen later
+        # logs this stack next to the heal stack, naming the culprit pair.
+        self._close_stack = traceback.format_stack()
+        conn = self._raw_conn
+        self._closed = True
+        self._raw_conn = None
+        if conn is None:
+            return
         # Fold the WAL into the main .db file so the documented
         # `git add -f .milknado/milknado.db` persistence step captures every
         # committed write. A non-last-connection close does no implicit
         # checkpoint, so without this an MCP tool call or detached run can leave
         # its tail in the -wal sidecar and lose it on container reclaim.
         try:
-            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except sqlite3.Error:
             _logger.warning("WAL checkpoint on close failed", exc_info=True)
         finally:
-            self._conn.close()
+            conn.close()
