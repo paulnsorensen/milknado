@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -39,6 +40,7 @@ _REQUIRED_NODE_COLUMNS = frozenset(
         "wiki_ref",
         "artifact_path",
         "github_ref",
+        "archived_at",
     }
 )
 
@@ -58,9 +60,20 @@ MIGRATIONS: list[tuple[int, str]] = [
         "created_at TEXT NOT NULL, "
         "PRIMARY KEY (node_id, round))",
     ),
+    (3, "ALTER TABLE nodes ADD COLUMN archived_at TEXT"),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
+
+# Fresh databases are created with the full current schema at user_version=0,
+# so migrate() always runs against them: an ALTER ... ADD COLUMN whose column
+# is already present must be skipped (still stamping user_version) rather than
+# failing with "duplicate column name".
+_ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE)
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))  # noqa: S608
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -76,7 +89,9 @@ def migrate(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("BEGIN")
         for version, sql in pending:
-            conn.execute(sql)
+            add_column = _ADD_COLUMN_RE.match(sql.strip())
+            if add_column is None or not _has_column(conn, *add_column.groups()):
+                conn.execute(sql)
             conn.execute(f"PRAGMA user_version = {version}")  # noqa: S608
         conn.commit()
     except Exception:
@@ -135,6 +150,10 @@ def create_tables(conn: sqlite3.Connection) -> None:
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nodes'"
     ).fetchone()
     if exists is not None:
+        # Migrate BEFORE validating: a migration may add a nodes column that
+        # _REQUIRED_NODE_COLUMNS already demands, so validating first would
+        # condemn a database that one pending migration would heal.
+        migrate(conn)
         _validate_schema(conn)
         _ensure_indexes(conn)
         return
@@ -158,7 +177,8 @@ def create_tables(conn: sqlite3.Connection) -> None:
             flavor TEXT,
             wiki_ref TEXT,
             artifact_path TEXT,
-            github_ref TEXT
+            github_ref TEXT,
+            archived_at TEXT
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref
             ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
@@ -252,6 +272,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         )
     completed_at = row["completed_at"]
     dispatched_at = row["dispatched_at"]
+    archived_at = row["archived_at"]
     return MikadoNode(
         id=row["id"],
         description=row["description"],
@@ -264,6 +285,7 @@ def row_to_node(row: sqlite3.Row) -> MikadoNode:
         created_at=datetime.fromisoformat(row["created_at"]),
         completed_at=datetime.fromisoformat(completed_at) if completed_at else None,
         dispatched_at=datetime.fromisoformat(dispatched_at) if dispatched_at else None,
+        archived_at=datetime.fromisoformat(archived_at) if archived_at else None,
         oversized=bool(row["oversized"]),
         batch_index=row["batch_index"],
         completion_duration_seconds=row["completion_duration_seconds"],

@@ -54,7 +54,9 @@ class HarvestSummary:
 
 def _task_descendants(graph: MikadoGraph, goal_id: int) -> list[MikadoNode]:
     children: dict[int, list[int]] = {}
-    nodes = graph.get_all_nodes()
+    # Harvest must keep seeing archived DONE goals' subtrees (spec: harvest
+    # flips include_archived=True).
+    nodes = graph.get_all_nodes(include_archived=True)
     for node in nodes:
         if node.parent_id is not None:
             children.setdefault(node.parent_id, []).append(node.id)

@@ -31,11 +31,13 @@ def milknado_graph_summary(
     kind: Kind | None = None,
     flavor: Flavor | None = None,
     page: tuple[int, int] = (100, 0),
+    include_archived: bool = False,
 ) -> dict:
     """Return a bounded page of Mikado nodes filtered in the graph query.
 
     ``page`` is ``(limit, offset)``. Each node includes id, status, and
-    description; no matches returns an empty nodes list.
+    description; no matches returns an empty nodes list. ``include_archived``
+    surfaces soft-hidden (archived) nodes; default hides them.
     """
     want_status = _parse_todo_status(status) if status is not None else None
     want_kind = _parse_kind(kind) if kind is not None else None
@@ -49,6 +51,7 @@ def milknado_graph_summary(
                 kind=want_kind,
                 flavor=want_flavor,
                 page=page,
+                include_archived=include_archived,
             )
         }
     finally:
@@ -109,6 +112,7 @@ def main() -> None:
         github,
         node,
         ralph,
+        rebalance,
         run,
         todo,
         todo_mutate,

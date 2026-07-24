@@ -18,7 +18,7 @@ from milknado.cli._helpers import (
 )
 from milknado.cli.agents import agents_app
 from milknado.cli.github_roadmap import github_roadmap_app
-from milknado.cli.graph import edge_app
+from milknado.cli.graph import edge_app, graph_app
 from milknado.cli.plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
 from milknado.cli.plan import plan
 from milknado.cli.roadmap import roadmap_app
@@ -52,6 +52,7 @@ app = typer.Typer(name="milknado", help="Mikado execution engine")
 
 app.add_typer(agents_app)
 app.add_typer(edge_app)
+app.add_typer(graph_app)
 app.add_typer(plugin_app)
 app.add_typer(tools_app)
 app.add_typer(roadmap_app)
@@ -163,6 +164,10 @@ def _fetch_run_states(
 @app.command()
 def status(
     project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    show_all: Annotated[
+        bool,
+        typer.Option("--all", help="Include archived (soft-hidden) nodes."),
+    ] = False,
 ) -> None:
     """Show the current state of the Mikado graph."""
     project_root = project_root.resolve()
@@ -170,9 +175,14 @@ def status(
     graph = project.graph
 
     try:
-        nodes = graph.get_all_nodes()
+        nodes = graph.get_all_nodes(include_archived=show_all)
         if not nodes:
-            console.print("No nodes in graph. Run [bold]milknado plan[/bold] to start.")
+            message = "No nodes in graph. Run [bold]milknado plan[/bold] to start."
+            if not show_all:
+                archived = graph.count_archived()
+                if archived:
+                    message += f" ({archived} archived node(s) — use --all)"
+            console.print(message)
             return
 
         run_states, failures = _fetch_run_states(nodes)
@@ -182,9 +192,45 @@ def status(
                 f"{'s' if len(failures) != 1 else ''} unavailable "
                 f"({'; '.join(failures)})[/yellow]"
             )
-        console.print(render_tree(graph, run_states=run_states))
+        console.print(render_tree(graph, run_states=run_states, include_archived=show_all))
     finally:
         graph.close()
+
+
+@app.command()
+def rebalance(
+    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print the plan without mutating anything."),
+    ] = False,
+    no_sweep: Annotated[
+        bool,
+        typer.Option("--no-sweep", help="Skip archiving all-DONE subtrees."),
+    ] = False,
+    no_restructure: Annotated[
+        bool,
+        typer.Option("--no-restructure", help="Skip orphan grouping and structural findings."),
+    ] = False,
+    no_reap: Annotated[
+        bool,
+        typer.Option("--no-reap", help="Skip archived-worktree teardown."),
+    ] = False,
+) -> None:
+    """Rebalance the working tree: sweep finished work, regroup orphans, reap worktrees."""
+    from milknado.app.rebalance import RebalanceOptions
+    from milknado.app.rebalance import rebalance as run_rebalance
+    from milknado.domains.graph import render_report
+
+    options = RebalanceOptions(
+        dry_run=dry_run,
+        sweep=not no_sweep,
+        restructure=not no_restructure,
+        reap=not no_reap,
+    )
+    report = run_rebalance(project_root.resolve(), options)
+    # markup=False: the report's literal "[dry-run]" prefix is not rich markup.
+    console.print(render_report(report, dry_run=dry_run), markup=False)
 
 
 @app.command()

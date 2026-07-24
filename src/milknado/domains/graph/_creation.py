@@ -28,12 +28,21 @@ from milknado.domains.graph._reads import get_node
 _logger = logging.getLogger(__name__)
 
 
-def _validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: NodeKind) -> None:
-    if parent_id is None:
-        return
+def _get_active_parent(conn: sqlite3.Connection, parent_id: int) -> MikadoNode:
     parent = get_node(conn, parent_id)
     if parent is None:
         raise ValueError(f"parent_id {parent_id} not found")
+    if parent.archived_at is not None:
+        raise ValueError(
+            f"Cannot add a node under archived parent {parent_id}; unarchive it first."
+        )
+    return parent
+
+
+def _validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: NodeKind) -> None:
+    if parent_id is None:
+        return
+    parent = _get_active_parent(conn, parent_id)
     if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
         raise InvalidContainment(parent.kind, kind)
 
@@ -134,6 +143,7 @@ def add_node(
 def add_edge(conn: sqlite3.Connection, parent_id: int, child_id: int) -> MikadoEdge:
     conn.execute("BEGIN IMMEDIATE")
     try:
+        _get_active_parent(conn, parent_id)
         if would_create_cycle(conn, parent_id, child_id):
             raise ValueError(f"Edge {parent_id}->{child_id} would create a cycle")
         conn.execute(
@@ -161,10 +171,17 @@ def set_batch_metadata(
 
 def set_parent_id(conn: sqlite3.Connection, node_id: int, parent_id: int | None) -> None:
     """Update parent_id without creating an edge (used by batching bridge)."""
-    cur = conn.execute(
-        "UPDATE nodes SET parent_id = ? WHERE id = ?",
-        (parent_id, node_id),
-    )
-    if cur.rowcount == 0:
-        raise ValueError(f"Node {node_id} not found")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if parent_id is not None:
+            _get_active_parent(conn, parent_id)
+        cur = conn.execute(
+            "UPDATE nodes SET parent_id = ? WHERE id = ?",
+            (parent_id, node_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError(f"Node {node_id} not found")
+    except Exception:
+        conn.rollback()
+        raise
     conn.commit()

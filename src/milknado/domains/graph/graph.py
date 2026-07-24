@@ -4,7 +4,7 @@ import logging
 import os
 import sqlite3
 import traceback
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -25,6 +25,7 @@ from milknado.domains.graph import (
     _mutations,
     _persistence,
     _reads,
+    _rebalance,
     _status,
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, _synchronized
@@ -32,7 +33,7 @@ from milknado.domains.graph._pipeline import StatusPipeline, _PluginAsMiddleware
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
-
+    from milknado.domains.graph.rebalance import ReapOutcome, ReapTarget, RebalanceState
 _logger = logging.getLogger(__name__)
 
 
@@ -51,6 +52,34 @@ class MikadoGraph(_AnalyticsFacade):
         self._close_stack: list[str] | None = None
         self._raw_conn = self._open(db_path)
         self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
+
+    @classmethod
+    def open_snapshot(cls, db_path: Path) -> MikadoGraph:
+        """Open a migrated in-memory copy without writing to the project database."""
+        uri = f"{db_path.resolve().as_uri()}?mode=ro"
+        source = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        snapshot = sqlite3.connect(":memory:", check_same_thread=False)
+        try:
+            if source.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError(f"database failed PRAGMA quick_check: {db_path}")
+            source.backup(snapshot)
+            snapshot.row_factory = sqlite3.Row
+            snapshot.execute("PRAGMA foreign_keys=ON")
+            _persistence.create_tables(snapshot)
+            _persistence.migrate(snapshot)
+        except Exception:
+            snapshot.close()
+            raise
+        finally:
+            source.close()
+        graph = cls.__new__(cls)
+        graph._lock = RLock()
+        graph._db_path = db_path
+        graph._closed = False
+        graph._close_stack = None
+        graph._raw_conn = snapshot
+        graph._pipeline = StatusPipeline([])
+        return graph
 
     # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────
 
@@ -147,6 +176,8 @@ class MikadoGraph(_AnalyticsFacade):
                 raw.execute("SELECT 1")
             except sqlite3.ProgrammingError:
                 self._heal_conn("connection died without close()")
+        if self._raw_conn is None:
+            raise RuntimeError("graph connection healing did not produce a connection")
         return self._raw_conn
 
     # ── Creation ─────────────────────────────────────────────────────────────
@@ -193,8 +224,44 @@ class MikadoGraph(_AnalyticsFacade):
         )
 
     @_synchronized
+    def archive_subtree(self, node_id: int) -> int:
+        """Soft-hide an all-DONE subtree; returns nodes archived. Fail-loud on live work."""
+        return _mutations.archive_subtree(self._conn, node_id)
+
+    @_synchronized
+    def unarchive_subtree(self, node_id: int) -> int:
+        """Cascade-restore an archived subtree; refuses under an archived ancestor."""
+        return _mutations.unarchive_subtree(self._conn, node_id)
+
+    @_synchronized
+    def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
+        """Set status across root_id's live (non-archived) subtree, children first."""
+        return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
+
+    @_synchronized
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         _mutations.reparent(self._conn, node_id, new_parent_id)
+
+    @_synchronized
+    def rebalance(self, *, sweep: bool = True, restructure: bool = True) -> RebalanceState:
+        """Apply graph-only rebalance passes in one database transaction."""
+        return _rebalance.rebalance_graph(self._conn, sweep=sweep, restructure=restructure)
+
+    @_synchronized
+    def get_reap_targets(self) -> tuple[ReapTarget, ...]:
+        """Return archived worktrees that have no running run."""
+        return _rebalance.get_reap_targets(self._conn)
+
+    @_synchronized
+    def reap_archived(
+        self, processor: Callable[[ReapTarget], ReapOutcome]
+    ) -> tuple[ReapOutcome, ...]:
+        """Process eligible worktrees while archive eligibility is write-fenced."""
+        return _rebalance.reap_archived(self._conn, processor)
+
+    @_synchronized
+    def count_archived(self) -> int:
+        return _rebalance.count_archived(self._conn)
 
     # ── Reads ────────────────────────────────────────────────────────────────
 
@@ -219,26 +286,33 @@ class MikadoGraph(_AnalyticsFacade):
         return _reads.find_node_by_github_ref(self._conn, github_ref)
 
     @_synchronized
-    def get_all_nodes(self) -> list[MikadoNode]:
-        return _reads.get_all_nodes(self._conn)
+    def get_all_nodes(self, *, include_archived: bool = False) -> list[MikadoNode]:
+        return _reads.get_all_nodes(self._conn, include_archived=include_archived)
 
     @_synchronized
-    def get_children(self, node_id: int) -> list[MikadoNode]:
-        return _reads.get_children(self._conn, node_id)
+    def get_children(self, node_id: int, *, include_archived: bool = False) -> list[MikadoNode]:
+        return _reads.get_children(self._conn, node_id, include_archived=include_archived)
 
     @_synchronized
-    def get_children_map(self) -> dict[int, list[MikadoNode]]:
-        return _reads.get_children_map(self._conn)
+    def get_children_map(self, *, include_archived: bool = False) -> dict[int, list[MikadoNode]]:
+        return _reads.get_children_map(self._conn, include_archived=include_archived)
 
     @_synchronized
-    def get_leaves(self) -> list[MikadoNode]:
-        return _reads.get_leaves(self._conn)
+    def get_leaves(self, *, include_archived: bool = False) -> list[MikadoNode]:
+        return _reads.get_leaves(self._conn, include_archived=include_archived)
 
     @_synchronized
     def get_ready_nodes(
-        self, *, kind: NodeKind | None = None, flavor: str | None = None, limit: int = 100
+        self,
+        *,
+        kind: NodeKind | None = None,
+        flavor: str | None = None,
+        limit: int = 100,
+        include_archived: bool = False,
     ) -> list[MikadoNode]:
-        return _reads.get_ready_nodes(self._conn, kind=kind, flavor=flavor, limit=limit)
+        return _reads.get_ready_nodes(
+            self._conn, kind=kind, flavor=flavor, limit=limit, include_archived=include_archived
+        )
 
     @_synchronized
     def get_node_summaries(
@@ -248,18 +322,24 @@ class MikadoGraph(_AnalyticsFacade):
         kind: NodeKind | None = None,
         flavor: str | None = None,
         page: tuple[int, int] = (100, 0),
+        include_archived: bool = False,
     ) -> list[dict[str, int | str]]:
         return _reads.get_node_summaries(
-            self._conn, status=status, kind=kind, flavor=flavor, page=page
+            self._conn,
+            status=status,
+            kind=kind,
+            flavor=flavor,
+            page=page,
+            include_archived=include_archived,
         )
 
     @_synchronized
-    def get_root(self) -> MikadoNode | None:
-        return _reads.get_root(self._conn)
+    def get_root(self, *, include_archived: bool = False) -> MikadoNode | None:
+        return _reads.get_root(self._conn, include_archived=include_archived)
 
     @_synchronized
-    def get_roots(self) -> list[MikadoNode]:
-        return _reads.get_roots(self._conn)
+    def get_roots(self, *, include_archived: bool = False) -> list[MikadoNode]:
+        return _reads.get_roots(self._conn, include_archived=include_archived)
 
     @_synchronized
     def get_next_runnable(self, kind: NodeKind | None = None) -> MikadoNode | None:

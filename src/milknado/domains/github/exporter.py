@@ -71,7 +71,7 @@ def export_github_roadmap(
 
     goals_exported = 0
     bodies_overwritten = 0
-    for goal in graph.get_children(roadmap_node_id):
+    for goal in graph.get_children(roadmap_node_id, include_archived=True):
         if goal.kind != NodeKind.GOAL or goal.github_ref is None:
             continue
         _write_status(github, goal, fields)

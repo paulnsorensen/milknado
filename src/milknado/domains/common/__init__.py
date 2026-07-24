@@ -19,6 +19,7 @@ from milknado.domains.common.config import (
 )
 from milknado.domains.common.doctor import render_report, run_doctor
 from milknado.domains.common.errors import (
+    ArchiveIneligible,
     CompletionTimeout,
     GitOperationError,
     InvalidContainment,
@@ -62,6 +63,7 @@ from milknado.domains.common.types import (
 
 __all__ = [
     "resolve_planning_agent_command",
+    "ArchiveIneligible",
     "BUILTIN_FLAVORS",
     "Gate",
     "CompletionTimeout",

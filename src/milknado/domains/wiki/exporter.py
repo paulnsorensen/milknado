@@ -69,7 +69,7 @@ def export_roadmap(
     files = goal_file_map(wiki_root, roadmap_dir, roadmap_slug)
     written = 0
     created = 0
-    for goal in graph.get_children(roadmap_node_id):
+    for goal in graph.get_children(roadmap_node_id, include_archived=True):
         if goal.kind != NodeKind.GOAL:
             continue
         harvest = format_harvest_text(build_harvest_summary(graph, goal))

@@ -53,22 +53,29 @@ def milknado_todo_tree(
     project_root: str = "",
     root_id: int | None = None,
     max_depth: int | None = None,
+    include_archived: bool = False,
 ) -> list[dict]:
     """Return the todo tree from root_id, or the forest of all top-level nodes.
 
     max_depth bounds how far to descend: 0 returns each root node only, 1 adds
     direct children, and so on; None (default) returns the full subtree.
+    include_archived surfaces soft-hidden (archived) nodes; default hides them.
     """
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        children_map = graph.get_children_map()
+        children_map = graph.get_children_map(include_archived=include_archived)
         if root_id is not None:
             node = graph.get_node(root_id)
             if node is None:
                 raise ValueError(f"node {root_id} not found")
+            if node.archived_at is not None and not include_archived:
+                return []
             return [_build_subtree(node, children_map, max_depth)]
-        return [_build_subtree(n, children_map, max_depth) for n in graph.get_roots()]
+        return [
+            _build_subtree(n, children_map, max_depth)
+            for n in graph.get_roots(include_archived=include_archived)
+        ]
     finally:
         graph.close()
 

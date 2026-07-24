@@ -122,6 +122,22 @@ class TestExportMembrane:
         assert r.files_written == 1
         assert r.files_created == 0
 
+    def test_archived_goal_still_updates_status_and_harvest(
+        self, wiki_root: Path, graph: MikadoGraph
+    ) -> None:
+        result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
+        goal_id = result.goal_node_ids["wire-export"]
+        graph.mark_running(goal_id)
+        graph.mark_done(goal_id)
+        graph.archive_subtree(goal_id)
+
+        exported = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+
+        text = _goal_path(wiki_root).read_text()
+        assert exported.files_written == 1
+        assert "status: done" in text
+        assert "result: done" in text
+
     def test_human_region_and_tail_byte_identical(
         self, wiki_root: Path, graph: MikadoGraph
     ) -> None:

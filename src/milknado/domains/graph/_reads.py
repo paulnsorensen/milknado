@@ -21,6 +21,13 @@ def node_status(conn: sqlite3.Connection, node_id: int) -> NodeStatus | None:
 
 
 def get_node(conn: sqlite3.Connection, node_id: int) -> MikadoNode | None:
+    """Point lookup by id — not a forest projection.
+
+    An archived node is still returned: callers addressing a node by id
+    (dispatch reconcile, briefs, harvest) need the real row. Unlike the
+    forest walks below there is deliberately no ``include_archived`` flag —
+    a point lookup never filters.
+    """
     row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
     if row is None:
         return None
@@ -108,37 +115,54 @@ def find_node_by_github_ref(conn: sqlite3.Connection, github_ref: str) -> Mikado
     return row_to_node(row) if row else None
 
 
-def get_all_nodes(conn: sqlite3.Connection) -> list[MikadoNode]:
-    return [row_to_node(r) for r in conn.execute("SELECT * FROM nodes").fetchall()]
+def get_all_nodes(conn: sqlite3.Connection, *, include_archived: bool = False) -> list[MikadoNode]:
+    sql = "SELECT * FROM nodes"
+    if not include_archived:
+        sql += " WHERE archived_at IS NULL"
+    return [row_to_node(r) for r in conn.execute(sql).fetchall()]
 
 
-def get_children(conn: sqlite3.Connection, node_id: int) -> list[MikadoNode]:
-    rows = conn.execute(
-        "SELECT n.* FROM nodes n JOIN edges e ON n.id = e.child_id WHERE e.parent_id = ?",
-        (node_id,),
-    ).fetchall()
+def get_children(
+    conn: sqlite3.Connection, node_id: int, *, include_archived: bool = False
+) -> list[MikadoNode]:
+    sql = "SELECT n.* FROM nodes n JOIN edges e ON n.id = e.child_id WHERE e.parent_id = ?"
+    if not include_archived:
+        sql += " AND n.archived_at IS NULL"
+    rows = conn.execute(sql, (node_id,)).fetchall()
     return [row_to_node(r) for r in rows]
 
 
-def get_children_map(conn: sqlite3.Connection) -> dict[int, list[MikadoNode]]:
-    """Map parent_id -> child nodes, reusing the persistence id-scan.
-
-    Lets callers materialise an entire subtree without issuing one
-    get_children query per node (the N+1 pattern).
-    """
-    nodes = {n.id: n for n in get_all_nodes(conn)}
+def get_children_map(
+    conn: sqlite3.Connection, *, include_archived: bool = False
+) -> dict[int, list[MikadoNode]]:
+    """Map parent ids to child nodes with archive filtering performed in SQL."""
     mapping: dict[int, list[MikadoNode]] = {}
+    if not include_archived:
+        rows = conn.execute(
+            """
+            SELECT e.parent_id AS edge_parent_id, n.*
+            FROM edges e
+            JOIN nodes p ON p.id = e.parent_id
+            JOIN nodes n ON n.id = e.child_id
+            WHERE p.archived_at IS NULL AND n.archived_at IS NULL
+            """
+        ).fetchall()
+        for row in rows:
+            mapping.setdefault(row["edge_parent_id"], []).append(row_to_node(row))
+        return mapping
+    nodes = {node.id: node for node in get_all_nodes(conn, include_archived=True)}
     for parent_id, child_ids in children_id_map(conn).items():
-        kids = [nodes[cid] for cid in child_ids if cid in nodes]
-        if kids:
-            mapping[parent_id] = kids
+        children = [nodes[child_id] for child_id in child_ids if child_id in nodes]
+        if children:
+            mapping[parent_id] = children
     return mapping
 
 
-def get_leaves(conn: sqlite3.Connection) -> list[MikadoNode]:
-    rows = conn.execute(
-        "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
-    ).fetchall()
+def get_leaves(conn: sqlite3.Connection, *, include_archived: bool = False) -> list[MikadoNode]:
+    sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    rows = conn.execute(sql).fetchall()
     return [row_to_node(r) for r in rows]
 
 
@@ -148,10 +172,16 @@ def get_ready_nodes(
     kind: NodeKind | None = None,
     flavor: str | None = None,
     limit: int = 100,
+    include_archived: bool = False,
 ) -> list[MikadoNode]:
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
     filters = ["n.status = ?", "EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id)"]
+    if not include_archived:
+        # Defensive: eligibility restricts archive to all-DONE subtrees, which
+        # the status filter already excludes, but the read layer must not rely
+        # on the mutation layer for its hiding contract.
+        filters.append("n.archived_at IS NULL")
     params: list[object] = [NodeStatus.PENDING.value]
     if kind is not None:
         filters.append("n.kind = ?")
@@ -177,6 +207,7 @@ def get_node_summaries(
     kind: NodeKind | None = None,
     flavor: str | None = None,
     page: tuple[int, int] = (100, 0),
+    include_archived: bool = False,
 ) -> list[dict[str, int | str]]:
     limit, offset = page
     if not 1 <= limit <= 100:
@@ -184,6 +215,8 @@ def get_node_summaries(
     if offset < 0:
         raise ValueError("offset must be non-negative")
     filters, params = [], []
+    if not include_archived:
+        filters.append("archived_at IS NULL")
     for column, value in (
         ("status", status.value if status else None),
         ("kind", kind.value if kind else None),
@@ -201,17 +234,17 @@ def get_node_summaries(
     return [dict(row) for row in rows]
 
 
-def get_root(conn: sqlite3.Connection) -> MikadoNode | None:
-    row = conn.execute(
-        "SELECT * FROM nodes"
-        " WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
-        " ORDER BY id LIMIT 1"
-    ).fetchone()
+def get_root(conn: sqlite3.Connection, *, include_archived: bool = False) -> MikadoNode | None:
+    sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    row = conn.execute(sql + " ORDER BY id LIMIT 1").fetchone()
     return row_to_node(row) if row else None
 
 
-def get_roots(conn: sqlite3.Connection) -> list[MikadoNode]:
-    rows = conn.execute(
-        "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
-    ).fetchall()
+def get_roots(conn: sqlite3.Connection, *, include_archived: bool = False) -> list[MikadoNode]:
+    sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
+    if not include_archived:
+        sql += " AND archived_at IS NULL"
+    rows = conn.execute(sql).fetchall()
     return [row_to_node(r) for r in rows]

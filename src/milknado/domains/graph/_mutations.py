@@ -7,9 +7,10 @@ Free functions taking a connection, mirroring `_persistence.py`. Kept out of
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
-from milknado.domains.common import NodeKind
-from milknado.domains.common.errors import InvalidContainment
+from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.errors import ArchiveIneligible, InvalidContainment
 from milknado.domains.common.types import BUILTIN_FLAVORS, VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
 
@@ -83,6 +84,109 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
         for nid in ordered:
             _delete_one(conn, nid)
     return len(ordered)
+
+
+def archive_subtree(conn: sqlite3.Connection, node_id: int, *, now: str | None = None) -> int:
+    """Atomically validate and archive an all-DONE canonical subtree."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+            raise ValueError(f"Node {node_id} not found")
+        rows = conn.execute(
+            """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT ?
+                UNION
+                SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
+            )
+            SELECT n.id, n.status FROM nodes n JOIN subtree s ON s.id = n.id
+            """,
+            (node_id,),
+        ).fetchall()
+        non_done = sorted(row[0] for row in rows if row[1] != NodeStatus.DONE.value)
+        if non_done:
+            raise ArchiveIneligible(tuple(non_done))
+        stamp = now or datetime.now(UTC).isoformat()
+        conn.execute(
+            """
+            WITH RECURSIVE subtree(id) AS (
+                SELECT ?
+                UNION
+                SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
+            )
+            UPDATE nodes SET archived_at = ? WHERE id IN (SELECT id FROM subtree)
+            """,
+            (node_id, stamp),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(rows)
+
+
+def _external_archived_ancestor(conn: sqlite3.Connection, node_id: int) -> int | None:
+    row = conn.execute(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT ?
+            UNION
+            SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
+        ),
+        ancestors(id) AS (
+            SELECT e.parent_id FROM edges e JOIN subtree s ON e.child_id = s.id
+            UNION
+            SELECT e.parent_id FROM edges e JOIN ancestors a ON e.child_id = a.id
+        )
+        SELECT MIN(a.id)
+        FROM ancestors a
+        JOIN nodes n ON n.id = a.id
+        WHERE n.archived_at IS NOT NULL
+          AND a.id NOT IN (SELECT id FROM subtree)
+        """,
+        (node_id,),
+    ).fetchone()
+    return row[0]
+
+
+def _archived_subtree_ids(conn: sqlite3.Connection, node_id: int) -> list[int]:
+    rows = conn.execute(
+        """
+        WITH RECURSIVE subtree(id) AS (
+            SELECT ?
+            UNION
+            SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
+        )
+        SELECT n.id FROM nodes n JOIN subtree s ON s.id = n.id
+        WHERE n.archived_at IS NOT NULL
+        """,
+        (node_id,),
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
+def unarchive_subtree(conn: sqlite3.Connection, node_id: int) -> int:
+    """Atomically restore a subtree unless an external archived ancestor remains."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+            raise ValueError(f"Node {node_id} not found")
+        ancestor = _external_archived_ancestor(conn, node_id)
+        if ancestor is not None:
+            raise ValueError(
+                f"Cannot unarchive {node_id} under archived ancestor {ancestor}; "
+                "unarchive the ancestor first."
+            )
+        archived = _archived_subtree_ids(conn, node_id)
+        conn.executemany(
+            "UPDATE nodes SET archived_at = NULL WHERE id = ?",
+            [(nid,) for nid in archived],
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return len(archived)
 
 
 def _validate_kind_change_containment(
@@ -179,32 +283,30 @@ def would_create_cycle(conn: sqlite3.Connection, parent_id: int, child_id: int) 
 
 
 def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) -> None:
-    """Move node_id under new_parent_id (or to root level when None).
-
-    Rewrites the incoming edge and the parent_id column atomically. Rejects a
-    missing node or new parent, and a new parent that is the node itself or one
-    of its descendants (which would create a cycle).
-
-    Assumes the single-parent tree model: every incoming edge is replaced, so a
-    node given multiple parents via add_edge collapses to the one new parent.
-    Multi-parent re-parenting is out of scope.
-    """
-    node_row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    if node_row is None:
-        raise ValueError(f"Node {node_id} not found")
-    if new_parent_id is not None:
-        parent_row = conn.execute(
-            "SELECT kind FROM nodes WHERE id = ?", (new_parent_id,)
-        ).fetchone()
-        if parent_row is None:
-            raise ValueError(f"new_parent_id {new_parent_id} not found")
-        node_kind = NodeKind(node_row["kind"])
-        parent_kind = NodeKind(parent_row["kind"])
-        if node_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
-            raise InvalidContainment(parent_kind, node_kind)
-        if new_parent_id == node_id or would_create_cycle(conn, new_parent_id, node_id):
-            raise ValueError(f"re-parenting {node_id} under {new_parent_id} would create a cycle")
-    with conn:
+    """Atomically move a node, refusing missing, archived, illegal, or cyclic parents."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        node_row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if node_row is None:
+            raise ValueError(f"Node {node_id} not found")
+        if new_parent_id is not None:
+            parent_row = conn.execute(
+                "SELECT kind, archived_at FROM nodes WHERE id = ?", (new_parent_id,)
+            ).fetchone()
+            if parent_row is None:
+                raise ValueError(f"new_parent_id {new_parent_id} not found")
+            if parent_row["archived_at"] is not None:
+                raise ValueError(
+                    f"Cannot add a node under archived parent {new_parent_id}; unarchive it first."
+                )
+            node_kind = NodeKind(node_row["kind"])
+            parent_kind = NodeKind(parent_row["kind"])
+            if node_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
+                raise InvalidContainment(parent_kind, node_kind)
+            if new_parent_id == node_id or would_create_cycle(conn, new_parent_id, node_id):
+                raise ValueError(
+                    f"re-parenting {node_id} under {new_parent_id} would create a cycle"
+                )
         conn.execute("DELETE FROM edges WHERE child_id = ?", (node_id,))
         if new_parent_id is not None:
             conn.execute(
@@ -212,3 +314,7 @@ def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) 
                 (new_parent_id, node_id),
             )
         conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (new_parent_id, node_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise

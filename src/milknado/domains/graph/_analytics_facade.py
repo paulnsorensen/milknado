@@ -47,7 +47,9 @@ def _synchronized(method: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 class _AnalyticsFacade:
-    _conn: sqlite3.Connection
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        raise NotImplementedError
 
     @_synchronized
     def record_batch_plan(self, plan: BatchPlan) -> int:
