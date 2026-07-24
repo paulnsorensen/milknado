@@ -1,7 +1,7 @@
 import collections
 import io
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -122,6 +122,11 @@ class FakeRalph:
         self._progress_before_completion: list[ProgressEvent] = []
         self.requested_stops: list[str] = []
         self.force_stops: list[tuple[str, float | None]] = []
+        # Maps the ordinal placeholder id ("run-1", "run-2", ...) a test
+        # pre-seeds before dispatch to the real (Executor-supplied,
+        # node-format) run id assigned at create_run time, and back.
+        self._ordinal_to_run_id: dict[str, str] = {}
+        self._run_id_to_ordinal: dict[str, str] = {}
 
     def create_run(
         self,
@@ -133,11 +138,20 @@ class FakeRalph:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
+        runtime_policy: Any | None = None,
+        run_id: str | None = None,
     ) -> FakeRun:
         self._run_counter += 1
-        run_id = f"run-{self._run_counter}"
+        ordinal_id = f"run-{self._run_counter}"
+        run_id = run_id or ordinal_id
+        self._ordinal_to_run_id[ordinal_id] = run_id
+        self._run_id_to_ordinal[run_id] = ordinal_id
+        # Tests pre-seed outcomes/success by ordinal ("run-1", "run-2", ...)
+        # before the real (Executor-supplied, node-format) run id is known;
+        # fall back to the ordinal key so that pre-configuration still works.
+        success = self._success.get(run_id, self._success.get(ordinal_id, True))
         outcome = self._outcomes.get(
-            run_id, "completed" if self._success.get(run_id, True) else "failed"
+            run_id, self._outcomes.get(ordinal_id, "completed" if success else "failed")
         )
         self._pending_completions.append((run_id, outcome))
         run = FakeRun(state=FakeRunState(run_id=run_id))
@@ -165,14 +179,25 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return self._runs.get(run_id)
 
+    def _seeded(self, mapping: dict[str, Any], run_id: str, default: Any) -> Any:
+        """Look up a test-pre-seeded value by the real run id, falling back
+        to the ordinal placeholder ("run-1", ...) the test seeded it under
+        before the real run id was known."""
+        if run_id in mapping:
+            return mapping[run_id]
+        ordinal = self._run_id_to_ordinal.get(run_id)
+        if ordinal is not None and ordinal in mapping:
+            return mapping[ordinal]
+        return default
+
     def get_run_stdout(self, run_id: str) -> list[str]:
-        return self.output.get(run_id, [])
+        return self._seeded(self.output, run_id, [])
 
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
-        return self.output.get(run_id, [])[-max_lines:]
+        return self._seeded(self.output, run_id, [])[-max_lines:]
 
     def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
-        return self.guidance.get(run_id, ())
+        return self._seeded(self.guidance, run_id, ())
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
         self.guidance[run_id] = (*self.guidance.get(run_id, ()), text)
@@ -188,8 +213,13 @@ class FakeRalph:
     ) -> tuple[str, str]:
         if self._progress_before_completion:
             event = self._progress_before_completion.pop(0)
-            if event.run_id in active_run_ids:
-                return event.run_id, event
+            # Tests pre-seed this event by ordinal ("run-1") before dispatch
+            # assigns the real run id; resolve through the ordinal map.
+            resolved_run_id = self._ordinal_to_run_id.get(event.run_id, event.run_id)
+            if resolved_run_id in active_run_ids:
+                if resolved_run_id != event.run_id:
+                    event = replace(event, run_id=resolved_run_id)
+                return resolved_run_id, event
         for i, (run_id, outcome) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
                 self._pending_completions.pop(i)
@@ -604,13 +634,14 @@ class TestRunLoopStoppedOutcome:
         assert state.available == 0
         assert len(state.terminal_runs) == 1
         terminal = state.terminal_runs[0]
-        assert terminal.run_id == "run-1"
+        real_run_id = ralph._ordinal_to_run_id["run-1"]
+        assert terminal.run_id == real_run_id
         assert terminal.status is RunStatus.STOPPED
         assert terminal.output == ("last worker output",)
         assert terminal.pending_guidance == ("not delivered",)
         assert any(
             call.args[0] == "node_stopped node_id=%d run_id=%s duration=%.1fs"
-            and call.args[1:3] == (leaf.id, "run-1")
+            and call.args[1:3] == (leaf.id, real_run_id)
             for call in log_info.call_args_list
         )
         assert any(
@@ -640,7 +671,7 @@ class TestRunLoopStoppedOutcome:
         assert state.stopped == 21
         assert len(state.terminal_runs) == 20
         assert tuple(run.run_id for run in state.terminal_runs) == tuple(
-            f"run-{index}" for index in range(2, 22)
+            ralph._ordinal_to_run_id[f"run-{index}"] for index in range(2, 22)
         )
 
 
@@ -1488,11 +1519,11 @@ class TestLoopAdapterLogDir:
 
         captured_configs: list[Any] = []
 
-        def fake_create_run(config: Any, *, emitter: Any) -> Any:
+        def fake_create_run(config: Any, *, emitter: Any, run_id: str | None = None) -> Any:
             assert emitter is adapter._emitter
             captured_configs.append(config)
             fake_run = MagicMock()
-            fake_run.state.run_id = "run-test"
+            fake_run.state.run_id = run_id or "run-test"
             return fake_run
 
         from milknado.adapters.loop import LoopAdapter

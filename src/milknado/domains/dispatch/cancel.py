@@ -54,7 +54,15 @@ def _reconcile_cancel(
         return None
     preserved: Path | None = None
     node = graph.get_node(node_id)
-    if node is not None and node.worktree_path:
+    if node is None or node.run_id != run_id:
+        # This run is not the node's current owner fence (e.g. a superseded
+        # review-redispatch round). The run's own row is already finalized by
+        # the caller; skip node-status/worktree reconciliation so a stale
+        # round's cancel can't tear down a worktree or node another owner
+        # still holds. Node-level lifecycle for adopted rounds belongs to the
+        # Executor's own control loop, not this generic cancel path.
+        return None
+    if node.worktree_path:
         worktree = Path(node.worktree_path)
         if worktree.exists():
             try:

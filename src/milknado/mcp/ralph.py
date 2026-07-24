@@ -18,6 +18,7 @@ re-exported here for the tests that exercise them directly.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from milknado.adapters import TmuxAdapter
 from milknado.app.ralph import (
@@ -29,7 +30,13 @@ from milknado.app.ralph import (
     _resolve_runner_cmd,
     start_ralph_run,
 )
-from milknado.domains.dispatch import RUN_ID_RE, reconcile_run_window, runs_dir, tail
+from milknado.domains.dispatch import (
+    RUN_ID_RE,
+    reconcile_run_window,
+    runs_dir,
+    tail,
+    tail_latest_iteration_log,
+)
 from milknado.mcp._core import (
     build_run_dict,
     mcp,
@@ -102,5 +109,17 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
         reconcile_run_window(TmuxAdapter(root), state)
     # Derive the log path from the validated run_id rather than trusting the
     # stored field: no arbitrary-file read via a tampered log_path.
-    state["summary"] = tail(rdir / f"{run_id}.log")
+    summary = tail(rdir / f"{run_id}.log")
+    if not summary:
+        # Executor-owned (in-process) ralph runs never write the detached
+        # path's flat <run_id>.log — they write one file per iteration under
+        # a `.ralph-logs` directory instead. Only trusted to the extent of
+        # tailing *.log files strictly inside the row's own recorded
+        # directory — never an arbitrary path derived from user input.
+        log_path = state.get("log_path")
+        if log_path:
+            candidate = Path(log_path).resolve()
+            if candidate.is_dir() and candidate.is_relative_to(root.resolve()):
+                summary = tail_latest_iteration_log(candidate)
+    state["summary"] = summary
     return build_run_dict(state)

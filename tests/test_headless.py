@@ -29,6 +29,7 @@ class _FakeExecutor:
         self.completed: list[int] = []
         self.cancelled: list[int] = []
         self.failed: list[int] = []
+        self.unconfirmed_stops: list[str] = []
 
     def dispatch(
         self,
@@ -51,6 +52,9 @@ class _FakeExecutor:
 
     def cancel(self, node_id: int) -> None:
         self.cancelled.append(node_id)
+
+    def note_unconfirmed_stop(self, run_id: str) -> None:
+        self.unconfirmed_stops.append(run_id)
 
 
 class _FakeRalph:
@@ -221,6 +225,10 @@ def test_progress_event_uses_remaining_completion_deadline(
 
 
 def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
+    """High: an unconfirmed stop here must register with the executor's
+    cancel watcher (note_unconfirmed_stop) — headless.py issues its own
+    stop_run outside Executor's own abort paths, so without this the row
+    would never be finalized once the wedged loop later self-exits."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(timeout=True)
     ralph.stop_run = lambda run_id, timeout=None: False
@@ -230,9 +238,12 @@ def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
     assert result.success is False
     assert result.detail == "completion timeout; worker did not exit, ownership preserved"
     assert ex.failed == []
+    assert ex.unconfirmed_stops == ["run-1"]
 
 
 def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
+    """High: same note_unconfirmed_stop registration as the timeout branch
+    above — the non-completed-run unconfirmed-stop path had the same gap."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(outcome="failed")
     ralph.stop_run = lambda run_id, timeout=None: False
@@ -242,3 +253,4 @@ def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
     assert result.success is False
     assert result.detail == "worker run did not complete or exit; ownership preserved"
     assert ex.failed == []
+    assert ex.unconfirmed_stops == ["run-1"]

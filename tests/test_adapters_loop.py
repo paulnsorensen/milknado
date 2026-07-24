@@ -69,7 +69,9 @@ class TestCreateRun:
             commit_footer="Co-authored-by: Team <team@example.com>",
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
-        mock_manager.create_run.assert_called_once_with(mock_config, emitter=adapter._emitter)
+        mock_manager.create_run.assert_called_once_with(
+            mock_config, emitter=adapter._emitter, run_id=None
+        )
         assert result.id == "run-1"
 
 

@@ -44,6 +44,7 @@ class _ExecutorLike(Protocol):
     def cancel(self, node_id: int) -> None: ...
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
     def fail(self, node_id: int, detail: str | None = None) -> None: ...
+    def note_unconfirmed_stop(self, run_id: str) -> None: ...
 
 
 class _RalphLike(Protocol):
@@ -96,6 +97,11 @@ def run_node_to_completion(
             )
         except CompletionTimeout:
             if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+                # Unconfirmed stop: this dispatch's own executor-spawned
+                # cancel watcher has no way to learn of it otherwise, and
+                # would never finalize the row when the wedged loop later
+                # self-exits — register it so that still happens.
+                executor.note_unconfirmed_stop(dispatch.run_id)
                 return HeadlessOutcome(
                     node_id,
                     success=False,
@@ -112,6 +118,9 @@ def run_node_to_completion(
             return HeadlessOutcome(node_id, success=False, detail="worker run stopped")
         if outcome == "failed":
             if not ralph.stop_run(dispatch.run_id, timeout=10.0):
+                # Same unconfirmed-stop registration as the timeout branch
+                # above — no completion path owns this row otherwise.
+                executor.note_unconfirmed_stop(dispatch.run_id)
                 return HeadlessOutcome(
                     node_id,
                     success=False,

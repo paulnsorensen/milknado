@@ -17,6 +17,9 @@ from milknado.domains.common import Gate
 from milknado.domains.dispatch._runstate import request_cancel, runs_dir
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.execution import ExecutionConfig, Executor
+from milknado.mcp._core import open_graph
+from milknado.mcp.ralph import milknado_run_loop_poll
+from milknado.mcp.run import milknado_run_cancel, milknado_run_list
 from tests.test_execution import FakeCrg, FakeGit, FakeRalph
 
 
@@ -276,3 +279,80 @@ def test_runs_row_insert_failure_does_not_kill_dispatch(
     assert any("runs-row insert failed" in r.message for r in caplog.records), (
         "the failed registry write must log loud, not vanish"
     )
+
+
+def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
+    """Blocker 1B hardening: an executor-dispatched node's run_id must pass
+    the MCP tools' RUN_ID_RE gate (`node-<id>-<ts>-<hex>` shape), not just the
+    domain functions the earlier tests exercise directly.
+
+    Uses the same on-disk db path the MCP tools open (via `open_graph`)
+    instead of the `graph` fixture's separate `test.db`, so the dispatch and
+    the MCP calls below see the same runs table. `FakeRalph(live=True)` gives
+    the run a real thread so the cancel watcher stays on its poll loop long
+    enough for `milknado_run_cancel`'s sentinel-confirm wait to observe it —
+    the graph must stay open for the watcher thread until after that cancel.
+    """
+    root = str(tmp_path)
+    mcp_graph, _cfg = open_graph(tmp_path)
+    try:
+        mcp_graph.add_node("mcp-format run_id")
+        executor = Executor(
+            graph=mcp_graph, git=FakeGit(), ralph=FakeRalph(live=True), crg=FakeCrg()
+        )
+        result = executor.dispatch(1, _config(tmp_path))
+
+        listed = milknado_run_list(project_root=root)
+        assert result.run_id in {r["run_id"] for r in listed}
+
+        polled = milknado_run_loop_poll(run_id=result.run_id, project_root=root)
+        assert polled["run_id"] == result.run_id
+
+        cancelled = milknado_run_cancel(run_id=result.run_id, project_root=root)
+        assert cancelled["run_id"] == result.run_id
+    finally:
+        mcp_graph.close()
+
+
+def test_cancel_stale_adopted_round_run_id_is_a_noop(tmp_path: Path) -> None:
+    """Blocker 1B hardening: for an adopted (review-owned) execution, the
+    node's run_id fence stays pinned to the parent/owner fence
+    (`_owner_fence_by_node`) while each round registers its own distinct
+    run_id in the runs table. Cancelling a round's own (still-running) run_id
+    through the real MCP tool must not raise and must not touch the node's
+    worktree/status it doesn't solely own — `_reconcile_cancel`'s
+    `node.run_id != run_id` guard must fire and skip reconciliation."""
+    from milknado.domains.dispatch._runstate import now_iso
+
+    root = str(tmp_path)
+    mcp_graph, _cfg = open_graph(tmp_path)
+    try:
+        mcp_graph.add_node("adopted round cancel")
+        parent_fence = "parent-fence-1"
+        assert mcp_graph.claim_node(1, parent_fence, now=now_iso())
+        executor = Executor(
+            graph=mcp_graph, git=FakeGit(), ralph=FakeRalph(live=True), crg=FakeCrg()
+        )
+
+        result = executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
+        before_node = mcp_graph.get_node(1)
+        assert before_node is not None
+        assert before_node.run_id == parent_fence, "adopted dispatch keeps the parent fence"
+        assert result.run_id != parent_fence, "the round gets its own distinct run_id"
+
+        cancelled = milknado_run_cancel(run_id=result.run_id, project_root=root)
+        assert cancelled["run_id"] == result.run_id
+
+        after_node = mcp_graph.get_node(1)
+        assert after_node is not None
+        assert after_node.run_id == parent_fence, (
+            "stale-round cancel must not touch the node's owner fence"
+        )
+        assert after_node.status.value == "running", (
+            "stale-round cancel must not flip the node's status"
+        )
+        assert after_node.worktree_path is not None, (
+            "stale-round cancel must not tear down a worktree it doesn't own"
+        )
+    finally:
+        mcp_graph.close()

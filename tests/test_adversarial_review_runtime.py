@@ -52,7 +52,7 @@ class _ReviewRalph:
 
     def create_run(self, **kwargs: Any) -> _Run:
         self._next_id += 1
-        run_id = f"run-{self._next_id}"
+        run_id = kwargs.get("run_id") or f"run-{self._next_id}"
         self.created.append({**kwargs, "run_id": run_id})
         return _Run(SimpleNamespace(run_id=run_id))
 
@@ -288,11 +288,12 @@ def test_adopted_review_keeps_parent_fence_and_notifies_worker(
 
     executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
     rejected = executor.complete(1, "main")
+    round_run_id = ralph.created[0]["run_id"]
 
     assert rejected.redispatch is not None
     assert graph.get_node(1).run_id == parent_fence
-    assert ralph.stdout_requests == ["run-1"]
-    assert notified.call_args.args[0] == "run-1"
+    assert ralph.stdout_requests == [round_run_id]
+    assert notified.call_args.args[0] == round_run_id
 
     approved = executor.complete(1, "main")
     assert approved.rebased is True
@@ -480,10 +481,10 @@ def test_loop_adapter_runs_bounded_review_in_pinned_worktree(monkeypatch, tmp_pa
         def __init__(self) -> None:
             self.emitter = None
 
-        def create_run(self, config, emitter):
+        def create_run(self, config, emitter, run_id=None):
             del config
             self.emitter = emitter
-            return SimpleNamespace(state=SimpleNamespace(run_id="review-run"))
+            return SimpleNamespace(state=SimpleNamespace(run_id=run_id or "review-run"))
 
         def start_run(self, run_id: str) -> None:
             assert run_id == "review-run"

@@ -46,6 +46,25 @@ def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def tail_latest_iteration_log(log_dir: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
+    """Tail the most recent per-iteration file in a `.ralph-logs` directory.
+
+    In-process (executor-owned) ralph runs write one file per iteration
+    under ``log_dir`` (see ``loop/_agent.py``'s ``_new_output_sink``) rather
+    than a single flat log a detached (subprocess) run's stdout redirects
+    to — there is nothing at the conventional ``<run_id>.log`` path for
+    these runs. Iteration filenames are zero-padded-iteration-prefixed, so
+    sorting by name gives chronological order; the newest file is the run's
+    current activity.
+    """
+    if not log_dir.is_dir():
+        return ""
+    files = sorted(log_dir.glob("*.log"))
+    if not files:
+        return ""
+    return tail(files[-1], max_bytes)
+
+
 def exit_code_path(runs_dir: Path, run_id: str) -> Path:
     """Where a tmux window wrapper records the runner's exit code."""
     return runs_dir / f"{run_id}.rc"

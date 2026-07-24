@@ -32,6 +32,7 @@ from milknado.domains.common.types import (
 )
 from milknado.domains.dispatch._runstate import is_cancel_requested, make_run_id, runs_dir
 from milknado.domains.execution._context import build_node_context
+from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
@@ -557,6 +558,7 @@ class Executor:
             config.quality_gates,
             wt_path / "RALPH.md",
         )
+        ralph_run_id = make_run_id(node.id)
         create_kwargs: dict[str, Any] = {
             "agent": config.execution_agent,
             "ralph_dir": wt_path,
@@ -566,11 +568,14 @@ class Executor:
             "project_root": wt_path,
             "commit_footer": config.commit_footer,
             "base_oid": base_oid,
+            "run_id": ralph_run_id,
         }
         if session is not None:
             create_kwargs["runtime_policy"] = RuntimePolicy(session=session)
         run = self._ralph.create_run(**create_kwargs)
         run_id = run.state.run_id
+        if run_id != ralph_run_id:
+            raise ValueError(f"ralph run id mismatch: requested {ralph_run_id!r}, got {run_id!r}")
         self._ralph.start_run(run_id)
         # Register the ralph run in the runs table so review-verdict
         # run_messages inserts satisfy the FK and run_list/poll can see it
@@ -657,77 +662,108 @@ class Executor:
         permanently wedged loop must not log at full poll rate forever.
         """
         rdir = runs_dir(project_root)
+        threading.Thread(
+            target=self._watch_ralph_cancel,
+            args=(run_id, rdir),
+            name=f"ralph-cancel-watch-{run_id}",
+            daemon=True,
+        ).start()
 
-        def watch() -> None:
-            backoff = _RALPH_CANCEL_POLL_SECS
-            while True:
-                run = self._ralph.get_run(run_id)
-                if run is None:
-                    # The run record is gone; nothing left to watch.
-                    self._unconfirmed_stop_run_ids.discard(run_id)
-                    return
-                thread = getattr(run, "thread", None)
-                if thread is not None and not thread.is_alive():
-                    if run_id in self._unconfirmed_stop_run_ids:
-                        # Aborted-after-start run whose stop was never
-                        # confirmed: no completion path owns this id, so
-                        # without this finalize the row would zombie
-                        # 'running' forever now that the loop self-exited.
-                        # The finish_run fence keeps any late finalize
-                        # exactly-one-winner.
-                        self._unconfirmed_stop_run_ids.discard(run_id)
-                        self._finalize_worker_run(
-                            run_id,
-                            RunResult(
-                                status="failed",
-                                exit_code=None,
-                                timed_out=False,
-                                ended_at=datetime.now(UTC).isoformat(),
-                                error="loop exited after unconfirmed stop",
-                            ),
-                        )
-                    return
-                if not is_cancel_requested(rdir, run_id):
-                    backoff = _RALPH_CANCEL_POLL_SECS
-                    time.sleep(_RALPH_CANCEL_POLL_SECS)
-                    continue
-                try:
-                    stopped = self._ralph.force_stop_run(
-                        run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS
-                    )
-                except Exception:
-                    _logger.exception(
-                        "force-stop raised for cancelled ralph run %s; row left "
-                        "running so cancel_run fails closed; retrying while the "
-                        "sentinel is set",
-                        run_id,
-                    )
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
-                    continue
-                if not stopped:
-                    _logger.error(
-                        "force-stop could not confirm exit for cancelled ralph "
-                        "run %s; row left running so cancel_run fails closed; "
-                        "retrying while the sentinel is set",
-                        run_id,
-                    )
-                    time.sleep(backoff)
-                    backoff = min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
-                    continue
-                self._finalize_worker_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=False,
-                        ended_at=datetime.now(UTC).isoformat(),
-                        error="cancelled",
-                    ),
-                )
+    def _watch_ralph_cancel(self, run_id: str, rdir: Path) -> None:
+        """Poll loop for one cancel watcher — see _spawn_ralph_cancel_watcher
+        for the full behavioral contract this implements."""
+        backoff = _RALPH_CANCEL_POLL_SECS
+        while True:
+            run = self._ralph.get_run(run_id)
+            if run is None:
+                # The run record is gone; nothing left to watch.
+                self._unconfirmed_stop_run_ids.discard(run_id)
                 return
+            thread = getattr(run, "thread", None)
+            if thread is not None and not thread.is_alive():
+                self._finalize_dead_watched_thread(run_id)
+                return
+            if not is_cancel_requested(rdir, run_id):
+                backoff = _RALPH_CANCEL_POLL_SECS
+                time.sleep(_RALPH_CANCEL_POLL_SECS)
+                continue
+            stopped, backoff = self._attempt_watcher_force_stop(run_id, backoff)
+            if stopped is None:
+                continue
+            if stopped:
+                self._finalize_watcher_stop(run_id)
+            return
 
-        threading.Thread(target=watch, name=f"ralph-cancel-watch-{run_id}", daemon=True).start()
+    def _finalize_dead_watched_thread(self, run_id: str) -> None:
+        """The watched thread already exited with no cancel ever requested:
+        only an aborted-after-start run with an unconfirmed stop has no
+        other owner — finalize it here so it doesn't zombie 'running'
+        forever. The finish_run fence keeps any late finalize
+        exactly-one-winner."""
+        if run_id not in self._unconfirmed_stop_run_ids:
+            return
+        self._unconfirmed_stop_run_ids.discard(run_id)
+        self._finalize_worker_run(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=None,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                error="loop exited after unconfirmed stop",
+            ),
+        )
+
+    def _attempt_watcher_force_stop(
+        self, run_id: str, backoff: float
+    ) -> tuple[bool | None, float]:
+        """One force-stop attempt for a cancel-requested run.
+
+        Returns ``(None, new_backoff)`` after a transient failure (logged
+        and slept already) so the caller keeps polling, or ``(confirmed,
+        backoff)`` once force_stop_run itself resolved either way.
+        """
+        try:
+            stopped = self._ralph.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
+        except Exception:
+            _logger.exception(
+                "force-stop raised for cancelled ralph run %s; row left "
+                "running so cancel_run fails closed; retrying while the "
+                "sentinel is set",
+                run_id,
+            )
+            time.sleep(backoff)
+            return None, min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+        if not stopped:
+            _logger.error(
+                "force-stop could not confirm exit for cancelled ralph "
+                "run %s; row left running so cancel_run fails closed; "
+                "retrying while the sentinel is set",
+                run_id,
+            )
+            time.sleep(backoff)
+            return None, min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+        return True, backoff
+
+    def _finalize_watcher_stop(self, run_id: str) -> None:
+        """A confirmed force-stop: finalize the row cancelled, unless the
+        loop's own completion won the race just before the stop landed —
+        force_stop_and_join only confirms the thread exited, not why, so a
+        completed run must be left for the normal completion path to
+        finalize with the real rebase outcome instead of being stomped."""
+        completed_run = self._ralph.get_run(run_id)
+        if completed_run is not None and completed_run.state.status is RunStatus.COMPLETED:
+            return
+        self._finalize_worker_run(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                error="cancelled",
+            ),
+        )
 
     def _review_enabled(self, config: ExecutionConfig) -> bool:
         if not config.review:
@@ -883,6 +919,24 @@ class Executor:
             raise ValueError(
                 f"node {node.id} has no run fence/worker run id for review redispatch"
             )
+        # The prior round is over (its review already ran) regardless of
+        # whether the next round can be created below — finalize it here,
+        # unconditionally and exactly once, so a fresh-run failure (raised
+        # out of _create_ralph_run before any fence check runs) can never
+        # leave it zombied 'running'. Only the recorded worker run id is
+        # finalized — never the node.run_id fence fallback, which can be a
+        # live parent run's row.
+        review_round = self._review_round_by_node.get(node.id, 0)
+        self._finalize_worker_run(
+            prior_worker_run_id,
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                detail=f"superseded by review round {review_round} redispatch",
+            ),
+        )
         base_oid = self._base_oid_by_node.get(node.id)
         if base_oid is None:
             base_oid = self._wt.resolve_ref(self._wt.current_branch())
@@ -899,20 +953,6 @@ class Executor:
                 self._stop_aborted_run(
                     run_id, context=f"review redispatch fence lost for node {node.id}"
                 )
-                # The replaced worker run is over (its review just ran); finalize
-                # its row before raising so it can't zombie 'running' — the raise
-                # propagates out of the run loop with no in-tree finalizer. Only
-                # the recorded worker run id, never the node.run_id fallback.
-                self._finalize_worker_run(
-                    prior_worker_run_id,
-                    RunResult(
-                        status="done",
-                        exit_code=0,
-                        timed_out=False,
-                        ended_at=datetime.now(UTC).isoformat(),
-                        detail="redispatch aborted: fence lost",
-                    ),
-                )
                 raise ValueError(f"review redispatch fence lost for node {node.id}")
         else:
             current = self._graph.get_node(node.id)
@@ -920,35 +960,8 @@ class Executor:
                 self._stop_aborted_run(
                     run_id, context=f"adopted owner fence lost for node {node.id}"
                 )
-                # Same finalize-before-raise discipline as the replace_run_id
-                # fence-loss branch above.
-                self._finalize_worker_run(
-                    prior_worker_run_id,
-                    RunResult(
-                        status="done",
-                        exit_code=0,
-                        timed_out=False,
-                        ended_at=datetime.now(UTC).isoformat(),
-                        detail="redispatch aborted: fence lost",
-                    ),
-                )
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
         self._worker_run_id_by_node[node.id] = run_id
-        # The replaced worker run is over (its review just ran); finalize its
-        # runs row so only the fresh round shows as running. Only the recorded
-        # worker run id is finalized — never the node.run_id fence fallback,
-        # which can be a live parent run's row.
-        review_round = self._review_round_by_node.get(node.id, 0)
-        self._finalize_worker_run(
-            prior_worker_run_id,
-            RunResult(
-                status="done",
-                exit_code=0,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                detail=f"superseded by review round {review_round} redispatch",
-            ),
-        )
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
     def _cleanup_failed_dispatch(
@@ -983,7 +996,15 @@ class Executor:
                     context=f"failed-dispatch cleanup for node {node_id}",
                 )
         try:
-            if release_claim:
+            # An unconfirmed stop means the abandoned loop may still be
+            # alive and writing into wt_path: releasing the claim here would
+            # let the caller's transient-retry loop reclaim the node and
+            # start a second worker (race) while the first is still live.
+            # Withhold release until the stop is confirmed (or nothing was
+            # ever started, where stop_confirmed defaults True) — the next
+            # _dispatch_once attempt then hits claim_node failing and raises
+            # ValueError, which the retry loop does not retry.
+            if release_claim and stop_confirmed:
                 self._graph.release(node_id, owner_run_id)
         except Exception:
             _logger.exception(
@@ -1027,6 +1048,13 @@ class Executor:
         there its row has no in-tree finalizer — the loud preserved-worktree
         error names the run id for manual recovery.
         """
+        # Register before attempting the stop, not after failure: the cancel
+        # watcher (already running independently) can observe a dead thread
+        # the instant force_stop_run kills it, and checks this set at that
+        # exact moment. Adding only on a failure branch left a window where
+        # the watcher's check could land before this call ever completes,
+        # permanently zombie-ing the row since nothing else would own it.
+        self._unconfirmed_stop_run_ids.add(run_id)
         try:
             stopped = self._ralph.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
@@ -1035,7 +1063,6 @@ class Executor:
                 run_id,
                 context,
             )
-            self._unconfirmed_stop_run_ids.add(run_id)
             return False
         if not stopped:
             _logger.error(
@@ -1044,7 +1071,6 @@ class Executor:
                 run_id,
                 context,
             )
-            self._unconfirmed_stop_run_ids.add(run_id)
             return False
         self._unconfirmed_stop_run_ids.discard(run_id)
         self._finalize_worker_run(
@@ -1058,6 +1084,17 @@ class Executor:
             ),
         )
         return True
+
+    def note_unconfirmed_stop(self, run_id: str) -> None:
+        """Register a run whose stop request was not confirmed so its cancel
+        watcher (if one exists) finalizes the row when the run later
+        self-exits, instead of leaving a permanent 'running' zombie.
+
+        Used by callers (e.g. headless dispatch) that issue their own
+        stop_run/force_stop_run outside Executor's own abort paths
+        (_stop_aborted_run) and so would otherwise never register the id.
+        """
+        self._unconfirmed_stop_run_ids.add(run_id)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
         target_branch = self._target_branch_by_node.get(node_id)

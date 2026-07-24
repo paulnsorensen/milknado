@@ -104,6 +104,7 @@ def _seed_run(
     timed_out: bool = False,
     error: str | None = None,
     pid: int | None = None,
+    log_path: str | None = None,
 ) -> None:
     """Insert a runs row directly (replaces writing a .state.json sidecar)."""
     from datetime import UTC, datetime
@@ -116,7 +117,7 @@ def _seed_run(
             (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
         )
         started_at = started_at or datetime.now(UTC).isoformat()
-        log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
+        log_path = log_path or str(root / ".milknado" / "runs" / f"{run_id}.log")
         graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
             graph.finish_run(
@@ -728,12 +729,12 @@ class TestRunCancel:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="cancel-node", kind="task", project_root=root)
         node_id = task["id"]
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.mark_running(node_id)
+            graph.mark_running(node_id, run_id=run_id)
         finally:
             graph.close()
-        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
         monkeypatch.setattr(os, "killpg", lambda *a: None)
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)
@@ -759,15 +760,17 @@ class TestRunCancel:
         orphan_wt = tmp_path / "milknado-cancel-wt"
         orphan_wt.mkdir()
 
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         graph, _cfg = open_graph(tmp_path)
         try:
             graph.mark_running(
-                node_id, worktree_path=str(orphan_wt), branch_name="milknado/cancel"
+                node_id,
+                worktree_path=str(orphan_wt),
+                branch_name="milknado/cancel",
+                run_id=run_id,
             )
         finally:
             graph.close()
-
-        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         removed: list[Path] = []
@@ -793,12 +796,12 @@ class TestRunCancel:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-stuck", kind="task", project_root=root)
         node_id = task["id"]
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.mark_running(node_id)
+            graph.mark_running(node_id, run_id=run_id)
         finally:
             graph.close()
-        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
@@ -827,12 +830,14 @@ class TestRunCancel:
         node_id = task["id"]
         orphan_wt = tmp_path / "milknado-wt-fail"
         orphan_wt.mkdir()
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.mark_running(node_id, worktree_path=str(orphan_wt), branch_name="milknado/x")
+            graph.mark_running(
+                node_id, worktree_path=str(orphan_wt), branch_name="milknado/x", run_id=run_id
+            )
         finally:
             graph.close()
-        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         def boom(self, wt, target="HEAD"):
@@ -871,12 +876,14 @@ class TestRunCancel:
             milknado_todo_add, description="cancel-git", kind="task", project_root=str(tmp_path)
         )
         node_id = task["id"]
+        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.mark_running(node_id, worktree_path=str(wt), branch_name="milknado/cancel")
+            graph.mark_running(
+                node_id, worktree_path=str(wt), branch_name="milknado/cancel", run_id=run_id
+            )
         finally:
             graph.close()
-        run_id = f"node-{node_id}-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
         return node_id, run_id, wt
 
@@ -1436,6 +1443,56 @@ class TestDepositResult:
         assert final["summary"] == "real log"
         assert "SECRET-CONTENT" not in (final["summary"] or "")
         assert final["log_path"] == str(derived), "returned log_path must be the derived one"
+
+    def test_run_loop_poll_falls_back_to_latest_iteration_log_for_executor_runs(
+        self, tmp_path: Path
+    ) -> None:
+        """Medium: executor-owned (in-process) ralph runs never write the
+        detached path's flat <run_id>.log — they write one file per
+        iteration under a `.ralph-logs` directory instead. Poll must fall
+        back to tailing the newest iteration file rather than silently
+        returning an empty summary forever."""
+        run_id = "node-1-20260101T000000Z-1234"
+        log_dir = tmp_path / "milknado-1-task" / ".ralph-logs"
+        log_dir.mkdir(parents=True)
+        (log_dir / "0001_20260101T000000Z.log").write_text("iteration 1 output", encoding="utf-8")
+        (log_dir / "0002_20260101T000100Z.log").write_text("iteration 2 output", encoding="utf-8")
+        _seed_run(
+            tmp_path,
+            run_id=run_id,
+            node_id=1,
+            status="running",
+            log_path=str(log_dir),
+        )
+        final = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
+        assert final["summary"] == "iteration 2 output", (
+            "poll must tail the newest per-iteration file, not stay empty"
+        )
+
+    def test_run_loop_poll_ignores_directory_log_path_outside_project_root(
+        self, tmp_path: Path
+    ) -> None:
+        """The directory fallback must stay inside the project root — a
+        tampered runs.log_path pointing at a directory elsewhere on disk
+        must not be tailed, mirroring the flat-file derivation's guard."""
+        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-ralph-logs"
+        outside_dir.mkdir(exist_ok=True)
+        (outside_dir / "0001_x.log").write_text("SECRET-ITERATION-OUTPUT", encoding="utf-8")
+        try:
+            run_id = "node-1-20260101T000000Z-5678"
+            _seed_run(
+                tmp_path,
+                run_id=run_id,
+                node_id=1,
+                status="running",
+                log_path=str(outside_dir),
+            )
+            final = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
+            assert final["summary"] == "", "a directory outside project_root must not be tailed"
+        finally:
+            import shutil
+
+            shutil.rmtree(outside_dir, ignore_errors=True)
 
     def test_multipart_deliverable_round_trips_intact(self, tmp_path: Path) -> None:
         """Dogfood shape (#122): a multi-part deliverable — several before/after

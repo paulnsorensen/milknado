@@ -2,7 +2,7 @@ import logging
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,6 +22,7 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
 )
+from milknado.domains.dispatch._runstate import RUN_ID_RE
 from milknado.domains.execution import (
     CompletionResult,
     DispatchResult,
@@ -31,11 +32,13 @@ from milknado.domains.execution import (
     get_dispatchable_nodes,
 )
 from milknado.domains.graph import MikadoGraph
+from milknado.loop import RunStatus
 
 
 @dataclass
 class FakeRunState:
     run_id: str = "run-1"
+    status: RunStatus = RunStatus.RUNNING
 
 
 def _dead_thread() -> threading.Thread:
@@ -153,6 +156,8 @@ class FakeRalph:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
+        runtime_policy: Any | None = None,
+        run_id: str | None = None,
     ) -> FakeRun:
         self.runs_created.append(
             {
@@ -162,7 +167,8 @@ class FakeRalph:
                 "base_oid": base_oid,
             }
         )
-        run = FakeRun(state=FakeRunState(run_id=f"{self._id_prefix}-{len(self.runs_created)}"))
+        resolved_run_id = run_id or f"{self._id_prefix}-{len(self.runs_created)}"
+        run = FakeRun(state=FakeRunState(run_id=resolved_run_id))
         self.runs[run.state.run_id] = run
         if self._live:
             self.make_live(run.state.run_id)
@@ -339,7 +345,7 @@ class TestExecutorDispatch:
 
         assert isinstance(result, DispatchResult)
         assert result.node_id == 1
-        assert result.run_id == "run-1"
+        assert RUN_ID_RE.match(result.run_id), "the ralph run_id matches the executor's id format"
         assert "extract-interface" in str(result.worktree)
 
     def test_marks_node_running(
@@ -459,8 +465,9 @@ class TestExecutorDispatch:
             crg=FakeCrg(),
         )
         graph.add_node("do it")
-        ex.dispatch(1, config)
-        assert fake_ralph.runs_started == ["run-1"]
+        result = ex.dispatch(1, config)
+        assert fake_ralph.runs_started == [result.run_id]
+        assert RUN_ID_RE.match(result.run_id)
 
     def test_stores_run_id_in_graph(
         self,
@@ -474,10 +481,11 @@ class TestExecutorDispatch:
             crg=FakeCrg(),
         )
         graph.add_node("track run")
-        ex.dispatch(1, config)
+        result = ex.dispatch(1, config)
         node = graph.get_node(1)
         assert node is not None
-        assert node.run_id == "run-1"
+        assert node.run_id == result.run_id
+        assert RUN_ID_RE.match(node.run_id)
 
     def test_adopts_an_existing_claim_without_remarking_running(
         self,
@@ -504,7 +512,9 @@ class TestExecutorDispatch:
         assert node.status == NodeStatus.RUNNING
         assert node.run_id == claim_run_id, "the parent's fence run_id is preserved"
         assert node.worktree_path is not None and "milknado-1-" in node.worktree_path
-        assert result.run_id == "run-1", "the ralph run_id is returned for completion waiting"
+        assert RUN_ID_RE.match(result.run_id), (
+            "the ralph run_id is returned for completion waiting"
+        )
 
     def test_complete_rejects_a_zombie_terminal_write_after_reclaim_mid_merge(
         self,
@@ -1476,12 +1486,14 @@ class TestGetAttemptCount:
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
                 base_oid: str | None = None,
+                runtime_policy: Any | None = None,
+                run_id: str | None = None,
             ) -> FakeRun:
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
                     raise TransientDispatchError("transient")
-                return FakeRun()
+                return FakeRun(state=FakeRunState(run_id=run_id or "run-1"))
 
         config_retry = ExecutionConfig(
             execution_agent="claude",
@@ -1512,6 +1524,8 @@ class TestGetAttemptCount:
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
                 base_oid: str | None = None,
+                runtime_policy: Any | None = None,
+                run_id: str | None = None,
             ) -> FakeRun:
                 raise ValueError("bad config")
 
@@ -1537,6 +1551,8 @@ class TestGetAttemptCount:
                 project_root: Path | None = None,
                 commit_footer: str | None = None,
                 base_oid: str | None = None,
+                runtime_policy: Any | None = None,
+                run_id: str | None = None,
             ) -> FakeRun:
                 raise TransientDispatchError("always fails")
 
@@ -1679,7 +1695,9 @@ def test_dispatch_rejects_lost_run_id_fence(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="dispatch fence lost"):
         executor.dispatch(1, config)
-    run_id = "fence-1"
+    assert len(ralph.runs_started) == 1
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
     row = graph.get_run(run_id)
     assert row is not None, "the started ralph run's row must not be orphaned"
@@ -1704,7 +1722,9 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="dispatch fence lost"):
         executor.dispatch(1, config)
-    run_id = "wedged-fence-1"
+    assert len(ralph.runs_started) == 1
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
     row = graph.get_run(run_id)
     assert row is not None and row["status"] == "running", (
@@ -1728,7 +1748,9 @@ def test_dispatch_fence_loss_force_stop_raise_preserves_worktree(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="dispatch fence lost"):
         executor.dispatch(1, config)
-    run_id = "raising-fence-1"
+    assert len(ralph.runs_started) == 1
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
     row = graph.get_run(run_id)
     assert row is not None and row["status"] == "running"
@@ -1756,8 +1778,9 @@ def test_watcher_spawn_failure_after_start_stops_and_finalizes(
     monkeypatch.setattr(executor_module, "runs_dir", _boom)
     with pytest.raises(OSError, match="read-only .milknado"):
         executor._dispatch_once(1, config)  # direct: skip the transient-retry wrapper
-    run_id = "spawnfail-1"
-    assert ralph.runs_started == [run_id], "the run was started before the raise"
+    assert len(ralph.runs_started) == 1, "the run was started before the raise"
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
     row = graph.get_run(run_id)
     assert row is not None and row["status"] != "running", (
@@ -1791,8 +1814,9 @@ def test_watcher_spawn_failure_unconfirmed_stop_preserves_worktree(
     monkeypatch.setattr(executor_module, "runs_dir", _boom)
     with pytest.raises(OSError, match="read-only .milknado"):
         executor._dispatch_once(1, config)  # direct: skip the transient-retry wrapper
-    run_id = "spawnwedged-1"
-    assert ralph.runs_started == [run_id], "the run was started before the raise"
+    assert len(ralph.runs_started) == 1, "the run was started before the raise"
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id], (
         "the post-start teardown attempted the stop exactly once; the caller's "
         "cleanup must not re-stop a run it never started"
@@ -1822,7 +1846,9 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="dispatch fence lost"):
         executor.dispatch(1, config)
-    run_id = "selfexit-1"
+    assert len(ralph.runs_started) == 1
+    run_id = ralph.runs_started[0]
+    assert RUN_ID_RE.match(run_id)
     row = graph.get_run(run_id)
     assert row is not None and row["status"] == "running"
     assert git.removed == [], "unconfirmed stop: worktree preserved"
@@ -1844,6 +1870,75 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     assert git.removed == [], "the finalizer must not discard the preserved worktree"
 
 
+def test_unconfirmed_stop_blocks_retry_from_starting_second_worker(
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Blocker 2: an unconfirmed stop during a transient dispatch failure
+    must retain the node claim so the retry loop cannot reclaim the node and
+    start a second worker (race-2) while the first's abandoned loop may
+    still be alive and writing into the shared worktree."""
+    import milknado.domains.execution.executor as executor_module
+
+    graph.add_node("unconfirmed stop retry")
+    ralph = FakeRalph(id_prefix="race")
+    ralph.force_stop_result = False  # the post-start abort's stop never confirms
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+
+    def _boom(root: Path) -> Path:
+        raise OSError("transient watcher-setup failure")
+
+    monkeypatch.setattr(executor_module, "runs_dir", _boom)
+    retry_config = replace(config, dispatch_max_retries=1, dispatch_backoff_seconds=0)
+
+    with pytest.raises(ValueError, match="already claimed"):
+        executor.dispatch(1, retry_config)
+
+    assert len(ralph.runs_started) == 1, (
+        "retry must not start a second worker while the first's stop is unconfirmed"
+    )
+    node = graph.get_node(1)
+    assert node is not None
+    assert node.status.value == "running", "claim retained, not released, under unconfirmed stop"
+
+
+def test_stop_aborted_run_registers_unconfirmed_before_attempting_stop(
+    graph: MikadoGraph,
+) -> None:
+    """High: _stop_aborted_run must register the run as unconfirmed BEFORE
+    attempting the stop, not only on a failure branch after the call
+    returns — otherwise the independently-polling cancel watcher can
+    observe a dead thread and check membership in the gap before the id is
+    ever added, permanently zombie-ing the row (nothing else owns it)."""
+    ralph = FakeRalph(id_prefix="registerfirst")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+
+    entered = threading.Event()
+    release = threading.Event()
+    original_force_stop_run = ralph.force_stop_run
+
+    def _blocking_force_stop_run(run_id: str, timeout: float | None = None) -> bool:
+        entered.set()
+        release.wait(timeout=5)
+        return original_force_stop_run(run_id, timeout=timeout)
+
+    ralph.force_stop_run = _blocking_force_stop_run
+
+    thread = threading.Thread(
+        target=lambda: executor._stop_aborted_run("run-registerfirst", context="test")
+    )
+    thread.start()
+    try:
+        assert entered.wait(timeout=5), "force_stop_run must have been called"
+        assert "run-registerfirst" in executor._unconfirmed_stop_run_ids, (
+            "the run must already be registered as unconfirmed while the stop is in flight"
+        )
+    finally:
+        release.set()
+        thread.join(timeout=5)
+
+
 def test_review_redispatch_fence_loss_stops_and_finalizes_fresh_run(
     graph: MikadoGraph,
     config: ExecutionConfig,
@@ -1862,17 +1957,21 @@ def test_review_redispatch_fence_loss_stops_and_finalizes_fresh_run(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="review redispatch fence lost"):
         executor._redispatch_review_round(node, config, result.worktree)
-    assert ralph.force_stopped == ["rd-2"]
-    row = graph.get_run("rd-2")
+    assert len(ralph.runs_started) == 2
+    old_run_id, new_run_id = ralph.runs_started
+    assert old_run_id == result.run_id
+    assert ralph.force_stopped == [new_run_id]
+    row = graph.get_run(new_run_id)
     assert row is not None, "the fresh run's row must not be orphaned"
     assert row["status"] != "running", "fresh run's row must not zombie as running"
     assert row["error"] == "dispatch aborted"
-    assert graph.get_node(1).run_id == "rd-1", "the old run id keeps the node fence"
-    old_row = graph.get_run("rd-1")
+    assert graph.get_node(1).run_id == old_run_id, "the old run id keeps the node fence"
+    old_row = graph.get_run(old_run_id)
     assert old_row is not None and old_row["status"] != "running", (
-        "the superseded worker run's row must be finalized on the fence-loss raise"
+        "the superseded worker run's row must be finalized unconditionally, "
+        "before the fence check, regardless of the raise that follows"
     )
-    assert old_row["detail"] == "redispatch aborted: fence lost"
+    assert old_row["detail"] == "superseded by review round 0 redispatch"
 
 
 def test_review_redispatch_fence_loss_unconfirmed_stop_leaves_row_running(
@@ -1893,8 +1992,10 @@ def test_review_redispatch_fence_loss_unconfirmed_stop_leaves_row_running(
     monkeypatch.setattr(graph, "replace_run_id", lambda *args: False)
     with pytest.raises(ValueError, match="review redispatch fence lost"):
         executor._redispatch_review_round(node, config, result.worktree)
-    assert ralph.force_stopped == ["rdwedged-2"]
-    row = graph.get_run("rdwedged-2")
+    assert len(ralph.runs_started) == 2
+    new_run_id = ralph.runs_started[1]
+    assert ralph.force_stopped == [new_run_id]
+    row = graph.get_run(new_run_id)
     assert row is not None and row["status"] == "running"
 
 
@@ -1913,15 +2014,50 @@ def test_review_redispatch_adopted_owner_fence_loss_stops_fresh_run(
     executor._owner_fence_by_node[1] = "other-owner-fence"
     with pytest.raises(ValueError, match="adopted owner fence lost"):
         executor._redispatch_review_round(node, config, result.worktree)
-    assert ralph.force_stopped == ["adopted-2"]
-    row = graph.get_run("adopted-2")
+    assert len(ralph.runs_started) == 2
+    old_run_id, new_run_id = ralph.runs_started
+    assert old_run_id == result.run_id
+    assert ralph.force_stopped == [new_run_id]
+    row = graph.get_run(new_run_id)
     assert row is not None and row["status"] != "running"
     assert row["error"] == "dispatch aborted"
-    old_row = graph.get_run("adopted-1")
+    old_row = graph.get_run(old_run_id)
     assert old_row is not None and old_row["status"] != "running", (
-        "the superseded worker run's row must be finalized on the fence-loss raise"
+        "the superseded worker run's row must be finalized unconditionally, "
+        "before the fence check, regardless of the raise that follows"
     )
-    assert old_row["detail"] == "redispatch aborted: fence lost"
+    assert old_row["detail"] == "superseded by review round 0 redispatch"
+
+
+def test_review_redispatch_finalizes_prior_round_even_when_fresh_run_fails_to_start(
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """High: the prior round's row must be finalized regardless of whether
+    the new round can even be created — a _create_ralph_run failure (ralph-md
+    generation, create_run, start_run) previously propagated before any of
+    the finalize calls ran, leaving the prior round zombied 'running' forever."""
+    graph.add_node("redispatch fresh run fails to start")
+    ralph = FakeRalph(id_prefix="redispatchboom")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    result = executor.dispatch(1, config)
+    node = graph.get_node(1)
+    assert node is not None
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("ralph create_run boom")
+
+    monkeypatch.setattr(ralph, "create_run", _boom)
+
+    with pytest.raises(RuntimeError, match="ralph create_run boom"):
+        executor._redispatch_review_round(node, config, result.worktree)
+
+    prior_row = graph.get_run(result.run_id)
+    assert prior_row is not None and prior_row["status"] != "running", (
+        "the prior round's row must be finalized even though the fresh round never started"
+    )
+    assert prior_row["detail"] == "superseded by review round 0 redispatch"
 
 
 def test_default_fake_ralph_id_prefixes_are_unique() -> None:
@@ -2013,4 +2149,38 @@ def test_watcher_retries_after_force_stop_raise(
     row = graph.get_run(result.run_id)
     assert row is not None and row["error"] == "cancelled", (
         "watcher must retry the force-stop and finalize cancelled"
+    )
+
+
+def test_watcher_does_not_overwrite_a_completion_that_won_the_race(
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    tmp_path: Path,
+) -> None:
+    """High: a cancel racing with natural completion must not win the DB
+    fence as failed/cancelled. force_stop_and_join only confirms the thread
+    exited, not why — if the loop's own try_commit_completion() won just
+    before the force-stop landed, the watcher must leave the row alone for
+    the normal completion path to finalize as done."""
+    from milknado.domains.dispatch._runstate import request_cancel, runs_dir
+
+    graph.add_node("cancel races completion")
+    ralph = FakeRalph(live=True, id_prefix="racecomplete")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    result = executor.dispatch(1, config)
+
+    # Simulate the loop committing completion just before the force-stop lands.
+    ralph.runs[result.run_id].state.status = RunStatus.COMPLETED
+
+    request_cancel(runs_dir(tmp_path), result.run_id)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not ralph.force_stopped:
+        time.sleep(0.01)
+    assert ralph.force_stopped == [result.run_id], "watcher must still confirm the stop"
+
+    # Give the watcher's post-stop check a moment to run and (correctly) no-op.
+    time.sleep(0.2)
+    row = graph.get_run(result.run_id)
+    assert row is not None and row["status"] == "running", (
+        "a completed run must not be overwritten as cancelled by the racing watcher"
     )
