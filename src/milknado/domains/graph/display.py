@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from milknado.domains.common import MikadoNode, NodeStatus
-from milknado.domains.graph import _reads
 from milknado.domains.graph.graph import MikadoGraph
 
 if TYPE_CHECKING:
@@ -46,15 +45,8 @@ class GraphSummary:
 
 
 def summarize(graph: MikadoGraph, *, include_archived: bool = False) -> GraphSummary:
-    if include_archived:
-        # The facade's read methods default to hiding archived nodes and (until
-        # the wiring lands) expose no opt-in, so the full projection reads
-        # through the slice's free functions on the graph's connection.
-        nodes = _reads.get_all_nodes(graph._conn, include_archived=True)
-        ready = _reads.get_ready_nodes(graph._conn, include_archived=True)
-    else:
-        nodes = graph.get_all_nodes()
-        ready = graph.get_ready_nodes()
+    nodes = graph.get_all_nodes(include_archived=include_archived)
+    ready = graph.get_ready_nodes(include_archived=include_archived)
     ready_ids = [n.id for n in ready]
     conflicts = graph.check_parallel_safety(ready_ids)
     active = [n for n in nodes if n.status == NodeStatus.RUNNING and n.worktree_path]
@@ -92,10 +84,7 @@ def render_tree(
     from rich.console import Console
     from rich.tree import Tree
 
-    if include_archived:
-        root_node = _reads.get_root(graph._conn, include_archived=True)
-    else:
-        root_node = graph.get_root()
+    root_node = graph.get_root(include_archived=include_archived)
     if root_node is None:
         return "[dim]No nodes in graph[/dim]"
 
@@ -113,10 +102,7 @@ def render_tree(
 def _build_subtree(
     graph: MikadoGraph, node_id: int, tree: Any, *, include_archived: bool = False
 ) -> None:
-    if include_archived:
-        children = _reads.get_children(graph._conn, node_id, include_archived=True)
-    else:
-        children = graph.get_children(node_id)
+    children = graph.get_children(node_id, include_archived=include_archived)
     for child in children:
         branch = tree.add(format_node(child))
         _build_subtree(graph, child.id, branch, include_archived=include_archived)

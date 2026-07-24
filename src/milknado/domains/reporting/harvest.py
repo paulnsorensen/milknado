@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.graph import _reads
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
@@ -56,9 +55,8 @@ class HarvestSummary:
 def _task_descendants(graph: MikadoGraph, goal_id: int) -> list[MikadoNode]:
     children: dict[int, list[int]] = {}
     # Harvest must keep seeing archived DONE goals' subtrees (spec: harvest
-    # flips include_archived=True). The facade defaults to hiding archived
-    # nodes, so read through the slice's free functions on the connection.
-    nodes = _reads.get_all_nodes(graph._conn, include_archived=True)
+    # flips include_archived=True).
+    nodes = graph.get_all_nodes(include_archived=True)
     for node in nodes:
         if node.parent_id is not None:
             children.setdefault(node.parent_id, []).append(node.id)
