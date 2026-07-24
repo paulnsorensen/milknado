@@ -260,3 +260,77 @@ def test_open_failure_closes_connection_before_reraising(
     assert len(opened) == 1
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         opened[0].execute("SELECT 1")
+
+
+class _FlakyCloseConn(sqlite3.Connection):
+    """The first close() across all instances raises sqlite3.Error; the rest succeed."""
+
+    _armed = True
+
+    def close(self) -> None:
+        cls = type(self)
+        if cls._armed:
+            cls._armed = False
+            raise sqlite3.Error("close boom")
+        super().close()
+
+
+def _use_flaky_close_conns(monkeypatch: pytest.MonkeyPatch) -> list[_FlakyCloseConn]:
+    _FlakyCloseConn._armed = True
+    opened: list[_FlakyCloseConn] = []
+    real_connect = sqlite3.connect
+
+    def _connect_with_factory(*args: object, **kwargs: object) -> _FlakyCloseConn:
+        conn = real_connect(*args, factory=_FlakyCloseConn, **kwargs)  # type: ignore[arg-type]
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", _connect_with_factory)
+    return opened
+
+
+def test_quarantine_swallows_close_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The quarantine path's close is best-effort: a failing close() must not
+    stop the quarantine + fresh-recreate heal."""
+    db = tmp_path / "g.db"
+    db.write_bytes(b"garbage-not-sqlite" * 64)
+    opened = _use_flaky_close_conns(monkeypatch)
+
+    graph = MikadoGraph(db)
+
+    moved = list(tmp_path.glob("*.corrupt-*"))
+    assert len(moved) == 1, "quarantine must still move the corrupt db aside"
+    graph.add_node("healed")
+    assert [n.description for n in graph.get_all_nodes()] == ["healed"]
+    graph.close()
+    for conn in opened:
+        conn.close()  # second close succeeds; no leaked handles
+
+
+def test_open_failure_swallows_close_failure_and_reraises_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When create_tables raises AND the cleanup close() also fails, the
+    ORIGINAL exception must still propagate unchanged."""
+    original = RuntimeError("schema boom")
+
+    def _boom(conn: sqlite3.Connection) -> None:
+        raise original
+
+    monkeypatch.setattr(_persistence, "create_tables", _boom)
+    opened = _use_flaky_close_conns(monkeypatch)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        MikadoGraph(tmp_path / "g.db")
+    assert exc_info.value is original
+    for conn in opened:
+        conn.close()  # second close succeeds; no leaked handles
+
+
+def test_close_before_first_use(tmp_path: Path) -> None:
+    """close() with no prior _conn access is a clean no-surprise shutdown."""
+    graph = MikadoGraph(tmp_path / "g.db")
+    graph.close()
+    assert graph._closed is True
