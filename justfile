@@ -71,12 +71,12 @@ coverage-check:
     if result.returncode != 0:
         sys.exit(result.returncode)
 
-# Full build with autofix: lint-fix → test → coverage check (for agents/developers)
-build: lint-fix test coverage-check
+# Full build with autofix: lint-fix → coverage check (for agents/developers)
+build: lint-fix coverage-check
     @echo "✅ Build passed — ready for PR"
 
-# Full build no autofix: lint → test → coverage check (for CI validation)
-build-ci: lint test coverage-check
+# Full build no autofix: lint → coverage check (for CI validation)
+build-ci: lint coverage-check
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + tests + project coverage + diff coverage in one shot.
