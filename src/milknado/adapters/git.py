@@ -101,20 +101,34 @@ class GitAdapter:
         PARENT repo, which would misreport the root's dirt as the worktree's;
         callers treat that as a non-refusal failure (nothing to preserve).
         """
+        blocker = self.worktree_teardown_blocker(path, target)
+        if blocker is not None:
+            raise UnlandedWorkError(path, blocker)
+        self._run(["worktree", "remove", str(path)])
+
+    def worktree_teardown_blocker(self, path: Path, target: str = "HEAD") -> str | None:
+        """Read-only probe: None when `remove_worktree` would succeed, else the reason.
+
+        Runs the same dirty (`git status --porcelain`) and unlanded
+        (`merge-base --is-ancestor`) checks as `remove_worktree` without
+        removing anything, so a dry-run can plan exactly what the real run
+        would preserve. Raises ValueError for a non-worktree path, same as
+        `remove_worktree` — callers treat that as a non-refusal failure.
+        """
         toplevel = self._run(["rev-parse", "--show-toplevel"], cwd=path).stdout.strip()
         if Path(toplevel).resolve() != path.resolve():
             raise ValueError(f"{path} is not a registered worktree (toplevel: {toplevel})")
         dirty = self._run(["status", "--porcelain"], cwd=path).stdout.strip()
         if dirty:
-            raise UnlandedWorkError(path, f"dirty files:\n{dirty}")
+            return f"dirty files:\n{dirty}"
         target_sha = self._run(["rev-parse", target]).stdout.strip()
         head = self._run(["rev-parse", "HEAD"], cwd=path).stdout.strip()
         if not self._is_landed(path, head, target_sha):
             unlanded = self._run(
                 ["log", "--oneline", f"{target_sha}..HEAD"], cwd=path
             ).stdout.strip()
-            raise UnlandedWorkError(path, f"unlanded commits (not on {target}):\n{unlanded}")
-        self._run(["worktree", "remove", str(path)])
+            return f"unlanded commits (not on {target}):\n{unlanded}"
+        return None
 
     def _is_landed(self, worktree: Path, head: str, target_sha: str) -> bool:
         """True when `target_sha` already contains `head` (ancestor containment).
@@ -142,6 +156,15 @@ class GitAdapter:
 
     def prune_worktrees(self) -> None:
         self._run(["worktree", "prune"])
+
+    def delete_branch(self, branch: str) -> None:
+        """Delete a merged local branch via `git branch -d`.
+
+        Deliberately no force flag: `-d` refuses an unmerged branch head, and
+        the non-zero exit surfaces as GitOperationError (fail closed). Callers
+        that need destruction must go through WorktreeManager.discard instead.
+        """
+        self._run(["branch", "-d", branch])
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         result = subprocess.run(
