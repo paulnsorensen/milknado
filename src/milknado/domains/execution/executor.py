@@ -72,6 +72,7 @@ class ExecutionConfig:
     review_max_rounds: int = 0
     on_reject: str = "warn"
     session_mode: str = "fresh"
+    completion_timeout_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -576,27 +577,29 @@ class Executor:
         run_id = run.state.run_id
         if run_id != ralph_run_id:
             raise ValueError(f"ralph run id mismatch: requested {ralph_run_id!r}, got {run_id!r}")
+        # Register the ralph run in the runs table BEFORE starting the loop so
+        # review-verdict run_messages inserts satisfy the FK and run_list/poll
+        # can see it (#296). Persistence must precede execution: an unregistered
+        # run is worse than a failed dispatch, so a failed insert propagates
+        # rather than being swallowed — the loop has not started yet (only
+        # create_run ran, registering an in-memory RunManager entry but no
+        # thread), so nothing needs teardown here. The row records
+        # timeout_seconds (the completion timeout) and NO pid, mirroring the
+        # async-worker path — so after a server crash fail_stale_running_runs
+        # (reconcile.py) sweeps the orphaned row once started_at + timeout +
+        # grace elapses; while the server lives, the headless completion-
+        # timeout force-stop drives a live run to terminal at timeout (before
+        # the sweep's timeout+grace window), so the row is never false-
+        # flipped. No pid means cancel correctly routes through the sentinel
+        # path, never _cancel_pid_run.
+        self._graph.start_run(
+            run_id,
+            node.id,
+            str(wt_path / ".ralph-logs"),
+            datetime.now(UTC).isoformat(),
+            config.completion_timeout_seconds,
+        )
         self._ralph.start_run(run_id)
-        # Register the ralph run in the runs table so review-verdict
-        # run_messages inserts satisfy the FK and run_list/poll can see it
-        # (#296). Ralph loops run in-process threads, so there is no pid to
-        # record. A failed registry write must not kill the dispatch — the
-        # review handoff threads findings in memory, never through the DB.
-        try:
-            self._graph.start_run(
-                run_id,
-                node.id,
-                str(wt_path / ".ralph-logs"),
-                datetime.now(UTC).isoformat(),
-                None,
-            )
-        except Exception:
-            _logger.exception(
-                "runs-row insert failed for ralph run %s (node %d); "
-                "verdict deposits for this run will FK-fail",
-                run_id,
-                node.id,
-            )
         try:
             self._spawn_ralph_cancel_watcher(run_id, config.project_root)
         except Exception as exc:

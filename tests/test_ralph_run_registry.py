@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 import time
 from pathlib import Path
@@ -23,12 +22,13 @@ from milknado.mcp.run import milknado_run_cancel, milknado_run_list
 from tests.test_execution import FakeCrg, FakeGit, FakeRalph
 
 
-def _config(root: Path) -> ExecutionConfig:
+def _config(root: Path, completion_timeout_seconds: int | None = None) -> ExecutionConfig:
     return ExecutionConfig(
         execution_agent="claude",
         quality_gates=(Gate("true"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=root,
+        completion_timeout_seconds=completion_timeout_seconds,
     )
 
 
@@ -263,22 +263,111 @@ def test_completed_ralph_run_row_is_finalized(graph: Any, tmp_path: Path) -> Non
     assert final["status"] == "done"
 
 
-def test_runs_row_insert_failure_does_not_kill_dispatch(
-    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
+    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A DB outage at dispatch must not strand the worker: the runs-row insert
-    is best-effort (findings thread in memory, never through the DB), so a
-    failed insert logs loud and the dispatch still returns its run_id."""
-    graph.add_node("resilient dispatch")
+    """H1 (corrected): persistence must precede execution, and the row must
+    carry the real completion timeout with NO pid, mirroring the async-worker
+    path — so cancel always routes through the sentinel path, never the
+    process-kill path (an executor ralph loop runs in-process; its pid is the
+    server's own pid)."""
+    call_order: list[str] = []
+    orig_graph_start_run = graph.start_run
+
+    def spy_graph_start_run(*a: Any, **kw: Any) -> None:
+        call_order.append("graph")
+        return orig_graph_start_run(*a, **kw)
+
+    monkeypatch.setattr(graph, "start_run", spy_graph_start_run)
+
+    ralph = FakeRalph()
+    orig_ralph_start_run = ralph.start_run
+
+    def spy_ralph_start_run(*a: Any, **kw: Any) -> None:
+        call_order.append("ralph")
+        return orig_ralph_start_run(*a, **kw)
+
+    monkeypatch.setattr(ralph, "start_run", spy_ralph_start_run)
+
+    graph.add_node("ordered dispatch")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    config = _config(tmp_path, completion_timeout_seconds=900)
+    result = executor.dispatch(1, config)
+
+    assert call_order == ["graph", "ralph"], "the DB insert must land before the loop starts"
+    row = graph.get_run(result.run_id)
+    assert row is not None
+    assert row["timeout_seconds"] == 900
+    assert row["pid"] is None
+
+
+def test_runs_row_insert_failure_fails_closed_and_never_starts_loop(
+    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H1: an unregistered run is worse than a failed dispatch. A failed
+    registry write must propagate (not be swallowed) and the ralph loop must
+    never start on a failed registration."""
+    graph.add_node("fail-closed dispatch")
+    ralph = FakeRalph()
     monkeypatch.setattr(graph, "start_run", MagicMock(side_effect=RuntimeError("db down")))
 
-    with caplog.at_level(logging.ERROR):
-        result = _executor(graph).dispatch(1, _config(tmp_path))
+    with pytest.raises(RuntimeError, match="db down"):
+        Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg()).dispatch(
+            1, _config(tmp_path)
+        )
 
-    assert result.run_id, "dispatch must succeed despite the failed registry write"
-    assert any("runs-row insert failed" in r.message for r in caplog.records), (
-        "the failed registry write must log loud, not vanish"
-    )
+    assert ralph.runs_started == [], "the loop must not start when registration fails"
+
+
+def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
+    graph: Any, tmp_path: Path
+) -> None:
+    """H1 (corrected): executor rows record NO pid, so fail_stale_running_runs
+    has nothing to check for liveness — it sweeps the row purely on
+    started_at + timeout_seconds + _STALE_GRACE_SECONDS, the same rule the
+    async-worker path already relies on. While the server is alive, the
+    headless completion-timeout force-stop drives a live run to terminal
+    before this window elapses, so the sweep never fires on a real run."""
+    from datetime import UTC, datetime, timedelta
+
+    from milknado.domains.dispatch import fail_stale_running_runs
+
+    graph.add_node("pidless dispatch")
+
+    run_id = "node-1-20200101T000000Z-pidless"
+    timeout = 300
+    old_started = (datetime.now(UTC) - timedelta(seconds=timeout + 3600)).isoformat()
+
+    graph.start_run(run_id, 1, str(tmp_path / "pidless.log"), old_started, timeout)
+    assert graph.get_run(run_id)["pid"] is None
+
+    flipped = fail_stale_running_runs(graph, 1)
+    assert [f["run_id"] for f in flipped] == [run_id]
+    assert graph.get_run(run_id)["status"] == "failed"
+
+
+def test_cancel_pidless_stale_row_routes_through_sentinel_not_pid_kill(
+    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression guard for H1: an executor row with pid=None must route
+    cancel through _cancel_async_run, never _cancel_pid_run — the latter
+    would terminate the recorded pid's process group, which for an
+    in-process executor ralph loop is the server's own pid."""
+    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.2)
+    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_POLL_SECS", 0.05)
+
+    def _fail_if_called(*a: Any, **kw: Any) -> None:
+        raise AssertionError("_cancel_pid_run must not be called for a pid-less row")
+
+    monkeypatch.setattr(cancel_module, "_cancel_pid_run", _fail_if_called)
+
+    graph.add_node("pidless cancel routing")
+    run_id = "node-1-20200101T000000Z-routing"
+    graph.start_run(run_id, 1, str(tmp_path / "routing.log"), "2020-01-01T00:00:00Z", 300)
+    assert graph.get_run(run_id)["pid"] is None
+
+    with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
+        cancel_run(graph, MagicMock(), MagicMock(), tmp_path, run_id)
 
 
 def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
