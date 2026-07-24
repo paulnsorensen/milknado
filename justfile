@@ -53,6 +53,8 @@ coverage-check:
     import subprocess
     import sys
 
+    # Streamed (not captured): a captured, buffered run prints nothing until
+    # the process exits, which hides all progress if pytest ever hangs.
     result = subprocess.run(
         [
             "uv", "run", "pytest", "tests/",
@@ -62,11 +64,7 @@ coverage-check:
             "--cov-report=xml:coverage.xml",
             "--cov-fail-under={{COVERAGE_THRESHOLD}}",
         ],
-        capture_output=True,
-        text=True,
     )
-    output = result.stdout + result.stderr
-    print(output, end="")
 
     if result.returncode != 0:
         sys.exit(result.returncode)
