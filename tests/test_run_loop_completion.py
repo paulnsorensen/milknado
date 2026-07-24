@@ -31,13 +31,15 @@ class _FakeGraph:
 class _FakeExecutor:
     def __init__(self) -> None:
         self.failed_ids: list[int] = []
+        self.fail_details: list[str | None] = []
         self._complete_result = _FakeCompleteResult()
 
     def complete(self, node_id: int, feature_branch: str) -> _FakeCompleteResult:
         return self._complete_result
 
-    def fail(self, node_id: int) -> None:
+    def fail(self, node_id: int, detail: str | None = None) -> None:
         self.failed_ids.append(node_id)
+        self.fail_details.append(detail)
 
 
 def _make_node(node_id: int, desc: str = "task") -> MikadoNode:
@@ -156,6 +158,9 @@ class TestHandleCompletionFailure:
         handle_completion(loop, "run-1", False, "main", live)
 
         assert "unknown flag: --mcp-config" in caplog.text
+        # The real failure detail is threaded into fail() so the runs row
+        # keeps it, not a static "node failed".
+        assert exec_.fail_details == ["Error: unknown flag: --mcp-config"]
 
     def test_failure_log_bare_when_no_detail(self, caplog) -> None:
         exec_ = _FakeExecutor()
@@ -168,6 +173,7 @@ class TestHandleCompletionFailure:
 
         assert "node_failed node_id=1" in caplog.text
         assert "detail=" not in caplog.text
+        assert exec_.fail_details == [None]
 
 
 class TestHandleCompletionRebaseConflict:

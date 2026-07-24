@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -27,8 +28,9 @@ from milknado.domains.common.types import (
     MikadoNode,
     NodeStatus,
     RebaseResult,
+    RunResult,
 )
-from milknado.domains.dispatch._runstate import make_run_id
+from milknado.domains.dispatch._runstate import is_cancel_requested, make_run_id, runs_dir
 from milknado.domains.execution._context import build_node_context
 
 if TYPE_CHECKING:
@@ -36,6 +38,16 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
+
+# Cancel-watcher cadence for pid-less in-process ralph runs: poll the on-disk
+# sentinel often enough that cancel_run's 8s confirm bound is comfortably met.
+_RALPH_CANCEL_POLL_SECS = 0.25
+_RALPH_CANCEL_STOP_TIMEOUT_SECS = 5.0
+# Ceiling for the watcher's retry backoff on consecutive force-stop failures:
+# a permanently wedged loop stays loud (first failure logs immediately) but
+# the retry cadence caps at one error line per minute (~1.4k lines/day) instead
+# of polling at full rate forever. Retry-until-stopped semantics are preserved.
+_RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS = 60.0
 
 _TRANSIENT_EXIT_CODES = frozenset({124, 137, 143})
 _TRANSIENT_MSG_RE = re.compile(
@@ -374,6 +386,11 @@ class Executor:
         self._base_oid_by_node: dict[int, str | None] = {}
         self._worker_run_id_by_node: dict[int, str] = {}
         self._owner_fence_by_node: dict[int, str] = {}
+        # Runs whose dispatch-abort force-stop was never confirmed: the cancel
+        # watcher finalizes their rows when the wedged loop later self-exits
+        # (no completion path owns these ids — they never enter
+        # _worker_run_id_by_node).
+        self._unconfirmed_stop_run_ids: set[str] = set()
         self._git = git
         self._target_branch_by_node: dict[int, str] = {}
         self._target_oid_by_node: dict[int, str] = {}
@@ -481,6 +498,7 @@ class Executor:
                 raise ValueError(f"node {node_id} is already claimed; dispatch refused")
 
         create_attempted = False
+        run_id: str | None = None
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         try:
             # Every filesystem mutation follows the fenced graph claim. A losing
@@ -510,6 +528,15 @@ class Executor:
                 owner_run_id=owner_run_id,
                 release_claim=not adopted,
                 discard_worktree=create_attempted,
+                # A run aborted in _create_ralph_run's post-start window never
+                # reaches the run_id local; its id and stop outcome ride the
+                # exception so the cleanup sees the real teardown result.
+                started_run_id=(
+                    run_id
+                    if run_id is not None
+                    else getattr(exc, "_milknado_aborted_run_id", None)
+                ),
+                stop_confirmed=getattr(exc, "_milknado_stop_confirmed", None),
             )
             raise
         return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
@@ -545,7 +572,164 @@ class Executor:
         run = self._ralph.create_run(**create_kwargs)
         run_id = run.state.run_id
         self._ralph.start_run(run_id)
+        # Register the ralph run in the runs table so review-verdict
+        # run_messages inserts satisfy the FK and run_list/poll can see it
+        # (#296). Ralph loops run in-process threads, so there is no pid to
+        # record. A failed registry write must not kill the dispatch — the
+        # review handoff threads findings in memory, never through the DB.
+        try:
+            self._graph.start_run(
+                run_id,
+                node.id,
+                str(wt_path / ".ralph-logs"),
+                datetime.now(UTC).isoformat(),
+                None,
+            )
+        except Exception:
+            _logger.exception(
+                "runs-row insert failed for ralph run %s (node %d); "
+                "verdict deposits for this run will FK-fail",
+                run_id,
+                node.id,
+            )
+        try:
+            self._spawn_ralph_cancel_watcher(run_id, config.project_root)
+        except Exception as exc:
+            # The run is live but its id never escapes _create_ralph_run, so
+            # the caller's cleanup cannot see it: tear it down here with the
+            # same confirmed-stop + fenced-finalize discipline as every other
+            # dispatch-abort path, and carry the outcome across the boundary
+            # on the propagating exception so _dispatch_once's cleanup honors
+            # an UNCONFIRMED stop (preserve the worktree, fail loud) instead
+            # of defaulting to discard under a possibly-live loop.
+            stop_confirmed = self._stop_aborted_run(
+                run_id, context=f"post-start setup failed for node {node.id}"
+            )
+            exc._milknado_aborted_run_id = run_id
+            exc._milknado_stop_confirmed = stop_confirmed
+            raise
         return run_id
+
+    def _finalize_worker_run(self, run_id: str | None, result: RunResult) -> None:
+        """Best-effort terminal write for an executor ralph run's runs row.
+
+        Executor ralph rows are registered at dispatch (#296); without a
+        matching finish they zombie as status='running' forever and pid-less
+        cancel takes a sentinel path nothing observed. The finish_run fence
+        (status='running') makes double-writes safe; the pre-check only keeps
+        the fence's dropped-write warning out of the logs. A failed finalize
+        must not kill node completion — loud log, like the dispatch insert.
+        """
+        if not run_id:
+            return
+        try:
+            row = self._graph.get_run(run_id)
+            if row is None or row.get("status") != "running":
+                return
+            self._graph.finish_run(run_id, result)
+        except Exception:
+            _logger.exception("runs-row finalize failed for ralph run %s", run_id)
+
+    def _finish_node_worker_run(self, node_id: int, result: RunResult) -> None:
+        self._finalize_worker_run(self._worker_run_id_by_node.get(node_id), result)
+
+    def _spawn_ralph_cancel_watcher(self, run_id: str, project_root: Path) -> None:
+        """Watch the on-disk cancel sentinel for a pid-less ralph run.
+
+        cancel_run() marks a pid-less run via the async-sentinel path, but the
+        in-process ralph loop never observes the sentinel — live cancel stalled
+        for the full confirm bound and then raised. This daemon thread is the
+        observer: on the sentinel it force-stops the loop and finalizes the
+        row cancelled, which cancel_run's confirm poll then sees. A dead run
+        thread (or a missing run record) exits the watcher — the executor
+        completion path owns that row's finalize, except for an
+        aborted-after-start run whose stop was never confirmed
+        (_unconfirmed_stop_run_ids): no completion path owns those ids, so
+        the watcher finalizes the row itself when the wedged loop self-exits
+        rather than letting it zombie 'running' forever. If the force-stop
+        fails or raises, the row is deliberately left running so
+        cancel_run's confirm bound expires and raises the preserving error
+        instead of tearing a worktree out from under a live worker — but
+        the sentinel stays set, so the watcher keeps observing and retries
+        the force-stop with a capped exponential backoff (doubling from the
+        poll cadence to _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS): a transient
+        stop failure must not permanently strand the cancel, and a
+        permanently wedged loop must not log at full poll rate forever.
+        """
+        rdir = runs_dir(project_root)
+
+        def watch() -> None:
+            backoff = _RALPH_CANCEL_POLL_SECS
+            while True:
+                run = self._ralph.get_run(run_id)
+                if run is None:
+                    # The run record is gone; nothing left to watch.
+                    self._unconfirmed_stop_run_ids.discard(run_id)
+                    return
+                thread = getattr(run, "thread", None)
+                if thread is not None and not thread.is_alive():
+                    if run_id in self._unconfirmed_stop_run_ids:
+                        # Aborted-after-start run whose stop was never
+                        # confirmed: no completion path owns this id, so
+                        # without this finalize the row would zombie
+                        # 'running' forever now that the loop self-exited.
+                        # The finish_run fence keeps any late finalize
+                        # exactly-one-winner.
+                        self._unconfirmed_stop_run_ids.discard(run_id)
+                        self._finalize_worker_run(
+                            run_id,
+                            RunResult(
+                                status="failed",
+                                exit_code=None,
+                                timed_out=False,
+                                ended_at=datetime.now(UTC).isoformat(),
+                                error="loop exited after unconfirmed stop",
+                            ),
+                        )
+                    return
+                if not is_cancel_requested(rdir, run_id):
+                    backoff = _RALPH_CANCEL_POLL_SECS
+                    time.sleep(_RALPH_CANCEL_POLL_SECS)
+                    continue
+                try:
+                    stopped = self._ralph.force_stop_run(
+                        run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS
+                    )
+                except Exception:
+                    _logger.exception(
+                        "force-stop raised for cancelled ralph run %s; row left "
+                        "running so cancel_run fails closed; retrying while the "
+                        "sentinel is set",
+                        run_id,
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+                    continue
+                if not stopped:
+                    _logger.error(
+                        "force-stop could not confirm exit for cancelled ralph "
+                        "run %s; row left running so cancel_run fails closed; "
+                        "retrying while the sentinel is set",
+                        run_id,
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+                    continue
+                self._finalize_worker_run(
+                    run_id,
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=False,
+                        ended_at=datetime.now(UTC).isoformat(),
+                        error="cancelled",
+                    ),
+                )
+                return
+
+        threading.Thread(
+            target=watch, name=f"ralph-cancel-watch-{run_id}", daemon=True
+        ).start()
 
     def _review_enabled(self, config: ExecutionConfig) -> bool:
         if not config.review:
@@ -695,7 +879,8 @@ class Executor:
         worktree: Path,
     ) -> DispatchResult:
         owner_fence = self._owner_fence_by_node.get(node.id)
-        old_worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        prior_worker_run_id = self._worker_run_id_by_node.get(node.id)
+        old_worker_run_id = prior_worker_run_id or node.run_id
         if not old_worker_run_id:
             raise ValueError(
                 f"node {node.id} has no run fence/worker run id for review redispatch"
@@ -713,16 +898,59 @@ class Executor:
         )
         if owner_fence is None:
             if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
-                with contextlib.suppress(Exception):
-                    self._ralph.stop_run(run_id, timeout=5.0)
+                self._stop_aborted_run(
+                    run_id, context=f"review redispatch fence lost for node {node.id}"
+                )
+                # The replaced worker run is over (its review just ran); finalize
+                # its row before raising so it can't zombie 'running' — the raise
+                # propagates out of the run loop with no in-tree finalizer. Only
+                # the recorded worker run id, never the node.run_id fallback.
+                self._finalize_worker_run(
+                    prior_worker_run_id,
+                    RunResult(
+                        status="done",
+                        exit_code=0,
+                        timed_out=False,
+                        ended_at=datetime.now(UTC).isoformat(),
+                        detail="redispatch aborted: fence lost",
+                    ),
+                )
                 raise ValueError(f"review redispatch fence lost for node {node.id}")
         else:
             current = self._graph.get_node(node.id)
             if current is None or current.run_id != owner_fence:
-                with contextlib.suppress(Exception):
-                    self._ralph.stop_run(run_id, timeout=5.0)
+                self._stop_aborted_run(
+                    run_id, context=f"adopted owner fence lost for node {node.id}"
+                )
+                # Same finalize-before-raise discipline as the replace_run_id
+                # fence-loss branch above.
+                self._finalize_worker_run(
+                    prior_worker_run_id,
+                    RunResult(
+                        status="done",
+                        exit_code=0,
+                        timed_out=False,
+                        ended_at=datetime.now(UTC).isoformat(),
+                        detail="redispatch aborted: fence lost",
+                    ),
+                )
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
         self._worker_run_id_by_node[node.id] = run_id
+        # The replaced worker run is over (its review just ran); finalize its
+        # runs row so only the fresh round shows as running. Only the recorded
+        # worker run id is finalized — never the node.run_id fence fallback,
+        # which can be a live parent run's row.
+        review_round = self._review_round_by_node.get(node.id, 0)
+        self._finalize_worker_run(
+            prior_worker_run_id,
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                detail=f"superseded by review round {review_round} redispatch",
+            ),
+        )
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
     def _cleanup_failed_dispatch(
@@ -733,7 +961,29 @@ class Executor:
         owner_run_id: str,
         release_claim: bool,
         discard_worktree: bool,
+        started_run_id: str | None = None,
+        stop_confirmed: bool | None = None,
     ) -> None:
+        # The ralph run may already have been started when dispatch aborted
+        # (fence loss / set_dispatched_at failure): stop it and finalize its
+        # runs row before the worktree it writes into is discarded, so it
+        # can't leak as a live loop with an unrecoverable zombie 'running'
+        # row. On an UNCONFIRMED stop the row stays 'running' and the
+        # worktree is kept — tearing it out from under a live loop is worse
+        # than a recoverable leftover directory.
+        #
+        # stop_confirmed carries a teardown result across the post-start
+        # window: _create_ralph_run already stopped the run there (its id
+        # never escaped), so cleanup must NOT stop it again — only honor the
+        # outcome. None means cleanup owns the stop attempt for
+        # started_run_id (the fence-loss paths).
+        if stop_confirmed is None:
+            stop_confirmed = True
+            if started_run_id is not None:
+                stop_confirmed = self._stop_aborted_run(
+                    started_run_id,
+                    context=f"failed-dispatch cleanup for node {node_id}",
+                )
         try:
             if release_claim:
                 self._graph.release(node_id, owner_run_id)
@@ -745,7 +995,73 @@ class Executor:
             )
         finally:
             if discard_worktree:
-                self._wt.discard(node_id, wt_path)
+                if stop_confirmed:
+                    self._wt.discard(node_id, wt_path)
+                else:
+                    _logger.error(
+                        "worktree %s preserved: ralph run %s was not confirmed "
+                        "stopped during failed-dispatch cleanup for node %d",
+                        wt_path,
+                        started_run_id,
+                        node_id,
+                    )
+
+    def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
+        """Confirmed force-stop + fenced finalize for a ralph run abandoned
+        after start.
+
+        Shared teardown for every dispatch-abort path (dispatch fence loss,
+        review-redispatch fence loss, post-start setup failure). The run's
+        worktree is about to be discarded or reused, so the stop is a
+        force-stop; the runs row is finalized only when the stop is
+        confirmed. On an unconfirmed stop — force_stop_run returned False or
+        raised — the row is deliberately left 'running' and False is
+        returned so the caller keeps the worktree instead of tearing it out
+        from under a still-live loop: the same fail-closed policy as the
+        cancel watcher. The run id is registered in
+        _unconfirmed_stop_run_ids so the cancel watcher — which was spawned
+        before the abort on every path except the post-start window —
+        finalizes the row (fenced, 'loop exited after unconfirmed stop')
+        when the wedged loop later self-exits; these ids never enter
+        _worker_run_id_by_node, so no completion path owns them. Accepted
+        residual: a run aborted in the post-start window whose watcher
+        itself failed to spawn has no observer, so on an unconfirmed stop
+        there its row has no in-tree finalizer — the loud preserved-worktree
+        error names the run id for manual recovery.
+        """
+        try:
+            stopped = self._ralph.force_stop_run(
+                run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS
+            )
+        except Exception:
+            _logger.exception(
+                "force-stop raised for aborted ralph run %s (%s); row left running",
+                run_id,
+                context,
+            )
+            self._unconfirmed_stop_run_ids.add(run_id)
+            return False
+        if not stopped:
+            _logger.error(
+                "force-stop could not confirm exit for aborted ralph run %s (%s); "
+                "row left running",
+                run_id,
+                context,
+            )
+            self._unconfirmed_stop_run_ids.add(run_id)
+            return False
+        self._unconfirmed_stop_run_ids.discard(run_id)
+        self._finalize_worker_run(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=None,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                error="dispatch aborted",
+            ),
+        )
+        return True
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
         target_branch = self._target_branch_by_node.get(node_id)
@@ -812,6 +1128,19 @@ class Executor:
                     detail=rebase_result.detail,
                 )
 
+        # Finalize the ralph run's runs row so it does not zombie as 'running'.
+        self._finish_node_worker_run(
+            node_id,
+            RunResult(
+                status="done" if rebase_result.success else "failed",
+                exit_code=0 if rebase_result.success else None,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                detail=None if rebase_result.success else (rebase_result.detail or None),
+                rebased=rebase_result.success,
+            ),
+        )
+
         newly_ready = get_dispatchable_nodes(self._graph) if rebase_result.success else []
         return CompletionResult(
             node_id=node_id,
@@ -867,6 +1196,16 @@ class Executor:
                 blocked = True
             if not blocked:
                 raise ValueError(f"review block fence lost for node {node_id}")
+            self._finish_node_worker_run(
+                node_id,
+                RunResult(
+                    status="failed",
+                    exit_code=None,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    detail=f"review blocked after round {round_number + 1}",
+                ),
+            )
             _logger.warning("node_review_blocked node_id=%d worktree=%s", node_id, worktree)
             return (
                 CompletionResult(
@@ -950,7 +1289,7 @@ class Executor:
             return True
         return self._graph.mark_terminal(node.id, node.run_id, status)
 
-    def fail(self, node_id: int) -> None:
+    def fail(self, node_id: int, detail: str | None = None) -> None:
         self._wt.ensure_clean(node_id)
         node = self._graph.get_node(node_id)
         if node and node.worktree_path:
@@ -958,12 +1297,32 @@ class Executor:
             if wt.exists():
                 self._wt.remove(node_id, wt)
         self._graph.mark_failed(node_id)
+        self._finish_node_worker_run(
+            node_id,
+            RunResult(
+                status="failed",
+                exit_code=None,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                detail=detail or "node failed",
+            ),
+        )
 
     def cancel(self, node_id: int) -> None:
         """Clean a stopped run and make its graph node schedulable next invocation."""
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
+        self._finish_node_worker_run(
+            node_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=datetime.now(UTC).isoformat(),
+                error="cancelled",
+            ),
+        )
         if node.worktree_path:
             worktree = Path(node.worktree_path)
             if worktree.exists():

@@ -111,10 +111,10 @@ def handle_completion(
         )
         loop._logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
-        loop._executor.fail(node_id)
+        detail = loop._ralph.get_run_failure_detail(run_id)
+        loop._executor.fail(node_id, detail=detail)
         if live is not None:
             live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
-        detail = loop._ralph.get_run_failure_detail(run_id)
         if detail:
             _logger.warning("node_failed node_id=%d detail=%s", node_id, detail)
         else:
