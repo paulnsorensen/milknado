@@ -1,0 +1,8 @@
+# ADR-003: restructure = orphan grouping + structural report  [status: accepted]
+
+Rebalance's restructure pass mutates only root-level orphan TASKs (grouped under a find-or-create Inbox GOAL) and *reports* deep chains and lopsided goals without mutating them. Spec: archive-rebalance (2026-07-23).
+
+- **Context:** "Rebalance the node forest" had no algorithm with defensible semantics. Root-level bare task lists are deliberately legal (`src/milknado/domains/common/types.py:53`), so orphans are not inherently wrong. Chain collapse (re-parent grandchildren, delete middle nodes) cascades into runs, `wiki_ref`, `github_ref`, and goal-claim history — the highest blast radius considered, against the fail-closed teardown philosophy (`src/milknado/domains/common/errors.py:34`).
+- **Decision:** Mutate only the trivially-safe case: root-level non-archived orphan TASKs move under a find-or-create root GOAL with a reserved description ("Inbox (milknado-managed)"). Single-child GOAL chains of depth ≥ 4 and GOALs with ≥ 20 direct TASK children are reported, not collapsed.
+- **Alternatives:** Report-only — zero mutation value for the one case everyone agrees is noise. Full algorithmic collapse — destroys node history (rejected-direction archive-rebalance-003). Drop restructure — leaves orphan sprawl manual.
+- **Consequences:** Inbox is identified by exact-match reserved description among root GOALs and reused across runs; thresholds are constants pending real usage data. `follow_up_parent_id` for root workers resolves to Inbox after grouping — follow-ups stay siblings. Sweep runs before restructure so DONE orphans are archived, not grouped.

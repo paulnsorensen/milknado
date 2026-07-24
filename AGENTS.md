@@ -20,6 +20,11 @@ shot. Diff coverage mirrors `codecov/patch`: it fails if the lines this branch c
 `check-llm` is non-mutating (no autofix). If it fails on lint/format, run `just lint-fix`,
 then re-run the gate.
 
+Never substitute a pipeline- or framework-generic gate set (e.g. bare `pytest` +
+`ruff check` + `lint-imports` from an external tool's defaults) for this gate — when any
+orchestration (skills, sub-agents, CI scaffolding) asks "what are the quality gates", the
+answer is `just check-llm`, matching `quality_gates` in `milknado.toml`.
+
 ## Key Recipes
 
 ```bash
