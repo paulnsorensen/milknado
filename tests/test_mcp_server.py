@@ -2296,7 +2296,7 @@ def test_main_imports_all_tool_modules() -> None:
 
 
 def test_mcp_tool_modules_register_expected_tool_names() -> None:
-    """The five main()-imported tool modules plus mcp_server must register the expected tool set.
+    """The eight main()-imported tool modules plus mcp_server must register the expected tool set.
 
     Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
     module from main()) is caught: the count and the names both fail.
@@ -2308,6 +2308,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         github,
         node,
         ralph,
+        rebalance,
         run,
         todo,
         todo_mutate,
@@ -2318,6 +2319,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
     expected = [
+        "milknado_archive_node",
         "milknado_delete_node",
         "milknado_deposit_result",
         "milknado_deposit_review",
@@ -2333,6 +2335,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_node_verify",
         "milknado_plan_apply",
         "milknado_plan_batches",
+        "milknado_rebalance",
         "milknado_roadmap_export",
         "milknado_roadmap_import",
         "milknado_run_cancel",
@@ -2350,6 +2353,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_todo_set_status",
         "milknado_todo_tree",
         "milknado_track_follow_up",
+        "milknado_unarchive_node",
     ]
     assert names == expected, f"registered tool names changed; got {names}, expected {expected}"
 
