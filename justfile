@@ -2,6 +2,7 @@ set dotenv-load := true
 
 # Matches codecov.yml project/patch target (95%)
 COVERAGE_THRESHOLD := "95"
+TEST_WORKERS := "4"
 
 # Show all available recipes
 default:
@@ -11,10 +12,19 @@ default:
 install:
     uv sync
 
-# Run linters without modifying files (for CI/build validation)
+# Run lint and format checks concurrently (both are read-only).
 lint:
-    uv run ruff check src/ tests/ --preview
-    uv run ruff format --check src/ tests/
+    #!/usr/bin/env python3
+    import subprocess
+    import sys
+
+    commands = [
+        ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"],
+        ["uv", "run", "ruff", "format", "--check", "src/", "tests/"],
+    ]
+    processes = [subprocess.Popen(command) for command in commands]
+    if any(process.wait() for process in processes):
+        sys.exit(1)
 
 # Run linters with autofix
 lint-fix:
@@ -23,7 +33,7 @@ lint-fix:
 
 # Run the test suite
 test *args:
-    uv run pytest tests/ {{args}}
+    uv run pytest tests/ -n {{TEST_WORKERS}} {{args}}
 
 # Run individual test file
 test-file file *args:
@@ -31,11 +41,11 @@ test-file file *args:
 
 # Run tests with verbose output
 test-verbose *args:
-    uv run pytest tests/ -vv {{args}}
+    uv run pytest tests/ -vv -n {{TEST_WORKERS}} {{args}}
 
 # Run tests with coverage report
 test-coverage:
-    uv run pytest tests/ --cov=src/milknado --cov-report=term-missing --cov-report=html
+    uv run pytest tests/ -n {{TEST_WORKERS}} --cov=src/milknado --cov-report=term-missing --cov-report=html
 
 # Check coverage meets threshold
 coverage-check:
@@ -46,6 +56,7 @@ coverage-check:
     result = subprocess.run(
         [
             "uv", "run", "pytest", "tests/",
+            "-n", "{{TEST_WORKERS}}",
             "--cov=src/milknado",
             "--cov-report=term",
             "--cov-report=xml:coverage.xml",
@@ -85,13 +96,12 @@ check-llm:
 
     steps = [
         ("import-contracts", ["uv", "run", "lint-imports"]),
-        ("lint", ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"]),
-        ("format", ["uv", "run", "ruff", "format", "--check", "src/", "tests/"]),
-        ("import-contracts", ["uv", "run", "lint-imports"]),
+        ("lint+format", ["just", "lint"]),
         (
             "tests+coverage",
             [
                 "uv", "run", "pytest", "tests/", "-q",
+                "-n", "{{TEST_WORKERS}}",
                 "--cov=src/milknado",
                 "--cov-report=term-missing",
                 "--cov-report=xml:coverage.xml",
