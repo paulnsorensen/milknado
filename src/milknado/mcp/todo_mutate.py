@@ -17,7 +17,6 @@ from milknado.domains.graph import (
     apply_todo_status,
     assert_done_verified,
     subtree_post_order,
-    validate_todo_status,
 )
 from milknado.mcp._core import (
     Flavor,
@@ -123,10 +122,11 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
 
 @mcp.tool()
 def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: str = "") -> dict:
-    """Set status on every node in root_id's subtree, children before parents.
+    """Set status on every live node in root_id's subtree, children before parents.
 
-    Returns {"updated": <count>}. Validates the whole subtree before writing, so
-    illegal transitions leave the graph unchanged.
+    Archived nodes are skipped — bulk reconciliation never resurrects shelved
+    work. Returns {"updated": <count>}. Validates the whole live set before
+    writing, so illegal transitions leave the graph unchanged.
     """
     target = _parse_todo_status(status)
     root = resolve_project_root(project_root or None)
@@ -135,21 +135,53 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
         node = graph.get_node(root_id)
         if node is None:
             raise ValueError(f"node {root_id} not found")
-        children_map = graph.get_children_map()
-        ordered = subtree_post_order(children_map, node)
-        for n in ordered:
-            validate_todo_status(n, target)
-            if target == NodeStatus.DONE:
-                assert_done_verified(graph, n)
-        updated = 0
-        for n in ordered:
-            if n.status != target:
-                apply_todo_status(graph, n, target)
-                updated += 1
+        if target == NodeStatus.DONE:
+            children_map = graph.get_children_map(include_archived=True)
+            for n in subtree_post_order(children_map, node):
+                if n.archived_at is None:
+                    assert_done_verified(graph, n)
+        updated = graph.set_subtree_status(root_id, target)
         _logger.info(
             "milknado_set_subtree_status: root=%d status=%s updated=%d", root_id, status, updated
         )
         return {"updated": updated}
+    finally:
+        graph.close()
+
+
+@mcp.tool()
+def milknado_archive_node(node_id: int, project_root: str = "") -> dict:
+    """Archive an all-DONE subtree (soft-hide, reversible via unarchive).
+
+    Fails loud naming the live offenders when any node in the subtree is not
+    done. Returns {"archived": <count>}.
+    """
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
+    try:
+        if graph.get_node(node_id) is None:
+            raise ValueError(f"node {node_id} not found")
+        archived = graph.archive_subtree(node_id)
+        _logger.info("milknado_archive_node: node=%d archived=%d", node_id, archived)
+        return {"archived": archived}
+    finally:
+        graph.close()
+
+
+@mcp.tool()
+def milknado_unarchive_node(node_id: int, project_root: str = "") -> dict:
+    """Restore an archived subtree; refuses while an ancestor stays archived.
+
+    Returns {"unarchived": <count>}.
+    """
+    root = resolve_project_root(project_root or None)
+    graph, _cfg = open_graph(root)
+    try:
+        if graph.get_node(node_id) is None:
+            raise ValueError(f"node {node_id} not found")
+        unarchived = graph.unarchive_subtree(node_id)
+        _logger.info("milknado_unarchive_node: node=%d unarchived=%d", node_id, unarchived)
+        return {"unarchived": unarchived}
     finally:
         graph.close()
 
