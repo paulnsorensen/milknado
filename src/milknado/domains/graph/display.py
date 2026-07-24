@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from milknado.domains.common import MikadoNode, NodeStatus
+from milknado.domains.graph import _reads
 from milknado.domains.graph.graph import MikadoGraph
 
 if TYPE_CHECKING:
@@ -44,9 +45,16 @@ class GraphSummary:
         return (self.done / self.total) * 100
 
 
-def summarize(graph: MikadoGraph) -> GraphSummary:
-    nodes = graph.get_all_nodes()
-    ready = graph.get_ready_nodes()
+def summarize(graph: MikadoGraph, *, include_archived: bool = False) -> GraphSummary:
+    if include_archived:
+        # The facade's read methods default to hiding archived nodes and (until
+        # the wiring lands) expose no opt-in, so the full projection reads
+        # through the slice's free functions on the graph's connection.
+        nodes = _reads.get_all_nodes(graph._conn, include_archived=True)
+        ready = _reads.get_ready_nodes(graph._conn, include_archived=True)
+    else:
+        nodes = graph.get_all_nodes()
+        ready = graph.get_ready_nodes()
     ready_ids = [n.id for n in ready]
     conflicts = graph.check_parallel_safety(ready_ids)
     active = [n for n in nodes if n.status == NodeStatus.RUNNING and n.worktree_path]
@@ -69,23 +77,31 @@ def format_node(node: MikadoNode) -> str:
     label = f"[{color}]{icon} [{node.id}] {node.description}[/{color}]"
     if node.status == NodeStatus.RUNNING and node.worktree_path:
         label += f" [dim]({node.worktree_path})[/dim]"
+    if node.archived_at is not None:
+        # Escaped so rich renders the literal marker instead of parsing a tag.
+        label += " [dim]\\[archived][/dim]"
     return label
 
 
 def render_tree(
     graph: MikadoGraph,
     run_states: dict[str, str] | None = None,
+    *,
+    include_archived: bool = False,
 ) -> str:
     from rich.console import Console
     from rich.tree import Tree
 
-    root_node = graph.get_root()
+    if include_archived:
+        root_node = _reads.get_root(graph._conn, include_archived=True)
+    else:
+        root_node = graph.get_root()
     if root_node is None:
         return "[dim]No nodes in graph[/dim]"
 
-    summary = summarize(graph)
+    summary = summarize(graph, include_archived=include_archived)
     tree = Tree(format_node(root_node))
-    _build_subtree(graph, root_node.id, tree)
+    _build_subtree(graph, root_node.id, tree, include_archived=include_archived)
 
     console = Console(record=True, width=120)
     console.print(tree)
@@ -94,10 +110,16 @@ def render_tree(
     return console.export_text()
 
 
-def _build_subtree(graph: MikadoGraph, node_id: int, tree: Any) -> None:
-    for child in graph.get_children(node_id):
+def _build_subtree(
+    graph: MikadoGraph, node_id: int, tree: Any, *, include_archived: bool = False
+) -> None:
+    if include_archived:
+        children = _reads.get_children(graph._conn, node_id, include_archived=True)
+    else:
+        children = graph.get_children(node_id)
+    for child in children:
         branch = tree.add(format_node(child))
-        _build_subtree(graph, child.id, branch)
+        _build_subtree(graph, child.id, branch, include_archived=include_archived)
 
 
 def _print_summary(
