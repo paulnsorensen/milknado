@@ -2003,6 +2003,8 @@ class TestArgDeliveryStdin:
             "omp",
             "-p",
             "--auto-approve",
+            "--mode",
+            "json",
             "do the work",
         ]
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
