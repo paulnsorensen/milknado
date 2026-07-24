@@ -113,4 +113,5 @@ dev = [
     "import-linter>=2.13",
     "ty>=0.0.38",
     "watchfiles>=1.2.0",
+    "pytest-xdist>=3.8.0",
 ]
