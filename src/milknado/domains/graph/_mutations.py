@@ -7,9 +7,10 @@ Free functions taking a connection, mirroring `_persistence.py`. Kept out of
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 
-from milknado.domains.common import NodeKind
-from milknado.domains.common.errors import InvalidContainment
+from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common.errors import ArchiveIneligible, InvalidContainment
 from milknado.domains.common.types import BUILTIN_FLAVORS, VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
 
@@ -83,6 +84,89 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
         for nid in ordered:
             _delete_one(conn, nid)
     return len(ordered)
+
+
+def archive_subtree(conn: sqlite3.Connection, node_id: int, *, now: str | None = None) -> int:
+    """Soft-hide an all-DONE subtree: stamp archived_at on every node in it.
+
+    Eligibility is fail-loud: any non-DONE node in the subtree raises
+    ArchiveIneligible naming the offending ids and nothing is stamped.
+    Reversible via unarchive_subtree. Returns the number of nodes archived.
+    """
+    if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+        raise ValueError(f"Node {node_id} not found")
+    ordered = _collect_subtree_post_order(children_id_map(conn), node_id)
+    placeholders = ",".join("?" * len(ordered))
+    rows = conn.execute(
+        f"SELECT id, status FROM nodes WHERE id IN ({placeholders})",  # noqa: S608 — placeholders only
+        ordered,
+    ).fetchall()
+    non_done = sorted(row[0] for row in rows if row[1] != NodeStatus.DONE.value)
+    if non_done:
+        raise ArchiveIneligible(tuple(non_done))
+    stamp = now or datetime.now(UTC).isoformat()
+    with conn:
+        conn.executemany(
+            "UPDATE nodes SET archived_at = ? WHERE id = ?",
+            [(stamp, nid) for nid in ordered],
+        )
+    return len(ordered)
+
+
+def unarchive_subtree(conn: sqlite3.Connection, node_id: int) -> int:
+    """Cascade restore: clear archived_at on node_id and every archived descendant.
+
+    Refuses when node_id has any archived ancestor — surfacing a node under a
+    still-archived ancestor would break the invariant *archived ⇒ whole
+    subtree archived*. Both the ancestor check and the descendant walk run over
+    the canonical edge relation (``children_id_map``), the same relation
+    ``archive_subtree`` stamps, so diamond wiring (an edge-parent that is not
+    the ``nodes.parent_id`` parent) cannot slip an archived ancestor past the
+    refusal. Returns the number of nodes un-archived; 0 when neither node_id
+    nor any descendant is archived.
+    """
+    if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+        raise ValueError(f"Node {node_id} not found")
+    children_map = children_id_map(conn)
+    parents_map: dict[int, list[int]] = {}
+    for parent_id, child_ids in children_map.items():
+        for child_id in child_ids:
+            parents_map.setdefault(child_id, []).append(parent_id)
+    archived_ancestors: set[int] = set()
+    visited: set[int] = set()
+    stack = list(parents_map.get(node_id, []))
+    while stack:
+        ancestor = stack.pop()
+        if ancestor in visited:
+            continue
+        visited.add(ancestor)
+        row = conn.execute("SELECT archived_at FROM nodes WHERE id = ?", (ancestor,)).fetchone()
+        if row is None:
+            continue
+        if row["archived_at"] is not None:
+            archived_ancestors.add(ancestor)
+        stack.extend(parents_map.get(ancestor, []))
+    if archived_ancestors:
+        ancestor_id = min(archived_ancestors)
+        raise ValueError(
+            f"Cannot unarchive {node_id} under archived ancestor {ancestor_id}; "
+            "unarchive the ancestor first."
+        )
+    ordered = _collect_subtree_post_order(children_map, node_id)
+    placeholders = ",".join("?" * len(ordered))
+    archived = [
+        r[0]
+        for r in conn.execute(
+            f"SELECT id FROM nodes WHERE id IN ({placeholders}) AND archived_at IS NOT NULL",  # noqa: S608 — placeholders only
+            ordered,
+        )
+    ]
+    with conn:
+        conn.executemany(
+            "UPDATE nodes SET archived_at = NULL WHERE id = ?",
+            [(nid,) for nid in archived],
+        )
+    return len(archived)
 
 
 def _validate_kind_change_containment(
@@ -194,10 +278,14 @@ def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) 
         raise ValueError(f"Node {node_id} not found")
     if new_parent_id is not None:
         parent_row = conn.execute(
-            "SELECT kind FROM nodes WHERE id = ?", (new_parent_id,)
+            "SELECT kind, archived_at FROM nodes WHERE id = ?", (new_parent_id,)
         ).fetchone()
         if parent_row is None:
             raise ValueError(f"new_parent_id {new_parent_id} not found")
+        if parent_row["archived_at"] is not None:
+            raise ValueError(
+                f"Cannot add a node under archived parent {new_parent_id}; unarchive it first."
+            )
         node_kind = NodeKind(node_row["kind"])
         parent_kind = NodeKind(parent_row["kind"])
         if node_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):

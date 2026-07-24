@@ -13,14 +13,25 @@ import sqlite3
 from milknado.domains.common import NodeStatus, pid_alive
 from milknado.domains.graph import _reads, _transitions
 from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
+from milknado.domains.graph._mutations import _collect_subtree_post_order
+from milknado.domains.graph._persistence import children_id_map
 from milknado.domains.graph._pipeline import StatusPipeline
+from milknado.domains.graph.status_flow import todo_status_steps, validate_todo_status
 
 _logger = logging.getLogger(__name__)
+
+
+def _reject_archived(conn: sqlite3.Connection, node_id: int) -> None:
+    """Refuse status writes on an archived node (shelved work is immutable)."""
+    row = conn.execute("SELECT archived_at FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is not None and row[0] is not None:
+        raise ValueError(f"Node {node_id} is archived; unarchive it first.")
 
 
 def transition_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
 ) -> None:
+    _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
@@ -37,6 +48,7 @@ def mark_done(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) 
 
 
 def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
+    _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
@@ -55,6 +67,7 @@ def mark_running(
     branch_name: str | None = None,
     run_id: str | None = None,
 ) -> None:
+    _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
@@ -65,6 +78,7 @@ def mark_running(
 
 
 def mark_pending(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
+    _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
@@ -76,6 +90,39 @@ def mark_pending(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: in
 
 def mark_blocked(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
     transition_status(pipeline, conn, node_id, NodeStatus.BLOCKED)
+
+
+def set_subtree_status(
+    pipeline: StatusPipeline, conn: sqlite3.Connection, root_id: int, target: NodeStatus
+) -> int:
+    """Set `target` on every non-archived node in root_id's subtree, children first.
+
+    Archived nodes are SKIPPED — neither stamped nor errored — so bulk
+    reconciliation never resurrects shelved work. The live set is validated
+    before any write, so an illegal transition leaves the subtree unchanged.
+    Returns the number of nodes whose status changed.
+    """
+    root = _reads.get_node(conn, root_id)
+    if root is None:
+        raise ValueError(f"Node {root_id} not found")
+    ordered = _collect_subtree_post_order(children_id_map(conn), root_id)
+    live = []
+    for nid in ordered:
+        node = _reads.get_node(conn, nid)
+        if node is None:
+            raise ValueError(f"Node {nid} not found")
+        if node.archived_at is None:
+            live.append(node)
+    for node in live:
+        validate_todo_status(node, target)
+    updated = 0
+    for node in live:
+        if node.status == target:
+            continue
+        for step in todo_status_steps(node.status, target):
+            transition_status(pipeline, conn, node.id, step)
+        updated += 1
+    return updated
 
 
 def complete_root(pipeline: StatusPipeline, conn: sqlite3.Connection) -> bool:

@@ -34,6 +34,10 @@ def _validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: Node
     parent = get_node(conn, parent_id)
     if parent is None:
         raise ValueError(f"parent_id {parent_id} not found")
+    if parent.archived_at is not None:
+        raise ValueError(
+            f"Cannot add a node under archived parent {parent_id}; unarchive it first."
+        )
     if kind not in VALID_CHILD_KINDS.get(parent.kind, set()):
         raise InvalidContainment(parent.kind, kind)
 
