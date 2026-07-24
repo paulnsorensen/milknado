@@ -352,6 +352,42 @@ class TestBuildRalphContent:
         assert "- `gate1`" in content
         assert "- `gate2`" in content
 
+    def test_findings_section_emitted_before_context(self) -> None:
+        """Redispatch path: prior review findings are required reading, emitted
+        verbatim ahead of the task body (#298)."""
+        node = MikadoNode(id=1, description="Do thing")
+        findings = "[P1][correctness] off-by-one in retry loop\n\nevidence: x.py:42"
+        content = _build_ralph_content(
+            node,
+            "some context",
+            (Gate("gate1"),),
+            prior_findings=findings,
+            findings_round=2,
+        )
+        assert "## Prior review findings (round 2)" in content
+        assert findings in content, "findings must be verbatim"
+        assert content.index("## Prior review findings") < content.index("## Context")
+
+    def test_findings_section_omitted_by_default(self) -> None:
+        """Ordinary dispatch/resume keeps the default empty findings: no section."""
+        node = MikadoNode(id=1, description="Do thing")
+        content = _build_ralph_content(node, "ctx", (Gate("gate1"),))
+        assert "Prior review findings" not in content
+
+    def test_findings_without_round_omits_round_label(self) -> None:
+        """findings_round=None → bare header, no dangling 'round' text."""
+        node = MikadoNode(id=1, description="Do thing")
+        content = _build_ralph_content(
+            node, "ctx", (Gate("gate1"),), prior_findings="finding", findings_round=None
+        )
+        assert "## Prior review findings\n" in content
+        assert "(round" not in content
+
+    def test_blank_findings_omits_section(self) -> None:
+        node = MikadoNode(id=1, description="Do thing")
+        content = _build_ralph_content(node, "ctx", (Gate("gate1"),), prior_findings="  ")
+        assert "Prior review findings" not in content
+
     def test_includes_completion_promise_instruction(self) -> None:
         node = MikadoNode(id=1, description="Do thing")
         content = _build_ralph_content(node, "ctx", (Gate("gate1"),))

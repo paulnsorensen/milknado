@@ -48,6 +48,7 @@ class _ReviewRalph:
         self.started: list[str] = []
         self.stdout_requests: list[str] = []
         self.reviews: list[tuple[str, Path]] = []
+        self.ralph_md_calls: list[dict[str, Any]] = []
         self._next_id = 0
 
     def create_run(self, **kwargs: Any) -> _Run:
@@ -78,7 +79,12 @@ class _ReviewRalph:
         context: str,
         quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
+        prior_findings: str = "",
+        findings_round: int | None = None,
     ) -> Path:
+        self.ralph_md_calls.append(
+            {"prior_findings": prior_findings, "findings_round": findings_round}
+        )
         return output_path
 
 
@@ -130,6 +136,89 @@ def test_reject_redispatches_pinned_worktree_and_resumes_session(graph, tmp_path
     assert (
         first.worktree / ".cheese" / "age" / "reviewed-change.md"
     ).read_text() == "[P1][correctness] finding\n"
+
+
+def test_redispatch_threads_findings_into_ralph_regeneration(graph, tmp_path: Path) -> None:
+    """#298: the redispatched worker's RALPH.md regenerates with the rejecting
+    round's findings threaded in memory — required reading, not re-derived."""
+    ralph = _ReviewRalph([False, True])
+    executor = _executor(graph, tmp_path, ralph)
+    graph.add_node("findings thread")
+
+    executor.dispatch(1, _config(tmp_path))
+    rejected = executor.complete(1, "main")
+
+    assert rejected.redispatch is not None
+    assert ralph.ralph_md_calls[0] == {"prior_findings": "", "findings_round": None}
+    assert ralph.ralph_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
+    assert ralph.ralph_md_calls[1]["findings_round"] == 1
+
+
+def test_notify_review_dual_writes_node_reviews_and_run_messages(graph, tmp_path: Path) -> None:
+    """#298: every notified verdict lands in node_reviews (audit trail, no runs
+    dependency) AND in run_messages (FK satisfied by the curd-A runs row)."""
+    ralph = _ReviewRalph([False, True])
+    executor = _executor(graph, tmp_path, ralph)
+    graph.add_node("verdict audit")
+
+    executor.dispatch(1, _config(tmp_path))
+    executor.complete(1, "main")
+
+    rows = graph.node_reviews_for_node(1)
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "reject"
+    assert rows[0]["round"] == 1
+    assert rows[0]["findings"] == "[P1][correctness] finding"
+    worker_run_id = ralph.started[0]
+    assert graph.latest_run_message(worker_run_id, "node_review") is not None
+
+
+def test_findings_delivered_in_memory_when_db_writes_fail(
+    graph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#298: the DB being down at redispatch must not lose the findings — the
+    handoff is the in-memory thread, never a DB read-back."""
+    ralph = _ReviewRalph([False, True])
+    executor = _executor(graph, tmp_path, ralph)
+    graph.add_node("db down redispatch")
+
+    executor.dispatch(1, _config(tmp_path))
+    monkeypatch.setattr(
+        graph, "deposit_run_message", MagicMock(side_effect=RuntimeError("db down"))
+    )
+    monkeypatch.setattr(
+        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("db down"))
+    )
+    rejected = executor.complete(1, "main")
+
+    assert rejected.review_notification_failed is True
+    assert rejected.redispatch is not None
+    assert ralph.ralph_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
+    assert ralph.ralph_md_calls[1]["findings_round"] == 1
+
+
+def test_second_rejection_round_accumulates_audits_and_labels_round_2(
+    graph, tmp_path: Path
+) -> None:
+    """#298: consecutive rejections are distinct rounds — node_reviews keeps one
+    row per round (PK is (node_id, round)) and the round-2 RALPH regeneration
+    is labeled round 2, so the worker can tell its second attempt was rejected
+    again rather than mistaking it for a fresh dispatch."""
+    ralph = _ReviewRalph([False, False, True])
+    executor = _executor(graph, tmp_path, ralph)
+    graph.add_node("two rejections")
+
+    executor.dispatch(1, _config(tmp_path, review_max_rounds=2))
+    first = executor.complete(1, "main")
+    second = executor.complete(1, "main")
+    assert first.redispatch is not None and second.redispatch is not None
+
+    rows = graph.node_reviews_for_node(1)
+    assert [r["round"] for r in rows] == [1, 2]
+    assert all(r["verdict"] == "reject" for r in rows)
+    assert ralph.ralph_md_calls[1]["findings_round"] == 1
+    assert ralph.ralph_md_calls[2]["findings_round"] == 2
+    assert ralph.ralph_md_calls[2]["prior_findings"] == "[P1][correctness] finding"
 
 
 def test_zero_review_rounds_preserves_merge_path(graph, tmp_path: Path) -> None:
@@ -246,7 +335,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(graph, tmp_path
     assert str((tmp_path / "spec.md").resolve()) in prompt
     assert "generated context" in prompt
     assert "diff from base-oid" in prompt
-    executor._notify_review(node, verdict="reject", findings_md="finding")
+    executor._notify_review(node, verdict="reject", findings_md="finding", round_number=1)
 
     missing_reviewer = SimpleNamespace()
     no_reviewer = Executor(

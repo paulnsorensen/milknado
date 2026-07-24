@@ -489,7 +489,15 @@ class TestDispatchRelocationIntegration:
 class _DispatchRalph:
     """Just enough LoopPort for Executor.dispatch to run against real git."""
 
-    def generate_ralph_md(self, node, context, quality_gates, output_path):  # noqa: ANN001, ANN201
+    def generate_ralph_md(
+        self,
+        node,
+        context,
+        quality_gates,
+        output_path,
+        prior_findings="",
+        findings_round=None,
+    ):  # noqa: ANN001, ANN201
         output_path.write_text("# ralph\n")
         return output_path
 
