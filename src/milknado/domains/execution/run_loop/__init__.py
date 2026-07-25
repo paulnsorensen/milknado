@@ -489,10 +489,11 @@ class RunLoop:
         available = concurrency_limit - len(self._active)
         if available <= 0:
             return 0, 0
+        exclusions = self._graph.dispatch_exclusions()
         dispatchable = [
             node_id
             for node_id in get_dispatchable_nodes(self._graph)
-            if node_id not in self._stopped_nodes
+            if node_id not in self._stopped_nodes and node_id not in exclusions
         ]
         dispatched = 0
         failed = 0
