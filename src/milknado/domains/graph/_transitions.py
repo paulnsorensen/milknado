@@ -160,12 +160,15 @@ def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
     return cur.rowcount == 1
 
 
-def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: NodeStatus) -> bool:
-    """Write a terminal status gated on the active run fence.
-
-    A failed integration retains its worktree and branch so the produced
-    deliverable remains recoverable. A later claim clears that recovery state.
-    """
+def mark_terminal(
+    conn: sqlite3.Connection,
+    node_id: int,
+    run_id: str,
+    status: NodeStatus,
+    *,
+    preserve_recovery: bool = False,
+) -> bool:
+    """Write a terminal status gated on the active run fence."""
     if status is NodeStatus.DONE:
         completed_at = datetime.now(UTC).isoformat()
         cur = conn.execute(
@@ -174,8 +177,13 @@ def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: N
             (NodeStatus.DONE.value, completed_at, node_id, run_id),
         )
     elif status is NodeStatus.FAILED:
+        recovery = (
+            "run_id = NULL"
+            if preserve_recovery
+            else ("worktree_path = NULL, branch_name = NULL, run_id = NULL")
+        )
         cur = conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = NULL, run_id = NULL "
+            f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "  # noqa: S608
             "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.FAILED.value, node_id, run_id),
         )

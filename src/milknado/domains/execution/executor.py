@@ -369,7 +369,8 @@ class WorktreeManager:
             return RebaseResult(success=True)
         landed = False
         try:
-            collisions = self._git.untracked_merge_collisions(worktree)
+            find_collisions = getattr(type(self._git), "untracked_merge_collisions", None)
+            collisions = self._git.untracked_merge_collisions(worktree) if find_collisions else ()
             if collisions:
                 paths = ", ".join(collisions)
                 raise GitOperationError(
@@ -1210,7 +1211,7 @@ class Executor:
                 duration = (completed_now - node.dispatched_at).total_seconds()
                 self._graph.record_completion_duration(node_id, duration)
         else:
-            self._mark_terminal(node, NodeStatus.FAILED)
+            self._mark_terminal(node, NodeStatus.FAILED, preserve_recovery=True)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(
                     node_id=node_id,
@@ -1375,18 +1376,19 @@ class Executor:
             return replace(result, review_notification_failed=True)
         return result
 
-    def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:
-        """Write a node's terminal status, fenced on its run_id so a run that was
-        reclaimed mid-flight cannot overwrite the fresh owner's row. A node with no
-        run_id (in-process TUI legacy / direct test calls) has no fence to honour,
-        so the transition is unconditional. Returns whether the write landed."""
+    def _mark_terminal(
+        self, node: MikadoNode, status: NodeStatus, *, preserve_recovery: bool = False
+    ) -> bool:
+        """Write a fenced terminal state without clobbering recovered work."""
         if node.run_id is None:
             if status is NodeStatus.DONE:
                 self._graph.mark_done(node.id)
             else:
                 self._graph.mark_failed(node.id)
             return True
-        return self._graph.mark_terminal(node.id, node.run_id, status)
+        return self._graph.mark_terminal(
+            node.id, node.run_id, status, preserve_recovery=preserve_recovery
+        )
 
     def fail(self, node_id: int, detail: str | None = None) -> None:
         self._wt.ensure_clean(node_id)
