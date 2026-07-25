@@ -9,6 +9,7 @@ from threading import Barrier
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.execution import get_execution_overview
 from milknado.domains.graph import MikadoGraph
 
 
@@ -252,23 +253,35 @@ def test_execution_overview_returns_one_public_atomic_projection(graph: MikadoGr
     first = graph.add_node("first", parent_id=goal.id)
     second = graph.add_node("second", parent_id=goal.id)
 
-    assert graph.get_execution_overview([goal.id, first.id, 999]) == (
+    assert get_execution_overview(graph, [goal.id, first.id, 999]) == (
         "goal",
         {goal.id: "goal", first.id: "first"},
         2,
     )
-    assert graph.get_execution_overview([second.id], excluded_node_ids=[first.id]) == (
+    assert get_execution_overview(graph, [second.id], {first.id}) == (
         "goal",
         {second.id: "second"},
         1,
     )
-    assert not hasattr(graph, "read_locked")
+    assert not hasattr(graph, "get_execution_overview")
 
 
-def test_execution_overview_holds_one_lock_across_projection(
+def test_execution_overview_accepts_graph_read_port(graph: MikadoGraph) -> None:
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    node = graph.add_node("task", parent_id=goal.id)
+    snapshot = graph.get_execution_snapshot([node.id])
+
+    class ReadPort:
+        def get_execution_snapshot(self, node_ids: list[int]):
+            assert node_ids == [node.id]
+            return snapshot
+
+    assert get_execution_overview(ReadPort(), [node.id]) == ("goal", {node.id: "task"}, 1)
+
+
+def test_execution_overview_reads_one_lock_held_graph_snapshot(
     graph: MikadoGraph, monkeypatch
 ) -> None:
-    from milknado.domains.execution import executor
     from milknado.domains.graph import _reads
 
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
@@ -285,20 +298,15 @@ def test_execution_overview_holds_one_lock_across_projection(
         observed.append(("nodes", graph._lock._is_owned()))
         return original_get_nodes(conn, node_ids)
 
-    def locked_get_dispatchable_nodes(_graph):
-        observed.append(("available", graph._lock._is_owned()))
-        return [task.id]
-
     monkeypatch.setattr(_reads, "get_root", locked_get_root)
     monkeypatch.setattr(_reads, "get_nodes", locked_get_nodes)
-    monkeypatch.setattr(executor, "get_dispatchable_nodes", locked_get_dispatchable_nodes)
 
-    assert graph.get_execution_overview([task.id]) == (
+    assert get_execution_overview(graph, [task.id]) == (
         "goal",
         {task.id: "task"},
         1,
     )
-    assert observed == [("root", True), ("nodes", True), ("available", True)]
+    assert observed == [("root", True), ("nodes", True)]
 
 
 def test_execution_overview_uses_one_cross_connection_snapshot(
@@ -321,7 +329,7 @@ def test_execution_overview_uses_one_cross_connection_snapshot(
 
         monkeypatch.setattr(_reads, "get_nodes", update_between_reads)
 
-        assert reader.get_execution_overview([goal.id, task.id]) == (
+        assert get_execution_overview(reader, [goal.id, task.id]) == (
             "before",
             {goal.id: "before", task.id: "task"},
             1,

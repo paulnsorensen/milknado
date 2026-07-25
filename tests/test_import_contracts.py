@@ -14,6 +14,10 @@ _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
         ["milknado.domains"],
         ["milknado.app", "milknado.cli", "milknado.mcp"],
     ),
+    "graph must not import execution": (
+        ["milknado.domains.graph"],
+        ["milknado.domains.execution"],
+    ),
     "app must not import cli or mcp": (
         ["milknado.app"],
         ["milknado.cli", "milknado.mcp"],
