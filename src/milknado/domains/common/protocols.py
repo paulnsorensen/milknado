@@ -33,6 +33,17 @@ class SymbolLocation:
     line_end: int
 
 
+@dataclass(frozen=True)
+class GraphExecutionSnapshot:
+    """Atomic graph facts required to compute execution availability."""
+
+    root: MikadoNode | None
+    nodes: tuple[MikadoNode, ...]
+    ready_node_ids: tuple[int, ...]
+    running_node_ids: tuple[int, ...]
+    parallel_conflicts: tuple[tuple[int, int, tuple[str, ...]], ...]
+
+
 class GitPort(Protocol):
     def create_worktree(self, path: Path, branch: str) -> Path: ...
     def branch_exists(self, branch: str) -> bool: ...
@@ -49,6 +60,13 @@ class GitPort(Protocol):
     def commit_all(self, worktree: Path, message: str) -> None: ...
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool: ...
     def fast_forward(self, branch: str) -> None: ...
+
+
+class GraphReadPort(Protocol):
+    def get_node(self, node_id: int) -> MikadoNode | None: ...
+    def get_children(self, node_id: int) -> list[MikadoNode]: ...
+    def get_file_ownership(self, node_id: int) -> list[str]: ...
+    def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot: ...
 
 
 class TilthPort(Protocol):

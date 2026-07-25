@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING
 from milknado.domains.common import ProgressEvent, TerminalRunOutcome, resolve_flavor_profile
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.types import NodeStatus
-from milknado.domains.execution.executor import RebaseConflict, get_dispatchable_nodes
+from milknado.domains.execution.executor import (
+    RebaseConflict,
+    get_dispatchable_nodes,
+    get_execution_overview,
+)
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
@@ -100,8 +104,9 @@ class RunLoop:
     def state(self) -> RunLoopState:
         """Build a bounded immutable execution state for the application layer."""
         active_items = tuple(sorted(self._active.items(), key=lambda item: item[1]))
-        goal, descriptions, available = self._graph.get_execution_overview(
-            (node_id for _, node_id in active_items),
+        goal, descriptions, available = get_execution_overview(
+            self._graph,
+            [node_id for _, node_id in active_items],
             self._stopped_nodes,
         )
         return RunLoopState(

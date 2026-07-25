@@ -10,6 +10,7 @@ from milknado.domains.execution.executor import (
     RebaseConflict,
     WorktreeManager,
     get_dispatchable_nodes,
+    get_execution_overview,
 )
 from milknado.domains.execution.headless import HeadlessOutcome, run_node_to_completion
 from milknado.domains.execution.run_loop import RunLoop, RunLoopResult
@@ -29,5 +30,6 @@ __all__ = [
     "WorktreeManager",
     "build_completion_verifier",
     "get_dispatchable_nodes",
+    "get_execution_overview",
     "run_node_to_completion",
 ]

@@ -5,11 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
-from milknado.domains.graph import MikadoGraph, walk_ancestors
+from milknado.domains.common import GraphReadPort, MikadoNode, NodeKind, NodeStatus
+from milknado.domains.graph import walk_ancestors
 
 
-def _done_prereqs(graph: MikadoGraph, node: MikadoNode) -> list[MikadoNode]:
+def _done_prereqs(graph: GraphReadPort, node: MikadoNode) -> list[MikadoNode]:
     if node.parent_id is None:
         return []
     siblings = graph.get_children(node.parent_id)
@@ -131,7 +131,7 @@ _PLATE_INSTRUCTIONS = (
 
 
 def render_brief(
-    graph: MikadoGraph,
+    graph: GraphReadPort,
     node_id: int,
     *,
     prepend: str | None = None,

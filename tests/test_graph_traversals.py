@@ -43,3 +43,14 @@ class TestWalkAncestors:
     def test_unknown_node_id_raises_value_error(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="Node 9999 not found"):
             walk_ancestors(graph, 9999)
+
+
+def test_walk_ancestors_accepts_read_port(graph: MikadoGraph) -> None:
+    root = graph.add_node("root")
+    leaf = graph.add_node("leaf", parent_id=root.id)
+
+    class ReadPort:
+        def get_node(self, node_id: int):
+            return {root.id: root, leaf.id: leaf}.get(node_id)
+
+    assert [node.id for node in walk_ancestors(ReadPort(), leaf.id)] == [leaf.id, root.id]
