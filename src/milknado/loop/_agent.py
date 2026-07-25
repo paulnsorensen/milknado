@@ -26,6 +26,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -307,7 +308,7 @@ def _new_output_sink(log_dir: Path | None, iteration: int) -> _FileSink | None:
         return _FileSink(tempfile.TemporaryFile(mode="w+", encoding="utf-8"))
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime(_LOG_TIMESTAMP_FORMAT)
-    path = log_dir / f"{iteration:0{_LOG_ITERATION_PAD_WIDTH}d}_{timestamp}.log"
+    path = log_dir / f"{iteration:0{_LOG_ITERATION_PAD_WIDTH}d}_{timestamp}_{uuid.uuid4().hex}.log"
     return _FileSink(path.open("w", encoding="utf-8"), path)
 
 

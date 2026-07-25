@@ -211,24 +211,34 @@ def _is_transient(exc: BaseException) -> bool:
     return False
 
 
-def _dispatchable_node_ids(snapshot: GraphExecutionSnapshot) -> list[int]:
+def _dispatchable_node_ids(
+    snapshot: GraphExecutionSnapshot,
+    logged_blocks: set[tuple[int, int, tuple[str, ...]]] | None = None,
+) -> list[int]:
     ready_ids = snapshot.ready_node_ids
     active_ids = set(snapshot.running_node_ids)
-    blocked = {
-        right_id
-        for left_id, right_id, _paths in snapshot.parallel_conflicts
+    blocked_relationships = {
+        (right_id, left_id, paths)
+        for left_id, right_id, paths in snapshot.parallel_conflicts
         if right_id in ready_ids and (left_id in active_ids or left_id in ready_ids)
     }
-    for left_id, right_id, paths in snapshot.parallel_conflicts:
-        if right_id in blocked:
-            logging.getLogger("milknado").info(
-                "Node %d blocked by Node %d on shared files: %s", right_id, left_id, paths
-            )
-    return [node_id for node_id in ready_ids if node_id not in blocked]
+    if logged_blocks is None:
+        newly_blocked = blocked_relationships
+    else:
+        newly_blocked = blocked_relationships - logged_blocks
+        logged_blocks.intersection_update(blocked_relationships)
+        logged_blocks.update(blocked_relationships)
+    for right_id, left_id, paths in sorted(newly_blocked):
+        _logger.info("Node %d blocked by Node %d on shared files: %s", right_id, left_id, paths)
+    blocked_ids = {item[0] for item in blocked_relationships}
+    return [node_id for node_id in ready_ids if node_id not in blocked_ids]
 
 
-def get_dispatchable_nodes(graph: GraphReadPort) -> list[int]:
-    return _dispatchable_node_ids(graph.get_execution_snapshot([]))
+def get_dispatchable_nodes(
+    graph: GraphReadPort,
+    logged_blocks: set[tuple[int, int, tuple[str, ...]]] | None = None,
+) -> list[int]:
+    return _dispatchable_node_ids(graph.get_execution_snapshot([]), logged_blocks)
 
 
 def get_execution_overview(
