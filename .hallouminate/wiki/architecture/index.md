@@ -7,6 +7,7 @@
 - [distribution](./distribution.md) — Distribution — Portable Plugin Packaging (Skills + MCP) Across Harnesses
 - [entry-points](./entry-points.md) — Entry Points — CLI & MCP Server
 - [execution](./execution.md) — Execution & Dispatch — Parallel Ralph Loops
+- [graph-read-port](./graph-read-port.md) — Graph read port and execution snapshots
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [omp-json-streaming](./omp-json-streaming.md) — OMP JSON Event Streaming
 - [planning](./planning.md) — Planning Domain — Goal Decomposition & Manifest
