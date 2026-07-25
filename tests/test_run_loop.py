@@ -10,8 +10,8 @@ import pytest
 from rich.console import Console
 
 from milknado.domains.common import ProgressEvent
+from milknado.domains.common.config import Gate
 from milknado.domains.common.types import (
-    MikadoNode,
     NodeSpec,
     NodeStatus,
     RebaseResult,
@@ -233,9 +233,8 @@ class FakeRalph:
 
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
-        quality_gates: list[str],
+        brief: str,
+        quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",
         findings_round: int | None = None,
@@ -1992,7 +1991,7 @@ class TestDispatchBatchFlavoredGates:
             project_root=tmp_path,
             db_path=tmp_path / ".milknado" / "milknado.db",
             flavors={
-                "research": FlavorOverride(quality_gates=()),
+                "research": FlavorOverride(quality_gates=(), brief_prepend="Research only."),
             },
         )
 
@@ -2018,3 +2017,4 @@ class TestDispatchBatchFlavoredGates:
         assert captured[0].quality_gates == (), (
             "flavored node with quality_gates=() must propagate empty gates to executor"
         )
+        assert captured[0].brief_prepend == "Research only."

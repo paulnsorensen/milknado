@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from milknado.domains.common.types import MikadoNode, NodeStatus, RebaseResult
+from milknado.domains.common.config import Gate
+from milknado.domains.common.types import NodeStatus, RebaseResult
 from milknado.domains.execution import ExecutionConfig, Executor
 from milknado.domains.graph import MikadoGraph
 
@@ -109,9 +110,8 @@ class _FakeRalph:
 
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
-        quality_gates: list[str],
+        brief: str,
+        quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",
         findings_round: int | None = None,

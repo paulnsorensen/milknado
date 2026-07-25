@@ -96,13 +96,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         git = GitAdapter(root)
         ralph = LoopAdapter()
-        crg = CrgAdapter(root)
-        executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
+        executor = Executor(graph=graph, git=git, ralph=ralph, crg=CrgAdapter(root))
         exec_config = ExecutionConfig(
             execution_agent=profile.execution_agent,
             quality_gates=profile.quality_gates,
             worktree_pattern=cfg.worktree_pattern,
             project_root=root,
+            brief_prepend=profile.brief_prepend,
             commit_footer=cfg.commit_footer,
             review=profile.review,
             review_agent=profile.review_agent,

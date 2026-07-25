@@ -501,6 +501,7 @@ class RunLoop:
                     config,
                     execution_agent=profile.execution_agent,
                     quality_gates=profile.quality_gates,
+                    brief_prepend=profile.brief_prepend,
                     review=profile.review,
                     review_agent=profile.review_agent,
                     review_max_rounds=profile.review_max_rounds,

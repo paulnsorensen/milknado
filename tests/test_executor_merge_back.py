@@ -491,8 +491,7 @@ class _DispatchRalph:
 
     def generate_ralph_md(
         self,
-        node,
-        context,
+        brief,
         quality_gates,
         output_path,
         prior_findings="",

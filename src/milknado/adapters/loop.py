@@ -12,7 +12,6 @@ from typing import Any, Final
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
-    MikadoNode,
     ProgressEvent,
     TerminalRunOutcome,
     VerifySpecResult,
@@ -252,8 +251,7 @@ class LoopAdapter:
 
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
+        brief: str,
         quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",
@@ -262,8 +260,7 @@ class LoopAdapter:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             content = _build_ralph_content(
-                node,
-                context,
+                brief,
                 quality_gates,
                 prior_findings=prior_findings,
                 findings_round=findings_round,
@@ -394,8 +391,7 @@ def _parse_verify_output(output: str) -> VerifySpecResult:
 
 
 def _build_ralph_content(
-    node: MikadoNode,
-    context: str,
+    brief: str,
     quality_gates: tuple[Gate, ...] | None,
     prior_findings: str = "",
     findings_round: int | None = None,
@@ -411,16 +407,14 @@ def _build_ralph_content(
     else:
         gate_lines = "\n".join(f"- `{g.command}`" for g in quality_gates)
         gates_section = f"## Quality Gates\n\n{gate_lines}"
-    findings_section = ""
-    if prior_findings.strip():
-        round_label = f" (round {findings_round})" if findings_round is not None else ""
-        findings_section = (
-            f"## Prior review findings{round_label}\n\n{prior_findings.rstrip()}\n\n"
-        )
+    round_label = f" (round {findings_round})" if findings_round is not None else ""
+    findings_section = (
+        f"## Prior review findings{round_label}\n\n{prior_findings.rstrip()}\n\n"
+        if prior_findings.strip()
+        else ""
+    )
     return (
-        f"# {node.description}\n\n"
-        f"{findings_section}"
-        f"## Context\n\n{context}\n\n"
+        f"{findings_section}{brief.rstrip()}\n\n"
         f"{gates_section}\n\n"
         "## Proposing follow-up work\n\n"
         "If this node cannot be finished without other work landing first "

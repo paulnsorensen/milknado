@@ -15,7 +15,6 @@ from milknado.adapters.loop import (
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
-from milknado.domains.common.types import MikadoNode
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import EventType
 
@@ -326,107 +325,74 @@ class TestWaitForNextCompletion:
 
 class TestGenerateRalphMd:
     def test_writes_file(self, adapter: LoopAdapter, tmp_path: Path) -> None:
-        node = MikadoNode(id=1, description="Extract interface")
         output = tmp_path / "RALPH.md"
         result = adapter.generate_ralph_md(
-            node=node,
-            context="Refactoring auth module",
+            brief="# Task: Extract interface\n\n## Goal context\n\n- refactor auth",
             quality_gates=(Gate("uv run pytest"),),
             output_path=output,
         )
         assert result == output
         assert output.exists()
         content = output.read_text()
-        assert "Extract interface" in content
-        assert "Refactoring auth module" in content
+        assert "# Task: Extract interface" in content
+        assert "## Goal context" in content
         assert "`uv run pytest`" in content
 
 
 class TestBuildRalphContent:
-    def test_includes_all_sections(self) -> None:
-        node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "some context", (Gate("gate1"), Gate("gate2")))
-        assert content.startswith("# Do thing")
-        assert "## Context" in content
-        assert "some context" in content
+    def test_includes_shared_brief_and_loop_scaffolding(self) -> None:
+        brief = "# Task: Do thing\n\n## Goal context\n\n- Ship it"
+        content = _build_ralph_content(brief, (Gate("gate1"), Gate("gate2")))
+        assert content.startswith(brief)
+        assert "## Context" not in content
         assert "- `gate1`" in content
         assert "- `gate2`" in content
 
-    def test_findings_section_emitted_before_context(self) -> None:
-        """Redispatch path: prior review findings are required reading, emitted
-        verbatim ahead of the task body (#298)."""
-        node = MikadoNode(id=1, description="Do thing")
+    def test_findings_section_emitted_before_brief(self) -> None:
         findings = "[P1][correctness] off-by-one in retry loop\n\nevidence: x.py:42"
+        brief = "# Task: Do thing"
         content = _build_ralph_content(
-            node,
-            "some context",
+            brief,
             (Gate("gate1"),),
             prior_findings=findings,
             findings_round=2,
         )
         assert "## Prior review findings (round 2)" in content
         assert findings in content, "findings must be verbatim"
-        assert content.index("## Prior review findings") < content.index("## Context")
+        assert content.index("## Prior review findings") < content.index(brief)
 
     def test_findings_section_omitted_by_default(self) -> None:
-        """Ordinary dispatch/resume keeps the default empty findings: no section."""
-        node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "ctx", (Gate("gate1"),))
+        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),))
         assert "Prior review findings" not in content
 
     def test_findings_without_round_omits_round_label(self) -> None:
-        """findings_round=None → bare header, no dangling 'round' text."""
-        node = MikadoNode(id=1, description="Do thing")
         content = _build_ralph_content(
-            node, "ctx", (Gate("gate1"),), prior_findings="finding", findings_round=None
+            "# Task: Do thing", (Gate("gate1"),), prior_findings="finding"
         )
         assert "## Prior review findings\n" in content
         assert "(round" not in content
 
     def test_blank_findings_omits_section(self) -> None:
-        node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "ctx", (Gate("gate1"),), prior_findings="  ")
+        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),), prior_findings="  ")
         assert "Prior review findings" not in content
 
     def test_includes_completion_promise_instruction(self) -> None:
-        node = MikadoNode(id=1, description="Do thing")
-        content = _build_ralph_content(node, "ctx", (Gate("gate1"),))
+        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),))
         assert "## Completion" in content
         assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
 
     def test_none_gates_renders_no_gates_notice(self) -> None:
-        """None gates → prominent notice in RALPH.md so the agent sees the issue."""
-        node = MikadoNode(id=1, description="Task")
-        content = _build_ralph_content(node, "ctx", None)
+        content = _build_ralph_content("# Task: Task", None)
         assert "no gates configured" in content
         assert "## Completion" in content
 
     def test_empty_gates_renders_skip_notice(self) -> None:
-        """Empty tuple → explicit-skip notice, not the fail-closed notice."""
-        node = MikadoNode(id=1, description="Spec task")
-        content = _build_ralph_content(node, "ctx", ())
+        content = _build_ralph_content("# Task: Spec task", ())
         assert "explicitly skipped" in content
         assert "no gates configured" not in content
 
-    def test_longer_context_injected_and_completion_preserved(self) -> None:
-        """Longer context with Goal/Why chain/Your task — template passes it
-        through verbatim and Completion block still ends the file."""
-        node = MikadoNode(id=2, description="Batch node")
-        longer_ctx = (
-            "## Goal\n\nRefactor auth slice into its own domain.\n\n"
-            "## Why chain (parent → grandparent → ...)\n\n"
-            "### Extract interfaces from auth module\n\n"
-            "## Your task\n\nUpdate callers to use new AuthService interface.\n\n"
-            "## Files\n\n- `src/main.py`\n\n"
-            "## Impact Radius\n\n_(CRG unavailable — impact radius skipped)_"
-        )
-        content = _build_ralph_content(node, longer_ctx, (Gate("uv run pytest"),))
-        assert "## Goal" in content
-        assert "## Why chain" in content
-        assert "## Your task" in content
-        assert "## Completion" in content
-        assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
-        # Completion block is the last heading in the file
+    def test_completion_block_ends_file(self) -> None:
+        content = _build_ralph_content("# Task: Batch node", (Gate("uv run pytest"),))
         completion_pos = content.rfind("## Completion")
         assert completion_pos != -1
         assert (
@@ -840,15 +806,13 @@ class TestGenerateRalphMdWriteError:
     def test_raises_on_write_failure(self, adapter: LoopAdapter, tmp_path: Path) -> None:
         from milknado.domains.common.errors import RalphMarkdownWriteError
 
-        node = MikadoNode(id=1, description="Task")
         bad_path = tmp_path / "nonexistent_dir" / "RALPH.md"
         # Make the parent non-writable to force OSError
         with patch("milknado.adapters.loop.Path.write_text") as mock_write:
             mock_write.side_effect = OSError("disk full")
             with pytest.raises(RalphMarkdownWriteError) as exc_info:
                 adapter.generate_ralph_md(
-                    node=node,
-                    context="ctx",
+                    brief="# Task: Task",
                     quality_gates=(),
                     output_path=bad_path,
                 )

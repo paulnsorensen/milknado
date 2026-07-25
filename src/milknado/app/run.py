@@ -136,6 +136,7 @@ def build_exec_config(config: MilknadoConfig, project_root: Path) -> ExecutionCo
         quality_gates=config.quality_gates,
         worktree_pattern=config.worktree_pattern,
         project_root=project_root,
+        brief_prepend=config.worker_brief_prepend,
     )
 
 

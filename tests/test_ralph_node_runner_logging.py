@@ -28,7 +28,7 @@ def test_main_logs_terminal_event_with_run_id(
         quality_gates = ()
         worktree_pattern = "wt-{node}"
         flavors: dict = {}
-        worker_brief_prepend = None
+        worker_brief_prepend = "Detached worker instruction."
         agent_family = "claude"
         worker_agent_type = "milknado:milknado-worker"
         loop_mode = "redispatch"
@@ -69,9 +69,13 @@ def test_main_logs_terminal_event_with_run_id(
     monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
     monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: _StubRalph())
-    monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
+    captured_configs: list[dict] = []
     monkeypatch.setattr(execution, "Executor", lambda **k: object())
-    monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
+    monkeypatch.setattr(
+        execution,
+        "ExecutionConfig",
+        lambda **kwargs: captured_configs.append(kwargs) or object(),
+    )
     monkeypatch.setattr(
         execution,
         "run_node_to_completion",
@@ -98,6 +102,7 @@ def test_main_logs_terminal_event_with_run_id(
 
     assert rc == 0
     assert any("ralph runner terminal" in message and run_id in args for message, args in messages)
+    assert captured_configs[0]["brief_prepend"] == "Detached worker instruction."
     assert list((tmp_path / ".milknado").glob("run-*.log")) == []
 
     graph.finish_result = False

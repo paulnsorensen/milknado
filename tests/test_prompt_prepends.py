@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from milknado.adapters.loop import _build_ralph_content
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.dispatch import render_brief
 from milknado.domains.graph import MikadoGraph
@@ -119,3 +120,20 @@ def test_render_brief_omits_spec_section_when_absent(tmp_path: Path) -> None:
     finally:
         graph.close()
     assert "## Spec" not in brief
+
+
+def test_ralph_wraps_the_same_rendered_brief_with_flavor_prepend(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "g.db")
+    try:
+        goal = graph.add_node("ship the feature", spec=NodeSpec(kind=NodeKind.GOAL))
+        task = graph.add_node("do the subtask", parent_id=goal.id)
+        graph.set_file_ownership(task.id, ["src/milknado/brief.py"])
+        brief = render_brief(graph, task.id, prepend="### Flavor rule: work narrowly.")
+    finally:
+        graph.close()
+
+    ralph_content = _build_ralph_content(brief, ())
+    assert brief in ralph_content
+    assert ralph_content.index("### Flavor rule:") < ralph_content.index("# Task: do the subtask")
+    assert "## Quality Gates" in ralph_content
+    assert "## Completion" in ralph_content
