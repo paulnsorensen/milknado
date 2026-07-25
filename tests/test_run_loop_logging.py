@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import milknado.domains.execution.run_loop._logging as run_logging
 from milknado.domains.execution.run_loop._logging import (
     _logger,
     configure_run_logging,
@@ -62,9 +63,30 @@ class TestConfigureRunLoggingFileCreation:
             assert log_path.name.endswith(".log")
 
     def test_log_filename_matches_iso8601_pattern(self, tmp_path: Path) -> None:
-        # US-009 contract: run-<ISO8601 basic-format UTC>.log, e.g. run-20260602T141530Z.log.
         with configure_run_logging(tmp_path) as log_path:
-            assert re.fullmatch(r"run-\d{8}T\d{6}Z\.log", log_path.name)
+            assert re.fullmatch(r"run-\d{8}T\d{12}Z-[0-9a-f]{32}\.log", log_path.name)
+
+    def test_same_timestamp_log_creation_is_unique(self, tmp_path: Path) -> None:
+        with configure_run_logging(tmp_path) as first, configure_run_logging(tmp_path) as second:
+            assert first != second
+
+    def test_pruning_protects_active_logs_and_enforces_byte_bound(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        log_dir = tmp_path / ".milknado"
+        log_dir.mkdir()
+        active = log_dir / "run-active.log"
+        active.write_bytes(b"x" * 20)
+        for index in range(3):
+            (log_dir / f"run-finished-{index}.log").write_bytes(b"x" * 10)
+        monkeypatch.setattr(run_logging, "_MAX_LOG_BYTES", 20)
+        run_logging._prune_old_logs(log_dir, "run-*.log", keep=2, active_run_ids=("active",))
+
+        assert active.exists()
+        finished_bytes = sum(
+            path.stat().st_size for path in log_dir.glob("run-*.log") if path != active
+        )
+        assert finished_bytes <= 20
 
     def test_creates_milknado_dir_if_missing(self, tmp_path: Path) -> None:
         project = tmp_path / "project"

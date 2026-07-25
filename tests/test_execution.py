@@ -325,6 +325,28 @@ class TestGetDispatchableNodes:
 
         assert get_dispatchable_nodes(graph) == []
 
+    def test_shared_file_block_logs_only_on_state_change(
+        self, graph: MikadoGraph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        root = graph.add_node("root")
+        active = graph.add_node("active", parent_id=root.id)
+        pending = graph.add_node("pending", parent_id=root.id)
+        graph.set_file_ownership(active.id, ["shared.py"])
+        graph.set_file_ownership(pending.id, ["shared.py"])
+        graph.mark_running(active.id)
+        logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
+
+        with caplog.at_level(logging.INFO, logger="milknado"):
+            assert get_dispatchable_nodes(graph, logged_blocks) == []
+            assert get_dispatchable_nodes(graph, logged_blocks) == []
+
+        assert (
+            caplog.messages.count(
+                f"Node {pending.id} blocked by Node {active.id} on shared files: ('shared.py',)"
+            )
+            == 1
+        )
+
     def test_child_must_complete_before_parent(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)

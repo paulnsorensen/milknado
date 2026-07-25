@@ -532,6 +532,10 @@ def set_worktree(
     conn.commit()
 
 
+_MAX_RETAINED_RUN_MESSAGES = 1000
+_MAX_RUN_MESSAGE_BYTES = 64 * 1024
+_RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
 _RUN_COLUMNS = (
     "run_id",
     "node_id",
@@ -660,14 +664,28 @@ def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
     return [_run_row_to_dict(r) for r in rows]
 
 
+def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:
+    cutoff = datetime.fromisoformat(created_at).timestamp() - _RUN_MESSAGE_MAX_AGE_SECONDS
+    cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
+    terminal = "SELECT run_id FROM runs WHERE status != 'RUNNING'"
+    conn.execute(
+        f"DELETE FROM run_messages WHERE run_id IN ({terminal}) AND created_at < ?",
+        (cutoff_at,),
+    )
+    conn.execute(
+        "DELETE FROM run_messages WHERE (run_id, seq) IN ("
+        f"SELECT run_id, seq FROM run_messages WHERE run_id IN ({terminal}) "
+        "ORDER BY created_at DESC, seq DESC LIMIT -1 OFFSET ?)",
+        (_MAX_RETAINED_RUN_MESSAGES,),
+    )
+
+
 def deposit_run_message(
     conn: sqlite3.Connection, run_id: str, role: str, body: str, created_at: str
 ) -> int:
-    """Append a run_messages row with the next seq for this run; return that seq.
-
-    Seq assignment and insert happen in one statement so concurrent depositors
-    for the same run cannot race MAX(seq) into a UNIQUE collision.
-    """
+    """Append a bounded run message and prune terminal history."""
+    body = body.encode()[:_MAX_RUN_MESSAGE_BYTES].decode(errors="ignore")
+    _prune_run_messages(conn, created_at)
     row = conn.execute(
         "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
         "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages WHERE run_id = ? "
