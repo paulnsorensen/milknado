@@ -283,15 +283,11 @@ def test_run_inline_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monk
     assert _node_status(root, node_id) == NodeStatus.PENDING
 
 
-def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
+def test_run_inline_use_tmux_success_delivers_brief_without_poll_reconcile(
     tmp_path, monkeypatch
 ) -> None:
-    """Worker reads the staged brief, exit 0 marks the run done, and the poll
-    reconcile backstop kills a window the wrapper failed to self-clean."""
+    """Worker reads the staged brief; normal polling never touches tmux."""
     fake = SpawningFakeTmux("cat {brief} >> {log}; echo 0 > {rc}")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
-    # The poll-time reconcile hook constructs its own adapter — same fake.
     monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
     monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
     root = str(tmp_path)
@@ -311,9 +307,7 @@ def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
     assert window.env["MILKNADO_PROJECT_ROOT"] == str(tmp_path.resolve())
     assert "tmux-task" in final["summary"]  # brief made it through the stdin redirect
     assert _node_status(root, node_id) == NodeStatus.DONE
-    # The fake never self-cleans its window, so the completed-run window must
-    # have been killed by the per-row poll reconcile (decision: done → cleanup).
-    assert started["run_id"] in fake.killed
+    assert fake.killed == [], "normal polling must not reconcile tmux windows"
     # The staged brief and rc file are transient: the worker's finally clears
     # them once the terminal state is written (log stays as the diagnostic).
     rdir = runs_dir(tmp_path)
@@ -499,9 +493,8 @@ def test_cleanup_is_noop_without_tmux_binary(tmp_path) -> None:
     assert cleanup_run_window(fake, {"run_id": RUN_ID, "status": "done"}) is False
 
 
-def test_loop_poll_reconciles_done_run_window(tmp_path, monkeypatch) -> None:
-    """The loop-path poll is the other reconcile surface: observing a done run
-    must kill its straggler window (per-row, runs table as the expected set)."""
+def test_loop_poll_does_not_reconcile_done_run_window(tmp_path, monkeypatch) -> None:
+    """Normal terminal polling reads durable state without touching tmux."""
     from milknado.mcp.ralph import milknado_run_loop_poll
 
     run_id = "node-7-20260101T000000Z-0000feed"
@@ -523,7 +516,7 @@ def test_loop_poll_reconciles_done_run_window(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", lambda root: fake)
     state = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
     assert state["status"] == "done"
-    assert fake.killed == [run_id]
+    assert fake.killed == []
 
 
 def test_reconcile_run_window_never_breaks_a_poll(caplog) -> None:

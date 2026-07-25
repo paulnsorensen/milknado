@@ -217,6 +217,7 @@ def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001
     claim = _claim_ralph(graph, git, request)
     _remove_reclaimed_worktree(git, claim)
     log_path = runs_dir(request.root) / f"{claim.run_id}.log"
+    log_path.touch()
     graph.start_run(
         claim.run_id,
         request.node_id,

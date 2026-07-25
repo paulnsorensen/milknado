@@ -240,7 +240,7 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
     # The tmux server this test starts inherits this sentinel; it must NOT
     # leak into the worker (env -i isolation — the security invariant).
     monkeypatch.setenv("LEAKY_SECRET", "should-not-reach-worker")
-    socket = tmp_path / "tmux-test.sock"
+    socket = Path("/tmp") / f"milknado-{tmp_path.name}.sock"
     adapter = TmuxAdapter(tmp_path, socket_path=socket)
     rdir = tmp_path / "runs"
     rdir.mkdir()

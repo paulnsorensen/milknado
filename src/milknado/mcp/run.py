@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter  # noqa: F401
 from milknado.app.run import (
     InlineRunRequest,
     run_inline,
@@ -18,7 +18,6 @@ from milknado.domains.dispatch import (
     now_iso,
     poll_async_run,
     reconcile_node_status,
-    reconcile_run_window,
 )
 from milknado.mcp._core import (
     build_run_dict,
@@ -114,24 +113,15 @@ def milknado_run_inline_start(
 
 @mcp.tool()
 def milknado_run_inline_poll(run_id: str, project_root: str = "") -> dict:
-    """Poll an async run; reconciles node status to done/failed once the worker exits.
-
-    Returns the deposited result payload (latest role='result' run message) under
-    `result` when one exists, alongside the log-tail `summary`.
-    """
+    """Poll an async run from durable state and attach its deposited result."""
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
         state = poll_async_run(graph, root, run_id)
         if state["status"] in ("done", "failed"):
-            # Fence on the polled run's run_id so polling an older run cannot
-            # clobber a newer RUNNING owner that re-claimed this node.
             reconcile_node_status(
                 graph, state["node_id"], state["status"], run_id=state.get("run_id")
             )
-            # Per-row window reconcile backstop: a completed run's window is
-            # normally self-cleaned; kill a straggler (e.g. after a restart).
-            reconcile_run_window(TmuxAdapter(root), state)
         state["result"] = graph.latest_run_message(run_id, "result")
     finally:
         graph.close()

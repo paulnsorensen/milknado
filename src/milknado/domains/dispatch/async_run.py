@@ -346,6 +346,7 @@ def start_headless_async(
     argv = tuple(_resolve_worker_cmd(request.worker_cmd, request.default_cmd))
     runs = _runs_dir(request.project_root)
     log_path = runs / f"{request.run_id}.log"
+    log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
         graph.start_run(

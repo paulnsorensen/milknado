@@ -16,24 +16,58 @@ _STALE_GRACE_SECONDS = 30
 
 
 def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
-    """Flip this node's orphaned "running" runs to "failed".
+    """Finalize confirmed-dead owners and timeout-stale pid-less runs.
 
-    The async worker runs in a daemon thread; if the server process dies
-    mid-run the thread dies with it and never writes a terminal state, leaving
-    the run stuck on "running" and the node locked on RUNNING forever
-    (orphan reconciliation only recovers runs that reached done/failed). For the
-    worker model a run still "running" past its own timeout plus a grace margin
-    can only mean the thread vanished — `_execute` kills and reaps the subprocess
-    at timeout, so a live worker always reaches a terminal write. A detached-ralph
-    runner has no such killer (its only timeout is `wait_for_next_completion`), so
-    this also skips any run whose recorded pid is still alive — slow, not dead.
-    Mark the rest failed so the caller's reconciliation can release the node.
-    Returns the runs it flipped.
+    A run row's pid is its worker pid. In-process coordinator runs deliberately
+    leave it NULL because cancelling that pid would kill the coordinator group;
+    their durable, fenced node pid is used only as a liveness signal. Missing pid
+    metadata never proves death and still follows the existing timeout path.
     """
     now = datetime.now(UTC)
+    node = graph.get_node(node_id) if hasattr(graph, "get_node") else None
     flipped: list[dict] = []
     for state in graph.runs_for_node(node_id):
         if state.get("status") != "running":
+            continue
+        run_id = state["run_id"]
+        worker_pid = state.get("pid")
+        owner_pid = worker_pid
+        if (
+            owner_pid is None
+            and node is not None
+            and node.run_id == run_id
+            and node.pid is not None
+        ):
+            owner_pid = node.pid
+        if owner_pid is not None:
+            if pid_alive(owner_pid):
+                continue
+            error = "worker session gone"
+            ended_at = _now_iso()
+            if (
+                graph.finish_run(
+                    run_id,
+                    RunResult(
+                        status="failed",
+                        exit_code=-1,
+                        timed_out=False,
+                        ended_at=ended_at,
+                        error=error,
+                    ),
+                )
+                is False
+            ):
+                raise RuntimeError(f"stale terminal write lost its fence for {run_id}")
+            flipped.append(
+                {
+                    **state,
+                    "status": "failed",
+                    "exit_code": -1,
+                    "timed_out": False,
+                    "ended_at": ended_at,
+                    "error": error,
+                }
+            )
             continue
         started_at = state.get("started_at")
         timeout = state.get("timeout_seconds")
@@ -44,45 +78,18 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
         except ValueError:
             _logger.warning(
                 "stale-run sweep skipped malformed timestamp: run_id=%s node_id=%d started_at=%r",
-                state.get("run_id"),
+                run_id,
                 node_id,
                 started_at,
             )
             continue
         if (now - started).total_seconds() <= timeout + _STALE_GRACE_SECONDS:
             continue
-        # A detached-ralph runner records its own pid; a live process past the
-        # grace window is slow (e.g. wedged in `git rebase`, which has no
-        # subprocess timeout), not orphaned. Flipping it would thrash a run about
-        # to write "done" — and could cross-fail another run kind sharing the
-        # node. The async-worker path records no pid, so its orphan sweep (server
-        # crash → daemon thread vanished, no terminal write) is unchanged:
-        # pid-unknown still falls through to the timeout flip.
-        pid = state.get("pid")
-        if pid is not None and pid_alive(pid):
-            # Log the skip: a run wedged past timeout+grace that keeps getting
-            # skipped as "slow, not dead" would otherwise leave no trace, since
-            # the caller discards this function's return value.
-            _logger.info(
-                "stale-run sweep skipped live run %s (node %s, pid %s) — slow, not orphaned",
-                state.get("run_id"),
-                node_id,
-                pid,
-            )
-            continue
-        # A pid-recording detached run that reached here has a dead pid (the
-        # liveness skip above did not fire), so "vanished" understates it — name
-        # the exited process. The async-worker path records no pid and keeps the
-        # daemon-thread "vanished" wording.
-        error = (
-            f"detached runner (pid {pid}) exited before writing terminal state (stale running run)"
-            if pid is not None
-            else "worker vanished before writing terminal state (stale running run)"
-        )
         ended_at = _now_iso()
+        error = "worker vanished before writing terminal state (stale running run)"
         if (
             graph.finish_run(
-                state["run_id"],
+                run_id,
                 RunResult(
                     status="failed",
                     exit_code=-1,
@@ -93,7 +100,7 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
             )
             is False
         ):
-            raise RuntimeError(f"stale terminal write lost its fence for {state['run_id']}")
+            raise RuntimeError(f"stale terminal write lost its fence for {run_id}")
         flipped.append(
             {
                 **state,
@@ -105,6 +112,25 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
             }
         )
     return flipped
+
+
+def reconcile_orphaned_runs(graph) -> list[dict]:  # noqa: ANN001
+    """Finalize and release orphaned nodes before a new coordinator dispatches."""
+    if not hasattr(graph, "get_all_nodes"):
+        return []
+    reconciled: list[dict] = []
+    for node in graph.get_all_nodes():
+        if node.status is not NodeStatus.RUNNING or node.run_id is None:
+            continue
+        fail_stale_running_runs(graph, node.id)
+        terminal = latest_terminal_run(
+            find_terminal_runs_for_node(graph, node.id, run_id=node.run_id)
+        )
+        if terminal is None:
+            continue
+        reconcile_node_status(graph, node.id, terminal["status"], run_id=node.run_id)
+        reconciled.append(terminal)
+    return reconciled
 
 
 def find_terminal_runs_for_node(

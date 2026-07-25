@@ -965,6 +965,10 @@ class TestAsyncCancel:
         )
         run_id = started["run_id"]
         assert started["status"] == "running"
+        deadline = time.monotonic() + 5.0
+        while _read_run(tmp_path, run_id)["pid"] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert _read_run(tmp_path, run_id)["pid"] is not None
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
@@ -1295,7 +1299,7 @@ class TestCancelFinalizeAndRace:
                 {"node_id": 3},
                 run_id,
             )
-        assert (cancel_module.runs_dir(tmp_path) / f"{run_id}.cancel").exists()
+        assert not (cancel_module.runs_dir(tmp_path) / f"{run_id}.cancel").exists()
 
 
 class TestTerminateWorker:
