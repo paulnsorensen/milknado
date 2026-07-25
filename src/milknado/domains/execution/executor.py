@@ -379,6 +379,15 @@ class WorktreeManager:
             return RebaseResult(success=True)
         landed = False
         try:
+            find_collisions = getattr(type(self._git), "untracked_merge_collisions", None)
+            collisions = self._git.untracked_merge_collisions(worktree) if find_collisions else ()
+            if collisions:
+                paths = ", ".join(collisions)
+                raise GitOperationError(
+                    f"merge --ff-only {worker_branch or '(worker branch unavailable)'}",
+                    f"untracked integration-checkout path collision: {paths}; "
+                    f"target branch={merge_target!r}, worker worktree={worktree}",
+                )
             msg = _build_commit_message(node_id, description)
             committed = self._git.squash_and_commit(worktree, merge_target, msg)
             rebase_result = self._git.rebase(worktree, merge_target)
@@ -503,6 +512,16 @@ class Executor:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
+        if (
+            parent_run_id is None
+            and node.status is NodeStatus.FAILED
+            and node.worktree_path
+            and node.branch_name
+        ):
+            raise ValueError(
+                f"node {node_id} retains worker branch {node.branch_name!r} at "
+                f"{node.worktree_path}; resolve and retry merge-back before redispatching"
+            )
 
         adopted = parent_run_id is not None
         if adopted:
@@ -525,8 +544,6 @@ class Executor:
         run_id: str | None = None
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         try:
-            # Every filesystem mutation follows the fenced graph claim. A losing
-            # contender exits above and cannot clean, relocate, or create anything.
             self._wt.ensure_clean(node_id)
             wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
             self._graph.set_worktree(node_id, owner_run_id, str(wt_path), branch)
@@ -552,9 +569,6 @@ class Executor:
                 owner_run_id=owner_run_id,
                 release_claim=not adopted,
                 discard_worktree=create_attempted,
-                # A run aborted in _create_ralph_run's post-start window never
-                # reaches the run_id local; its id and stop outcome ride the
-                # exception so the cleanup sees the real teardown result.
                 started_run_id=(
                     run_id
                     if run_id is not None
@@ -1201,6 +1215,9 @@ class Executor:
     ) -> CompletionResult:
         node_id = node.id
         conflict: RebaseConflict | None = None
+        failure_reason = rebase_result.detail or (
+            "merge-back did not integrate the worker deliverable"
+        )
         if rebase_result.success:
             wrote = self._mark_terminal(node, NodeStatus.DONE)
             if wrote and node.dispatched_at is not None:
@@ -1208,16 +1225,15 @@ class Executor:
                 duration = (completed_now - node.dispatched_at).total_seconds()
                 self._graph.record_completion_duration(node_id, duration)
         else:
-            self._mark_terminal(node, NodeStatus.FAILED)
+            self._mark_terminal(node, NodeStatus.FAILED, preserve_recovery=True)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(
                     node_id=node_id,
                     description=node.description,
                     conflicting_files=rebase_result.conflicting_files,
-                    detail=rebase_result.detail,
+                    detail=failure_reason,
                 )
 
-        # Finalize the ralph run's runs row so it does not zombie as 'running'.
         self._finish_node_worker_run(
             node_id,
             RunResult(
@@ -1225,7 +1241,7 @@ class Executor:
                 exit_code=0 if rebase_result.success else None,
                 timed_out=False,
                 ended_at=datetime.now(UTC).isoformat(),
-                detail=None if rebase_result.success else (rebase_result.detail or None),
+                error=None if rebase_result.success else failure_reason,
                 rebased=rebase_result.success,
             ),
         )
@@ -1374,18 +1390,19 @@ class Executor:
             return replace(result, review_notification_failed=True)
         return result
 
-    def _mark_terminal(self, node: MikadoNode, status: NodeStatus) -> bool:
-        """Write a node's terminal status, fenced on its run_id so a run that was
-        reclaimed mid-flight cannot overwrite the fresh owner's row. A node with no
-        run_id (in-process TUI legacy / direct test calls) has no fence to honour,
-        so the transition is unconditional. Returns whether the write landed."""
+    def _mark_terminal(
+        self, node: MikadoNode, status: NodeStatus, *, preserve_recovery: bool = False
+    ) -> bool:
+        """Write a fenced terminal state without clobbering recovered work."""
         if node.run_id is None:
             if status is NodeStatus.DONE:
                 self._graph.mark_done(node.id)
             else:
                 self._graph.mark_failed(node.id)
             return True
-        return self._graph.mark_terminal(node.id, node.run_id, status)
+        return self._graph.mark_terminal(
+            node.id, node.run_id, status, preserve_recovery=preserve_recovery
+        )
 
     def fail(self, node_id: int, detail: str | None = None) -> None:
         self._wt.ensure_clean(node_id)

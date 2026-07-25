@@ -354,3 +354,12 @@ class GitAdapter:
         `git merge --ff-only` exits non-zero and `check=True` raises.
         """
         self._run(["merge", "--ff-only", branch])
+
+    def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
+        """Return untracked root paths that a worker branch would track."""
+        untracked = self._run(["ls-files", "--others", "--exclude-standard", "-z"]).stdout.split(
+            "\0"
+        )
+        worker_paths = self._run(["ls-files", "-z"], cwd=worktree).stdout.split("\0")
+        incoming = {path for path in worker_paths if path}
+        return tuple(sorted(path for path in untracked if path and path in incoming))
