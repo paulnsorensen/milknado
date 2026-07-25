@@ -116,7 +116,8 @@ _REVIEW_INSTRUCTIONS = (
     "As your final step, call milknado_deposit_result with run_id set to the "
     "MILKNADO_RUN_ID environment variable and payload set to your COMPLETE "
     "findings report — the full markdown, not a reference to content that "
-    "lives only in this context."
+    "lives only in this context. Then call milknado_deposit_review with the same "
+    "run_id, verdict exactly 'approve' or 'reject', and the same findings markdown."
 )
 
 _PLATE_INSTRUCTIONS = (

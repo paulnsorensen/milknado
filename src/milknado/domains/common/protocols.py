@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -134,6 +135,7 @@ class LoopPort(Protocol):
         commit_footer: str | None = None,
         runtime_policy: Any | None = None,
         run_id: str | None = None,
+        completion_probe: Callable[[], bool] | None = None,
     ) -> Any: ...
     def start_run(self, run_id: str) -> None: ...
     def queue_guidance(self, run_id: str, text: str) -> bool: ...

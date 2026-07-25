@@ -5,6 +5,7 @@ import queue
 import re
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -50,6 +51,7 @@ class LoopAdapter:
         base_oid: str | None = None,
         runtime_policy: Any | None = None,
         run_id: str | None = None,
+        completion_probe: Callable[[], bool] | None = None,
     ) -> Any:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
@@ -61,21 +63,25 @@ class LoopAdapter:
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
-        config = RunConfig(
-            agent=agent_cmd,
-            ralph_dir=ralph_dir,
-            ralph_file=ralph_file,
-            project_root=project_root or ralph_dir,
-            completion_signal=MILKNADO_COMPLETION_SIGNAL,
-            stop_on_completion_signal=True,
-            stop_on_error=True,
-            log_dir=ralph_dir / ".ralph-logs",
-            commit_footer=commit_footer,
-            max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
-        )
-        config.completion_verifier = build_completion_verifier(
-            ralph_dir, quality_gates, base_oid=base_oid
-        )
+        config_kwargs: dict[str, Any] = {
+            "agent": agent_cmd,
+            "ralph_dir": ralph_dir,
+            "ralph_file": ralph_file,
+            "project_root": project_root or ralph_dir,
+            "completion_signal": MILKNADO_COMPLETION_SIGNAL,
+            "stop_on_completion_signal": True,
+            "stop_on_error": True,
+            "log_dir": ralph_dir / ".ralph-logs",
+            "commit_footer": commit_footer,
+            "max_consecutive_failures": MAX_CONSECUTIVE_AGENT_FAILURES,
+        }
+        if completion_probe is not None:
+            config_kwargs["completion_probe"] = completion_probe
+        config = RunConfig(**config_kwargs)
+        if completion_probe is None:
+            config.completion_verifier = build_completion_verifier(
+                ralph_dir, quality_gates, base_oid=base_oid
+            )
         return self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
 
     def start_run(self, run_id: str) -> None:

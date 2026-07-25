@@ -138,6 +138,10 @@ class RunConfig:
     # Tier-2 completion check consulted when exit-0 + promise would
     # complete the run; ``None`` accepts on the promise alone.
     completion_verifier: Callable[[], CompletionVerdict] | None = None
+    # Optional durable completion probe evaluated after a successful agent turn.
+    # Unlike ``completion_verifier``, it can establish completion without a
+    # promise tag when an external system commits the terminal signal.
+    completion_probe: Callable[[], bool] | None = None
 
     def __post_init__(self) -> None:
         if (self.prompt is None) == (self.ralph_file is None):

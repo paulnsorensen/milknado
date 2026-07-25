@@ -696,6 +696,32 @@ def deposit_run_message(
     return row[0]
 
 
+def deposit_review_verdict(
+    conn: sqlite3.Connection, run_id: str, verdict: str, findings: str, created_at: str
+) -> int:
+    """Persist a verdict and atomically mark it terminal only for an active review run."""
+    with conn:
+        row = conn.execute(
+            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+            "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review', ?, ? "
+            "FROM run_messages WHERE run_id = ? RETURNING seq",
+            (run_id, f"{verdict}\n{findings}", created_at, run_id),
+        ).fetchone()
+        terminal = conn.execute(
+            "SELECT 1 FROM runs JOIN nodes ON nodes.id = runs.node_id "
+            "WHERE runs.run_id = ? AND runs.status = 'running' AND nodes.flavor = 'review'",
+            (run_id,),
+        ).fetchone()
+        if terminal is not None:
+            conn.execute(
+                "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+                "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review_terminal', ?, ? "
+                "FROM run_messages WHERE run_id = ?",
+                (run_id, verdict, created_at, run_id),
+            )
+    return row[0]
+
+
 def insert_node_review(
     conn: sqlite3.Connection,
     node_id: int,
