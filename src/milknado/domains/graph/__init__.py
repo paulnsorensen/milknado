@@ -10,7 +10,7 @@ from milknado.domains.graph.rebalance import (
     StructureReport,
     render_report,
 )
-from milknado.domains.graph.runnability import validate_runnable_roots
+from milknado.domains.graph.runnability import invalid_subtree_node_ids, validate_runnable_roots
 from milknado.domains.graph.status_flow import (
     CLAIM_ROLE,
     VERIFY_ROLE,
@@ -38,6 +38,7 @@ __all__ = [
     "render_tree",
     "subtree_post_order",
     "summarize",
+    "invalid_subtree_node_ids",
     "VERIFY_ROLE",
     "validate_runnable_roots",
     "validate_todo_status",

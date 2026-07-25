@@ -53,6 +53,7 @@ class MikadoGraph(_AnalyticsFacade):
         self._close_stack: list[str] | None = None
         self._raw_conn = self._open(db_path)
         self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
+        self._dispatch_exclusions: set[int] = set()
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:
@@ -80,6 +81,7 @@ class MikadoGraph(_AnalyticsFacade):
         graph._close_stack = None
         graph._raw_conn = snapshot
         graph._pipeline = StatusPipeline([])
+        graph._dispatch_exclusions = set()
         return graph
 
     # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────
@@ -235,9 +237,27 @@ class MikadoGraph(_AnalyticsFacade):
         return _mutations.unarchive_subtree(self._conn, node_id)
 
     @_synchronized
+    def set_todo_status(self, node_id: int, target: NodeStatus) -> bool:
+        """Apply one todo status request after complete preflight."""
+        return _status.set_todo_status(self._pipeline, self._conn, node_id, target)
+
+    @_synchronized
     def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
         """Set status across root_id's live (non-archived) subtree, children first."""
         return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
+
+    @_synchronized
+    def reconcile_completed_goals(self) -> int:
+        """Reconcile completed goal children through the state machine."""
+        return _status.reconcile_completed_goals(self._pipeline, self._conn)
+
+    @_synchronized
+    def set_dispatch_exclusions(self, node_ids: set[int]) -> None:
+        self._dispatch_exclusions = set(node_ids)
+
+    @_synchronized
+    def dispatch_exclusions(self) -> set[int]:
+        return set(self._dispatch_exclusions)
 
     @_synchronized
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:

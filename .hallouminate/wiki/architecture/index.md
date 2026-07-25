@@ -8,6 +8,7 @@
 - [entry-points](./entry-points.md) — Entry Points — CLI & MCP Server
 - [execution](./execution.md) — Execution & Dispatch — Parallel Ralph Loops
 - [graph-read-port](./graph-read-port.md) — Graph read port and execution snapshots
+- [graph-status-reconciliation](./graph-status-reconciliation.md) — Graph status reconciliation
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [omp-json-streaming](./omp-json-streaming.md) — OMP JSON Event Streaming
 - [path-contracts](./path-contracts.md) — Path contracts

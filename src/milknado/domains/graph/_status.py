@@ -152,6 +152,20 @@ def mark_blocked(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: in
     transition_status(pipeline, conn, node_id, NodeStatus.BLOCKED)
 
 
+def set_todo_status(
+    pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
+) -> bool:
+    """Validate verification and transition before applying one facade request."""
+    node = _reads.get_node(conn, node_id)
+    if node is None:
+        raise ValueError(f"Node {node_id} not found")
+    _reject_archived(conn, node_id)
+    if target is NodeStatus.DONE:
+        _validate_done_verification(conn, node_id, [node])
+    validate_todo_status(node, target)
+    return _apply_subtree_status(pipeline, conn, node, target)
+
+
 def set_subtree_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, root_id: int, target: NodeStatus
 ) -> int:
@@ -169,6 +183,32 @@ def set_subtree_status(
     for node in live:
         validate_todo_status(node, target)
     return sum(_apply_subtree_status(pipeline, conn, node, target) for node in live)
+
+
+def reconcile_completed_goals(pipeline: StatusPipeline, conn: sqlite3.Connection) -> int:
+    """Mark pending goals DONE when all direct children are already DONE.
+
+    Repeat because reconciling a child goal can make its parent eligible in the
+    same startup pass. Each candidate uses the bulk state-machine operation,
+    so its validation happens before any write.
+    """
+    completed = 0
+    while True:
+        candidates = [
+            node
+            for node in _reads.get_all_nodes(conn)
+            if node.kind.value == "goal" and node.status is NodeStatus.PENDING
+        ]
+        eligible = [
+            node
+            for node in candidates
+            if (children := _reads.get_children(conn, node.id))
+            and all(child.status is NodeStatus.DONE for child in children)
+        ]
+        if not eligible:
+            return completed
+        for goal in eligible:
+            completed += set_subtree_status(pipeline, conn, goal.id, NodeStatus.DONE)
 
 
 def complete_root(pipeline: StatusPipeline, conn: sqlite3.Connection) -> bool:

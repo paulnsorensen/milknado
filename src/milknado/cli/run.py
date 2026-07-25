@@ -109,7 +109,7 @@ def run(
     from milknado.app.run_tui import run_execution_tui
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import get_dispatchable_nodes
-    from milknado.domains.graph import validate_runnable_roots
+    from milknado.domains.graph import invalid_subtree_node_ids, validate_runnable_roots
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
@@ -132,16 +132,19 @@ def run(
     graph = _ensure_db(config, plugins)
 
     try:
+        graph.reconcile_completed_goals()
         root_reports = validate_runnable_roots(graph)
-        all_errors: list[str] = []
+        excluded: set[int] = set()
+        has_errors = False
         for goal_id, report in root_reports:
             for msg in report.warnings:
                 console.print(f"[yellow]warning (goal {goal_id}): {msg}[/yellow]")
-            all_errors.extend(f"goal {goal_id}: {e}" for e in report.errors)
-        if all_errors:
-            for msg in all_errors:
-                console.print(f"[red]error: {msg}[/red]")
-            raise typer.Exit(code=1)
+            if report.errors:
+                has_errors = True
+                excluded.update(invalid_subtree_node_ids(graph, goal_id))
+                for msg in report.errors:
+                    console.print(f"[yellow]warning (goal {goal_id}; skipped): {msg}[/yellow]")
+        graph.set_dispatch_exclusions(excluded)
 
         interactive = _is_interactive_terminal()
         if not interactive:
@@ -149,8 +152,10 @@ def run(
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
-        if not get_dispatchable_nodes(graph):
+        if not [node for node in get_dispatchable_nodes(graph) if node not in excluded]:
             console.print("No nodes ready for execution.")
+            if has_errors:
+                raise typer.Exit(code=1)
             return
 
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
