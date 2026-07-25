@@ -15,6 +15,11 @@ from milknado.domains.common.agent_argv import (
     resolve_planning_agent_command,
     resolve_worker_tools,
 )
+from milknado.domains.common.config_layers import (
+    OriginMap,
+    record_origins,
+    remove_origin_prefix,
+)
 from milknado.domains.common.flavor_codec import (
     FlavorOverride,
     Gate,
@@ -118,29 +123,65 @@ def global_config_path() -> Path:
     return Path(base) / "milknado" / "milknado.toml"
 
 
+@dataclass(frozen=True)
+class LoadedConfig:
+    """Effective runtime config with source attribution captured during layering."""
+
+    config: MilknadoConfig
+    raw: dict[str, Any]
+    origins: OriginMap
+
+
 def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
-    """Load config from ``path``, optionally merged under the global config.
+    """Load config from path using the defaults → global → local cascade."""
+    return load_config_details(path, include_global=include_global).config
 
-    Load order (last write wins): built-in defaults → global → ``path``.
 
-    ``include_global=False`` skips the global lookup — used by tests and any
-    caller that must be reproducible regardless of the host's user config.
-    """
-    raw: dict[str, Any] = {}
+def load_config_details(path: Path, *, include_global: bool = True) -> LoadedConfig:
+    """Load config and preserve each supplied key's layer of origin."""
     local_raw = _read_milknado_section(path)
-    if include_global:
-        g = global_config_path()
-        if g.exists():
-            global_raw = _read_milknado_section(g)
-            _warn_local_only_keys(global_raw, g)
-            for k in _LOCAL_ONLY_KEYS:
-                global_raw.pop(k, None)
-            _absolutize_global_prompt_paths(global_raw, g.parent)
-            _absolutize_global_flavor_paths(global_raw, g.parent)
+    inherit_global, replaced_flavors = _extract_inheritance(local_raw, local=True)
+    raw: dict[str, Any] = {}
+    origins: OriginMap = {}
+
+    if include_global and inherit_global:
+        global_path = global_config_path()
+        if global_path.exists():
+            global_raw = _read_milknado_section(global_path)
+            _extract_inheritance(global_raw, local=False)
+            _warn_local_only_keys(global_raw, global_path)
+            for key in _LOCAL_ONLY_KEYS:
+                global_raw.pop(key, None)
+            _absolutize_global_prompt_paths(global_raw, global_path.parent)
+            _absolutize_global_flavor_paths(global_raw, global_path.parent)
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
+            record_origins(origins, global_raw, f"global:{global_path}")
+
+    for flavor in replaced_flavors:
+        raw.get("flavor", {}).pop(flavor, None)
+        remove_origin_prefix(origins, ("flavor", flavor))
     raw = _merge(raw, local_raw)
-    return _build_config(raw, project_root=path.parent)
+    record_origins(origins, local_raw, f"local:{path}")
+    return LoadedConfig(_build_config(raw, project_root=path.parent), raw, origins)
+
+
+def _extract_inheritance(raw: dict[str, Any], *, local: bool) -> tuple[bool, tuple[str, ...]]:
+    """Validate and remove layer-control metadata before normal merging."""
+    inherit_global = raw.pop("inherit_global", True)
+    if not isinstance(inherit_global, bool):
+        raise ValueError("[milknado] inherit_global must be a boolean")
+    replaced: list[str] = []
+    flavors = raw.get("flavor")
+    if isinstance(flavors, dict):
+        for name, flavor in flavors.items():
+            if isinstance(flavor, dict) and "inherit" in flavor:
+                inherit = flavor.pop("inherit")
+                if not isinstance(inherit, bool):
+                    raise ValueError(f"[milknado.flavor.{name}] inherit must be a boolean")
+                if local and not inherit:
+                    replaced.append(name)
+    return inherit_global, tuple(replaced)
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:

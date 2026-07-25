@@ -10,13 +10,16 @@ from milknado.domains.common.agent_argv import (
 from milknado.domains.common.config import (
     FlavorOverride,
     Gate,
+    LoadedConfig,
     MilknadoConfig,
     default_config,
     detect_project_gates,
     global_config_path,
     load_config,
+    load_config_details,
     save_config,
 )
+from milknado.domains.common.config_view import explain_view, resolved_view
 from milknado.domains.common.doctor import render_report, run_doctor
 from milknado.domains.common.errors import (
     ArchiveIneligible,
@@ -107,6 +110,10 @@ __all__ = [
     "detect_project_gates",
     "global_config_path",
     "load_config",
+    "load_config_details",
+    "LoadedConfig",
+    "explain_view",
+    "resolved_view",
     "slugify",
     "TrustedGlobalPath",
     "resolve_project_path",
