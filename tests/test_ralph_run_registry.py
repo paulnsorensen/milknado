@@ -45,6 +45,7 @@ def test_dispatch_inserts_runs_row(graph: Any, tmp_path: Path) -> None:
     assert row["node_id"] == 1
     assert row["status"] == "running"
     assert row["log_path"].endswith(".ralph-logs")
+    assert (Path(row["log_path"]) / "0000-dispatch.log").is_file()
 
 
 def test_verdict_message_deposit_no_longer_fk_fails(graph: Any, tmp_path: Path) -> None:
@@ -93,31 +94,23 @@ def test_cancel_marks_ralph_run_row_cancelled(graph: Any, tmp_path: Path) -> Non
     assert row is not None and row["error"] == "cancelled"
 
 
-def test_cancel_pidless_ralph_run_via_sentinel(graph: Any, tmp_path: Path) -> None:
-    """The real pid-less path: no artificial set_run_pid. cancel_run takes the
-    async-sentinel path; the executor's cancel watcher observes the sentinel,
-    force-stops the loop, and finalizes the row cancelled inside the confirm
-    bound — live cancel must not stall and raise."""
+def test_cancel_pidless_coordinator_refuses_without_writing_marker(
+    graph: Any, tmp_path: Path
+) -> None:
+    """A live coordinator-owned run lacks a worker pid, so cancellation must
+    refuse without leaving a marker for the coordinator to observe later."""
     graph.add_node("cancellable pid-less ralph run")
-    # live=True: the run's thread is alive from creation, so the watcher
-    # stays on its poll loop and observes the sentinel (a dead thread would
-    # exit it on the dead-thread branch first).
-    ralph = FakeRalph(live=True)
-    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    executor = Executor(
+        graph=graph, git=FakeGit(), ralph=FakeRalph(live=True), crg=FakeCrg()
+    )
     result = executor.dispatch(1, _config(tmp_path))
     assert graph.get_run(result.run_id)["pid"] is None
 
-    final = cancel_run(
-        graph,
-        MagicMock(),
-        MagicMock(),
-        tmp_path,
-        result.run_id,
-    )
-    assert final["status"] == "failed"
-    assert final["error"] == "cancelled"
-    row = graph.get_run(result.run_id)
-    assert row is not None and row["error"] == "cancelled"
+    with pytest.raises(RuntimeError, match="no confirmed worker exit"):
+        cancel_run(graph, MagicMock(), MagicMock(), tmp_path, result.run_id)
+
+    assert graph.get_run(result.run_id)["status"] == "running"
+    assert not (runs_dir(tmp_path) / f"{result.run_id}.cancel").exists()
 
 
 def test_watcher_exits_when_run_thread_is_dead(graph: Any, tmp_path: Path) -> None:
@@ -141,56 +134,18 @@ def test_watcher_exits_when_run_thread_is_dead(graph: Any, tmp_path: Path) -> No
     assert row is not None and row["status"] == "running"
 
 
-def test_cancel_force_stop_failure_fails_closed_then_recovers(
-    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Force-stop-failure branch: when the watcher cannot confirm the loop
-    stopped, it must NOT write a falsely-terminal row — the row stays
-    'running', so cancel_run's confirm bound expires and raises the
-    preserving error instead of tearing a worktree out from under a live
-    worker. The watcher is NOT one-shot: the sentinel stays set, it keeps
-    observing, and once the transient stop failure clears it retries the
-    force-stop and finalizes the row cancelled — a retried cancel then
-    succeeds."""
+def test_cancel_refusal_creates_no_marker(graph: Any, tmp_path: Path) -> None:
     graph.add_node("wedged ralph run")
-    ralph = FakeRalph(live=True, id_prefix="wedged")
-    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+    executor = Executor(
+        graph=graph, git=FakeGit(), ralph=FakeRalph(live=True, id_prefix="wedged"), crg=FakeCrg()
+    )
     result = executor.dispatch(1, _config(tmp_path))
-    ralph.force_stop_result = False
-    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.5)
 
-    with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
+    with pytest.raises(RuntimeError, match="no confirmed worker exit"):
         cancel_run(graph, MagicMock(), MagicMock(), tmp_path, result.run_id)
 
-    row = graph.get_run(result.run_id)
-    assert row is not None and row["status"] == "running", "no falsely-terminal row"
-    assert set(ralph.force_stopped) == {result.run_id}
-
-    # The transient failure clears: the still-observing watcher retries the
-    # force-stop, kills the loop, and finalizes the row cancelled.
-    ralph.force_stop_result = True
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        row = graph.get_run(result.run_id)
-        if row is not None and row["status"] != "running":
-            break
-        time.sleep(0.05)
-    row = graph.get_run(result.run_id)
-    assert row is not None and row["error"] == "cancelled", (
-        "watcher must retry the force-stop and finalize cancelled"
-    )
-
-    # A retried cancel no longer strands: the terminal row early-returns.
-    final = cancel_run(graph, MagicMock(), MagicMock(), tmp_path, result.run_id)
-    assert final["error"] == "cancelled"
-
-    watcher = next(
-        (t for t in threading.enumerate() if t.name == f"ralph-cancel-watch-{result.run_id}"),
-        None,
-    )
-    if watcher is not None:  # None: it already exited — the same proof
-        watcher.join(timeout=5)
-        assert not watcher.is_alive(), "watcher must exit after the confirmed stop"
+    assert graph.get_run(result.run_id)["status"] == "running"
+    assert not (runs_dir(tmp_path) / f"{result.run_id}.cancel").exists()
 
 
 def test_watcher_retry_backoff_doubles_and_caps(
@@ -266,11 +221,10 @@ def test_completed_ralph_run_row_is_finalized(graph: Any, tmp_path: Path) -> Non
 def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
     graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """H1 (corrected): persistence must precede execution, and the row must
-    carry the real completion timeout with NO pid, mirroring the async-worker
-    path — so cancel always routes through the sentinel path, never the
-    process-kill path (an executor ralph loop runs in-process; its pid is the
-    server's own pid)."""
+    """Persistence precedes execution and records its completion timeout.
+
+    Executor runs intentionally leave ``runs.pid`` NULL because their owner is
+    the coordinator; cancellation must not process-kill that coordinator."""
     call_order: list[str] = []
     orig_graph_start_run = graph.start_run
 
@@ -346,41 +300,46 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     assert graph.get_run(run_id)["status"] == "failed"
 
 
-def test_cancel_pidless_stale_row_routes_through_sentinel_not_pid_kill(
-    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_cancel_refuses_pidless_run_without_owner_without_writing_marker(
+    graph: Any, tmp_path: Path
 ) -> None:
-    """Regression guard for H1: an executor row with pid=None must route
-    cancel through _cancel_async_run, never _cancel_pid_run — the latter
-    would terminate the recorded pid's process group, which for an
-    in-process executor ralph loop is the server's own pid."""
-    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.2)
-    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_POLL_SECS", 0.05)
-
-    def _fail_if_called(*a: Any, **kw: Any) -> None:
-        raise AssertionError("_cancel_pid_run must not be called for a pid-less row")
-
-    monkeypatch.setattr(cancel_module, "_cancel_pid_run", _fail_if_called)
-
     graph.add_node("pidless cancel routing")
     run_id = "node-1-20200101T000000Z-routing"
     graph.start_run(run_id, 1, str(tmp_path / "routing.log"), "2020-01-01T00:00:00Z", 300)
-    assert graph.get_run(run_id)["pid"] is None
 
-    with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
+    with pytest.raises(RuntimeError, match="no confirmed worker owner"):
         cancel_run(graph, MagicMock(), MagicMock(), tmp_path, run_id)
+
+    assert graph.get_run(run_id)["status"] == "running"
+    assert not (runs_dir(tmp_path) / f"{run_id}.cancel").exists()
+
+
+def test_cancel_recovers_dead_coordinator_without_terminating_its_group(
+    graph: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.domains.dispatch.reconcile as reconcile_module
+
+    graph.add_node("dead coordinator")
+    run_id = "node-1-20200101T000000Z-dead"
+    assert graph.claim_node(1, run_id, now="2026-01-01T00:00:00+00:00", pid=424242)
+    graph.start_run(run_id, 1, str(tmp_path / "dead.log"), "2026-01-01T00:00:00+00:00", 300)
+    monkeypatch.setattr(cancel_module, "pid_alive", lambda _pid: False)
+    monkeypatch.setattr(reconcile_module, "pid_alive", lambda _pid: False)
+
+    final = cancel_run(graph, MagicMock(), MagicMock(), tmp_path, run_id)
+
+    assert final["error"] == "worker session gone"
+    assert graph.get_run(run_id)["status"] == "failed"
+    assert graph.get_node(1).status.value == "failed"
+    assert graph.get_node(1).run_id is None
 
 
 def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
-    """Blocker 1B hardening: an executor-dispatched node's run_id must pass
-    the MCP tools' RUN_ID_RE gate (`node-<id>-<ts>-<hex>` shape), not just the
-    domain functions the earlier tests exercise directly.
+    """Executor-dispatched run IDs pass the MCP tools' RUN_ID_RE gate.
 
-    Uses the same on-disk db path the MCP tools open (via `open_graph`)
-    instead of the `graph` fixture's separate `test.db`, so the dispatch and
-    the MCP calls below see the same runs table. `FakeRalph(live=True)` gives
-    the run a real thread so the cancel watcher stays on its poll loop long
-    enough for `milknado_run_cancel`'s sentinel-confirm wait to observe it —
-    the graph must stay open for the watcher thread until after that cancel.
+    The coordinator-owned NULL-PID state is deliberately not cancellable until
+    it has a worker pid or is confirmed dead, so the MCP cancel must refuse
+    without writing a delayed cancellation marker.
     """
     root = str(tmp_path)
     mcp_graph, _cfg = open_graph(tmp_path)
@@ -397,8 +356,8 @@ def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
         polled = milknado_run_loop_poll(run_id=result.run_id, project_root=root)
         assert polled["run_id"] == result.run_id
 
-        cancelled = milknado_run_cancel(run_id=result.run_id, project_root=root)
-        assert cancelled["run_id"] == result.run_id
+        with pytest.raises(RuntimeError, match="no confirmed worker exit"):
+            milknado_run_cancel(run_id=result.run_id, project_root=root)
     finally:
         mcp_graph.close()
 
@@ -429,8 +388,8 @@ def test_cancel_stale_adopted_round_run_id_is_a_noop(tmp_path: Path) -> None:
         assert before_node.run_id == parent_fence, "adopted dispatch keeps the parent fence"
         assert result.run_id != parent_fence, "the round gets its own distinct run_id"
 
-        cancelled = milknado_run_cancel(run_id=result.run_id, project_root=root)
-        assert cancelled["run_id"] == result.run_id
+        with pytest.raises(RuntimeError, match="no confirmed worker owner"):
+            milknado_run_cancel(run_id=result.run_id, project_root=root)
 
         after_node = mcp_graph.get_node(1)
         assert after_node is not None

@@ -43,6 +43,7 @@ from milknado.domains.dispatch.reconcile import (
     find_terminal_runs_for_node,
     latest_terminal_run,
     reconcile_node_status,
+    reconcile_orphaned_runs,
 )
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
@@ -89,6 +90,7 @@ __all__ = [
     "poll_async_run",
     "reclaim_stale_node",
     "reconcile_node_status",
+    "reconcile_orphaned_runs",
     "reconcile_run_window",
     "render_brief",
     "resolve_attach_target",

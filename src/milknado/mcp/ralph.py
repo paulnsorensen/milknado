@@ -20,7 +20,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from milknado.adapters import TmuxAdapter
 from milknado.app.ralph import (
     _DEFAULT_RUNNER,
     RalphClaim,
@@ -32,7 +31,6 @@ from milknado.app.ralph import (
 )
 from milknado.domains.dispatch import (
     RUN_ID_RE,
-    reconcile_run_window,
     runs_dir,
     tail,
     tail_latest_iteration_log,
@@ -87,11 +85,7 @@ def milknado_run_loop_start(
 
 @mcp.tool()
 def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
-    """Poll a ralph run started by milknado_run_loop_start.
-
-    Returns the run state, rebase result, log tail, and summary fields without
-    changing node status.
-    """
+    """Poll a ralph run from durable state and its persisted logs."""
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
@@ -103,19 +97,8 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
         graph.close()
     if state is None:
         raise ValueError(f"run {run_id!r} not found")
-    if state.get("status") == "done":
-        # Per-row window reconcile backstop: a completed run's window is
-        # normally self-cleaned; kill a straggler (e.g. after a restart).
-        reconcile_run_window(TmuxAdapter(root), state)
-    # Derive the log path from the validated run_id rather than trusting the
-    # stored field: no arbitrary-file read via a tampered log_path.
     summary = tail(rdir / f"{run_id}.log")
     if not summary:
-        # Executor-owned (in-process) ralph runs never write the detached
-        # path's flat <run_id>.log — they write one file per iteration under
-        # a `.ralph-logs` directory instead. Only trusted to the extent of
-        # tailing *.log files strictly inside the row's own recorded
-        # directory — never an arbitrary path derived from user input.
         log_path = state.get("log_path")
         if log_path:
             candidate = Path(log_path).resolve()

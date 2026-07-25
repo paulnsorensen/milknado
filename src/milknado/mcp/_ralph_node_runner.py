@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from pathlib import Path
 
 from milknado.domains.common import RunResult
@@ -70,6 +71,9 @@ def main(argv: list[str] | None = None) -> int:
         args.base_oid,
     )
     graph, cfg = open_graph(root)
+    pid = os.getpid()
+    graph.set_run_pid(args.run_id, pid)
+    graph.set_pid(args.node_id, args.run_id, pid)
     try:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)

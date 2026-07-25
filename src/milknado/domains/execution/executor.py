@@ -611,10 +611,13 @@ class Executor:
         # the sweep's timeout+grace window), so the row is never false-
         # flipped. No pid means cancel correctly routes through the sentinel
         # path, never _cancel_pid_run.
+        log_dir = wt_path / ".ralph-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "0000-dispatch.log").touch()
         self._graph.start_run(
             run_id,
             node.id,
-            str(wt_path / ".ralph-logs"),
+            str(log_dir),
             datetime.now(UTC).isoformat(),
             config.completion_timeout_seconds,
         )

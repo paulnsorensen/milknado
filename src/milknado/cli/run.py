@@ -142,13 +142,14 @@ def run(
                 console.print(f"[red]error: {msg}[/red]")
             raise typer.Exit(code=1)
 
+        interactive = _is_interactive_terminal()
+        controller = build_execution_controller(graph, config, project_root) if interactive else None
         if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return
 
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
-        if _is_interactive_terminal():
-            controller = build_execution_controller(graph, config, project_root)
+        if interactive:
             result = run_execution_tui(
                 controller,
                 feature_branch=feature_branch,

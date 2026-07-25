@@ -49,6 +49,12 @@ def test_main_logs_terminal_event_with_run_id(
             self.finished = {"run_id": run_id, "result": result}
             return self.finish_result
 
+        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
+
+        def set_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
+
         def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
             return 1
 

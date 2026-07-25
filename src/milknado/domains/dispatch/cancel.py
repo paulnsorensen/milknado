@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from pathlib import Path
 
-from milknado.domains.common import GitPort, RunResult, UnlandedWorkError
+from milknado.domains.common import GitPort, RunResult, UnlandedWorkError, pid_alive
 from milknado.domains.dispatch._runstate import clear_cancel, now_iso, request_cancel, runs_dir
 from milknado.domains.dispatch.ports import ProcessTerminationPort
-from milknado.domains.dispatch.reconcile import reconcile_node_status
+from milknado.domains.dispatch.reconcile import fail_stale_running_runs, reconcile_node_status
 
 _logger = logging.getLogger(__name__)
 
@@ -128,15 +129,17 @@ def _cancel_async_run(
 ) -> dict:
     rdir = runs_dir(root)
     request_cancel(rdir, run_id)
-    final = _await_cancel_finalize(graph, run_id)
-    if final is None:
-        latest = graph.get_run(run_id)
-        if latest is None or latest.get("status") == "running":
-            raise RuntimeError(
-                f"run {run_id!r} has not confirmed worker exit; state and worktree preserved"
-            )
-        final = latest
-    clear_cancel(rdir, run_id)
+    try:
+        final = _await_cancel_finalize(graph, run_id)
+        if final is None:
+            latest = graph.get_run(run_id)
+            if latest is None or latest.get("status") == "running":
+                raise RuntimeError(
+                    f"run {run_id!r} has not confirmed worker exit; state and worktree preserved"
+                )
+            final = latest
+    finally:
+        clear_cancel(rdir, run_id)
     preserved = _reconcile_cancel(
         graph, git, final.get("node_id"), run_id, final.get("status", "failed")
     )
@@ -163,4 +166,24 @@ def cancel_run(
         return state
     if state.get("pid") is not None:
         return _cancel_pid_run(graph, git, process, state, run_id)
+
+    node_id = state.get("node_id")
+    node = graph.get_node(node_id) if node_id is not None else None
+    owner_pid = node.pid if node is not None and node.run_id == run_id else None
+    if owner_pid is None:
+        raise RuntimeError(
+            f"run {run_id!r} has no confirmed worker owner; state and worktree preserved"
+        )
+    if not pid_alive(owner_pid):
+        fail_stale_running_runs(graph, node_id)
+        final = graph.get_run(run_id)
+        if final is None or final.get("status") == "running":
+            raise RuntimeError(f"run {run_id!r} dead-owner recovery lost its terminal write")
+        reconcile_node_status(graph, node_id, final["status"], run_id=run_id)
+        final["worktree_preserved"] = node.worktree_path
+        return final
+    if owner_pid == os.getpid():
+        raise RuntimeError(
+            f"run {run_id!r} has no confirmed worker exit; state and worktree preserved"
+        )
     return _cancel_async_run(graph, git, project_root, state, run_id)

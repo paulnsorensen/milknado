@@ -461,6 +461,16 @@ def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
     assert state["summary"] == ""  # derived log file absent -> empty tail, never KeyError
 
 
+def test_terminal_poll_does_not_invoke_tmux_subprocess(tmp_path: Path, monkeypatch) -> None:
+    run_id = "node-1-20260101T000000Z-cafe"
+    _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: pytest.fail("tmux called"))
+
+    state = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
+
+    assert state["status"] == "done"
+
+
 def test_runner_crash_writes_detail_and_keeps_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -572,6 +582,12 @@ def test_runner_writes_done_on_successful_outcome(
         def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
             self.finished = {"run_id": run_id, **vars(result)}
 
+        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
+
+        def set_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
+
         def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
             return 1
 
@@ -662,6 +678,12 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
 
         def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
             self.finished = {"run_id": run_id, **vars(result)}
+
+        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
+
+        def set_pid(self, *_args) -> None:  # noqa: ANN002
+            pass
 
         def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
             return 1

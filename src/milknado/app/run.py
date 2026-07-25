@@ -342,8 +342,10 @@ def build_execution_controller(
 ) -> ExecutionController:
     """Compose the sole UI-facing execution API from application dependencies."""
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
+    reconcile_orphaned_runs(graph)
     ralph = LoopAdapter()
     executor = Executor(
         graph=graph,
@@ -366,14 +368,12 @@ def run_execution_loop(
     feature_branch: str,
     strict: bool,
 ) -> RunLoopResult:
-    """Wire the executor + run loop and drive it to completion.
-
-    Owns the adapter composition (git, loop, crg, executor, run loop) so the CLI
-    ``run`` command never constructs an adapter or holds this policy inline.
-    """
+    """Wire the executor + run loop and drive it to completion."""
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
+    reconcile_orphaned_runs(graph)
     git = GitAdapter(project_root)
     ralph = LoopAdapter()
     crg = CrgAdapter(project_root)
