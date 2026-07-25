@@ -591,6 +591,10 @@ class Executor:
             "base_oid": base_oid,
             "run_id": ralph_run_id,
         }
+        if node.flavor == "review":
+            create_kwargs["completion_probe"] = lambda run_id=ralph_run_id: (
+                self._graph.latest_run_message(run_id, "review_terminal") is not None
+            )
         if session is not None:
             create_kwargs["runtime_policy"] = RuntimePolicy(session=session)
         run = self._ralph.create_run(**create_kwargs)

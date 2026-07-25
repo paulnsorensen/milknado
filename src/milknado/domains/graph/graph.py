@@ -568,6 +568,14 @@ class MikadoGraph(_AnalyticsFacade):
         return _persistence.deposit_run_message(self._conn, run_id, role, body, created_at)
 
     @_synchronized
+    def deposit_review_verdict(
+        self, run_id: str, verdict: str, findings: str, created_at: str
+    ) -> int:
+        return _persistence.deposit_review_verdict(
+            self._conn, run_id, verdict, findings, created_at
+        )
+
+    @_synchronized
     def latest_run_message(self, run_id: str, role: str) -> str | None:
         return _persistence.latest_run_message(self._conn, run_id, role)
 

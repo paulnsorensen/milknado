@@ -213,8 +213,7 @@ def milknado_deposit_review(
     try:
         if graph.get_run(run_id) is None:
             raise ValueError(f"run {run_id!r} not found")
-        body = f"{verdict}\n{findings_md}"
-        seq = graph.deposit_run_message(run_id, "review", body, now_iso())
+        seq = graph.deposit_review_verdict(run_id, verdict, findings_md, now_iso())
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}

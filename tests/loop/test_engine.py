@@ -60,6 +60,21 @@ class TestRunLoop:
         assert state.completed == 3
         assert mock_run.call_count == 3
 
+    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
+    def test_ordinary_loop_ignores_unrelated_completion_probe(self, mock_run, tmp_path):
+        config = make_config(
+            tmp_path,
+            max_iterations=2,
+            stop_on_completion_signal=True,
+            completion_probe=lambda: False,
+        )
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_run.call_count == 2
+        assert state.status is RunStatus.COMPLETED
+
     @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
     def test_failed_iterations_counted(self, mock_run, tmp_path):
         config = make_config(tmp_path, max_iterations=2)
