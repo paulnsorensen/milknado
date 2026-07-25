@@ -347,6 +347,9 @@ class TestRunManagerForceStop:
         assert not managed.thread.is_alive()
         assert managed.state.status is RunStatus.STOPPED
         assert managed.state.completed == 0
+        deadline = time.monotonic() + 5
+        while not stopped.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert stopped.read_text(encoding="utf-8") == "stopped"
 
 
