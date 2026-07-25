@@ -132,6 +132,7 @@ def reconcile_orphaned_runs(graph) -> list[dict]:  # noqa: ANN001
         reconciled.append(terminal)
     return reconciled
 
+
 def find_terminal_runs_for_node(
     graph,
     node_id: int,

@@ -100,9 +100,7 @@ def test_cancel_pidless_coordinator_refuses_without_writing_marker(
     """A live coordinator-owned run lacks a worker pid, so cancellation must
     refuse without leaving a marker for the coordinator to observe later."""
     graph.add_node("cancellable pid-less ralph run")
-    executor = Executor(
-        graph=graph, git=FakeGit(), ralph=FakeRalph(live=True), crg=FakeCrg()
-    )
+    executor = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(live=True), crg=FakeCrg())
     result = executor.dispatch(1, _config(tmp_path))
     assert graph.get_run(result.run_id)["pid"] is None
 

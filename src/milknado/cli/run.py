@@ -143,7 +143,9 @@ def run(
             raise typer.Exit(code=1)
 
         interactive = _is_interactive_terminal()
-        controller = build_execution_controller(graph, config, project_root) if interactive else None
+        controller = (
+            build_execution_controller(graph, config, project_root) if interactive else None
+        )
         if not get_dispatchable_nodes(graph):
             console.print("No nodes ready for execution.")
             return
