@@ -1394,24 +1394,6 @@ class TestBuildCommitMessage:
         assert desc in msg
 
 
-class TestSlugify:
-    def test_basic_slugify(self) -> None:
-        from milknado.domains.execution.executor import _slugify
-
-        assert _slugify("Extract Payment Service") == "extract-payment-service"
-
-    def test_truncates_long_slugs(self) -> None:
-        from milknado.domains.execution.executor import _slugify
-
-        result = _slugify("a" * 50)
-        assert len(result) <= 30
-
-    def test_strips_special_chars(self) -> None:
-        from milknado.domains.execution.executor import _slugify
-
-        assert _slugify("fix: auth (v2)") == "fix-auth-v2"
-
-
 class TestIsTransient:
     def test_os_error_is_transient(self) -> None:
         from milknado.domains.execution.executor import _is_transient

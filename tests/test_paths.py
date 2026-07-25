@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common.paths import normalize_hint_paths
+from milknado.domains.common.paths import (
+    TrustedGlobalPath,
+    normalize_hint_paths,
+    resolve_project_path,
+    slugify,
+    trust_global_path,
+)
 
 
 class TestNormalizeHintPaths:
@@ -73,3 +79,33 @@ class TestNormalizeHintPaths:
         # Padding must not persist into the stored hint, or it never matches the real file.
         result = normalize_hint_paths(["  src/foo.py  "], tmp_path)
         assert result == ["src/foo.py"]
+
+
+class TestSlugify:
+    def test_normalizes_text_and_trims_truncated_separator(self) -> None:
+        assert slugify("Wire the Export Path!") == "wire-the-export-path"
+        assert slugify("abc def", max_length=4) == "abc"
+
+    def test_blank_and_punctuation_only_values_return_empty(self) -> None:
+        assert slugify("  ") == ""
+        assert slugify("!!!") == ""
+
+    def test_truncation_collisions_are_not_disambiguated(self) -> None:
+        first = slugify("abcdefghij first", max_length=10)
+        second = slugify("abcdefghij second", max_length=10)
+        assert first == second == "abcdefghij"
+
+
+class TestResolveProjectPath:
+    def test_valid_missing_path_is_resolved_under_root(self, tmp_path: Path) -> None:
+        result = resolve_project_path("future/file.md", tmp_path, label="path")
+        assert result == tmp_path / "future/file.md"
+
+    def test_only_trusted_global_paths_may_escape_project_root(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / "global.md"
+        trusted = trust_global_path(str(outside), tmp_path)
+
+        assert isinstance(trusted, TrustedGlobalPath)
+        assert resolve_project_path(trusted, tmp_path, label="path") == outside
+        with pytest.raises(ValueError, match="escapes"):
+            resolve_project_path(str(outside), tmp_path, label="path")

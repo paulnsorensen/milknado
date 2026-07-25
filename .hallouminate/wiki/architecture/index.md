@@ -10,6 +10,7 @@
 - [graph-read-port](./graph-read-port.md) — Graph read port and execution snapshots
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [omp-json-streaming](./omp-json-streaming.md) — OMP JSON Event Streaming
+- [path-contracts](./path-contracts.md) — Path contracts
 - [planning](./planning.md) — Planning Domain — Goal Decomposition & Manifest
 - [prompt-threading](./prompt-threading.md) — Prompt Threading — how briefs and worker definitions reach a dispatch
 - [resume-mode-worktree-lifecycle](./resume-mode-worktree-lifecycle.md) — Resume-mode worktree lifecycle

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import MikadoNode, NodeKind
+from milknado.domains.common import MikadoNode, NodeKind, slugify
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.reporting import build_harvest_summary, format_harvest_text
 from milknado.domains.wiki._locate import (
@@ -24,7 +24,6 @@ from milknado.domains.wiki._serialize import (
     load_frontmatter,
     replace_harvest_block,
     set_frontmatter_field,
-    slugify,
 )
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult
 

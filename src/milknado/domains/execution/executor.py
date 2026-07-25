@@ -23,6 +23,7 @@ from milknado.domains.common.errors import (
     TransientDispatchError,
     UnlandedWorkError,
 )
+from milknado.domains.common.paths import slugify
 from milknado.domains.common.protocols import GraphExecutionSnapshot
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
@@ -110,11 +111,6 @@ class RebaseConflict:
 def _build_commit_message(node_id: int, description: str) -> str:
     subject = description[:57] + "..." if len(description) > 60 else description
     return f"feat(milknado-{node_id}): {subject}\n\n{description}\n\nMilknado-Node: {node_id}"
-
-
-def _slugify(text: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:30]
 
 
 _LOOP_SCAFFOLDING = ("RALPH.md", ".ralph-logs/")
@@ -473,7 +469,7 @@ class Executor:
     def _resolve_worktree_path(
         self, node_id: int, node: MikadoNode, config: ExecutionConfig
     ) -> tuple[Path, str]:
-        slug = _slugify(node.description)
+        slug = slugify(node.description, max_length=30) or "node"
         worktree_name = config.worktree_pattern.format(node_id=node_id, slug=slug)
         wt_path = config.project_root / worktree_name
         resolved_root = config.project_root.resolve()
@@ -871,7 +867,7 @@ class Executor:
         worktree: Path,
         findings_md: str,
     ) -> None:
-        slug = _slugify(node.description) or str(node.id)
+        slug = slugify(node.description, max_length=30) or str(node.id)
         path = worktree / ".cheese" / "age" / f"{slug}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")

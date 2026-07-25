@@ -747,6 +747,12 @@ class TestIssueHelpers:
         with pytest.raises(ValueError, match="issue_refs must not be empty"):
             materialize_issue_spec([], project_dir, MagicMock())
 
+    def test_normalize_plan_identifier_has_fallback_and_preserves_spec_stems(self) -> None:
+        from milknado.domains.planning import normalize_plan_identifier
+
+        assert normalize_plan_identifier("  no_heading.v2  ", "plan") == "no_heading.v2"
+        assert normalize_plan_identifier("!!!", "plan") == "plan"
+
 
 def _make_plan_result(**kwargs: object) -> MagicMock:
     """Build a PlanResult-like mock with sensible defaults."""

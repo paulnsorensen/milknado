@@ -15,7 +15,11 @@ from milknado.domains.planning.ports import (
     PlanningProcessPort,
     PlanningProcessResult,
 )
-from milknado.domains.planning.source_material import derive_goal, resolve_plan_spec
+from milknado.domains.planning.source_material import (
+    derive_goal,
+    normalize_plan_identifier,
+    resolve_plan_spec,
+)
 from milknado.domains.planning.telemetry import record_batch_snapshot
 
 __all__ = [
@@ -33,4 +37,5 @@ __all__ = [
     "record_batch_snapshot",
     "derive_goal",
     "resolve_plan_spec",
+    "normalize_plan_identifier",
 ]

@@ -43,7 +43,7 @@ def _create_node_worktree(
     description: str,
     worktree_pattern: str,
 ) -> IsolateContext:
-    slug = slugify(description)
+    slug = slugify(description) or "node"
     wt_path = root / worktree_pattern.format(node_id=node_id, slug=slug)
     if not wt_path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"worktree path resolves outside project_root: {wt_path!r}")
