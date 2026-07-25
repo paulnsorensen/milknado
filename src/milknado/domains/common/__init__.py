@@ -44,6 +44,8 @@ from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import (
     CrgPort,
     GitPort,
+    GraphExecutionSnapshot,
+    GraphReadPort,
     LoopPort,
     ProgressEvent,
     SymbolLocation,
@@ -78,6 +80,8 @@ __all__ = [
     "CrgPort",
     "GitPort",
     "GitOperationError",
+    "GraphExecutionSnapshot",
+    "GraphReadPort",
     "InvalidContainment",
     "InvalidTransition",
     "RalphMarkdownWriteError",

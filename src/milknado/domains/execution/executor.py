@@ -24,6 +24,7 @@ from milknado.domains.common.errors import (
     UnlandedWorkError,
 )
 from milknado.domains.common.paths import slugify
+from milknado.domains.common.protocols import GraphExecutionSnapshot
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoNode,
@@ -36,7 +37,7 @@ from milknado.domains.execution._context import build_node_context
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
+    from milknado.domains.common.protocols import CrgPort, GitPort, GraphReadPort, LoopPort
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
@@ -209,25 +210,39 @@ def _is_transient(exc: BaseException) -> bool:
     return False
 
 
-def get_dispatchable_nodes(graph: MikadoGraph) -> list[int]:
-    ready_ids = [node.id for node in graph.get_ready_nodes()]
-    active_ids = [node.id for node in graph.get_all_nodes() if node.status is NodeStatus.RUNNING]
-    conflicts = graph.check_parallel_safety([*active_ids, *ready_ids])
+def _dispatchable_node_ids(snapshot: GraphExecutionSnapshot) -> list[int]:
+    ready_ids = snapshot.ready_node_ids
+    active_ids = set(snapshot.running_node_ids)
     blocked = {
         right_id
-        for left_id, right_id, paths in conflicts
+        for left_id, right_id, _paths in snapshot.parallel_conflicts
         if right_id in ready_ids and (left_id in active_ids or left_id in ready_ids)
     }
-    milknado_logger = logging.getLogger("milknado")
-    for left_id, right_id, paths in conflicts:
+    for left_id, right_id, paths in snapshot.parallel_conflicts:
         if right_id in blocked:
-            milknado_logger.info(
-                "Node %d blocked by Node %d on shared files: %s",
-                right_id,
-                left_id,
-                paths,
+            logging.getLogger("milknado").info(
+                "Node %d blocked by Node %d on shared files: %s", right_id, left_id, paths
             )
     return [node_id for node_id in ready_ids if node_id not in blocked]
+
+
+def get_dispatchable_nodes(graph: GraphReadPort) -> list[int]:
+    return _dispatchable_node_ids(graph.get_execution_snapshot([]))
+
+
+def get_execution_overview(
+    graph: GraphReadPort,
+    node_ids: list[int],
+    excluded_node_ids: set[int] | None = None,
+) -> tuple[str, dict[int, str], int]:
+    snapshot = graph.get_execution_snapshot(node_ids)
+    excluded = excluded_node_ids or set()
+    available = sum(node_id not in excluded for node_id in _dispatchable_node_ids(snapshot))
+    return (
+        snapshot.root.description if snapshot.root is not None else "",
+        {node.id: node.description for node in snapshot.nodes},
+        available,
+    )
 
 
 class WorktreeManager:

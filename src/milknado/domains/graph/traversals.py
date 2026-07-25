@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from milknado.domains.common import MikadoNode
-
-from .graph import MikadoGraph
+from milknado.domains.common import GraphReadPort, MikadoNode
 
 
-def walk_ancestors(graph: MikadoGraph, node_id: int) -> list[MikadoNode]:
+def walk_ancestors(graph: GraphReadPort, node_id: int) -> list[MikadoNode]:
     """Return nodes from `node_id` (leaf) up to the root (no parents).
 
     Follows the first parent encountered at each step, giving a deterministic
