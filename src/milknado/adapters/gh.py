@@ -14,19 +14,36 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from dataclasses import dataclass
+from collections.abc import Sequence
+from typing import TypeVar
 
+from pydantic import BaseModel, Field, ValidationError
 
-@dataclass(frozen=True)
-class GithubIssue:
-    title: str
-    body: str
-    number: int | None
-    url: str
+from milknado.domains.github import (
+    GithubField,
+    GithubIssue,
+    GithubItem,
+    GithubProject,
+)
 
 
 class GhTransportError(RuntimeError):
     """A `gh` invocation failed — raised loud with the command and its stderr."""
+
+
+class _IdResponse(BaseModel, frozen=True):
+    id: str = Field(min_length=1, strict=True)
+
+
+class _ItemListResponse(BaseModel, frozen=True):
+    items: list[GithubItem] = Field(default_factory=list)
+
+
+class _FieldListResponse(BaseModel, frozen=True):
+    fields: list[GithubField] = Field(default_factory=list)
+
+
+ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 
 def _gh_bin() -> str:
@@ -52,20 +69,24 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
         raise GhTransportError(f"`gh {' '.join(args)}` failed: {exc.stderr.strip()}") from exc
 
 
-def _run_json(args: list[str]) -> dict:
-    """Run `gh <args>` and parse stdout as a JSON object; raise GhTransportError on bad output."""
+def _run_json(args: list[str]) -> object:
+    """Run `gh <args>` and parse its JSON response."""
     result = _run(args)
     try:
-        data = json.loads(result.stdout)
+        return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
         raise GhTransportError(
             f"`gh {' '.join(args)}` returned unparseable JSON: {result.stdout.strip()[:200]!r}"
         ) from exc
-    if not isinstance(data, dict):
-        raise GhTransportError(
-            f"`gh {' '.join(args)}` returned a non-object JSON payload: {data!r}"
-        )
-    return data
+
+
+def _run_model(args: list[str], model: type[ResponseModel]) -> ResponseModel:
+    data = _run_json(args)
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        command = " ".join(args[:2])
+        raise GhTransportError(f"`gh {command}` response is malformed: {exc}") from exc
 
 
 def gh_preflight() -> None:
@@ -92,23 +113,17 @@ def gh_preflight() -> None:
         )
 
 
-def gh_project_view(owner: str, number: int) -> dict:
-    """Return the project's own metadata, including its `id` (PVT node id)."""
-    data = _run_json(["project", "view", str(number), "--owner", owner, "--format", "json"])
-    project_id = data.get("id")
-    if not isinstance(project_id, str) or not project_id:
-        raise GhTransportError(f"`gh project view` response has no valid `id`: {data!r}")
-    if "title" not in data:
-        raise GhTransportError(f"`gh project view` response has no `title`: {data!r}")
-    return data
+def gh_project_view(owner: str, number: int) -> GithubProject:
+    """Return the project's validated metadata."""
+    return _run_model(
+        ["project", "view", str(number), "--owner", owner, "--format", "json"],
+        GithubProject,
+    )
 
 
-def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
-    """Return the project's items: each `{id, title, body, type, url?}`.
-
-    `id` is the ProjectV2 *item* node id (PVTI_...), the goal's github_ref.
-    """
-    return _run_json(
+def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[GithubItem]:
+    """Return validated Project items."""
+    response = _run_model(
         [
             "project",
             "item-list",
@@ -119,13 +134,15 @@ def gh_item_list(owner: str, number: int, *, limit: int = 500) -> list[dict]:
             "json",
             "--limit",
             str(limit),
-        ]
-    ).get("items", [])
+        ],
+        _ItemListResponse,
+    )
+    return response.items
 
 
 def gh_item_add(owner: str, number: int, issue_url: str) -> str:
-    """Link an existing Issue as a project item; return the new item node id."""
-    data = _run_json(
+    """Link an existing Issue as a Project item."""
+    response = _run_model(
         [
             "project",
             "item-add",
@@ -136,12 +153,10 @@ def gh_item_add(owner: str, number: int, issue_url: str) -> str:
             issue_url,
             "--format",
             "json",
-        ]
+        ],
+        _IdResponse,
     )
-    try:
-        return data["id"]
-    except KeyError as exc:
-        raise GhTransportError(f"`gh project item-add` response has no `id`: {data!r}") from exc
+    return response.id
 
 
 def gh_item_edit(
@@ -152,9 +167,7 @@ def gh_item_edit(
     text: str | None = None,
     single_select_option_id: str | None = None,
 ) -> None:
-    """Set one field value on a project item (one field per invocation)."""
-    if (text is None) == (single_select_option_id is None):
-        raise ValueError("gh_item_edit requires exactly one of text or single_select_option_id")
+    """Set one field value on a Project item."""
     args = [
         "project",
         "item-edit",
@@ -165,38 +178,30 @@ def gh_item_edit(
         "--field-id",
         field_id,
     ]
-    if text is not None:
-        args += ["--text", text]
-    else:
-        args += ["--single-select-option-id", single_select_option_id]  # type: ignore[list-item]
+    match text, single_select_option_id:
+        case str(), None:
+            args.extend(("--text", text))
+        case None, str():
+            args.extend(("--single-select-option-id", single_select_option_id))
+        case _:
+            raise ValueError(
+                "gh_item_edit requires exactly one of text or single_select_option_id"
+            )
     _run(args)
 
 
-def gh_field_list(owner: str, number: int) -> list[dict]:
-    """Return the project's fields: each `{id, name, type, options?:[{id,name}]}`."""
-    fields = _run_json(
-        ["project", "field-list", str(number), "--owner", owner, "--format", "json"]
-    ).get("fields", [])
-    for field in fields:
-        field_id = field.get("id")
-        if not isinstance(field_id, str) or not field_id:
-            raise GhTransportError(
-                f"`gh project field-list` returned a field with no valid `id`: {field!r}"
-            )
-        name = field.get("name")
-        if not isinstance(name, str) or not name:
-            raise GhTransportError(
-                f"`gh project field-list` returned a field with no valid `name`: {field!r}"
-            )
-    return fields
+def gh_field_list(owner: str, number: int) -> list[GithubField]:
+    """Return validated Project fields."""
+    response = _run_model(
+        ["project", "field-list", str(number), "--owner", owner, "--format", "json"],
+        _FieldListResponse,
+    )
+    return response.fields
 
 
-def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> dict:
-    """Create a single-select field with ALL options in one call (create-once).
-
-    Never adds options to an existing field — that path is GraphQL-only.
-    """
-    return _run_json(
+def gh_field_create(number: int, owner: str, name: str, options: Sequence[str]) -> str:
+    """Create a single-select field with all options in one call."""
+    response = _run_model(
         [
             "project",
             "field-create",
@@ -209,13 +214,15 @@ def gh_field_create(number: int, owner: str, name: str, options: list[str]) -> d
             "SINGLE_SELECT",
             "--single-select-options",
             ",".join(options),
-        ]
+        ],
+        _IdResponse,
     )
+    return response.id
 
 
-def gh_field_create_text(number: int, owner: str, name: str) -> dict:
-    """Create a free-text field (create-once, used for the harvest field)."""
-    return _run_json(
+def gh_field_create_text(number: int, owner: str, name: str) -> str:
+    """Create a free-text field."""
+    response = _run_model(
         [
             "project",
             "field-create",
@@ -226,22 +233,18 @@ def gh_field_create_text(number: int, owner: str, name: str) -> dict:
             name,
             "--data-type",
             "TEXT",
-        ]
+        ],
+        _IdResponse,
     )
+    return response.id
 
 
 def gh_issue_view(ref: str) -> GithubIssue:
-    """Return stable identity and content for one GitHub issue."""
-    data = _run_json(["issue", "view", ref, "--json", "title,body,number,url"])
-    try:
-        return GithubIssue(
-            title=data["title"],
-            body=data["body"],
-            number=data.get("number"),
-            url=data["url"],
-        )
-    except (KeyError, TypeError) as exc:
-        raise GhTransportError(f"`gh issue view` response is malformed: {data!r}") from exc
+    """Return validated identity and content for one GitHub issue."""
+    return _run_model(
+        ["issue", "view", ref, "--json", "title,body,number,url"],
+        GithubIssue,
+    )
 
 
 def gh_issue_create(owner: str, repo: str, title: str, body: str) -> str:

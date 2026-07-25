@@ -1,7 +1,4 @@
-"""GitHub Projects v2 crossover slice: a peer serialization surface of the
-milknado graph, symmetric to the wiki. import seeds nodes from a Project
-(github-origin); bind projects a wiki-origin roadmap onto a Project; export
-harvests execution state onto the bound Project item fields."""
+"""GitHub Projects v2 crossover slice."""
 
 from milknado.domains.github.bind import GithubBindResult, bind_github_project
 from milknado.domains.github.exporter import (
@@ -10,12 +7,24 @@ from milknado.domains.github.exporter import (
     resolve_github_roadmap_node,
 )
 from milknado.domains.github.importer import GithubImportResult, import_github_roadmap
+from milknado.domains.github.models import (
+    GithubField,
+    GithubFieldOption,
+    GithubIssue,
+    GithubItem,
+    GithubProject,
+)
 from milknado.domains.github.ports import GithubProjectPort
 
 __all__ = [
     "GithubBindResult",
     "GithubExportResult",
+    "GithubField",
+    "GithubFieldOption",
     "GithubImportResult",
+    "GithubIssue",
+    "GithubItem",
+    "GithubProject",
     "GithubProjectPort",
     "bind_github_project",
     "export_github_roadmap",

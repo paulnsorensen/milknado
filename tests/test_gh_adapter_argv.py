@@ -14,7 +14,6 @@ import pytest
 
 from milknado.adapters import gh
 from milknado.adapters.gh import (
-    GithubIssue,
     gh_field_create,
     gh_field_create_text,
     gh_field_list,
@@ -26,6 +25,7 @@ from milknado.adapters.gh import (
     gh_item_list,
     gh_project_view,
 )
+from milknado.domains.github import GithubField, GithubIssue, GithubItem, GithubProject
 
 GH_BIN = "/usr/bin/gh"
 
@@ -59,13 +59,13 @@ class TestWrapperArgv:
     def test_project_view_builds_argv_and_parses(self, wire) -> None:  # noqa: ANN001
         rec = wire(json.dumps({"id": "PVT_1", "title": "RM"}))
         out = gh_project_view("acme", 7)
-        assert out == {"id": "PVT_1", "title": "RM"}
+        assert out == GithubProject(id="PVT_1", title="RM")
         assert rec.calls[0][1:] == ["project", "view", "7", "--owner", "acme", "--format", "json"]
 
     def test_item_list_returns_items_key(self, wire) -> None:  # noqa: ANN001
         rec = wire(json.dumps({"items": [{"id": "PVTI_1", "title": "g"}]}))
         out = gh_item_list("acme", 7, limit=3)
-        assert out == [{"id": "PVTI_1", "title": "g"}]
+        assert out == [GithubItem(id="PVTI_1", title="g")]
         assert rec.calls[0][1:] == [
             "project",
             "item-list",
@@ -131,7 +131,7 @@ class TestWrapperArgv:
     def test_field_list_returns_fields_key(self, wire) -> None:  # noqa: ANN001
         rec = wire(json.dumps({"fields": [{"id": "F_1", "name": "Milknado Status"}]}))
         out = gh_field_list("acme", 7)
-        assert out == [{"id": "F_1", "name": "Milknado Status"}]
+        assert out == [GithubField(id="F_1", name="Milknado Status")]
         assert rec.calls[0][1:] == [
             "project",
             "field-list",
@@ -145,7 +145,7 @@ class TestWrapperArgv:
     def test_field_create_single_select_joins_options(self, wire) -> None:  # noqa: ANN001
         rec = wire(json.dumps({"id": "F_new"}))
         out = gh_field_create(7, "acme", "Milknado Status", ["Pending", "Done"])
-        assert out == {"id": "F_new"}
+        assert out == "F_new"
         assert rec.calls[0][1:] == [
             "project",
             "field-create",
@@ -163,7 +163,7 @@ class TestWrapperArgv:
     def test_field_create_text_uses_text_data_type(self, wire) -> None:  # noqa: ANN001
         rec = wire(json.dumps({"id": "F_txt"}))
         out = gh_field_create_text(7, "acme", "Milknado Harvest")
-        assert out == {"id": "F_txt"}
+        assert out == "F_txt"
         assert rec.calls[0][1:] == [
             "project",
             "field-create",

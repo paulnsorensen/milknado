@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from milknado.domains.github import GithubField
 from milknado.domains.github._fields import (
     STATUS_OPTIONS,
     find_field,
@@ -42,16 +43,17 @@ def test_status_option_name_blocked_is_none() -> None:
 
 
 def test_find_field_by_name() -> None:
-    fields = [{"name": "A"}, {"name": "Milknado Status", "id": "F"}]
-    assert find_field(fields, "Milknado Status") == {"name": "Milknado Status", "id": "F"}
+    fields = [GithubField(id="A", name="A"), GithubField(id="F", name="Milknado Status")]
+    assert find_field(fields, "Milknado Status") == GithubField(id="F", name="Milknado Status")
     assert find_field(fields, "Absent") is None
 
 
 def test_find_option_id() -> None:
-    field = {"options": [{"name": "Done", "id": "opt-done"}]}
+    field = GithubField.model_validate(
+        {"id": "F", "name": "Status", "options": [{"name": "Done", "id": "opt-done"}]}
+    )
     assert find_option_id(field, "Done") == "opt-done"
     assert find_option_id(field, "Missing") is None
-    assert find_option_id({}, "Done") is None
 
 
 def test_format_harvest_text_summary_line_only() -> None:

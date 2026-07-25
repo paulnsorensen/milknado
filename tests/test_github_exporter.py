@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.github import GithubField, GithubItem, GithubProject
 from milknado.domains.github.exporter import (
     export_github_roadmap,
     resolve_github_roadmap_node,
@@ -50,7 +51,7 @@ Export without clobbering human text.
 """
 
 
-def _status_field(*, with_options: bool = True) -> dict:
+def _status_field(*, with_options: bool = True) -> GithubField:
     options = (
         [
             {"id": "opt-pending", "name": "Pending"},
@@ -61,16 +62,18 @@ def _status_field(*, with_options: bool = True) -> dict:
         if with_options
         else []
     )
-    return {"id": "F_status", "name": "Milknado Status", "options": options}
+    return GithubField.model_validate(
+        {"id": "F_status", "name": "Milknado Status", "options": options}
+    )
 
 
-HARVEST_FIELD = {"id": "F_harvest", "name": "Milknado Harvest"}
+HARVEST_FIELD = GithubField(id="F_harvest", name="Milknado Harvest")
 
 
 class FakeExport:
-    def __init__(self, fields: list[dict], items: list[dict]) -> None:
+    def __init__(self, fields: list[GithubField], items: list[dict]) -> None:
         self.fields = fields
-        self.items = items
+        self.items = [GithubItem.model_validate(item) for item in items]
         self.item_edits: list[dict] = []
         self.body_edits: list[tuple[str, str]] = []
         self.project_id = "PVT_1"
@@ -78,13 +81,13 @@ class FakeExport:
     def preflight(self) -> None:
         pass
 
-    def project_view(self, _owner: str, _number: int) -> dict:
-        return {"id": self.project_id}
+    def project_view(self, _owner: str, _number: int) -> GithubProject:
+        return GithubProject(id=self.project_id, title="Demo")
 
-    def field_list(self, _o: str, _n: int) -> list[dict]:
+    def field_list(self, _o: str, _n: int) -> list[GithubField]:
         return self.fields
 
-    def item_list(self, _o: str, _n: int) -> list[dict]:
+    def item_list(self, _o: str, _n: int) -> list[GithubItem]:
         return self.items
 
     def item_edit(self, project_id, item_id, field_id, *, text=None, single_select_option_id=None):  # noqa: ANN001

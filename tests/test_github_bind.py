@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.github import GithubField, GithubItem, GithubProject
 from milknado.domains.github._fields import STATUS_FIELD_NAME, STATUS_OPTIONS
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.github.bind import bind_github_project
@@ -69,8 +70,8 @@ class FakeGh:
         *,
         fail_item_add_once: bool = False,
     ) -> None:
-        self.fields = fields or []
-        self.existing_items = existing_items or []
+        self.fields = [GithubField.model_validate(field) for field in fields or []]
+        self.existing_items = [GithubItem.model_validate(item) for item in existing_items or []]
         self.fail_item_add_once = fail_item_add_once
         self.issues: list[tuple[str, str, str, str]] = []
         self.items: list[str] = []
@@ -81,8 +82,8 @@ class FakeGh:
     def preflight(self) -> None:
         pass
 
-    def project_view(self, _owner: str, _number: int) -> dict:
-        return {"id": "PVT_1"}
+    def project_view(self, _owner: str, _number: int) -> GithubProject:
+        return GithubProject(id="PVT_1", title="Demo")
 
     def issue_create(self, owner: str, repo: str, title: str, body: str) -> str:
         self.issues.append((owner, repo, title, body))
@@ -96,19 +97,19 @@ class FakeGh:
         self.items.append(url)
         return f"PVTI_{len(self.items)}"
 
-    def item_list(self, _owner: str, _number: int) -> list[dict]:
+    def item_list(self, _owner: str, _number: int) -> list[GithubItem]:
         return list(self.existing_items)
 
-    def field_list(self, _owner: str, _number: int) -> list[dict]:
+    def field_list(self, _owner: str, _number: int) -> list[GithubField]:
         return list(self.fields)
 
-    def field_create(self, _number: int, _owner: str, name: str, options: list[str]) -> dict:
+    def field_create(self, _number: int, _owner: str, name: str, options: list[str]) -> str:
         self.created_fields.append((name, options))
-        return {"id": "F_status"}
+        return "F_status"
 
-    def field_create_text(self, _number: int, _owner: str, name: str) -> dict:
+    def field_create_text(self, _number: int, _owner: str, name: str) -> str:
         self.created_text_fields.append(name)
-        return {"id": "F_harvest"}
+        return "F_harvest"
 
 
 def _seed_wiki(tmp_path: Path, *, index: str = INDEX_MD) -> Path:

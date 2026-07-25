@@ -1,5 +1,14 @@
 # Milknado — Agent Instructions
 
+## Mandatory Python Workflow
+
+For every Python implementation, refactor, review, or test change, invoke and follow the
+local `$pythonic` skill at `.agents/skills/pythonic/SKILL.md`. Its Python de-slop and
+Sliced Bread rules are required project conventions, not optional guidance.
+
+Keep `CLAUDE.md` as a pointer to this file so every agent follows one authoritative set
+of repository instructions.
+
 ## Build Gate
 
 **`just check-llm` is the gate. Run it before opening any PR — and only this command.**
