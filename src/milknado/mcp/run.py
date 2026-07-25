@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from milknado.adapters import GitAdapter, ProcessAdapter
+from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter  # noqa: F401
 from milknado.app.run import (
     InlineRunRequest,
     run_inline,

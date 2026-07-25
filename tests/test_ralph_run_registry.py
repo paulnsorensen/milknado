@@ -76,6 +76,7 @@ def test_cancel_marks_ralph_run_row_cancelled(graph: Any, tmp_path: Path) -> Non
     graph.add_node("cancellable ralph run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
     graph.set_run_pid(result.run_id, 424242)
+    graph.set_pid(1, result.run_id, 424242)
 
     class _Process:
         def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002

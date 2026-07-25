@@ -107,6 +107,7 @@ def run(
         run_execution_loop,
     )
     from milknado.app.run_tui import run_execution_tui
+    from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import get_dispatchable_nodes
     from milknado.domains.graph import validate_runnable_roots
 
@@ -143,6 +144,8 @@ def run(
             raise typer.Exit(code=1)
 
         interactive = _is_interactive_terminal()
+        if not interactive:
+            reconcile_orphaned_runs(graph)
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )

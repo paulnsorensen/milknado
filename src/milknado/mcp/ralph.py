@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from milknado.adapters import TmuxAdapter  # noqa: F401
 from milknado.app.ralph import (
     _DEFAULT_RUNNER,
     RalphClaim,
