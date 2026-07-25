@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from milknado.adapters.gh import GhProjectAdapter, GhTransportError
 from milknado.cli import app
+from milknado.domains.github import GithubField, GithubItem, GithubProject
 
 runner = CliRunner()
 
@@ -55,12 +56,12 @@ def test_import_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: {"id": "PVT_1", "title": "RM"}),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [{"id": "PVTI_1", "title": "g"}]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),
     )
     result = runner.invoke(
         app, ["github-roadmap", "import", "acme", "7", "--project-root", str(tmp_path)]
@@ -92,7 +93,9 @@ def test_bind_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(GhProjectAdapter, "preflight", staticmethod(lambda: None))
     monkeypatch.setattr(
-        GhProjectAdapter, "project_view", staticmethod(lambda _o, _n: {"id": "PVT_1"})
+        GhProjectAdapter,
+        "project_view",
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
     )
     monkeypatch.setattr(GhProjectAdapter, "item_list", staticmethod(lambda _o, _n: []))
     monkeypatch.setattr(
@@ -102,10 +105,8 @@ def test_bind_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     )
     monkeypatch.setattr(GhProjectAdapter, "item_add", staticmethod(lambda _o, _n, _u: "PVTI_1"))
     monkeypatch.setattr(GhProjectAdapter, "field_list", staticmethod(lambda _o, _n: []))
-    monkeypatch.setattr(GhProjectAdapter, "field_create", staticmethod(lambda *_a: {"id": "F"}))
-    monkeypatch.setattr(
-        GhProjectAdapter, "field_create_text", staticmethod(lambda *_a: {"id": "F2"})
-    )
+    monkeypatch.setattr(GhProjectAdapter, "field_create", staticmethod(lambda *_a: "F"))
+    monkeypatch.setattr(GhProjectAdapter, "field_create_text", staticmethod(lambda *_a: "F2"))
 
     argv = ["github-roadmap", "bind", "demo", "--project-root", str(tmp_path)]
     result = runner.invoke(app, argv)
@@ -120,12 +121,12 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: {"id": "PVT_1", "title": "RM"}),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [{"id": "PVTI_1", "title": "g"}]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),
     )
     imp = runner.invoke(
         app, ["github-roadmap", "import", "acme", "7", "--project-root", str(tmp_path)]
@@ -134,26 +135,30 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(GhProjectAdapter, "preflight", staticmethod(lambda: None))
     monkeypatch.setattr(
-        GhProjectAdapter, "project_view", staticmethod(lambda _o, _n: {"id": "PVT_1"})
+        GhProjectAdapter,
+        "project_view",
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "field_list",
         staticmethod(
             lambda _o, _n: [
-                {
-                    "id": "F_status",
-                    "name": "Milknado Status",
-                    "options": [{"id": "o", "name": "Pending"}],
-                },
-                {"id": "F_harvest", "name": "Milknado Harvest"},
+                GithubField.model_validate(
+                    {
+                        "id": "F_status",
+                        "name": "Milknado Status",
+                        "options": [{"id": "o", "name": "Pending"}],
+                    }
+                ),
+                GithubField(id="F_harvest", name="Milknado Harvest"),
             ]
         ),
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [{"id": "PVTI_1", "url": "https://x/1"}]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", url="https://x/1")]),
     )
     monkeypatch.setattr(GhProjectAdapter, "item_edit", staticmethod(lambda *_a, **_k: None))
     monkeypatch.setattr(GhProjectAdapter, "issue_edit_body", staticmethod(lambda *_a: None))

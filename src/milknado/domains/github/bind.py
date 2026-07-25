@@ -20,6 +20,7 @@ from milknado.domains.github._fields import (
     find_field,
 )
 from milknado.domains.github._intent import goal_file_map, goal_intent
+from milknado.domains.github.models import GithubBindingConfig, GithubItem
 from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki import load_frontmatter, locate_roadmap_dir, read_text
@@ -52,13 +53,15 @@ def bind_github_project(
         )
     github.preflight()
     roadmap_dir, _slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
-    frontmatter = load_frontmatter(read_text(wiki_root, roadmap_dir / "index.md"))
-    owner, number = _resolve_project(owner, number, frontmatter)
-    issue_owner, issue_repo = _resolve_repo(frontmatter)
+    config = GithubBindingConfig.model_validate(
+        load_frontmatter(read_text(wiki_root, roadmap_dir / "index.md"))
+    )
+    owner, number = _resolve_project(owner, number, config)
+    issue_owner, issue_repo = config.repo
     file_map = goal_file_map(wiki_root, roadmap.wiki_ref)
 
     project = github.project_view(owner, number)
-    _bind_roadmap_ref(graph, roadmap_node_id, roadmap.github_ref, project["id"])
+    _bind_roadmap_ref(graph, roadmap_node_id, roadmap.github_ref, project.id)
     issues_created = 0
     items_added = 0
     items = github.item_list(owner, number)
@@ -77,7 +80,7 @@ def bind_github_project(
                     f"matched {len(matches)} project items"
                 )
             if len(matches) == 1:
-                graph.set_github_ref(goal.id, matches[0]["id"])
+                graph.set_github_ref(goal.id, matches[0].id)
                 graph.clear_github_bind_attempt(goal.id)
                 continue
             issue_url = attempt.get("issue_url")
@@ -90,7 +93,7 @@ def bind_github_project(
             graph.set_github_ref(goal.id, item_id)
             graph.clear_github_bind_attempt(goal.id)
             items_added += 1
-            items.append({"id": item_id, "body": f"{marker}\n", "url": issue_url})
+            items.append(GithubItem(id=item_id, body=f"{marker}\n", url=issue_url))
             continue
         if matches:
             if len(matches) != 1:
@@ -98,7 +101,7 @@ def bind_github_project(
                     f"cannot safely recover goal {goal.id}: correlation marker "
                     f"matched {len(matches)} project items"
                 )
-            graph.set_github_ref(goal.id, matches[0]["id"])
+            graph.set_github_ref(goal.id, matches[0].id)
             continue
 
         graph.set_github_bind_attempt(goal.id, marker, None, datetime.now(UTC).isoformat())
@@ -110,7 +113,7 @@ def bind_github_project(
         graph.clear_github_bind_attempt(goal.id)
         issues_created += 1
         items_added += 1
-        items.append({"id": item_id, "body": body, "url": url})
+        items.append(GithubItem(id=item_id, title=goal.description, body=body, url=url))
 
     field_created = _ensure_fields(github, owner, number)
     return GithubBindResult(
@@ -139,38 +142,23 @@ def _correlation_marker(roadmap_ref: str, goal_ref: str) -> str:
     return f"<!-- milknado-bind:roadmap={roadmap_ref};goal={goal_ref} -->"
 
 
-def _correlated_items(items: list[dict], marker: str) -> list[dict]:
-    return [item for item in items if marker in str(item.get("body", ""))]
+def _correlated_items(items: list[GithubItem], marker: str) -> list[GithubItem]:
+    return [item for item in items if marker in item.body]
 
 
-def _resolve_project(owner: str | None, number: int | None, frontmatter: dict) -> tuple[str, int]:
-    """Owner/number from explicit args, else `github_project: owner/number` frontmatter."""
+def _resolve_project(
+    owner: str | None,
+    number: int | None,
+    config: GithubBindingConfig,
+) -> tuple[str, int]:
     if owner is not None and number is not None:
         return owner, number
-    raw = frontmatter.get("github_project")
-    if not isinstance(raw, str) or "/" not in raw:
+    if config.github_project is None:
         raise ValueError(
             "bind requires owner/number args or a `github_project: owner/number` "
             "field in the roadmap index.md frontmatter"
         )
-    fm_owner, _, fm_number = raw.partition("/")
-    if not fm_owner.strip() or not fm_number.strip().isdigit():
-        raise ValueError(f"malformed `github_project` frontmatter: {raw!r}")
-    return fm_owner.strip(), int(fm_number.strip())
-
-
-def _resolve_repo(frontmatter: dict) -> tuple[str, str]:
-    """Issue repo from the `github_repo: owner/repo` frontmatter (Issues need a repo)."""
-    raw = frontmatter.get("github_repo")
-    if not isinstance(raw, str) or "/" not in raw:
-        raise ValueError(
-            "bind requires a `github_repo: owner/repo` field in the roadmap "
-            "index.md frontmatter (Issues are created against a repo)"
-        )
-    repo_owner, _, repo_name = raw.partition("/")
-    if not repo_owner.strip() or not repo_name.strip():
-        raise ValueError(f"malformed `github_repo` frontmatter: {raw!r}")
-    return repo_owner.strip(), repo_name.strip()
+    return config.project
 
 
 def _ensure_fields(github: GithubProjectPort, owner: str, number: int) -> bool:

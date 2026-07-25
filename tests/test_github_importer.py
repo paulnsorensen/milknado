@@ -5,13 +5,14 @@ from __future__ import annotations
 import pytest
 
 from milknado.domains.common import NodeKind
+from milknado.domains.github import GithubItem, GithubProject
 from milknado.domains.github.importer import import_github_roadmap
 from milknado.domains.graph import MikadoGraph
 
-PROJECT = {"id": "PVT_1", "title": "Peer Roadmap"}
+PROJECT = GithubProject(id="PVT_1", title="Peer Roadmap")
 ITEMS = [
-    {"id": "PVTI_a", "title": "Goal A"},
-    {"id": "PVTI_b", "title": "Goal B"},
+    GithubItem(id="PVTI_a", title="Goal A"),
+    GithubItem(id="PVTI_b", title="Goal B"),
 ]
 
 
@@ -22,10 +23,10 @@ class FakeGithub:
     def preflight(self) -> None:
         pass
 
-    def project_view(self, _owner: str, _number: int) -> dict:
+    def project_view(self, _owner: str, _number: int) -> GithubProject:
         return PROJECT
 
-    def item_list(self, _owner: str, _number: int) -> list[dict]:
+    def item_list(self, _owner: str, _number: int) -> list[GithubItem]:
         return list(self.items)
 
 
@@ -67,7 +68,7 @@ def test_reimport_adopts_new_item_without_duplicating(
     graph: MikadoGraph, github: FakeGithub
 ) -> None:
     import_github_roadmap(graph, "acme", 1, github)
-    github.items.append({"id": "PVTI_c", "title": "Goal C"})
+    github.items.append(GithubItem(id="PVTI_c", title="Goal C"))
 
     second = import_github_roadmap(graph, "acme", 1, github)
 
