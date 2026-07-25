@@ -45,10 +45,7 @@ state reset (release under the node's `run_id` if it has one, else `mark_pending
 then discards the worktree. The fence stops a failed dispatch from walking a node
 back to PENDING after a different run already re-claimed it.
 
-`_create_ralph_run` builds node context (`_context.build_node_context`: goal +
-why-chain from `walk_ancestors`, owned files, and CRG impact radius — CRG
-failures degrade gracefully to a skipped section), writes `RALPH.md`, creates
-and starts the ralph run, returns its `run_id`.
+`_create_ralph_run` renders the shared `dispatch.brief.render_brief` output, wraps it in ralph-only loop scaffolding, writes `RALPH.md`, creates and starts the ralph run, and returns its `run_id`.
 
 ## Run identity — runs are per-task-dispatch; there is NO coordinator-run entity
 
@@ -459,24 +456,22 @@ and non-tmux run each fail with a distinct message — then execs
 `tmux select-window -t =sess:=run \; attach-session` (or `switch-client` when
 already inside tmux).
 
-## Brief vs context — two artifacts
+## Shared brief and RALPH.md
 
-Don't confuse them. `brief.render_brief` (dispatch) is the markdown piped to a
-**subprocess worker's stdin** — goal context, done prerequisites, owned files,
-and instructions (including registering follow-ups via `milknado_track_follow_up`
-and depositing the final deliverable via `milknado_deposit_result`).
-`_context.build_node_context` (execution) is the context **embedded in
-`RALPH.md`** for a ralph run, including CRG impact radius. Headless/MCP workers
-get a brief; ralph loops get RALPH.md.
+`brief.render_brief` is the shared node-context markdown for native/MCP and
+ralph workers: goal context, completed prerequisites, owned files, specs, and
+instructions. Ralph dispatch embeds that exact brief in `RALPH.md` and adds only
+the iteration-specific findings, gates, follow-up protocol, and completion
+sentinel.
 
 ## Key files
 
 - `src/milknado/domains/execution/executor.py` — `Executor`, `WorktreeManager`, dispatch/complete state machine, fencing.
 - `src/milknado/domains/execution/headless.py` — `run_node_to_completion`.
-- `src/milknado/domains/execution/_context.py` — `build_node_context` (RALPH.md context).
+- `src/milknado/domains/dispatch/brief.py` — `render_brief` (shared worker context and result-deposit instructions).
+- `src/milknado/adapters/loop.py` — RALPH.md loop scaffolding.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
-- `src/milknado/domains/dispatch/brief.py` — `render_brief` (worker stdin, mandates the result deposit).
 - `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.
 - `src/milknado/domains/dispatch/tmux_run.py` — `ensure_tmux_ready` (fail-closed), `execute_in_window` (run-inline pane waiter), `cleanup_run_window` / `reconcile_run_window` (per-row lifecycle), `resolve_attach_target`.
 - `src/milknado/domains/common/agent_argv.py` — `WORKER_ALLOWED_TOOLS` (per-vendor worker tool allowlist), `_ALLOWED_WORKER_EXECUTABLES` / `validate_worker_argv` (worker-cmd basename gate), `resolve_*_agent_command`.

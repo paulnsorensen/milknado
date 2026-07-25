@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from milknado.domains.common.config import Gate
 from milknado.domains.common.types import (
     DegradationMarker,
     MikadoNode,
@@ -164,9 +165,8 @@ class LoopPort(Protocol):
     ) -> VerifySpecResult: ...
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
-        quality_gates: list[str],
+        brief: str,
+        quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",
         findings_round: int | None = None,

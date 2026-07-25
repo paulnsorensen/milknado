@@ -75,8 +75,7 @@ class _ReviewRalph:
 
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
+        brief: str,
         quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",

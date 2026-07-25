@@ -32,8 +32,8 @@ from milknado.domains.common.types import (
     RebaseResult,
     RunResult,
 )
+from milknado.domains.dispatch import render_brief
 from milknado.domains.dispatch._runstate import is_cancel_requested, make_run_id, runs_dir
-from milknado.domains.execution._context import build_node_context
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
@@ -65,6 +65,7 @@ class ExecutionConfig:
     quality_gates: tuple[Gate, ...] | None
     worktree_pattern: str
     project_root: Path
+    brief_prepend: str | None = None
     dispatch_max_retries: int = 2
     dispatch_backoff_seconds: float = 5.0
     commit_footer: str | None = None
@@ -565,10 +566,14 @@ class Executor:
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> str:
-        context = build_node_context(node, self._graph, self._crg)
+        brief = render_brief(
+            self._graph,
+            node.id,
+            prepend=config.brief_prepend,
+            project_root=config.project_root,
+        )
         ralph_path = self._ralph.generate_ralph_md(
-            node,
-            context,
+            brief,
             config.quality_gates,
             wt_path / "RALPH.md",
             prior_findings=prior_findings,

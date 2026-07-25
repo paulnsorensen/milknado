@@ -38,32 +38,28 @@ The two file-backed prompt loaders share the dependency-neutral `resolve_project
 
 The resolved flavor profile also carries `worktree`: an explicit flavor value wins, otherwise `[milknado] worktree` supplies the default (`true`).
 
-## Two prompt pipelines (they do not share a brief-builder)
+## One brief pipeline
 
-**Path A — native/MCP** (`milknado_todo_claim`, `milknado_todo_brief`,
-`milknado_run_inline*`, `dispatch_node_sync`): `render_brief`
-(`domains/dispatch/brief.py:107-140`). Assembly order:
-`{brief_prepend}` → `# Task: {description}` → `## Goal context` (ancestors) →
-`## Prerequisites already done` → `## Relevant files` → `## Spec` (nearest
-`artifact_path`) → `## Instructions` (static per flavor — only `review`/`plate`
-have their own block; all others get the default coder instructions,
-`brief.py:117-122`).
+`render_brief` is the single node-context renderer for native/MCP and subprocess
+ralph workers. Assembly order is `{brief_prepend}` → task/review/plate heading →
+goal context → completed prerequisites → relevant files → nearest spec →
+flavor-specific instructions.
 
-**Path B — subprocess ralph** (`milknado run` CLI, `RunLoop`,
-`milknado_run_loop_start`): `_build_ralph_content` (`adapters/loop.py:254-288`)
-writes `RALPH.md`; signature is `(node, context, quality_gates)`.
-**`brief_prepend` is resolved and then silently dropped** — no prepend parameter
-exists on this path (`run_loop/__init__.py:308-313`,
-`_ralph_node_runner.py:79-85`). Per-flavor prompt text set in TOML reaches
-Path A workers verbatim and Path B workers not at all. Known gap, tracked in
-the issue tracker; `FlavorProfile`'s docstring documents `worker_agent_type`/
-`loop_mode`/`max_*` as native-only but says nothing about `brief_prepend`.
+The ralph adapter receives that rendered markdown and appends only ralph-loop
+scaffolding: optional prior review findings, quality gates, follow-up protocol,
+and the completion sentinel. `RALPH.md` remains a plain markdown prompt body,
+which is the format the loop runner parses.
+
+`ExecutionConfig.brief_prepend` carries the resolved profile through both
+subprocess entry points: `RunLoop._dispatch_batch` and the detached
+`_ralph_node_runner`. The base execution config starts from
+`worker_brief_prepend`; a flavor profile replaces it per node.
 
 ## Three prepend knobs — don't conflate
 
 | Knob | Feeds | Path |
 |---|---|---|
-| `[milknado.flavor.<name>] brief_prepend` (or `_path`) | worker brief header | Path A only (see gap above) |
+| `[milknado.flavor.<name>] brief_prepend` (or `_path`) | worker brief header | native/MCP and subprocess ralph |
 | `planning_prompt_prepend` (cfg) | goal-decomposition prompt (`cli_plan.py` via `planning/context.py:26-27`) | planning only |
 | flavor `## Instructions` block | brief tail | static, code-owned (`brief.py`), only `review`/`plate` customized |
 

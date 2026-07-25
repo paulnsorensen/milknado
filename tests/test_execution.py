@@ -18,7 +18,6 @@ from milknado.domains.common.errors import (
     UnlandedWorkError,
 )
 from milknado.domains.common.types import (
-    MikadoNode,
     NodeStatus,
     RebaseResult,
 )
@@ -120,6 +119,7 @@ class FakeRalph:
         self.runs_created: list[dict[str, Any]] = []
         self.runs_started: list[str] = []
         self.generated: list[Path] = []
+        self.generated_briefs: list[str] = []
         self.runs: dict[str, FakeRun] = {}
         self.stopped: list[str] = []
         self.force_stopped: list[str] = []
@@ -219,14 +219,14 @@ class FakeRalph:
 
     def generate_ralph_md(
         self,
-        node: MikadoNode,
-        context: str,
+        brief: str,
         quality_gates: tuple[Gate, ...] | None,
         output_path: Path,
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> Path:
         self.generated.append(output_path)
+        self.generated_briefs.append(brief)
         return output_path
 
 
@@ -421,9 +421,12 @@ class TestExecutorDispatch:
             crg=FakeCrg(),
         )
         graph.add_node("build feature")
-        ex.dispatch(1, config)
+        ex.dispatch(1, replace(config, brief_prepend="Use the project gate."))
+
         assert len(fake_ralph.generated) == 1
         assert fake_ralph.generated[0].name == "RALPH.md"
+        assert fake_ralph.generated_briefs[0].startswith("Use the project gate.")
+        assert "# Task: build feature" in fake_ralph.generated_briefs[0]
 
     def test_dispatch_nonexistent_node_raises(
         self,
@@ -1550,98 +1553,6 @@ class TestGetAttemptCount:
         graph.add_node("task")
         with pytest.raises(TransientDispatchError):
             ex.dispatch(1, config_retry)
-
-
-class TestBuildNodeContext:
-    def test_root_only_no_why_chain(self, graph: MikadoGraph) -> None:
-        """Single root node: no Why chain; Goal and Your task both present."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        graph.add_node("Root goal description")
-        node = graph.get_node(1)
-        assert node is not None
-        result = _build_node_context(node, graph, FakeCrg())
-        assert "## Goal" in result
-        assert "Root goal description" in result
-        assert "## Your task" in result
-        assert "## Why chain" not in result
-
-    def test_leaf_depth_3_has_why_chain(self, graph: MikadoGraph) -> None:
-        """Leaf at depth 3: Goal=root, Why chain=batch1+batch2, Your task=leaf."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        root = graph.add_node("Root goal: refactor auth")
-        batch1 = graph.add_node("Batch1: extract interfaces", parent_id=root.id)
-        batch2 = graph.add_node("Batch2: update callers", parent_id=batch1.id)
-        leaf = graph.add_node("Leaf: fix import in handler.py", parent_id=batch2.id)
-
-        result = _build_node_context(leaf, graph, FakeCrg())
-        assert "## Goal" in result
-        assert "Root goal: refactor auth" in result
-        assert "## Why chain" in result
-        assert "Batch2: update callers" in result
-        assert "Batch1: extract interfaces" in result
-        assert "## Your task" in result
-        assert "Leaf: fix import in handler.py" in result
-        assert "## Files" in result
-        assert "## Impact Radius" in result
-
-    def test_crg_none_shows_degradation_marker(self, graph: MikadoGraph) -> None:
-        """crg=None produces fallback Impact Radius line."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        graph.add_node("some task")
-        node = graph.get_node(1)
-        assert node is not None
-        result = _build_node_context(node, graph, None)
-        assert "## Impact Radius" in result
-        assert "CRG unavailable" in result
-
-    def test_with_files_includes_file_list(self, graph: MikadoGraph) -> None:
-        """Files assigned to node appear in ## Files section."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        graph.add_node("refactor")
-        graph.set_file_ownership(1, ["auth.py", "models.py"])
-        node = graph.get_node(1)
-        assert node is not None
-        result = _build_node_context(node, graph, FakeCrg())
-        assert "## Files" in result
-        assert "`auth.py`" in result
-        assert "`models.py`" in result
-        assert "## Impact Radius" in result
-
-    def test_why_chain_order_parent_first(self, graph: MikadoGraph) -> None:
-        """Why chain lists parent before grandparent."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        root = graph.add_node("Root")
-        parent = graph.add_node("Parent node", parent_id=root.id)
-        leaf = graph.add_node("Leaf node", parent_id=parent.id)
-
-        result = _build_node_context(leaf, graph, FakeCrg())
-        # Why chain shows parent (not root which is in Goal); root excluded from Why chain
-        assert "## Why chain" in result
-        assert "Parent node" in result
-        # Root is only in Goal section, not duplicated in Why chain
-        assert result.count("Root") == 1  # only in ## Goal
-
-    def test_crg_raises_produces_degradation_marker(self, graph: MikadoGraph) -> None:
-        """CRG that raises produces a degraded Impact Radius marker rather than crashing."""
-        from milknado.domains.execution._context import build_node_context as _build_node_context
-
-        class FailingCrg(FakeCrg):
-            def get_impact_radius(self, files: list) -> dict:
-                raise RuntimeError("CRG exploded")
-
-        graph.add_node("task")
-        graph.set_file_ownership(1, ["some.py"])
-        node = graph.get_node(1)
-        assert node is not None
-        result = _build_node_context(node, graph, FailingCrg())
-        assert "## Impact Radius" in result
-        assert "CRG unavailable" in result
-        assert "CRG exploded" in result
 
 
 def test_dispatch_refuses_claimed_node_before_worktree_mutation(
