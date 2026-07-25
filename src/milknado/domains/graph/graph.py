@@ -11,6 +11,7 @@ from threading import RLock
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
+    GraphExecutionSnapshot,
     MikadoEdge,
     MikadoNode,
     NodeKind,
@@ -347,24 +348,29 @@ class MikadoGraph(_AnalyticsFacade):
         return ready[0] if ready else None
 
     @_synchronized
-    def get_execution_overview(
-        self,
-        node_ids: Iterable[int],
-        excluded_node_ids: Iterable[int] = (),
-    ) -> tuple[str, dict[int, str], int]:
-        from milknado.domains.execution.executor import get_dispatchable_nodes
-
-        self._conn.execute("SAVEPOINT execution_overview")
+    def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:
+        """Return one lock-held snapshot of graph facts for execution policy."""
+        self._conn.execute("SAVEPOINT execution_snapshot")
         try:
-            root = _reads.get_root(self._conn)
-            descriptions = {
-                node.id: node.description for node in _reads.get_nodes(self._conn, node_ids)
-            }
-            excluded = set(excluded_node_ids)
-            available = sum(node_id not in excluded for node_id in get_dispatchable_nodes(self))
-            return root.description if root is not None else "", descriptions, available
+            ready = _reads.get_ready_nodes(self._conn)
+            running = tuple(
+                node.id
+                for node in _reads.get_all_nodes(self._conn)
+                if node.status is NodeStatus.RUNNING
+            )
+            ready_ids = tuple(node.id for node in ready)
+            conflicts = _persistence.check_parallel_safety(self._conn, [*running, *ready_ids])
+            return GraphExecutionSnapshot(
+                root=_reads.get_root(self._conn),
+                nodes=tuple(_reads.get_nodes(self._conn, node_ids)),
+                ready_node_ids=ready_ids,
+                running_node_ids=running,
+                parallel_conflicts=tuple(
+                    (left_id, right_id, tuple(paths)) for left_id, right_id, paths in conflicts
+                ),
+            )
         finally:
-            self._conn.execute("RELEASE SAVEPOINT execution_overview")
+            self._conn.execute("RELEASE SAVEPOINT execution_snapshot")
 
     def _node_status(self, node_id: int) -> NodeStatus | None:
         return _reads.node_status(self._conn, node_id)

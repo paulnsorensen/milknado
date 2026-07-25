@@ -8,20 +8,21 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.execution import get_execution_overview
 from milknado.domains.graph import MikadoGraph, _persistence
 
 _GRAPH_LOG = "milknado.domains.graph.graph"
 
 
 def test_closed_connection_reopens_on_next_access(tmp_path: Path, caplog) -> None:  # noqa: ANN001
-    """The #297 repro: graph.close() then get_execution_overview() must heal."""
+    """The #297 repro: graph.close() then execution reads its snapshot must heal."""
     graph = MikadoGraph(tmp_path / "g.db")
     graph.add_node("alpha")
     graph.close()
     assert graph._close_stack is not None, "close() must record the calling stack"
 
     with caplog.at_level(logging.WARNING, logger=_GRAPH_LOG):
-        _root, descriptions, _available = graph.get_execution_overview([1])
+        _root, descriptions, _available = get_execution_overview(graph, [1])
     assert descriptions == {1: "alpha"}
 
     warnings = [r for r in caplog.records if "reopened unexpectedly" in r.message]

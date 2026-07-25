@@ -3,16 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort
+    from milknado.domains.common.protocols import CrgPort, GraphReadPort
     from milknado.domains.common.types import MikadoNode
-    from milknado.domains.graph import MikadoGraph
 
 from milknado.domains.graph import walk_ancestors
 
 
 def build_node_context(
     node: MikadoNode,
-    graph: MikadoGraph,
+    graph: GraphReadPort,
     crg: CrgPort | None,
 ) -> str:
     ancestors = walk_ancestors(graph, node.id)

@@ -44,6 +44,13 @@ type = "forbidden"
 source_modules = ["milknado.domains"]
 forbidden_modules = ["milknado.app", "milknado.cli", "milknado.mcp"]
 
+# The graph is a transactional state crust, never an execution-policy consumer.
+[[tool.importlinter.contracts]]
+name = "graph must not import execution"
+type = "forbidden"
+source_modules = ["milknado.domains.graph"]
+forbidden_modules = ["milknado.domains.execution"]
+
 # The application layer wires domains to delivery; it must not depend on delivery.
 [[tool.importlinter.contracts]]
 name = "app must not import cli or mcp"
