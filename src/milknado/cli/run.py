@@ -135,10 +135,12 @@ def run(
         graph.reconcile_completed_goals()
         root_reports = validate_runnable_roots(graph)
         excluded: set[int] = set()
+        has_errors = False
         for goal_id, report in root_reports:
             for msg in report.warnings:
                 console.print(f"[yellow]warning (goal {goal_id}): {msg}[/yellow]")
             if report.errors:
+                has_errors = True
                 excluded.update(invalid_subtree_node_ids(graph, goal_id))
                 for msg in report.errors:
                     console.print(f"[yellow]warning (goal {goal_id}; skipped): {msg}[/yellow]")
@@ -152,6 +154,8 @@ def run(
         )
         if not [node for node in get_dispatchable_nodes(graph) if node not in excluded]:
             console.print("No nodes ready for execution.")
+            if has_errors:
+                raise typer.Exit(code=1)
             return
 
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")

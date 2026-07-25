@@ -159,6 +159,7 @@ def set_todo_status(
     node = _reads.get_node(conn, node_id)
     if node is None:
         raise ValueError(f"Node {node_id} not found")
+    _reject_archived(conn, node_id)
     if target is NodeStatus.DONE:
         _validate_done_verification(conn, node_id, [node])
     validate_todo_status(node, target)
