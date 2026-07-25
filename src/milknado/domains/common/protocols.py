@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 from milknado.domains.common.config import Gate
 from milknado.domains.common.types import (
     DegradationMarker,
+    MikadoNode,
     RebaseResult,
     TilthMap,
 )
