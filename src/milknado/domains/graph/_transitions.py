@@ -161,17 +161,10 @@ def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
 
 
 def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: NodeStatus) -> bool:
-    """Write a node's terminal status (DONE/FAILED), gated on the run_id fence.
+    """Write a terminal status gated on the active run fence.
 
-    Returns False (zero rows) when the node has been re-claimed under a new
-    run_id — the caller was reclaimed and must NOT treat its run as authoritative.
-    DONE sets completed_at and keeps the worktree/branch (already removed on disk);
-    FAILED clears worktree/branch/run_id, mirroring mark_failed.
-
-    The `status = 'running'` guard makes the transition fire exactly once from the
-    active owner: DONE keeps its run_id, so without it a later same-run_id
-    mark_terminal(..., FAILED) would walk a DONE node back to FAILED, bypassing
-    the terminal state machine.
+    A failed integration retains its worktree and branch so the produced
+    deliverable remains recoverable. A later claim clears that recovery state.
     """
     if status is NodeStatus.DONE:
         completed_at = datetime.now(UTC).isoformat()
@@ -182,8 +175,8 @@ def mark_terminal(conn: sqlite3.Connection, node_id: int, run_id: str, status: N
         )
     elif status is NodeStatus.FAILED:
         cur = conn.execute(
-            "UPDATE nodes SET status = ?, completed_at = NULL, worktree_path = NULL, "
-            "branch_name = NULL, run_id = NULL WHERE id = ? AND run_id = ? AND status = 'running'",
+            "UPDATE nodes SET status = ?, completed_at = NULL, run_id = NULL "
+            "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.FAILED.value, node_id, run_id),
         )
     else:

@@ -27,6 +27,7 @@ import pytest
 from milknado.adapters.git import GitAdapter
 from milknado.domains.common.errors import GitOperationError
 from milknado.domains.execution.executor import (
+    ExecutionConfig,
     Executor,
     WorktreeManager,
     _exclude_loop_scaffolding,
@@ -162,28 +163,58 @@ class TestMergeBackIntegration:
         git.create_worktree(wt, branch)
         _exclude_loop_scaffolding(wt)
         _worker_did_work(wt)
-
-        # An untracked file at the project root that the incoming merge would
-        # overwrite: `git merge --ff-only` refuses and exits non-zero.
-        (project / "feature.py").write_text("LOCAL UNCOMMITTED EDIT\n")
+        (wt / "addons").symlink_to("worker-addons")
+        _git(wt, "add", "addons")
+        _git(wt, "commit", "-qm", "add addons symlink")
+        (project / "addons").symlink_to("local-addons")
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            _running_node(graph, wt, branch)
+            graph.add_node("Add the added() helper")
+            graph.mark_running(1, worktree_path=str(wt), branch_name=branch, run_id="run-1")
+            graph.start_run("run-1", 1, "run.log", "2026-01-01T00:00:00+00:00", 300)
             ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
+            ex._worker_run_id_by_node[1] = "run-1"
+
             result = ex.complete(1, "feature")
+            row = graph.get_run("run-1")
             assert result.rebased is False
             assert result.rebase_conflict is not None
-            assert "GitOperationError" in result.rebase_conflict.detail
+            assert "untracked integration-checkout path collision: addons" in (
+                result.rebase_conflict.detail
+            )
+            assert row is not None
+            assert row["status"] == "failed"
+            assert row["error"] == result.rebase_conflict.detail
+            assert row["rebased"] == 0
+            node = graph.get_node(1)
+            assert node is not None
+            assert node.status.value == "failed"
+            assert node.worktree_path == str(wt)
+            assert node.branch_name == branch
+
+            with pytest.raises(ValueError, match="retry merge-back before redispatching"):
+                ex.dispatch(
+                    1,
+                    ExecutionConfig(
+                        execution_agent="claude",
+                        quality_gates=None,
+                        worktree_pattern="milknado-{node_id}",
+                        project_root=project,
+                    ),
+                )
         finally:
             graph.close()
 
-        # Fail-closed teardown: the squashed-but-never-fast-forwarded commit
-        # exists only in this worktree — it must survive the failed merge-back
-        # (it used to be force-removed here: the silent-destruction bug).
-        assert wt.exists(), "unlanded worktree must be preserved on ff failure"
-        subjects = _git(wt, "log", "--oneline", "feature..HEAD")
-        assert "feat(milknado-1)" in subjects, "the squashed commit is the preserved work"
+        assert wt.exists(), "unlanded worktree must be preserved on merge-back failure"
+        assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").strip() == branch
+
+        (project / "addons").unlink()
+        retry = WorktreeManager(git).rebase_and_merge(
+            wt, "feature", 1, "Add the added() helper", branch
+        )
+        assert retry.success is True
+        assert _git(project, "show", "HEAD:addons").strip() == "worker-addons"
 
 
 class TestGitAdapterContract:
@@ -540,6 +571,9 @@ class _RecordingGit:
         if self._ff_error is not None:
             raise self._ff_error
         self.fast_forwarded.append(branch)
+
+    def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
+        return ()
 
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         self.removed.append(path)
