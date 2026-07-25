@@ -105,6 +105,9 @@ class FakeGit:
     def fast_forward(self, branch: str) -> None:
         self.fast_forwards.append(branch)
 
+    def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
+        return ()
+
 
 class FakeRalph:
     def __init__(self, *, live: bool = False, id_prefix: str | None = None) -> None:
@@ -324,6 +327,28 @@ class TestGetDispatchableNodes:
         graph.mark_running(active.id)
 
         assert get_dispatchable_nodes(graph) == []
+
+    def test_shared_file_block_logs_only_on_state_change(
+        self, graph: MikadoGraph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        root = graph.add_node("root")
+        active = graph.add_node("active", parent_id=root.id)
+        pending = graph.add_node("pending", parent_id=root.id)
+        graph.set_file_ownership(active.id, ["shared.py"])
+        graph.set_file_ownership(pending.id, ["shared.py"])
+        graph.mark_running(active.id)
+        logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
+
+        with caplog.at_level(logging.INFO, logger="milknado"):
+            assert get_dispatchable_nodes(graph, logged_blocks) == []
+            assert get_dispatchable_nodes(graph, logged_blocks) == []
+
+        assert (
+            caplog.messages.count(
+                f"Node {pending.id} blocked by Node {active.id} on shared files: ('shared.py',)"
+            )
+            == 1
+        )
 
     def test_child_must_complete_before_parent(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
@@ -970,7 +995,7 @@ class TestExecutorComplete:
         assert fake_git.removed == []
         assert result.rebased is False
 
-    def test_clears_metadata_on_rebase_failure(
+    def test_preserves_metadata_on_rebase_failure(
         self,
         graph: MikadoGraph,
         tmp_path: Path,
@@ -986,12 +1011,12 @@ class TestExecutorComplete:
         graph.add_node("task")
         wt = tmp_path / "worktree"
         wt.mkdir()
-        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
+        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task", run_id="run-1")
         ex.complete(1, "main")
         node = graph.get_node(1)
         assert node is not None
-        assert node.worktree_path is None
-        assert node.branch_name is None
+        assert node.worktree_path == str(wt)
+        assert node.branch_name == "milknado/1-task"
 
     def test_returns_newly_ready_nodes(
         self,

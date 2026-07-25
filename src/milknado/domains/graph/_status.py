@@ -276,15 +276,15 @@ def mark_terminal(
     node_id: int,
     run_id: str,
     status: NodeStatus,
+    *,
+    preserve_recovery: bool = False,
 ) -> bool:
-    """Write a terminal status (DONE/FAILED) gated on the run_id fence.
-
-    Returns False when the node was re-claimed under a new run_id — the caller
-    was reclaimed and its terminal write is rejected (zero rows).
-    """
+    """Write a terminal status (DONE/FAILED) gated on the run_id fence."""
 
     def mutate() -> bool:
-        return _transitions.mark_terminal(conn, node_id, run_id, status)
+        return _transitions.mark_terminal(
+            conn, node_id, run_id, status, preserve_recovery=preserve_recovery
+        )
 
     ok = pipeline.run(
         lambda nid: _reads.get_node(conn, nid), node_id, NodeStatus.RUNNING, status, mutate

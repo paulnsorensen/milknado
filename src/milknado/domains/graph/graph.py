@@ -441,8 +441,22 @@ class MikadoGraph(_AnalyticsFacade):
         return _status.release(self._pipeline, self._conn, node_id, run_id)
 
     @_synchronized
-    def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool:
-        return _status.mark_terminal(self._pipeline, self._conn, node_id, run_id, status)
+    def mark_terminal(
+        self,
+        node_id: int,
+        run_id: str,
+        status: NodeStatus,
+        *,
+        preserve_recovery: bool = False,
+    ) -> bool:
+        return _status.mark_terminal(
+            self._pipeline,
+            self._conn,
+            node_id,
+            run_id,
+            status,
+            preserve_recovery=preserve_recovery,
+        )
 
     @_synchronized
     def mark_blocked_fenced(self, node_id: int, run_id: str) -> bool:
@@ -586,6 +600,14 @@ class MikadoGraph(_AnalyticsFacade):
     @_synchronized
     def deposit_run_message(self, run_id: str, role: str, body: str, created_at: str) -> int:
         return _persistence.deposit_run_message(self._conn, run_id, role, body, created_at)
+
+    @_synchronized
+    def deposit_review_verdict(
+        self, run_id: str, verdict: str, findings: str, created_at: str
+    ) -> int:
+        return _persistence.deposit_review_verdict(
+            self._conn, run_id, verdict, findings, created_at
+        )
 
     @_synchronized
     def latest_run_message(self, run_id: str, role: str) -> str | None:

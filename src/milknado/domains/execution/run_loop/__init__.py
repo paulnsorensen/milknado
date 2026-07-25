@@ -96,6 +96,7 @@ class RunLoop:
         self._completion_wait_started = 0.0
         self._scheduling_stopped = False
         self._scheduling_lock = Lock()
+        self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
         """Set the application-layer state sink used during execution."""
@@ -220,6 +221,7 @@ class RunLoop:
         self._exec_config = config
         self._process_controls = process_controls
         self._stopped_nodes.clear()
+        self._logged_blocks.clear()
         self._terminal_runs.clear()
         self._completed = 0
         self._failed = 0
@@ -492,7 +494,7 @@ class RunLoop:
         exclusions = self._graph.dispatch_exclusions()
         dispatchable = [
             node_id
-            for node_id in get_dispatchable_nodes(self._graph)
+            for node_id in get_dispatchable_nodes(self._graph, self._logged_blocks)
             if node_id not in self._stopped_nodes and node_id not in exclusions
         ]
         dispatched = 0

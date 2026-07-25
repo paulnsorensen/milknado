@@ -1,7 +1,5 @@
-"""`adapters/gh.py` transport: preflight fails loud on missing gh/auth/scope,
-`_run_json` rejects unparseable or non-object JSON, and each wrapper that
-trusts a shaped reply (`gh project view`/`field-list`) validates the keys it
-depends on rather than passing through a malformed payload (Acceptance 6).
+"""`adapters/gh.py` fails loudly on transport errors and validates every shaped
+GitHub response with its Pydantic boundary model (Acceptance 6).
 
 subprocess.run is fully mocked so these tests never touch a real `gh`.
 """
@@ -59,12 +57,12 @@ class TestRunJson:
 
     def test_non_object_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire("[]")
-        with pytest.raises(GhTransportError, match="non-object JSON"):
+        with pytest.raises(GhTransportError, match="response is malformed"):
             gh_project_view("acme", 7)
 
     def test_item_add_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"foo": 1}))
-        with pytest.raises(GhTransportError, match="has no `id`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_item_add("acme", 7, "https://x/1")
 
 
@@ -98,29 +96,29 @@ class TestIssueViewValidation:
 class TestProjectViewValidation:
     def test_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"title": "RM"}))
-        with pytest.raises(GhTransportError, match="no valid `id`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_project_view("acme", 7)
 
     def test_empty_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"id": "", "title": "RM"}))
-        with pytest.raises(GhTransportError, match="no valid `id`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_project_view("acme", 7)
 
     def test_missing_title_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"id": "PVT_1"}))
-        with pytest.raises(GhTransportError, match="no `title`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*title"):
             gh_project_view("acme", 7)
 
 
 class TestFieldListValidation:
     def test_field_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"fields": [{"name": "Milknado Status"}]}))
-        with pytest.raises(GhTransportError, match="no valid `id`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_field_list("acme", 7)
 
     def test_field_missing_name_raises_transport_error(self, wire) -> None:  # noqa: ANN001
         wire(json.dumps({"fields": [{"id": "F_1"}]}))
-        with pytest.raises(GhTransportError, match="no valid `name`"):
+        with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*name"):
             gh_field_list("acme", 7)
 
 

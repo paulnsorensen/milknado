@@ -532,6 +532,10 @@ def set_worktree(
     conn.commit()
 
 
+_MAX_RETAINED_RUN_MESSAGES = 1000
+_MAX_RUN_MESSAGE_BYTES = 64 * 1024
+_RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
 _RUN_COLUMNS = (
     "run_id",
     "node_id",
@@ -660,14 +664,28 @@ def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
     return [_run_row_to_dict(r) for r in rows]
 
 
+def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:
+    cutoff = datetime.fromisoformat(created_at).timestamp() - _RUN_MESSAGE_MAX_AGE_SECONDS
+    cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
+    terminal = "SELECT run_id FROM runs WHERE status != 'RUNNING'"
+    conn.execute(
+        f"DELETE FROM run_messages WHERE run_id IN ({terminal}) AND created_at < ?",
+        (cutoff_at,),
+    )
+    conn.execute(
+        "DELETE FROM run_messages WHERE (run_id, seq) IN ("
+        f"SELECT run_id, seq FROM run_messages WHERE run_id IN ({terminal}) "
+        "ORDER BY created_at DESC, seq DESC LIMIT -1 OFFSET ?)",
+        (_MAX_RETAINED_RUN_MESSAGES,),
+    )
+
+
 def deposit_run_message(
     conn: sqlite3.Connection, run_id: str, role: str, body: str, created_at: str
 ) -> int:
-    """Append a run_messages row with the next seq for this run; return that seq.
-
-    Seq assignment and insert happen in one statement so concurrent depositors
-    for the same run cannot race MAX(seq) into a UNIQUE collision.
-    """
+    """Append a bounded run message and prune terminal history."""
+    body = body.encode()[:_MAX_RUN_MESSAGE_BYTES].decode(errors="ignore")
+    _prune_run_messages(conn, created_at)
     row = conn.execute(
         "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
         "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages WHERE run_id = ? "
@@ -675,6 +693,32 @@ def deposit_run_message(
         (run_id, role, body, created_at, run_id),
     ).fetchone()
     conn.commit()
+    return row[0]
+
+
+def deposit_review_verdict(
+    conn: sqlite3.Connection, run_id: str, verdict: str, findings: str, created_at: str
+) -> int:
+    """Persist a verdict and atomically mark it terminal only for an active review run."""
+    with conn:
+        row = conn.execute(
+            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+            "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review', ?, ? "
+            "FROM run_messages WHERE run_id = ? RETURNING seq",
+            (run_id, f"{verdict}\n{findings}", created_at, run_id),
+        ).fetchone()
+        terminal = conn.execute(
+            "SELECT 1 FROM runs JOIN nodes ON nodes.id = runs.node_id "
+            "WHERE runs.run_id = ? AND runs.status = 'running' AND nodes.flavor = 'review'",
+            (run_id,),
+        ).fetchone()
+        if terminal is not None:
+            conn.execute(
+                "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+                "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review_terminal', ?, ? "
+                "FROM run_messages WHERE run_id = ?",
+                (run_id, verdict, created_at, run_id),
+            )
     return row[0]
 
 

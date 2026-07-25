@@ -38,26 +38,26 @@ def import_github_roadmap(
     """Seed roadmap + goal nodes from a Project; idempotent, no task nodes."""
     github.preflight()
     project = github.project_view(owner, number)
-    project_id = project["id"]
+    project_id = project.id
     created = 0
     reused = 0
     roadmap = graph.find_node_by_github_ref(project_id)
     if roadmap is None:
         roadmap = graph.add_node(
-            project["title"], spec=NodeSpec(kind=NodeKind.ROADMAP, github_ref=project_id)
+            project.title, spec=NodeSpec(kind=NodeKind.ROADMAP, github_ref=project_id)
         )
         created += 1
     else:
         reused += 1
     goal_node_ids: dict[str, int] = {}
     for item in github.item_list(owner, number):
-        item_id = item.get("id")
-        if not item_id:
-            continue  # draft/malformed item with no node id — skip deterministically
+        item_id = item.id
+        if item_id is None:
+            continue
         node = graph.find_node_by_github_ref(item_id)
         if node is None:
             node = graph.add_node(
-                item.get("title") or "(untitled item)",
+                item.title,
                 parent_id=roadmap.id,
                 spec=NodeSpec(kind=NodeKind.GOAL, github_ref=item_id),
             )
