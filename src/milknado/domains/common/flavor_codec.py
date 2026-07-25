@@ -7,11 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
-from milknado.domains.common.paths import (
-    TrustedGlobalPath,
-    resolve_project_path,
-    trust_global_path,
-)
+from milknado.domains.common.paths import resolve_project_path, trust_global_path
 
 
 @dataclass(frozen=True)
@@ -232,7 +228,6 @@ def _load_flavor_brief(entry: dict[str, Any], name: str, project_root: Path) -> 
             value,
             project_root,
             label=f"{ctx} brief_prepend_path",
-            allow_outside=isinstance(value, TrustedGlobalPath),
         )
         if not path.exists():
             raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {path}")

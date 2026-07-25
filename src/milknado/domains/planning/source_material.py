@@ -17,7 +17,13 @@ IssueFetcher = Callable[[str], IssueSource]
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-def _slug(source: str, fallback: str) -> str:
+def normalize_plan_identifier(source: str, fallback: str) -> str:
+    """Normalize a planning-owned materialized-spec identifier.
+
+    The identifier preserves dots and underscores from spec stems. Blank input
+    or input containing no permitted identifier characters returns the caller's
+    fallback; planning has no length limit or collision disambiguation.
+    """
     return _SLUG_RE.sub("-", source).strip("-") or fallback
 
 
@@ -61,7 +67,7 @@ def materialize_issue_spec(
         raise ValueError("issue_refs must not be empty")
     issues = [fetch_issue(ref) for ref in issue_refs]
     numbers = [str(issue.number) for issue in issues if issue.number is not None]
-    slug = _slug("-".join(numbers or issue_refs), "issue")
+    slug = normalize_plan_identifier("-".join(numbers or issue_refs), "issue")
     if len(issues) == 1:
         content = _render_single_issue(issues[0])
     else:
@@ -92,7 +98,7 @@ def materialize_combined_spec(
     sections.extend(_render_issue_section(issue) for issue in issues)
     tokens = [path.stem for path in spec_paths]
     tokens.extend(str(issue.number) for issue in issues if issue.number is not None)
-    slug = _slug("-".join(tokens), "plan")
+    slug = normalize_plan_identifier("-".join(tokens), "plan")
     return _write_materialized(project_root, f"plan-{slug}.md", "\n".join(sections) + "\n")
 
 

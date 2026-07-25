@@ -31,7 +31,14 @@ from milknado.domains.common.errors import (
 )
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.common.merge import deep_merge
-from milknado.domains.common.paths import normalize_hint_paths, slugify, validate_hint_path
+from milknado.domains.common.paths import (
+    TrustedGlobalPath,
+    normalize_hint_paths,
+    resolve_project_path,
+    slugify,
+    trust_global_path,
+    validate_hint_path,
+)
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import pid_alive
 from milknado.domains.common.protocols import (
@@ -97,6 +104,9 @@ __all__ = [
     "global_config_path",
     "load_config",
     "slugify",
+    "TrustedGlobalPath",
+    "resolve_project_path",
+    "trust_global_path",
     "validate_hint_path",
     "save_config",
     "resolve_flavor_profile",

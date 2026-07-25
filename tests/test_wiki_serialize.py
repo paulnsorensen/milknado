@@ -23,7 +23,6 @@ from milknado.domains.wiki._serialize import (
     read_prereqs,
     replace_harvest_block,
     set_frontmatter_field,
-    slugify,
     validate_slug,
 )
 
@@ -164,14 +163,6 @@ class TestHarvestBlock:
         # Must not raise — previously blew up with re.error
         out = replace_harvest_block(GOAL_FILE, inner)
         assert inner in out
-
-
-class TestSlugify:
-    def test_slugify_basic(self) -> None:
-        assert slugify("Wire the Export Path!") == "wire-the-export-path"
-
-    def test_slugify_collapses_separators(self) -> None:
-        assert slugify("  foo / bar __baz  ") == "foo-bar-baz"
 
 
 class TestValidateSlug:

@@ -9,6 +9,7 @@
 - [execution](./execution.md) — Execution & Dispatch — Parallel Ralph Loops
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [omp-json-streaming](./omp-json-streaming.md) — OMP JSON Event Streaming
+- [path-contracts](./path-contracts.md) — Path contracts
 - [planning](./planning.md) — Planning Domain — Goal Decomposition & Manifest
 - [prompt-threading](./prompt-threading.md) — Prompt Threading — how briefs and worker definitions reach a dispatch
 - [run-inline-isolation](./run-inline-isolation.md) — run_inline isolates per dispatch — ISOLATE by default, merge-back on success

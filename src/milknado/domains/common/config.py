@@ -44,11 +44,7 @@ from milknado.domains.common.flavor_codec import (
     validate_positive_int as _validated_positive_int,
 )
 from milknado.domains.common.merge import deep_merge
-from milknado.domains.common.paths import (
-    TrustedGlobalPath,
-    resolve_project_path,
-    trust_global_path,
-)
+from milknado.domains.common.paths import resolve_project_path, trust_global_path
 from milknado.domains.common.types import BUILTIN_FLAVORS
 
 _logger = logging.getLogger(__name__)
@@ -509,10 +505,9 @@ def _load_prompt_prepend(
         return text or None
     if path_value:
         resolved = resolve_project_path(
-            str(path_value),
+            path_value,
             project_root,
             label=f"[milknado.prompts] {base_key}_path",
-            allow_outside=isinstance(path_value, TrustedGlobalPath),
         )
         if not resolved.exists():
             raise FileNotFoundError(
@@ -524,7 +519,4 @@ def _load_prompt_prepend(
 
 
 def _validated_db_path(project_root: Path, raw: str) -> Path:
-    db_path = project_root / Path(raw)
-    if not db_path.resolve().is_relative_to(project_root.resolve()):
-        raise ValueError(f"db_path '{raw}' escapes project_root '{project_root}'")
-    return db_path
+    return resolve_project_path(raw, project_root, label="db_path")
