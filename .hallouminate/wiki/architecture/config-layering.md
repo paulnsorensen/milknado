@@ -46,11 +46,20 @@ field has a coded default (`config.py:65-96,362-399`).
 
 ## Inherit vs full override
 
-Deep-merge **is** the inherit mode. There is currently no full-override switch —
-a project file cannot say "ignore the global layer" short of redefining every
-key it cares about. If a global flavor table sets a field you want *unset*
-locally, there is no way to express that (`None` in TOML doesn't exist; omitting
-the key inherits). Tracked as a design gap in the issue tracker.
+Deep-merge remains the default. A local [milknado] `inherit_global = false` skips
+the global layer entirely; any other value must be a TOML boolean. A local
+[milknado.flavor.<name>] `inherit = false` removes that inherited flavor table
+before deep-merging the local table, so omitted fields fall back to the config
+defaults rather than the global flavor. It is a boolean-only control, not an
+empty-string or null unset sentinel.[^1]
+
+`load_config_details` records the supplying layer while the cascade runs. The
+`milknado config show --resolved` and `--explain` commands use that record rather
+than trying to infer origin after path resolution; `--flavor <name>` exposes the
+same `FlavorProfile` used at runtime.[^2]
+
+[^1]: src/milknado/domains/common/config.py:144-188
+[^2]: src/milknado/domains/common/config_layers.py:10-34; src/milknado/cli/config.py:18-40
 
 
 ### Path confinement and worktree fallback
