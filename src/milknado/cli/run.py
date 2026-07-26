@@ -152,7 +152,7 @@ def run(
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
-        if not [node for node in get_dispatchable_nodes(graph) if node not in excluded]:
+        if not any(node not in excluded for node in get_dispatchable_nodes(graph)):
             console.print("No nodes ready for execution.")
             if has_errors:
                 raise typer.Exit(code=1)

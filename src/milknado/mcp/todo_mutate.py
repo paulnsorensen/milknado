@@ -36,7 +36,7 @@ class _CreateTodo:
     files: list[str] | None
     flavor: Flavor | None
     artifact: str | None
-    prereqs: list[int] | None
+    prereqs: tuple[int, ...] | None
     root: Path
 
 
@@ -87,7 +87,15 @@ def milknado_todo_add(
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        request = _CreateTodo(
+            description=description,
+            kind=kind,
+            files=files,
+            flavor=flavor,
+            artifact=artifact,
+            prereqs=tuple(prereqs) if prereqs is not None else None,
+            root=root,
+        )
         return _create_todo(graph, cfg, parent_id, request)
     finally:
         graph.close()
@@ -197,7 +205,15 @@ def milknado_track_follow_up(
     graph, cfg = open_graph(root)
     try:
         resolved_parent = parent_id if parent_id is not None else follow_up_parent_id(graph)
-        request = _CreateTodo(description, kind, files, flavor, artifact, prereqs, root)
+        request = _CreateTodo(
+            description=description,
+            kind=kind,
+            files=files,
+            flavor=flavor,
+            artifact=artifact,
+            prereqs=tuple(prereqs) if prereqs is not None else None,
+            root=root,
+        )
         return _create_todo(graph, cfg, resolved_parent, request)
     finally:
         graph.close()

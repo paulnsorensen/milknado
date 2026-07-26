@@ -7,7 +7,8 @@ would form an import cycle.
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from collections.abc import Mapping
+from typing import Literal, TypedDict, cast
 
 from fastmcp import FastMCP
 
@@ -55,21 +56,11 @@ class RunDict(TypedDict):
 
 
 def build_run_dict(state: object) -> RunDict:
-    source = state if isinstance(state, dict) else vars(state)
-    return RunDict(
-        run_id=source.get("run_id"),
-        node_id=source.get("node_id"),
-        status=source.get("status"),
-        exit_code=source.get("exit_code"),
-        timed_out=source.get("timed_out"),
-        error=source.get("error"),
-        detail=source.get("detail"),
-        rebased=source.get("rebased"),
-        pid=source.get("pid"),
-        log_path=source.get("log_path"),
-        summary=source.get("summary"),
-        result=source.get("result"),
-        worktree_preserved=source.get("worktree_preserved"),
+    raw = state if isinstance(state, dict) else vars(state)
+    source = cast(Mapping[str, object], raw)
+    return cast(
+        RunDict,
+        {key: source.get(key) for key in RunDict.__annotations__},
     )
 
 

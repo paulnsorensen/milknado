@@ -44,19 +44,30 @@ class _PlanningSubprocess:
             if not planner_path.is_file() or not planner_path.is_relative_to(root):
                 raise ValueError("MILKNADO_LOCAL_PLANNER must be a file within the project root")
             argv = [sys.executable, str(planner_path)]
-            options = {
-                "input": context_path.read_text(encoding="utf-8"),
-                "text": True,
-                "stderr": subprocess.PIPE,
-            }
+            completed = subprocess.run(  # noqa: UP022
+                argv,
+                cwd=project_root,
+                check=False,
+                input=context_path.read_text(encoding="utf-8"),
+                text=True,
+                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+            )
         else:
             argv, options = build_planning_subprocess(
                 context_path,
                 command,
                 project_root=project_root,
             )
-        options["stdout"] = subprocess.PIPE
-        completed = subprocess.run(argv, cwd=project_root, check=False, **options)
+            completed = subprocess.run(
+                argv,
+                cwd=project_root,
+                check=False,
+                input=options["input"],
+                text=True,
+                env=options["env"],
+                stdout=subprocess.PIPE,
+            )
         return PlanningProcessResult(
             exit_code=completed.returncode,
             stdout=completed.stdout or "",
@@ -175,9 +186,16 @@ def _spawn_plan_critic(command: str, prompt: str, project_root: Path) -> str:
     context_path.parent.mkdir(parents=True, exist_ok=True)
     context_path.write_text(prompt, encoding="utf-8")
     argv, options = build_planning_subprocess(context_path, command, project_root=project_root)
-    options["stdout"] = subprocess.PIPE
-    options.setdefault("stderr", subprocess.PIPE)
-    completed = subprocess.run(argv, cwd=project_root, check=False, **options)
+    completed = subprocess.run(  # noqa: UP022
+        argv,
+        cwd=project_root,
+        input=options["input"],
+        text=True,
+        env=options["env"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
     return completed.stdout or ""
 
 

@@ -34,6 +34,6 @@ def open_project_graph(
 
 
 def open_project(root: Path, config: MilknadoConfig | None = None) -> OpenProject:
-    config = config or load_project_config(root)
+    config = load_project_config(root) if config is None else config
     plugins = load_project_plugins(config)
     return OpenProject(open_project_graph(config, plugins), config, plugins)
