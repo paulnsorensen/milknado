@@ -90,7 +90,7 @@ class _ReviewRalph:
 def _config(root: Path, **overrides: Any) -> ExecutionConfig:
     values: dict[str, Any] = {
         "execution_agent": "claude --model opus --effort high",
-        "quality_gates": (Gate("true"),),
+        "quality_gates": (Gate(command="true"),),
         "worktree_pattern": "milknado-{node_id}-{slug}",
         "project_root": root,
         "review": True,
@@ -288,7 +288,7 @@ def test_loop_adapter_resume_command_keeps_cwd_and_controls(tmp_path: Path) -> N
         tmp_path,
         prompt_file,
         [],
-        (Gate("true"),),
+        (Gate(command="true"),),
         project_root=tmp_path,
         runtime_policy=SimpleNamespace(session=session),
     )

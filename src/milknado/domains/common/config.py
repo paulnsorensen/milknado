@@ -3,11 +3,20 @@ from __future__ import annotations
 import logging
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import tomli_w
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
@@ -22,31 +31,14 @@ from milknado.domains.common.config_layers import (
 )
 from milknado.domains.common.flavor_codec import (
     FlavorOverride,
+    FlavorTable,
     Gate,
-)
-from milknado.domains.common.flavor_codec import (
-    absolutize_global_flavor_paths as _absolutize_global_flavor_paths,
-)
-from milknado.domains.common.flavor_codec import (
-    coerce_tool_list as _coerce_single_tool_list,
-)
-from milknado.domains.common.flavor_codec import (
-    parse_flavor_tables as _parse_flavor_tables,
-)
-from milknado.domains.common.flavor_codec import (
-    parse_gates as _parse_gates,
-)
-from milknado.domains.common.flavor_codec import (
-    serialize_flavor_tables as _serialize_flavor_tables,
-)
-from milknado.domains.common.flavor_codec import (
-    serialize_gates as _serialize_gates,
-)
-from milknado.domains.common.flavor_codec import (
-    validate_loop_mode as _validated_loop_mode,
-)
-from milknado.domains.common.flavor_codec import (
-    validate_positive_int as _validated_positive_int,
+    absolutize_global_flavor_paths,
+    coerce_tool_list,
+    serialize_flavor_tables,
+    serialize_gates,
+    validate_loop_mode,
+    validate_positive_int,
 )
 from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.paths import resolve_project_path, trust_global_path
@@ -64,12 +56,12 @@ DEFAULT_WORKER_AGENT_TYPE = "milknado:milknado-worker"
 DEFAULT_LOOP_MODE = "redispatch"
 DEFAULT_MAX_ITERATIONS = 8
 DEFAULT_MAX_TURNS = 60
-_LOOP_MODES = ("redispatch", "single")
 
 
-@dataclass(frozen=True)
-class MilknadoConfig:
+class MilknadoConfig(BaseModel):
     """Runtime config loaded from ``milknado.toml``."""
+
+    model_config = ConfigDict(frozen=True)
 
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
@@ -90,9 +82,9 @@ class MilknadoConfig:
     protected_branches: tuple[str, ...] = ("main", "master")
     completion_timeout_seconds: float | None = None
     eta_sample_size: int = 10
-    worker_tools: dict[str, tuple[str, ...]] = field(default_factory=dict)
-    flavors: dict[str, FlavorOverride] = field(default_factory=dict)
-    flavor_registry: frozenset[str] = field(default_factory=lambda: BUILTIN_FLAVORS)
+    worker_tools: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    flavors: dict[str, FlavorOverride] = Field(default_factory=dict)
+    flavor_registry: frozenset[str] = Field(default_factory=lambda: BUILTIN_FLAVORS)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
     commit_footer: str | None = None
@@ -101,6 +93,245 @@ class MilknadoConfig:
     loop_mode: str = DEFAULT_LOOP_MODE
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     max_turns: int = DEFAULT_MAX_TURNS
+
+
+_PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
+
+
+class PromptsTable(BaseModel):
+    """Schema for the ``[milknado.prompts]`` TOML table."""
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    planning_prepend: str | None = None
+    planning_prepend_path: str | None = None
+    worker_brief_prepend: str | None = None
+    worker_brief_prepend_path: str | None = None
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strings(cls, value: Any, info: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError(f"[milknado.prompts] {info.field_name} must be a string")
+        return value
+
+    @model_validator(mode="after")
+    def _mutually_exclusive(self) -> PromptsTable:
+        for slot in _PROMPT_PREPEND_SLOTS:
+            if getattr(self, slot) is not None and getattr(self, f"{slot}_path") is not None:
+                raise ValueError(
+                    f"[milknado.prompts] {slot} and {slot}_path are mutually exclusive"
+                )
+        return self
+
+    def prepend(self, slot: str, project_root: Path) -> str | None:
+        """Return the inline text for one slot, or load it from its ``_path`` file."""
+        inline = getattr(self, slot)
+        if inline:
+            return inline.strip() or None
+        path_value = getattr(self, f"{slot}_path")
+        if not path_value:
+            return None
+        resolved = resolve_project_path(
+            path_value,
+            project_root,
+            label=f"[milknado.prompts] {slot}_path",
+        )
+        if not resolved.exists():
+            raise FileNotFoundError(f"[milknado.prompts] {slot}_path does not exist: {resolved}")
+        return resolved.read_text(encoding="utf-8").strip() or None
+
+
+class WorkerTable(BaseModel):
+    """Schema for the ``[milknado.worker]`` TOML table."""
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    tools: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _tool_lists(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("[milknado.worker.tools] must be a table")
+        out: dict[str, tuple[str, ...]] = {}
+        for fam, tool_list in value.items():
+            if not isinstance(fam, str):
+                raise ValueError("[milknado.worker.tools] family keys must be strings")
+            out[fam] = coerce_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
+        return out
+
+
+class _MilknadoInheritanceControls(BaseModel):
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    inherit_global: bool = True
+
+    @field_validator("inherit_global", mode="before")
+    @classmethod
+    def _inherit_global_bool(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError("[milknado] inherit_global must be a boolean")
+        return value
+
+
+class _FlavorInheritanceControls(BaseModel):
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    inherit: bool = True
+
+    @field_validator("inherit", mode="before")
+    @classmethod
+    def _inherit_bool(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError("inherit must be a boolean")
+        return value
+
+
+class MilknadoSection(BaseModel):
+    """Schema for the merged ``[milknado]`` TOML table, before derivation."""
+
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    agent_family: str = "claude"
+    planning_agent: str | None = None
+    execution_agent: str | None = None
+    planning_validation_hook: str | None = None
+    plan_reviewer_agent: str | None = None
+    plan_review_max_rounds: StrictInt = 3
+    quality_gates: tuple[Gate, ...] | None = None
+    worktree: bool = True
+    worktree_pattern: str = "milknado-{node_id}-{slug}"
+    concurrency_limit: StrictInt = 4
+    db_path: str = ".milknado/milknado.db"
+    plugins: tuple[str, ...] = ()
+    stall_threshold_seconds: StrictInt = 300
+    dispatch_max_retries: StrictInt = 2
+    dispatch_backoff_seconds: StrictFloat = 5.0
+    protected_branches: tuple[str, ...] = ("main", "master")
+    completion_timeout_seconds: StrictFloat | None = None
+    eta_sample_size: StrictInt = 10
+    commit_footer: str | None = None
+    worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
+    loop_mode: str = DEFAULT_LOOP_MODE
+    max_iterations: StrictInt = DEFAULT_MAX_ITERATIONS
+    max_turns: StrictInt = DEFAULT_MAX_TURNS
+    prompts: PromptsTable = Field(default_factory=PromptsTable)
+    worker: WorkerTable = Field(default_factory=WorkerTable)
+    flavor: dict[str, FlavorTable] = Field(default_factory=dict)
+
+    @field_validator("agent_family", mode="before")
+    @classmethod
+    def _family(cls, value: Any) -> str:
+        family = str(value).strip().lower()
+        if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
+            allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
+            raise ValueError(f"Invalid agent_family. Expected one of: {allowed}")
+        return family
+
+    @field_validator("planning_validation_hook", mode="before")
+    @classmethod
+    def _hook(cls, value: Any) -> Any:
+        if not value:
+            return None
+        return str(value).strip() or None
+
+    @field_validator("commit_footer", mode="before")
+    @classmethod
+    def _commit_footer_str(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"[milknado] commit_footer must be a string; got {type(value).__name__}"
+            )
+        return value
+
+    @field_validator("plan_reviewer_agent", mode="before")
+    @classmethod
+    def _plan_reviewer_str(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"[milknado] plan_reviewer_agent must be a string; got {type(value).__name__}"
+            )
+        return value
+
+    @field_validator("worktree", mode="before")
+    @classmethod
+    def _worktree_bool(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError(f"[milknado] worktree must be a boolean; got {type(value).__name__}")
+        return value
+
+    @field_validator("worker_agent_type", mode="before")
+    @classmethod
+    def _worker_agent_type_str(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            raise ValueError(
+                f"[milknado] worker_agent_type must be a string; got {type(value).__name__}"
+            )
+        return value
+
+    @field_validator("loop_mode", mode="before")
+    @classmethod
+    def _loop_mode_valid(cls, value: Any) -> str:
+        return validate_loop_mode(value)
+
+    @field_validator("max_iterations", mode="before")
+    @classmethod
+    def _max_iterations_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "[milknado] max_iterations")
+
+    @field_validator("max_turns", mode="before")
+    @classmethod
+    def _max_turns_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "[milknado] max_turns")
+
+    @field_validator("plan_review_max_rounds", mode="before")
+    @classmethod
+    def _plan_review_max_rounds_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "[milknado] plan_review_max_rounds")
+
+    @field_validator("quality_gates", mode="before")
+    @classmethod
+    def _gates_list(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, list):
+            raise ValueError(
+                "[milknado] quality_gates must be a list (use [] to explicitly skip gates)"
+            )
+        return value
+
+    @field_validator("prompts", mode="before")
+    @classmethod
+    def _prompts_table(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("[milknado.prompts] must be a table")
+        return value
+
+    @field_validator("worker", mode="before")
+    @classmethod
+    def _worker_table(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("[milknado.worker] must be a table")
+        return value
+
+    @field_validator("flavor", mode="before")
+    @classmethod
+    def _flavor_tables(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("[milknado.flavor] must be a table")
+        for name, entry in value.items():
+            if not isinstance(name, str) or not name:
+                raise ValueError("[milknado.flavor] flavor keys must be non-empty strings")
+            if not isinstance(entry, dict):
+                raise ValueError(f"[milknado.flavor.{name}] must be a table")
+        return value
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -153,7 +384,7 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
             for key in _LOCAL_ONLY_KEYS:
                 global_raw.pop(key, None)
             _absolutize_global_prompt_paths(global_raw, global_path.parent)
-            _absolutize_global_flavor_paths(global_raw, global_path.parent)
+            absolutize_global_flavor_paths(global_raw, global_path.parent)
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
             record_origins(origins, global_raw, f"global:{global_path}")
@@ -168,20 +399,18 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
 
 def _extract_inheritance(raw: dict[str, Any], *, local: bool) -> tuple[bool, tuple[str, ...]]:
     """Validate and remove layer-control metadata before normal merging."""
-    inherit_global = raw.pop("inherit_global", True)
-    if not isinstance(inherit_global, bool):
-        raise ValueError("[milknado] inherit_global must be a boolean")
+    controls = _MilknadoInheritanceControls.model_validate(raw)
+    raw.pop("inherit_global", None)
     replaced: list[str] = []
     flavors = raw.get("flavor")
     if isinstance(flavors, dict):
         for name, flavor in flavors.items():
             if isinstance(flavor, dict) and "inherit" in flavor:
-                inherit = flavor.pop("inherit")
-                if not isinstance(inherit, bool):
-                    raise ValueError(f"[milknado.flavor.{name}] inherit must be a boolean")
-                if local and not inherit:
+                flavor_controls = _FlavorInheritanceControls.model_validate(flavor)
+                flavor.pop("inherit")
+                if local and not flavor_controls.inherit:
                     replaced.append(name)
-    return inherit_global, tuple(replaced)
+    return controls.inherit_global, tuple(replaced)
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:
@@ -195,7 +424,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
     if tools:
         milknado["worker"] = {"tools": tools}
 
-    flavor_tables = _serialize_flavor_tables(config.flavors)
+    flavor_tables = serialize_flavor_tables(config.flavors)
     if flavor_tables:
         milknado["flavor"] = flavor_tables
 
@@ -231,7 +460,7 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
     if not _should_suppress_execution_agent(config):
         milknado["execution_agent"] = config.execution_agent
     if config.quality_gates is not None:
-        milknado["quality_gates"] = _serialize_gates(config.quality_gates)
+        milknado["quality_gates"] = serialize_gates(config.quality_gates)
     milknado.update(
         {
             "worktree": config.worktree,
@@ -286,24 +515,24 @@ def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
     """
     if (project_root / "pyproject.toml").exists():
         return (
-            Gate("uv run pytest"),
-            Gate("uv run ruff check"),
-            Gate("uv run ty check"),
+            Gate(command="uv run pytest"),
+            Gate(command="uv run ruff check"),
+            Gate(command="uv run ty check"),
         )
     if (project_root / "Cargo.toml").exists():
         return (
-            Gate("cargo test"),
-            Gate("cargo clippy -- -D warnings"),
+            Gate(command="cargo test"),
+            Gate(command="cargo clippy -- -D warnings"),
         )
     if (project_root / "package.json").exists():
-        return (Gate("npm test"),)
+        return (Gate(command="npm test"),)
     if (project_root / "go.mod").exists():
         return (
-            Gate("go test ./..."),
-            Gate("go vet ./..."),
+            Gate(command="go test ./..."),
+            Gate(command="go vet ./..."),
         )
     if (project_root / "project.godot").exists():
-        return (Gate("godot --headless --quit", fail_on_stdout="SCRIPT ERROR|^ERROR:"),)
+        return (Gate(command="godot --headless --quit", fail_on_stdout="SCRIPT ERROR|^ERROR:"),)
     return None
 
 
@@ -321,9 +550,6 @@ def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return deep_merge(base, override, list_mode="replace")
 
 
-_PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
-
-
 def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) -> None:
     """Resolve relative prompt ``_path`` values in the GLOBAL config against the
     global config directory.
@@ -333,7 +559,7 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
     ``planning_prepend_path = "team.md"`` would wrongly look for the file next to
     the project's ``milknado.toml`` instead of next to the global config. Rewrite
     them to absolute here, before the merge, so the global base dir is honoured.
-    Non-string values are left untouched for ``_load_prompt_prepend`` to reject.
+    Non-string values are left untouched for the schema to reject.
     """
     prompts = global_raw.get("prompts")
     if not isinstance(prompts, dict):
@@ -373,30 +599,19 @@ def _warn_local_only_keys(global_raw: dict[str, Any], path: Path) -> None:
         )
 
 
-def _validated_family(raw: dict[str, Any]) -> str:
-    family = str(raw.get("agent_family", "claude")).strip().lower()
-    if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
-        allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
-        raise ValueError(f"Invalid agent_family '{family}'. Expected one of: {allowed}")
-    return family
-
-
-def _resolve_agents(
-    raw: dict[str, Any], family: str, worker_tools: dict[str, tuple[str, ...]]
-) -> tuple[str, str]:
-    planning_agent_raw = raw.get("planning_agent")
-    execution_agent_raw = raw.get("execution_agent")
+def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
+    """Derive the planning/execution commands from explicit values or family defaults."""
     planning_agent = resolve_planning_agent_command(
         family,
-        planning_agent=(str(planning_agent_raw) if planning_agent_raw is not None else None),
+        planning_agent=section.planning_agent,
     )
     # Default execution_agent is built from the family default + the worker-tool
     # override. An explicit `execution_agent` in TOML wins outright — it's the
     # opt-out for users who want full control of the worker invocation.
-    family_tools = worker_tools.get(family)
+    family_tools = section.worker.tools.get(family)
     execution_agent = resolve_execution_agent_command(
         family,
-        execution_agent=(str(execution_agent_raw) if execution_agent_raw is not None else None),
+        execution_agent=section.execution_agent,
         tools=(
             resolve_worker_tools(family, list(family_tools)) if family_tools is not None else None
         ),
@@ -404,160 +619,41 @@ def _resolve_agents(
     return planning_agent, execution_agent
 
 
-def _scalar_config_kwargs(raw: dict[str, Any], project_root: Path) -> dict[str, Any]:
-    planning_validation_hook_raw = raw.get("planning_validation_hook")
-    return {
-        "planning_validation_hook": (
-            str(planning_validation_hook_raw).strip() if planning_validation_hook_raw else None
-        ),
-        "quality_gates": _parse_gates(raw.get("quality_gates"), "[milknado] quality_gates"),
-        "worktree": _validated_bool(raw.get("worktree"), True, "[milknado] worktree"),
-        "worktree_pattern": raw.get("worktree_pattern", "milknado-{node_id}-{slug}"),
-        "concurrency_limit": raw.get("concurrency_limit", 4),
-        "project_root": project_root,
-        "db_path": _validated_db_path(project_root, raw.get("db_path", ".milknado/milknado.db")),
-        "plugins": tuple(raw.get("plugins", [])),
-        "stall_threshold_seconds": int(raw.get("stall_threshold_seconds", 300)),
-        "dispatch_max_retries": int(raw.get("dispatch_max_retries", 2)),
-        "dispatch_backoff_seconds": float(raw.get("dispatch_backoff_seconds", 5.0)),
-        "protected_branches": tuple(raw.get("protected_branches", ["main", "master"])),
-        "completion_timeout_seconds": (
-            float(raw["completion_timeout_seconds"])
-            if "completion_timeout_seconds" in raw
-            else None
-        ),
-        "eta_sample_size": int(raw.get("eta_sample_size", 10)),
-        "worker_agent_type": _validated_str(
-            raw.get("worker_agent_type"), DEFAULT_WORKER_AGENT_TYPE, "[milknado] worker_agent_type"
-        ),
-        "loop_mode": _validated_loop_mode(raw.get("loop_mode", DEFAULT_LOOP_MODE), "[milknado]"),
-        "max_iterations": _validated_positive_int(
-            raw.get("max_iterations", DEFAULT_MAX_ITERATIONS), "[milknado] max_iterations"
-        ),
-        "max_turns": _validated_positive_int(
-            raw.get("max_turns", DEFAULT_MAX_TURNS), "[milknado] max_turns"
-        ),
-        "commit_footer": _validated_optional_str(
-            raw.get("commit_footer"), "[milknado] commit_footer"
-        ),
-        "plan_reviewer_agent": _validated_optional_str(
-            raw.get("plan_reviewer_agent"), "[milknado] plan_reviewer_agent"
-        ),
-        "plan_review_max_rounds": _validated_positive_int(
-            raw.get("plan_review_max_rounds", 3), "[milknado] plan_review_max_rounds"
-        ),
-    }
-
-
 def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
-    family = _validated_family(raw)
-    worker_tools = _parse_worker_tools(raw.get("worker"))
-    flavors = _parse_flavor_tables(raw.get("flavor"), project_root)
-    planning_agent, execution_agent = _resolve_agents(raw, family, worker_tools)
-
-    kwargs = _scalar_config_kwargs(raw, project_root)
-    kwargs.update(
+    section = MilknadoSection.model_validate(raw)
+    family = section.agent_family
+    flavors = {
+        name: table.to_override(name, project_root) for name, table in section.flavor.items()
+    }
+    planning_agent, execution_agent = _resolve_agents(section, family)
+    return MilknadoConfig(
         agent_family=family,
         planning_agent=planning_agent,
+        planning_validation_hook=section.planning_validation_hook,
+        plan_reviewer_agent=section.plan_reviewer_agent,
+        plan_review_max_rounds=section.plan_review_max_rounds,
         execution_agent=execution_agent,
-        worker_tools=worker_tools,
+        quality_gates=section.quality_gates,
+        worktree=section.worktree,
+        worktree_pattern=section.worktree_pattern,
+        concurrency_limit=section.concurrency_limit,
+        project_root=project_root,
+        db_path=resolve_project_path(section.db_path, project_root, label="db_path"),
+        plugins=section.plugins,
+        stall_threshold_seconds=section.stall_threshold_seconds,
+        dispatch_max_retries=section.dispatch_max_retries,
+        dispatch_backoff_seconds=section.dispatch_backoff_seconds,
+        protected_branches=section.protected_branches,
+        completion_timeout_seconds=section.completion_timeout_seconds,
+        eta_sample_size=section.eta_sample_size,
+        worker_tools=section.worker.tools,
         flavors=flavors,
         flavor_registry=BUILTIN_FLAVORS | flavors.keys(),
-        planning_prompt_prepend=_load_prompt_prepend(
-            raw.get("prompts"), "planning_prepend", project_root
-        ),
-        worker_brief_prepend=_load_prompt_prepend(
-            raw.get("prompts"), "worker_brief_prepend", project_root
-        ),
+        planning_prompt_prepend=section.prompts.prepend("planning_prepend", project_root),
+        worker_brief_prepend=section.prompts.prepend("worker_brief_prepend", project_root),
+        commit_footer=section.commit_footer,
+        worker_agent_type=section.worker_agent_type,
+        loop_mode=section.loop_mode,
+        max_iterations=section.max_iterations,
+        max_turns=section.max_turns,
     )
-    return MilknadoConfig(**kwargs)
-
-
-def _validated_bool(value: Any, default: bool, ctx: str) -> bool:
-    if value is None:
-        return default
-    if not isinstance(value, bool):
-        raise ValueError(f"{ctx} must be a boolean; got {type(value).__name__}")
-    return value
-
-
-def _validated_str(value: Any, default: str, ctx: str) -> str:
-    if value is None:
-        return default
-    if not isinstance(value, str):
-        raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
-    return value
-
-
-def _validated_optional_str(value: Any, ctx: str) -> str | None:
-    """Return a string config value or None, rejecting non-string types instead of coercing."""
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"{ctx} must be a string; got {type(value).__name__}")
-    return value
-
-
-def _parse_worker_tools(worker_raw: Any) -> dict[str, tuple[str, ...]]:
-    """Parse [milknado.worker.tools] in single-list grammar.
-
-    Each family key maps to a list (possibly containing one \"...\" sentinel).
-    The stored tuple is the raw list; sentinel expansion happens at resolution
-    time (in resolve_worker_tools / resolve_execution_agent_command).
-    """
-    if worker_raw is None:
-        return {}
-    if not isinstance(worker_raw, dict):
-        raise ValueError("[milknado.worker] must be a table")
-    tools_raw = worker_raw.get("tools")
-    if tools_raw is None:
-        return {}
-    if not isinstance(tools_raw, dict):
-        raise ValueError("[milknado.worker.tools] must be a table")
-    out: dict[str, tuple[str, ...]] = {}
-    for fam, tool_list in tools_raw.items():
-        if not isinstance(fam, str):
-            raise ValueError(f"[milknado.worker.tools] family keys must be strings, got {fam!r}")
-        out[fam] = _coerce_single_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
-    return out
-
-
-def _load_prompt_prepend(
-    prompts_raw: Any,
-    base_key: str,
-    project_root: Path,
-) -> str | None:
-    if prompts_raw is None:
-        return None
-    if not isinstance(prompts_raw, dict):
-        raise ValueError("[milknado.prompts] must be a table")
-    inline = prompts_raw.get(base_key)
-    path_value = prompts_raw.get(f"{base_key}_path")
-    if inline is not None and not isinstance(inline, str):
-        raise ValueError(f"[milknado.prompts] {base_key} must be a string")
-    if path_value is not None and not isinstance(path_value, str):
-        raise ValueError(f"[milknado.prompts] {base_key}_path must be a string")
-    if inline is not None and path_value is not None:
-        raise ValueError(
-            f"[milknado.prompts] {base_key} and {base_key}_path are mutually exclusive"
-        )
-    if inline:
-        text = str(inline).strip()
-        return text or None
-    if path_value:
-        resolved = resolve_project_path(
-            path_value,
-            project_root,
-            label=f"[milknado.prompts] {base_key}_path",
-        )
-        if not resolved.exists():
-            raise FileNotFoundError(
-                f"[milknado.prompts] {base_key}_path does not exist: {resolved}"
-            )
-        text = resolved.read_text(encoding="utf-8").strip()
-        return text or None
-    return None
-
-
-def _validated_db_path(project_root: Path, raw: str) -> Path:
-    return resolve_project_path(raw, project_root, label="db_path")

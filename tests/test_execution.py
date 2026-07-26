@@ -260,7 +260,7 @@ class FakeCrg:
 def config(tmp_path: Path) -> ExecutionConfig:
     return ExecutionConfig(
         execution_agent="claude",
-        quality_gates=(Gate("uv run pytest"),),
+        quality_gates=(Gate(command="uv run pytest"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,
     )
@@ -419,7 +419,7 @@ class TestExecutorDispatch:
         """A set commit_footer on ExecutionConfig reaches the ralph port's create_run call."""
         footer_config = ExecutionConfig(
             execution_agent="claude",
-            quality_gates=(Gate("uv run pytest"),),
+            quality_gates=(Gate(command="uv run pytest"),),
             worktree_pattern="milknado-{node_id}-{slug}",
             project_root=tmp_path,
             commit_footer="Co-authored-by: Team <team@example.com>",
@@ -1507,7 +1507,7 @@ class TestGetAttemptCount:
 
         config_retry = ExecutionConfig(
             execution_agent="claude",
-            quality_gates=(Gate("uv run pytest"),),
+            quality_gates=(Gate(command="uv run pytest"),),
             worktree_pattern="milknado-{node_id}-{slug}",
             project_root=config.project_root,
             dispatch_max_retries=2,

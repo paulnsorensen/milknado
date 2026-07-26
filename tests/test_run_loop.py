@@ -254,7 +254,7 @@ def config(tmp_path: Path) -> ExecutionConfig:
 
     return ExecutionConfig(
         execution_agent="claude",
-        quality_gates=(Gate("uv run pytest"),),
+        quality_gates=(Gate(command="uv run pytest"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=tmp_path,
     )

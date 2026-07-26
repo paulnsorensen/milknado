@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
+from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from milknado.domains.common.config import (
     Gate,
     MilknadoConfig,
-    _parse_gates,
+    MilknadoSection,
     default_config,
     detect_project_gates,
     load_config,
@@ -59,13 +60,34 @@ class TestLoadConfig:
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
         assert cfg.quality_gates is not None
-        assert Gate("uv run pytest") in cfg.quality_gates
+        assert Gate(command="uv run pytest") in cfg.quality_gates
 
     def test_loads_concurrency_limit(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\nconcurrency_limit = 8\n'
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
         assert cfg.concurrency_limit == 8
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("concurrency_limit", "8"),
+            ("stall_threshold_seconds", "300"),
+            ("dispatch_max_retries", "2"),
+            ("dispatch_backoff_seconds", "5.0"),
+            ("completion_timeout_seconds", "30.0"),
+            ("eta_sample_size", "10"),
+        ],
+    )
+    def test_rejects_coercible_numeric_strings(self, field: str, value: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            MilknadoSection.model_validate({field: value})
+
+    def test_invalid_family_error_hides_input(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            MilknadoSection.model_validate({"agent_family": "TOPSECRET"})
+
+        assert "topsecret" not in str(exc_info.value).lower()
 
     def test_loads_custom_planning_agent(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\nplanning_agent = "claude --model opus"\n'
@@ -179,10 +201,7 @@ class TestSaveConfig:
         assert loaded.completion_timeout_seconds is None
 
     def test_roundtrip_preserves_explicit_completion_timeout(self, tmp_path: Path) -> None:
-        cfg = dataclasses.replace(
-            default_config(tmp_path),
-            completion_timeout_seconds=3600.0,
-        )
+        cfg = default_config(tmp_path).model_copy(update={"completion_timeout_seconds": 3600.0})
         path = tmp_path / "milknado.toml"
 
         save_config(cfg, path)
@@ -318,63 +337,68 @@ class TestSaveConfig:
         assert "milknado.db" in content
 
 
+def _section_gates(raw: Any) -> tuple[Gate, ...] | None:
+    """Validate raw TOML ``quality_gates`` through the ``[milknado]`` schema."""
+    return MilknadoSection.model_validate({"quality_gates": raw}).quality_gates
+
+
 class TestParseGates:
     def test_none_returns_none(self) -> None:
-        assert _parse_gates(None, "ctx") is None
+        assert _section_gates(None) is None
 
     def test_empty_list_returns_empty_tuple(self) -> None:
-        assert _parse_gates([], "ctx") == ()
+        assert _section_gates([]) == ()
 
     def test_string_entries_become_gate_objects(self) -> None:
-        result = _parse_gates(["uv run pytest", "uv run ruff check"], "ctx")
-        assert result == (Gate("uv run pytest"), Gate("uv run ruff check"))
+        result = _section_gates(["uv run pytest", "uv run ruff check"])
+        assert result == (Gate(command="uv run pytest"), Gate(command="uv run ruff check"))
 
     def test_table_entry_with_fail_on_stdout(self) -> None:
         raw = [{"command": "godot --headless", "fail_on_stdout": "SCRIPT ERROR"}]
-        result = _parse_gates(raw, "ctx")
-        assert result == (Gate("godot --headless", fail_on_stdout="SCRIPT ERROR"),)
+        result = _section_gates(raw)
+        assert result == (Gate(command="godot --headless", fail_on_stdout="SCRIPT ERROR"),)
 
     def test_table_entry_without_fail_on_stdout(self) -> None:
         raw = [{"command": "cargo test"}]
-        result = _parse_gates(raw, "ctx")
-        assert result == (Gate("cargo test"),)
+        result = _section_gates(raw)
+        assert result == (Gate(command="cargo test"),)
 
     def test_non_list_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="must be a list"):
-            _parse_gates("uv run pytest", "ctx")
+        with pytest.raises(ValidationError, match="must be a list"):
+            _section_gates("uv run pytest")
 
     def test_empty_string_entry_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
-            _parse_gates([""], "ctx")
+        with pytest.raises(ValidationError, match="non-empty string"):
+            _section_gates([""])
 
     def test_bad_regex_fail_on_stdout_raises(self) -> None:
         raw = [{"command": "godot", "fail_on_stdout": "[invalid"}]
-        with pytest.raises(ValueError, match="not a valid regex"):
-            _parse_gates(raw, "ctx")
+        with pytest.raises(ValidationError, match="not a valid regex"):
+            _section_gates(raw)
 
     def test_dict_missing_command_raises(self) -> None:
-        with pytest.raises(ValueError, match="command"):
-            _parse_gates([{"fail_on_stdout": "ERROR"}], "ctx")
+        with pytest.raises(ValidationError, match="command"):
+            _section_gates([{"fail_on_stdout": "ERROR"}])
 
     def test_wrong_type_entry_raises(self) -> None:
-        with pytest.raises(ValueError, match="string or a table"):
-            _parse_gates([42], "ctx")
+        with pytest.raises(ValidationError, match="string or a table"):
+            _section_gates([42])
 
     def test_non_string_fail_on_stdout_raises(self) -> None:
-        with pytest.raises(ValueError, match="fail_on_stdout must be a string"):
-            _parse_gates([{"command": "godot", "fail_on_stdout": 42}], "ctx")
+        with pytest.raises(ValidationError, match="fail_on_stdout must be a string"):
+            _section_gates([{"command": "godot", "fail_on_stdout": 42}])
 
     def test_whitespace_only_string_entry_raises(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
-            _parse_gates(["   "], "ctx")
+        with pytest.raises(ValidationError, match="non-empty string"):
+            _section_gates(["   "])
 
     def test_whitespace_only_command_raises(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
-            _parse_gates([{"command": "   "}], "ctx")
+        with pytest.raises(ValidationError, match="non-empty string"):
+            _section_gates([{"command": "   "}])
 
     def test_whitespace_only_fail_on_stdout_treated_as_absent(self) -> None:
-        result = _parse_gates([{"command": "godot", "fail_on_stdout": "   "}], "ctx")
-        assert result == (Gate("godot", fail_on_stdout=None),)
+        result = _section_gates([{"command": "godot", "fail_on_stdout": "   "}])
+        assert result == (Gate(command="godot", fail_on_stdout=None),)
 
 
 class TestDetectProjectGates:
@@ -434,9 +458,8 @@ class TestDetectProjectGates:
 
 class TestSaveConfigGates:
     def test_string_gate_serialized_as_bare_string(self, tmp_path: Path) -> None:
-        cfg = dataclasses.replace(
-            default_config(tmp_path),
-            quality_gates=(Gate("uv run pytest"),),
+        cfg = default_config(tmp_path).model_copy(
+            update={"quality_gates": (Gate(command="uv run pytest"),)}
         )
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
@@ -444,9 +467,10 @@ class TestSaveConfigGates:
         assert '"uv run pytest"' in content
 
     def test_gate_with_fail_on_stdout_serialized_as_inline_table(self, tmp_path: Path) -> None:
-        cfg = dataclasses.replace(
-            default_config(tmp_path),
-            quality_gates=(Gate("godot --headless", fail_on_stdout="SCRIPT ERROR"),),
+        cfg = default_config(tmp_path).model_copy(
+            update={
+                "quality_gates": (Gate(command="godot --headless", fail_on_stdout="SCRIPT ERROR"),)
+            }
         )
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
@@ -455,18 +479,22 @@ class TestSaveConfigGates:
         assert "fail_on_stdout" in content
 
     def test_roundtrip_string_gate(self, tmp_path: Path) -> None:
-        cfg = dataclasses.replace(
-            default_config(tmp_path),
-            quality_gates=(Gate("uv run pytest"), Gate("uv run ruff check")),
+        cfg = default_config(tmp_path).model_copy(
+            update={
+                "quality_gates": (Gate(command="uv run pytest"), Gate(command="uv run ruff check"))
+            }
         )
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
         loaded = load_config(path, include_global=False)
-        assert loaded.quality_gates == (Gate("uv run pytest"), Gate("uv run ruff check"))
+        assert loaded.quality_gates == (
+            Gate(command="uv run pytest"),
+            Gate(command="uv run ruff check"),
+        )
 
     def test_roundtrip_gate_with_fail_on_stdout(self, tmp_path: Path) -> None:
-        gate = Gate("godot --headless --run-tests", fail_on_stdout="SCRIPT ERROR|FAILED")
-        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=(gate,))
+        gate = Gate(command="godot --headless --run-tests", fail_on_stdout="SCRIPT ERROR|FAILED")
+        cfg = default_config(tmp_path).model_copy(update={"quality_gates": (gate,)})
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
         loaded = load_config(path, include_global=False)
@@ -474,7 +502,7 @@ class TestSaveConfigGates:
 
     def test_none_gates_not_written_to_toml(self, tmp_path: Path) -> None:
         """quality_gates=None (unconfigured) must not emit a key — absence is the signal."""
-        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=None)
+        cfg = default_config(tmp_path).model_copy(update={"quality_gates": None})
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
         loaded = load_config(path, include_global=False)
@@ -482,7 +510,7 @@ class TestSaveConfigGates:
 
     def test_empty_tuple_gates_written_as_empty_list(self, tmp_path: Path) -> None:
         """quality_gates=() (explicit skip) round-trips back as empty tuple."""
-        cfg = dataclasses.replace(default_config(tmp_path), quality_gates=())
+        cfg = default_config(tmp_path).model_copy(update={"quality_gates": ()})
         path = tmp_path / "milknado.toml"
         save_config(cfg, path)
         loaded = load_config(path, include_global=False)

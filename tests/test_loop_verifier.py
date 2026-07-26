@@ -109,7 +109,7 @@ class TestGateEnvHermeticity:
         monkeypatch.setenv("MILKNADO_NODE_ID", "77")
         # Fails (exit 1) if either injected var is visible to the gate command;
         # uses shell builtins only so the check does not itself depend on PATH.
-        probe = Gate('test -z "$MILKNADO_RUN_ID" && test -z "$MILKNADO_NODE_ID"')
+        probe = Gate(command='test -z "$MILKNADO_RUN_ID" && test -z "$MILKNADO_NODE_ID"')
         assert _run_quality_gates(worktree, [probe]) is None
 
     def test_gate_env_preserves_non_milknado_vars(
@@ -118,14 +118,14 @@ class TestGateEnvHermeticity:
         # Stripping MILKNADO_* must not nuke the rest of the env: PATH must survive
         # so an external command still resolves (guards against passing env={}).
         monkeypatch.setenv("MILKNADO_RUN_ID", "leak-run-123")
-        assert _run_quality_gates(worktree, [Gate("env >/dev/null")]) is None
+        assert _run_quality_gates(worktree, [Gate(command="env >/dev/null")]) is None
 
 
 class TestFailingGate:
     def test_failing_gate_yields_not_ok_naming_command(self, worktree: Path) -> None:
         _commit_change(worktree)
         cmd = "sh -c 'echo boom-marker >&2; exit 1'"
-        verifier = _build_completion_verifier(worktree, (Gate(cmd),))
+        verifier = _build_completion_verifier(worktree, (Gate(command=cmd),))
 
         verdict = verifier()
 
@@ -135,7 +135,7 @@ class TestFailingGate:
     def test_failing_gate_includes_output_tail(self, worktree: Path) -> None:
         _commit_change(worktree)
         verifier = _build_completion_verifier(
-            worktree, (Gate("sh -c 'echo unique-tail-token; exit 3'"),)
+            worktree, (Gate(command="sh -c 'echo unique-tail-token; exit 3'"),)
         )
 
         verdict = verifier()
@@ -147,7 +147,7 @@ class TestFailingGate:
         _commit_change(worktree)
         verifier = _build_completion_verifier(
             worktree,
-            (Gate("sh -c 'exit 1'"), Gate("sh -c 'echo second-gate-ran; exit 0'")),
+            (Gate(command="sh -c 'exit 1'"), Gate(command="sh -c 'echo second-gate-ran; exit 0'")),
         )
 
         verdict = verifier()
@@ -163,7 +163,7 @@ class TestFailingGate:
 
         monkeypatch.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'sleep 5'"),))
 
         verdict = verifier()
 
@@ -178,7 +178,7 @@ class TestFailingGate:
         only the agent's rejection feedback — a budget-burning reject loop on a
         non-interactive server run is otherwise invisible."""
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'exit 2'"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'exit 2'"),))
 
         with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
             verifier()
@@ -197,7 +197,7 @@ class TestFailingGate:
 
         monkeypatch.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", 0.2)
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 5'"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'sleep 5'"),))
 
         with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
             verifier()
@@ -208,7 +208,7 @@ class TestFailingGate:
         """Gates run before the diff check: a failing gate on an empty worktree
         reports the gate failure, not the no-change message — the agent must see
         the harness reason it actually hit first."""
-        verifier = _build_completion_verifier(worktree, (Gate("sh -c 'exit 1'"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'exit 1'"),))
 
         verdict = verifier()
 
@@ -219,7 +219,7 @@ class TestFailingGate:
 
 class TestEmptyDiff:
     def test_empty_diff_yields_no_change_feedback(self, worktree: Path) -> None:
-        verifier = _build_completion_verifier(worktree, (Gate("true"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="true"),))
 
         verdict = verifier()
 
@@ -230,7 +230,9 @@ class TestEmptyDiff:
 
     def test_gates_pass_but_no_change_still_rejected(self, worktree: Path) -> None:
         """A green harness with zero produced change must not be accepted."""
-        verifier = _build_completion_verifier(worktree, (Gate("true"), Gate("true")))
+        verifier = _build_completion_verifier(
+            worktree, (Gate(command="true"), Gate(command="true"))
+        )
 
         assert verifier().ok is False
 
@@ -238,7 +240,7 @@ class TestEmptyDiff:
 class TestAllGreen:
     def test_passing_gates_and_committed_change_ok(self, worktree: Path) -> None:
         _commit_change(worktree)
-        verifier = _build_completion_verifier(worktree, (Gate("true"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="true"),))
 
         verdict = verifier()
 
@@ -248,7 +250,7 @@ class TestAllGreen:
     def test_passing_gates_and_uncommitted_change_ok(self, worktree: Path) -> None:
         """A stageable-but-uncommitted change counts as produced work."""
         (worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
-        verifier = _build_completion_verifier(worktree, (Gate("true"),))
+        verifier = _build_completion_verifier(worktree, (Gate(command="true"),))
 
         assert verifier().ok is True
 
@@ -363,7 +365,7 @@ class TestArtifactEvidenceMode:
         node with an artifact_path — the artifact-evidence mode is scoped to
         explicitly-empty gates only."""
         verifier = _build_completion_verifier(
-            worktree, (Gate("true"),), in_place=True, artifact_path="NOTES.md"
+            worktree, (Gate(command="true"),), in_place=True, artifact_path="NOTES.md"
         )
 
         verdict = verifier()
@@ -464,7 +466,9 @@ class TestFailOnStdout:
         """A gate that exits 0 but prints a pattern match should be a failure.
         This covers Godot headless and similar harnesses that exit 0 on errors."""
         _commit_change(worktree)
-        gate = Gate("sh -c 'echo SCRIPT ERROR: oops; exit 0'", fail_on_stdout="SCRIPT ERROR")
+        gate = Gate(
+            command="sh -c 'echo SCRIPT ERROR: oops; exit 0'", fail_on_stdout="SCRIPT ERROR"
+        )
         verifier = _build_completion_verifier(worktree, (gate,))
 
         verdict = verifier()
@@ -475,7 +479,7 @@ class TestFailOnStdout:
     def test_non_matching_stdout_on_exit_0_passes(self, worktree: Path) -> None:
         """Output that does not match the pattern should not trip the gate."""
         _commit_change(worktree)
-        gate = Gate("sh -c 'echo all good; exit 0'", fail_on_stdout="SCRIPT ERROR|FAILED")
+        gate = Gate(command="sh -c 'echo all good; exit 0'", fail_on_stdout="SCRIPT ERROR|FAILED")
         verifier = _build_completion_verifier(worktree, (gate,))
 
         verdict = verifier()
@@ -485,7 +489,7 @@ class TestFailOnStdout:
     def test_fail_on_stdout_with_nonzero_exit_also_fails(self, worktree: Path) -> None:
         """Non-zero exit still fails even if fail_on_stdout would also match."""
         _commit_change(worktree)
-        gate = Gate("sh -c 'echo FAILED; exit 1'", fail_on_stdout="FAILED")
+        gate = Gate(command="sh -c 'echo FAILED; exit 1'", fail_on_stdout="FAILED")
         verifier = _build_completion_verifier(worktree, (gate,))
 
         verdict = verifier()
@@ -496,7 +500,7 @@ class TestFailOnStdout:
     def test_fail_on_stdout_names_command_in_feedback(self, worktree: Path) -> None:
         _commit_change(worktree)
         cmd = "sh -c 'echo SCRIPT ERROR; exit 0'"
-        gate = Gate(cmd, fail_on_stdout="SCRIPT ERROR")
+        gate = Gate(command=cmd, fail_on_stdout="SCRIPT ERROR")
         verifier = _build_completion_verifier(worktree, (gate,))
 
         verdict = verifier()
@@ -510,7 +514,7 @@ class TestFailOnStdout:
         _commit_change(worktree)
         # stdout ends with "SCRIPT ", stderr starts with "ERROR" — would join without separator
         gate = Gate(
-            'sh -c \'printf "SCRIPT " >&1; printf "ERROR" >&2; exit 0\'',
+            command='sh -c \'printf "SCRIPT " >&1; printf "ERROR" >&2; exit 0\'',
             fail_on_stdout="SCRIPT ERROR",
         )
         verifier = _build_completion_verifier(worktree, (gate,))
@@ -566,7 +570,7 @@ class TestGitFailureFailsClosed:
             text=True,
         ).stdout.strip()
         _git("checkout", "--detach", head, cwd=feature_repo)
-        verifier = _build_completion_verifier(feature_repo, (Gate("true"),))
+        verifier = _build_completion_verifier(feature_repo, (Gate(command="true"),))
 
         verdict = verifier()
 
@@ -610,7 +614,7 @@ class TestGateCapSizing:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(completion_mod, "_GATE_TIMEOUT_SECONDS", loop_mod_gate_cap)
             _commit_change(worktree)
-            verifier = _build_completion_verifier(worktree, (Gate("sh -c 'sleep 1.5'"),))
+            verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'sleep 1.5'"),))
 
             verdict = verifier()
 
@@ -626,7 +630,7 @@ class TestCreateRunAttachesVerifier:
             ralph_dir=worktree,
             ralph_file=worktree / "RALPH.md",
             commands=[],
-            quality_gates=(Gate("true"),),
+            quality_gates=(Gate(command="true"),),
             base_oid=_BASE_OIDS[worktree],
         )
 

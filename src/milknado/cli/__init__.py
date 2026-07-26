@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import subprocess
 from pathlib import Path
 from typing import Annotated
@@ -88,7 +87,7 @@ def init(
         config = default_config(project_root)
         detected_gates = detect_project_gates(project_root)
         if detected_gates is not None:
-            config = dataclasses.replace(config, quality_gates=detected_gates)
+            config = config.model_copy(update={"quality_gates": detected_gates})
             gate_cmds = ", ".join(f"`{g.command}`" for g in detected_gates)
             console.print(f"Detected project type → gates: {gate_cmds}")
         else:

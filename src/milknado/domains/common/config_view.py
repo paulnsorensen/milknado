@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +13,7 @@ from milknado.domains.common.flavor_profile import resolve_flavor_profile
 def resolved_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
     """Return the runtime configuration that dispatch code actually consumes."""
     value = resolve_flavor_profile(details.config, flavor) if flavor else details.config
-    return _json_value(asdict(value))
+    return _json_value(value.model_dump(mode="python"))
 
 
 def explain_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
