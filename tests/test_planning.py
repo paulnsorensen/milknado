@@ -25,6 +25,7 @@ from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
     MANIFEST_VERSION,
     PlanChangeManifest,
+    manifest_to_dict,
     parse_manifest_from_dict,
     parse_manifest_from_output,
 )
@@ -1230,6 +1231,50 @@ class TestPlanChangeManifest:
                 reason="call site",
             ),
         )
+
+    def test_serialization_preserves_boundary_fields(self) -> None:
+        manifest = PlanChangeManifest(
+            manifest_version=MANIFEST_VERSION,
+            goal="Refactor auth",
+            goal_summary="Extract auth slice",
+            spec_path=None,
+            changes=(
+                FileChange(
+                    id="c1",
+                    path="src/auth.py",
+                    hash_anchors=HashAnchors(before="before", after="after"),
+                    dependencies=(
+                        ChangeDependency(
+                            path="src/models.py",
+                            symbols=(SymbolRef(name="User", file="src/models.py"),),
+                            hash_anchors=HashAnchors(before="model-before", after="model-after"),
+                            reason="type use",
+                        ),
+                    ),
+                ),
+            ),
+            new_relationships=(),
+        )
+
+        assert manifest_to_dict(manifest)["changes"] == [
+            {
+                "id": "c1",
+                "path": "src/auth.py",
+                "edit_kind": "modify",
+                "description": "",
+                "symbols": [],
+                "depends_on": [],
+                "hash_anchors": {"before": "before", "after": "after"},
+                "dependencies": [
+                    {
+                        "path": "src/models.py",
+                        "symbols": [{"name": "User", "file": "src/models.py"}],
+                        "reason": "type use",
+                        "hash_anchors": {"before": "model-before", "after": "model-after"},
+                    },
+                ],
+            },
+        ]
 
     def test_direct_construction_is_frozen(self) -> None:
         manifest = PlanChangeManifest(
