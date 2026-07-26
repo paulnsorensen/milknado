@@ -514,6 +514,10 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
 
 def test_agent_session_parser_rejects_bad_shapes() -> None:
     assert capture_session_id("codex", '[{"session_id":"s"}]') == "s"
+    assert capture_session_id("omp", '{"sessionId":"omp-session"}') == "omp-session"
+    assert build_resume_command("omp -p --model x", "omp", "omp-session") == (
+        "omp -p --model x --resume omp-session"
+    )
     with pytest.raises(ValueError, match="could not parse"):
         capture_session_id("claude", "not-json")
     with pytest.raises(ValueError, match="no session_id"):

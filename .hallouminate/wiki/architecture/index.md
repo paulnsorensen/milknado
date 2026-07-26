@@ -11,6 +11,7 @@
 - [graph-status-reconciliation](./graph-status-reconciliation.md) — Graph status reconciliation
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph
 - [omp-json-streaming](./omp-json-streaming.md) — OMP JSON Event Streaming
+- [omp-planning-decision](./omp-planning-decision.md) — OMP planning decision
 - [path-contracts](./path-contracts.md) — Path contracts
 - [planning](./planning.md) — Planning Domain — Goal Decomposition & Manifest
 - [prompt-threading](./prompt-threading.md) — Prompt Threading — how briefs and worker definitions reach a dispatch

@@ -245,6 +245,41 @@ def test_build_planning_subprocess_sandboxes_codex_exactly(tmp_path: Path) -> No
     }
 
 
+def test_build_planning_subprocess_sandboxes_omp_and_forwards_openrouter(
+    tmp_path: Path,
+) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    command = (
+        "omp --model openrouter/example --thinking high --tools=bash --auto-approve "
+        "--approval-mode=yolo --plan-yolo --config ignored --extension=evil "
+        "--hook hook.py --plugin-dir plugin --mode json --no-tools --no-lsp"
+    )
+    env = {"HOME": "/home/test", "PATH": "/bin", "OPENROUTER_API_KEY": "secret"}
+    with patch("milknado.domains.common.agent_argv.os.environ", env):
+        argv, extra = build_planning_subprocess(context, command)
+
+    assert argv == [
+        "omp",
+        "--model",
+        "openrouter/example",
+        "--thinking",
+        "high",
+        "-p",
+        "--no-session",
+        "--no-pty",
+        "--no-extensions",
+        "--no-skills",
+        "--no-rules",
+        "--mode",
+        "text",
+        "--tools",
+        "read,grep,glob,lsp",
+        "-",
+    ]
+    assert extra == {"env": {**env}, "input": "hello world", "text": True}
+
+
 def test_build_planning_subprocess_rejects_cursor_without_read_only_mode(
     tmp_path: Path,
 ) -> None:
@@ -287,17 +322,22 @@ def test_build_planning_subprocess_does_not_forward_repo_mcp_by_default(
     assert extra["env"] == build_minimal_mcp_env()
 
 
-def test_build_minimal_mcp_env_forwards_only_process_essentials() -> None:
+def test_build_minimal_mcp_env_forwards_only_omp_openrouter_credential() -> None:
     mocked_env = {
         "ANTHROPIC_API_KEY": "secret",
         "CRG_EMBEDDING_MODEL": "all-MiniLM-L6-v2",
         "HOME": "/home/test",
         "MILKNADO_PROJECT_ROOT": "/secret/root",
+        "OPENROUTER_API_KEY": "openrouter-secret",
         "PATH": "/bin",
     }
     with patch("milknado.domains.common.agent_argv.os.environ", mocked_env):
-        env = build_minimal_mcp_env()
-    assert env == {"HOME": "/home/test", "PATH": "/bin"}
+        assert build_minimal_mcp_env() == {"HOME": "/home/test", "PATH": "/bin"}
+        assert build_minimal_mcp_env(executable="omp") == {
+            "HOME": "/home/test",
+            "OPENROUTER_API_KEY": "openrouter-secret",
+            "PATH": "/bin",
+        }
 
 
 def test_load_config_roundtrip_split_agents(tmp_path: Path) -> None:
@@ -314,6 +354,45 @@ def test_load_config_roundtrip_split_agents(tmp_path: Path) -> None:
     assert loaded.agent_family == "gemini"
     assert "gemini" in loaded.planning_agent
     assert "gemini" in loaded.execution_agent
+
+
+def test_load_config_accepts_omp_with_explicit_execution_agent(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p --tools=read"\n',
+        encoding="utf-8",
+    )
+
+    loaded = load_config(cfg_path, include_global=False)
+
+    assert loaded.planning_agent == "omp -p"
+    assert loaded.execution_agent == "omp -p --tools=read"
+
+
+@pytest.mark.parametrize(
+    ("config", "message"),
+    [
+        ('[milknado]\nagent_family = "omp"\n', "requires an explicit execution_agent"),
+        (
+            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'
+            "[milknado.worker.tools]\nomp = []\n",
+            "worker.tools.omp",
+        ),
+        (
+            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'
+            "[milknado.flavor.implement]\ntools = []\n",
+            "flavor.*].tools",
+        ),
+    ],
+)
+def test_load_config_rejects_omp_implicit_or_translated_tools(
+    tmp_path: Path, config: str, message: str
+) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(config, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        load_config(cfg_path, include_global=False)
 
 
 def test_default_config_uses_claude_preset(tmp_path: Path) -> None:

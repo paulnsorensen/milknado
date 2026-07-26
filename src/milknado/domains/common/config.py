@@ -605,10 +605,12 @@ def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
         family,
         planning_agent=section.planning_agent,
     )
-    # Default execution_agent is built from the family default + the worker-tool
-    # override. An explicit `execution_agent` in TOML wins outright — it's the
-    # opt-out for users who want full control of the worker invocation.
     family_tools = section.worker.tools.get(family)
+    if family == "omp":
+        if family_tools is not None:
+            raise ValueError("[milknado.worker.tools.omp] is not supported; set execution_agent")
+        if not section.execution_agent:
+            raise ValueError("agent_family 'omp' requires an explicit execution_agent")
     execution_agent = resolve_execution_agent_command(
         family,
         execution_agent=section.execution_agent,
@@ -625,6 +627,8 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     flavors = {
         name: table.to_override(name, project_root) for name, table in section.flavor.items()
     }
+    if family == "omp" and any(table.tools is not None for table in section.flavor.values()):
+        raise ValueError("[milknado.flavor.*].tools is not supported for agent_family 'omp'")
     planning_agent, execution_agent = _resolve_agents(section, family)
     return MilknadoConfig(
         agent_family=family,
