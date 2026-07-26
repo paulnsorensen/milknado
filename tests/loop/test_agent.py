@@ -43,6 +43,20 @@ class TestReadAgentStream:
         assert len(result.stdout_lines) == 3
         assert result.timed_out is False
 
+    def test_force_stop_returns_captured_lines(self):
+        force_stop = threading.Event()
+        force_stop.set()
+
+        result = _read_agent_stream(
+            io.StringIO("line\n"),
+            deadline=None,
+            on_activity=None,
+            force_stop_event=force_stop,
+        )
+
+        assert result.force_stopped is True
+        assert result.stdout_lines == ()
+
     def test_parses_json_lines(self):
         activities = []
         stream = io.StringIO('{"type": "status", "msg": "ok"}\n')

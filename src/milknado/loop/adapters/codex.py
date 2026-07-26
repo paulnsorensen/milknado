@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
@@ -190,7 +191,7 @@ def _build_shim_command(counter_path: Path, cap: int, grace: int) -> str:
     return f"{sys.executable} -m milknado.loop._wind_down_shim {counter_path} {cap} {grace} codex"
 
 
-def _build_hooks_payload(command: str) -> dict:
+def _build_hooks_payload(command: str) -> dict[str, Any]:
     """Return the JSON dict written to ``hooks.json``."""
     return {
         _HOOK_EVENT: [
@@ -204,7 +205,7 @@ def _build_hooks_payload(command: str) -> dict:
     }
 
 
-def _event_type(parsed: dict) -> str | None:
+def _event_type(parsed: dict[str, Any]) -> str | None:
     """Return the Codex event type, whether top-level or nested under ``type``."""
     event_type = parsed.get("type") or parsed.get("kind")
     if isinstance(event_type, str):
@@ -217,7 +218,7 @@ def _event_type(parsed: dict) -> str | None:
     return None
 
 
-def _tool_name(parsed: dict, event_type: str | None) -> str | None:
+def _tool_name(parsed: dict[str, Any], event_type: str | None) -> str | None:
     """Best-effort extraction of the tool name from a tool-call event.
 
     Codex event shapes vary by tool type — ``CommandExecution`` carries a
@@ -237,7 +238,7 @@ def _tool_name(parsed: dict, event_type: str | None) -> str | None:
     return event_type
 
 
-def _event_text_payload(parsed: dict) -> str | None:
+def _event_text_payload(parsed: dict[str, Any]) -> str | None:
     """Extract any final-assistant text from a Codex result event."""
     for key in ("result", "text", "content", "output"):
         value = parsed.get(key)

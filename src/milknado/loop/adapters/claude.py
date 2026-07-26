@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
@@ -185,7 +186,7 @@ class ClaudeAdapter:
         return {"CLAUDE_CONFIG_DIR": str(tempdir)}
 
 
-def _iter_content_blocks(raw: dict) -> list[dict]:
+def _iter_content_blocks(raw: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the ``message.content`` list, filtered to dict blocks only."""
     message = raw.get("message")
     if not isinstance(message, dict):
@@ -205,7 +206,7 @@ def _build_shim_command(counter_path: Path, cap: int, grace: int) -> str:
     return f"{sys.executable} -m milknado.loop._wind_down_shim {counter_path} {cap} {grace} claude"
 
 
-def _build_settings_payload(command: str) -> dict:
+def _build_settings_payload(command: str) -> dict[str, Any]:
     """Return the JSON dict written to ``settings.json``.
 
     The shape matches Claude Code's hook reference: the top-level
