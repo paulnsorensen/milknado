@@ -29,8 +29,8 @@ from milknado.domains.batching.graph_build import (
     contract_sccs,
     symbols_by_scc,
 )
-from milknado.domains.batching.weights import estimate_tokens_per_symbols
-from milknado.domains.common.protocols import CrgPort, TilthPort
+from milknado.domains.batching.weights import estimate_tokens
+from milknado.domains.common.protocols import CrgPort
 
 
 @dataclass
@@ -40,7 +40,6 @@ class SolverConfig:
     new_relationships: Sequence[NewRelationship] = field(default_factory=tuple)
     time_limit_s: float = 10.0
     root: Path = field(default_factory=Path.cwd)
-    tilth_port: TilthPort | None = None
 
 
 # Per-batch token budget ceiling. One batch is one implementation context
@@ -134,37 +133,20 @@ def _tokens_per_scc(
     scc_members: dict[str, list[str]],
     sccs: list[str],
     root: Path,
-    tilth_port: TilthPort | None = None,
 ) -> dict[str, int]:
-    change_by_id = {c.id: c for c in changes}
+    change_by_id = {change.id: change for change in changes}
 
     def _scc_tokens(member_ids: list[str]) -> int:
-        seen_sym_keys: set[tuple[str, str]] = set()
         seen_paths: set[str] = set()
         total = 0
-        for cid in member_ids:
-            change = change_by_id[cid]
-            if tilth_port is not None and change.symbols:
-                new_syms = tuple(
-                    sym for sym in change.symbols if (sym.file, sym.name) not in seen_sym_keys
-                )
-                if new_syms:
-                    filtered = FileChange(
-                        id=change.id,
-                        path=change.path,
-                        edit_kind=change.edit_kind,
-                        symbols=new_syms,
-                    )
-                    total += estimate_tokens_per_symbols(filtered, root, tilth_port)
-                    for sym in new_syms:
-                        seen_sym_keys.add((sym.file, sym.name))
-            else:
-                if change.path not in seen_paths:
-                    seen_paths.add(change.path)
-                    total += estimate_tokens_per_symbols(change, root, None)
+        for change_id in member_ids:
+            change = change_by_id[change_id]
+            if change.path not in seen_paths:
+                seen_paths.add(change.path)
+                total += estimate_tokens(change, root)
         return total
 
-    return {s: _scc_tokens(scc_members[s]) for s in sccs}
+    return {scc: _scc_tokens(scc_members[scc]) for scc in sccs}
 
 
 def _partition_oversized(
@@ -242,7 +224,6 @@ def plan_batches(
     new_relationships: Sequence[NewRelationship] = (),
     time_limit_s: float = 10.0,
     root: Path | None = None,
-    tilth_port: TilthPort | None = None,
 ) -> BatchPlan:
     """Compute token-budgeted, precedence-respecting batches."""
     if time_limit_s < 0:
@@ -261,7 +242,6 @@ def plan_batches(
             new_relationships=new_relationships,
             time_limit_s=time_limit_s,
             root=root if root is not None else Path.cwd(),
-            tilth_port=tilth_port,
         ),
     )
 
@@ -270,7 +250,7 @@ def _run_solver(changes: Sequence[FileChange], config: SolverConfig) -> BatchPla
     graph = build_change_graph(changes, config.crg, config.new_relationships)
     contracted: ContractedGraph = contract_sccs(graph.nodes, graph.edges)
     sccs, scc_members = _group_sccs(graph.nodes, contracted.scc_of)
-    tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, config.root, config.tilth_port)
+    tokens_by_scc = _tokens_per_scc(changes, scc_members, sccs, config.root)
     oversized_list, _ = _partition_oversized(sccs, tokens_by_scc, config.budget)
     inputs = ModelInputs(
         sccs=sccs,

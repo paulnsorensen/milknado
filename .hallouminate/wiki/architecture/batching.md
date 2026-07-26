@@ -29,8 +29,8 @@ Pure dataclasses, all frozen:
    representative node (SCC id = lexicographically smallest member, stable across runs). The
    result is a DAG of SCCs (`dag_edges`). Cyclic changes *must* share a batch, so they're
    fused before solving.
-3. **Estimate tokens per SCC** — `_tokens_per_scc` sums `estimate_tokens_per_symbols`
-   (`weights.py`) across members, de-duplicating shared symbols/paths.
+3. **Estimate tokens per SCC** — `_tokens_per_scc` sums `estimate_tokens`
+   (`weights.py`) across members, de-duplicating changes that share a path.
 4. **Partition oversized** — SCCs whose token cost exceeds `budget` are flagged; they get
    their own isolated batch (passthrough) rather than failing the solve.
 5. **Build + solve the CP-SAT model** — `build_model` (`_model.py`) then `_two_pass_solve`.
@@ -77,15 +77,14 @@ the solver toward more, smaller batches. All values are ×100 to stay integer fo
 
 ## Weights (`weights.py`)
 
-`estimate_tokens_per_symbols` is a fallback ladder, most→least precise:
+`estimate_tokens` uses path-level costs:
 
-1. **Per-symbol tiktoken** (modify + symbols + live `TilthPort`): resolve each `SymbolRef`
-   via `search_symbol` + `read_section`, encode the concatenated slices ×`HEADROOM` (1.25).
-   Proportional to symbols touched, not whole-file size.
-2. **Whole-file tiktoken**: when no tilth port, no symbols, or any resolution raises
-   (degradations logged to `.milknado/planning-context-warn.log`).
-3. **Line heuristic**: `NEW_FILE_LINES[ext] * TOKENS_PER_LINE[ext] * HEADROOM` when the file
-   doesn't exist on disk (add). `delete`/`rename` use a flat cost (80/120).
+1. **Whole-file tiktoken** for an existing modified file, multiplied by `HEADROOM` (1.25).
+2. **Line heuristic** — `NEW_FILE_LINES[ext] * TOKENS_PER_LINE[ext] * HEADROOM` for adds
+   and missing modified files. `delete`/`rename` use a flat cost (80/120).
+
+Within an SCC, changes sharing one path are counted once so multiple symbol-scoped manifest
+entries for the same file do not inflate the batch cost.
 
 tiktoken uses the `cl100k_base` encoder, cached via a vendored blob
 (`src/milknado/_vendor/tiktoken-cache/`) so it works offline; encoder is `lru_cache`d.

@@ -26,7 +26,6 @@ DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
 # without CLI-level tool restriction receive no host-shell capability here.
 WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": (
-        "mcp__tilth__*",
         # serena shell execution is intentionally omitted.
         "mcp__serena__get_symbols_overview",
         "mcp__serena__find_symbol",
@@ -52,12 +51,6 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
     # Gemini uses raw MCP tool names (no mcp__server__ prefix) + ShellTool(pattern) for shell.
     "gemini": (
-        "tilth_search",
-        "tilth_read",
-        "tilth_files",
-        "tilth_deps",
-        "tilth_diff",
-        "tilth_edit",
         # serena symbol layer (raw names; shell-exec intentionally omitted).
         "get_symbols_overview",
         "find_symbol",

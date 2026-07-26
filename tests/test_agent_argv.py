@@ -348,7 +348,7 @@ def test_resolve_worker_tools_explicit_list_replaces_default() -> None:
     tools = resolve_worker_tools("claude", ["Read", "Edit"])
     assert tools == ("Read", "Edit")
     # And the family default really is dropped.
-    assert "mcp__tilth__*" not in tools
+    assert "mcp__serena__find_symbol" not in tools
 
 
 def test_resolve_worker_tools_sentinel_expands_family_default() -> None:
@@ -364,7 +364,7 @@ def test_resolve_worker_tools_sentinel_expands_family_default() -> None:
 def test_resolve_worker_tools_list_without_sentinel_replaces() -> None:
     tools = resolve_worker_tools("claude", ["Read", "Write"])
     assert "Write" in tools
-    assert "mcp__tilth__*" not in tools  # default dropped
+    assert "mcp__serena__find_symbol" not in tools  # default dropped
 
 
 def test_resolve_worker_tools_sentinel_at_end() -> None:
@@ -374,7 +374,7 @@ def test_resolve_worker_tools_sentinel_at_end() -> None:
     )
     # Read/Write/Edit come first (first-wins dedup), then expanded defaults without dups.
     assert tools[:3] == ("Read", "Write", "Edit")
-    assert "mcp__tilth__*" in tools
+    assert "mcp__serena__find_symbol" in tools
 
 
 def test_resolve_execution_agent_uses_tools_kwarg() -> None:
@@ -403,9 +403,9 @@ def test_resolve_execution_agent_unknown_family_raises() -> None:
 
 
 def test_resolve_execution_agent_gemini_builds_allowed_tools() -> None:
-    cmd = resolve_execution_agent_command("gemini", tools=["tilth_search"])
+    cmd = resolve_execution_agent_command("gemini", tools=["find_symbol"])
     assert cmd.startswith("gemini")
-    assert "--allowed-tools 'tilth_search'" in cmd
+    assert "--allowed-tools 'find_symbol'" in cmd
 
 
 def test_resolve_execution_agent_cursor_ignores_tools() -> None:
@@ -450,7 +450,7 @@ def test_load_config_structured_worker_tools_replace(tmp_path: Path) -> None:
     cfg = load_config(cfg_path)
     assert "Read,Edit" in cfg.execution_agent
     # Default tool dropped because single-list without sentinel replaces.
-    assert "mcp__tilth__*" not in cfg.execution_agent
+    assert "mcp__serena__find_symbol" not in cfg.execution_agent
 
 
 def test_load_config_structured_worker_tools_rejects_non_string_item(tmp_path: Path) -> None:

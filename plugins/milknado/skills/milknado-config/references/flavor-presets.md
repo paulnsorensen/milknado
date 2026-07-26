@@ -99,8 +99,6 @@ quality_gates = []
 # Bare list REPLACES the default allowlist — drops Edit/Write so the worker
 # cannot modify code. Keep deposit_result so it can hand findings back.
 tools = [
-  "mcp__tilth__tilth_read",
-  "mcp__tilth__tilth_search",
   "mcp__serena__get_symbols_overview",
   "mcp__serena__find_symbol",
   "mcp__serena__find_referencing_symbols",
@@ -197,7 +195,7 @@ tools = ["...", "WebSearch"]
 
 [milknado.flavor.research]
 quality_gates = []
-tools = ["mcp__tilth__tilth_read", "mcp__tilth__tilth_search", "Read", "Grep", "Glob", "WebSearch", "mcp__milknado__milknado_deposit_result"]
+tools = ["mcp__serena__get_symbols_overview", "mcp__serena__find_symbol", "Read", "Grep", "Glob", "WebSearch", "mcp__milknado__milknado_deposit_result"]
 brief_prepend = "Research only — investigate and report; do not modify code."
 ```
 
@@ -205,11 +203,11 @@ brief_prepend = "Research only — investigate and report; do not modify code."
 
 - **claude** — default execution `claude --model sonnet -p --allowedTools '<csv>'`;
   default planning opus. `tools` allowlist is enforced. Tool names are MCP-prefixed
-  (`mcp__tilth__*`, `mcp__serena__find_symbol`, …) plus host `Read`/`Edit`/`Write`/
-  `Glob`/`Grep`/`MultiEdit`, `Bash(rtk:*)`, `WebSearch`.
+  (`mcp__serena__get_symbols_overview`, `mcp__serena__find_symbol`, …) plus host
+  `Read`/`Edit`/`Write`/`Glob`/`Grep`/`MultiEdit`, `Bash(rtk:*)`, `WebSearch`.
 - **gemini** — default execution flash with `--allowed-tools`; planning
   `gemini-3.1-pro-preview`. Allowlist enforced; tool names are **bare**
-  (`tilth_search`, `find_symbol`, …) and shell is `ShellTool(<pattern>)`.
+  (`get_symbols_overview`, `find_symbol`, …) and shell is `ShellTool(<pattern>)`.
 - **cursor** — `cursor-agent --model sonnet -p`. **No** CLI tool allowlist
   (headless `--allowedTools` unsupported); a `tools` list is inert. Use
   `execution_agent` / `quality_gates` to differentiate flavors.

@@ -156,11 +156,3 @@ class TestTruncateDescription:
         result = _truncate_description(long_line)
         assert result == long_line
         assert "\u2026" not in result
-
-
-class TestTilthNoneHandling:
-    def test_tilth_none_shows_skipped_message(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=None)
-        assert "tilth not available" in ctx or "tilth" in ctx.lower()

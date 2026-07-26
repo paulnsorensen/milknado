@@ -10,9 +10,9 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 `Planner.launch(goal, project_root, spec_path=?)` in `planner.py` runs these steps:
 
 1. **Build context** — `build_planning_context` (`context.py`) assembles a markdown
-   prompt: goal, compact CRG architecture overview, tilth structural map, the existing
-   Mikado graph state, a batching-policy note, the v2 manifest schema + instructions, and
-   (optionally) the spec text. Written to `<root>/.milknado/planning-context.md`.
+   prompt: goal, compact CRG architecture overview, the existing Mikado graph state, a
+   batching-policy note, the v2 manifest schema + instructions, and (optionally) the spec
+   text. Written to `<root>/.milknado/planning-context.md`.
 2. **Run the agent** — `build_planning_subprocess` (in `domains/common/agent_argv`)
    builds the argv; the agent runs as a subprocess with stdout piped.
 3. **Parse manifest** — `parse_manifest_from_output` (`manifest.py`) extracts a single
@@ -56,15 +56,15 @@ defining its own. `manifest_to_dict` serializes back for the validation hook pay
 `build_planning_context` joins independent section builders with blank lines. Notable
 shape decisions:
 
-- **Degradation, not failure**: if CRG or tilth is unavailable, the section prints a
-  `_(... skipped)_` marker and planning continues. `_safe_ensure_crg` in `planner.py`
-  catches CRG init failures and proceeds without structural edges.
+- **CRG degradation, not failure**: if CRG is unavailable, the architecture section
+  prints a `_(... skipped)_` marker and planning continues. `_safe_ensure_crg` in
+  `planner.py` catches CRG init failures and proceeds without structural edges.
 - **Resume awareness**: `resuming = len(graph.get_all_nodes()) > 0`. The instructions
   section switches to "do NOT recreate existing nodes" and the graph section dumps
   progress counts, failed nodes (need re-planning), and ready-to-execute nodes.
 - **Schema is embedded in the prompt** — `_instructions_section` ships the full v2 JSON
   schema, enum constraints, granularity guidance ("emit file-level changes, let the solver
-  batch"), and the MCP-targeting note (require tilth/CRG inspection for real hash_anchors).
+  batch"), and the MCP-targeting note (require repository inspection for real hash anchors).
 - Guard: `spec_text == ""` raises — callers must pass `None` to omit the spec, never empty.
 
 ## Bridge into batching (`batching_bridge.py`)
