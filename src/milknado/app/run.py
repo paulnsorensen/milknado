@@ -17,10 +17,12 @@ from enum import StrEnum
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
+    GitPort,
+    MikadoNode,
     MilknadoConfig,
     NodeKind,
     NodeStatus,
@@ -29,6 +31,7 @@ from milknado.domains.common import (
 )
 
 if TYPE_CHECKING:
+    from milknado.domains.dispatch import IsolateContext
     from milknado.domains.execution import ExecutionConfig, RunLoop, RunLoopResult, RunLoopState
     from milknado.domains.graph import MikadoGraph
 
@@ -150,9 +153,9 @@ def resolve_feature_branch(project_root: Path) -> str:
 @dataclass
 class _ControlRequest:
     operation: str
-    args: tuple[Any, ...]
+    args: tuple[object, ...]
     done: Event = field(default_factory=Event)
-    result: Any = None
+    result: object | None = None
     error: BaseException | None = None
 
 
@@ -215,7 +218,9 @@ class ExecutionController:
         worker.join()
         if error is not None:
             raise error
-        return result  # type: ignore[return-value]
+        if result is None:
+            raise RuntimeError("execution loop returned no result")
+        return result
 
     def snapshot(self) -> ExecutionSnapshot:
         """Return the controller's current immutable presentation snapshot."""
@@ -304,7 +309,7 @@ class ExecutionController:
         """Stop admitting new work and request terminal completion of active runs."""
         self._control("stop_scheduling")
 
-    def _control(self, operation: str, *args: Any) -> Any:
+    def _control(self, operation: str, *args: object) -> object:
         request: _ControlRequest | None = None
         with self._state_lock:
             if self._running:
@@ -410,15 +415,15 @@ def validate_worker_cmd(worker_cmd: str | None) -> None:
 
 
 def prepare_isolation(
-    graph,  # noqa: ANN001
-    git,  # noqa: ANN001
+    graph: MikadoGraph,
+    git: GitPort,
     root: Path,
-    node,  # noqa: ANN001
+    node: MikadoNode,
     run_id: str,
     worktree: WorktreeMode,
     merge_back: bool,
     worktree_pattern: str,
-):  # noqa: ANN201
+) -> tuple[Path, IsolateContext | None]:
     from milknado.domains.dispatch import setup_isolated_worktree
 
     if worktree != WorktreeMode.ISOLATE:
@@ -436,7 +441,7 @@ class InlineRunRequest:
     merge_back: bool
 
 
-def _require_task_node(graph, node_id: int):  # noqa: ANN001, ANN202
+def _require_task_node(graph: MikadoGraph, node_id: int) -> MikadoNode:
     node = graph.get_node(node_id)
     if node is None:
         raise ValueError(f"node {node_id} not found")
@@ -447,7 +452,12 @@ def _require_task_node(graph, node_id: int):  # noqa: ANN001, ANN202
     return node
 
 
-def run_inline(graph, cfg, root: Path, request: InlineRunRequest) -> dict:  # noqa: ANN001
+def run_inline(
+    graph: MikadoGraph,
+    cfg: MilknadoConfig,
+    root: Path,
+    request: InlineRunRequest,
+) -> dict[str, object]:
     """Dispatch a node to a blocking subprocess worker; return the run state dict."""
     from milknado.adapters import GitAdapter
     from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
@@ -480,7 +490,13 @@ def run_inline(graph, cfg, root: Path, request: InlineRunRequest) -> dict:  # no
     return state if isinstance(state, dict) else vars(state)
 
 
-def run_inline_start(graph, cfg, root: Path, request: InlineRunRequest, use_tmux: bool) -> dict:  # noqa: ANN001
+def run_inline_start(
+    graph: MikadoGraph,
+    cfg: MilknadoConfig,
+    root: Path,
+    request: InlineRunRequest,
+    use_tmux: bool,
+) -> dict[str, object]:
     """Start an async worker (optionally in tmux); return the initial run state dict."""
     from milknado.adapters import GitAdapter
     from milknado.app.project import open_graph
@@ -496,7 +512,7 @@ def run_inline_start(graph, cfg, root: Path, request: InlineRunRequest, use_tmux
     )
 
     class _GraphSessions(GraphSessionPort):
-        def open_graph(self, project_root: Path):  # noqa: ANN201
+        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
             return open_graph(project_root)
 
     tmux: TmuxAdapter | None = None

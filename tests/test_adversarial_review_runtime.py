@@ -290,7 +290,6 @@ def test_loop_adapter_resume_command_keeps_cwd_and_controls(tmp_path: Path) -> N
         "claude --model opus --effort high",
         tmp_path,
         prompt_file,
-        [],
         (Gate(command="true"),),
         project_root=tmp_path,
         runtime_policy=SimpleNamespace(session=session),

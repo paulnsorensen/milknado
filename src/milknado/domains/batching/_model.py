@@ -23,8 +23,8 @@ class ModelInputs:
 class ModelBundle:
     model: cp_model.CpModel
     batch_of: dict[str, cp_model.IntVar]
+    total_cost: cp_model.IntVar
     spread_vars: dict[str, cp_model.IntVar] = field(default_factory=dict)
-    total_cost: cp_model.IntVar | None = None
 
 
 @dataclass(frozen=True)

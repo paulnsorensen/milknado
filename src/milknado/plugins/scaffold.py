@@ -75,7 +75,7 @@ def scaffold_plugin(name: str, target_dir: Path) -> ScaffoldResult:
         ("README.md", README_TEMPLATE),
     ]:
         path = plugin_dir / filename
-        path.write_text(template.format(name=name, class_name=class_name))
+        path.write_text(template.format(name=name, class_name=class_name), encoding="utf-8")
         files.append(filename)
 
     return ScaffoldResult(plugin_dir=plugin_dir, files_created=files)

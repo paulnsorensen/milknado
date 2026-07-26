@@ -37,6 +37,7 @@ from milknado.domains.dispatch import (
     tail_latest_iteration_log,
 )
 from milknado.mcp._core import (
+    RunDict,
     build_run_dict,
     mcp,
     open_graph,
@@ -64,7 +65,7 @@ def milknado_run_loop_start(
     timeout_seconds: int = 1800,
     use_tmux: bool = False,
     project_root: str = "",
-) -> dict:
+) -> RunDict:
     """Start a task node in a detached worktree-backed Ralph loop.
 
     Returns immediately with a run ID for polling. Refuses concurrent dispatch.
@@ -85,7 +86,7 @@ def milknado_run_loop_start(
 
 
 @mcp.tool()
-def milknado_run_loop_poll(run_id: str, project_root: str = "") -> dict:
+def milknado_run_loop_poll(run_id: str, project_root: str = "") -> RunDict:
     """Poll a ralph run from durable state and its persisted logs."""
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):

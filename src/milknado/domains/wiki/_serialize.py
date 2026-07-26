@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Mapping
 from datetime import date, datetime
+from typing import cast
 
 import yaml
 
@@ -36,13 +38,13 @@ def compute_roadmap_ref(roadmap_slug: str, created: Created) -> str:
     return str(uuid.uuid5(NAMESPACE_MILKNADO_WIKI, f"{roadmap_slug}@{created}"))
 
 
-def load_frontmatter(text: str) -> dict:
+def load_frontmatter(text: str) -> dict[str, object]:
     """Parse the leading `---` YAML block into a dict, or {} when absent."""
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}
     data = yaml.safe_load(m.group(1))
-    return data if isinstance(data, dict) else {}
+    return cast(dict[str, object], data) if isinstance(data, dict) else {}
 
 
 def extract_title(text: str) -> str | None:
@@ -116,7 +118,7 @@ def parse_wikilink(value: str) -> str:
     return m.group(1).strip() if m else value
 
 
-def read_prereqs(frontmatter: dict) -> list[str]:
+def read_prereqs(frontmatter: Mapping[str, object]) -> list[str]:
     """Return order-preserving, deduped union of `prereqs:` and parsed `down:` targets.
 
     Raises ValueError on non-list or non-str entries (same message shape as importer).
@@ -131,11 +133,11 @@ def read_prereqs(frontmatter: dict) -> list[str]:
         raise ValueError(f"`down` must be a list of wikilink strings, got {raw_down!r}")
     seen: set[str] = set()
     result: list[str] = []
-    for slug in raw_prereqs:
+    for slug in cast(list[str], raw_prereqs):
         if slug not in seen:
             seen.add(slug)
             result.append(slug)
-    for entry in raw_down:
+    for entry in cast(list[str], raw_down):
         slug = parse_wikilink(entry)
         if slug not in seen:
             seen.add(slug)

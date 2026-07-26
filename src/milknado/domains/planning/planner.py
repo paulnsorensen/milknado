@@ -165,7 +165,7 @@ class Planner:
     ) -> str | None:
         if self._planning_validation_hook is None:
             return None
-        payload = {
+        payload: dict[str, object] = {
             "manifest": manifest_to_dict(manifest),
             "project_root": str(project_root),
             "context_path": str(context_path),

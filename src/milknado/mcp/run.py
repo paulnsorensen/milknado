@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter  # noqa: F401
 from milknado.app.run import (
@@ -20,6 +21,7 @@ from milknado.domains.dispatch import (
     reconcile_node_status,
 )
 from milknado.mcp._core import (
+    RunDict,
     build_run_dict,
     mcp,
     open_graph,
@@ -38,7 +40,7 @@ def milknado_run_inline(
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
     project_root: str = "",
-) -> dict:
+) -> RunDict:
     """Spawn a subprocess worker with the task brief on stdin; capture log and update status.
 
     worker_cmd defaults to profile.execution_agent (resolved from the node's flavor).
@@ -79,7 +81,7 @@ def milknado_run_inline_start(
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
     project_root: str = "",
-) -> dict:
+) -> RunDict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
 
     Refuses if the node is already running. Use milknado_run_inline_poll(run_id) to
@@ -112,7 +114,7 @@ def milknado_run_inline_start(
 
 
 @mcp.tool()
-def milknado_run_inline_poll(run_id: str, project_root: str = "") -> dict:
+def milknado_run_inline_poll(run_id: str, project_root: str = "") -> RunDict:
     """Poll an async run from durable state and attach its deposited result."""
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
@@ -120,7 +122,10 @@ def milknado_run_inline_poll(run_id: str, project_root: str = "") -> dict:
         state = poll_async_run(graph, root, run_id)
         if state["status"] in ("done", "failed"):
             reconcile_node_status(
-                graph, state["node_id"], state["status"], run_id=state.get("run_id")
+                graph,
+                cast(int, state["node_id"]),
+                cast(str, state["status"]),
+                run_id=cast(str | None, state.get("run_id")),
             )
         state["result"] = graph.latest_run_message(run_id, "result")
     finally:
@@ -130,7 +135,7 @@ def milknado_run_inline_poll(run_id: str, project_root: str = "") -> dict:
 
 
 @mcp.tool()
-def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
+def milknado_run_list(project_root: str = "", limit: int = 50) -> list[RunDict]:
     """List active and recent runs, newest first.
 
     Returns superset-schema dicts for up to `limit` runs. Use poll tools for log
@@ -145,7 +150,7 @@ def milknado_run_list(project_root: str = "", limit: int = 50) -> list[dict]:
 
 
 @mcp.tool()
-def milknado_run_cancel(run_id: str, project_root: str = "") -> dict:
+def milknado_run_cancel(run_id: str, project_root: str = "") -> RunDict:
     """Cancel a run and return its final superset-schema state.
 
     No-ops for terminal runs. Active runs stop and finalize when safe. An owned

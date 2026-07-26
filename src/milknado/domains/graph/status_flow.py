@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import Protocol
 
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
@@ -15,7 +17,14 @@ VERIFY_REQUIRED_MESSAGE = (
 )
 
 
-def latest_verify_ok(graph, run_id: str) -> bool:  # noqa: ANN001
+class _StatusGraph(Protocol):
+    def latest_run_message(self, run_id: str, role: str) -> str | None: ...
+
+    def get_run(self, run_id: str) -> Mapping[str, object] | None: ...
+    def set_todo_status(self, node_id: int, target: NodeStatus) -> bool: ...
+
+
+def latest_verify_ok(graph: _StatusGraph, run_id: str) -> bool:
     """Accept only a JSON object with an explicit boolean ok=true."""
     body = graph.latest_run_message(run_id, VERIFY_ROLE)
     if not body:
@@ -27,7 +36,7 @@ def latest_verify_ok(graph, run_id: str) -> bool:  # noqa: ANN001
     return isinstance(deposit, dict) and deposit.get("ok") is True
 
 
-def assert_done_verified(graph, node: MikadoNode) -> None:  # noqa: ANN001
+def assert_done_verified(graph: _StatusGraph, node: MikadoNode) -> None:
     if node.run_id is None or graph.get_run(node.run_id) is None:
         return
     native = (
@@ -66,7 +75,7 @@ def validate_todo_status(node: MikadoNode, target: NodeStatus) -> None:
         state = step
 
 
-def apply_todo_status(graph, node: MikadoNode, target: NodeStatus) -> None:  # noqa: ANN001
+def apply_todo_status(graph: _StatusGraph, node: MikadoNode, target: NodeStatus) -> None:
     """Apply a preflighted facade transition through the graph's atomic operation."""
     graph.set_todo_status(node.id, target)
 

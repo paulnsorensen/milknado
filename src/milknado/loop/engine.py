@@ -16,7 +16,14 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from milknado.domains.common.agent_argv import validate_worker_argv
-from milknado.loop._agent import AgentRunSpec, execute_agent
+from milknado.loop._agent import (
+    ActivityCallback,
+    AgentResult,
+    AgentRunSpec,
+    OutputLineCallback,
+    ToolUseCallback,
+    execute_agent,
+)
 from milknado.loop._events import (
     AgentActivityData,
     BoundEmitter,
@@ -50,7 +57,7 @@ from milknado.loop._run_types import (
     RunStatus,
 )
 from milknado.loop._runner import run_command
-from milknado.loop.adapters import select_adapter
+from milknado.loop.adapters import CLIAdapter, select_adapter
 from milknado.loop.hooks import CombinedAgentHook
 
 _PAUSE_POLL_INTERVAL = 0.25  # seconds between pause/resume checks
@@ -163,7 +170,7 @@ def _assemble_prompt(
     command_outputs: dict[str, str],
     verifier_feedback: str | None = None,
     guidance: tuple[str, ...] = (),
-):
+) -> str:
     """Build the full prompt for one iteration.
 
     Uses ``config.prompt`` as the body when set (no file read, no
@@ -192,12 +199,12 @@ def _assemble_prompt(
 
 
 class _AgentCallbacks(NamedTuple):
-    on_output_line: Any
-    on_tool_use: Any
-    on_activity: Any
+    on_output_line: OutputLineCallback | None
+    on_tool_use: ToolUseCallback | None
+    on_activity: ActivityCallback | None
 
 
-def _resolve_agent_command(config: RunConfig) -> tuple[list[str], Any]:
+def _resolve_agent_command(config: RunConfig) -> tuple[list[str], CLIAdapter]:
     """Parse and validate the worker command before selecting its adapter."""
     try:
         cmd = shlex.split(config.agent)
@@ -241,13 +248,12 @@ def _build_agent_callbacks(
 
 def _launch_agent(
     cmd: list[str],
-    adapter: Any,
+    adapter: CLIAdapter,
     prompt: str,
     config: RunConfig,
     state: RunState,
     callbacks: _AgentCallbacks,
-):
-    """Run the agent subprocess, translating a missing binary into a clear error."""
+) -> AgentResult:
     # Capture full stdout only when somebody downstream actually needs the
     # bytes — log writing, or promise detection for adapters that cannot
     # work from ``agent.result_text`` alone.  Without this gate every
@@ -287,7 +293,7 @@ def _launch_agent(
         ) from exc
 
 
-def _promise_completed(agent: Any, adapter: Any, config: RunConfig) -> bool:
+def _promise_completed(agent: AgentResult, adapter: CLIAdapter, config: RunConfig) -> bool:
     """Return whether the agent's exit + output satisfy the completion signal."""
     if not agent.success:
         return False
@@ -303,7 +309,7 @@ def _promise_completed(agent: Any, adapter: Any, config: RunConfig) -> bool:
 
 
 def _emit_turn_capped(
-    agent: Any, state: RunState, emit: BoundEmitter, hooks: CombinedAgentHook | None
+    agent: AgentResult, state: RunState, emit: BoundEmitter, hooks: CombinedAgentHook | None
 ) -> None:
     if not agent.turn_capped:
         return
@@ -316,7 +322,7 @@ def _emit_turn_capped(
 
 
 def _classify_iteration_outcome(
-    agent: Any,
+    agent: AgentResult,
     state: RunState,
     promise_completed: bool,
     completion_signal: str,
@@ -344,7 +350,7 @@ def _classify_iteration_outcome(
 
 
 def _build_ended_data(
-    agent: Any,
+    agent: AgentResult,
     state: RunState,
     config: RunConfig,
     duration: str,
@@ -377,7 +383,7 @@ def _build_ended_data(
 def _notify_iteration_hooks(
     hooks: CombinedAgentHook | None,
     state: RunState,
-    agent: Any,
+    agent: AgentResult,
     promise_completed: bool,
     completion_signal: str | None,
 ) -> None:
@@ -455,7 +461,7 @@ def _build_tool_use_bridge(
     hooks: CombinedAgentHook | None,
     max_turns: int | None,
     max_turns_grace: int,
-):
+) -> ToolUseCallback | None:
     """Return a ``ToolUseCallback`` that emits ``TOOL_USE`` and approaching-limit events.
 
     Collapses the per-tool-use notification shape expected by ``_agent``

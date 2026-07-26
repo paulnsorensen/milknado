@@ -349,6 +349,15 @@ class TestRunManagerForceStop:
         assert managed.state.status is RunStatus.STOPPED
         assert managed.state.completed == 0
 
+        # The grandchild's SIGTERM handler races the parent's own (unhandled)
+        # SIGTERM exit — force_stop_and_join only guarantees the parent thread
+        # joined, not that the grandchild finished writing. Poll for completed
+        # sentinel content rather than treating file creation as completion.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if stopped.exists() and stopped.read_text(encoding="utf-8") == "stopped":
+                break
+            time.sleep(0.01)
         assert stopped.read_text(encoding="utf-8") == "stopped"
 
 

@@ -11,12 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.tmux import (
-    RunWindow,
-    TmuxAdapter,
-    TmuxDispatchError,
-    session_name_for,
-)
+from milknado.adapters.tmux import TmuxAdapter, TmuxDispatchError, session_name_for
+from milknado.domains.dispatch import RunWindow
 
 RUN_ID = "node-1-20260101T000000Z-deadbeef"
 
@@ -202,6 +198,28 @@ def test_open_run_window_rejects_unparseable_pane_pid(tmp_path: Path, monkeypatc
         ),
     )
     with pytest.raises(TmuxDispatchError, match="unparseable pane pid"):
+        TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
+
+
+@pytest.mark.parametrize("stdout", ["0\n", "-1\n"])
+def test_open_run_window_rejects_non_positive_pane_pid(
+    tmp_path: Path,
+    monkeypatch,
+    stdout: str,
+) -> None:
+    monkeypatch.setattr(
+        TmuxAdapter,
+        "_run",
+        _stub_run(
+            {
+                "has-session": _completed(0),
+                "set-option": _completed(0),
+                "list-windows": _completed(0, ""),
+                "new-window": _completed(0, stdout=stdout),
+            }
+        ),
+    )
+    with pytest.raises(TmuxDispatchError, match="invalid pane pid"):
         TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
 
 

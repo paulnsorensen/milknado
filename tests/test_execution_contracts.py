@@ -27,6 +27,22 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
     assert {"queue_guidance", "request_stop_run", "stop_run", "force_stop_run"} <= set(
         LoopPort.__dict__
     )
+    create_signature = inspect.signature(LoopPort.create_run)
+    assert list(create_signature.parameters) == [
+        "self",
+        "agent",
+        "ralph_dir",
+        "ralph_file",
+        "quality_gates",
+        "project_root",
+        "commit_footer",
+        "base_oid",
+        "runtime_policy",
+        "run_id",
+        "completion_probe",
+    ]
+    assert create_signature.parameters["base_oid"].default is None
+    assert get_type_hints(LoopPort.create_run)["base_oid"] == (str | None)
     assert list(inspect.signature(LoopPort.queue_guidance).parameters) == [
         "self",
         "run_id",

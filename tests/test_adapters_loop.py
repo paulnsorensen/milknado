@@ -51,7 +51,6 @@ class TestCreateRun:
             agent="claude",
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),
-            commands=["uv run pytest"],
             quality_gates=(Gate(command="uv run ruff check"),),
             commit_footer="Co-authored-by: Team <team@example.com>",
         )
@@ -727,7 +726,6 @@ class TestCreateRunWithProjectRoot:
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
-            commands=[],
             quality_gates=(),
             project_root=tmp_path,
         )
@@ -751,7 +749,6 @@ class TestCreateRunWithProjectRoot:
             agent="omp",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
-            commands=[],
             quality_gates=(),
             project_root=tmp_path,
         )
@@ -773,7 +770,6 @@ class TestCreateRunWithProjectRoot:
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
-            commands=[],
             quality_gates=(),
             project_root=tmp_path,  # .mcp.json does not exist
         )
@@ -796,7 +792,6 @@ class TestCreateRunWithProjectRoot:
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
-            commands=[],
             quality_gates=(),
         )
 
@@ -886,7 +881,6 @@ class TestWorkerFailureCap:
             agent="claude",
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),
-            commands=[],
             quality_gates=None,
         )
 

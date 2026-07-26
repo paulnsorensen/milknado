@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import importlib
 import logging
-from typing import Any
+from types import ModuleType
+from typing import TypeGuard
 
 from milknado.domains.common import PluginHook, PluginMeta
 
 logger = logging.getLogger("milknado.plugins")
 
 
-def _is_plugin(obj: Any) -> bool:
-    return hasattr(obj, "meta") and hasattr(obj, "on_node_status_change")
+def _is_plugin(obj: object) -> TypeGuard[type[PluginHook]]:
+    return isinstance(obj, type) and hasattr(obj, "meta") and hasattr(obj, "on_node_status_change")
 
 
-def _find_plugin_class(module: Any) -> type | None:
+def _find_plugin_class(module: ModuleType) -> type[PluginHook] | None:
     for name in dir(module):
         obj = getattr(module, name)
-        if isinstance(obj, type) and _is_plugin(obj) and not name.startswith("_"):
+        if _is_plugin(obj) and not name.startswith("_"):
             return obj
     return None
 

@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from milknado.domains.common.config import MilknadoConfig
+from milknado.domains.graph import MikadoGraph
+
 
 @dataclass(frozen=True)
 class RunWindow:
@@ -68,4 +71,4 @@ class ProcessTerminationPort(Protocol):
 
 
 class GraphSessionPort(Protocol):
-    def open_graph(self, project_root: Path): ...  # noqa: ANN201
+    def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]: ...

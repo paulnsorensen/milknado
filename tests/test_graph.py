@@ -803,6 +803,14 @@ class TestDeleteSubtreePostOrder:
         assert result.index(2) < result.index(1)
         assert result.index(3) < result.index(1)
 
+    def test_collect_post_order_handles_deep_chains(self) -> None:
+        from milknado.domains.graph._mutations import _collect_subtree_post_order
+
+        children_map = {node: [node + 1] for node in range(1, 1_500)}
+        result = _collect_subtree_post_order(children_map, 1)
+
+        assert result == list(range(1_500, 0, -1))
+
     def test_delete_subtree_removes_all_nodes_atomically(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)

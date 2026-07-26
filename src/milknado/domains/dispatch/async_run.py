@@ -7,6 +7,7 @@ import threading
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import GitPort, RunResult
 from milknado.domains.dispatch._runstate import (
@@ -47,6 +48,9 @@ from milknado.domains.dispatch.runner import (
 )
 from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
 
+if TYPE_CHECKING:
+    from milknado.domains.graph import MikadoGraph
+
 _logger = logging.getLogger(__name__)
 
 
@@ -81,10 +85,10 @@ def _run_worker_process(
     argv: list[str],
     *,
     timeout: int,
-    base_state: dict,
+    request: AsyncRunRequest,
     rdir: Path,
     tmux: TmuxPort | None,
-    graph,  # noqa: ANN001
+    graph: MikadoGraph,
     process: ProcessPort,
 ) -> tuple[int, bool, bool]:
     """Execute the worker on the requested substrate: tmux window or subprocess.
@@ -98,16 +102,16 @@ def _run_worker_process(
     if tmux is None:
         return _execute_cancellable(
             cwd,
-            base_state["node_id"],
+            request.node_id,
             log_path,
             brief,
             argv,
             timeout,
             runs_dir=rdir,
-            run_id=base_state["run_id"],
-            project_root=Path(base_state["project_root"]),
+            run_id=request.run_id,
+            project_root=request.project_root,
             process=process,
-            on_started=lambda pid: graph.set_run_pid(base_state["run_id"], pid),
+            on_started=lambda pid: graph.set_run_pid(request.run_id, pid),
         )
     return _run_in_tmux_window(
         cwd,
@@ -115,7 +119,7 @@ def _run_worker_process(
         brief,
         argv,
         timeout=timeout,
-        base_state=base_state,
+        request=request,
         rdir=rdir,
         tmux=tmux,
         graph=graph,
@@ -129,17 +133,17 @@ def _run_in_tmux_window(
     argv: list[str],
     *,
     timeout: int,
-    base_state: dict,
+    request: AsyncRunRequest,
     rdir: Path,
     tmux: TmuxPort,
-    graph,  # noqa: ANN001
+    graph: MikadoGraph,
 ) -> tuple[int, bool, bool]:
     """Stage the brief and run the worker inside its named tmux window.
 
     No stdin pipe into a tmux pane: the brief is staged to a file the window
     wrapper redirects into the worker. `cwd` is the worker's working tree.
     """
-    run_id = base_state["run_id"]
+    run_id = request.run_id
     staged_brief = _brief_path(rdir, run_id)
     staged_brief.write_text(brief, encoding="utf-8")
     log_path.touch()
@@ -151,9 +155,9 @@ def _run_in_tmux_window(
         exit_code_path=_exit_code_path(rdir, run_id),
         env=build_worker_env(
             {
-                "MILKNADO_NODE_ID": str(base_state["node_id"]),
+                "MILKNADO_NODE_ID": str(request.node_id),
                 "MILKNADO_RUN_ID": run_id,
-                "MILKNADO_PROJECT_ROOT": str(Path(base_state["project_root"]).resolve()),
+                "MILKNADO_PROJECT_ROOT": str(request.project_root.resolve()),
             }
         ),
         brief_path=staged_brief,
@@ -213,11 +217,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             request.brief,
             list(context.argv),
             timeout=request.timeout_seconds,
-            base_state={
-                "run_id": run_id,
-                "node_id": request.node_id,
-                "project_root": str(project_root),
-            },
+            request=request,
             rdir=rdir,
             tmux=context.tmux,
             process=context.process,
@@ -377,7 +377,7 @@ def start_headless_async(
     return AsyncStartRef(run_id=request.run_id, log_path=log_path)
 
 
-def poll_async_run(graph, project_root: Path, run_id: str) -> dict:  # noqa: ANN001
+def poll_async_run(graph: MikadoGraph, project_root: Path, run_id: str) -> dict[str, object]:
     if not _RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
     state = graph.get_run(run_id)

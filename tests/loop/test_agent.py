@@ -43,6 +43,20 @@ class TestReadAgentStream:
         assert len(result.stdout_lines) == 3
         assert result.timed_out is False
 
+    def test_force_stop_returns_captured_lines(self):
+        force_stop = threading.Event()
+        force_stop.set()
+
+        result = _read_agent_stream(
+            io.StringIO("line\n"),
+            deadline=None,
+            on_activity=None,
+            force_stop_event=force_stop,
+        )
+
+        assert result.force_stopped is True
+        assert result.stdout_lines == ()
+
     def test_parses_json_lines(self):
         activities = []
         stream = io.StringIO('{"type": "status", "msg": "ok"}\n')
@@ -2090,10 +2104,11 @@ class TestBoundedOutput:
         assert list(output) == ["efgh"]
 
 
-def test_lingering_group_ignores_sigkill_race() -> None:
+def test_lingering_group_that_exits_during_grace_is_not_sigkilled() -> None:
     proc = MagicMock(pid=123)
     with (
         patch("milknado.loop._agent.IS_WINDOWS", False),
+        patch("milknado.loop._agent.time.monotonic", return_value=0),
         patch(
             "milknado.loop._agent.os.killpg",
             side_effect=[None, ProcessLookupError()],
@@ -2103,5 +2118,26 @@ def test_lingering_group_ignores_sigkill_race() -> None:
 
     assert killpg.call_args_list == [
         call(123, signal.SIGTERM),
+        call(123, 0),
+    ]
+
+
+def test_lingering_group_escalates_and_ignores_sigkill_race() -> None:
+    proc = MagicMock(pid=123)
+    with (
+        patch("milknado.loop._agent.IS_WINDOWS", False),
+        patch("milknado.loop._agent.time.monotonic", side_effect=[0, 0, 3]),
+        patch("milknado.loop._agent.time.sleep") as sleep,
+        patch(
+            "milknado.loop._agent.os.killpg",
+            side_effect=[None, None, ProcessLookupError()],
+        ) as killpg,
+    ):
+        _terminate_lingering_group(proc)
+
+    assert killpg.call_args_list == [
+        call(123, signal.SIGTERM),
+        call(123, 0),
         call(123, signal.SIGKILL),
     ]
+    sleep.assert_called_once_with(0.1)

@@ -27,7 +27,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -248,7 +248,7 @@ class _BoundedOutput:
         while self._chars > self.limit and len(self._lines) > 1:
             self._chars -= len(self._lines.pop(0))
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._lines)
 
     @property
@@ -291,7 +291,7 @@ class _OutputCapture:
     def text(self) -> str | None:
         return self.tail.text if self.tail is not None else None
 
-    def iter_complete_lines(self):
+    def iter_complete_lines(self) -> Iterable[str]:
         if self.sink is None:
             return ()
         self.sink.handle.flush()
@@ -324,7 +324,7 @@ _COUNTER_LOG_SUFFIX = ".turncount"
 _COUNTER_PAD_WIDTH = _LOG_ITERATION_PAD_WIDTH
 
 
-def _extract_result_text_from_lines(lines: list[str] | None) -> str | None:
+def _extract_result_text_from_lines(lines: Iterable[str] | None) -> str | None:
     """Return the last string payload from any JSON ``result`` event in *lines*."""
     if lines is None:
         return None
@@ -738,7 +738,7 @@ def _read_agent_stream(
     def stopped() -> _StreamResult:
         stop_event.set()
         return _StreamResult(
-            stdout_lines=state.stdout_lines.lines if state.stdout_lines else None,
+            stdout_lines=(tuple(state.stdout_lines) if state.stdout_lines is not None else None),
             result_text=state.result_text,
             timed_out=False,
             force_stopped=True,
@@ -909,7 +909,7 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
 
 def _pump_stream(
     stream: IO[str],
-    buffer: Any | None,
+    buffer: _OutputCapture | None,
     stream_name: OutputStream,
     on_output_line: OutputLineCallback | None,
     correlation: str = "unknown",
@@ -939,7 +939,7 @@ def _start_writer_thread(
 
 def _start_pump_thread(
     stream: IO[str],
-    buffer: Any | None,
+    buffer: _OutputCapture | None,
     stream_name: OutputStream,
     on_output_line: OutputLineCallback | None,
     correlation: str = "unknown",
@@ -975,6 +975,15 @@ def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
         os.killpg(proc.pid, signal.SIGTERM)
     except (OSError, ProcessLookupError):
         return
+
+    deadline = time.monotonic() + _SIGTERM_GRACE_PERIOD
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            os.killpg(proc.pid, 0)
+        except (OSError, ProcessLookupError):
+            return
+        time.sleep(min(remaining, 0.1))
+
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, ProcessLookupError):

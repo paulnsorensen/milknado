@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
@@ -161,7 +162,7 @@ class OpenCodeAdapter:
         )
 
 
-def _tool_name(parsed: dict) -> str | None:
+def _tool_name(parsed: dict[str, Any]) -> str | None:
     """Best-effort extraction of the tool name from a ``tool_use`` event.
 
     opencode nests event data under ``part``; the tool name may live there

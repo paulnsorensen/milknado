@@ -5,7 +5,9 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
+
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
 
 from milknado.domains.batching import (
     ChangeDependency,
@@ -19,10 +21,6 @@ from milknado.domains.batching import (
 
 MANIFEST_VERSION = "milknado.plan.v2"
 
-_VALID_EDIT_KINDS = frozenset({"add", "modify", "delete", "rename"})
-_VALID_RELATIONSHIP_REASONS = frozenset(
-    {"new_file", "new_import", "new_call", "new_type_use"},
-)
 _FENCED_JSON_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
 
 _logger = logging.getLogger(__name__)
@@ -38,30 +36,180 @@ class PlanChangeManifest:
     new_relationships: tuple[NewRelationship, ...]
 
 
+class _PlanningModel(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+
+def _require_list(value: object) -> object:
+    if not isinstance(value, list):
+        raise ValueError("must be a list")
+    return value
+
+
+def _validate_relative_path(value: str, *, field_name: str) -> str:
+    path = Path(value)
+    if not value or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"{field_name} must be repo-relative without traversal")
+    return value
+
+
+class _SymbolModel(_PlanningModel):
+    name: StrictStr
+    file: StrictStr
+
+    @field_validator("file")
+    @classmethod
+    def validate_file(cls, value: str) -> str:
+        return _validate_relative_path(value, field_name="symbol file")
+
+
+class _HashAnchorsModel(_PlanningModel):
+    before: StrictStr
+    after: StrictStr
+
+    @field_validator("before", "after")
+    @classmethod
+    def strip_non_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("hash anchor must be a non-empty string")
+        return value
+
+
+class _DependencyModel(_PlanningModel):
+    path: StrictStr
+    symbols: list[_SymbolModel] = Field(default_factory=list)
+    hash_anchors: _HashAnchorsModel | None = None
+    reason: StrictStr = ""
+
+    @field_validator("symbols", mode="before")
+    @classmethod
+    def validate_symbols(cls, value: object) -> object:
+        return _require_list(value)
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("dependency path must be a non-empty string")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def strip_reason(cls, value: str) -> str:
+        return value.strip()
+
+
+class _ChangeModel(_PlanningModel):
+    id: StrictStr
+    path: StrictStr
+    edit_kind: EditKind = "modify"
+    symbols: list[_SymbolModel] = Field(default_factory=list)
+    hash_anchors: _HashAnchorsModel | None = None
+    dependencies: list[_DependencyModel] = Field(default_factory=list)
+    depends_on: list[StrictStr] = Field(default_factory=list)
+    description: StrictStr
+
+    @field_validator("symbols", "dependencies", "depends_on", mode="before")
+    @classmethod
+    def validate_lists(cls, value: object) -> object:
+        return _require_list(value)
+
+    @field_validator("id")
+    @classmethod
+    def validate_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("change id must be a non-empty string")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        return _validate_relative_path(value, field_name="change path")
+
+    @field_validator("description")
+    @classmethod
+    def strip_description(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("description must be a non-empty string")
+        return value
+
+
+class _RelationshipModel(_PlanningModel):
+    source_change_id: StrictStr
+    dependant_change_id: StrictStr
+    reason: RelationshipReason
+
+
+class _ManifestModel(_PlanningModel):
+    manifest_version: StrictStr
+    goal: StrictStr
+    goal_summary: StrictStr
+    spec_path: StrictStr | None = None
+    changes: list[_ChangeModel]
+    new_relationships: list[_RelationshipModel] = Field(default_factory=list)
+
+    @field_validator("changes", "new_relationships", mode="before")
+    @classmethod
+    def validate_lists(cls, value: object) -> object:
+        return _require_list(value)
+
+    @field_validator("goal", "goal_summary")
+    @classmethod
+    def strip_non_empty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("manifest text must be a non-empty string")
+        return value
+
+
+def _hash_anchors_to_dict(anchors: HashAnchors) -> dict[str, object]:
+    return {"before": anchors.before, "after": anchors.after}
+
+
+def _dependency_to_dict(dependency: ChangeDependency) -> dict[str, object]:
+    result: dict[str, object] = {
+        "path": dependency.path,
+        "symbols": [{"name": s.name, "file": s.file} for s in dependency.symbols],
+        "reason": dependency.reason,
+    }
+    if dependency.hash_anchors is not None:
+        result["hash_anchors"] = _hash_anchors_to_dict(dependency.hash_anchors)
+    return result
+
+
+def _change_to_dict(change: FileChange) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": change.id,
+        "path": change.path,
+        "edit_kind": change.edit_kind,
+        "description": change.description,
+        "symbols": [{"name": s.name, "file": s.file} for s in change.symbols],
+        "depends_on": list(change.depends_on),
+    }
+    if change.hash_anchors is not None:
+        result["hash_anchors"] = _hash_anchors_to_dict(change.hash_anchors)
+    if change.dependencies:
+        result["dependencies"] = [_dependency_to_dict(d) for d in change.dependencies]
+    return result
+
+
 def manifest_to_dict(manifest: PlanChangeManifest) -> dict[str, object]:
     return {
         "manifest_version": manifest.manifest_version,
         "goal": manifest.goal,
         "goal_summary": manifest.goal_summary,
         "spec_path": manifest.spec_path,
-        "changes": [
-            {
-                "id": c.id,
-                "path": c.path,
-                "edit_kind": c.edit_kind,
-                "description": c.description,
-                "symbols": [{"name": s.name, "file": s.file} for s in c.symbols],
-                "depends_on": list(c.depends_on),
-            }
-            for c in manifest.changes
-        ],
+        "changes": [_change_to_dict(change) for change in manifest.changes],
         "new_relationships": [
             {
-                "source_change_id": r.source_change_id,
-                "dependant_change_id": r.dependant_change_id,
-                "reason": r.reason,
+                "source_change_id": relationship.source_change_id,
+                "dependant_change_id": relationship.dependant_change_id,
+                "reason": relationship.reason,
             }
-            for r in manifest.new_relationships
+            for relationship in manifest.new_relationships
         ],
     }
 
@@ -99,256 +247,103 @@ def _decode_manifest_or_none(raw: object) -> PlanChangeManifest | None:
     if not isinstance(raw, dict):
         _logger.warning("manifest root is not an object")
         return None
-    if raw.get("manifest_version") != MANIFEST_VERSION:
+    raw_dict = cast(dict[str, object], raw)
+    if raw_dict.get("manifest_version") != MANIFEST_VERSION:
         _logger.warning(
             "manifest_version mismatch: expected %s, got %r",
             MANIFEST_VERSION,
-            raw.get("manifest_version"),
+            raw_dict.get("manifest_version"),
         )
         return None
-    goal = raw.get("goal")
-    if not isinstance(goal, str) or not goal.strip():
-        _logger.warning("manifest.goal must be a non-empty string")
+    try:
+        model = _ManifestModel.model_validate(raw_dict)
+    except ValidationError as exc:
+        _logger.warning("manifest validation failed: %s", exc)
         return None
-    goal = goal.strip()
-    goal_summary = raw.get("goal_summary")
-    if not isinstance(goal_summary, str) or not goal_summary.strip():
-        _logger.warning("manifest.goal_summary must be a non-empty string")
+
+    known_ids = {change.id for change in model.changes}
+    if len(known_ids) != len(model.changes):
+        _logger.warning("duplicate change id in manifest")
         return None
-    goal_summary = goal_summary.strip()
-    raw_spec_path = raw.get("spec_path")
-    if raw_spec_path is not None and not isinstance(raw_spec_path, str):
-        _logger.warning("manifest.spec_path must be a string or null")
-        return None
-    spec_path: str | None = raw_spec_path if isinstance(raw_spec_path, str) else None
-    changes = _parse_changes(raw.get("changes"))
-    if changes is None:
-        return None
-    relationships = _parse_relationships(
-        raw.get("new_relationships", []),
-        known_ids={c.id for c in changes},
-    )
-    if relationships is None:
-        return None
+    for change in model.changes:
+        for dependency_id in change.depends_on:
+            if dependency_id not in known_ids:
+                _logger.warning(
+                    "change %r depends_on unknown id %r",
+                    change.id,
+                    dependency_id,
+                )
+                return None
+    for relationship in model.new_relationships:
+        if relationship.source_change_id not in known_ids:
+            _logger.warning(
+                "new_relationship source %r not in changes",
+                relationship.source_change_id,
+            )
+            return None
+        if relationship.dependant_change_id not in known_ids:
+            _logger.warning(
+                "new_relationship dependant %r not in changes",
+                relationship.dependant_change_id,
+            )
+            return None
+
     return PlanChangeManifest(
-        manifest_version=MANIFEST_VERSION,
-        goal=goal,
-        goal_summary=goal_summary,
-        spec_path=spec_path,
-        changes=changes,
-        new_relationships=relationships,
+        manifest_version=model.manifest_version,
+        goal=model.goal,
+        goal_summary=model.goal_summary,
+        spec_path=model.spec_path,
+        changes=tuple(
+            FileChange(
+                id=change.id,
+                path=change.path,
+                edit_kind=change.edit_kind,
+                symbols=tuple(
+                    SymbolRef(name=symbol.name, file=symbol.file) for symbol in change.symbols
+                ),
+                hash_anchors=(
+                    None
+                    if change.hash_anchors is None
+                    else HashAnchors(
+                        before=change.hash_anchors.before,
+                        after=change.hash_anchors.after,
+                    )
+                ),
+                dependencies=tuple(
+                    ChangeDependency(
+                        path=dependency.path,
+                        symbols=tuple(
+                            SymbolRef(name=symbol.name, file=symbol.file)
+                            for symbol in dependency.symbols
+                        ),
+                        hash_anchors=(
+                            None
+                            if dependency.hash_anchors is None
+                            else HashAnchors(
+                                before=dependency.hash_anchors.before,
+                                after=dependency.hash_anchors.after,
+                            )
+                        ),
+                        reason=dependency.reason,
+                    )
+                    for dependency in change.dependencies
+                ),
+                depends_on=tuple(change.depends_on),
+                description=change.description,
+            )
+            for change in model.changes
+        ),
+        new_relationships=tuple(
+            NewRelationship(
+                source_change_id=relationship.source_change_id,
+                dependant_change_id=relationship.dependant_change_id,
+                reason=relationship.reason,
+            )
+            for relationship in model.new_relationships
+        ),
     )
 
 
 def _extract_fenced_json(text: str) -> str | None:
     match = _FENCED_JSON_RE.search(text)
     return match.group(1) if match else None
-
-
-def _parse_changes(raw: object) -> tuple[FileChange, ...] | None:
-    if not isinstance(raw, list):
-        _logger.warning("manifest.changes must be a list, got %s", type(raw).__name__)
-        return None
-    parsed: list[FileChange] = []
-    seen_ids: set[str] = set()
-    for entry in raw:
-        change = _parse_single_change(entry)
-        if change is None:
-            return None
-        if change.id in seen_ids:
-            _logger.warning("duplicate change id %r", change.id)
-            return None
-        seen_ids.add(change.id)
-        parsed.append(change)
-    for change in parsed:
-        for dep in change.depends_on:
-            if dep not in seen_ids:
-                _logger.warning(
-                    "change %r depends_on unknown id %r",
-                    change.id,
-                    dep,
-                )
-                return None
-    return tuple(parsed)
-
-
-def _parse_single_change(entry: object) -> FileChange | None:
-    if not isinstance(entry, dict):
-        _logger.warning("change entry must be an object")
-        return None
-    raw = cast(dict[str, object], entry)
-    cid = raw.get("id")
-    path = raw.get("path")
-    if not isinstance(cid, str) or not cid:
-        _logger.warning("change.id must be a non-empty string")
-        return None
-    if not isinstance(path, str) or not path:
-        _logger.warning("change %r: path must be a non-empty string", cid)
-        return None
-    if Path(path).is_absolute() or ".." in Path(path).parts:
-        _logger.warning(
-            "change %r: path must be repo-relative without traversal, got %r", cid, path
-        )
-        return None
-    edit_kind = raw.get("edit_kind", "modify")
-    if edit_kind not in _VALID_EDIT_KINDS:
-        _logger.warning("change %r: invalid edit_kind %r", cid, edit_kind)
-        return None
-    symbols = _parse_symbols(raw.get("symbols", []), cid)
-    if symbols is None:
-        return None
-    hash_anchors = _parse_hash_anchors(raw.get("hash_anchors"), cid, field_name="hash_anchors")
-    if raw.get("hash_anchors") is not None and hash_anchors is None:
-        return None
-    dependencies = _parse_dependencies(raw.get("dependencies", []), cid)
-    if dependencies is None:
-        return None
-    raw_deps = raw.get("depends_on", [])
-    if not isinstance(raw_deps, list) or not all(isinstance(d, str) for d in raw_deps):
-        _logger.warning("change %r: depends_on must be a list of strings", cid)
-        return None
-    depends_on: tuple[str, ...] = tuple(cast(list[str], raw_deps))
-    description = raw.get("description")
-    if not isinstance(description, str) or not description.strip():
-        _logger.warning("change %r: description must be a non-empty string", cid)
-        return None
-    return FileChange(
-        id=cid,
-        path=path,
-        edit_kind=cast(EditKind, edit_kind),
-        symbols=symbols,
-        hash_anchors=hash_anchors,
-        dependencies=dependencies,
-        depends_on=depends_on,
-        description=description.strip(),
-    )
-
-
-def _parse_symbols(raw: object, cid: str) -> tuple[SymbolRef, ...] | None:
-    if not isinstance(raw, list):
-        _logger.warning("change %r: symbols must be a list", cid)
-        return None
-    out: list[SymbolRef] = []
-    for sym in raw:
-        if not isinstance(sym, dict):
-            _logger.warning("change %r: symbol entry must be an object", cid)
-            return None
-        sym_raw = cast(dict[str, object], sym)
-        name = sym_raw.get("name")
-        file = sym_raw.get("file")
-        if not isinstance(name, str) or not isinstance(file, str):
-            _logger.warning(
-                "change %r: symbol requires string name and file",
-                cid,
-            )
-            return None
-        if Path(file).is_absolute() or ".." in Path(file).parts:
-            _logger.warning(
-                "change %r: symbol file must be repo-relative without traversal, got %r",
-                cid,
-                file,
-            )
-            return None
-        out.append(SymbolRef(name=name, file=file))
-    return tuple(out)
-
-
-def _parse_hash_anchors(
-    raw: object,
-    cid: str,
-    *,
-    field_name: str,
-) -> HashAnchors | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, dict):
-        _logger.warning("change %r: %s must be an object", cid, field_name)
-        return None
-    d = cast("dict[str, Any]", raw)
-    before = d.get("before")
-    after = d.get("after")
-    if not isinstance(before, str) or not before.strip():
-        _logger.warning("change %r: %s.before must be a non-empty string", cid, field_name)
-        return None
-    if not isinstance(after, str) or not after.strip():
-        _logger.warning("change %r: %s.after must be a non-empty string", cid, field_name)
-        return None
-    return HashAnchors(before=before.strip(), after=after.strip())
-
-
-def _parse_dependencies(raw: object, cid: str) -> tuple[ChangeDependency, ...] | None:
-    if not isinstance(raw, list):
-        _logger.warning("change %r: dependencies must be a list", cid)
-        return None
-    dependencies: list[ChangeDependency] = []
-    for dep in raw:
-        if not isinstance(dep, dict):
-            _logger.warning("change %r: dependency entry must be an object", cid)
-            return None
-        dep_raw = cast(dict[str, object], dep)
-        path = dep_raw.get("path")
-        if not isinstance(path, str) or not path.strip():
-            _logger.warning("change %r: dependency.path must be a non-empty string", cid)
-            return None
-        symbols = _parse_symbols(dep_raw.get("symbols", []), cid)
-        if symbols is None:
-            return None
-        hash_anchors = _parse_hash_anchors(
-            dep_raw.get("hash_anchors"),
-            cid,
-            field_name="dependency.hash_anchors",
-        )
-        if dep_raw.get("hash_anchors") is not None and hash_anchors is None:
-            return None
-        reason = dep_raw.get("reason", "")
-        if not isinstance(reason, str):
-            _logger.warning("change %r: dependency.reason must be a string", cid)
-            return None
-        dependencies.append(
-            ChangeDependency(
-                path=path.strip(),
-                symbols=symbols,
-                hash_anchors=hash_anchors,
-                reason=reason.strip(),
-            )
-        )
-    return tuple(dependencies)
-
-
-def _parse_relationships(
-    raw: object,
-    *,
-    known_ids: set[str],
-) -> tuple[NewRelationship, ...] | None:
-    if not isinstance(raw, list):
-        _logger.warning("new_relationships must be a list")
-        return None
-    parsed: list[NewRelationship] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            _logger.warning("new_relationship entry must be an object")
-            return None
-        rel = cast(dict[str, object], entry)
-        source = rel.get("source_change_id")
-        dependant = rel.get("dependant_change_id")
-        reason = rel.get("reason")
-        if not isinstance(source, str) or source not in known_ids:
-            _logger.warning("new_relationship source %r not in changes", source)
-            return None
-        if not isinstance(dependant, str) or dependant not in known_ids:
-            _logger.warning(
-                "new_relationship dependant %r not in changes",
-                dependant,
-            )
-            return None
-        if reason not in _VALID_RELATIONSHIP_REASONS:
-            _logger.warning("new_relationship reason %r invalid", reason)
-            return None
-        parsed.append(
-            NewRelationship(
-                source_change_id=source,
-                dependant_change_id=dependant,
-                reason=cast(RelationshipReason, reason),
-            ),
-        )
-    return tuple(parsed)

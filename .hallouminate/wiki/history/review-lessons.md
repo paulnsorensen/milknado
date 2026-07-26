@@ -173,3 +173,18 @@ succeed" drift the moment a new field (`turn_capped`) can co-occur with an old
 one (`timed_out`). The streaming path makes those flags mutually exclusive; the
 blocking post-hoc path does not, so test the co-occurring case
 (`timed_out and turn_capped`), not just the happy cap.
+
+## Tests: completion sentinels belong to the process being observed (#325)
+
+A force-stop regression originally handled `SIGTERM` by touching an empty sentinel, spawning a detached helper to fill it after a delay, and exiting. Python 3.11 CI could observe the file forever empty even though the handler ran: the assertion depended on scheduling and survival of a second process rather than completion of the event under test.[^sentinel-failure] The reliable test writes the completed `stopped` value directly in the signal handler before `SystemExit`, then polls for that content because joining the manager thread does not prove its descendant finished handling the signal.[^sentinel-fix]
+
+The corrected sentinel still exposed a production race: after the process-group leader exited, `_terminate_lingering_group` sent SIGTERM and immediately SIGKILL, so the descendant could die before its handler wrote the completed sentinel. The cleanup now uses the existing SIGTERM grace period to poll group existence with signal `0`, returning if the group disappears and escalating only when the deadline expires.[^lingering-fix] Focused tests mock the clock and sleep so both graceful exit and SIGKILL-race behavior are deterministic without wall-clock delays.[^lingering-tests]
+
+**Rule:** a completion sentinel must be finalized by the process whose completion it represents. Do not touch an incomplete marker and delegate its final value to a detached helper; that tests helper scheduling, not the lifecycle event. When the production join covers only an ancestor, poll for completed sentinel content rather than file existence. Cleanup must also allow the descendant's SIGTERM handler to finish before escalation: poll group liveness throughout the grace period, then SIGKILL only if it remains.
+
+[^sentinel-failure]: PR #325 Actions job 89758215559; `tests/loop/test_manager.py:311-367` before commit `5889c635a07627461d6acab44a92adb6ae90ff17`
+[^sentinel-fix]: `tests/loop/test_manager.py:311-360`; PR #325 commit `5889c635a07627461d6acab44a92adb6ae90ff17`
+[^lingering-fix]: `src/milknado/loop/_agent.py:971-990`
+[^lingering-tests]: `tests/loop/test_agent.py:2107-2145`
+
+_Source: PR #325 affinage · Updated: 2026-07-26 · Supersedes: none_

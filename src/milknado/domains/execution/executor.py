@@ -9,10 +9,11 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, TypedDict
 
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.config import Gate
@@ -107,6 +108,19 @@ class RebaseConflict:
     description: str
     conflicting_files: tuple[str, ...]
     detail: str
+
+
+class _RalphRunKwargs(TypedDict, total=False):
+    agent: str
+    ralph_dir: Path
+    ralph_file: Path
+    quality_gates: tuple[Gate, ...] | None
+    project_root: Path
+    commit_footer: str | None
+    base_oid: str
+    run_id: str
+    completion_probe: Callable[[], bool]
+    runtime_policy: RuntimePolicy
 
 
 def _build_commit_message(node_id: int, description: str) -> str:
@@ -604,11 +618,10 @@ class Executor:
             findings_round=findings_round,
         )
         ralph_run_id = make_run_id(node.id)
-        create_kwargs: dict[str, Any] = {
+        create_kwargs: _RalphRunKwargs = {
             "agent": config.execution_agent,
             "ralph_dir": wt_path,
             "ralph_file": ralph_path,
-            "commands": [],
             "quality_gates": config.quality_gates,
             "project_root": wt_path,
             "commit_footer": config.commit_footer,
