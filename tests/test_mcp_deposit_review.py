@@ -181,7 +181,6 @@ class TestDepositReview:
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=ralph_file,
-            commands=[],
             quality_gates=(),
             project_root=tmp_path,
             run_id=run_id,

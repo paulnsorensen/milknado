@@ -14,8 +14,9 @@ import re
 import shlex
 import shutil
 import subprocess
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from milknado.domains.dispatch import RunWindow
 
 _TMUX_TIMEOUT_SECS = 30
 
@@ -33,25 +34,6 @@ def session_name_for(project_root: Path) -> str:
     """
     sanitized = re.sub(r"[^A-Za-z0-9_-]+", "-", project_root.name).strip("-")
     return f"milknado-{sanitized or 'project'}"
-
-
-@dataclass(frozen=True)
-class RunWindow:
-    """Everything a run needs from its tmux window.
-
-    ``log_path`` receives a live copy of the pane output (the same file the
-    poll tools tail); ``exit_code_path`` receives the runner's exit code so a
-    waiter with no process handle can still read it; ``brief_path``, when set,
-    is redirected to the runner's stdin (the run-inline brief channel).
-    """
-
-    run_id: str
-    argv: tuple[str, ...]
-    cwd: Path
-    log_path: Path
-    exit_code_path: Path
-    env: dict[str, str] = field(default_factory=dict)
-    brief_path: Path | None = None
 
 
 class TmuxAdapter:
@@ -151,11 +133,14 @@ class TmuxAdapter:
                 f"tmux could not open a window for run {window.run_id!r}: {result.stderr.strip()}"
             )
         try:
-            return int(result.stdout.strip())
+            pane_pid = int(result.stdout.strip())
         except ValueError as exc:
             raise TmuxDispatchError(
                 f"tmux returned an unparseable pane pid: {result.stdout!r}"
             ) from exc
+        if pane_pid <= 0:
+            raise TmuxDispatchError(f"tmux returned an invalid pane pid: {result.stdout!r}")
+        return pane_pid
 
     def kill_window(self, run_id: str) -> bool:
         """Kill the run's window; an absent window is a no-op returning False.

@@ -44,7 +44,6 @@ class LoopAdapter:
         agent: str,
         ralph_dir: Path,
         ralph_file: Path,
-        commands: list[str],
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,

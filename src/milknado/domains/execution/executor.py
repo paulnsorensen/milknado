@@ -114,7 +114,6 @@ class _RalphRunKwargs(TypedDict, total=False):
     agent: str
     ralph_dir: Path
     ralph_file: Path
-    commands: list[str]
     quality_gates: tuple[Gate, ...] | None
     project_root: Path
     commit_footer: str | None
@@ -623,7 +622,6 @@ class Executor:
             "agent": config.execution_agent,
             "ralph_dir": wt_path,
             "ralph_file": ralph_path,
-            "commands": [],
             "quality_gates": config.quality_gates,
             "project_root": wt_path,
             "commit_footer": config.commit_footer,

@@ -629,7 +629,6 @@ class TestCreateRunAttachesVerifier:
             agent="claude",
             ralph_dir=worktree,
             ralph_file=worktree / "RALPH.md",
-            commands=[],
             quality_gates=(Gate(command="true"),),
             base_oid=_BASE_OIDS[worktree],
         )
@@ -647,7 +646,6 @@ class TestCreateRunAttachesVerifier:
             agent="claude",
             ralph_dir=worktree,
             ralph_file=worktree / "RALPH.md",
-            commands=[],
             quality_gates=None,
             base_oid=_BASE_OIDS[worktree],
         )

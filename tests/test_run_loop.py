@@ -133,8 +133,7 @@ class FakeRalph:
         agent: str,
         ralph_dir: Path,
         ralph_file: Path,
-        commands: list[str],
-        quality_gates: list[str],
+        quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
@@ -1536,7 +1535,6 @@ class TestLoopAdapterLogDir:
                 agent="claude",
                 ralph_dir=ralph_dir,
                 ralph_file=ralph_file,
-                commands=[],
                 quality_gates=[],
                 project_root=None,
             )

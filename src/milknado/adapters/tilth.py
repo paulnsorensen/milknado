@@ -6,13 +6,36 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+
 from milknado.domains.common import DegradationMarker, SymbolLocation, TilthMap
+
+_JSON_OBJECT = TypeAdapter(dict[str, object])
+
+
+class _TilthSearchResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+    output: str = ""
+
 
 _MATCH_HEADER = re.compile(r"^## (.+):(\d+)(?:-(\d+))? \[")
 
 
-def _run_tilth_json(cmd: list[str]) -> dict | None:
-    """Run a tilth command expecting JSON output. Returns None on any failure."""
+def _parse_json_object(output: str) -> tuple[dict[str, object] | None, str | None]:
+    try:
+        raw = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return None, str(exc)
+    if not isinstance(raw, dict):
+        return None, "top-level JSON is not an object"
+    try:
+        return _JSON_OBJECT.validate_python(raw, strict=True), None
+    except ValidationError as exc:
+        return None, str(exc)
+
+
+def _run_tilth_json(cmd: list[str]) -> dict[str, object] | None:
+    """Run a tilth command expecting a JSON object. Returns None on failure."""
     try:
         result = subprocess.run(
             cmd,
@@ -25,12 +48,7 @@ def _run_tilth_json(cmd: list[str]) -> dict | None:
         return None
     if result.returncode != 0:
         return None
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
+    data, _ = _parse_json_object(result.stdout)
     return data
 
 
@@ -62,7 +80,8 @@ class TilthAdapter:
         scope: Path,
         budget_tokens: int,
     ) -> TilthMap | DegradationMarker:
-        if shutil.which("tilth") is None:
+        binary = shutil.which("tilth")
+        if binary is None:
             return DegradationMarker(
                 source="tilth",
                 reason="binary_missing",
@@ -71,7 +90,7 @@ class TilthAdapter:
         try:
             result = subprocess.run(
                 [
-                    "tilth",
+                    binary,
                     "--map",
                     "--json",
                     "--scope",
@@ -96,19 +115,12 @@ class TilthAdapter:
                 reason="exec_failed",
                 detail=(result.stderr or "").strip()[:500],
             )
-        try:
-            data = json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
+        data, detail = _parse_json_object(result.stdout)
+        if data is None:
             return DegradationMarker(
                 source="tilth",
                 reason="invalid_json",
-                detail=str(exc)[:500],
-            )
-        if not isinstance(data, dict):
-            return DegradationMarker(
-                source="tilth",
-                reason="invalid_json",
-                detail="top-level JSON is not an object",
+                detail=(detail or "invalid JSON object")[:500],
             )
         return TilthMap(scope=scope, budget_tokens=budget_tokens, data=data)
 
@@ -117,25 +129,28 @@ class TilthAdapter:
         keyword: str,
         glob: str | None = None,
     ) -> list[SymbolLocation]:
-        if shutil.which("tilth") is None:
+        binary = shutil.which("tilth")
+        if binary is None:
             return []
-        cmd = ["tilth", keyword, "--json"]
+        cmd = [binary, keyword, "--json"]
         if glob:
             cmd += ["--glob", glob]
         data = _run_tilth_json(cmd)
         if data is None:
             return []
-        output_text = data.get("output", "")
-        if not isinstance(output_text, str):
+        try:
+            response = _TilthSearchResponse.model_validate(data)
+        except ValidationError:
             return []
-        return _parse_symbol_headers(output_text)
+        return _parse_symbol_headers(response.output)
 
     def read_section(self, path: Path, line_start: int, line_end: int) -> str:
-        if shutil.which("tilth") is None:
+        binary = shutil.which("tilth")
+        if binary is None:
             return ""
         try:
             result = subprocess.run(
-                ["tilth", str(path), "--section", f"{line_start}-{line_end}"],
+                [binary, str(path), "--section", f"{line_start}-{line_end}"],
                 capture_output=True,
                 text=True,
                 check=False,

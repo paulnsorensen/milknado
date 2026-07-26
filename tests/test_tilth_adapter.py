@@ -61,7 +61,7 @@ class TestStructuralMap:
         assert result.data == payload
         mock_run.assert_called_once_with(
             [
-                "tilth",
+                "/usr/bin/tilth",
                 "--map",
                 "--json",
                 "--scope",
@@ -228,7 +228,7 @@ class TestSearchSymbol:
         mock_run.return_value = _ok(json.dumps({"output": ""}))
         TilthAdapter().search_symbol("Foo", glob="*.py")
         mock_run.assert_called_once_with(
-            ["tilth", "Foo", "--json", "--glob", "*.py"],
+            ["/usr/bin/tilth", "Foo", "--json", "--glob", "*.py"],
             capture_output=True,
             text=True,
             check=False,
@@ -276,7 +276,7 @@ class TestReadSection:
         result = TilthAdapter().read_section(Path("src/foo.py"), 1, 5)
         assert result == "def foo():\n    pass\n"
         mock_run.assert_called_once_with(
-            ["tilth", "src/foo.py", "--section", "1-5"],
+            ["/usr/bin/tilth", "src/foo.py", "--section", "1-5"],
             capture_output=True,
             text=True,
             check=False,
