@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 
 import tomli_w
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
@@ -93,7 +101,7 @@ _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prep
 class PromptsTable(BaseModel):
     """Schema for the ``[milknado.prompts]`` TOML table."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     planning_prepend: str | None = None
     planning_prepend_path: str | None = None
@@ -137,7 +145,7 @@ class PromptsTable(BaseModel):
 class WorkerTable(BaseModel):
     """Schema for the ``[milknado.worker]`` TOML table."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     tools: dict[str, tuple[str, ...]] = Field(default_factory=dict)
 
@@ -151,41 +159,65 @@ class WorkerTable(BaseModel):
         out: dict[str, tuple[str, ...]] = {}
         for fam, tool_list in value.items():
             if not isinstance(fam, str):
-                raise ValueError(
-                    f"[milknado.worker.tools] family keys must be strings, got {fam!r}"
-                )
+                raise ValueError("[milknado.worker.tools] family keys must be strings")
             out[fam] = coerce_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
         return out
+
+
+class _MilknadoInheritanceControls(BaseModel):
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    inherit_global: bool = True
+
+    @field_validator("inherit_global", mode="before")
+    @classmethod
+    def _inherit_global_bool(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError("[milknado] inherit_global must be a boolean")
+        return value
+
+
+class _FlavorInheritanceControls(BaseModel):
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
+
+    inherit: bool = True
+
+    @field_validator("inherit", mode="before")
+    @classmethod
+    def _inherit_bool(cls, value: Any) -> Any:
+        if not isinstance(value, bool):
+            raise ValueError("inherit must be a boolean")
+        return value
 
 
 class MilknadoSection(BaseModel):
     """Schema for the merged ``[milknado]`` TOML table, before derivation."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     agent_family: str = "claude"
     planning_agent: str | None = None
     execution_agent: str | None = None
     planning_validation_hook: str | None = None
     plan_reviewer_agent: str | None = None
-    plan_review_max_rounds: int = 3
+    plan_review_max_rounds: StrictInt = 3
     quality_gates: tuple[Gate, ...] | None = None
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
-    concurrency_limit: int = 4
+    concurrency_limit: StrictInt = 4
     db_path: str = ".milknado/milknado.db"
     plugins: tuple[str, ...] = ()
-    stall_threshold_seconds: int = 300
-    dispatch_max_retries: int = 2
-    dispatch_backoff_seconds: float = 5.0
+    stall_threshold_seconds: StrictInt = 300
+    dispatch_max_retries: StrictInt = 2
+    dispatch_backoff_seconds: StrictFloat = 5.0
     protected_branches: tuple[str, ...] = ("main", "master")
-    completion_timeout_seconds: float | None = None
-    eta_sample_size: int = 10
+    completion_timeout_seconds: StrictFloat | None = None
+    eta_sample_size: StrictInt = 10
     commit_footer: str | None = None
     worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
     loop_mode: str = DEFAULT_LOOP_MODE
-    max_iterations: int = DEFAULT_MAX_ITERATIONS
-    max_turns: int = DEFAULT_MAX_TURNS
+    max_iterations: StrictInt = DEFAULT_MAX_ITERATIONS
+    max_turns: StrictInt = DEFAULT_MAX_TURNS
     prompts: PromptsTable = Field(default_factory=PromptsTable)
     worker: WorkerTable = Field(default_factory=WorkerTable)
     flavor: dict[str, FlavorTable] = Field(default_factory=dict)
@@ -196,7 +228,7 @@ class MilknadoSection(BaseModel):
         family = str(value).strip().lower()
         if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
             allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
-            raise ValueError(f"Invalid agent_family '{family}'. Expected one of: {allowed}")
+            raise ValueError(f"Invalid agent_family. Expected one of: {allowed}")
         return family
 
     @field_validator("planning_validation_hook", mode="before")
@@ -296,9 +328,7 @@ class MilknadoSection(BaseModel):
             raise ValueError("[milknado.flavor] must be a table")
         for name, entry in value.items():
             if not isinstance(name, str) or not name:
-                raise ValueError(
-                    f"[milknado.flavor] flavor keys must be non-empty strings, got {name!r}"
-                )
+                raise ValueError("[milknado.flavor] flavor keys must be non-empty strings")
             if not isinstance(entry, dict):
                 raise ValueError(f"[milknado.flavor.{name}] must be a table")
         return value
@@ -369,20 +399,18 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
 
 def _extract_inheritance(raw: dict[str, Any], *, local: bool) -> tuple[bool, tuple[str, ...]]:
     """Validate and remove layer-control metadata before normal merging."""
-    inherit_global = raw.pop("inherit_global", True)
-    if not isinstance(inherit_global, bool):
-        raise ValueError("[milknado] inherit_global must be a boolean")
+    controls = _MilknadoInheritanceControls.model_validate(raw)
+    raw.pop("inherit_global", None)
     replaced: list[str] = []
     flavors = raw.get("flavor")
     if isinstance(flavors, dict):
         for name, flavor in flavors.items():
             if isinstance(flavor, dict) and "inherit" in flavor:
-                inherit = flavor.pop("inherit")
-                if not isinstance(inherit, bool):
-                    raise ValueError(f"[milknado.flavor.{name}] inherit must be a boolean")
-                if local and not inherit:
+                flavor_controls = _FlavorInheritanceControls.model_validate(flavor)
+                flavor.pop("inherit")
+                if local and not flavor_controls.inherit:
                     replaced.append(name)
-    return inherit_global, tuple(replaced)
+    return controls.inherit_global, tuple(replaced)
 
 
 def save_config(config: MilknadoConfig, path: Path) -> None:

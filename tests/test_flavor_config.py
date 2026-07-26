@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
@@ -178,8 +179,12 @@ def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> No
         'execution_agent = "evil-bin --flag"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="evil-bin"):
+    with pytest.raises(ValidationError) as exc_info:
         load_config(cfg_path)
+
+    message = str(exc_info.value)
+    assert "execution_agent must start with one of" in message
+    assert "evil-bin" not in message
 
 
 def test_load_config_flavor_tools_malformed_bare_string_raises(tmp_path: Path) -> None:
@@ -650,6 +655,30 @@ def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) ->
         FlavorTable.model_validate({"execution_agent": 42})
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"execution_agent": "TOPSECRET --api-key hidden"},
+        {"tools": [{"api_key": "TOPSECRET"}]},
+        {"loop_mode": "TOPSECRET"},
+        {"session_mode": "TOPSECRET"},
+        {"on_reject": "TOPSECRET"},
+        {
+            "quality_gates": [
+                {"command": "test", "fail_on_stdout": "[TOPSECRET"},
+            ]
+        },
+    ],
+)
+def test_flavor_validation_hides_invalid_input(payload: dict[str, object]) -> None:
+    from milknado.domains.common.flavor_codec import FlavorTable
+
+    with pytest.raises(ValidationError) as exc_info:
+        FlavorTable.model_validate(payload)
+
+    assert "TOPSECRET" not in str(exc_info.value)
+
+
 def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path) -> None:
     """Non-string quality_gates item in a flavor entry raises ValueError."""
     cfg_path = tmp_path / "milknado.toml"
@@ -954,7 +983,7 @@ def test_load_config_flavor_resume_cursor_agent_execution_agent_raises(tmp_path:
         'execution_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
+    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
         load_config(cfg_path)
 
 
@@ -967,7 +996,21 @@ def test_load_config_flavor_resume_cursor_agent_review_agent_raises(tmp_path: Pa
         'review_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
+    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
+        load_config(cfg_path)
+
+
+def test_load_config_flavor_resume_checks_both_configured_agents(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        "[milknado.flavor.implement]\n"
+        'session_mode = "resume"\n'
+        'execution_agent = "cursor-agent -p"\n'
+        'review_agent = "claude -p"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
         load_config(cfg_path)
 
 

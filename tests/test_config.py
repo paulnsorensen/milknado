@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from milknado.domains.common.config import (
     Gate,
@@ -66,6 +67,27 @@ class TestLoadConfig:
         path = self._write_toml(tmp_path, toml)
         cfg = load_config(path)
         assert cfg.concurrency_limit == 8
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("concurrency_limit", "8"),
+            ("stall_threshold_seconds", "300"),
+            ("dispatch_max_retries", "2"),
+            ("dispatch_backoff_seconds", "5.0"),
+            ("completion_timeout_seconds", "30.0"),
+            ("eta_sample_size", "10"),
+        ],
+    )
+    def test_rejects_coercible_numeric_strings(self, field: str, value: str) -> None:
+        with pytest.raises(ValidationError, match=field):
+            MilknadoSection.model_validate({field: value})
+
+    def test_invalid_family_error_hides_input(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            MilknadoSection.model_validate({"agent_family": "TOPSECRET"})
+
+        assert "topsecret" not in str(exc_info.value).lower()
 
     def test_loads_custom_planning_agent(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\nplanning_agent = "claude --model opus"\n'
@@ -342,36 +364,36 @@ class TestParseGates:
         assert result == (Gate(command="cargo test"),)
 
     def test_non_list_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="must be a list"):
+        with pytest.raises(ValidationError, match="must be a list"):
             _section_gates("uv run pytest")
 
     def test_empty_string_entry_raises_value_error(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
+        with pytest.raises(ValidationError, match="non-empty string"):
             _section_gates([""])
 
     def test_bad_regex_fail_on_stdout_raises(self) -> None:
         raw = [{"command": "godot", "fail_on_stdout": "[invalid"}]
-        with pytest.raises(ValueError, match="not a valid regex"):
+        with pytest.raises(ValidationError, match="not a valid regex"):
             _section_gates(raw)
 
     def test_dict_missing_command_raises(self) -> None:
-        with pytest.raises(ValueError, match="command"):
+        with pytest.raises(ValidationError, match="command"):
             _section_gates([{"fail_on_stdout": "ERROR"}])
 
     def test_wrong_type_entry_raises(self) -> None:
-        with pytest.raises(ValueError, match="string or a table"):
+        with pytest.raises(ValidationError, match="string or a table"):
             _section_gates([42])
 
     def test_non_string_fail_on_stdout_raises(self) -> None:
-        with pytest.raises(ValueError, match="fail_on_stdout must be a string"):
+        with pytest.raises(ValidationError, match="fail_on_stdout must be a string"):
             _section_gates([{"command": "godot", "fail_on_stdout": 42}])
 
     def test_whitespace_only_string_entry_raises(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
+        with pytest.raises(ValidationError, match="non-empty string"):
             _section_gates(["   "])
 
     def test_whitespace_only_command_raises(self) -> None:
-        with pytest.raises(ValueError, match="non-empty string"):
+        with pytest.raises(ValidationError, match="non-empty string"):
             _section_gates([{"command": "   "}])
 
     def test_whitespace_only_fail_on_stdout_treated_as_absent(self) -> None:

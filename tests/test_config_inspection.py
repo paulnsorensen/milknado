@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -76,7 +77,7 @@ def test_flavor_inherit_false_replaces_global_table(xdg: Path, tmp_path: Path) -
 def test_invalid_inherit_controls_fail_at_config_boundary(
     tmp_path: Path, body: str, match: str
 ) -> None:
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(ValidationError, match=match):
         load_config(_write(tmp_path / "milknado.toml", body))
 
 

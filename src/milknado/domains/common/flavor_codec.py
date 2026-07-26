@@ -21,7 +21,7 @@ from milknado.domains.common.paths import resolve_project_path, trust_global_pat
 
 
 class Gate(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     command: str
     fail_on_stdout: str | None = None
@@ -58,7 +58,7 @@ class Gate(BaseModel):
             try:
                 re.compile(pattern)
             except re.error as exc:
-                raise ValueError(f"fail_on_stdout is not a valid regex: {exc}") from exc
+                raise ValueError("fail_on_stdout is not a valid regex") from exc
         return pattern
 
 
@@ -78,7 +78,7 @@ def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
     sentinels = 0
     for index, item in enumerate(value):
         if not isinstance(item, str) or not item:
-            raise ValueError(f"{ctx}[{index}] must be a non-empty string, got {item!r}")
+            raise ValueError(f"{ctx}[{index}] must be a non-empty string")
         if item == "...":
             sentinels += 1
             if sentinels > 1:
@@ -90,21 +90,21 @@ def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
 def validate_loop_mode(value: Any) -> str:
     mode = str(value)
     if mode not in ("redispatch", "single"):
-        raise ValueError(f"loop_mode must be one of ['redispatch', 'single']; got {mode!r}")
+        raise ValueError("loop_mode must be one of ['redispatch', 'single']")
     return mode
 
 
 def validate_session_mode(value: Any) -> str:
     mode = str(value)
     if mode not in ("fresh", "resume"):
-        raise ValueError(f"session_mode must be one of ['fresh', 'resume']; got {mode!r}")
+        raise ValueError("session_mode must be one of ['fresh', 'resume']")
     return mode
 
 
 def validate_on_reject(value: Any) -> str:
     policy = str(value)
     if policy not in ("block", "warn"):
-        raise ValueError(f"on_reject must be one of ['block', 'warn']; got {policy!r}")
+        raise ValueError("on_reject must be one of ['block', 'warn']")
     return policy
 
 
@@ -114,7 +114,7 @@ def validate_positive_int(value: Any, ctx: str) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{ctx} must be an integer")
     if value < 1:
-        raise ValueError(f"{ctx} must be >= 1; got {value}")
+        raise ValueError(f"{ctx} must be >= 1")
     return value
 
 
@@ -142,7 +142,7 @@ class FlavorOverride(BaseModel):
 class FlavorTable(BaseModel):
     """Schema for one ``[milknado.flavor.<name>]`` TOML table."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     execution_agent: str | None = None
     tools: tuple[str, ...] | None = None
@@ -170,8 +170,7 @@ class FlavorTable(BaseModel):
         argv = shlex.split(value)
         if argv and Path(argv[0]).name not in ALLOWED_WORKER_EXECUTABLES:
             raise ValueError(
-                f"execution_agent must start with one of "
-                f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {Path(argv[0]).name!r}"
+                f"execution_agent must start with one of {sorted(ALLOWED_WORKER_EXECUTABLES)!r}"
             )
         return value
 
@@ -273,11 +272,10 @@ class FlavorTable(BaseModel):
         if self.brief_prepend is not None and self.brief_prepend_path is not None:
             raise ValueError("brief_prepend and brief_prepend_path are mutually exclusive")
         if self.session_mode == "resume":
-            agent_for_check = (
-                self.review_agent if self.review_agent is not None else self.execution_agent
-            )
-            if agent_for_check is not None:
-                argv = shlex.split(agent_for_check)
+            for command in (self.execution_agent, self.review_agent):
+                if command is None:
+                    continue
+                argv = shlex.split(command)
                 if argv and Path(argv[0]).name == "cursor-agent":
                     raise ValueError(
                         "session_mode 'resume' is not supported for the cursor-agent "
