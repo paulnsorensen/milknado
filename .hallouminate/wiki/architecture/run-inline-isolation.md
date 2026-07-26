@@ -66,13 +66,13 @@ execution.
 
 ## Why ISOLATE is the default (2026-07-04 incident)
 
-Verified empirically 2026-07-04: three concurrent one-shot workers (tilth n14,
-easy-cheese n10, hallouminate n6) all ran in their repos' main checkouts under the
-old shared-checkout behavior. Consequences observed the same night:
+Verified empirically 2026-07-04: three concurrent one-shot workers all ran in their
+repos' main checkouts under the old shared-checkout behavior. Consequences observed the
+same night:
 
-- **Cross-contamination** — the tilth worker collided with an unrelated concurrent
-  cherry-pick in the same tree; a blind `git stash` inside the worker tangled with
-  the other actor's index.
+- **Cross-contamination** — one worker collided with an unrelated concurrent cherry-pick
+  in the same tree; a blind `git stash` inside the worker tangled with the other actor's
+  index.
 - **Work displaced by other actors** — the easy-cheese worker's uncommitted diff
   was `git stash`-ed away by a concurrent session clearing the tree for its own
   commit; the diff looked destroyed until forensics found it in `stash@{0}`.

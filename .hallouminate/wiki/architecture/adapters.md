@@ -6,14 +6,17 @@ one wraps a single external system and implements a `Protocol` ("port") defined 
 on the adapter — so the engine can be tested with fakes and the concrete subprocess/
 library calls stay quarantined in `src/milknado/adapters/`.
 
-The four ports and their adapters:
+The three ports and their adapters:
 
 | Port (protocols.py) | Adapter | External system |
 |---|---|---|
 | `GitPort` | `git.GitAdapter` | `git` CLI + `mergiraf` |
 | `LoopPort` | `loop.LoopAdapter` | `milknado.loop` (vendored engine, subprocess agent loops) |
-| `TilthPort` | `tilth.TilthAdapter` | `tilth` CLI (code intelligence) |
 | `CrgPort` | `crg.CrgAdapter` | `code-review-graph` library + CLI |
+
+Code intelligence is not a Milknado adapter boundary. Planning and execution agents inspect
+repository content through their own read/tool allowlists; Milknado consumes the resulting
+manifest and uses CRG only for graph topology.[^code-intelligence-boundary]
 
 ## git.py — GitPort
 
@@ -61,20 +64,6 @@ signal. This is where Milknado's parallel execution actually happens.
   instruction, and the completion-signal contract). An `OSError` becomes
   `RalphMarkdownWriteError` — fail-loud on a write the loop depends on.
 
-## tilth.py — TilthPort
-
-Wraps the `tilth` CLI for structural code maps, symbol search, and section reads.
-Distinct failure philosophy from the others: tilth is *optional* code intelligence,
-so missing/broken tilth must degrade gracefully, not abort a run.
-
-- `structural_map` returns a `TilthMap | DegradationMarker` union — a missing binary
-  (`shutil.which`), timeout, non-zero exit, or invalid/non-object JSON each yields a
-  typed `DegradationMarker(source, reason, detail)` the domain can reason about
-  instead of an exception.
-- `search_symbol` / `read_section` degrade silently to `[]` / `""` on any failure.
-  All calls are `check=False` with a 30s timeout. `_parse_symbol_headers` regex-parses
-  `## path:start-end [kind]` headers into `SymbolLocation`.
-
 ## crg.py — CrgPort
 
 Wraps `code-review-graph` for graph intelligence: impact radius, architecture
@@ -94,10 +83,12 @@ operations shell out to the `code-review-graph` CLI via `_run_crg`.
 
 ## Gotchas
 
-- Every adapter calls external processes; all timed/error paths matter. Note the
-  split: git/crg/loop **fail loud** on operations the engine depends on (raise),
-  while tilth **degrades** because it's advisory. Match this when extending.
+- Every adapter crosses an external process or library boundary; timed and error paths
+  matter. Git, CRG, and loop operations fail loud when the engine depends on them.
 - `LoopPort.create_run` / `get_run` / `list_runs` return `Any` — the loop
   run object is not typed at the port boundary.
 - `verify_spec` builds its own `RunManager` rather than reusing the adapter's, so its
   events never reach the shared completion queue.
+
+
+[^code-intelligence-boundary]: `src/milknado/domains/planning/context.py:11-36`; `src/milknado/domains/common/agent_argv.py:13-74`

@@ -314,16 +314,17 @@ class TestRunManagerForceStop:
         stopped = tmp_path / "child-stopped"
         script = tmp_path / "worker.py"
         script.write_text(
-            "import subprocess, sys, time\n"
-            "child = '''import os, signal, sys, time\\n"
-            "from pathlib import Path\\n"
+            "import signal, subprocess, sys, time\n"
+            "from pathlib import Path\n"
             "def stop(*_):\n"
             "    Path(sys.argv[2]).write_text('stopped')\n"
             "    raise SystemExit(0)\n"
-            "signal.signal(signal.SIGTERM, stop)\\n"
+            "signal.signal(signal.SIGTERM, stop)\n"
+            "child = '''import os, sys, time\\n"
+            "from pathlib import Path\\n"
             "Path(sys.argv[1]).write_text(str(os.getpid()))\\n"
             "while True: time.sleep(1)\\n'''\n"
-            "subprocess.Popen([sys.executable, '-c', child, sys.argv[1], sys.argv[2]])\n"
+            "subprocess.Popen([sys.executable, '-c', child, sys.argv[1]])\n"
             "while True: time.sleep(1)\n",
             encoding="utf-8",
         )

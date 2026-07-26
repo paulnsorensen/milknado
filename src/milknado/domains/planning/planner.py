@@ -124,8 +124,6 @@ class Planner:
             crg,
             self._graph,
             spec_text=spec_text,
-            tilth=self._ports.tilth,
-            scope=project_root,
             prepend=self._prompt_prepend,
         )
         context_path = project_root / ".milknado" / "planning-context.md"

@@ -19,7 +19,6 @@ from milknado.cli.plan import (
 from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
 from milknado.domains.common.config import default_config
-from milknado.domains.common.types import DegradationMarker, TilthMap
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
@@ -34,9 +33,7 @@ from milknado.domains.planning.ports import PlanningPorts, PlanningProcessResult
 
 
 def _ports() -> PlanningPorts:
-    tilth = MagicMock()
-    tilth.structural_map.return_value = DegradationMarker(source="tilth", reason="mocked")
-    return PlanningPorts(tilth=tilth, process=_PlanningSubprocess())
+    return PlanningPorts(process=_PlanningSubprocess())
 
 
 @pytest.fixture()
@@ -306,47 +303,6 @@ class TestBuildPlanningContext:
         with pytest.raises(ValueError, match="spec_text"):
             build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
 
-    # --- structural section tests ---
-
-    def test_tilth_kwarg_accepted(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        mock_tilth = MagicMock()
-        mock_tilth.structural_map.return_value = TilthMap(
-            scope=Path("."), budget_tokens=2000, data={"modules": 5}
-        )
-        ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=mock_tilth)
-        assert ctx  # no error
-
-    def test_structural_section_with_tilth_map(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        mock_tilth = MagicMock()
-        mock_tilth.structural_map.return_value = TilthMap(
-            scope=Path("."), budget_tokens=2000, data={"modules": 42, "files": 7}
-        )
-        ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=mock_tilth)
-        assert "Structural Map" in ctx
-        assert "modules" in ctx
-        assert "42" in ctx
-
-    def test_structural_section_fallback_on_degradation(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        mock_tilth = MagicMock()
-        mock_tilth.structural_map.return_value = DegradationMarker(
-            source="tilth", reason="binary not found"
-        )
-        ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=mock_tilth)
-        assert "Structural Map" in ctx
-        assert "tilth" in ctx
-        assert "binary not found" in ctx
-
-    def test_structural_section_fallback_when_tilth_none(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
-    ) -> None:
-        ctx = build_planning_context("goal", mock_crg, tmp_graph, tilth=None)
-        assert "Structural Map" in ctx
-        assert "not available" in ctx
-
     # --- v2 prompt schema tests ---
 
     def test_v2_instructions_contain_manifest_version(
@@ -498,16 +454,11 @@ class TestPlanner:
     ) -> None:
         process = MagicMock()
         process.run_agent.return_value = PlanningProcessResult(exit_code=0, stdout="")
-        tilth = MagicMock()
-        tilth.structural_map.return_value = DegradationMarker(
-            source="tilth",
-            reason="test",
-        )
         planner = Planner(
             tmp_graph,
             mock_crg,
             "claude",
-            PlanningPorts(tilth=tilth, process=process),
+            PlanningPorts(process=process),
         )
 
         result = planner.launch("goal", tmp_path)
