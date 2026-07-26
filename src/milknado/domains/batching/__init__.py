@@ -12,7 +12,7 @@ from milknado.domains.batching.change import (
     SymbolSpread,
 )
 from milknado.domains.batching.solver import DUMB_ZONE_BUDGET, plan_batches
-from milknado.domains.batching.weights import estimate_tokens, estimate_tokens_per_symbols
+from milknado.domains.batching.weights import estimate_tokens
 
 __all__ = [
     "DUMB_ZONE_BUDGET",
@@ -28,6 +28,5 @@ __all__ = [
     "SymbolRef",
     "SymbolSpread",
     "estimate_tokens",
-    "estimate_tokens_per_symbols",
     "plan_batches",
 ]

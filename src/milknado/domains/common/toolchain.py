@@ -15,7 +15,6 @@ class RustTool:
 
 # rtk is rtk-ai/rtk (token-optimizing CLI), not the unrelated `rtk` crate on crates.io.
 REQUIRED_RUST_TOOLS: tuple[RustTool, ...] = (
-    RustTool(name="tilth", install_args=("tilth",)),
     RustTool(name="mergiraf", install_args=("mergiraf",)),
     RustTool(
         name="rtk",

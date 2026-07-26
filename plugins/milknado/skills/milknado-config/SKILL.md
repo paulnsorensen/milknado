@@ -121,7 +121,7 @@ claude = ["...", "Bash(just:*)"]
 # Per-flavor override. Every field optional; absent = inherit.
 [milknado.flavor.research]
 quality_gates = []                       # [] = skip; omit = inherit
-tools = ["mcp__tilth__*", "Read", "Grep", "Glob", "WebSearch"]  # replaces default
+tools = ["mcp__serena__get_symbols_overview", "mcp__serena__find_symbol", "Read", "Grep", "Glob", "WebSearch"]  # replaces default
 brief_prepend = "Research only. Investigate and report; do not modify code."
 # brief_prepend_path = "agents/research.md"   # mutually exclusive with brief_prepend
 

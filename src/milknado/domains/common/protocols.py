@@ -6,12 +6,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from milknado.domains.common.config import Gate
-from milknado.domains.common.types import (
-    DegradationMarker,
-    MikadoNode,
-    RebaseResult,
-    TilthMap,
-)
+from milknado.domains.common.types import MikadoNode, RebaseResult
 
 
 @dataclass(frozen=True)
@@ -26,13 +21,6 @@ class ProgressEvent:
 class VerifySpecResult:
     outcome: Literal["done", "gaps"]
     goal_delta: str | None = None
-
-
-@dataclass(frozen=True)
-class SymbolLocation:
-    path: Path
-    line_start: int
-    line_end: int
 
 
 @dataclass(frozen=True)
@@ -70,22 +58,6 @@ class GraphReadPort(Protocol):
     def get_children(self, node_id: int) -> list[MikadoNode]: ...
     def get_file_ownership(self, node_id: int) -> list[str]: ...
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot: ...
-
-
-class TilthPort(Protocol):
-    def structural_map(
-        self,
-        scope: Path,
-        budget_tokens: int,
-    ) -> TilthMap | DegradationMarker: ...
-
-    def search_symbol(
-        self,
-        keyword: str,
-        glob: str | None = None,
-    ) -> list[SymbolLocation]: ...
-
-    def read_section(self, path: Path, line_start: int, line_end: int) -> str: ...
 
 
 class CrgPort(Protocol):

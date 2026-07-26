@@ -48,7 +48,7 @@ def test_resolve_worker_tools_sentinel_expands_to_default() -> None:
 def test_resolve_worker_tools_no_sentinel_replaces_default() -> None:
     tools = resolve_worker_tools("claude", ["Read", "Edit"])
     assert tools == ("Read", "Edit")
-    assert "mcp__tilth__*" not in tools
+    assert "mcp__serena__find_symbol" not in tools
 
 
 def test_resolve_worker_tools_sentinel_dedupes_first_wins() -> None:
@@ -487,7 +487,7 @@ def test_resolve_flavor_profile_single_winner_tools_precedence(tmp_path: Path) -
         agent_family="claude",
         project_root=tmp_path,
         db_path=tmp_path / ".milknado" / "milknado.db",
-        worker_tools={"claude": ("mcp__tilth__*", "Bash(rtk:*)")},
+        worker_tools={"claude": ("mcp__serena__find_symbol", "Bash(rtk:*)")},
         flavors={
             "spike": FlavorOverride(
                 tools=("Read", "Edit"),

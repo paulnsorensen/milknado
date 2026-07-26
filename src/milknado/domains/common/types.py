@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any
 
 
 class NodeStatus(Enum):
@@ -107,20 +105,6 @@ class MikadoEdge:
 class RebaseResult:
     success: bool
     conflicting_files: tuple[str, ...] = ()
-    detail: str = ""
-
-
-@dataclass(frozen=True)
-class TilthMap:
-    scope: Path
-    budget_tokens: int
-    data: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class DegradationMarker:
-    source: str
-    reason: str
     detail: str = ""
 
 

@@ -227,16 +227,15 @@ def _run_plan_with_critic(
 
 
 def build_planner(graph: MikadoGraph, project_root: Path, config: MilknadoConfig) -> Planner:
-    """Construct the planner with its adapter-backed ports (crg, tilth, subprocess)."""
+    """Construct the planner with its adapter-backed ports (CRG and subprocess)."""
     from milknado.adapters.crg import CrgAdapter
-    from milknado.adapters.tilth import TilthAdapter
     from milknado.domains.planning import Planner
 
     return Planner(
         graph,
         CrgAdapter(project_root),
         config.planning_agent,
-        PlanningPorts(tilth=TilthAdapter(), process=_PlanningSubprocess()),
+        PlanningPorts(process=_PlanningSubprocess()),
         planning_validation_hook=config.planning_validation_hook,
         prompt_prepend=config.planning_prompt_prepend,
     )

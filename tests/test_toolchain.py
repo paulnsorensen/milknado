@@ -55,13 +55,12 @@ class FakeToolchain:
 
 
 def test_status_uses_toolchain_port() -> None:
-    toolchain = FakeToolchain({"tilth": "/bin/tilth"})
+    toolchain = FakeToolchain({"mergiraf": "/bin/mergiraf"})
 
     statuses = get_required_tool_status(toolchain)
 
     assert [(status.name, status.installed, status.path) for status in statuses] == [
-        ("tilth", True, "/bin/tilth"),
-        ("mergiraf", False, None),
+        ("mergiraf", True, "/bin/mergiraf"),
         ("rtk", False, None),
     ]
 
@@ -79,9 +78,7 @@ def test_no_cargo_marks_only_missing_tools_failed() -> None:
 
 
 def test_binstall_and_cargo_install_are_selected_per_tool() -> None:
-    toolchain = FakeToolchain({"cargo": "/bin/cargo"})
-    toolchain.executables["tilth"] = "/home/test/.cargo/bin/tilth"
-    toolchain.executables["rtk"] = "/home/test/.cargo/bin/rtk"
+    toolchain = FakeToolchain({"cargo": "/bin/cargo", "rtk": "/home/test/.cargo/bin/rtk"})
 
     installed, failed = install_missing_rust_tools(toolchain)
 
@@ -94,20 +91,18 @@ def test_binstall_and_cargo_install_are_selected_per_tool() -> None:
 
 
 def test_install_failure_is_reported() -> None:
-    toolchain = FakeToolchain(
-        {"cargo": "/bin/cargo", "mergiraf": "/bin/mergiraf", "rtk": "/bin/rtk"}
-    )
-    toolchain.returncodes[("cargo", "binstall", "--no-confirm", "tilth")] = 1
+    toolchain = FakeToolchain({"cargo": "/bin/cargo", "rtk": "/bin/rtk"})
+    toolchain.returncodes[("cargo", "binstall", "--no-confirm", "mergiraf")] = 1
 
     installed, failed = install_missing_rust_tools(toolchain)
 
     assert installed == []
-    assert failed == ["tilth"]
+    assert failed == ["mergiraf"]
 
 
 def test_successful_command_without_installed_binary_is_failure(tmp_path: Path) -> None:
     toolchain = FakeToolchain(
-        {"cargo": "/bin/cargo", "mergiraf": "/bin/mergiraf", "rtk": "/bin/rtk"},
+        {"cargo": "/bin/cargo", "rtk": "/bin/rtk"},
         home=tmp_path,
         materialize_installs=False,
     )
@@ -115,21 +110,21 @@ def test_successful_command_without_installed_binary_is_failure(tmp_path: Path) 
     installed, failed = install_missing_rust_tools(toolchain)
 
     assert installed == []
-    assert failed == ["tilth"]
+    assert failed == ["mergiraf"]
 
 
 def test_cargo_home_binary_proves_install_success(tmp_path: Path) -> None:
     cargo_home = tmp_path / "cargo"
-    binary = cargo_home / "bin" / "tilth"
+    binary = cargo_home / "bin" / "mergiraf"
     binary.parent.mkdir(parents=True)
     binary.touch()
     toolchain = FakeToolchain(
-        {"cargo": "/bin/cargo", "mergiraf": "/bin/mergiraf", "rtk": "/bin/rtk"},
+        {"cargo": "/bin/cargo", "rtk": "/bin/rtk"},
         cargo_home=cargo_home,
         materialize_installs=False,
     )
 
     installed, failed = install_missing_rust_tools(toolchain)
 
-    assert installed == ["tilth"]
+    assert installed == ["mergiraf"]
     assert failed == []

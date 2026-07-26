@@ -51,9 +51,7 @@ from milknado.domains.common.protocols import (
     GraphReadPort,
     LoopPort,
     ProgressEvent,
-    SymbolLocation,
     TerminalRunOutcome,
-    TilthPort,
     VerifySpecResult,
 )
 from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
@@ -61,7 +59,6 @@ from milknado.domains.common.types import (
     BUILTIN_FLAVORS,
     VALID_CHILD_KINDS,
     VALID_TRANSITIONS,
-    DegradationMarker,
     MikadoEdge,
     MikadoNode,
     NodeKind,
@@ -69,7 +66,6 @@ from milknado.domains.common.types import (
     NodeStatus,
     RebaseResult,
     RunResult,
-    TilthMap,
     WorktreeMode,
 )
 
@@ -79,7 +75,6 @@ __all__ = [
     "BUILTIN_FLAVORS",
     "Gate",
     "CompletionTimeout",
-    "DegradationMarker",
     "CrgPort",
     "GitPort",
     "GitOperationError",
@@ -136,9 +131,7 @@ __all__ = [
     "normalize_hint_paths",
     "UnlandedWorkError",
     "MegaBatchAborted",
-    "TilthPort",
     "ProgressEvent",
-    "SymbolLocation",
-    "TilthMap",
+    "TerminalRunOutcome",
     "VerifySpecResult",
 ]
