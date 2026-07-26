@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
@@ -14,11 +14,12 @@ from milknado.loop import RunStatus
 if TYPE_CHECKING:
     from rich.live import Live
 
+    from milknado.domains.execution.run_loop import RunLoop
 _logger = logging.getLogger("milknado")
 
 
 def handle_completion(
-    loop: Any,
+    loop: RunLoop,
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,
@@ -38,7 +39,7 @@ def handle_completion(
 
     if outcome == "completed":
         result = loop._executor.complete(node_id, feature_branch)
-        if getattr(result, "redispatch", None) is not None:
+        if result.redispatch is not None:
             redispatch = result.redispatch
             loop._active[redispatch.run_id] = node_id
             loop._dispatched_at[redispatch.run_id] = time.monotonic()
@@ -55,7 +56,7 @@ def handle_completion(
             loop._logs.append(f"[{ts()}] ↻ node {node_id} review round")
             return completed, failed, conflicts
         loop._completion_durations.append(duration)
-        if getattr(result, "blocked", False):
+        if result.blocked:
             if live is not None:
                 live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
             _logger.warning("node_review_blocked node_id=%d", node_id)
@@ -64,7 +65,7 @@ def handle_completion(
             if loop._strict:
                 loop._failure_triggered = True
             failed += 1
-        elif getattr(result, "rebase_conflict", None):
+        elif result.rebase_conflict:
             conflicts.append(result.rebase_conflict)
             files = ", ".join(result.rebase_conflict.conflicting_files)
             if live is not None:

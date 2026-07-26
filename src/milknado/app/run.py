@@ -496,7 +496,7 @@ def run_inline_start(graph, cfg, root: Path, request: InlineRunRequest, use_tmux
     )
 
     class _GraphSessions(GraphSessionPort):
-        def open_graph(self, project_root: Path):  # noqa: ANN201
+        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
             return open_graph(project_root)
 
     tmux: TmuxAdapter | None = None

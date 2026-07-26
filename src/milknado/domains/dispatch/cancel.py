@@ -21,7 +21,7 @@ _CANCEL_FINALIZE_TIMEOUT_SECS = 8.0
 _CANCEL_FINALIZE_POLL_SECS = 0.25
 
 
-def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
+def _finalize_cancelled(graph, run_id: str) -> dict | None:  # noqa: ANN001
     """Write the cancelled terminal run row and return its refreshed dict.
 
     The direct-finalize path (pid run, or the fallback when the async worker never

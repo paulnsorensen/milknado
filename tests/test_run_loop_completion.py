@@ -15,6 +15,8 @@ from milknado.domains.execution.run_loop.input import InputState
 @dataclass
 class _FakeCompleteResult:
     rebase_conflict: RebaseConflict | None = None
+    redispatch: Any | None = None
+    blocked: bool = False
 
 
 class _FakeGraph:
