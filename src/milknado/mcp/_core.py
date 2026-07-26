@@ -8,9 +8,10 @@ would form an import cycle.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal, TypedDict, cast
+from typing import Literal, cast
 
 from fastmcp import FastMCP
+from typing_extensions import TypedDict
 
 from milknado.app.project import (
     open_graph,
