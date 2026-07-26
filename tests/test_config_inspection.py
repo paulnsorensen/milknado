@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -90,7 +89,7 @@ def test_resolved_flavor_output_is_the_runtime_profile(xdg: Path, tmp_path: Path
         ),
     )
     details = load_config_details(local)
-    expected = asdict(resolve_flavor_profile(details.config, "research"))
+    expected = resolve_flavor_profile(details.config, "research").model_dump(mode="python")
 
     assert resolved_view(details, "research") == expected
     result = runner.invoke(

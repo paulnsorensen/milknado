@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import subprocess
 import sys
 from pathlib import Path
@@ -1434,7 +1433,7 @@ class TestPlanChangeManifest:
 
 
 def _cfg(tmp_path: Path, **overrides: object) -> object:
-    return dataclasses.replace(default_config(tmp_path), **overrides)
+    return default_config(tmp_path).model_copy(update=overrides)
 
 
 def _plan_result(**overrides: object) -> PlanResult:

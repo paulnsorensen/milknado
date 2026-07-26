@@ -461,7 +461,7 @@ class TestDispatchRelocationIntegration:
             ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
             config = ExecutionConfig(
                 execution_agent="claude",
-                quality_gates=(Gate("true"),),
+                quality_gates=(Gate(command="true"),),
                 worktree_pattern="milknado-{node_id}-{slug}",
                 project_root=project,
             )
@@ -500,7 +500,7 @@ class TestDispatchRelocationIntegration:
             ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
             config = ExecutionConfig(
                 execution_agent="claude",
-                quality_gates=(Gate("true"),),
+                quality_gates=(Gate(command="true"),),
                 worktree_pattern="milknado-{node_id}-{slug}",
                 project_root=project,
             )

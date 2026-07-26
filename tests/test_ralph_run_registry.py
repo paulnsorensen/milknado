@@ -25,7 +25,7 @@ from tests.test_execution import FakeCrg, FakeGit, FakeRalph
 def _config(root: Path, completion_timeout_seconds: int | None = None) -> ExecutionConfig:
     return ExecutionConfig(
         execution_agent="claude",
-        quality_gates=(Gate("true"),),
+        quality_gates=(Gate(command="true"),),
         worktree_pattern="milknado-{node_id}-{slug}",
         project_root=root,
         completion_timeout_seconds=completion_timeout_seconds,

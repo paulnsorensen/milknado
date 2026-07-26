@@ -52,7 +52,7 @@ class TestCreateRun:
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),
             commands=["uv run pytest"],
-            quality_gates=(Gate("uv run ruff check"),),
+            quality_gates=(Gate(command="uv run ruff check"),),
             commit_footer="Co-authored-by: Team <team@example.com>",
         )
 
@@ -328,7 +328,7 @@ class TestGenerateRalphMd:
         output = tmp_path / "RALPH.md"
         result = adapter.generate_ralph_md(
             brief="# Task: Extract interface\n\n## Goal context\n\n- refactor auth",
-            quality_gates=(Gate("uv run pytest"),),
+            quality_gates=(Gate(command="uv run pytest"),),
             output_path=output,
         )
         assert result == output
@@ -342,7 +342,7 @@ class TestGenerateRalphMd:
 class TestBuildRalphContent:
     def test_includes_shared_brief_and_loop_scaffolding(self) -> None:
         brief = "# Task: Do thing\n\n## Goal context\n\n- Ship it"
-        content = _build_ralph_content(brief, (Gate("gate1"), Gate("gate2")))
+        content = _build_ralph_content(brief, (Gate(command="gate1"), Gate(command="gate2")))
         assert content.startswith(brief)
         assert "## Context" not in content
         assert "- `gate1`" in content
@@ -353,7 +353,7 @@ class TestBuildRalphContent:
         brief = "# Task: Do thing"
         content = _build_ralph_content(
             brief,
-            (Gate("gate1"),),
+            (Gate(command="gate1"),),
             prior_findings=findings,
             findings_round=2,
         )
@@ -362,22 +362,24 @@ class TestBuildRalphContent:
         assert content.index("## Prior review findings") < content.index(brief)
 
     def test_findings_section_omitted_by_default(self) -> None:
-        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),))
+        content = _build_ralph_content("# Task: Do thing", (Gate(command="gate1"),))
         assert "Prior review findings" not in content
 
     def test_findings_without_round_omits_round_label(self) -> None:
         content = _build_ralph_content(
-            "# Task: Do thing", (Gate("gate1"),), prior_findings="finding"
+            "# Task: Do thing", (Gate(command="gate1"),), prior_findings="finding"
         )
         assert "## Prior review findings\n" in content
         assert "(round" not in content
 
     def test_blank_findings_omits_section(self) -> None:
-        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),), prior_findings="  ")
+        content = _build_ralph_content(
+            "# Task: Do thing", (Gate(command="gate1"),), prior_findings="  "
+        )
         assert "Prior review findings" not in content
 
     def test_includes_completion_promise_instruction(self) -> None:
-        content = _build_ralph_content("# Task: Do thing", (Gate("gate1"),))
+        content = _build_ralph_content("# Task: Do thing", (Gate(command="gate1"),))
         assert "## Completion" in content
         assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
 
@@ -392,7 +394,7 @@ class TestBuildRalphContent:
         assert "no gates configured" not in content
 
     def test_completion_block_ends_file(self) -> None:
-        content = _build_ralph_content("# Task: Batch node", (Gate("uv run pytest"),))
+        content = _build_ralph_content("# Task: Batch node", (Gate(command="uv run pytest"),))
         completion_pos = content.rfind("## Completion")
         assert completion_pos != -1
         assert (

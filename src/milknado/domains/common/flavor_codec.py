@@ -1,37 +1,65 @@
+"""Flavor and quality-gate models with their TOML boundary schemas.
+
+``Gate`` and ``FlavorOverride`` are the validated records the rest of the
+system consumes. ``FlavorTable`` is the Pydantic schema for one
+``[milknado.flavor.<name>]`` TOML table; it owns the flavor grammar (type
+checks, literal vocabularies, mutual exclusion) and ``to_override`` hydrates
+file-backed fields into a ``FlavorOverride``.
+"""
+
 from __future__ import annotations
 
 import re
 import shlex
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.common.paths import resolve_project_path, trust_global_path
 
 
-@dataclass(frozen=True)
-class Gate:
+class Gate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     command: str
     fail_on_stdout: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _shorthand(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            if not value.strip():
+                raise ValueError("command must be a non-empty string")
+            return {"command": value}
+        if not isinstance(value, dict):
+            raise ValueError(
+                f"must be a string or a table with 'command', got {type(value).__name__}"
+            )
+        return value
 
-@dataclass(frozen=True)
-class FlavorOverride:
-    execution_agent: str | None = None
-    tools: tuple[str, ...] | None = None
-    brief_prepend: str | None = None
-    quality_gates: tuple[Gate, ...] | None = None
-    agent_type: str | None = None
-    loop_mode: str | None = None
-    max_iterations: int | None = None
-    max_turns: int | None = None
-    worktree: bool | None = None
-    session_mode: str = "fresh"
-    review: bool | None = None
-    review_agent: str | None = None
-    review_max_rounds: int = 2
-    on_reject: str = "block"
+    @field_validator("command", mode="before")
+    @classmethod
+    def _command_present(cls, value: Any) -> Any:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("command must be a non-empty string")
+        return value
+
+    @field_validator("fail_on_stdout", mode="before")
+    @classmethod
+    def _pattern_valid(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("fail_on_stdout must be a string")
+        pattern = value.strip() or None
+        if pattern is not None:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"fail_on_stdout is not a valid regex: {exc}") from exc
+        return pattern
 
 
 def serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
@@ -41,42 +69,6 @@ def serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
         else {"command": gate.command, "fail_on_stdout": gate.fail_on_stdout}
         for gate in gates
     ]
-
-
-def parse_gates(raw: Any, ctx: str) -> tuple[Gate, ...] | None:
-    if raw is None:
-        return None
-    if not isinstance(raw, list):
-        raise ValueError(f"{ctx} must be a list (use [] to explicitly skip gates)")
-    return tuple(_parse_gate_entry(entry, ctx, i) for i, entry in enumerate(raw))
-
-
-def _parse_gate_entry(entry: Any, ctx: str, index: int) -> Gate:
-    if isinstance(entry, str):
-        if not entry.strip():
-            raise ValueError(f"{ctx}[{index}] must be a non-empty string")
-        return Gate(command=entry)
-    if not isinstance(entry, dict):
-        raise ValueError(
-            f"{ctx}[{index}] must be a string or a table with 'command', "
-            f"got {type(entry).__name__}"
-        )
-    command = entry.get("command")
-    if not isinstance(command, str) or not command.strip():
-        raise ValueError(f"{ctx}[{index}].command must be a non-empty string")
-    pattern = entry.get("fail_on_stdout")
-    if pattern is not None:
-        if not isinstance(pattern, str):
-            raise ValueError(f"{ctx}[{index}].fail_on_stdout must be a string")
-        pattern = pattern.strip() or None
-        if pattern is not None:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                raise ValueError(
-                    f"{ctx}[{index}].fail_on_stdout is not a valid regex: {exc}"
-                ) from exc
-    return Gate(command=command, fail_on_stdout=pattern)
 
 
 def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
@@ -95,24 +87,24 @@ def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def validate_loop_mode(value: Any, ctx: str) -> str:
+def validate_loop_mode(value: Any) -> str:
     mode = str(value)
     if mode not in ("redispatch", "single"):
-        raise ValueError(f"{ctx} loop_mode must be one of ['redispatch', 'single']; got {mode!r}")
+        raise ValueError(f"loop_mode must be one of ['redispatch', 'single']; got {mode!r}")
     return mode
 
 
-def validate_session_mode(value: Any, ctx: str) -> str:
+def validate_session_mode(value: Any) -> str:
     mode = str(value)
     if mode not in ("fresh", "resume"):
-        raise ValueError(f"{ctx} session_mode must be one of ['fresh', 'resume']; got {mode!r}")
+        raise ValueError(f"session_mode must be one of ['fresh', 'resume']; got {mode!r}")
     return mode
 
 
-def validate_on_reject(value: Any, ctx: str) -> str:
+def validate_on_reject(value: Any) -> str:
     policy = str(value)
     if policy not in ("block", "warn"):
-        raise ValueError(f"{ctx} on_reject must be one of ['block', 'warn']; got {policy!r}")
+        raise ValueError(f"on_reject must be one of ['block', 'warn']; got {policy!r}")
     return policy
 
 
@@ -126,113 +118,211 @@ def validate_positive_int(value: Any, ctx: str) -> int | None:
     return value
 
 
-def parse_flavor_tables(flavor_raw: Any, project_root: Path) -> dict[str, FlavorOverride]:
-    if flavor_raw is None:
-        return {}
-    if not isinstance(flavor_raw, dict):
-        raise ValueError("[milknado.flavor] must be a table")
-    flavors: dict[str, FlavorOverride] = {}
-    for name, entry in flavor_raw.items():
-        if not isinstance(name, str) or not name:
-            raise ValueError(
-                f"[milknado.flavor] flavor keys must be non-empty strings, got {name!r}"
-            )
-        if not isinstance(entry, dict):
-            raise ValueError(f"[milknado.flavor.{name}] must be a table")
-        flavors[name] = _parse_flavor_entry(entry, name, project_root)
-    return flavors
+class FlavorOverride(BaseModel):
+    """Validated per-flavor override, hydrated from a ``FlavorTable``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    execution_agent: str | None = None
+    tools: tuple[str, ...] | None = None
+    brief_prepend: str | None = None
+    quality_gates: tuple[Gate, ...] | None = None
+    agent_type: str | None = None
+    loop_mode: str | None = None
+    max_iterations: int | None = None
+    max_turns: int | None = None
+    worktree: bool | None = None
+    session_mode: str = "fresh"
+    review: bool | None = None
+    review_agent: str | None = None
+    review_max_rounds: int = 2
+    on_reject: str = "block"
 
 
-def _parse_flavor_entry(entry: dict[str, Any], name: str, project_root: Path) -> FlavorOverride:
-    ctx = f"[milknado.flavor.{name}]"
-    execution_agent = entry.get("execution_agent")
-    if execution_agent is not None:
-        if not isinstance(execution_agent, str):
-            raise ValueError(f"{ctx} execution_agent must be a string")
-        argv = shlex.split(execution_agent)
+class FlavorTable(BaseModel):
+    """Schema for one ``[milknado.flavor.<name>]`` TOML table."""
+
+    model_config = ConfigDict(frozen=True)
+
+    execution_agent: str | None = None
+    tools: tuple[str, ...] | None = None
+    brief_prepend: str | None = None
+    brief_prepend_path: str | list[str] | None = None
+    quality_gates: tuple[Gate, ...] | None = None
+    agent_type: str | None = None
+    loop_mode: str | None = None
+    max_iterations: int | None = None
+    max_turns: int | None = None
+    worktree: bool | None = None
+    session_mode: str = "fresh"
+    review: bool | None = None
+    review_agent: str | None = None
+    review_max_rounds: int = 2
+    on_reject: str = "block"
+
+    @field_validator("execution_agent", mode="before")
+    @classmethod
+    def _execution_agent_allowed(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("execution_agent must be a string")
+        argv = shlex.split(value)
         if argv and Path(argv[0]).name not in ALLOWED_WORKER_EXECUTABLES:
             raise ValueError(
-                f"{ctx} execution_agent must start with one of "
+                f"execution_agent must start with one of "
                 f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {Path(argv[0]).name!r}"
             )
-    tools_raw = entry.get("tools")
-    tools = coerce_tool_list(tools_raw, f"{ctx} tools") if tools_raw is not None else None
-    agent_type = entry.get("agent_type")
-    if agent_type is not None and not isinstance(agent_type, str):
-        raise ValueError(f"{ctx} agent_type must be a string")
-    loop_raw = entry.get("loop_mode")
-    loop_mode = validate_loop_mode(loop_raw, ctx) if loop_raw is not None else None
-    worktree = entry.get("worktree")
-    if worktree is not None and not isinstance(worktree, bool):
-        raise ValueError(f"{ctx} worktree must be a boolean")
-    session_mode = validate_session_mode(entry.get("session_mode", "fresh"), ctx)
-    review = entry.get("review")
-    if review is not None and not isinstance(review, bool):
-        raise ValueError(f"{ctx} review must be a boolean")
-    review_agent = entry.get("review_agent")
-    if review_agent is not None and not isinstance(review_agent, str):
-        raise ValueError(f"{ctx} review_agent must be a string")
-    if session_mode == "resume":
-        agent_for_check = review_agent if review_agent is not None else execution_agent
-        if agent_for_check is not None:
-            argv_check = shlex.split(agent_for_check)
-            if argv_check and Path(argv_check[0]).name == "cursor-agent":
-                raise ValueError(
-                    f"{ctx} session_mode 'resume' is not supported for the cursor-agent "
-                    "family (headless resume mechanics are unverified — see "
-                    "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
-                    "different agent"
-                )
-    review_max_rounds = validate_positive_int(
-        entry.get("review_max_rounds", 2), f"{ctx} review_max_rounds"
-    )
-    on_reject = validate_on_reject(entry.get("on_reject", "block"), ctx)
-    return FlavorOverride(
-        execution_agent=execution_agent,
-        tools=tools,
-        brief_prepend=_load_flavor_brief(entry, name, project_root),
-        quality_gates=parse_gates(entry.get("quality_gates"), f"{ctx} quality_gates"),
-        agent_type=agent_type,
-        loop_mode=loop_mode,
-        max_iterations=validate_positive_int(entry.get("max_iterations"), f"{ctx} max_iterations"),
-        max_turns=validate_positive_int(entry.get("max_turns"), f"{ctx} max_turns"),
-        worktree=worktree,
-        session_mode=session_mode,
-        review=review,
-        review_agent=review_agent,
-        review_max_rounds=review_max_rounds if review_max_rounds is not None else 2,
-        on_reject=on_reject,
-    )
+        return value
 
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _tools_valid(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return coerce_tool_list(value, "tools")
 
-def _load_flavor_brief(entry: dict[str, Any], name: str, project_root: Path) -> str | None:
-    ctx = f"[milknado.flavor.{name}]"
-    inline = entry.get("brief_prepend")
-    paths_raw = entry.get("brief_prepend_path")
-    if inline is not None and not isinstance(inline, str):
-        raise ValueError(f"{ctx} brief_prepend must be a string")
-    if inline is not None and paths_raw is not None:
-        raise ValueError(f"{ctx} brief_prepend and brief_prepend_path are mutually exclusive")
-    if inline is not None:
-        return inline.strip() or None
-    if paths_raw is None:
-        return None
-    paths = [paths_raw] if isinstance(paths_raw, str) else paths_raw
-    if not isinstance(paths, list):
-        raise ValueError(f"{ctx} brief_prepend_path must be a string or list of strings")
-    parts: list[str] = []
-    for value in paths:
-        if not isinstance(value, str):
-            raise ValueError(f"{ctx} brief_prepend_path entries must be strings")
-        path = resolve_project_path(
-            value,
-            project_root,
-            label=f"{ctx} brief_prepend_path",
+    @field_validator("brief_prepend", mode="before")
+    @classmethod
+    def _brief_str(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("brief_prepend must be a string")
+        return value
+
+    @field_validator("brief_prepend_path", mode="before")
+    @classmethod
+    def _brief_path_valid(cls, value: Any) -> Any:
+        if value is None or isinstance(value, str):
+            return value
+        if not isinstance(value, list):
+            raise ValueError("brief_prepend_path must be a string or list of strings")
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError("brief_prepend_path entries must be strings")
+        return value
+
+    @field_validator("quality_gates", mode="before")
+    @classmethod
+    def _gates_list(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, list):
+            raise ValueError("quality_gates must be a list (use [] to explicitly skip gates)")
+        return value
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def _agent_type_str(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("agent_type must be a string")
+        return value
+
+    @field_validator("review_agent", mode="before")
+    @classmethod
+    def _review_agent_str(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("review_agent must be a string")
+        return value
+
+    @field_validator("loop_mode", mode="before")
+    @classmethod
+    def _loop_mode_valid(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        return validate_loop_mode(value)
+
+    @field_validator("session_mode", mode="before")
+    @classmethod
+    def _session_mode_valid(cls, value: Any) -> str:
+        return validate_session_mode(value)
+
+    @field_validator("on_reject", mode="before")
+    @classmethod
+    def _on_reject_valid(cls, value: Any) -> str:
+        return validate_on_reject(value)
+
+    @field_validator("review", mode="before")
+    @classmethod
+    def _review_bool(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, bool):
+            raise ValueError("review must be a boolean")
+        return value
+
+    @field_validator("worktree", mode="before")
+    @classmethod
+    def _worktree_bool(cls, value: Any) -> Any:
+        if value is not None and not isinstance(value, bool):
+            raise ValueError("worktree must be a boolean")
+        return value
+
+    @field_validator("max_iterations", mode="before")
+    @classmethod
+    def _max_iterations_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "max_iterations")
+
+    @field_validator("max_turns", mode="before")
+    @classmethod
+    def _max_turns_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "max_turns")
+
+    @field_validator("review_max_rounds", mode="before")
+    @classmethod
+    def _review_max_rounds_positive(cls, value: Any) -> Any:
+        return validate_positive_int(value, "review_max_rounds")
+
+    @model_validator(mode="after")
+    def _check_cross_field(self) -> FlavorTable:
+        if self.brief_prepend is not None and self.brief_prepend_path is not None:
+            raise ValueError("brief_prepend and brief_prepend_path are mutually exclusive")
+        if self.session_mode == "resume":
+            agent_for_check = (
+                self.review_agent if self.review_agent is not None else self.execution_agent
+            )
+            if agent_for_check is not None:
+                argv = shlex.split(agent_for_check)
+                if argv and Path(argv[0]).name == "cursor-agent":
+                    raise ValueError(
+                        "session_mode 'resume' is not supported for the cursor-agent "
+                        "family (headless resume mechanics are unverified — see "
+                        "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+                        "different agent"
+                    )
+        return self
+
+    def to_override(self, name: str, project_root: Path) -> FlavorOverride:
+        return FlavorOverride(
+            execution_agent=self.execution_agent,
+            tools=self.tools,
+            brief_prepend=self._load_brief(name, project_root),
+            quality_gates=self.quality_gates,
+            agent_type=self.agent_type,
+            loop_mode=self.loop_mode,
+            max_iterations=self.max_iterations,
+            max_turns=self.max_turns,
+            worktree=self.worktree,
+            session_mode=self.session_mode,
+            review=self.review,
+            review_agent=self.review_agent,
+            review_max_rounds=self.review_max_rounds,
+            on_reject=self.on_reject,
         )
-        if not path.exists():
-            raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {path}")
-        parts.append(path.read_text(encoding="utf-8").strip())
-    return "\n\n".join(part for part in parts if part) or None
+
+    def _load_brief(self, name: str, project_root: Path) -> str | None:
+        if self.brief_prepend is not None:
+            return self.brief_prepend.strip() or None
+        if self.brief_prepend_path is None:
+            return None
+        ctx = f"[milknado.flavor.{name}]"
+        values = (
+            [self.brief_prepend_path]
+            if isinstance(self.brief_prepend_path, str)
+            else self.brief_prepend_path
+        )
+        parts: list[str] = []
+        for value in values:
+            path = resolve_project_path(value, project_root, label=f"{ctx} brief_prepend_path")
+            if not path.exists():
+                raise FileNotFoundError(f"{ctx} brief_prepend_path does not exist: {path}")
+            parts.append(path.read_text(encoding="utf-8").strip())
+        return "\n\n".join(part for part in parts if part) or None
 
 
 def serialize_flavor_tables(

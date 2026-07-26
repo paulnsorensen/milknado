@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -13,7 +12,7 @@ from milknado.domains.common import (
     load_config,
     save_config,
 )
-from milknado.domains.common.config import _parse_worker_tools
+from milknado.domains.common.config import WorkerTable
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 
@@ -512,7 +511,7 @@ def test_worker_tools_family_not_list_rejected(tmp_path: Path) -> None:
 def test_parse_worker_tools_non_string_family_rejected() -> None:
     """Non-string family keys (only reachable via a raw dict, not TOML) are rejected."""
     with pytest.raises(ValueError, match="family keys must be strings"):
-        _parse_worker_tools({"tools": {1: ["Read"]}})
+        WorkerTable.model_validate({"tools": {1: ["Read"]}})
 
 
 def test_top_level_milknado_not_table_rejected(tmp_path: Path) -> None:
@@ -552,10 +551,11 @@ def test_save_config_skips_empty_worker_tools(tmp_path: Path) -> None:
 def test_save_config_preserves_explicit_execution_agent_alongside_tools(tmp_path: Path) -> None:
     """An explicit execution_agent that differs from the derived command is user
     intent and must survive a save->load round trip, even alongside a tools list."""
-    cfg = replace(
-        default_config(tmp_path),
-        execution_agent="claude --my-custom-exec",
-        worker_tools={"claude": ("...", "mcp__github__*")},
+    cfg = default_config(tmp_path).model_copy(
+        update={
+            "execution_agent": "claude --my-custom-exec",
+            "worker_tools": {"claude": ("...", "mcp__github__*")},
+        }
     )
     out = tmp_path / "milknado.toml"
     save_config(cfg, out)
