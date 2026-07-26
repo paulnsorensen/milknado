@@ -1,7 +1,6 @@
 """Tests for the run engine."""
 
 import os
-import sys
 import threading
 import time
 from pathlib import Path
@@ -1767,7 +1766,7 @@ def _write_opencode_stub(tmp_path: Path) -> Path:
     """
     script = tmp_path / "opencode"
     script.write_text(
-        f"#!{sys.executable}\n"
+        "#!/usr/bin/env python3\n"
         "import sys\n"
         'print(\'{"type": "step_start", "part": {}}\', flush=True)\n'
         'print(\'{"type": "tool_use", "part": {"name": "Edit"}}\', flush=True)\n'

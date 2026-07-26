@@ -21,7 +21,7 @@ _CANCEL_FINALIZE_TIMEOUT_SECS = 8.0
 _CANCEL_FINALIZE_POLL_SECS = 0.25
 
 
-def _finalize_cancelled(graph, run_id: str) -> dict | None:  # noqa: ANN001
+def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
     """Write the cancelled terminal run row and return its refreshed dict.
 
     The direct-finalize path (pid run, or the fallback when the async worker never
@@ -38,7 +38,12 @@ def _finalize_cancelled(graph, run_id: str) -> dict | None:  # noqa: ANN001
         ),
     )
     state = graph.get_run(run_id)
-    if state is not None and not written:
+    if state is None or state.get("status") == "running":
+        raise RuntimeError(
+            f"run {run_id!r} cancellation finalization was not confirmed; "
+            "state and worktree preserved"
+        )
+    if not written:
         state["terminal_persistence"] = "late-write-lost"
     return state
 
@@ -203,6 +208,10 @@ def cancel_run(
     if owner_pid is None:
         # This never creates a cancel marker; a still-running row remains refused.
         return _adopt_pre_finalized_run(graph, git, run_id)
+    if node is None or not isinstance(node_id, int):
+        raise RuntimeError(
+            f"run {run_id!r} has no confirmed node owner; state and worktree preserved"
+        )
     if not pid_alive(owner_pid):
         return _recover_dead_owner(graph, node, node_id, run_id)
     raise RuntimeError(

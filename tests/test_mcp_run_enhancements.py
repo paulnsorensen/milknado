@@ -1280,6 +1280,30 @@ class TestCancelFinalizeAndRace:
                 "node-3-20260101T000000Z-stuk",
             )
 
+    def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(self) -> None:
+        from milknado.domains.dispatch.cancel import _cancel_pid_run
+
+        class Graph:
+            def finish_run(self, run_id, result):  # noqa: ANN001
+                return False
+
+            def get_run(self, run_id):  # noqa: ANN001
+                return None
+
+        class Process:
+            def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002
+                return True
+
+        run_id = "node-3-20260101T000000Z-gone"
+        with pytest.raises(RuntimeError, match="cancellation finalization was not confirmed"):
+            _cancel_pid_run(
+                Graph(),
+                object(),  # type: ignore[arg-type]
+                Process(),
+                {"pid": 91, "node_id": 3},
+                run_id,
+            )
+
     def test_async_cancel_preserves_running_state_without_exit_confirmation(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

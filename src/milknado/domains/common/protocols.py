@@ -133,6 +133,7 @@ class LoopPort(Protocol):
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
+        base_oid: str | None = None,
         runtime_policy: Any | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,

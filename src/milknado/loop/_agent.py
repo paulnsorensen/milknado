@@ -324,7 +324,7 @@ _COUNTER_LOG_SUFFIX = ".turncount"
 _COUNTER_PAD_WIDTH = _LOG_ITERATION_PAD_WIDTH
 
 
-def _extract_result_text_from_lines(lines: list[str] | None) -> str | None:
+def _extract_result_text_from_lines(lines: Iterable[str] | None) -> str | None:
     """Return the last string payload from any JSON ``result`` event in *lines*."""
     if lines is None:
         return None
