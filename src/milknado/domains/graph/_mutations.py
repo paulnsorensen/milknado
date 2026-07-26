@@ -21,18 +21,19 @@ def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int
     Dedups shared descendants reachable via diamond wiring so a delete pass
     touches every node exactly once and never re-visits an already-removed id.
     """
-    visited: set[int] = set()
+    visited: set[int] = {node_id}
     ordered: list[int] = []
-
-    def visit(nid: int) -> None:
-        if nid in visited:
-            return
-        visited.add(nid)
-        for child in children_map.get(nid, []):
-            visit(child)
-        ordered.append(nid)
-
-    visit(node_id)
+    stack: list[tuple[int, bool]] = [(node_id, False)]
+    while stack:
+        current, expanded = stack.pop()
+        if expanded:
+            ordered.append(current)
+            continue
+        stack.append((current, True))
+        for child in reversed(children_map.get(current, [])):
+            if child not in visited:
+                visited.add(child)
+                stack.append((child, False))
     return ordered
 
 

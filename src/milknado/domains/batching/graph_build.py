@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
-from typing import Any, NamedTuple
+from collections.abc import Mapping, Sequence
+from typing import NamedTuple
 
 from milknado.domains.batching._tarjan import compute_sccs
 from milknado.domains.batching.change import ChangeGraph, FileChange, NewRelationship, SymbolRef
@@ -127,14 +127,14 @@ def _resolve_ids_for_endpoint(
     return list(ids)
 
 
-def _edge_endpoints(edge: Any) -> tuple[str, str] | None:
+def _edge_endpoints(edge: object) -> tuple[str, str] | None:
     """Extract (src_raw, dst_raw) from an edge record.
 
     Supports the CRG ``GraphEdge`` dataclass (``source_qualified`` /
-    ``target_qualified``) and dict forms using either ``src``/``dst`` or
+    ``target_qualified``) and mapping forms using either ``src``/``dst`` or
     ``source``/``target`` keys. Returns ``None`` if the shape is unrecognised.
     """
-    if isinstance(edge, dict):
+    if isinstance(edge, Mapping):
         src = edge.get("src") or edge.get("source")
         dst = edge.get("dst") or edge.get("target")
     else:
@@ -146,7 +146,7 @@ def _edge_endpoints(edge: Any) -> tuple[str, str] | None:
 
 
 def _pairs_from_edge_list(
-    edges: list[Any],
+    edges: Sequence[object],
     path_to_ids: dict[str, list[str]],
     id_to_change: dict[str, FileChange],
 ) -> set[tuple[str, str]]:
@@ -167,7 +167,7 @@ def _pairs_from_edge_list(
 
 
 def _pairs_from_impacted_files(
-    files: list[Any],
+    files: Sequence[object],
     source_path: str,
     path_to_ids: dict[str, list[str]],
 ) -> set[tuple[str, str]]:
@@ -184,7 +184,7 @@ def _pairs_from_impacted_files(
 
 
 def _parse_impact_dict(
-    result: dict[str, Any],
+    result: Mapping[str, object],
     source_path: str,
     path_to_ids: dict[str, list[str]],
     id_to_change: dict[str, FileChange],
@@ -197,11 +197,11 @@ def _parse_impact_dict(
     """
     pairs: set[tuple[str, str]] = set()
     edges = result.get("edges")
-    if isinstance(edges, list):
+    if isinstance(edges, Sequence) and not isinstance(edges, (str, bytes)):
         pairs |= _pairs_from_edge_list(edges, path_to_ids, id_to_change)
     for key in ("impacted_files", "files"):
         files = result.get(key)
-        if isinstance(files, list):
+        if isinstance(files, Sequence) and not isinstance(files, (str, bytes)):
             pairs |= _pairs_from_impacted_files(files, source_path, path_to_ids)
             break
     return list(pairs)
@@ -275,8 +275,5 @@ def symbols_by_scc(
     """Union symbols across all nodes in each SCC."""
     result: dict[str, list[SymbolRef]] = defaultdict(list)
     for node_id, syms in symbols_by_node.items():
-        scc_id = scc_of[node_id]
-        for sym in syms:
-            if sym not in result[scc_id]:
-                result[scc_id].append(sym)
-    return {k: tuple(v) for k, v in result.items()}
+        result[scc_of[node_id]].extend(syms)
+    return {scc_id: tuple(dict.fromkeys(syms)) for scc_id, syms in result.items()}

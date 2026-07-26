@@ -83,10 +83,14 @@ class BatchPlan:
         Scans ALL batches — a mega-batch is any single batch with too many changes,
         not only the degenerate single-batch plan.
         """
-        offending = [
-            len(b.change_ids) for b in self.batches if len(b.change_ids) > MEGA_BATCH_THRESHOLD
-        ]
-        return max(offending) if offending else None
+        return max(
+            (
+                len(batch.change_ids)
+                for batch in self.batches
+                if len(batch.change_ids) > MEGA_BATCH_THRESHOLD
+            ),
+            default=None,
+        )
 
 
 class ChangeGraph(NamedTuple):

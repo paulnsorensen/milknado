@@ -1,9 +1,7 @@
 """CP-SAT batch planner — lexicographic two-pass solver with oversized passthrough."""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from ortools.sat.python import cp_model
@@ -92,17 +90,15 @@ def _two_pass_solve(
     solver = cp_model.CpSolver()
     model = bundle.model
     cost_objective = bundle.total_cost
-    model.minimize(cost_objective)  # type: ignore
+    model.minimize(cost_objective)
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status1 = _status_name(solver.solve(model))
     if status1 in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
         return None, status1
     pass1 = _take_snapshot(solver, bundle.batch_of, bundle.spread_vars)
-    cost_star = int(solver.value(cost_objective))  # type: ignore
+    cost_star = int(solver.value(cost_objective))
     model.add(cost_objective == cost_star)
-    model.minimize(
-        sum(bundle.spread_vars.values()) if bundle.spread_vars else cost_objective  # type: ignore
-    )
+    model.minimize(sum(bundle.spread_vars.values()) if bundle.spread_vars else cost_objective)
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status2 = _status_name(solver.solve(model))
     if status2 in (STATUS_INFEASIBLE, STATUS_UNKNOWN):
@@ -149,12 +145,7 @@ def _tokens_per_scc(
                     sym for sym in change.symbols if (sym.file, sym.name) not in seen_sym_keys
                 )
                 if new_syms:
-                    filtered = FileChange(
-                        id=change.id,
-                        path=change.path,
-                        edit_kind=change.edit_kind,
-                        symbols=new_syms,
-                    )
+                    filtered = replace(change, symbols=new_syms)
                     total += estimate_tokens_per_symbols(filtered, root, tilth_port)
                     for sym in new_syms:
                         seen_sym_keys.add((sym.file, sym.name))
