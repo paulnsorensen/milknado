@@ -315,11 +315,18 @@ class TestRunManagerForceStop:
         script = tmp_path / "worker.py"
         script.write_text(
             "import subprocess, sys, time\n"
-            "child = '''import os, signal, sys, time\\n"
+            "child = '''import os, signal, subprocess, sys, time\\n"
             "from pathlib import Path\\n"
-            "def stop(*_):\\n"
-            "    Path(sys.argv[2]).write_text('stopped')\\n"
-            "    raise SystemExit(0)\\n"
+            "def stop(*_):\n"
+            "    stopped = Path(sys.argv[2])\n"
+            "    stopped.touch()\n"
+            "    subprocess.Popen(\n"
+            "        [sys.executable, '-c', "
+            '"import sys, time; from pathlib import Path; time.sleep(0.1); '
+            "Path(sys.argv[1]).write_text('stopped')\", str(stopped)],\n"
+            "        start_new_session=True,\n"
+            "    )\n"
+            "    raise SystemExit(0)\n"
             "signal.signal(signal.SIGTERM, stop)\\n"
             "Path(sys.argv[1]).write_text(str(os.getpid()))\\n"
             "while True: time.sleep(1)\\n'''\n"
@@ -350,9 +357,12 @@ class TestRunManagerForceStop:
 
         # The grandchild's SIGTERM handler races the parent's own (unhandled)
         # SIGTERM exit — force_stop_and_join only guarantees the parent thread
-        # joined, not that the grandchild finished writing. Poll briefly.
+        # joined, not that the grandchild finished writing. Poll for completed
+        # sentinel content rather than treating file creation as completion.
         deadline = time.monotonic() + 5
-        while not stopped.exists() and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
+            if stopped.exists() and stopped.read_text(encoding="utf-8") == "stopped":
+                break
             time.sleep(0.01)
         assert stopped.read_text(encoding="utf-8") == "stopped"
 
