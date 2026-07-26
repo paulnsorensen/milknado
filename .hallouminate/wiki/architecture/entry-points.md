@@ -67,7 +67,7 @@ re-exports and registers them.
 
 The shared `FastMCP` instance and the project-root/graph helpers (`resolve_project_root`,
 `open_graph`, status/kind parsers, the unified `RunDict` return schema) live in
-**`_mcp_core.py`** — split out so the tool modules register against one `mcp` without forming
+**`src/milknado/mcp/_core.py`** — split out so the tool modules register against one `mcp` without forming
 an import cycle. Project root comes from the `project_root` arg or `MILKNADO_PROJECT_ROOT`.
 
 `main()` in `mcp_server.py` imports `mcp_ralph`, `mcp_run`, `mcp_todo` purely for their
@@ -90,6 +90,15 @@ instance at import time — then calls `mcp.run()`. Tools are grouped by capabil
   `milknado_run_cancel`. Detached runs claim the node RUNNING via a SQLite conditional UPDATE
   (cross-process mutual exclusion) and survive a server restart; pollers reconcile orphaned
   or dead-runner runs before reporting.
+
+### Python-version schema compatibility
+
+FastMCP evaluates MCP tool return annotations through Pydantic when decorators register the tools. Because Milknado supports Python 3.11, `RunDict` must inherit `typing_extensions.TypedDict`; `typing.TypedDict` cannot supply the runtime metadata Pydantic needs on Python 3.12 and lower.[^typed-dict-contract] Keep `typing-extensions` as a direct project dependency rather than relying on Pydantic's transitive installation.[^typed-dict-dependency]
+
+[^typed-dict-contract]: `src/milknado/mcp/_core.py:11-14,40`; PR #325 Actions job 89758215559
+[^typed-dict-dependency]: `pyproject.toml:9,21-22`; PR #325 commit `5889c635a07627461d6acab44a92adb6ae90ff17`
+
+_Source: PR #325 affinage · Updated: 2026-07-25 · Supersedes: none_
 
 ## stdio gotcha
 
