@@ -194,41 +194,29 @@ def _replace_option(parts: list[str], option: str, value: str) -> None:
     parts.extend([option, value])
 
 
-def _remove_omp_planning_options(parts: list[str]) -> list[str]:
-    value_options = {
-        "--approval-mode",
-        "--config",
-        "--extension",
-        "--hook",
-        "--mode",
-        "--plugin-dir",
-        "--tools",
-        "-e",
-    }
-    flag_options = {
-        "--auto-approve",
-        "--no-extensions",
-        "--no-lsp",
-        "--no-pty",
-        "--no-rules",
-        "--no-session",
-        "--no-skills",
-        "--no-tools",
-        "--plan-yolo",
-        "--print",
-        "-p",
-    }
+def _allowlist_omp_planning_options(parts: list[str]) -> list[str]:
+    """Keep only the omp flags planning explicitly permits; drop every other token.
+
+    Allowlist, not denylist: an unrecognized flag (including one a repo-local
+    milknado.toml tries to add, e.g. --add-dir or --cwd) is dropped rather than
+    passed through, so planning cannot widen its own read-only sandbox.
+    """
+    value_options = {"--model", "--thinking", "--smol", "--slow", "--plan", "--max-time"}
     kept = [parts[0]]
     index = 1
     while index < len(parts):
         option = parts[index]
         name = option.partition("=")[0]
-        if name in flag_options:
-            index += 1
-        elif name in value_options:
-            index += 1 if "=" in option else 2
+        if name in value_options:
+            if "=" in option:
+                kept.append(option)
+                index += 1
+            elif index + 1 < len(parts):
+                kept.extend(parts[index : index + 2])
+                index += 2
+            else:
+                index += 1
         else:
-            kept.append(option)
             index += 1
     return kept
 
@@ -253,7 +241,8 @@ def _sandbox_planning_argv(parts: list[str]) -> list[str]:
         "--full-auto",
         "--yolo",
     }
-    parts = [part for part in parts if part not in unsafe_flags]
+    if executable != "omp":
+        parts = [part for part in parts if part not in unsafe_flags]
     if executable == "claude":
         _replace_option(parts, "--permission-mode", "plan")
         _replace_option(parts, "--allowedTools", ",".join(PLANNING_ALLOWED_TOOLS["claude"]))
@@ -262,7 +251,7 @@ def _sandbox_planning_argv(parts: list[str]) -> list[str]:
     elif executable == "codex":
         _replace_option(parts, "--sandbox", "read-only")
     elif executable == "omp":
-        parts = _remove_omp_planning_options(parts)
+        parts = _allowlist_omp_planning_options(parts)
         parts.extend(
             (
                 "-p",
@@ -299,7 +288,8 @@ def build_planning_subprocess(
     mcp_config = project_root / ".mcp.json" if project_root else None
     if allow_external_mcp and mcp_config and mcp_config.exists():
         parts.extend(["--mcp-config", str(mcp_config)])
-    parts.append("-")
+    if parts[0] != "omp":
+        parts.append("-")
     extra: dict[str, Any] = {
         "env": build_minimal_mcp_env(executable=parts[0]),
         "input": body,

@@ -599,6 +599,18 @@ def _warn_local_only_keys(global_raw: dict[str, Any], path: Path) -> None:
         )
 
 
+def _reject_omp_tool_translation(section: MilknadoSection, family: str) -> None:
+    """omp has no tool-list-to-flag translation; only an explicit command works."""
+    if family != "omp":
+        return
+    if section.worker.tools.get("omp") is not None:
+        raise ValueError("[milknado.worker.tools.omp] is not supported; set execution_agent")
+    if not section.execution_agent:
+        raise ValueError("agent_family 'omp' requires an explicit execution_agent")
+    if any(table.tools is not None for table in section.flavor.values()):
+        raise ValueError("[milknado.flavor.*].tools is not supported for agent_family 'omp'")
+
+
 def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
     """Derive the planning/execution commands from explicit values or family defaults."""
     planning_agent = resolve_planning_agent_command(
@@ -606,11 +618,6 @@ def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
         planning_agent=section.planning_agent,
     )
     family_tools = section.worker.tools.get(family)
-    if family == "omp":
-        if family_tools is not None:
-            raise ValueError("[milknado.worker.tools.omp] is not supported; set execution_agent")
-        if not section.execution_agent:
-            raise ValueError("agent_family 'omp' requires an explicit execution_agent")
     execution_agent = resolve_execution_agent_command(
         family,
         execution_agent=section.execution_agent,
@@ -627,8 +634,7 @@ def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
     flavors = {
         name: table.to_override(name, project_root) for name, table in section.flavor.items()
     }
-    if family == "omp" and any(table.tools is not None for table in section.flavor.values()):
-        raise ValueError("[milknado.flavor.*].tools is not supported for agent_family 'omp'")
+    _reject_omp_tool_translation(section, family)
     planning_agent, execution_agent = _resolve_agents(section, family)
     return MilknadoConfig(
         agent_family=family,

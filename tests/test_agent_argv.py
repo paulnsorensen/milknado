@@ -275,9 +275,49 @@ def test_build_planning_subprocess_sandboxes_omp_and_forwards_openrouter(
         "text",
         "--tools",
         "read,grep,glob,lsp",
-        "-",
     ]
     assert extra == {"env": {**env}, "input": "hello world", "text": True}
+
+
+def test_build_planning_subprocess_omp_drops_unrecognized_flags(tmp_path: Path) -> None:
+    """Allowlist, not denylist: --add-dir/--cwd/--profile are not in the kept
+    set, so a repo-local milknado.toml cannot widen omp planning's sandbox by
+    smuggling them into the configured command."""
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    command = "omp --model foo --add-dir /tmp --cwd /tmp --profile evil"
+    env = {"HOME": "/home/test", "PATH": "/bin"}
+    with patch("milknado.domains.common.agent_argv.os.environ", env):
+        argv, _extra = build_planning_subprocess(context, command)
+
+    assert "--add-dir" not in argv
+    assert "--cwd" not in argv
+    assert "--profile" not in argv
+    assert "/tmp" not in argv
+    assert "evil" not in argv
+
+
+def test_build_planning_subprocess_omp_keeps_equals_form_kept_flag(tmp_path: Path) -> None:
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    command = "omp --model=foo"
+    env = {"HOME": "/home/test", "PATH": "/bin"}
+    with patch("milknado.domains.common.agent_argv.os.environ", env):
+        argv, _extra = build_planning_subprocess(context, command)
+
+    assert "--model=foo" in argv
+
+
+def test_build_planning_subprocess_omp_has_no_trailing_stdin_sentinel(tmp_path: Path) -> None:
+    """omp treats a bare '-' as a positional message, not a stdin marker —
+    appending it (as every other planning agent gets) would corrupt the argv."""
+    context = tmp_path / "ctx.md"
+    context.write_text("hello world", encoding="utf-8")
+    env = {"HOME": "/home/test", "PATH": "/bin"}
+    with patch("milknado.domains.common.agent_argv.os.environ", env):
+        argv, _extra = build_planning_subprocess(context, "omp --model foo")
+
+    assert argv[-1] != "-"
 
 
 def test_build_planning_subprocess_rejects_cursor_without_read_only_mode(

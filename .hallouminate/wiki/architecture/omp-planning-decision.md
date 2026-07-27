@@ -9,6 +9,6 @@ The planning subprocess environment is intentionally minimal and currently forwa
 OMP execution remains explicit: a project supplies its own `execution_agent` with its chosen OMP tool set. Do not translate the existing Claude/Gemini worker-tool schema to OMP or silently fall back to unrestricted OMP tools. Resume support must parse OMP's camel-case `sessionId` from its JSON header/event output and use `omp --resume <id>`.[^4]
 
 [^1]: src/milknado/domains/common/agent_argv.py:83-108; src/milknado/domains/dispatch/runner.py:45-62; src/milknado/loop/engine.py:207-216
-[^2]: src/milknado/loop/adapters/omp.py:12-60; src/milknado/domains/common/agent_argv.py:202-257; https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/DEVELOPMENT.md
-[^3]: src/milknado/domains/common/agent_argv.py:260-263; https://github.com/can1357/oh-my-pi/blob/main/docs/environment-variables.md
-[^4]: src/milknado/domains/common/agent_argv.py:118-162,277-319; https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/DEVELOPMENT.md
+[^2]: src/milknado/loop/adapters/omp.py:12-60; src/milknado/domains/common/agent_argv.py:197-221,253-268; `omp --help`
+[^3]: src/milknado/domains/common/agent_argv.py:253-268,301-306; `omp --help`
+[^4]: src/milknado/domains/common/agent_argv.py:320-365; `omp --help`

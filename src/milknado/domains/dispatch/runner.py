@@ -102,11 +102,14 @@ _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
-def build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+def build_worker_env(
+    extra: dict[str, str] | None = None, *, executable: str | None = None
+) -> dict[str, str]:
     """Return a filtered environment for worker subprocesses.
 
     Passes only allowlisted system vars plus MILKNADO_* config vars from the
-    parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only.
+    parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only,
+    except the OMP OpenRouter credential an omp worker needs to authenticate.
     """
     # INVARIANT: no MILKNADO_* var may hold a secret — every one is forwarded to
     # workers verbatim. Keep API keys, tokens, and DB URLs out of that namespace
@@ -116,6 +119,8 @@ def build_worker_env(extra: dict[str, str] | None = None) -> dict[str, str]:
         for k, v in os.environ.items()
         if k in _WORKER_ENV_ALLOWLIST or k.startswith("MILKNADO_")
     }
+    if executable == "omp" and "OPENROUTER_API_KEY" in os.environ:
+        env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     if extra:
         env.update(extra)
     return env
@@ -146,7 +151,7 @@ def _execute(
         project_root,
         log_path,
         stdin,
-        build_worker_env(extra),
+        build_worker_env(extra, executable=argv[0]),
         timeout,
     )
     return outcome.exit_code, outcome.timed_out
@@ -177,7 +182,8 @@ def _execute_cancellable(
                 "MILKNADO_NODE_ID": str(node_id),
                 "MILKNADO_RUN_ID": run_id,
                 "MILKNADO_PROJECT_ROOT": str(project_root.resolve()),
-            }
+            },
+            executable=argv[0],
         ),
         timeout,
         cancel_requested=lambda: _is_cancel_requested(runs_dir, run_id),
