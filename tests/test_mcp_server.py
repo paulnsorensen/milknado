@@ -2305,14 +2305,14 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
     from milknado.mcp import (
-        github,
-        node,
-        ralph,
-        rebalance,
-        run,
-        todo,
-        todo_mutate,
-        wiki,
+        github,  # noqa: F401
+        node,  # noqa: F401
+        ralph,  # noqa: F401
+        rebalance,  # noqa: F401
+        run,  # noqa: F401
+        todo,  # noqa: F401
+        todo_mutate,  # noqa: F401
+        wiki,  # noqa: F401
     )
     from milknado.mcp._core import mcp
 
@@ -2361,12 +2361,12 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
 def test_mcp_metadata_stays_succinct_and_accurate() -> None:
     """MCP listings should advertise tool families without implementation mechanics."""
     from milknado.mcp import (
-        node,
-        ralph,
-        run,
-        todo,
-        todo_mutate,
-        wiki,
+        node,  # noqa: F401
+        ralph,  # noqa: F401
+        run,  # noqa: F401
+        todo,  # noqa: F401
+        todo_mutate,  # noqa: F401
+        wiki,  # noqa: F401
     )
 
     families = (

@@ -61,7 +61,7 @@ class TestScaffoldPlugin:
         sys.path.insert(0, str(tmp_path))
         try:
             mod = importlib.import_module("importable_plug")
-            cls = getattr(mod, "ImportablePlug")
+            cls = mod.ImportablePlug
             instance = cls()
             assert instance.meta.name == "importable_plug"
             assert instance.meta.version == "0.1.0"

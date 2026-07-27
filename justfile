@@ -19,8 +19,8 @@ lint:
     import sys
 
     commands = [
-        ["uv", "run", "ruff", "check", "src/", "tests/", "--preview"],
-        ["uv", "run", "ruff", "format", "--check", "src/", "tests/"],
+        ["uv", "run", "ruff", "check", "src/", "tests/", "scripts/", "--preview"],
+        ["uv", "run", "ruff", "format", "--check", "src/", "tests/", "scripts/"],
     ]
     processes = [subprocess.Popen(command) for command in commands]
     if any(process.wait() for process in processes):
@@ -28,8 +28,8 @@ lint:
 
 # Run linters with autofix
 lint-fix:
-    uv run ruff check src/ tests/ --fix --preview
-    uv run ruff format src/ tests/
+    uv run ruff check src/ tests/ scripts/ --fix --preview
+    uv run ruff format src/ tests/ scripts/
 
 # Run the test suite
 test *args:
@@ -73,8 +73,12 @@ coverage-check:
 build: lint-fix coverage-check
     @echo "✅ Build passed — ready for PR"
 
-# Full build no autofix: lint → coverage check (for CI validation)
-build-ci: lint coverage-check
+# Enforce the source file-size budget (mirrors the file-size step in check-llm)
+file-size:
+    uv run python scripts/check_file_lengths.py
+
+# Full build no autofix: lint → file-size → coverage check (for CI validation)
+build-ci: lint file-size coverage-check
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + tests + project coverage + diff coverage in one shot.

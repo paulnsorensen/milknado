@@ -327,4 +327,4 @@ class TestRunStatus:
     @pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING, RunStatus.PAUSED])
     def test_reason_raises_for_non_terminal_statuses(self, status):
         with pytest.raises(ValueError, match="not a terminal status"):
-            status.reason
+            _ = status.reason
