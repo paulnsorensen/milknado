@@ -15,6 +15,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
+from tenacity import (
+    RetryCallState,
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
@@ -223,6 +231,11 @@ def _is_transient(exc: BaseException) -> bool:
     if _TRANSIENT_MSG_RE.search(str(exc)):
         return True
     return False
+
+
+def _should_retry_dispatch(exc: BaseException) -> bool:
+    # Precondition failures (InvalidTransition/ValueError), not transient worker errors.
+    return not isinstance(exc, (InvalidTransition, ValueError)) and _is_transient(exc)
 
 
 def _dispatchable_node_ids(
@@ -459,46 +472,49 @@ class Executor:
         parent_run_id: str | None = None,
     ) -> DispatchResult:
         self._review_enabled(config)
-        max_retries = config.dispatch_max_retries
-        backoff = config.dispatch_backoff_seconds
-        last_exc: BaseException | None = None
         target_branch = self._wt.current_branch()
         target_oid = base_oid or self._wt.resolve_ref(target_branch)
-        for attempt in range(max_retries + 1):
+        max_retries = config.dispatch_max_retries
+
+        def _before_sleep(retry_state: RetryCallState) -> None:
+            _logger.warning(
+                "Dispatch attempt %d/%d failed for node %d: %s",
+                retry_state.attempt_number,
+                max_retries + 1,
+                node_id,
+                retry_state.outcome.exception(),
+            )
+
+        retryer = Retrying(
+            stop=stop_after_attempt(max_retries + 1),
+            wait=wait_exponential(multiplier=config.dispatch_backoff_seconds, min=0),
+            retry=retry_if_exception(_should_retry_dispatch),
+            reraise=True,
+            before_sleep=_before_sleep,
+        )
+
+        def _attempt() -> DispatchResult:
+            attempt_index = retryer.statistics["attempt_number"] - 1
             try:
                 result = self._dispatch_once(
-                    node_id,
-                    config,
-                    base_oid=target_oid,
-                    parent_run_id=parent_run_id,
+                    node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
                 )
-                self._base_oid_by_node[node_id] = target_oid
-                self._worker_run_id_by_node[node_id] = result.run_id
-                if parent_run_id is not None:
-                    self._owner_fence_by_node[node_id] = parent_run_id
-                self._target_branch_by_node[node_id] = target_branch
-                self._target_oid_by_node[node_id] = target_oid
-                self._attempts_by_node[node_id] = attempt
-                self._config_by_node[node_id] = config
-                return result
             except (InvalidTransition, ValueError):
                 raise
-            except Exception as exc:
-                last_exc = exc
-                self._attempts_by_node[node_id] = attempt
-                if not _is_transient(exc) or attempt >= max_retries:
-                    raise
-                wait = backoff * (2**attempt)
-                _logger.warning(
-                    "Dispatch attempt %d/%d failed for node %d: %s. Retrying in %.1fs",
-                    attempt + 1,
-                    max_retries + 1,
-                    node_id,
-                    exc,
-                    wait,
-                )
-                time.sleep(wait)
-        raise last_exc or RuntimeError("dispatch exhausted retries")
+            except Exception:
+                self._attempts_by_node[node_id] = attempt_index
+                raise
+            self._base_oid_by_node[node_id] = target_oid
+            self._worker_run_id_by_node[node_id] = result.run_id
+            if parent_run_id is not None:
+                self._owner_fence_by_node[node_id] = parent_run_id
+            self._target_branch_by_node[node_id] = target_branch
+            self._target_oid_by_node[node_id] = target_oid
+            self._attempts_by_node[node_id] = attempt_index
+            self._config_by_node[node_id] = config
+            return result
+
+        return retryer(_attempt)
 
     def _resolve_worktree_path(
         self, node_id: int, node: MikadoNode, config: ExecutionConfig

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict
+import msgspec
 
 from milknado.domains.common.flavor_codec import Gate
 
@@ -12,14 +12,12 @@ if TYPE_CHECKING:
     from milknado.domains.common.config import MilknadoConfig
 
 
-class FlavorProfile(BaseModel):
+class FlavorProfile(msgspec.Struct, frozen=True, kw_only=True):
     """Resolved, ready-to-use per-flavor configuration. No identity.
 
     ``worker_agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns``
     drive the native Workflow backend; the subprocess dispatcher ignores them.
     """
-
-    model_config = ConfigDict(frozen=True)
 
     execution_agent: str
     quality_gates: tuple[Gate, ...] | None

@@ -5,18 +5,10 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
+import msgspec
 import tomli_w
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StrictFloat,
-    StrictInt,
-    field_validator,
-    model_validator,
-)
 
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
@@ -35,6 +27,8 @@ from milknado.domains.common.flavor_codec import (
     Gate,
     absolutize_global_flavor_paths,
     coerce_tool_list,
+    normalize_flavor_table,
+    normalize_gates,
     serialize_flavor_tables,
     serialize_gates,
     validate_loop_mode,
@@ -58,10 +52,8 @@ DEFAULT_MAX_ITERATIONS = 8
 DEFAULT_MAX_TURNS = 60
 
 
-class MilknadoConfig(BaseModel):
+class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
     """Runtime config loaded from ``milknado.toml``."""
-
-    model_config = ConfigDict(frozen=True)
 
     agent_family: str = "claude"
     planning_agent: str = "claude --model opus -p --dangerously-skip-permissions"
@@ -82,13 +74,12 @@ class MilknadoConfig(BaseModel):
     protected_branches: tuple[str, ...] = ("main", "master")
     completion_timeout_seconds: float | None = None
     eta_sample_size: int = 10
-    worker_tools: dict[str, tuple[str, ...]] = Field(default_factory=dict)
-    flavors: dict[str, FlavorOverride] = Field(default_factory=dict)
-    flavor_registry: frozenset[str] = Field(default_factory=lambda: BUILTIN_FLAVORS)
+    worker_tools: dict[str, tuple[str, ...]] = msgspec.field(default_factory=dict)
+    flavors: dict[str, FlavorOverride] = msgspec.field(default_factory=dict)
+    flavor_registry: frozenset[str] = msgspec.field(default_factory=lambda: BUILTIN_FLAVORS)
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
     commit_footer: str | None = None
-    # Native Workflow ("ultracode") backend defaults — coordinator-side only.
     worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
     loop_mode: str = DEFAULT_LOOP_MODE
     max_iterations: int = DEFAULT_MAX_ITERATIONS
@@ -98,31 +89,20 @@ class MilknadoConfig(BaseModel):
 _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
 
 
-class PromptsTable(BaseModel):
+class PromptsTable(msgspec.Struct, frozen=True, kw_only=True):
     """Schema for the ``[milknado.prompts]`` TOML table."""
-
-    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     planning_prepend: str | None = None
     planning_prepend_path: str | None = None
     worker_brief_prepend: str | None = None
     worker_brief_prepend_path: str | None = None
 
-    @field_validator("*", mode="before")
-    @classmethod
-    def _strings(cls, value: Any, info: Any) -> Any:
-        if value is not None and not isinstance(value, str):
-            raise ValueError(f"[milknado.prompts] {info.field_name} must be a string")
-        return value
-
-    @model_validator(mode="after")
-    def _mutually_exclusive(self) -> PromptsTable:
+    def __post_init__(self) -> None:
         for slot in _PROMPT_PREPEND_SLOTS:
             if getattr(self, slot) is not None and getattr(self, f"{slot}_path") is not None:
                 raise ValueError(
                     f"[milknado.prompts] {slot} and {slot}_path are mutually exclusive"
                 )
-        return self
 
     def prepend(self, slot: str, project_root: Path) -> str | None:
         """Return the inline text for one slot, or load it from its ``_path`` file."""
@@ -142,196 +122,143 @@ class PromptsTable(BaseModel):
         return resolved.read_text(encoding="utf-8").strip() or None
 
 
-class WorkerTable(BaseModel):
+class WorkerTable(msgspec.Struct, frozen=True, kw_only=True):
     """Schema for the ``[milknado.worker]`` TOML table."""
 
-    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
-
-    tools: dict[str, tuple[str, ...]] = Field(default_factory=dict)
-
-    @field_validator("tools", mode="before")
-    @classmethod
-    def _tool_lists(cls, value: Any) -> Any:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("[milknado.worker.tools] must be a table")
-        out: dict[str, tuple[str, ...]] = {}
-        for fam, tool_list in value.items():
-            if not isinstance(fam, str):
-                raise ValueError("[milknado.worker.tools] family keys must be strings")
-            out[fam] = coerce_tool_list(tool_list, f"[milknado.worker.tools.{fam}]")
-        return out
+    tools: dict[str, tuple[str, ...]] = msgspec.field(default_factory=dict)
 
 
-class _MilknadoInheritanceControls(BaseModel):
-    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
-
+class _MilknadoInheritanceControls(msgspec.Struct, frozen=True, kw_only=True):
     inherit_global: bool = True
 
-    @field_validator("inherit_global", mode="before")
-    @classmethod
-    def _inherit_global_bool(cls, value: Any) -> Any:
-        if not isinstance(value, bool):
-            raise ValueError("[milknado] inherit_global must be a boolean")
-        return value
 
-
-class _FlavorInheritanceControls(BaseModel):
-    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
-
+class _FlavorInheritanceControls(msgspec.Struct, frozen=True, kw_only=True):
     inherit: bool = True
 
-    @field_validator("inherit", mode="before")
-    @classmethod
-    def _inherit_bool(cls, value: Any) -> Any:
-        if not isinstance(value, bool):
-            raise ValueError("inherit must be a boolean")
-        return value
 
-
-class MilknadoSection(BaseModel):
+class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
     """Schema for the merged ``[milknado]`` TOML table, before derivation."""
-
-    model_config = ConfigDict(frozen=True, hide_input_in_errors=True)
 
     agent_family: str = "claude"
     planning_agent: str | None = None
     execution_agent: str | None = None
     planning_validation_hook: str | None = None
     plan_reviewer_agent: str | None = None
-    plan_review_max_rounds: StrictInt = 3
+    plan_review_max_rounds: int = 3
     quality_gates: tuple[Gate, ...] | None = None
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
-    concurrency_limit: StrictInt = 4
+    concurrency_limit: int = 4
     db_path: str = ".milknado/milknado.db"
     plugins: tuple[str, ...] = ()
-    stall_threshold_seconds: StrictInt = 300
-    dispatch_max_retries: StrictInt = 2
-    dispatch_backoff_seconds: StrictFloat = 5.0
+    stall_threshold_seconds: int = 300
+    dispatch_max_retries: int = 2
+    dispatch_backoff_seconds: float = 5.0
     protected_branches: tuple[str, ...] = ("main", "master")
-    completion_timeout_seconds: StrictFloat | None = None
-    eta_sample_size: StrictInt = 10
+    completion_timeout_seconds: float | None = None
+    eta_sample_size: int = 10
     commit_footer: str | None = None
     worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
     loop_mode: str = DEFAULT_LOOP_MODE
-    max_iterations: StrictInt = DEFAULT_MAX_ITERATIONS
-    max_turns: StrictInt = DEFAULT_MAX_TURNS
-    prompts: PromptsTable = Field(default_factory=PromptsTable)
-    worker: WorkerTable = Field(default_factory=WorkerTable)
-    flavor: dict[str, FlavorTable] = Field(default_factory=dict)
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
+    max_turns: int = DEFAULT_MAX_TURNS
+    prompts: PromptsTable = msgspec.field(default_factory=PromptsTable)
+    worker: WorkerTable = msgspec.field(default_factory=WorkerTable)
+    flavor: dict[str, FlavorTable] = msgspec.field(default_factory=dict)
 
-    @field_validator("agent_family", mode="before")
-    @classmethod
-    def _family(cls, value: Any) -> str:
-        family = str(value).strip().lower()
-        if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
-            allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
-            raise ValueError(f"Invalid agent_family. Expected one of: {allowed}")
-        return family
+    def __post_init__(self) -> None:
+        validate_positive_int(self.plan_review_max_rounds, "[milknado] plan_review_max_rounds")
+        validate_positive_int(self.max_iterations, "[milknado] max_iterations")
+        validate_positive_int(self.max_turns, "[milknado] max_turns")
+        validate_loop_mode(self.loop_mode)
 
-    @field_validator("planning_validation_hook", mode="before")
-    @classmethod
-    def _hook(cls, value: Any) -> Any:
-        if not value:
-            return None
-        return str(value).strip() or None
 
-    @field_validator("commit_footer", mode="before")
-    @classmethod
-    def _commit_footer_str(cls, value: Any) -> Any:
+T = TypeVar("T")
+
+
+def _typed_convert(value: Any, model: type[T]) -> T:
+    return msgspec.convert(value, type=model, strict=True)
+
+
+def _validate_section_scalars(section: dict[str, Any]) -> None:
+    if "worktree" in section and not isinstance(section["worktree"], bool):
+        raise msgspec.ValidationError("[milknado] worktree must be a boolean")
+    for key in ("commit_footer", "plan_reviewer_agent"):
+        value = section.get(key)
         if value is not None and not isinstance(value, str):
-            raise ValueError(
-                f"[milknado] commit_footer must be a string; got {type(value).__name__}"
-            )
-        return value
+            raise msgspec.ValidationError(f"[milknado] {key} must be a string")
+    for key in ("worker_agent_type", "loop_mode"):
+        if key in section and not isinstance(section[key], str):
+            raise msgspec.ValidationError(f"[milknado] {key} must be a string")
+    if "loop_mode" in section:
+        validate_loop_mode(section["loop_mode"])
+    for key in ("plan_review_max_rounds", "max_iterations", "max_turns"):
+        if key in section:
+            validate_positive_int(section[key], f"[milknado] {key}")
 
-    @field_validator("plan_reviewer_agent", mode="before")
-    @classmethod
-    def _plan_reviewer_str(cls, value: Any) -> Any:
-        if value is not None and not isinstance(value, str):
-            raise ValueError(
-                f"[milknado] plan_reviewer_agent must be a string; got {type(value).__name__}"
-            )
-        return value
 
-    @field_validator("worktree", mode="before")
-    @classmethod
-    def _worktree_bool(cls, value: Any) -> Any:
-        if not isinstance(value, bool):
-            raise ValueError(f"[milknado] worktree must be a boolean; got {type(value).__name__}")
-        return value
-
-    @field_validator("worker_agent_type", mode="before")
-    @classmethod
-    def _worker_agent_type_str(cls, value: Any) -> Any:
-        if not isinstance(value, str):
-            raise ValueError(
-                f"[milknado] worker_agent_type must be a string; got {type(value).__name__}"
-            )
-        return value
-
-    @field_validator("loop_mode", mode="before")
-    @classmethod
-    def _loop_mode_valid(cls, value: Any) -> str:
-        return validate_loop_mode(value)
-
-    @field_validator("max_iterations", mode="before")
-    @classmethod
-    def _max_iterations_positive(cls, value: Any) -> Any:
-        return validate_positive_int(value, "[milknado] max_iterations")
-
-    @field_validator("max_turns", mode="before")
-    @classmethod
-    def _max_turns_positive(cls, value: Any) -> Any:
-        return validate_positive_int(value, "[milknado] max_turns")
-
-    @field_validator("plan_review_max_rounds", mode="before")
-    @classmethod
-    def _plan_review_max_rounds_positive(cls, value: Any) -> Any:
-        return validate_positive_int(value, "[milknado] plan_review_max_rounds")
-
-    @field_validator("quality_gates", mode="before")
-    @classmethod
-    def _gates_list(cls, value: Any) -> Any:
-        if value is not None and not isinstance(value, list):
-            raise ValueError(
-                "[milknado] quality_gates must be a list (use [] to explicitly skip gates)"
-            )
-        return value
-
-    @field_validator("prompts", mode="before")
-    @classmethod
-    def _prompts_table(cls, value: Any) -> Any:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("[milknado.prompts] must be a table")
-        return value
-
-    @field_validator("worker", mode="before")
-    @classmethod
-    def _worker_table(cls, value: Any) -> Any:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("[milknado.worker] must be a table")
-        return value
-
-    @field_validator("flavor", mode="before")
-    @classmethod
-    def _flavor_tables(cls, value: Any) -> Any:
-        if value is None:
-            return {}
-        if not isinstance(value, dict):
-            raise ValueError("[milknado.flavor] must be a table")
-        for name, entry in value.items():
+def _normalize_section(raw: Any) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    normalized = dict(raw)
+    family = str(normalized.get("agent_family", "claude")).strip().lower()
+    if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
+        allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
+        raise msgspec.ValidationError(f"Invalid agent_family. Expected one of: {allowed}")
+    normalized["agent_family"] = family
+    _validate_section_scalars(normalized)
+    for key in ("prompts", "worker", "flavor"):
+        value = normalized.get(key)
+        if value is not None and not isinstance(value, dict):
+            raise msgspec.ValidationError(f"[milknado.{key}] must be a table")
+    hook = normalized.get("planning_validation_hook")
+    normalized["planning_validation_hook"] = str(hook).strip() if hook else None
+    for key in ("prompts", "worker", "flavor"):
+        if normalized.get(key) is None:
+            normalized[key] = {}
+    if "quality_gates" in normalized:
+        normalized["quality_gates"] = normalize_gates(
+            normalized["quality_gates"], "[milknado] quality_gates"
+        )
+    prompts = normalized.get("prompts")
+    if isinstance(prompts, dict):
+        for key, value in prompts.items():
+            if value is not None and not isinstance(value, str):
+                raise msgspec.ValidationError(f"[milknado.prompts] {key} must be a string")
+    worker = normalized.get("worker")
+    if isinstance(worker, dict) and "tools" in worker:
+        worker = dict(worker)
+        tools = worker["tools"]
+        if not isinstance(tools, dict):
+            raise msgspec.ValidationError("[milknado.worker.tools] must be a table")
+        worker["tools"] = {
+            family: coerce_tool_list(value, f"[milknado.worker.tools.{family}]")
+            for family, value in tools.items()
+        }
+        normalized["worker"] = worker
+    flavors = normalized.get("flavor")
+    if isinstance(flavors, dict):
+        for name, entry in flavors.items():
             if not isinstance(name, str) or not name:
-                raise ValueError("[milknado.flavor] flavor keys must be non-empty strings")
+                raise msgspec.ValidationError(
+                    "[milknado.flavor] flavor keys must be non-empty strings"
+                )
             if not isinstance(entry, dict):
-                raise ValueError(f"[milknado.flavor.{name}] must be a table")
-        return value
+                raise msgspec.ValidationError(f"[milknado.flavor.{name}] must be a table")
+        normalized["flavor"] = {
+            name: normalize_flavor_table(entry) for name, entry in flavors.items()
+        }
+    return normalized
+
+
+def decode_milknado_section(raw: Any) -> MilknadoSection:
+    """Validate an already-parsed TOML section through its typed boundary."""
+    try:
+        return _typed_convert(_normalize_section(raw), MilknadoSection)
+    except msgspec.ValidationError:
+        raise
+    except ValueError as exc:
+        raise msgspec.ValidationError(str(exc)) from exc
 
 
 def default_config(project_root: Path) -> MilknadoConfig:
@@ -397,16 +324,28 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
     return LoadedConfig(_build_config(raw, project_root=path.parent), raw, origins)
 
 
+def _decode_inheritance_controls(raw: dict[str, Any]) -> _MilknadoInheritanceControls:
+    if "inherit_global" in raw and not isinstance(raw["inherit_global"], bool):
+        raise msgspec.ValidationError("[milknado] inherit_global must be a boolean")
+    return _typed_convert(raw, _MilknadoInheritanceControls)
+
+
+def _decode_flavor_inheritance_controls(raw: dict[str, Any]) -> _FlavorInheritanceControls:
+    if "inherit" in raw and not isinstance(raw["inherit"], bool):
+        raise msgspec.ValidationError("inherit must be a boolean")
+    return _typed_convert(raw, _FlavorInheritanceControls)
+
+
 def _extract_inheritance(raw: dict[str, Any], *, local: bool) -> tuple[bool, tuple[str, ...]]:
     """Validate and remove layer-control metadata before normal merging."""
-    controls = _MilknadoInheritanceControls.model_validate(raw)
+    controls = _decode_inheritance_controls(raw)
     raw.pop("inherit_global", None)
     replaced: list[str] = []
     flavors = raw.get("flavor")
     if isinstance(flavors, dict):
         for name, flavor in flavors.items():
             if isinstance(flavor, dict) and "inherit" in flavor:
-                flavor_controls = _FlavorInheritanceControls.model_validate(flavor)
+                flavor_controls = _decode_flavor_inheritance_controls(flavor)
                 flavor.pop("inherit")
                 if local and not flavor_controls.inherit:
                     replaced.append(name)
@@ -629,7 +568,7 @@ def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
 
 
 def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
-    section = MilknadoSection.model_validate(raw)
+    section = decode_milknado_section(raw)
     family = section.agent_family
     flavors = {
         name: table.to_override(name, project_root) for name, table in section.flavor.items()

@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from milknado.adapters.gh import GhProjectAdapter, GhTransportError
-from milknado.domains.github import GithubField, GithubItem, GithubProject
+from milknado.domains.github import GithubField, GithubFieldOption, GithubItem, GithubProject
 from milknado.mcp.github import (
     milknado_github_roadmap_bind,
     milknado_github_roadmap_export,
@@ -122,7 +122,7 @@ def test_export_tool_after_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
             GithubField(
                 id="F_s",
                 name="Milknado Status",
-                options=({"id": "o", "name": "Pending"},),
+                options=(GithubFieldOption(id="o", name="Pending"),),
             ),
             GithubField(id="F_h", name="Milknado Harvest"),
         ],

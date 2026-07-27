@@ -18,6 +18,7 @@ from milknado.domains.common.config import (
     DEFAULT_WORKER_AGENT_TYPE,
     FlavorOverride,
     MilknadoConfig,
+    decode_milknado_section,
     load_config,
     save_config,
 )
@@ -240,3 +241,25 @@ def test_global_max_iterations_rejects_bool(tmp_path: Path) -> None:
     path.write_text('[milknado]\nagent_family = "claude"\nmax_iterations = true\n')
     with pytest.raises(ValueError, match=r"\[milknado\] max_iterations must be an integer"):
         load_config(path, include_global=False)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"plan_reviewer_agent": 7}, "plan_reviewer_agent must be a string"),
+        ({"plan_review_max_rounds": True}, "plan_review_max_rounds must be an integer"),
+        ({"flavor": {"x": {"execution_agent": 7}}}, "execution_agent must be a string"),
+        ({"flavor": {"x": {"brief_prepend": 7}}}, "brief_prepend must be a string"),
+        ({"flavor": {"x": {"brief_prepend_path": ["ok", 7]}}}, "brief_prepend_path"),
+        ({"flavor": {"x": {"loop_mode": 7}}}, "loop_mode must be a string"),
+        ({"flavor": {"x": {"session_mode": 7}}}, "session_mode must be a string"),
+        ({"flavor": {"x": {"on_reject": 7}}}, "on_reject must be a string"),
+        ({"flavor": {"x": {"review_max_rounds": True}}}, "review_max_rounds must be an integer"),
+        ({"flavor": {"x": {"max_turns": "many"}}}, "max_turns must be an integer"),
+    ],
+)
+def test_normalization_preserves_domain_validation_messages(
+    payload: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        decode_milknado_section(payload)

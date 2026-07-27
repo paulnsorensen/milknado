@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import msgspec
 import pytest
 import typer
 
@@ -1429,7 +1430,7 @@ class TestPlanChangeManifest:
 
 
 def _cfg(tmp_path: Path, **overrides: object) -> object:
-    return default_config(tmp_path).model_copy(update=overrides)
+    return msgspec.structs.replace(default_config(tmp_path), **overrides)
 
 
 def _plan_result(**overrides: object) -> PlanResult:

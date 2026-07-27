@@ -4,66 +4,62 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+import msgspec
+from msgspec import structs
 
-NonEmptyString = Annotated[StrictStr, Field(min_length=1)]
-
-
-class _GithubModel(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
+NonEmptyString = Annotated[str, msgspec.Meta(min_length=1)]
 
 
-class GithubProject(_GithubModel):
+class _GithubModel(msgspec.Struct, frozen=True, kw_only=True):
+    pass
+
+
+class GithubProject(_GithubModel, frozen=True, kw_only=True):
     id: NonEmptyString
-    title: StrictStr
+    title: str
 
 
-class GithubItem(_GithubModel):
+class GithubItem(_GithubModel, frozen=True, kw_only=True):
     id: NonEmptyString | None = None
-    title: StrictStr = "(untitled item)"
-    body: StrictStr = ""
-    url: StrictStr | None = None
+    title: str = "(untitled item)"
+    body: str = ""
+    url: str | None = None
 
 
-class GithubFieldOption(_GithubModel):
+class GithubFieldOption(_GithubModel, frozen=True, kw_only=True):
     id: NonEmptyString
     name: NonEmptyString
 
 
-class GithubField(_GithubModel):
+class GithubField(_GithubModel, frozen=True, kw_only=True):
     id: NonEmptyString
     name: NonEmptyString
     options: tuple[GithubFieldOption, ...] = ()
 
 
-class GithubIssue(_GithubModel):
-    title: StrictStr
-    body: StrictStr
-    number: StrictInt | None = None
+class GithubIssue(_GithubModel, frozen=True, kw_only=True):
+    title: str
+    body: str
     url: NonEmptyString
+    number: int | None = None
 
 
-class GithubBindingConfig(_GithubModel):
-    github_project: StrictStr | None = None
-    github_repo: StrictStr
+class GithubBindingConfig(_GithubModel, frozen=True, kw_only=True):
+    github_repo: str
+    github_project: str | None = None
 
-    @field_validator("github_project")
-    @classmethod
-    def validate_project(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        owner, separator, number = value.partition("/")
-        if not separator or not owner.strip() or not number.strip().isdigit():
-            raise ValueError(f"malformed `github_project` frontmatter: {value!r}")
-        return f"{owner.strip()}/{number.strip()}"
-
-    @field_validator("github_repo")
-    @classmethod
-    def validate_repo(cls, value: str) -> str:
-        owner, separator, repo = value.partition("/")
+    def __post_init__(self) -> None:
+        if self.github_project is not None:
+            owner, separator, number = self.github_project.partition("/")
+            if not separator or not owner.strip() or not number.strip().isdigit():
+                raise ValueError(
+                    f"malformed `github_project` frontmatter: {self.github_project!r}"
+                )
+            structs.force_setattr(self, "github_project", f"{owner.strip()}/{number.strip()}")
+        owner, separator, repo = self.github_repo.partition("/")
         if not separator or not owner.strip() or not repo.strip():
-            raise ValueError(f"malformed `github_repo` frontmatter: {value!r}")
-        return f"{owner.strip()}/{repo.strip()}"
+            raise ValueError(f"malformed `github_repo` frontmatter: {self.github_repo!r}")
+        structs.force_setattr(self, "github_repo", f"{owner.strip()}/{repo.strip()}")
 
     @property
     def project(self) -> tuple[str, int]:
@@ -76,3 +72,7 @@ class GithubBindingConfig(_GithubModel):
     def repo(self) -> tuple[str, str]:
         owner, repo = self.github_repo.split("/", maxsplit=1)
         return owner, repo
+
+
+def decode_github_binding(raw: object) -> GithubBindingConfig:
+    return msgspec.convert(raw, type=GithubBindingConfig, strict=True)

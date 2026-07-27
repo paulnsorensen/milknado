@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import msgspec
+
 from milknado.domains.github import GithubField
 from milknado.domains.github._fields import (
     STATUS_OPTIONS,
@@ -49,8 +51,10 @@ def test_find_field_by_name() -> None:
 
 
 def test_find_option_id() -> None:
-    field = GithubField.model_validate(
-        {"id": "F", "name": "Status", "options": [{"name": "Done", "id": "opt-done"}]}
+    field = msgspec.convert(
+        {"id": "F", "name": "Status", "options": [{"name": "Done", "id": "opt-done"}]},
+        type=GithubField,
+        strict=True,
     )
     assert find_option_id(field, "Done") == "opt-done"
     assert find_option_id(field, "Missing") is None

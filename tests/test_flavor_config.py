@@ -6,8 +6,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import msgspec
 import pytest
-from pydantic import ValidationError
 
 from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
@@ -179,7 +179,7 @@ def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> No
         'execution_agent = "evil-bin --flag"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValidationError) as exc_info:
+    with pytest.raises(msgspec.ValidationError) as exc_info:
         load_config(cfg_path)
 
     message = str(exc_info.value)
@@ -641,18 +641,18 @@ def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
 def test_load_config_flavor_entry_not_a_table_raises(tmp_path: Path) -> None:
     """A scalar flavor entry raises ValueError."""
     # We simulate this via a raw dict through the [milknado] schema directly.
-    from milknado.domains.common.config import MilknadoSection
+    from milknado.domains.common.config import decode_milknado_section
 
     with pytest.raises(ValueError, match="\\[milknado.flavor.spike\\] must be a table"):
-        MilknadoSection.model_validate({"flavor": {"spike": "oops"}})
+        decode_milknado_section({"flavor": {"spike": "oops"}})
 
 
 def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) -> None:
     """Non-string execution_agent in a flavor entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
-    with pytest.raises(ValueError, match="execution_agent must be a string"):
-        FlavorTable.model_validate({"execution_agent": 42})
+    with pytest.raises(ValueError, match="execution_agent"):
+        msgspec.convert({"execution_agent": 42}, type=FlavorTable, strict=True)
 
 
 @pytest.mark.parametrize(
@@ -673,8 +673,8 @@ def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) ->
 def test_flavor_validation_hides_invalid_input(payload: dict[str, object]) -> None:
     from milknado.domains.common.flavor_codec import FlavorTable
 
-    with pytest.raises(ValidationError) as exc_info:
-        FlavorTable.model_validate(payload)
+    with pytest.raises(msgspec.ValidationError) as exc_info:
+        msgspec.convert(payload, type=FlavorTable, strict=True)
 
     assert "TOPSECRET" not in str(exc_info.value)
 
@@ -695,31 +695,31 @@ def test_load_config_flavor_quality_gates_error_names_quality_gates_key(tmp_path
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="quality_gates"):
-        FlavorTable.model_validate({"quality_gates": [42]})
+        msgspec.convert({"quality_gates": [42]}, type=FlavorTable, strict=True)
 
 
 def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> None:
     """Non-string brief_prepend in a flavor entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
-    with pytest.raises(ValueError, match="brief_prepend must be a string"):
-        FlavorTable.model_validate({"brief_prepend": 42})
+    with pytest.raises(ValueError, match="brief_prepend"):
+        msgspec.convert({"brief_prepend": 42}, type=FlavorTable, strict=True)
 
 
 def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises(tmp_path: Path) -> None:
     """brief_prepend_path being a number raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
-    with pytest.raises(ValueError, match="brief_prepend_path must be a string or list"):
-        FlavorTable.model_validate({"brief_prepend_path": 42})
+    with pytest.raises(ValueError, match="brief_prepend_path"):
+        msgspec.convert({"brief_prepend_path": 42}, type=FlavorTable, strict=True)
 
 
 def test_load_config_flavor_brief_prepend_path_list_non_string_raises(tmp_path: Path) -> None:
     """A list brief_prepend_path with a non-string entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
-    with pytest.raises(ValueError, match="brief_prepend_path entries must be strings"):
-        FlavorTable.model_validate({"brief_prepend_path": [42, "ok.md"]})
+    with pytest.raises(ValueError, match="brief_prepend_path"):
+        msgspec.convert({"brief_prepend_path": [42, "ok.md"]}, type=FlavorTable, strict=True)
 
 
 def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
@@ -983,7 +983,7 @@ def test_load_config_flavor_resume_cursor_agent_execution_agent_raises(tmp_path:
         'execution_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
+    with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
         load_config(cfg_path)
 
 
@@ -996,7 +996,7 @@ def test_load_config_flavor_resume_cursor_agent_review_agent_raises(tmp_path: Pa
         'review_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
+    with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
         load_config(cfg_path)
 
 
@@ -1010,7 +1010,7 @@ def test_load_config_flavor_resume_checks_both_configured_agents(tmp_path: Path)
         'review_agent = "claude -p"\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValidationError, match="adversarial-review-loops-F001"):
+    with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
         load_config(cfg_path)
 
 

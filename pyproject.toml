@@ -18,8 +18,9 @@ dependencies = [
     "tiktoken>=0.13.0",
     "tomli-w>=1.0.0",
     "textual>=8.2.8",
-    "pydantic>=2.13.4",
     "typing-extensions>=4.14.1",
+    "msgspec>=0.21.1",
+    "tenacity>=9.1.4",
 ]
 
 [project.scripts]
@@ -248,9 +249,8 @@ max_file_lines = 300
 "src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
 "src/milknado/domains/common/agent_argv.py" = { max_lines = 365, reason = "Pre-existing agent command boundary; keep its measured ceiling until command builders are split." }
 "src/milknado/domains/common/config.py" = { max_lines = 669, reason = "Pre-existing config boundary; keep its measured ceiling until serialization is split." }
-"src/milknado/domains/common/flavor_codec.py" = { max_lines = 375, reason = "Pre-existing flavor boundary; keep its measured ceiling until codec concerns are split." }
 "src/milknado/domains/dispatch/async_run.py" = { max_lines = 396, reason = "Pre-existing async dispatch boundary; keep its measured ceiling until lifecycle is split." }
-"src/milknado/domains/execution/executor.py" = { max_lines = 1472, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split." }
+"src/milknado/domains/execution/executor.py" = { max_lines = 1488, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split. Bumped from 1472 for the tenacity-based dispatch retry (replaced a hand-rolled backoff loop)." }
 "src/milknado/domains/execution/run_loop/__init__.py" = { max_lines = 560, reason = "Pre-existing run loop boundary; keep its measured ceiling until phases are split." }
 "src/milknado/domains/graph/_mutations.py" = { max_lines = 321, reason = "Pre-existing graph mutation boundary; keep its measured ceiling until mutations are split." }
 "src/milknado/domains/graph/_persistence.py" = { max_lines = 757, reason = "Pre-existing graph persistence boundary; keep its measured ceiling until persistence concerns are split." }

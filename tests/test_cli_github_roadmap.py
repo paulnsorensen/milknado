@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import msgspec
 import pytest
 from typer.testing import CliRunner
 
@@ -144,12 +145,14 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         "field_list",
         staticmethod(
             lambda _o, _n: [
-                GithubField.model_validate(
+                msgspec.convert(
                     {
                         "id": "F_status",
                         "name": "Milknado Status",
                         "options": [{"id": "o", "name": "Pending"}],
-                    }
+                    },
+                    type=GithubField,
+                    strict=True,
                 ),
                 GithubField(id="F_harvest", name="Milknado Harvest"),
             ]
