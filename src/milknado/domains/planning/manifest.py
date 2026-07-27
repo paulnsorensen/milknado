@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 
 import msgspec
+from msgspec import structs
 
 from milknado.domains.batching import (
     ChangeDependency,
@@ -64,8 +65,8 @@ class _HashAnchorsModel(_PlanningModel, frozen=True, kw_only=True):
         after = self.after.strip()
         if not before or not after:
             raise ValueError("hash anchor must be a non-empty string")
-        object.__setattr__(self, "before", before)
-        object.__setattr__(self, "after", after)
+        structs.force_setattr(self, "before", before)
+        structs.force_setattr(self, "after", after)
 
 
 class _DependencyModel(_PlanningModel, frozen=True, kw_only=True):
@@ -78,8 +79,8 @@ class _DependencyModel(_PlanningModel, frozen=True, kw_only=True):
         path = self.path.strip()
         if not path:
             raise ValueError("dependency path must be a non-empty string")
-        object.__setattr__(self, "path", path)
-        object.__setattr__(self, "reason", self.reason.strip())
+        structs.force_setattr(self, "path", path)
+        structs.force_setattr(self, "reason", self.reason.strip())
 
 
 class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
@@ -99,7 +100,7 @@ class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
         description = self.description.strip()
         if not description:
             raise ValueError("description must be a non-empty string")
-        object.__setattr__(self, "description", description)
+        structs.force_setattr(self, "description", description)
 
 
 class _RelationshipModel(_PlanningModel, frozen=True, kw_only=True):
@@ -121,8 +122,8 @@ class _ManifestModel(_PlanningModel, frozen=True, kw_only=True):
         summary = self.goal_summary.strip()
         if not goal or not summary:
             raise ValueError("manifest text must be a non-empty string")
-        object.__setattr__(self, "goal", goal)
-        object.__setattr__(self, "goal_summary", summary)
+        structs.force_setattr(self, "goal", goal)
+        structs.force_setattr(self, "goal_summary", summary)
 
 
 def _hash_anchors_to_dict(anchors: HashAnchors) -> dict[str, object]:

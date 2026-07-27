@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import msgspec
+from msgspec import structs
 
 NonEmptyString = Annotated[str, msgspec.Meta(min_length=1)]
 
@@ -54,11 +55,11 @@ class GithubBindingConfig(_GithubModel, frozen=True, kw_only=True):
                 raise ValueError(
                     f"malformed `github_project` frontmatter: {self.github_project!r}"
                 )
-            object.__setattr__(self, "github_project", f"{owner.strip()}/{number.strip()}")
+            structs.force_setattr(self, "github_project", f"{owner.strip()}/{number.strip()}")
         owner, separator, repo = self.github_repo.partition("/")
         if not separator or not owner.strip() or not repo.strip():
             raise ValueError(f"malformed `github_repo` frontmatter: {self.github_repo!r}")
-        object.__setattr__(self, "github_repo", f"{owner.strip()}/{repo.strip()}")
+        structs.force_setattr(self, "github_repo", f"{owner.strip()}/{repo.strip()}")
 
     @property
     def project(self) -> tuple[str, int]:

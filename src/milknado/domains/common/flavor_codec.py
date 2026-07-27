@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import msgspec
+from msgspec import structs
 
 from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.common.paths import resolve_project_path, trust_global_path
@@ -29,7 +30,7 @@ class Gate(msgspec.Struct, frozen=True, kw_only=True):
                 re.compile(pattern)
             except re.error as exc:
                 raise ValueError("fail_on_stdout is not a valid regex") from exc
-        object.__setattr__(self, "fail_on_stdout", pattern or None)
+        structs.force_setattr(self, "fail_on_stdout", pattern or None)
 
 
 def normalize_gate(value: Any) -> dict[str, Any]:
