@@ -1458,6 +1458,32 @@ class TestIsTransient:
         assert not _is_transient(RuntimeError("something broke"))
 
 
+class TestShouldRetryDispatch:
+    def test_transient_exception_retries(self) -> None:
+        from milknado.domains.execution.executor import _should_retry_dispatch
+
+        assert _should_retry_dispatch(OSError("no such file"))
+
+    def test_invalid_transition_never_retries(self) -> None:
+        from milknado.domains.execution.executor import _should_retry_dispatch
+
+        exc = InvalidTransition(1, NodeStatus.DONE, NodeStatus.RUNNING, (NodeStatus.PENDING,))
+        assert not _should_retry_dispatch(exc)
+
+    def test_value_error_never_retries_even_with_transient_message(self) -> None:
+        """A ValueError is a dispatch precondition failure, not a transient worker
+        error — it must not retry even if its text happens to match the
+        transient-message regex (e.g. "rate limit")."""
+        from milknado.domains.execution.executor import _should_retry_dispatch
+
+        assert not _should_retry_dispatch(ValueError("429 rate limit exceeded"))
+
+    def test_non_transient_exception_does_not_retry(self) -> None:
+        from milknado.domains.execution.executor import _should_retry_dispatch
+
+        assert not _should_retry_dispatch(RuntimeError("something broke"))
+
+
 class TestGetAttemptCount:
     def test_returns_zero_before_dispatch(
         self,

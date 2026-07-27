@@ -110,43 +110,33 @@ def validate_positive_int(value: Any, ctx: str) -> int | None:
     return value
 
 
-class FlavorOverride(msgspec.Struct, frozen=True, kw_only=True):
+class _FlavorFields(msgspec.Struct, frozen=True, kw_only=True):
+    """Fields shared by ``FlavorOverride`` and ``FlavorTable``."""
+
+    execution_agent: str | None = None
+    tools: tuple[str, ...] | None = None
+    brief_prepend: str | None = None
+    quality_gates: tuple[Gate, ...] | None = None
+    agent_type: str | None = None
+    loop_mode: str | None = None
+    max_iterations: int | None = None
+    max_turns: int | None = None
+    worktree: bool | None = None
+    session_mode: str = "fresh"
+    review: bool | None = None
+    review_agent: str | None = None
+    review_max_rounds: int = 2
+    on_reject: str = "block"
+
+
+class FlavorOverride(_FlavorFields, frozen=True, kw_only=True):
     """Validated per-flavor override, hydrated from a ``FlavorTable``."""
 
-    execution_agent: str | None = None
-    tools: tuple[str, ...] | None = None
-    brief_prepend: str | None = None
-    quality_gates: tuple[Gate, ...] | None = None
-    agent_type: str | None = None
-    loop_mode: str | None = None
-    max_iterations: int | None = None
-    max_turns: int | None = None
-    worktree: bool | None = None
-    session_mode: str = "fresh"
-    review: bool | None = None
-    review_agent: str | None = None
-    review_max_rounds: int = 2
-    on_reject: str = "block"
 
-
-class FlavorTable(msgspec.Struct, frozen=True, kw_only=True):
+class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
     """Schema for one ``[milknado.flavor.<name>]`` TOML table."""
 
-    execution_agent: str | None = None
-    tools: tuple[str, ...] | None = None
-    brief_prepend: str | None = None
     brief_prepend_path: str | list[str] | None = None
-    quality_gates: tuple[Gate, ...] | None = None
-    agent_type: str | None = None
-    loop_mode: str | None = None
-    max_iterations: int | None = None
-    max_turns: int | None = None
-    worktree: bool | None = None
-    session_mode: str = "fresh"
-    review: bool | None = None
-    review_agent: str | None = None
-    review_max_rounds: int = 2
-    on_reject: str = "block"
 
     def __post_init__(self) -> None:
         if self.execution_agent is not None:
