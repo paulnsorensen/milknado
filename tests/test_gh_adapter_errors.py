@@ -31,7 +31,7 @@ class Recorder:
         self.calls: list[list[str]] = []
         self.stdout = stdout
 
-    def __call__(self, args, **_kwargs):  # noqa: ANN001, ANN002
+    def __call__(self, args, **_kwargs):
         self.calls.append(list(args))
         return subprocess.CompletedProcess(args, 0, stdout=self.stdout, stderr="")
 
@@ -50,24 +50,24 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestRunJson:
-    def test_unparseable_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_unparseable_json_raises_transport_error(self, wire) -> None:
         wire("not json{")
         with pytest.raises(GhTransportError, match="unparseable JSON"):
             gh_project_view("acme", 7)
 
-    def test_non_object_json_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_non_object_json_raises_transport_error(self, wire) -> None:
         wire("[]")
         with pytest.raises(GhTransportError, match="response is malformed"):
             gh_project_view("acme", 7)
 
-    def test_item_add_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_item_add_missing_id_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"foo": 1}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_item_add("acme", 7, "https://x/1")
 
 
 class TestIssueViewValidation:
-    def test_missing_required_field_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_missing_required_field_raises_transport_error(self, wire) -> None:
         recorder = wire(
             json.dumps(
                 {
@@ -94,29 +94,29 @@ class TestIssueViewValidation:
 
 
 class TestProjectViewValidation:
-    def test_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_missing_id_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"title": "RM"}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_project_view("acme", 7)
 
-    def test_empty_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_empty_id_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"id": "", "title": "RM"}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_project_view("acme", 7)
 
-    def test_missing_title_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_missing_title_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"id": "PVT_1"}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*title"):
             gh_project_view("acme", 7)
 
 
 class TestFieldListValidation:
-    def test_field_missing_id_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_field_missing_id_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"fields": [{"name": "Milknado Status"}]}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*id"):
             gh_field_list("acme", 7)
 
-    def test_field_missing_name_raises_transport_error(self, wire) -> None:  # noqa: ANN001
+    def test_field_missing_name_raises_transport_error(self, wire) -> None:
         wire(json.dumps({"fields": [{"id": "F_1"}]}))
         with pytest.raises(GhTransportError, match=r"(?s)response is malformed.*name"):
             gh_field_list("acme", 7)

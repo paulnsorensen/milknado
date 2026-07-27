@@ -30,7 +30,7 @@ from milknado.mcp.todo_mutate import (
 runner = CliRunner()
 
 
-def _call(tool, **kwargs):  # noqa: ANN001, ANN202
+def _call(tool, **kwargs):
     """Invoke a FastMCP tool through its underlying Python callable."""
     return getattr(tool, "fn", tool)(**kwargs)
 

@@ -527,15 +527,15 @@ class _DispatchRalph:
         output_path,
         prior_findings="",
         findings_round=None,
-    ):  # noqa: ANN001, ANN201
+    ):
         output_path.write_text("# ralph\n")
         return output_path
 
-    def create_run(self, **_kw):  # noqa: ANN003, ANN201
+    def create_run(self, **_kw):
         resolved_run_id = _kw.get("run_id") or "run-1"
 
         class _Run:
-            class state:  # noqa: N801
+            class state:
                 run_id = resolved_run_id
 
         return _Run()
@@ -562,7 +562,7 @@ class _RecordingGit:
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         return self._committed
 
-    def rebase(self, worktree: Path, onto: str):  # noqa: ANN201
+    def rebase(self, worktree: Path, onto: str):
         from milknado.domains.common.types import RebaseResult
 
         return RebaseResult(success=True)
@@ -588,5 +588,5 @@ class _NoRalph:
 
 
 class _NoCrg:
-    def __getattr__(self, _name: str):  # noqa: ANN202
+    def __getattr__(self, _name: str):
         raise AssertionError("crg must not be used during complete()")

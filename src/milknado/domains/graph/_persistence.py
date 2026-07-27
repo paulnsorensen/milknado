@@ -73,7 +73,7 @@ _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))  # noqa: S608
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -92,7 +92,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             add_column = _ADD_COLUMN_RE.match(sql.strip())
             if add_column is None or not _has_column(conn, *add_column.groups()):
                 conn.execute(sql)
-            conn.execute(f"PRAGMA user_version = {version}")  # noqa: S608
+            conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -335,7 +335,7 @@ def get_file_ownership_map(
             return {}
         placeholders = ",".join("?" for _ in ids)
         rows = conn.execute(
-            f"SELECT node_id, file_path FROM file_ownership "  # noqa: S608
+            f"SELECT node_id, file_path FROM file_ownership "
             f"WHERE node_id IN ({placeholders}) ORDER BY node_id, file_path",
             ids,
         ).fetchall()
@@ -383,8 +383,7 @@ def check_parallel_safety(
         return []
     placeholders = ",".join("?" for _ in node_ids)
     rows = conn.execute(
-        f"SELECT node_id, file_path FROM file_ownership "  # noqa: S608
-        f"WHERE node_id IN ({placeholders})",
+        f"SELECT node_id, file_path FROM file_ownership WHERE node_id IN ({placeholders})",
         node_ids,
     ).fetchall()
     ownership = {node_id: set() for node_id in node_ids}

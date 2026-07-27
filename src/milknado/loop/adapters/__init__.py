@@ -52,7 +52,7 @@ def _register_builtin_adapters() -> None:
     module (executed once at first package import) so cyclic-import risk
     is contained.
     """
-    from milknado.loop.adapters import (  # noqa: F401
+    from milknado.loop.adapters import (
         claude,
         codex,
         copilot,

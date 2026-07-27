@@ -5,7 +5,11 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter  # noqa: F401
+from milknado.adapters import (  # noqa: F401  # TmuxAdapter is a monkeypatch seam for tests
+    GitAdapter,
+    ProcessAdapter,
+    TmuxAdapter,
+)
 from milknado.app.run import (
     InlineRunRequest,
     run_inline,

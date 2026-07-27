@@ -68,7 +68,7 @@ class _FakeRalph:
         self._timeout = timeout
         self.stopped: list[str] = []
 
-    def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
+    def wait_for_next_completion(self, active_run_ids, timeout=None):
         if self._timeout:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
         return next(iter(active_run_ids)), self._outcome
@@ -90,7 +90,7 @@ class _ProgressThenTerminalRalph(_FakeRalph):
         self.waits = 0
         self.timeouts: list[float | None] = []
 
-    def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
+    def wait_for_next_completion(self, active_run_ids, timeout=None):
         self.timeouts.append(timeout)
         self.waits += 1
         return next(iter(active_run_ids)), next(self._outcomes)

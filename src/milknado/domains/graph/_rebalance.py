@@ -84,7 +84,7 @@ def _sweep_archivable(conn: sqlite3.Connection) -> list[int]:
         placeholders = ",".join("?" for _ in ids)
         conn.execute(
             f"UPDATE nodes SET archived_at = ? WHERE id IN ({placeholders}) "
-            "AND archived_at IS NULL",  # noqa: S608
+            "AND archived_at IS NULL",
             [stamp, *ids],
         )
     return roots

@@ -42,9 +42,9 @@ class SyncDispatchRequest:
 
 
 def _setup_sync_worktree(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
-    node,  # noqa: ANN001
+    node,
     run_id: str,
     request: SyncDispatchRequest,
 ) -> tuple[Path, IsolateContext | None]:
@@ -62,10 +62,10 @@ def _setup_sync_worktree(
 
 
 def _finish_dispatch(
-    graph,  # noqa: ANN001
+    graph,
     node_id: int,
     run_id: str,
-    result,  # noqa: ANN001
+    result,
     terminal: str,
     merge: MergeBackResult | None,
 ) -> None:
@@ -95,7 +95,7 @@ def _finish_dispatch(
 
 
 def dispatch_node_sync(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     request: SyncDispatchRequest,
 ) -> dict:
@@ -201,7 +201,7 @@ def _maybe_merge_back(
     return result
 
 
-def reclaim_stale_node(graph, node_id: int, fence_run_id: str | None) -> None:  # noqa: ANN001
+def reclaim_stale_node(graph, node_id: int, fence_run_id: str | None) -> None:
     """Reconcile an orphaned RUNNING node before a new async dispatch.
 
     A prior worker may have finished without anyone polling, leaving the node

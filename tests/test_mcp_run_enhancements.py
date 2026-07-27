@@ -457,7 +457,7 @@ class TestSyncRunOrphanRescue:
             stdin,
             env,
             timeout,
-            **kwargs,  # noqa: ANN001, ARG001
+            **kwargs,
         ):
             envs.append(env)
             log_path.write_text("", encoding="utf-8")
@@ -500,7 +500,7 @@ class TestDispatchLifecycleGuards:
         from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
 
         class Graph:
-            def get_node(self, node_id: int) -> object | None:  # noqa: ARG002
+            def get_node(self, node_id: int) -> object | None:
                 return node
 
         request = SyncDispatchRequest(
@@ -528,20 +528,20 @@ class TestDispatchLifecycleGuards:
             def __init__(self) -> None:
                 self.reads = 0
 
-            def get_node(self, node_id: int) -> object | None:  # noqa: ARG002
+            def get_node(self, node_id: int) -> object | None:
                 self.reads += 1
                 return node if self.reads == 1 else None
 
-            def claim_node_for_dispatch(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def claim_node_for_dispatch(self, *args, **kwargs) -> None:
                 pass
 
-            def start_run(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def start_run(self, *args, **kwargs) -> None:
                 pass
 
-            def finish_run(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def finish_run(self, *args, **kwargs) -> None:
                 pass
 
-            def mark_terminal(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def mark_terminal(self, *args, **kwargs) -> None:
                 pass
 
         monkeypatch.setattr(lifecycle, "render_brief", lambda *args, **kwargs: "")
@@ -574,7 +574,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
     from milknado.domains.dispatch import fail_stale_running_runs
 
     class Graph:
-        def runs_for_node(self, node_id: int) -> list[dict]:  # noqa: ARG002
+        def runs_for_node(self, node_id: int) -> list[dict]:
             return [
                 {
                     "run_id": "node-4-20260101T000000Z-bad1",
@@ -1268,7 +1268,7 @@ class TestCancelFinalizeAndRace:
         from milknado.domains.dispatch.cancel import _cancel_pid_run
 
         class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002
+            def terminate_group(self, pid: int, timeout: float) -> bool:
                 return False
 
         with pytest.raises(RuntimeError, match="did not exit after termination"):
@@ -1284,14 +1284,14 @@ class TestCancelFinalizeAndRace:
         from milknado.domains.dispatch.cancel import _cancel_pid_run
 
         class Graph:
-            def finish_run(self, run_id, result):  # noqa: ANN001
+            def finish_run(self, run_id, result):
                 return False
 
-            def get_run(self, run_id):  # noqa: ANN001
+            def get_run(self, run_id):
                 return None
 
         class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002
+            def terminate_group(self, pid: int, timeout: float) -> bool:
                 return True
 
         run_id = "node-3-20260101T000000Z-gone"
@@ -1310,7 +1310,7 @@ class TestCancelFinalizeAndRace:
         from milknado.domains.dispatch import cancel as cancel_module
 
         class Graph:
-            def get_run(self, run_id: str) -> dict:  # noqa: ARG002
+            def get_run(self, run_id: str) -> dict:
                 return {"status": "running"}
 
         monkeypatch.setattr(cancel_module, "_await_cancel_finalize", lambda graph, run_id: None)

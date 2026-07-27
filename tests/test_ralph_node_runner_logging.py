@@ -42,20 +42,20 @@ def test_main_logs_terminal_event_with_run_id(
             self.finish_result = True
             self.finished: dict | None = None
 
-        def get_node(self, node_id: int) -> None:  # noqa: ARG002
+        def get_node(self, node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result) -> bool:  # noqa: ANN001
+        def finish_run(self, run_id: str, result) -> bool:
             self.finished = {"run_id": run_id, "result": result}
             return self.finish_result
 
-        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_run_pid(self, *_args) -> None:
             pass
 
-        def set_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_pid(self, *_args) -> None:
             pass
 
-        def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
+        def deposit_run_message(self, *a, **k) -> int:
             return 1
 
         def close(self) -> None:

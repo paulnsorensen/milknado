@@ -76,7 +76,7 @@ def create_isolated_worktree(
 
 
 @contextmanager
-def _merge_back_lock(root: Path):  # noqa: ANN202
+def _merge_back_lock(root: Path):
     """Serialize merge-backs across processes on a repo-scoped ``flock``.
 
     Both the sync (``_maybe_merge_back``) and async (``_async_merge_back``) paths
@@ -93,10 +93,10 @@ def _merge_back_lock(root: Path):  # noqa: ANN202
 
 
 def setup_isolated_worktree(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     root: Path,
-    node,  # noqa: ANN001
+    node,
     run_id: str,
     worktree_pattern: str,
 ) -> IsolateContext:

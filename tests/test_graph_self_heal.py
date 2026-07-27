@@ -14,7 +14,7 @@ from milknado.domains.graph import MikadoGraph, _persistence
 _GRAPH_LOG = "milknado.domains.graph.graph"
 
 
-def test_closed_connection_reopens_on_next_access(tmp_path: Path, caplog) -> None:  # noqa: ANN001
+def test_closed_connection_reopens_on_next_access(tmp_path: Path, caplog) -> None:
     """The #297 repro: graph.close() then execution reads its snapshot must heal."""
     graph = MikadoGraph(tmp_path / "g.db")
     graph.add_node("alpha")
@@ -37,7 +37,7 @@ def test_closed_connection_reopens_on_next_access(tmp_path: Path, caplog) -> Non
     graph.close()
 
 
-def test_connection_killed_under_live_graph_heals(tmp_path: Path, caplog) -> None:  # noqa: ANN001
+def test_connection_killed_under_live_graph_heals(tmp_path: Path, caplog) -> None:
     """The 03:47 lifetime-bug shape: the conn dies without close() being called."""
     graph = MikadoGraph(tmp_path / "g.db")
     graph.add_node("beta")
@@ -66,7 +66,7 @@ def test_inflight_statement_at_close_time_fails_loud(tmp_path: Path) -> None:
     graph.close()
 
 
-def test_corrupt_db_quarantined_and_recreated(tmp_path: Path, caplog) -> None:  # noqa: ANN001
+def test_corrupt_db_quarantined_and_recreated(tmp_path: Path, caplog) -> None:
     db = tmp_path / "g.db"
     db.write_bytes(b"garbage-not-sqlite" * 64)
     wal = Path(f"{db}-wal")

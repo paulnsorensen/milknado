@@ -450,7 +450,7 @@ def test_load_config_rejects_unknown_family(tmp_path: Path) -> None:
     )
     try:
         load_config(cfg_path)
-        assert False, "Expected ValueError for invalid agent_family"
+        pytest.fail("Expected ValueError for invalid agent_family")
     except ValueError as exc:
         assert "Invalid agent_family" in str(exc)
 
@@ -516,7 +516,7 @@ def test_resolve_execution_agent_unknown_family_raises() -> None:
     # one must fail loudly rather than silently emit a broken CLI string.
     try:
         resolve_execution_agent_command("powershell", tools=["Read"])
-        assert False, "Expected KeyError for unknown execution family"
+        pytest.fail("Expected KeyError for unknown execution family")
     except KeyError as exc:
         assert "powershell" in str(exc)
 

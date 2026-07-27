@@ -79,7 +79,7 @@ def test_cancel_marks_ralph_run_row_cancelled(graph: Any, tmp_path: Path) -> Non
     graph.set_pid(1, result.run_id, 424242)
 
     class _Process:
-        def terminate_group(self, pid: int, timeout: float) -> bool:  # noqa: ARG002
+        def terminate_group(self, pid: int, timeout: float) -> bool:
             return True
 
     final = cancel_run(

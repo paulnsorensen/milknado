@@ -204,7 +204,7 @@ def claim_or_reclaim_goal(
         raise
 
 
-def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:  # noqa: ARG001
+def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:
     """Free a claim only when its non-null PID is provably dead."""
     conn.execute("BEGIN IMMEDIATE")
     try:

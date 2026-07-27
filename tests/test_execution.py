@@ -1990,7 +1990,7 @@ def test_default_fake_ralph_id_prefixes_are_unique() -> None:
 def test_finalize_worker_run_swallows_finish_run_failure(
     graph: MikadoGraph,
     monkeypatch: pytest.MonkeyPatch,
-    caplog,  # noqa: ANN001
+    caplog,
 ) -> None:
     """A failed finalize must not kill node completion: the finish_run raise
     is swallowed and logged loud, like the dispatch insert."""
@@ -2020,7 +2020,7 @@ def test_watcher_retries_after_force_stop_raise(
     config: ExecutionConfig,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog,  # noqa: ANN001
+    caplog,
 ) -> None:
     """force_stop_run raising must be retried with backoff: the failure is
     logged, the row stays running (fail-closed), and once the raise clears

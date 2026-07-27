@@ -414,7 +414,7 @@ class ExecutionApp(App[RunLoopResult | None]):
         self.auto_follow = False
         self._refresh_view()
 
-    def on_key(self, event) -> None:  # noqa: ANN001
+    def on_key(self, event) -> None:
         if self._confirmation is None:
             if event.key in {"home", "end", "pageup", "pagedown"}:
                 self._pause_auto_follow()
