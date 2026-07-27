@@ -13,6 +13,7 @@ from typing import Any, Final
 PLANNING_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": ("Read", "Glob", "Grep"),
     "gemini": ("read_file", "glob", "search_file_content"),
+    "omp": ("read", "grep", "glob", "lsp"),
 }
 
 DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
@@ -20,6 +21,7 @@ DEFAULT_PLANNING_AGENT_BY_FAMILY: Final[dict[str, str]] = {
     "cursor": "cursor-agent --model opus -p",
     "gemini": "gemini --model gemini-3.1-pro-preview -p",
     "codex": "codex exec --model gpt-5.4 --sandbox read-only",
+    "omp": "omp -p",
 }
 
 # Per-family tool allowlists for deny-by-default execution workers. Families
@@ -192,6 +194,33 @@ def _replace_option(parts: list[str], option: str, value: str) -> None:
     parts.extend([option, value])
 
 
+def _allowlist_omp_planning_options(parts: list[str]) -> list[str]:
+    """Keep only the omp flags planning explicitly permits; drop every other token.
+
+    Allowlist, not denylist: an unrecognized flag (including one a repo-local
+    milknado.toml tries to add, e.g. --add-dir or --cwd) is dropped rather than
+    passed through, so planning cannot widen its own read-only sandbox.
+    """
+    value_options = {"--model", "--thinking", "--smol", "--slow", "--plan", "--max-time"}
+    kept = [parts[0]]
+    index = 1
+    while index < len(parts):
+        option = parts[index]
+        name = option.partition("=")[0]
+        if name in value_options:
+            if "=" in option:
+                kept.append(option)
+                index += 1
+            elif index + 1 < len(parts):
+                kept.extend(parts[index : index + 2])
+                index += 2
+            else:
+                index += 1
+        else:
+            index += 1
+    return kept
+
+
 def _sandbox_planning_argv(parts: list[str]) -> list[str]:
     executable = parts[0] if parts else ""
     # Bare non-allowlisted tokens get a planning-specific message before the
@@ -206,12 +235,14 @@ def _sandbox_planning_argv(parts: list[str]) -> list[str]:
         raise ValueError(f"unsupported planning agent executable: {executable!r}")
     validate_worker_argv(parts)
     unsafe_flags = {
+        "--auto-approve",
         "--dangerously-skip-permissions",
         "--dangerously-bypass-approvals-and-sandbox",
         "--full-auto",
         "--yolo",
     }
-    parts = [part for part in parts if part not in unsafe_flags]
+    if executable != "omp":
+        parts = [part for part in parts if part not in unsafe_flags]
     if executable == "claude":
         _replace_option(parts, "--permission-mode", "plan")
         _replace_option(parts, "--allowedTools", ",".join(PLANNING_ALLOWED_TOOLS["claude"]))
@@ -219,8 +250,24 @@ def _sandbox_planning_argv(parts: list[str]) -> list[str]:
         _replace_option(parts, "--allowed-tools", ",".join(PLANNING_ALLOWED_TOOLS["gemini"]))
     elif executable == "codex":
         _replace_option(parts, "--sandbox", "read-only")
+    elif executable == "omp":
+        parts = _allowlist_omp_planning_options(parts)
+        parts.extend(
+            (
+                "-p",
+                "--no-session",
+                "--no-pty",
+                "--no-extensions",
+                "--no-skills",
+                "--no-rules",
+                "--mode",
+                "text",
+                "--tools",
+                ",".join(PLANNING_ALLOWED_TOOLS["omp"]),
+            )
+        )
     else:
-        raise ValueError("cursor-agent cannot enforce read-only planning capabilities")
+        raise ValueError(f"{executable} cannot enforce read-only planning capabilities")
     return parts
 
 
@@ -241,18 +288,21 @@ def build_planning_subprocess(
     mcp_config = project_root / ".mcp.json" if project_root else None
     if allow_external_mcp and mcp_config and mcp_config.exists():
         parts.extend(["--mcp-config", str(mcp_config)])
-    parts.append("-")
+    if parts[0] != "omp":
+        parts.append("-")
     extra: dict[str, Any] = {
-        "env": build_minimal_mcp_env(),
+        "env": build_minimal_mcp_env(executable=parts[0]),
         "input": body,
         "text": True,
     }
     return parts, extra
 
 
-def build_minimal_mcp_env() -> dict[str, str]:
-    """Return only process essentials; never forward coordinator credentials."""
-    allowed = ("HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR")
+def build_minimal_mcp_env(*, executable: str | None = None) -> dict[str, str]:
+    """Return process essentials plus the OMP OpenRouter credential when needed."""
+    allowed = ["HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR"]
+    if executable == "omp":
+        allowed.append("OPENROUTER_API_KEY")
     return {key: os.environ[key] for key in allowed if key in os.environ}
 
 
@@ -276,15 +326,18 @@ def capture_session_id(family: str, first_turn_json: str) -> str:
             f"{family}: could not parse first-turn JSON output for session id"
         ) from exc
     candidates: list[Any] = []
+    keys = ("session_id", "sessionId") if family == "omp" else ("session_id",)
     if isinstance(payload, dict):
-        candidates.append(payload.get("session_id"))
+        candidates.extend(payload.get(key) for key in keys)
         if family == "codex":
             for key in ("msg", "event", "data"):
                 nested = payload.get(key)
                 if isinstance(nested, dict):
                     candidates.append(nested.get("session_id"))
     elif isinstance(payload, list):
-        candidates.extend(item.get("session_id") for item in payload if isinstance(item, dict))
+        candidates.extend(
+            item.get(key) for item in payload if isinstance(item, dict) for key in keys
+        )
     session_id = next(
         (value for value in candidates if isinstance(value, str) and value.strip()),
         None,
@@ -299,7 +352,7 @@ def build_resume_command(command: str, family: str, session_id: str) -> str:
     argv = shlex.split(command)
     if not argv:
         raise ValueError("agent command must not be empty")
-    if family in {"claude", "gemini"}:
+    if family in {"claude", "gemini", "omp"}:
         argv.extend(["--resume", session_id])
     elif family == "codex":
         try:

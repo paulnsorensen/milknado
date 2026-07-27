@@ -165,3 +165,57 @@ def test_run_headless_delivers_omp_brief_as_positional_argument(
     log_text = result.log_path.read_text(encoding="utf-8")
     assert f"argv=<-p --auto-approve --no-session {brief_marker}>" in log_text
     assert "stdin=<>" in log_text
+
+
+def test_run_headless_forwards_openrouter_key_to_omp_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An omp worker authenticates via OPENROUTER_API_KEY, so it must reach the
+    omp subprocess even though build_worker_env filters secrets by default."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "omp"
+    stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")
+
+    result = run_headless(
+        tmp_path,
+        node_id=1,
+        brief="hi",
+        timeout_seconds=10,
+        default_cmd="omp -p --auto-approve --no-session",
+        process=ProcessAdapter(),
+    )
+
+    assert result.exit_code == 0
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY=or-key-CANARY-12345" in log_text
+
+
+def test_run_headless_does_not_forward_openrouter_key_to_non_omp_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-omp worker (e.g. claude) has no use for OPENROUTER_API_KEY, so the
+    default secret-filtering behavior of build_worker_env must still apply."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "claude"
+    stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")
+
+    result = run_headless(
+        tmp_path,
+        node_id=1,
+        brief="hi",
+        timeout_seconds=10,
+        default_cmd="claude -p",
+        process=ProcessAdapter(),
+    )
+
+    assert result.exit_code == 0
+    log_text = result.log_path.read_text(encoding="utf-8")
+    assert "OPENROUTER_API_KEY" not in log_text

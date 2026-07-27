@@ -158,7 +158,8 @@ def _run_in_tmux_window(
                 "MILKNADO_NODE_ID": str(request.node_id),
                 "MILKNADO_RUN_ID": run_id,
                 "MILKNADO_PROJECT_ROOT": str(request.project_root.resolve()),
-            }
+            },
+            executable=argv[0],
         ),
         brief_path=staged_brief,
     )
