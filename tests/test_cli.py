@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import msgspec
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -1832,7 +1833,7 @@ def test_write_worker_hooks_skips_when_rtk_missing(tmp_path: Path) -> None:
 
 
 def test_write_worker_hooks_dispatches_to_gemini(tmp_path: Path) -> None:
-    config = default_config(tmp_path).model_copy(update={"agent_family": "gemini"})
+    config = msgspec.structs.replace(default_config(tmp_path), agent_family="gemini")
     with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
@@ -1840,7 +1841,7 @@ def test_write_worker_hooks_dispatches_to_gemini(tmp_path: Path) -> None:
 
 
 def test_write_worker_hooks_dispatches_to_cursor(tmp_path: Path) -> None:
-    config = default_config(tmp_path).model_copy(update={"agent_family": "cursor"})
+    config = msgspec.structs.replace(default_config(tmp_path), agent_family="cursor")
     with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     hooks = json.loads((tmp_path / "hooks" / "hooks.json").read_text(encoding="utf-8"))
@@ -1893,7 +1894,7 @@ class TestPrintRunResult:
 def test_write_worker_hooks_unknown_family_skips(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    config = default_config(tmp_path).model_copy(update={"agent_family": "acme"})
+    config = msgspec.structs.replace(default_config(tmp_path), agent_family="acme")
     with patch("milknado.cli.tools.shutil.which", return_value="/usr/bin/rtk"):
         _write_worker_hooks(tmp_path, config)
     assert "No hook template for family 'acme'" in capsys.readouterr().out

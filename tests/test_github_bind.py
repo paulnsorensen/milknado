@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
@@ -70,8 +71,12 @@ class FakeGh:
         *,
         fail_item_add_once: bool = False,
     ) -> None:
-        self.fields = [GithubField.model_validate(field) for field in fields or []]
-        self.existing_items = [GithubItem.model_validate(item) for item in existing_items or []]
+        self.fields = [
+            msgspec.convert(field, type=GithubField, strict=True) for field in fields or []
+        ]
+        self.existing_items = [
+            msgspec.convert(item, type=GithubItem, strict=True) for item in existing_items or []
+        ]
         self.fail_item_add_once = fail_item_add_once
         self.issues: list[tuple[str, str, str, str]] = []
         self.items: list[str] = []

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import msgspec
 import pytest
-from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -77,7 +77,7 @@ def test_flavor_inherit_false_replaces_global_table(xdg: Path, tmp_path: Path) -
 def test_invalid_inherit_controls_fail_at_config_boundary(
     tmp_path: Path, body: str, match: str
 ) -> None:
-    with pytest.raises(ValidationError, match=match):
+    with pytest.raises(msgspec.ValidationError, match=match):
         load_config(_write(tmp_path / "milknado.toml", body))
 
 
@@ -90,7 +90,7 @@ def test_resolved_flavor_output_is_the_runtime_profile(xdg: Path, tmp_path: Path
         ),
     )
     details = load_config_details(local)
-    expected = resolve_flavor_profile(details.config, "research").model_dump(mode="python")
+    expected = msgspec.to_builtins(resolve_flavor_profile(details.config, "research"))
 
     assert resolved_view(details, "research") == expected
     result = runner.invoke(

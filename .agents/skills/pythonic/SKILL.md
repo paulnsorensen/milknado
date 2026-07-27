@@ -1,6 +1,6 @@
 ---
 name: pythonic
-description: Write, edit, refactor, or review Python with concise declarative contracts, idiomatic control flow, Sliced Bread boundaries, and the Python de-slop rules. Use for Python implementation work in this repository, especially when the user asks for Pythonic, succinct, LLM-optimized, de-slopped, Pydantic, dataclass, pattern-matching, or vertical-slice code.
+description: Write, edit, refactor, or review Python with concise declarative contracts, idiomatic control flow, Sliced Bread boundaries, and the Python de-slop rules. Use for Python implementation work in this repository, especially when the user asks for Pythonic, succinct, LLM-optimized, de-slopped, msgspec, dataclass, pattern-matching, or vertical-slice code.
 ---
 
 # Pythonic
@@ -19,8 +19,9 @@ Produce the smallest readable Python change that satisfies the request and match
 
 ## Model data declaratively
 
-- Use Pydantic `BaseModel` and `Field` for untrusted external input, serialized I/O, API payloads, configuration boundaries, and LLM tool schemas.
-- Put coercion and validation in the Pydantic schema instead of hand-written boundary checks.
+- Use frozen `msgspec.Struct` models for untrusted external input, serialized I/O, API payloads, configuration boundaries, and LLM tool schemas.
+- Validate every untrusted value with a typed decoder or `msgspec.convert(..., type=..., strict=True)`; direct Struct construction is only for trusted internal values.
+- Keep input normalization narrow and explicit before typed conversion when the wire grammar supports shorthand.
 - Use dataclasses for trusted internal records that need named fields but not boundary parsing.
 - Use domain value types when invariants belong to the business concept rather than transport validation.
 - Fully annotate function and public-method signatures. Omit obvious local annotations unless inference cannot determine the intended type.
@@ -64,7 +65,7 @@ Organize by business capability, not technical layer:
 
 Confirm:
 
-- Boundary data is validated once by Pydantic.
+- Boundary data is validated once by typed msgspec decode or strict conversion; direct Struct construction never validates untrusted annotations.
 - Internal records use dataclasses or domain types where useful.
 - Slice imports cross only public crusts and point toward domains.
 - Control flow is succinct without being clever.

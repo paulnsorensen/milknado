@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 from milknado.domains.common.config import LoadedConfig
 from milknado.domains.common.config_layers import origin_for
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
@@ -13,7 +15,7 @@ from milknado.domains.common.flavor_profile import resolve_flavor_profile
 def resolved_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
     """Return the runtime configuration that dispatch code actually consumes."""
     value = resolve_flavor_profile(details.config, flavor) if flavor else details.config
-    return _json_value(value.model_dump(mode="python"))
+    return _json_value(msgspec.to_builtins(value, enc_hook=_encode_builtin))
 
 
 def explain_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
@@ -107,6 +109,12 @@ def _annotate(
     if flavor and source != "default":
         source = f"{source} (flavor:{flavor})"
     return {"value": value, "source": source}
+
+
+def _encode_builtin(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(f"Unsupported type: {type(value).__name__}")
 
 
 def _json_value(value: Any) -> Any:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError, field_validator
+import msgspec
 
 from milknado.domains.batching import (
     ChangeDependency,
@@ -36,14 +36,8 @@ class PlanChangeManifest:
     new_relationships: tuple[NewRelationship, ...]
 
 
-class _PlanningModel(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-
-def _require_list(value: object) -> object:
-    if not isinstance(value, list):
-        raise ValueError("must be a list")
-    return value
+class _PlanningModel(msgspec.Struct, frozen=True, kw_only=True):
+    pass
 
 
 def _validate_relative_path(value: str, *, field_name: str) -> str:
@@ -53,116 +47,82 @@ def _validate_relative_path(value: str, *, field_name: str) -> str:
     return value
 
 
-class _SymbolModel(_PlanningModel):
-    name: StrictStr
-    file: StrictStr
+class _SymbolModel(_PlanningModel, frozen=True, kw_only=True):
+    name: str
+    file: str
 
-    @field_validator("file")
-    @classmethod
-    def validate_file(cls, value: str) -> str:
-        return _validate_relative_path(value, field_name="symbol file")
+    def __post_init__(self) -> None:
+        _validate_relative_path(self.file, field_name="symbol file")
 
 
-class _HashAnchorsModel(_PlanningModel):
-    before: StrictStr
-    after: StrictStr
+class _HashAnchorsModel(_PlanningModel, frozen=True, kw_only=True):
+    before: str
+    after: str
 
-    @field_validator("before", "after")
-    @classmethod
-    def strip_non_empty(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+    def __post_init__(self) -> None:
+        before = self.before.strip()
+        after = self.after.strip()
+        if not before or not after:
             raise ValueError("hash anchor must be a non-empty string")
-        return value
+        object.__setattr__(self, "before", before)
+        object.__setattr__(self, "after", after)
 
 
-class _DependencyModel(_PlanningModel):
-    path: StrictStr
-    symbols: list[_SymbolModel] = Field(default_factory=list)
+class _DependencyModel(_PlanningModel, frozen=True, kw_only=True):
+    path: str
+    symbols: list[_SymbolModel] = msgspec.field(default_factory=list)
     hash_anchors: _HashAnchorsModel | None = None
-    reason: StrictStr = ""
+    reason: str = ""
 
-    @field_validator("symbols", mode="before")
-    @classmethod
-    def validate_symbols(cls, value: object) -> object:
-        return _require_list(value)
-
-    @field_validator("path")
-    @classmethod
-    def validate_path(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+    def __post_init__(self) -> None:
+        path = self.path.strip()
+        if not path:
             raise ValueError("dependency path must be a non-empty string")
-        return value
-
-    @field_validator("reason")
-    @classmethod
-    def strip_reason(cls, value: str) -> str:
-        return value.strip()
+        object.__setattr__(self, "path", path)
+        object.__setattr__(self, "reason", self.reason.strip())
 
 
-class _ChangeModel(_PlanningModel):
-    id: StrictStr
-    path: StrictStr
+class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
+    id: str
+    path: str
+    description: str
     edit_kind: EditKind = "modify"
-    symbols: list[_SymbolModel] = Field(default_factory=list)
+    symbols: list[_SymbolModel] = msgspec.field(default_factory=list)
     hash_anchors: _HashAnchorsModel | None = None
-    dependencies: list[_DependencyModel] = Field(default_factory=list)
-    depends_on: list[StrictStr] = Field(default_factory=list)
-    description: StrictStr
+    dependencies: list[_DependencyModel] = msgspec.field(default_factory=list)
+    depends_on: list[str] = msgspec.field(default_factory=list)
 
-    @field_validator("symbols", "dependencies", "depends_on", mode="before")
-    @classmethod
-    def validate_lists(cls, value: object) -> object:
-        return _require_list(value)
-
-    @field_validator("id")
-    @classmethod
-    def validate_id(cls, value: str) -> str:
-        if not value:
+    def __post_init__(self) -> None:
+        if not self.id:
             raise ValueError("change id must be a non-empty string")
-        return value
-
-    @field_validator("path")
-    @classmethod
-    def validate_path(cls, value: str) -> str:
-        return _validate_relative_path(value, field_name="change path")
-
-    @field_validator("description")
-    @classmethod
-    def strip_description(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+        _validate_relative_path(self.path, field_name="change path")
+        description = self.description.strip()
+        if not description:
             raise ValueError("description must be a non-empty string")
-        return value
+        object.__setattr__(self, "description", description)
 
 
-class _RelationshipModel(_PlanningModel):
-    source_change_id: StrictStr
-    dependant_change_id: StrictStr
+class _RelationshipModel(_PlanningModel, frozen=True, kw_only=True):
+    source_change_id: str
+    dependant_change_id: str
     reason: RelationshipReason
 
 
-class _ManifestModel(_PlanningModel):
-    manifest_version: StrictStr
-    goal: StrictStr
-    goal_summary: StrictStr
-    spec_path: StrictStr | None = None
+class _ManifestModel(_PlanningModel, frozen=True, kw_only=True):
+    manifest_version: str
+    goal: str
+    goal_summary: str
     changes: list[_ChangeModel]
-    new_relationships: list[_RelationshipModel] = Field(default_factory=list)
+    spec_path: str | None = None
+    new_relationships: list[_RelationshipModel] = msgspec.field(default_factory=list)
 
-    @field_validator("changes", "new_relationships", mode="before")
-    @classmethod
-    def validate_lists(cls, value: object) -> object:
-        return _require_list(value)
-
-    @field_validator("goal", "goal_summary")
-    @classmethod
-    def strip_non_empty(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
+    def __post_init__(self) -> None:
+        goal = self.goal.strip()
+        summary = self.goal_summary.strip()
+        if not goal or not summary:
             raise ValueError("manifest text must be a non-empty string")
-        return value
+        object.__setattr__(self, "goal", goal)
+        object.__setattr__(self, "goal_summary", summary)
 
 
 def _hash_anchors_to_dict(anchors: HashAnchors) -> dict[str, object]:
@@ -256,8 +216,8 @@ def _decode_manifest_or_none(raw: object) -> PlanChangeManifest | None:
         )
         return None
     try:
-        model = _ManifestModel.model_validate(raw_dict)
-    except ValidationError as exc:
+        model = msgspec.convert(raw_dict, type=_ManifestModel, strict=True)
+    except msgspec.ValidationError as exc:
         _logger.warning("manifest validation failed: %s", exc)
         return None
 

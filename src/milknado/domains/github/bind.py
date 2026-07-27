@@ -20,7 +20,11 @@ from milknado.domains.github._fields import (
     find_field,
 )
 from milknado.domains.github._intent import goal_file_map, goal_intent
-from milknado.domains.github.models import GithubBindingConfig, GithubItem
+from milknado.domains.github.models import (
+    GithubBindingConfig,
+    GithubItem,
+    decode_github_binding,
+)
 from milknado.domains.github.ports import GithubProjectPort
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki import load_frontmatter, locate_roadmap_dir, read_text
@@ -53,9 +57,8 @@ def bind_github_project(
         )
     github.preflight()
     roadmap_dir, _slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
-    config = GithubBindingConfig.model_validate(
-        load_frontmatter(read_text(wiki_root, roadmap_dir / "index.md"))
-    )
+    frontmatter = load_frontmatter(read_text(wiki_root, roadmap_dir / "index.md"))
+    config = decode_github_binding(frontmatter)
     owner, number = _resolve_project(owner, number, config)
     issue_owner, issue_repo = config.repo
     file_map = goal_file_map(wiki_root, roadmap.wiki_ref)

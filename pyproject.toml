@@ -18,8 +18,8 @@ dependencies = [
     "tiktoken>=0.13.0",
     "tomli-w>=1.0.0",
     "textual>=8.2.8",
-    "pydantic>=2.13.4",
     "typing-extensions>=4.14.1",
+    "msgspec>=0.21.1",
 ]
 
 [project.scripts]

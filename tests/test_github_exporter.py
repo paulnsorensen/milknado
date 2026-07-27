@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import msgspec
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
@@ -62,8 +63,10 @@ def _status_field(*, with_options: bool = True) -> GithubField:
         if with_options
         else []
     )
-    return GithubField.model_validate(
-        {"id": "F_status", "name": "Milknado Status", "options": options}
+    return msgspec.convert(
+        {"id": "F_status", "name": "Milknado Status", "options": options},
+        type=GithubField,
+        strict=True,
     )
 
 
@@ -73,7 +76,7 @@ HARVEST_FIELD = GithubField(id="F_harvest", name="Milknado Harvest")
 class FakeExport:
     def __init__(self, fields: list[GithubField], items: list[dict]) -> None:
         self.fields = fields
-        self.items = [GithubItem.model_validate(item) for item in items]
+        self.items = [msgspec.convert(item, type=GithubItem, strict=True) for item in items]
         self.item_edits: list[dict] = []
         self.body_edits: list[tuple[str, str]] = []
         self.project_id = "PVT_1"

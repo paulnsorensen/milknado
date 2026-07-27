@@ -15,9 +15,9 @@ import json
 import shutil
 import subprocess
 from collections.abc import Sequence
-from typing import TypeVar
+from typing import Annotated, TypeVar
 
-from pydantic import BaseModel, Field, ValidationError
+import msgspec
 
 from milknado.domains.github import (
     GithubField,
@@ -31,19 +31,19 @@ class GhTransportError(RuntimeError):
     """A `gh` invocation failed — raised loud with the command and its stderr."""
 
 
-class _IdResponse(BaseModel, frozen=True):
-    id: str = Field(min_length=1, strict=True)
+class _IdResponse(msgspec.Struct, frozen=True, kw_only=True):
+    id: Annotated[str, msgspec.Meta(min_length=1)]
 
 
-class _ItemListResponse(BaseModel, frozen=True):
-    items: list[GithubItem] = Field(default_factory=list)
+class _ItemListResponse(msgspec.Struct, frozen=True, kw_only=True):
+    items: list[GithubItem] = msgspec.field(default_factory=list)
 
 
-class _FieldListResponse(BaseModel, frozen=True):
-    fields: list[GithubField] = Field(default_factory=list)
+class _FieldListResponse(msgspec.Struct, frozen=True, kw_only=True):
+    fields: list[GithubField] = msgspec.field(default_factory=list)
 
 
-ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
+ResponseModel = TypeVar("ResponseModel")
 
 
 def _gh_bin() -> str:
@@ -83,8 +83,8 @@ def _run_json(args: list[str]) -> object:
 def _run_model(args: list[str], model: type[ResponseModel]) -> ResponseModel:
     data = _run_json(args)
     try:
-        return model.model_validate(data)
-    except ValidationError as exc:
+        return msgspec.convert(data, type=model, strict=True)
+    except msgspec.ValidationError as exc:
         command = " ".join(args[:2])
         raise GhTransportError(f"`gh {command}` response is malformed: {exc}") from exc
 
