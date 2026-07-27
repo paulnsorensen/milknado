@@ -63,6 +63,9 @@ class _ReviewRalph:
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return True
 
+    def get_run(self, run_id: str) -> None:
+        return None
+
     def get_run_stdout(self, run_id: str) -> list[str]:
         self.stdout_requests.append(run_id)
         return ['{"session_id":"session-1"}']

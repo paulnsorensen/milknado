@@ -2,18 +2,13 @@ from __future__ import annotations
 
 import functools
 import hashlib
-import logging
 import math
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import tiktoken
 
 from milknado.domains.batching.change import FileChange
-
-if TYPE_CHECKING:
-    from milknado.domains.common import TilthPort
 
 TOKENS_PER_LINE: dict[str, int] = {
     "py": 10,
@@ -62,8 +57,6 @@ HEADROOM: float = 1.25
 TIKTOKEN_BLOB_URL = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
 TIKTOKEN_CACHE_KEY = hashlib.sha1(TIKTOKEN_BLOB_URL.encode(), usedforsecurity=False).hexdigest()
 
-_logger = logging.getLogger(__name__)
-
 
 def _configure_tiktoken_cache() -> None:
     cache_dir = Path(__file__).resolve().parents[2] / "_vendor" / "tiktoken-cache"
@@ -104,24 +97,6 @@ def batch_size_cost(k: int) -> int:
     return RALPH_STARTUP_TOKENS if k > 0 else 0
 
 
-def _estimate_via_symbols(
-    change: FileChange,
-    tilth_port: TilthPort,
-) -> int:
-    seen: dict[tuple[str, str], str] = {}
-    for sym in change.symbols:
-        key = (sym.name, sym.file)
-        if key in seen:
-            continue
-        locs = tilth_port.search_symbol(sym.name, glob=sym.file)
-        if not locs:
-            raise ValueError(f"symbol not found: {sym.name!r} in {sym.file!r}")
-        loc = locs[0]
-        seen[key] = tilth_port.read_section(loc.path, loc.line_start, loc.line_end)
-    combined = "\n".join(seen.values())
-    return math.ceil(len(_get_encoder().encode(combined)) * HEADROOM)
-
-
 def _estimate_path_level(change: FileChange, root: Path) -> int:
     ext = _extension(change.path)
     resolved_root = root.resolve()
@@ -135,48 +110,12 @@ def _estimate_path_level(change: FileChange, root: Path) -> int:
     return math.ceil(lines * tpl * HEADROOM)
 
 
-def _log_degradation(root: Path, change: FileChange, reason: str) -> None:
-    _logger.warning(
-        "planning token estimate degraded to path-level analysis",
-        extra={
-            "project_root": str(root),
-            "change_id": change.id,
-            "change_path": change.path,
-            "reason": reason,
-        },
-    )
-
-
-def estimate_tokens_per_symbols(
-    change: FileChange,
-    root: Path,
-    tilth_port: TilthPort | None,
-) -> int:
-    """Estimate token cost for a single change using the best available method.
-
-    Fallback ladder:
-    1. Per-symbol tiktoken: for modify changes with symbols and a live TilthPort,
-       resolves each SymbolRef via search_symbol + read_section and encodes the
-       concatenated slices.  Proportional to symbols touched, not whole-file size.
-    2. Whole-file tiktoken: when tilth_port is None, symbols are absent, or any
-       resolution step raises. Degradations are emitted through structured logging.
-    3. Line-heuristic: NEW_FILE_LINES x TOKENS_PER_LINE x HEADROOM when the file
-       doesn't exist on disk (add) or for flat-cost kinds (delete/rename).
-    """
+def estimate_tokens(change: FileChange, root: Path) -> int:
     if change.edit_kind in FLAT_COST:
         return FLAT_COST[change.edit_kind]
+    if change.edit_kind == "modify":
+        return _estimate_path_level(change, root)
     ext = _extension(change.path)
-    if change.edit_kind != "modify":
-        lines = NEW_FILE_LINES.get(ext, 150)
-        tpl = TOKENS_PER_LINE.get(ext, 8)
-        return math.ceil(lines * tpl * HEADROOM)
-    if tilth_port is not None and change.symbols:
-        try:
-            return _estimate_via_symbols(change, tilth_port)
-        except Exception as exc:
-            _log_degradation(root, change, str(exc))
-    return _estimate_path_level(change, root)
-
-
-def estimate_tokens(change: FileChange, root: Path) -> int:
-    return estimate_tokens_per_symbols(change, root, None)
+    lines = NEW_FILE_LINES.get(ext, 150)
+    tpl = TOKENS_PER_LINE.get(ext, 8)
+    return math.ceil(lines * tpl * HEADROOM)

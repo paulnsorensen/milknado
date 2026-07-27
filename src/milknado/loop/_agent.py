@@ -975,6 +975,15 @@ def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
         os.killpg(proc.pid, signal.SIGTERM)
     except (OSError, ProcessLookupError):
         return
+
+    deadline = time.monotonic() + _SIGTERM_GRACE_PERIOD
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            os.killpg(proc.pid, 0)
+        except (OSError, ProcessLookupError):
+            return
+        time.sleep(min(remaining, 0.1))
+
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except (OSError, ProcessLookupError):

@@ -1239,25 +1239,25 @@ class TestToolsCheck:
         from milknado.domains.common.toolchain import ToolStatus
 
         mock_status.return_value = [
-            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
             ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
+            ToolStatus(name="rtk", installed=True, path="/usr/bin/rtk"),
         ]
         result = runner.invoke(app, ["tools", "check"])
         assert result.exit_code == 0
-        assert "tilth" in result.output
         assert "mergiraf" in result.output
+        assert "rtk" in result.output
 
     @patch("milknado.cli.tools.get_required_tool_status")
     def test_missing_tool_exits_nonzero(self, mock_status: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
         mock_status.return_value = [
-            ToolStatus(name="tilth", installed=False, path=None),
-            ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
+            ToolStatus(name="mergiraf", installed=False, path=None),
+            ToolStatus(name="rtk", installed=True, path="/usr/bin/rtk"),
         ]
         result = runner.invoke(app, ["tools", "check"])
         assert result.exit_code != 0
-        assert "tilth" in result.output
+        assert "mergiraf" in result.output
 
 
 class TestToolsInstall:
@@ -1266,13 +1266,13 @@ class TestToolsInstall:
     def test_success_exits_zero(self, mock_status: MagicMock, mock_install: MagicMock) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
-        mock_install.return_value = (["tilth"], [])
+        mock_install.return_value = (["mergiraf"], [])
         mock_status.return_value = [
-            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
+            ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
         ]
         result = runner.invoke(app, ["tools", "install"])
         assert result.exit_code == 0
-        assert "tilth" in result.output
+        assert "mergiraf" in result.output
 
     @patch("milknado.cli.tools.install_missing_rust_tools")
     def test_failure_exits_nonzero(self, mock_install: MagicMock) -> None:
@@ -1295,9 +1295,9 @@ class TestInitWithInstallRustTools:
     ) -> None:
         from milknado.domains.common.toolchain import ToolStatus
 
-        mock_install.return_value = (["tilth"], [])
+        mock_install.return_value = (["mergiraf"], [])
         mock_status.return_value = [
-            ToolStatus(name="tilth", installed=True, path="/usr/bin/tilth"),
+            ToolStatus(name="mergiraf", installed=True, path="/usr/bin/mergiraf"),
         ]
         result = runner.invoke(app, ["init", str(project_dir), "--install-rust-tools"])
         assert result.exit_code == 0
@@ -1805,9 +1805,9 @@ def test_write_claude_worker_settings_writes_resolved_tools(tmp_path: Path) -> N
 
 
 def test_write_gemini_worker_settings_writes_resolved_tools(tmp_path: Path) -> None:
-    _write_gemini_worker_settings(tmp_path, tools=("tilth_search", "read_file"))
+    _write_gemini_worker_settings(tmp_path, tools=("find_symbol", "read_file"))
     settings = json.loads((tmp_path / ".gemini" / "settings.json").read_text(encoding="utf-8"))
-    assert settings["includeTools"] == ["tilth_search", "read_file"]
+    assert settings["includeTools"] == ["find_symbol", "read_file"]
     before = settings["hooks"]["BeforeTool"][0]
     assert before["matcher"] == "run_shell_command"
     assert before["hooks"][0]["command"] == "rtk hook gemini"

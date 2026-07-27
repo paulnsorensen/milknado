@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort, TilthPort
+    from milknado.domains.common.protocols import CrgPort
     from milknado.domains.common.types import MikadoNode
     from milknado.domains.graph import MikadoGraph
 
@@ -15,8 +14,6 @@ def build_planning_context(
     graph: MikadoGraph,
     *,
     spec_text: str | None = None,
-    tilth: TilthPort | None = None,
-    scope: Path | None = None,
     prepend: str | None = None,
 ) -> str:
     if spec_text == "":
@@ -29,7 +26,6 @@ def build_planning_context(
         [
             _goal_section(goal),
             _crg_compact_section(crg),
-            _structural_section(tilth, scope),
             _graph_section(graph),
             _batching_section(),
             _instructions_section(resuming),
@@ -78,27 +74,6 @@ def _crg_compact_section(crg: CrgPort | None) -> str:
         lines.append(f"- {name}")
 
     return "\n".join(lines)
-
-
-def _structural_section(tilth: TilthPort | None, scope: Path | None) -> str:
-    from milknado.domains.common.types import DegradationMarker, TilthMap
-
-    header = "# Structural Map (tilth)"
-    if tilth is None:
-        return f"{header}\n\n_(tilth not available — structural map skipped)_"
-    result = tilth.structural_map(scope or Path("."), 2000)
-    if isinstance(result, DegradationMarker):
-        return (
-            f"{header}\n\n"
-            f"_(tilth unavailable: {result.source} — {result.reason}. "
-            "Structural analysis skipped.)_"
-        )
-    assert isinstance(result, TilthMap)
-    data_lines = []
-    for key, value in result.data.items():
-        data_lines.append(f"- **{key}**: {value}")
-    body = "\n".join(data_lines) if data_lines else "_(no structural data returned)_"
-    return f"{header}\n\n{body}"
 
 
 def _spec_section(spec_text: str) -> str:

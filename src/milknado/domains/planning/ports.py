@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from milknado.domains.common.protocols import TilthPort
-
 
 @dataclass(frozen=True)
 class PlanningProcessResult:
@@ -32,5 +30,4 @@ class PlanningProcessPort(Protocol):
 
 @dataclass(frozen=True)
 class PlanningPorts:
-    tilth: TilthPort
     process: PlanningProcessPort
