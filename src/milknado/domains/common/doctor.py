@@ -43,7 +43,7 @@ def _probe(name: str) -> ToolProbe:
         )
         raw = (proc.stdout or proc.stderr).strip()
         ver = raw.splitlines()[0] if raw else "unknown"
-    except Exception:  # noqa: BLE001
+    except Exception:
         ver = "unknown"
     return ToolProbe(name=name, path=path, version=ver)
 

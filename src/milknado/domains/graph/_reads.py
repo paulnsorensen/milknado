@@ -51,7 +51,7 @@ def get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoN
         placeholders = ",".join("?" for _ in chunk)
         rows.extend(
             conn.execute(
-                f"SELECT * FROM nodes WHERE id IN ({placeholders})",  # noqa: S608
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})",
                 chunk,
             ).fetchall()
         )
@@ -60,7 +60,7 @@ def get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoN
     if goal_ids:
         placeholders = ",".join("?" for _ in goal_ids)
         claims = conn.execute(
-            f"SELECT goal_id, run_id FROM goal_claims WHERE goal_id IN ({placeholders})",  # noqa: S608
+            f"SELECT goal_id, run_id FROM goal_claims WHERE goal_id IN ({placeholders})",
             goal_ids,
         ).fetchall()
         for goal_id, run_id in claims:
@@ -79,7 +79,7 @@ def latest_results_for_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) 
             "SELECT r.node_id, m.body "
             "FROM runs r CROSS JOIN run_messages m "
             "WHERE m.run_id = r.run_id AND m.role = 'result' "
-            f"AND r.node_id IN ({placeholders}) "  # noqa: S608
+            f"AND r.node_id IN ({placeholders}) "
             "AND NOT EXISTS ("
             "SELECT 1 FROM runs newer_r CROSS JOIN run_messages newer_m "
             "WHERE newer_r.node_id = r.node_id "
@@ -228,7 +228,7 @@ def get_node_summaries(
     where = f" WHERE {' AND '.join(filters)}" if filters else ""
     params.extend((limit, offset))
     rows = conn.execute(
-        f"SELECT id, status, description FROM nodes{where} ORDER BY id LIMIT ? OFFSET ?",  # noqa: S608
+        f"SELECT id, status, description FROM nodes{where} ORDER BY id LIMIT ? OFFSET ?",
         params,
     ).fetchall()
     return [dict(row) for row in rows]

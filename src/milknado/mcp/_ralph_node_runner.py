@@ -21,7 +21,7 @@ from milknado.domains.dispatch import now_iso, runs_dir
 _logger = logging.getLogger("milknado")
 
 
-def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:  # noqa: ANN001
+def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:
     try:
         written = graph.finish_run(run_id, result)
     except Exception as exc:

@@ -120,7 +120,7 @@ def _read_run(root: Path, run_id: str) -> dict | None:
         graph.close()
 
 
-def _run_status(graph, run_id: str) -> str:  # noqa: ANN001
+def _run_status(graph, run_id: str) -> str:
     """Fetch a run's status, asserting the row exists first. Keeps the
     stale-sweep assertions from masking a missing row (get_run -> None) as a raw
     TypeError instead of a clear 'run vanished' failure."""
@@ -293,7 +293,7 @@ class TestTodoTools:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="t", kind="task", project_root=root)
         _call(milknado_todo_set_status, node_id=task["id"], status="done", project_root=root)
-        with pytest.raises(Exception):  # noqa: B017 - InvalidTransition from the state machine
+        with pytest.raises(Exception):  # InvalidTransition from the state machine
             _call(
                 milknado_todo_set_status,
                 node_id=task["id"],
@@ -2304,7 +2304,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    from milknado.mcp import (  # noqa: F401
+    from milknado.mcp import (
         github,
         node,
         ralph,
@@ -2360,7 +2360,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
 
 def test_mcp_metadata_stays_succinct_and_accurate() -> None:
     """MCP listings should advertise tool families without implementation mechanics."""
-    from milknado.mcp import (  # noqa: F401
+    from milknado.mcp import (
         node,
         ralph,
         run,

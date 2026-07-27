@@ -108,7 +108,7 @@ def main() -> None:
     configure_stderr_logging()
 
     # Importing each tool module registers its @mcp.tool()s on the shared instance.
-    from milknado.mcp import (  # noqa: F401
+    from milknado.mcp import (
         github,
         node,
         ralph,

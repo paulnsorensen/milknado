@@ -54,7 +54,7 @@ def _resolve_model(execution_agent: str) -> str:
     return match.group(1) if match else "sonnet"
 
 
-def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...]:  # noqa: ANN001
+def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...]:
     """Resolve the worker tool allowlist for a native-backend node.
 
     Mirrors the subprocess execution_agent precedence (resolve_flavor_profile):
@@ -88,7 +88,7 @@ def _resolve_owner(owner: str) -> str:
 
 def _provision_claim_run(
     graph, root, node, run_id: str, worktree: bool | None, cfg
-) -> Path | None:  # noqa: ANN001
+) -> Path | None:
     """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE.
 
     On any failure the claim is released with a fenced terminal write so the

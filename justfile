@@ -93,6 +93,7 @@ check-llm:
     subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, text=True)
 
     steps = [
+        ("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"]),
         ("import-contracts", ["uv", "run", "lint-imports"]),
         ("lint+format", ["just", "lint"]),
         (

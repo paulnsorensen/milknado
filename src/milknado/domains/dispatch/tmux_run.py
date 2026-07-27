@@ -133,7 +133,7 @@ def reconcile_run_window(tmux: TmuxPort, run_state: dict) -> None:
     """Best-effort poll-time reconcile hook: tmux trouble must never break a poll."""
     try:
         cleanup_run_window(tmux, run_state)
-    except Exception as exc:  # noqa: BLE001 — diagnostics-only path; poll result is the payload
+    except Exception as exc:  # diagnostics-only path; poll result is the payload
         _logger.warning(
             "tmux window reconcile failed: run_id=%s error=%s",
             run_state.get("run_id"),
@@ -142,7 +142,7 @@ def reconcile_run_window(tmux: TmuxPort, run_state: dict) -> None:
         )
 
 
-def resolve_attach_target(graph, tmux: TmuxPort, run_id: str) -> str:  # noqa: ANN001
+def resolve_attach_target(graph, tmux: TmuxPort, run_id: str) -> str:
     """Attach preconditions, each failure mode with its own message.
 
     Pane existence is inherently a tmux question, so this is the one place

@@ -15,7 +15,7 @@ _logger = logging.getLogger(__name__)
 _STALE_GRACE_SECONDS = 30
 
 
-def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
+def fail_stale_running_runs(graph, node_id: int) -> list[dict]:
     """Finalize confirmed-dead owners and timeout-stale pid-less runs.
 
     A run row's pid is its worker pid. In-process coordinator runs deliberately
@@ -114,7 +114,7 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:  # noqa: ANN001
     return flipped
 
 
-def reconcile_orphaned_runs(graph) -> list[dict]:  # noqa: ANN001
+def reconcile_orphaned_runs(graph) -> list[dict]:
     """Finalize and release orphaned nodes before a new coordinator dispatches."""
     if not hasattr(graph, "get_all_nodes"):
         return []
@@ -136,7 +136,7 @@ def reconcile_orphaned_runs(graph) -> list[dict]:  # noqa: ANN001
 def find_terminal_runs_for_node(
     graph,
     node_id: int,
-    run_id: str | None = None,  # noqa: ANN001
+    run_id: str | None = None,
 ) -> list[dict]:
     """Return this node's runs that reached a terminal status. Used by callers that
     want to reconcile orphaned runs (started, worker finished, but never polled —
@@ -165,7 +165,7 @@ def latest_terminal_run(runs: list[dict]) -> dict | None:
     return max(terminal, key=lambda r: r.get("ended_at") or "")
 
 
-def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | None = None) -> None:  # noqa: ANN001
+def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | None = None) -> None:
     """Transition a node to its run's terminal status, idempotently and fenced.
 
     When `run_id` is given AND the node carries a run_id, the write goes through

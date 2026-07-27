@@ -90,7 +90,7 @@ class FakeExport:
     def item_list(self, _o: str, _n: int) -> list[GithubItem]:
         return self.items
 
-    def item_edit(self, project_id, item_id, field_id, *, text=None, single_select_option_id=None):  # noqa: ANN001
+    def item_edit(self, project_id, item_id, field_id, *, text=None, single_select_option_id=None):
         self.item_edits.append(
             {
                 "item_id": item_id,

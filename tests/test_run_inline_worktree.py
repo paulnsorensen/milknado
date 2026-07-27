@@ -75,7 +75,7 @@ def _spy_worker_cwd(monkeypatch) -> dict:
     captured: dict = {}
     real = adapters.ProcessAdapter.run
 
-    def spy(self, argv, cwd, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+    def spy(self, argv, cwd, *args, **kwargs):
         captured["cwd"] = Path(cwd)
         return real(self, argv, cwd, *args, **kwargs)
 
@@ -94,7 +94,7 @@ def _wait_for_terminal(run_id: str, root: str, timeout: float = 10.0) -> dict:
     raise AssertionError(f"run {run_id} did not finish; last={last}")
 
 
-def _node(root: Path, node_id: int):  # noqa: ANN202
+def _node(root: Path, node_id: int):
     graph, _cfg = open_graph(root)
     try:
         return graph.get_node(node_id)
@@ -234,7 +234,7 @@ class TestDoneTerminalization:
         spawned: list = []
         real = adapters.ProcessAdapter.run
 
-        def spy(self, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        def spy(self, *args, **kwargs):
             spawned.append(args)
             return real(self, *args, **kwargs)
 
@@ -259,7 +259,7 @@ class TestMergeBackReuse:
         calls: list[tuple[str, str, str]] = []
         original = adapters.GitAdapter.compare_and_swap_ref
 
-        def spy(self, ref, expected_oid, new_oid):  # noqa: ANN001, ANN202
+        def spy(self, ref, expected_oid, new_oid):
             calls.append((ref, expected_oid, new_oid))
             return original(self, ref, expected_oid, new_oid)
 
@@ -341,7 +341,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_git, _root, ctx):  # noqa: ANN001, ANN202
+        def _fail(_git, _root, ctx):
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _fail)
@@ -379,7 +379,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _boom(_git, _root, ctx):  # noqa: ANN001, ANN202
+        def _boom(_git, _root, ctx):
             raise RebaseAbortError(ctx.worktree_path, "rebase --abort failed")
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _boom)
@@ -410,7 +410,7 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_git, _root, ctx):  # noqa: ANN001, ANN202
+        def _fail(_git, _root, ctx):
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(async_mod, "merge_back_isolated", _fail)
@@ -437,7 +437,7 @@ class TestMergeBackFailure:
 class TestFailClosedPreservation:
     """Merge-back failures preserve the isolated worktree for recovery."""
 
-    def _ctx(self, root: Path):  # noqa: ANN202
+    def _ctx(self, root: Path):
         from milknado.domains.dispatch.isolate import IsolateContext
 
         wt = root / "milknado-1-x"
@@ -497,7 +497,7 @@ class TestFailClosedPreservation:
         monkeypatch.setattr(git, "resolve_ref", lambda *a, **k: "worker-oid")
         monkeypatch.setattr(git, "compare_and_swap_ref", lambda *a, **k: None)
 
-        def _refuse(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        def _refuse(*a, **k):
             raise UnlandedWorkError(ctx.worktree_path, "dirty files:\nx")
 
         monkeypatch.setattr(git, "remove_worktree", _refuse)
@@ -569,7 +569,7 @@ class TestAsyncStartFailure:
         _init_repo(root)
         task = _call(milknado_todo_add, description="boom", kind="task", project_root=str(root))
 
-        def _explode(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        def _explode(*args, **kwargs):
             raise RuntimeError("spawn exploded")
 
         monkeypatch.setattr(dispatch_mod, "start_headless_async", _explode)
@@ -602,7 +602,7 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
         def resolve_ref(self, ref: str) -> str:
             return "base-before" if ref == "refs/heads/main" else "base-after"
 
-        def create_worktree(self, path: Path, branch: str) -> None:  # noqa: ARG002
+        def create_worktree(self, path: Path, branch: str) -> None:
             path.mkdir(parents=True)
 
         def force_remove_worktree(self, path: Path) -> None:
@@ -635,7 +635,7 @@ class TestMergeBackLock:
             def current_branch(self) -> str:
                 return "main"
 
-            def squash_and_commit(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            def squash_and_commit(self, *args, **kwargs):
                 start = time.monotonic()
                 time.sleep(0.05)
                 end = time.monotonic()
@@ -643,16 +643,16 @@ class TestMergeBackLock:
                     intervals.append((start, end))
                 return True
 
-            def rebase(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+            def rebase(self, *args, **kwargs):
                 return RebaseResult(success=True)
 
             def resolve_ref(self, ref: str) -> str:
                 return f"{ref}-oid"
 
-            def compare_and_swap_ref(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def compare_and_swap_ref(self, *args, **kwargs) -> None:
                 return None
 
-            def remove_worktree(self, *args, **kwargs) -> None:  # noqa: ANN002, ANN003
+            def remove_worktree(self, *args, **kwargs) -> None:
                 return None
 
         def _run(n: int) -> None:

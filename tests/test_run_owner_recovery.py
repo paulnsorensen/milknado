@@ -32,7 +32,7 @@ class _RecoveryGraph:
     def runs_for_node(self, node_id: int, **_kwargs) -> list[dict]:
         return [self.state] if node_id == self.node.id else []
 
-    def finish_run(self, _run_id: str, result) -> bool:  # noqa: ANN001
+    def finish_run(self, _run_id: str, result) -> bool:
         if self.finish_succeeds:
             self.state.update(
                 status=result.status,

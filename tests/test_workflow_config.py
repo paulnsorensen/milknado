@@ -24,7 +24,7 @@ from milknado.domains.common.config import (
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 
-def _cfg(tmp_path: Path, **kwargs) -> MilknadoConfig:  # noqa: ANN003
+def _cfg(tmp_path: Path, **kwargs) -> MilknadoConfig:
     return MilknadoConfig(
         agent_family="claude",
         project_root=tmp_path,

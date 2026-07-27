@@ -44,7 +44,7 @@ class _PlanningSubprocess:
             if not planner_path.is_file() or not planner_path.is_relative_to(root):
                 raise ValueError("MILKNADO_LOCAL_PLANNER must be a file within the project root")
             argv = [sys.executable, str(planner_path)]
-            completed = subprocess.run(  # noqa: UP022
+            completed = subprocess.run(
                 argv,
                 cwd=project_root,
                 check=False,
@@ -186,7 +186,7 @@ def _spawn_plan_critic(command: str, prompt: str, project_root: Path) -> str:
     context_path.parent.mkdir(parents=True, exist_ok=True)
     context_path.write_text(prompt, encoding="utf-8")
     argv, options = build_planning_subprocess(context_path, command, project_root=project_root)
-    completed = subprocess.run(  # noqa: UP022
+    completed = subprocess.run(
         argv,
         cwd=project_root,
         input=options["input"],

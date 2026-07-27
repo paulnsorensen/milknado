@@ -690,7 +690,7 @@ class TestPlanResult:
         assert result.solver_status == "OPTIMAL"
 
 
-import json as _json_module  # noqa: E402
+import json as _json_module
 
 
 def _make_v2_manifest_stdout(changes: list[dict]) -> str:  # type: ignore[type-arg]
@@ -1236,7 +1236,7 @@ class TestPlanChangeManifest:
             changes=(),
             new_relationships=(),
         )
-        with pytest.raises(Exception):  # noqa: B017, PT011 — frozen dataclass
+        with pytest.raises(Exception):  # frozen dataclass
             manifest.changes = ()  # ty: ignore[invalid-assignment]
 
     def test_v2_parse_with_descriptions(self) -> None:
@@ -1514,7 +1514,7 @@ class TestSpawnPlanCritic:
 
         captured: dict[str, object] = {}
 
-        def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        def fake_run(argv, **kwargs):
             captured["argv"] = argv
             captured["kwargs"] = kwargs
             return subprocess.CompletedProcess(argv, 0, stdout="<verdict>approve</verdict>")
@@ -1534,7 +1534,7 @@ class TestSpawnPlanCritic:
     ) -> None:
         from milknado.app.plan import _spawn_plan_critic
 
-        def fake_run(argv, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        def fake_run(argv, **kwargs):
             return subprocess.CompletedProcess(argv, 0, stdout=None)
 
         monkeypatch.setattr(subprocess, "run", fake_run)

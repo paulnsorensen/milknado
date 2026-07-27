@@ -131,7 +131,7 @@ def claim_node(
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
     cur = conn.execute(
-        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "  # noqa: S608 — fixed tuple
+        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
         f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
         (run_id, now, pid, node_id),
     )
@@ -183,7 +183,7 @@ def mark_terminal(
             else ("worktree_path = NULL, branch_name = NULL, run_id = NULL")
         )
         cur = conn.execute(
-            f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "  # noqa: S608
+            f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "
             "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.FAILED.value, node_id, run_id),
         )

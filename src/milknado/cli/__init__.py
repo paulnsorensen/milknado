@@ -19,7 +19,7 @@ from milknado.cli.agents import agents_app
 from milknado.cli.config import config_app
 from milknado.cli.github_roadmap import github_roadmap_app
 from milknado.cli.graph import edge_app, graph_app
-from milknado.cli.plan import _derive_goal as _derive_goal  # noqa: PLC0414 — re-export
+from milknado.cli.plan import _derive_goal as _derive_goal  # re-export
 from milknado.cli.plan import plan
 from milknado.cli.roadmap import roadmap_app
 from milknado.cli.run import attach, run

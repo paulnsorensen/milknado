@@ -64,7 +64,7 @@ class RalphClaim:
     stale_worktree: Path | None
 
 
-def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:  # noqa: ANN001
+def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:
     node = graph.get_node(request.node_id)
     if node is None:
         raise ValueError(f"node {request.node_id} not found")
@@ -163,7 +163,7 @@ def _spawn_ralph(
     return process.spawn_detached(tuple(argv), request.root, log_path, env)
 
 
-def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # noqa: ANN001
+def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:
     run_written = False
     node_written = False
     persistence_error: Exception | None = None
@@ -204,7 +204,7 @@ def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:  # 
         raise RuntimeError(detail) from persistence_error
 
 
-def start_ralph_run(graph, request: RalphStartRequest) -> dict:  # noqa: ANN001
+def start_ralph_run(graph, request: RalphStartRequest) -> dict:
     """Claim a task node and spawn its detached ralph loop; return the run state dict.
 
     Owns the adapter composition (git, process, tmux) and the claim/spawn policy

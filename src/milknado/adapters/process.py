@@ -107,7 +107,7 @@ class ProcessAdapter:
         return not pid_alive(pid)
 
     @staticmethod
-    def _write_stdin(stdin, payload: bytes) -> None:  # noqa: ANN001
+    def _write_stdin(stdin, payload: bytes) -> None:
         try:
             stdin.write(payload)
             stdin.close()

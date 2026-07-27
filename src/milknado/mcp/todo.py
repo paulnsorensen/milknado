@@ -155,7 +155,7 @@ def _worker_node_id() -> int | None:
     return int(raw) if raw else None
 
 
-def follow_up_parent_id(graph) -> int | None:  # noqa: ANN001
+def follow_up_parent_id(graph) -> int | None:
     """Parent for an auto-parented follow-up: the worker node's own parent.
 
     The worker's exit-0 reconcile drives MILKNADO_NODE_ID's node to done, and

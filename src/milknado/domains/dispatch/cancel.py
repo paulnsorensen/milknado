@@ -21,7 +21,7 @@ _CANCEL_FINALIZE_TIMEOUT_SECS = 8.0
 _CANCEL_FINALIZE_POLL_SECS = 0.25
 
 
-def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
+def _finalize_cancelled(graph, run_id: str) -> dict:
     """Write the cancelled terminal run row and return its refreshed dict.
 
     The direct-finalize path (pid run, or the fallback when the async worker never
@@ -49,7 +49,7 @@ def _finalize_cancelled(graph, run_id: str) -> dict:  # noqa: ANN001
 
 
 def _reconcile_cancel(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     node_id: int | None,
     run_id: str,
@@ -85,7 +85,7 @@ def _reconcile_cancel(
     return preserved
 
 
-def _await_cancel_finalize(graph, run_id: str) -> dict | None:  # noqa: ANN001
+def _await_cancel_finalize(graph, run_id: str) -> dict | None:
     """Poll the run row for the async worker's terminal write, up to a bound.
 
     Returns the terminal run dict once the worker finalizes, or None if the bound
@@ -101,7 +101,7 @@ def _await_cancel_finalize(graph, run_id: str) -> dict | None:  # noqa: ANN001
     return None
 
 
-def _reconcile_terminal_cancel(graph, git: GitPort, run_id: str, final: dict) -> dict:  # noqa: ANN001
+def _reconcile_terminal_cancel(graph, git: GitPort, run_id: str, final: dict) -> dict:
     preserved = _reconcile_cancel(
         graph, git, final.get("node_id"), run_id, final.get("status", "failed")
     )
@@ -109,7 +109,7 @@ def _reconcile_terminal_cancel(graph, git: GitPort, run_id: str, final: dict) ->
     return final
 
 
-def _adopt_pre_finalized_run(graph, git: GitPort, run_id: str) -> dict:  # noqa: ANN001
+def _adopt_pre_finalized_run(graph, git: GitPort, run_id: str) -> dict:
     final = _await_cancel_finalize(graph, run_id) or graph.get_run(run_id)
     if final is None or final.get("status") == "running":
         raise RuntimeError(
@@ -118,7 +118,7 @@ def _adopt_pre_finalized_run(graph, git: GitPort, run_id: str) -> dict:  # noqa:
     return _reconcile_terminal_cancel(graph, git, run_id, final)
 
 
-def _recover_dead_owner(graph, node, node_id: int, run_id: str) -> dict:  # noqa: ANN001
+def _recover_dead_owner(graph, node, node_id: int, run_id: str) -> dict:
     fail_stale_running_runs(graph, node_id)
     final = graph.get_run(run_id)
     if final is None or final.get("status") == "running":
@@ -129,7 +129,7 @@ def _recover_dead_owner(graph, node, node_id: int, run_id: str) -> dict:  # noqa
 
 
 def _cancel_pid_run(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     process: ProcessTerminationPort,
     state: dict,
@@ -152,7 +152,7 @@ def _cancel_pid_run(
 
 
 def _cancel_async_run(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     root: Path,
     state: dict,
@@ -181,7 +181,7 @@ def _cancel_async_run(
 
 
 def cancel_run(
-    graph,  # noqa: ANN001
+    graph,
     git: GitPort,
     process: ProcessTerminationPort,
     project_root: Path,

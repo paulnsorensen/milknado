@@ -380,7 +380,7 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
     worktree.mkdir()
 
     class Git:
-        def remove_worktree(self, path: Path) -> None:  # noqa: ARG002
+        def remove_worktree(self, path: Path) -> None:
             raise RuntimeError("adapter unavailable")
 
     claim = RalphClaim(
@@ -407,7 +407,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         def __init__(self) -> None:
             self.terminal: tuple[int, str, NodeStatus] | None = None
 
-        def finish_run(self, run_id: str, result: object) -> None:  # noqa: ARG002
+        def finish_run(self, run_id: str, result: object) -> None:
             raise RuntimeError("database unavailable")
 
         def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
@@ -576,19 +576,19 @@ def test_runner_writes_done_on_successful_outcome(
             self.closed = False
             self.finished: dict | None = None
 
-        def get_node(self, node_id: int) -> None:  # noqa: ARG002
+        def get_node(self, node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
+        def finish_run(self, run_id: str, result) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
 
-        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_run_pid(self, *_args) -> None:
             pass
 
-        def set_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_pid(self, *_args) -> None:
             pass
 
-        def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
+        def deposit_run_message(self, *a, **k) -> int:
             return 1
 
         def close(self) -> None:
@@ -673,19 +673,19 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
             self.closed = False
             self.finished: dict | None = None
 
-        def get_node(self, node_id: int) -> None:  # noqa: ARG002
+        def get_node(self, node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result) -> None:  # noqa: ANN001
+        def finish_run(self, run_id: str, result) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
 
-        def set_run_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_run_pid(self, *_args) -> None:
             pass
 
-        def set_pid(self, *_args) -> None:  # noqa: ANN002
+        def set_pid(self, *_args) -> None:
             pass
 
-        def deposit_run_message(self, *a, **k) -> int:  # noqa: ANN002, ANN003
+        def deposit_run_message(self, *a, **k) -> int:
             return 1
 
         def close(self) -> None:
@@ -701,10 +701,10 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def __init__(self) -> None:
             self.stopped: list[str] = []
 
-        def wait_for_next_completion(self, active_run_ids, timeout=None):  # noqa: ANN001
+        def wait_for_next_completion(self, active_run_ids, timeout=None):
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
 
-        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:  # noqa: ARG002
+        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
             self.stopped.append(run_id)
             return True
 
@@ -714,7 +714,7 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     class _StubExecutor:
         def dispatch(
             self, node_id: int, config, *, base_oid=None, parent_run_id=None
-        ) -> DispatchResult:  # noqa: ANN001, ARG002
+        ) -> DispatchResult:
             return DispatchResult(
                 node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
             )
@@ -929,7 +929,7 @@ def test_orphan_worktree_removed_before_retry(
 
     removed: list[Path] = []
 
-    def _stub_remove(self: object, wt: Path, target: str = "HEAD") -> None:  # noqa: ANN001
+    def _stub_remove(self: object, wt: Path, target: str = "HEAD") -> None:
         removed.append(wt)
 
     monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _stub_remove)
@@ -985,7 +985,7 @@ def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
     import milknado.adapters as adapters
     from milknado.domains.common.errors import UnlandedWorkError
 
-    def _refuse(self: object, wt: Path, target: str = "HEAD") -> None:  # noqa: ANN001
+    def _refuse(self: object, wt: Path, target: str = "HEAD") -> None:
         raise UnlandedWorkError(wt, "dirty files:\n M src/app.py")
 
     monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _refuse)

@@ -508,7 +508,7 @@ class MikadoGraph(_AnalyticsFacade):
 
     def _update_node_field(self, column: str, value: str, node_id: int) -> None:
         cur = self._conn.execute(
-            f"UPDATE nodes SET {column} = ? WHERE id = ?",  # noqa: S608
+            f"UPDATE nodes SET {column} = ? WHERE id = ?",
             (value, node_id),
         )
         if cur.rowcount == 0:

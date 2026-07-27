@@ -37,7 +37,7 @@ class Recorder:
         self.calls: list[list[str]] = []
         self.stdout = stdout
 
-    def __call__(self, args, **_kwargs):  # noqa: ANN001, ANN002
+    def __call__(self, args, **_kwargs):
         self.calls.append(list(args))
         return subprocess.CompletedProcess(args, 0, stdout=self.stdout, stderr="")
 
@@ -56,13 +56,13 @@ def wire(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestWrapperArgv:
-    def test_project_view_builds_argv_and_parses(self, wire) -> None:  # noqa: ANN001
+    def test_project_view_builds_argv_and_parses(self, wire) -> None:
         rec = wire(json.dumps({"id": "PVT_1", "title": "RM"}))
         out = gh_project_view("acme", 7)
         assert out == GithubProject(id="PVT_1", title="RM")
         assert rec.calls[0][1:] == ["project", "view", "7", "--owner", "acme", "--format", "json"]
 
-    def test_item_list_returns_items_key(self, wire) -> None:  # noqa: ANN001
+    def test_item_list_returns_items_key(self, wire) -> None:
         rec = wire(json.dumps({"items": [{"id": "PVTI_1", "title": "g"}]}))
         out = gh_item_list("acme", 7, limit=3)
         assert out == [GithubItem(id="PVTI_1", title="g")]
@@ -78,11 +78,11 @@ class TestWrapperArgv:
             "3",
         ]
 
-    def test_item_list_defaults_empty_when_no_items(self, wire) -> None:  # noqa: ANN001
+    def test_item_list_defaults_empty_when_no_items(self, wire) -> None:
         wire(json.dumps({}))
         assert gh_item_list("acme", 7) == []
 
-    def test_item_add_returns_item_id(self, wire) -> None:  # noqa: ANN001
+    def test_item_add_returns_item_id(self, wire) -> None:
         rec = wire(json.dumps({"id": "PVTI_new"}))
         assert gh_item_add("acme", 7, "https://x/1") == "PVTI_new"
         assert rec.calls[0][1:] == [
@@ -97,7 +97,7 @@ class TestWrapperArgv:
             "json",
         ]
 
-    def test_item_edit_text_branch(self, wire) -> None:  # noqa: ANN001
+    def test_item_edit_text_branch(self, wire) -> None:
         rec = wire("{}")
         gh_item_edit("PVT_1", "PVTI_1", "F_1", text="hello")
         assert rec.calls[0][1:] == [
@@ -113,22 +113,22 @@ class TestWrapperArgv:
             "hello",
         ]
 
-    def test_item_edit_option_branch(self, wire) -> None:  # noqa: ANN001
+    def test_item_edit_option_branch(self, wire) -> None:
         rec = wire("{}")
         gh_item_edit("PVT_1", "PVTI_1", "F_1", single_select_option_id="opt-9")
         assert rec.calls[0][-2:] == ["--single-select-option-id", "opt-9"]
 
-    def test_item_edit_rejects_both(self, wire) -> None:  # noqa: ANN001
+    def test_item_edit_rejects_both(self, wire) -> None:
         wire("{}")
         with pytest.raises(ValueError, match="exactly one"):
             gh_item_edit("PVT_1", "PVTI_1", "F_1", text="x", single_select_option_id="y")
 
-    def test_item_edit_rejects_neither(self, wire) -> None:  # noqa: ANN001
+    def test_item_edit_rejects_neither(self, wire) -> None:
         wire("{}")
         with pytest.raises(ValueError, match="exactly one"):
             gh_item_edit("PVT_1", "PVTI_1", "F_1")
 
-    def test_field_list_returns_fields_key(self, wire) -> None:  # noqa: ANN001
+    def test_field_list_returns_fields_key(self, wire) -> None:
         rec = wire(json.dumps({"fields": [{"id": "F_1", "name": "Milknado Status"}]}))
         out = gh_field_list("acme", 7)
         assert out == [GithubField(id="F_1", name="Milknado Status")]
@@ -142,7 +142,7 @@ class TestWrapperArgv:
             "json",
         ]
 
-    def test_field_create_single_select_joins_options(self, wire) -> None:  # noqa: ANN001
+    def test_field_create_single_select_joins_options(self, wire) -> None:
         rec = wire(json.dumps({"id": "F_new"}))
         out = gh_field_create(7, "acme", "Milknado Status", ["Pending", "Done"])
         assert out == "F_new"
@@ -160,7 +160,7 @@ class TestWrapperArgv:
             "Pending,Done",
         ]
 
-    def test_field_create_text_uses_text_data_type(self, wire) -> None:  # noqa: ANN001
+    def test_field_create_text_uses_text_data_type(self, wire) -> None:
         rec = wire(json.dumps({"id": "F_txt"}))
         out = gh_field_create_text(7, "acme", "Milknado Harvest")
         assert out == "F_txt"
@@ -176,7 +176,7 @@ class TestWrapperArgv:
             "TEXT",
         ]
 
-    def test_issue_create_returns_stripped_url(self, wire) -> None:  # noqa: ANN001
+    def test_issue_create_returns_stripped_url(self, wire) -> None:
         rec = wire("https://github.com/acme/repo/issues/3\n")
         url = gh_issue_create("acme", "repo", "Title", "Body")
         assert url == "https://github.com/acme/repo/issues/3"
@@ -191,12 +191,12 @@ class TestWrapperArgv:
             "Body",
         ]
 
-    def test_issue_edit_body_argv(self, wire) -> None:  # noqa: ANN001
+    def test_issue_edit_body_argv(self, wire) -> None:
         rec = wire("")
         gh_issue_edit_body("https://x/3", "new body")
         assert rec.calls[0][1:] == ["issue", "edit", "https://x/3", "--body", "new body"]
 
-    def test_issue_view_builds_argv_and_returns_typed_issue(self, wire) -> None:  # noqa: ANN001
+    def test_issue_view_builds_argv_and_returns_typed_issue(self, wire) -> None:
         rec = wire(
             '{"title":"Bug","body":"Details","number":7,'
             '"url":"https://github.com/acme/app/issues/7"}'
@@ -223,7 +223,7 @@ class TestWrapperArgv:
 
 
 class TestZeroGraphql:
-    def test_no_wrapper_argv_contains_graphql_or_api(self, wire) -> None:  # noqa: ANN001
+    def test_no_wrapper_argv_contains_graphql_or_api(self, wire) -> None:
         # Acceptance 8: the entire transport is `gh project`/`gh issue` — never
         # a raw GraphQL/api call. Exercise every wrapper and scan the argv.
         rec = wire(json.dumps({"id": "x", "title": "t", "items": [], "fields": []}))

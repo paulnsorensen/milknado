@@ -40,7 +40,7 @@ class _CreateTodo:
     root: Path
 
 
-def _create_todo(graph, cfg, parent_id: int | None, request: _CreateTodo) -> dict:  # noqa: ANN001
+def _create_todo(graph, cfg, parent_id: int | None, request: _CreateTodo) -> dict:
     if request.artifact is not None:
         validate_hint_path(request.artifact, request.root, label="artifact")
     files = (
