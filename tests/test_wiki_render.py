@@ -3,6 +3,8 @@ from __future__ import annotations
 import html as html_lib
 from datetime import date
 
+from msgspec import structs
+
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.wiki.model import GoalDocument, Lifecycle, RoadmapDocument, RoadmapModel
 from milknado.domains.wiki.render import render_html, render_mermaid
@@ -119,8 +121,9 @@ def test_render_uses_all_edges_and_unique_ids() -> None:
 
 
 def test_render_html_escapes_mermaid_source() -> None:
-    model = _model()
-    model.goals["a"].title = "<script>"
+    original = _model()
+    goals = {**original.goals, "a": structs.replace(original.goals["a"], title="<script>")}
+    model = structs.replace(original, goals=goals)
     output = render_html(model)
     assert "&lt;script&gt;" in output
     assert "<script>" not in output

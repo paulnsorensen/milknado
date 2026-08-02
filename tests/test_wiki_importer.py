@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._locate import RoadmapPathError
 from milknado.domains.wiki.importer import _apply_document_state, import_roadmap
@@ -478,20 +478,42 @@ def test_apply_document_state_does_not_apply_stale_status() -> None:
     )
     _apply_document_state(graph, 1, document)
     graph.set_todo_status.assert_not_called()
+    graph.get_node.assert_not_called()
 
 
-def test_deprecated_goal_wires_edges_before_archiving(tmp_path: Path, graph: MikadoGraph) -> None:
+def test_deprecated_reimport_detaches_prereq_and_archives_contained_subtree(
+    tmp_path: Path, graph: MikadoGraph
+) -> None:
     root = tmp_path / "wiki"
-    d = root / "roadmaps" / ROADMAP_SLUG
-    d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "base.md").write_text(
-        GOAL_A.replace("define-schema", "base").replace("status: pending", "lifecycle: deprecated")
-    )
-    (d / "old.md").write_text(
+    roadmap_dir = root / "roadmaps" / ROADMAP_SLUG
+    roadmap_dir.mkdir(parents=True)
+    (roadmap_dir / "index.md").write_text(INDEX_MD)
+    (roadmap_dir / "base.md").write_text(GOAL_A.replace("define-schema", "base"))
+    old_path = roadmap_dir / "old.md"
+    old_document = (
         "---\nkind: goal\nslug: old\nroadmap: demo-roadmap\ncreated: 2026-06-04\n"
-        "lifecycle: deprecated\nprereqs: [base]\n---\n# Old\n"
+        "lifecycle: active\nprereqs: [base]\n---\n# Old\n\n"
+        "## Intent\nRetire old work.\n\n## Acceptance\n- archived\n"
     )
-    result = import_roadmap(root, ROADMAP_SLUG, graph)
-    old_id = result.goal_node_ids["old"]
+    old_path.write_text(old_document)
+    first = import_roadmap(root, ROADMAP_SLUG, graph)
+    old_id = first.goal_node_ids["old"]
+    base_id = first.goal_node_ids["base"]
+    task = graph.add_node("task", parent_id=old_id, spec=NodeSpec(kind=NodeKind.TASK))
+    subgoal = graph.add_node("subgoal", parent_id=old_id, spec=NodeSpec(kind=NodeKind.GOAL))
+    for child in (task, subgoal):
+        graph.mark_running(child.id)
+        graph.mark_done(child.id)
+
+    old_path.write_text(old_document.replace("lifecycle: active", "lifecycle: deprecated"))
+    second = import_roadmap(root, ROADMAP_SLUG, graph)
+
+    assert second.goal_node_ids["old"] == old_id
     assert graph.get_node(old_id).archived_at is not None
+    assert graph.get_node(task.id).archived_at is not None
+    assert graph.get_node(subgoal.id).archived_at is not None
+    assert graph.get_node(base_id).archived_at is None
+    assert {child.id for child in graph.get_children(old_id, include_archived=True)} == {
+        task.id,
+        subgoal.id,
+    }

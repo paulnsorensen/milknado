@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     GraphExecutionSnapshot,
-    MikadoEdge,
     MikadoNode,
     NodeKind,
     NodeSpec,
@@ -30,6 +29,7 @@ from milknado.domains.graph import (
     _status,
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, _synchronized
+from milknado.domains.graph._edge_facade import _EdgeFacade
 from milknado.domains.graph._pipeline import StatusPipeline, _PluginAsMiddleware
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class MikadoGraph(_AnalyticsFacade):
+class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     """Thin facade over the graph slice's free-function modules.
 
     Public methods delegate to `_reads`/`_creation`/`_status`/`_persistence`/
@@ -190,10 +190,6 @@ class MikadoGraph(_AnalyticsFacade):
         self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
     ) -> MikadoNode:
         return _creation.add_node(self._conn, description, parent_id, spec or NodeSpec())
-
-    @_synchronized
-    def add_edge(self, parent_id: int, child_id: int) -> MikadoEdge:
-        return _creation.add_edge(self._conn, parent_id, child_id)
 
     @_synchronized
     def set_batch_metadata(self, node_id: int, oversized: bool, batch_index: int | None) -> None:

@@ -72,7 +72,7 @@ def import_roadmap(
         counters=counters,
     )
     goal_ids: dict[str, int] = {}
-    prereqs: dict[str, list[str]] = {}
+    prereqs: dict[str, tuple[str, ...]] = {}
     documents: list[tuple[int, GoalDocument]] = []
     for goal_slug, document in model.goals.items():
         goal_id, edges = _ingest_file(
@@ -86,7 +86,7 @@ def import_roadmap(
             document=document,
         )
         goal_ids[goal_slug] = goal_id
-        prereqs[goal_slug] = edges
+        prereqs[goal_slug] = edges if document.lifecycle is Lifecycle.ACTIVE else ()
         documents.append((goal_id, document))
     _wire_prereqs(graph, roadmap_slug, goal_ids, prereqs)
     for node_id, document in documents:
@@ -128,7 +128,7 @@ def _ingest_file(
     ref_for: Callable[[object], str],
     counters: _Counters,
     document: GoalDocument | None = None,
-) -> tuple[int, list[str]]:
+) -> tuple[int, tuple[str, ...]]:
     """Find-or-create a graph node from one validated canonical document."""
     ref = ref_for(created)
     existing = graph.find_node_by_wiki_ref(ref)
@@ -139,18 +139,21 @@ def _ingest_file(
         node = graph.add_node(title, parent_id=parent_id, spec=NodeSpec(kind=kind, wiki_ref=ref))
         counters.created += 1
         node_id = node.id
-    return node_id, document.edges if document is not None else []
+    return node_id, document.edges if document is not None else ()
 
 
 def _apply_document_state(graph: MikadoGraph, node_id: int, document: GoalDocument) -> None:
-    """Validate authored status and apply only lifecycle transitions."""
+    """Apply the authored lifecycle transition."""
+    if document.lifecycle is not Lifecycle.DEPRECATED:
+        return
     current = graph.get_node(node_id)
     if current is None:
         raise ValueError(f"goal {document.slug!r} was not created")
     if document.status is not None and not isinstance(document.status, NodeStatus):
         raise ValueError(f"goal {document.slug!r} has invalid status")
-    if document.lifecycle is not Lifecycle.DEPRECATED:
-        return
+    for child in graph.get_children(node_id, include_archived=True):
+        if child.kind is NodeKind.GOAL and child.parent_id != node_id:
+            graph.remove_edge(node_id, child.id)
     if current.status is not NodeStatus.DONE:
         graph.set_todo_status(node_id, NodeStatus.DONE)
         current = graph.get_node(node_id)
@@ -163,7 +166,7 @@ def _wire_prereqs(
     graph: MikadoGraph,
     roadmap_slug: str,
     goal_ids: dict[str, int],
-    prereqs: dict[str, list[str]],
+    prereqs: dict[str, tuple[str, ...]],
 ) -> None:
     """Add prereq edges (child = prerequisite), skipping any that already exist."""
     for goal_slug, prereq_slugs in prereqs.items():

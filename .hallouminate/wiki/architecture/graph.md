@@ -74,6 +74,8 @@ stays under the 300-line ceiling. Every function takes the `sqlite3.Connection`:
   `would_create_cycle`.
 - **`_analytics_facade.py`** — `_AnalyticsFacade` mixin; pure pass-throughs to
   `_persistence` for batch plans, completion durations, spec hash, dispatch time.
+- **`_edge_facade.py`** — synchronized `add_edge`/`remove_edge` graph API over
+  `_creation` transaction functions.
 - **`traversals.py`** — `walk_ancestors`, a leaf→root single-path walk.
 - **`display.py`** — rendering only.
 

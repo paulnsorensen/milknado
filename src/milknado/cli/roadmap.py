@@ -19,6 +19,8 @@ from milknado.domains.wiki import (
     render_mermaid,
     resolve_roadmap_dir,
     resolve_roadmap_node,
+    roadmap_json,
+    roadmap_schema,
     wiki_root,
 )
 
@@ -34,20 +36,6 @@ def _roadmap_model(project_root: Path, slug: str) -> RoadmapModel:
     return load_roadmap(resolve_roadmap_dir(root, slug))
 
 
-def _json_payload(model: RoadmapModel) -> dict:
-    goals = model.goals
-    edges = [
-        {"from": slug, "to": dependency}
-        for slug in sorted(goals)
-        for dependency in goals[slug].edges
-    ]
-    return {
-        "roadmap": model.roadmap.model_dump(mode="json"),
-        "goals": {slug: goals[slug].model_dump(mode="json") for slug in sorted(goals)},
-        "edges": edges,
-    }
-
-
 def _emit(text: str, out: Path | None) -> None:
     if out is None:
         typer.echo(text, nl=not text.endswith("\n"))
@@ -59,7 +47,7 @@ def _emit(text: str, out: Path | None) -> None:
 def roadmap_schema_cmd(out: _Out = None) -> None:
     """Print or write the canonical roadmap model JSON Schema."""
     try:
-        _emit(json.dumps(RoadmapModel.model_json_schema(), indent=2, sort_keys=True), out)
+        _emit(json.dumps(roadmap_schema(), indent=2, sort_keys=True), out)
     except OSError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
@@ -73,7 +61,7 @@ def roadmap_json_cmd(
 ) -> None:
     """Print or write a canonical roadmap JSON instance."""
     try:
-        payload = _json_payload(_roadmap_model(project_root.resolve(), slug))
+        payload = roadmap_json(_roadmap_model(project_root.resolve(), slug))
         _emit(json.dumps(payload, indent=2, sort_keys=True), out)
     except (OSError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")

@@ -11,7 +11,6 @@ license = "MIT"
 dependencies = [
     "code-review-graph>=2.3.3",
     "fastmcp>=3.3.1",
-    "pydantic>=2.0,<3",
     "typer>=0.25.1",
     "rich>=15.0.0",
     "pyyaml>=6.0.3",
@@ -95,6 +94,7 @@ forbidden_modules = [
     "milknado.domains.github._intent",
     "milknado.domains.graph._analytics_facade",
     "milknado.domains.graph._creation",
+    "milknado.domains.graph._edge_facade",
     "milknado.domains.graph._goal_claims",
     "milknado.domains.graph._mutations",
     "milknado.domains.graph._persistence",

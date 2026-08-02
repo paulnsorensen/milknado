@@ -6,7 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.wiki.model import GoalDocument, Lifecycle, load_roadmap, parse_goal_document
+from milknado.domains.wiki.model import (
+    Lifecycle,
+    load_roadmap,
+    parse_goal_document,
+    roadmap_schema,
+)
 
 ROADMAP = """---
 kind: roadmap
@@ -67,7 +72,7 @@ def test_parse_goal_document_and_edges() -> None:
     assert goal.created == date(2026, 8, 2)
     assert goal.intent == "Do A."
     assert goal.acceptance == "- A works."
-    assert goal.edges == []
+    assert goal.edges == ()
 
 
 def test_deprecated_goal_may_omit_intent_and_acceptance() -> None:
@@ -99,6 +104,34 @@ created: 2026-08-02
         parse_goal_document(text, slug="active")
 
 
+@pytest.mark.parametrize("link", ("[[b]]", "[[b|Alias]]"))
+def test_goal_wikilinks_resolve_target(link: str) -> None:
+    text = GOAL_A.replace("up: [b]", "up: []").replace("down: []", f'down: ["{link}"]')
+    goal = parse_goal_document(text, slug="a")
+    assert goal.down == ("b",)
+
+
+def test_load_roadmap_rejects_symlinked_index(tmp_path: Path) -> None:
+    directory = tmp_path / "demo-roadmap"
+    directory.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text(ROADMAP)
+    (directory / "index.md").symlink_to(outside)
+    with pytest.raises(ValueError, match="symlinked roadmap path"):
+        load_roadmap(directory)
+
+
+def test_load_roadmap_rejects_symlinked_goal(tmp_path: Path) -> None:
+    directory = tmp_path / "demo-roadmap"
+    directory.mkdir()
+    (directory / "index.md").write_text(ROADMAP)
+    outside = tmp_path / "outside.md"
+    outside.write_text(GOAL_A)
+    (directory / "a.md").symlink_to(outside)
+    with pytest.raises(ValueError, match="symlinked roadmap path"):
+        load_roadmap(directory)
+
+
 def test_load_roadmap_and_validate_json_schema(tmp_path: Path) -> None:
     directory = tmp_path / "demo-roadmap"
     directory.mkdir()
@@ -112,8 +145,15 @@ def test_load_roadmap_and_validate_json_schema(tmp_path: Path) -> None:
     model = load_roadmap(directory)
     assert model.roadmap.slug == "demo-roadmap"
     assert set(model.goals) == {"a", "b"}
-    assert model.goals["b"].edges == []
-    json.loads(json.dumps(model.model_json_schema()))
+    assert model.goals["b"].edges == ()
+    json.loads(json.dumps(roadmap_schema()))
+
+
+def test_repository_roadmap_loads() -> None:
+    directory = Path(__file__).parents[1] / ".hallouminate/wiki/roadmaps/milestone-0-3-0"
+    model = load_roadmap(directory)
+    assert model.roadmap.slug == "milestone-0-3-0"
+    assert model.goals
 
 
 def test_bad_edge_target_names_file_and_field(tmp_path: Path) -> None:
@@ -148,26 +188,20 @@ def test_up_down_asymmetry_and_prereq_cycle_fail(tmp_path: Path) -> None:
         load_roadmap(directory)
 
 
-def test_goal_document_schema_is_json_round_trippable() -> None:
-    schema = GoalDocument.model_json_schema()
-    assert json.loads(json.dumps(schema))["title"] == "GoalDocument"
+def test_goal_document_is_frozen() -> None:
+    goal = parse_goal_document(GOAL_A, slug="a")
+    with pytest.raises(AttributeError, match="immutable"):
+        goal.title = "Changed"  # type: ignore[misc]
 
 
 def test_edges_union_prereqs_first_and_preserves_order() -> None:
-    goal = GoalDocument.model_validate(
-        {
-            "slug": "a",
-            "roadmap": "demo-roadmap",
-            "kind": "goal",
-            "created": "2026-08-02",
-            "title": "A",
-            "intent": "Do A.",
-            "acceptance": "A works.",
-            "prereqs": ["p", "shared"],
-            "down": ["shared", "child"],
-        }
+    text = (
+        GOAL_A.replace("up: [b]", "up: []")
+        .replace("prereqs: []", "prereqs: [p, shared]")
+        .replace("down: []", "down: [shared, child]")
     )
-    assert goal.edges == ["p", "shared", "child"]
+    goal = parse_goal_document(text, slug="a")
+    assert goal.edges == ("p", "shared", "child")
 
 
 @pytest.mark.parametrize(

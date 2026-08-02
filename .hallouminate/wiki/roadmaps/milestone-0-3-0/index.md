@@ -1,4 +1,6 @@
 ---
+kind: roadmap
+slug: milestone-0-3-0
 created: 2026-06-30
 ---
 # Milestone 0.3.0 — Harden the Native Backend & Lock Distribution

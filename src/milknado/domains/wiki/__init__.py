@@ -22,6 +22,8 @@ from milknado.domains.wiki.model import (
     RoadmapModel,
     load_roadmap,
     parse_goal_document,
+    roadmap_json,
+    roadmap_schema,
 )
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult, WikiIndexStatus
 from milknado.domains.wiki.render import render_html, render_mermaid
@@ -44,6 +46,8 @@ __all__ = [
     "load_roadmap",
     "locate_roadmap_dir",
     "parse_goal_document",
+    "roadmap_json",
+    "roadmap_schema",
     "read_text",
     "render_html",
     "render_mermaid",

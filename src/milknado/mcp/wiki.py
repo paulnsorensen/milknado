@@ -14,6 +14,8 @@ from milknado.domains.wiki import (
     render_mermaid,
     resolve_roadmap_dir,
     resolve_roadmap_node,
+    roadmap_json,
+    roadmap_schema,
     wiki_root,
 )
 from milknado.mcp._core import mcp, open_graph, resolve_project_root
@@ -29,29 +31,16 @@ def _load_model(project_root: str, roadmap_slug: str) -> RoadmapModel:
     return load_roadmap(resolve_roadmap_dir(root, roadmap_slug))
 
 
-def _json_payload(model: RoadmapModel) -> dict:
-    goals = model.goals
-    return {
-        "roadmap": model.roadmap.model_dump(mode="json"),
-        "goals": {slug: goals[slug].model_dump(mode="json") for slug in sorted(goals)},
-        "edges": [
-            {"from": slug, "to": dependency}
-            for slug in sorted(goals)
-            for dependency in goals[slug].edges
-        ],
-    }
-
-
 @mcp.tool()
 def milknado_roadmap_schema() -> dict:
     """Return the canonical roadmap model JSON Schema."""
-    return RoadmapModel.model_json_schema()
+    return roadmap_schema()
 
 
 @mcp.tool()
 def milknado_roadmap_json(roadmap_slug: str, project_root: str = "") -> dict:
     """Return a canonical JSON-compatible roadmap document and resolved edges."""
-    return _json_payload(_load_model(project_root, roadmap_slug))
+    return roadmap_json(_load_model(project_root, roadmap_slug))
 
 
 @mcp.tool()
