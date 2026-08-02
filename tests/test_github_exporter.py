@@ -58,6 +58,7 @@ def _status_field(*, with_options: bool = True) -> GithubField:
             {"id": "opt-pending", "name": "Pending"},
             {"id": "opt-running", "name": "Running"},
             {"id": "opt-done", "name": "Done"},
+            {"id": "opt-blocked", "name": "Blocked"},
             {"id": "opt-failed", "name": "Failed"},
         ]
         if with_options
@@ -199,7 +200,7 @@ def test_archived_goal_still_exports_status_and_harvest(
     assert wiki_edits[1]["text"] == "result: done · tasks: 0 done / 0 failed"
 
 
-def test_blocked_status_skips_option_but_writes_harvest(
+def test_blocked_status_writes_blocked_option_and_harvest(
     tmp_path: Path,
     graph: MikadoGraph,
     monkeypatch: pytest.MonkeyPatch,
@@ -218,9 +219,8 @@ def test_blocked_status_skips_option_but_writes_harvest(
     gh_text_edits = [
         e for e in fake.item_edits if e["item_id"] == "PVTI_gh" and e["text"] is not None
     ]
-    assert gh_option_edits == []  # blocked has no Status option
-    assert len(gh_text_edits) == 1  # harvest still written
-    # blocked -> None is an intentional no-op, not a missing-option warning.
+    assert [e["option"] for e in gh_option_edits] == ["opt-blocked"]
+    assert len(gh_text_edits) == 1
     assert caplog.records == []
 
 

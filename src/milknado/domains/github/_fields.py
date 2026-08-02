@@ -8,12 +8,13 @@ from milknado.domains.github.models import GithubField
 
 STATUS_FIELD_NAME = "Milknado Status"
 HARVEST_FIELD_NAME = "Milknado Harvest"
-STATUS_OPTIONS = ["Pending", "Running", "Done", "Failed"]
+STATUS_OPTIONS = ["Pending", "Running", "Done", "Blocked", "Failed"]
 
 _OPTION_BY_STATUS = {
     "pending": "Pending",
     "running": "Running",
     "done": "Done",
+    "blocked": "Blocked",
     "failed": "Failed",
 }
 

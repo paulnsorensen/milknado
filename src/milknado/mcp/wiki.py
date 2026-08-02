@@ -1,8 +1,4 @@
-"""MCP tools for the wiki <-> milknado roadmap crossover.
-
-Coordinator-level tools alongside the other graph tools: import seeds the graph
-from the wiki, export harvests execution state back into it.
-"""
+"""MCP tools for the wiki <-> milknado roadmap crossover."""
 
 from __future__ import annotations
 
@@ -10,8 +6,13 @@ from pathlib import Path
 
 from milknado.adapters.hallouminate import HallouminateIndexer
 from milknado.domains.wiki import (
+    RoadmapModel,
     export_roadmap,
     import_roadmap,
+    load_roadmap,
+    render_html,
+    render_mermaid,
+    resolve_roadmap_dir,
     resolve_roadmap_node,
     wiki_root,
 )
@@ -21,6 +22,50 @@ from milknado.mcp._core import mcp, open_graph, resolve_project_root
 def _wiki_root_for(project_root: str) -> tuple[Path, Path]:
     root = resolve_project_root(project_root or None)
     return root, wiki_root(root)
+
+
+def _load_model(project_root: str, roadmap_slug: str) -> RoadmapModel:
+    _, root = _wiki_root_for(project_root)
+    return load_roadmap(resolve_roadmap_dir(root, roadmap_slug))
+
+
+def _json_payload(model: RoadmapModel) -> dict:
+    goals = model.goals
+    return {
+        "roadmap": model.roadmap.model_dump(mode="json"),
+        "goals": {slug: goals[slug].model_dump(mode="json") for slug in sorted(goals)},
+        "edges": [
+            {"from": slug, "to": dependency}
+            for slug in sorted(goals)
+            for dependency in goals[slug].edges
+        ],
+    }
+
+
+@mcp.tool()
+def milknado_roadmap_schema() -> dict:
+    """Return the canonical roadmap model JSON Schema."""
+    return RoadmapModel.model_json_schema()
+
+
+@mcp.tool()
+def milknado_roadmap_json(roadmap_slug: str, project_root: str = "") -> dict:
+    """Return a canonical JSON-compatible roadmap document and resolved edges."""
+    return _json_payload(_load_model(project_root, roadmap_slug))
+
+
+@mcp.tool()
+def milknado_roadmap_render(
+    roadmap_slug: str,
+    format: str = "mermaid",
+    project_root: str = "",
+) -> dict:
+    """Render a roadmap as Mermaid or self-contained HTML."""
+    if format not in {"mermaid", "html"}:
+        raise ValueError("format must be 'mermaid' or 'html'")
+    model = _load_model(project_root, roadmap_slug)
+    content = render_mermaid(model) if format == "mermaid" else render_html(model)
+    return {"format": format, "content": content}
 
 
 @mcp.tool()

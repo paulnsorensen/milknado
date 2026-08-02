@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._locate import (
     read_text,
@@ -24,11 +24,9 @@ from milknado.domains.wiki._locate import (
 from milknado.domains.wiki._serialize import (
     compute_goal_ref,
     compute_roadmap_ref,
-    extract_title,
-    load_frontmatter,
-    read_prereqs,
     set_frontmatter_field,
 )
+from milknado.domains.wiki.model import GoalDocument, Lifecycle, RoadmapModel, load_roadmap
 
 
 @dataclass(frozen=True)
@@ -58,38 +56,41 @@ def import_roadmap(
     *,
     today: str | None = None,
 ) -> ImportResult:
-    """Parse `roadmaps/<roadmap_slug>/` or `<roadmap_slug>/` into nodes; fail fast if absent."""
+    """Parse a roadmap through the canonical wiki model into graph nodes."""
     roadmap_dir = resolve_roadmap_dir(wiki_root, roadmap_slug)
-    index_path = roadmap_dir / "index.md"
     stamp = today or _today_iso()
     counters = _Counters()
+    _stamp_missing_created(wiki_root, roadmap_dir, stamp, counters)
+    model = _load_model(roadmap_dir, roadmap_slug)
     roadmap_id, _ = _ingest_file(
         graph,
-        wiki_root,
-        index_path,
         kind=NodeKind.ROADMAP,
         parent_id=None,
+        created=model.roadmap.created,
+        title=roadmap_dir.name,
         ref_for=lambda created: compute_roadmap_ref(roadmap_slug, created),
-        stamp=stamp,
         counters=counters,
     )
     goal_ids: dict[str, int] = {}
     prereqs: dict[str, list[str]] = {}
-    for path in roadmap_markdown_files(wiki_root, roadmap_dir):
-        if path.name == "index.md":
-            continue
-        goal_slug = path.stem
-        goal_ids[goal_slug], prereqs[goal_slug] = _ingest_file(
+    documents: list[tuple[int, GoalDocument]] = []
+    for goal_slug, document in model.goals.items():
+        goal_id, edges = _ingest_file(
             graph,
-            wiki_root,
-            path,
             kind=NodeKind.GOAL,
             parent_id=roadmap_id,
+            created=document.created,
+            title=document.title,
             ref_for=lambda created, s=goal_slug: compute_goal_ref(roadmap_slug, s, created),
-            stamp=stamp,
             counters=counters,
+            document=document,
         )
+        goal_ids[goal_slug] = goal_id
+        prereqs[goal_slug] = edges
+        documents.append((goal_id, document))
     _wire_prereqs(graph, roadmap_slug, goal_ids, prereqs)
+    for node_id, document in documents:
+        _apply_document_state(graph, node_id, document)
     return ImportResult(
         roadmap_node_id=roadmap_id,
         goal_node_ids=goal_ids,
@@ -99,43 +100,63 @@ def import_roadmap(
     )
 
 
+def _stamp_missing_created(
+    wiki_root: Path, roadmap_dir: Path, stamp: str, counters: _Counters
+) -> None:
+    for path in roadmap_markdown_files(wiki_root, roadmap_dir):
+        text = read_text(wiki_root, path)
+        if "created:" in text.split("\n---\n", 1)[0]:
+            continue
+        updated = set_frontmatter_field(text, "created", stamp)
+        write_text_atomic(wiki_root, path, updated)
+        counters.stamped.append(path.stem)
+
+
+def _load_model(roadmap_dir: Path, roadmap_slug: str) -> RoadmapModel:
+    """Load the canonical model; roadmap_slug remains for signature stability."""
+    del roadmap_slug
+    return load_roadmap(roadmap_dir)
+
+
 def _ingest_file(
     graph: MikadoGraph,
-    wiki_root: Path,
-    path: Path,
     *,
     kind: NodeKind,
     parent_id: int | None,
-    ref_for: Callable[[str], str],
-    stamp: str,
+    created: object,
+    title: str,
+    ref_for: Callable[[object], str],
     counters: _Counters,
+    document: GoalDocument | None = None,
 ) -> tuple[int, list[str]]:
-    """Find-or-create the node for one roadmap/goal file; stamp `created` if absent.
-
-    Returns the node id and the file's declared prereq slugs, parsed from the
-    single frontmatter read so the caller need not re-read the file.
-    """
-    text = read_text(wiki_root, path)
-    frontmatter = load_frontmatter(text)
-    created = frontmatter.get("created")
-    try:
-        prereqs = read_prereqs(frontmatter)
-    except ValueError as exc:
-        raise ValueError(f"{path.name}: {exc}") from exc
-    if created is None:
-        text = set_frontmatter_field(text, "created", stamp)
-        write_text_atomic(wiki_root, path, text)
-        created = stamp
-        counters.stamped.append(path.stem)
-    ref = ref_for(str(created))
+    """Find-or-create a graph node from one validated canonical document."""
+    ref = ref_for(created)
     existing = graph.find_node_by_wiki_ref(ref)
     if existing is not None:
         counters.reused += 1
-        return existing.id, prereqs
-    description = extract_title(text) or path.stem
-    node = graph.add_node(description, parent_id=parent_id, spec=NodeSpec(kind=kind, wiki_ref=ref))
-    counters.created += 1
-    return node.id, prereqs
+        node_id = existing.id
+    else:
+        node = graph.add_node(title, parent_id=parent_id, spec=NodeSpec(kind=kind, wiki_ref=ref))
+        counters.created += 1
+        node_id = node.id
+    return node_id, document.edges if document is not None else []
+
+
+def _apply_document_state(graph: MikadoGraph, node_id: int, document: GoalDocument) -> None:
+    """Validate authored status and apply only lifecycle transitions."""
+    current = graph.get_node(node_id)
+    if current is None:
+        raise ValueError(f"goal {document.slug!r} was not created")
+    if document.status is not None and not isinstance(document.status, NodeStatus):
+        raise ValueError(f"goal {document.slug!r} has invalid status")
+    if document.lifecycle is not Lifecycle.DEPRECATED:
+        return
+    if current.status is not NodeStatus.DONE:
+        graph.set_todo_status(node_id, NodeStatus.DONE)
+        current = graph.get_node(node_id)
+    if current is None:
+        raise ValueError(f"goal {document.slug!r} was not created")
+    graph.archive_subtree(node_id)
 
 
 def _wire_prereqs(

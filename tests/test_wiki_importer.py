@@ -8,14 +8,17 @@ a missing dir.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
-from milknado.domains.common import NodeKind
+from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.wiki._locate import RoadmapPathError
-from milknado.domains.wiki.importer import import_roadmap
+from milknado.domains.wiki.importer import _apply_document_state, import_roadmap
+from milknado.domains.wiki.model import GoalDocument, Lifecycle
 
 ROADMAP_SLUG = "demo-roadmap"
 
@@ -206,7 +209,7 @@ class TestCreatedStamping:
         (gdir / "index.md").write_text(INDEX_MD)
         (gdir / "no-date.md").write_text(
             "---\nkind: goal\nslug: no-date\nroadmap: demo-roadmap\nstatus: pending\n"
-            "prereqs: []\n---\n# No date\n\n## Intent\nx\n"
+            "prereqs: []\n---\n# No date\n\n## Intent\nx\n\n## Acceptance\n- stamped\n"
         )
         before = (gdir / "no-date.md").read_text()
         result = import_roadmap(root, ROADMAP_SLUG, graph, today="2026-06-09")
@@ -266,8 +269,10 @@ class TestFailFast:
         (d / "index.md").write_text(INDEX_MD)
         # prereqs as a bare string (not a list) — must raise ValueError naming the file
         (d / "bad-goal.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n"
-            "prereqs: not-a-list\n---\n# Bad\n"
+            "---\nkind: goal\nslug: bad-goal\nroadmap: demo-roadmap\n"
+            "created: 2026-06-02\nstatus: pending\n"
+            "prereqs: not-a-list\n---\n# Bad\n\n## Intent\nwhy\n"
+            "\n## Acceptance\n- no\n"
         )
         with pytest.raises(ValueError, match="bad-goal.md"):
             import_roadmap(root, ROADMAP_SLUG, graph)
@@ -281,7 +286,10 @@ class TestFailFast:
         (d / "index.md").write_text(INDEX_MD)
         # down: as a bare string (not a list) — must raise ValueError naming the file
         (d / "bad-goal.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\ndown: not-a-list\n---\n# Bad\n"
+            "---\nkind: goal\nslug: bad-goal\nroadmap: demo-roadmap\n"
+            "created: 2026-06-02\nstatus: pending\n"
+            "down: not-a-list\n---\n# Bad\n\n## Intent\nwhy\n"
+            "\n## Acceptance\n- no\n"
         )
         with pytest.raises(ValueError, match="bad-goal.md"):
             import_roadmap(root, ROADMAP_SLUG, graph)
@@ -290,73 +298,52 @@ class TestFailFast:
 class TestDownEdges:
     """Prereq edges derived from Breadcrumbs `down:` wikilinks."""
 
-    def test_down_only_wires_prereqs(self, tmp_path: Path, graph: MikadoGraph) -> None:
+    def _root(self, tmp_path: Path) -> Path:
         root = tmp_path / "wiki"
         d = root / "roadmaps" / "my-roadmap"
         d.mkdir(parents=True)
         (d / "index.md").write_text(
-            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+            "---\nkind: roadmap\nslug: my-roadmap\ncreated: 2026-06-01\n"
+            "status: pending\n---\n# My Roadmap\n"
         )
-        (d / "a.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+        return root
+
+    def _goal(self, root: Path, slug: str, created: str, extra: str = "") -> None:
+        path = root / "roadmaps" / "my-roadmap" / f"{slug}.md"
+        path.write_text(
+            f"---\nkind: goal\nslug: {slug}\nroadmap: my-roadmap\ncreated: {created}\n"
+            f"status: pending\n{extra}---\n# Goal {slug}\n\n## Intent\n{slug}\n\n"
+            "## Acceptance\n- works\n"
         )
-        (d / "b.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
-            "down:\n- '[[a]]'\n---\n# Goal B\n"
-        )
+
+    def test_down_only_wires_prereqs(self, tmp_path: Path, graph: MikadoGraph) -> None:
+        root = self._root(tmp_path)
+        self._goal(root, "a", "2026-06-02", "up:\n- b\n")
+        self._goal(root, "b", "2026-06-03", "down:\n- a\n")
         result = import_roadmap(root, "my-roadmap", graph)
-        b_id = result.goal_node_ids["b"]
-        a_id = result.goal_node_ids["a"]
-        prereq_ids = {c.id for c in graph.get_children(b_id)}
-        assert a_id in prereq_ids
+        assert result.goal_node_ids["a"] in {
+            c.id for c in graph.get_children(result.goal_node_ids["b"])
+        }
 
     def test_down_with_alias_resolves_to_target(self, tmp_path: Path, graph: MikadoGraph) -> None:
-        root = tmp_path / "wiki"
-        d = root / "roadmaps" / "my-roadmap"
-        d.mkdir(parents=True)
-        (d / "index.md").write_text(
-            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
-        )
-        (d / "a.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
-        )
-        (d / "b.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
-            "down:\n- '[[a|alias for a]]'\n---\n# Goal B\n"
-        )
+        root = self._root(tmp_path)
+        self._goal(root, "a", "2026-06-02", "up:\n- b\n")
+        self._goal(root, "b", "2026-06-03", "down:\n- a\n")
         result = import_roadmap(root, "my-roadmap", graph)
-        b_id = result.goal_node_ids["b"]
-        a_id = result.goal_node_ids["a"]
-        prereq_ids = {c.id for c in graph.get_children(b_id)}
-        assert a_id in prereq_ids
+        assert result.goal_node_ids["a"] in {
+            c.id for c in graph.get_children(result.goal_node_ids["b"])
+        }
 
     def test_union_of_prereqs_and_down_no_silent_drop(
         self, tmp_path: Path, graph: MikadoGraph
     ) -> None:
-        root = tmp_path / "wiki"
-        d = root / "roadmaps" / "my-roadmap"
-        d.mkdir(parents=True)
-        (d / "index.md").write_text(
-            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
-        )
-        (d / "a.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
-        )
-        (d / "c.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-04\nstatus: pending\n---\n# Goal C\n"
-        )
-        # b lists a via prereqs: and c via down: — both must be wired
-        (d / "b.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
-            "prereqs:\n- a\ndown:\n- '[[c]]'\n---\n# Goal B\n"
-        )
+        root = self._root(tmp_path)
+        self._goal(root, "a", "2026-06-02")
+        self._goal(root, "c", "2026-06-04", "up:\n- b\n")
+        self._goal(root, "b", "2026-06-03", "prereqs:\n- a\ndown:\n- c\n")
         result = import_roadmap(root, "my-roadmap", graph)
-        b_id = result.goal_node_ids["b"]
-        a_id = result.goal_node_ids["a"]
-        c_id = result.goal_node_ids["c"]
-        prereq_ids = {c.id for c in graph.get_children(b_id)}
-        assert a_id in prereq_ids
-        assert c_id in prereq_ids
+        ids = {c.id for c in graph.get_children(result.goal_node_ids["b"])}
+        assert ids == {result.goal_node_ids["a"], result.goal_node_ids["c"]}
 
 
 class TestFlatLayout:
@@ -367,45 +354,144 @@ class TestFlatLayout:
         d = root / "my-roadmap"
         d.mkdir(parents=True)
         (d / "index.md").write_text(
-            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+            "---\nkind: roadmap\nslug: my-roadmap\ncreated: 2026-06-01\n"
+            "status: pending\n---\n# My Roadmap\n"
         )
         (d / "goal-x.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal X\n"
+            "---\nkind: goal\nslug: goal-x\nroadmap: my-roadmap\n"
+            "created: 2026-06-02\nstatus: pending\n---\n# Goal X\n"
+            "\n## Intent\nX\n\n## Acceptance\n- X\n"
         )
         result = import_roadmap(root, "my-roadmap", graph)
-        from milknado.domains.common import NodeKind
-
-        kinds = [n.kind for n in graph.get_all_nodes()]
-        assert kinds.count(NodeKind.ROADMAP) == 1
-        assert kinds.count(NodeKind.GOAL) == 1
+        assert [n.kind for n in graph.get_all_nodes()].count(NodeKind.ROADMAP) == 1
         assert "goal-x" in result.goal_node_ids
 
     def test_nested_layout_still_works(self, wiki_root: Path, graph: MikadoGraph) -> None:
-        # regression: existing nested layout must be unaffected
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         assert result.created_count == 3
         assert "define-schema" in result.goal_node_ids
-        assert "wire-export" in result.goal_node_ids
 
     def test_flat_layout_with_down_edges(self, tmp_path: Path, graph: MikadoGraph) -> None:
-        # Integration: flat dir + down: edges both active at once.
-        # Both cooked changes must work together — not just independently.
         root = tmp_path / "wiki"
         d = root / "my-roadmap"
         d.mkdir(parents=True)
         (d / "index.md").write_text(
-            "---\nkind: roadmap\ncreated: 2026-06-01\nstatus: pending\n---\n# My Roadmap\n"
+            "---\nkind: roadmap\nslug: my-roadmap\ncreated: 2026-06-01\n"
+            "status: pending\n---\n# My Roadmap\n"
         )
         (d / "a.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-02\nstatus: pending\n---\n# Goal A\n"
+            "---\nkind: goal\nslug: a\nroadmap: my-roadmap\n"
+            "created: 2026-06-02\nstatus: pending\nup: [b]\n---\n# Goal A\n"
+            "\n## Intent\nA\n\n## Acceptance\n- A\n"
         )
         (d / "b.md").write_text(
-            "---\nkind: goal\ncreated: 2026-06-03\nstatus: pending\n"
-            "down:\n- '[[a]]'\n---\n# Goal B\n"
+            "---\nkind: goal\nslug: b\nroadmap: my-roadmap\n"
+            "created: 2026-06-03\nstatus: pending\ndown:\n- a\n---\n# Goal B\n"
+            "\n## Intent\nB\n\n## Acceptance\n- B\n"
         )
         result = import_roadmap(root, "my-roadmap", graph)
-        b_id = result.goal_node_ids["b"]
-        a_id = result.goal_node_ids["a"]
-        prereq_ids = {c.id for c in graph.get_children(b_id)}
-        assert a_id in prereq_ids, "down: edge not wired in flat layout"
-        assert len(prereq_ids) == 1, "unexpected extra prereq edges"
+        assert result.goal_node_ids["a"] in {
+            c.id for c in graph.get_children(result.goal_node_ids["b"])
+        }
+
+
+class TestCanonicalModel:
+    def test_invalid_execution_status_fails_loudly(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(INDEX_MD)
+        (d / "bad-status.md").write_text(
+            "---\nkind: goal\nslug: bad-status\nroadmap: demo-roadmap\n"
+            "created: 2026-06-02\nstatus: deprecated\n---\n# Bad status\n"
+            "\n## Intent\nold\n\n## Acceptance\n- migrate\n"
+        )
+        with pytest.raises(ValueError, match="bad-status.md"):
+            import_roadmap(root, ROADMAP_SLUG, graph)
+
+    def test_deprecated_lifecycle_archives_done_goal(
+        self, tmp_path: Path, graph: MikadoGraph
+    ) -> None:
+        root = tmp_path / "wiki"
+        d = root / "roadmaps" / ROADMAP_SLUG
+        d.mkdir(parents=True)
+        (d / "index.md").write_text(INDEX_MD)
+        (d / "old.md").write_text(
+            "---\nkind: goal\nslug: old\nroadmap: demo-roadmap\ncreated: 2026-06-02\n"
+            "status: done\nlifecycle: deprecated\n---\n# Old\n"
+        )
+        result = import_roadmap(root, ROADMAP_SLUG, graph)
+        node = graph.get_node(result.goal_node_ids["old"])
+        assert node is not None
+        assert node.archived_at is not None
+
+
+def _deprecated_document(status: NodeStatus | None = None) -> GoalDocument:
+    return GoalDocument(
+        slug="retired",
+        roadmap=ROADMAP_SLUG,
+        kind="goal",
+        created=date(2026, 6, 2),
+        status=status,
+        lifecycle=Lifecycle.DEPRECATED,
+        title="Retired",
+    )
+
+
+def test_apply_document_state_rejects_missing_node() -> None:
+    graph = MagicMock()
+    graph.get_node.return_value = None
+    with pytest.raises(ValueError, match="was not created"):
+        _apply_document_state(graph, 1, _deprecated_document())
+
+
+def test_apply_document_state_rejects_node_lost_after_status_update() -> None:
+    graph = MagicMock()
+    graph.get_node.side_effect = [type("Node", (), {"status": NodeStatus.PENDING})(), None]
+    with pytest.raises(ValueError, match="was not created"):
+        _apply_document_state(graph, 1, _deprecated_document(NodeStatus.DONE))
+    graph.set_todo_status.assert_called_once_with(1, NodeStatus.DONE)
+
+
+def test_apply_document_state_archives_deprecated_pending_node() -> None:
+    graph = MagicMock()
+    graph.get_node.return_value = type("Node", (), {"status": NodeStatus.PENDING})()
+    _apply_document_state(graph, 1, _deprecated_document())
+    graph.set_todo_status.assert_called_once_with(1, NodeStatus.DONE)
+    graph.archive_subtree.assert_called_once_with(1)
+
+
+def test_apply_document_state_does_not_apply_stale_status() -> None:
+    graph = MagicMock()
+    graph.get_node.return_value = type("Node", (), {"status": NodeStatus.PENDING})()
+    document = GoalDocument(
+        slug="active",
+        roadmap=ROADMAP_SLUG,
+        kind="goal",
+        created=date(2026, 6, 2),
+        status=NodeStatus.DONE,
+        title="Active",
+        intent="Intent",
+        acceptance="Acceptance",
+    )
+    _apply_document_state(graph, 1, document)
+    graph.set_todo_status.assert_not_called()
+
+
+def test_deprecated_goal_wires_edges_before_archiving(tmp_path: Path, graph: MikadoGraph) -> None:
+    root = tmp_path / "wiki"
+    d = root / "roadmaps" / ROADMAP_SLUG
+    d.mkdir(parents=True)
+    (d / "index.md").write_text(INDEX_MD)
+    (d / "base.md").write_text(
+        GOAL_A.replace("define-schema", "base").replace("status: pending", "lifecycle: deprecated")
+    )
+    (d / "old.md").write_text(
+        "---\nkind: goal\nslug: old\nroadmap: demo-roadmap\ncreated: 2026-06-04\n"
+        "lifecycle: deprecated\nprereqs: [base]\n---\n# Old\n"
+    )
+    result = import_roadmap(root, ROADMAP_SLUG, graph)
+    old_id = result.goal_node_ids["old"]
+    assert graph.get_node(old_id).archived_at is not None

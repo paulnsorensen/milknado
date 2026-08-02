@@ -5,6 +5,7 @@ from milknado.domains.wiki._locate import (
     goal_file_map,
     locate_roadmap_dir,
     read_text,
+    resolve_roadmap_dir,
     wiki_root,
 )
 from milknado.domains.wiki._serialize import extract_section, load_frontmatter
@@ -14,21 +15,39 @@ from milknado.domains.wiki.exporter import (
     resolve_roadmap_node,
 )
 from milknado.domains.wiki.importer import ImportResult, import_roadmap
+from milknado.domains.wiki.model import (
+    GoalDocument,
+    Lifecycle,
+    RoadmapDocument,
+    RoadmapModel,
+    load_roadmap,
+    parse_goal_document,
+)
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult, WikiIndexStatus
+from milknado.domains.wiki.render import render_html, render_mermaid
 
 __all__ = [
     "ExportResult",
+    "GoalDocument",
     "ImportResult",
-    "export_roadmap",
+    "Lifecycle",
+    "RoadmapDocument",
+    "RoadmapModel",
     "WikiIndexerPort",
     "WikiIndexResult",
     "WikiIndexStatus",
+    "export_roadmap",
     "extract_section",
     "goal_file_map",
     "import_roadmap",
     "load_frontmatter",
+    "load_roadmap",
     "locate_roadmap_dir",
+    "parse_goal_document",
     "read_text",
+    "render_html",
+    "render_mermaid",
     "resolve_roadmap_node",
+    "resolve_roadmap_dir",
     "wiki_root",
 ]

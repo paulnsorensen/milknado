@@ -39,9 +39,12 @@ status: pending
 prereqs: []
 ---
 # Goal one
-
 ## Intent
 do the thing
+
+## Acceptance
+- done
+
 """
 
 

@@ -1,4 +1,4 @@
-"""MCP veneer for the wiki roadmap crossover: import + export tools."""
+"""MCP veneer for the wiki roadmap crossover."""
 
 from __future__ import annotations
 
@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from milknado.mcp.wiki import milknado_roadmap_export, milknado_roadmap_import
+from milknado.mcp.wiki import (
+    milknado_roadmap_export,
+    milknado_roadmap_import,
+    milknado_roadmap_json,
+    milknado_roadmap_render,
+    milknado_roadmap_schema,
+)
 
 INDEX_MD = """---
 kind: roadmap
@@ -77,3 +83,46 @@ def test_export_before_import_raises(tmp_path: Path) -> None:
     _seed(tmp_path)
     with pytest.raises(LookupError):
         _call(milknado_roadmap_export, roadmap_slug="demo", project_root=str(tmp_path))
+
+
+def test_schema_json_and_render_tools(tmp_path: Path) -> None:
+    _seed(tmp_path)
+
+    schema = _call(milknado_roadmap_schema)
+    assert "properties" in schema
+
+    payload = _call(milknado_roadmap_json, roadmap_slug="demo", project_root=str(tmp_path))
+    assert payload["roadmap"]["slug"] == "demo"
+    assert payload["goals"]["g1"]["slug"] == "g1"
+    assert payload["edges"] == []
+
+    mermaid = _call(
+        milknado_roadmap_render,
+        roadmap_slug="demo",
+        format="mermaid",
+        project_root=str(tmp_path),
+    )
+    assert mermaid["format"] == "mermaid"
+    assert mermaid["content"].startswith("graph TD")
+
+
+def test_render_rejects_unknown_format(tmp_path: Path) -> None:
+    _seed(tmp_path)
+    with pytest.raises(ValueError, match="format must be"):
+        _call(
+            milknado_roadmap_render,
+            roadmap_slug="demo",
+            format="text",
+            project_root=str(tmp_path),
+        )
+
+
+def test_json_rejects_symlinked_roadmap(tmp_path: Path) -> None:
+    wiki = tmp_path / ".hallouminate" / "wiki"
+    wiki.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (wiki / "roadmaps").mkdir()
+    (wiki / "roadmaps" / "demo").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlinked roadmap"):
+        _call(milknado_roadmap_json, roadmap_slug="demo", project_root=str(tmp_path))

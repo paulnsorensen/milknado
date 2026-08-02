@@ -39,6 +39,10 @@ prereqs: []
 
 ## Intent
 do the thing
+
+## Acceptance
+- done
+
 """
 
 

@@ -58,6 +58,9 @@ prereqs: []
 
 ## Intent
 build the second goal
+
+## Acceptance
+- done
 """
 
 
@@ -207,7 +210,9 @@ def test_bind_accepts_explicit_owner_number(tmp_path: Path, graph: MikadoGraph) 
 def test_bind_rejects_invalid_frontmatter(
     tmp_path: Path, graph: MikadoGraph, old: str, new: str, message: str
 ) -> None:
-    rid, root = _import(tmp_path, graph, index=INDEX_MD.replace(old, new))
+    rid, root = _import(tmp_path, graph)
+    index_path = root / "roadmaps" / SLUG / "index.md"
+    index_path.write_text(INDEX_MD.replace(old, new))
 
     with pytest.raises(ValueError, match=message):
         bind_github_project(graph, rid, root, FakeGh())

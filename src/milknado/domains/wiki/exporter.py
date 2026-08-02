@@ -25,6 +25,7 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
 )
+from milknado.domains.wiki.importer import _load_model
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult
 
 
@@ -65,6 +66,7 @@ def export_roadmap(
         )
     roadmap_dir, roadmap_slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
     context = _ExportContext(wiki_root, roadmap_dir, roadmap_slug, now or _now_iso())
+    _load_model(roadmap_dir, roadmap_slug)
     files = goal_file_map(wiki_root, roadmap_dir, roadmap_slug)
     written = 0
     created = 0
