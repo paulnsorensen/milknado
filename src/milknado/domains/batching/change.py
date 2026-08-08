@@ -38,6 +38,7 @@ class FileChange:
     dependencies: tuple[ChangeDependency, ...] = ()
     depends_on: tuple[str, ...] = ()
     description: str = ""
+    excluded_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

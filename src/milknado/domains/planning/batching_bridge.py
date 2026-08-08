@@ -8,7 +8,7 @@ from milknado.domains.common import VALID_CHILD_KINDS, NodeKind, NodeSpec
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from milknado.domains.batching import Batch, BatchPlan
+    from milknado.domains.batching import Batch, BatchPlan, FileChange
     from milknado.domains.common.protocols import CrgPort
     from milknado.domains.graph import MikadoGraph
     from milknado.domains.planning.manifest import PlanChangeManifest
@@ -79,7 +79,6 @@ def apply_batches_to_graph(
     if not plan.batches:
         return created
 
-    desc_by_change = {c.id: c.description or c.id for c in manifest.changes}
     paths_by_change = {c.id: c.path for c in manifest.changes}
     input_order = {c.id: i for i, c in enumerate(manifest.changes)}
     node_id_by_batch: dict[int, int] = {}
@@ -88,7 +87,7 @@ def apply_batches_to_graph(
     for batch in plan.batches:
         files = _batch_files(batch, paths_by_change, input_order)
         node = graph.add_node(
-            _batch_description(batch, desc_by_change),
+            render_batch_description(batch, manifest),
             spec=NodeSpec(oversized=batch.oversized, batch_index=batch.index, kind=NodeKind.TASK),
         )
         if batch.depends_on:
@@ -128,12 +127,17 @@ def _batch_files(
     return files
 
 
-def _batch_description(
-    batch: Batch,
-    desc_by_change: dict[str, str],
-) -> str:
+def render_batch_description(batch: Batch, manifest: PlanChangeManifest) -> str:
+    descriptions = {change.id: _change_description(change) for change in manifest.changes}
     lines = []
-    for i, cid in enumerate(batch.change_ids, start=1):
-        text = desc_by_change.get(cid) or cid
-        lines.append(f"{i}. {text}")
+    for ordinal, change_id in enumerate(batch.change_ids, start=1):
+        text = descriptions.get(change_id) or change_id
+        lines.append(f"{ordinal}. [{change_id}] {text}")
     return "\n".join(lines) if lines else f"Batch {batch.index}"
+
+
+def _change_description(change: FileChange) -> str:
+    text = change.description or change.id
+    if change.excluded_paths:
+        text += f"\nExcluded paths: {', '.join(change.excluded_paths)}"
+    return text

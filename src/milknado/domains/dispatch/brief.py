@@ -101,10 +101,12 @@ _CODER_INSTRUCTIONS = (
     "milknado_track_follow_up with a one-line description rather than only "
     "printing it. "
     "As your final step, call milknado_deposit_result with run_id set to the "
-    "MILKNADO_RUN_ID environment variable and payload set to your COMPLETE "
-    "deliverable — the full text of what you produced, not a reference to "
-    "content that lives only in this context. The deposited payload is what "
-    "the coordinator reads back; anything left only in your reply is lost."
+    "MILKNADO_RUN_ID environment variable. If the task description defines a "
+    "structured result contract, payload must be that exact structured result; "
+    "otherwise payload must be your COMPLETE deliverable — the full text of what "
+    "you produced, not a reference to content that lives only in this context. "
+    "The deposited payload is what the coordinator reads back; anything left "
+    "only in your reply is lost."
 )
 
 _REVIEW_INSTRUCTIONS = (

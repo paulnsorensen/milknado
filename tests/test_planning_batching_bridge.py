@@ -105,7 +105,12 @@ class TestApplyBatchesToGraph:
     ) -> None:
         manifest = _manifest(
             _change("a", "src/a.py", "Add module A"),
-            _change("b", "src/b.py", "Add module B"),
+            _change(
+                "b",
+                "src/b.py",
+                "Add module B",
+                excluded_paths=("src/generated.py", "tests/fixtures.py"),
+            ),
         )
         plan = BatchPlan(
             batches=(Batch(index=0, change_ids=("a", "b"), depends_on=()),),
@@ -117,8 +122,10 @@ class TestApplyBatchesToGraph:
 
         batch_node = graph.get_node(created[1])
         assert batch_node is not None
-        assert "1. Add module A" in batch_node.description
-        assert "2. Add module B" in batch_node.description
+        assert "1. [a] Add module A" in batch_node.description
+        assert "Excluded paths: src/generated.py, tests/fixtures.py" in batch_node.description
+        assert "2. [b] Add module B" in batch_node.description
+        assert graph.get_file_ownership(created[1]) == ["src/a.py", "src/b.py"]
 
     def test_diamond_root_batches_attach_to_goal_root(
         self,
@@ -257,8 +264,8 @@ class TestApplyBatchesToGraph:
         batch_node = graph.get_node(created[1])
         assert batch_node is not None
         # Both descriptions appear in full, numbered
-        assert f"1. {long_desc_1}" in batch_node.description
-        assert f"2. {long_desc_2}" in batch_node.description
+        assert f"1. [c1] {long_desc_1}" in batch_node.description
+        assert f"2. [c2] {long_desc_2}" in batch_node.description
 
     def test_description_fallback_to_id_when_empty(
         self,

@@ -21,6 +21,7 @@ dependencies = [
     "typing-extensions>=4.14.1",
     "msgspec>=0.21.1",
     "tenacity>=9.1.4",
+    "easy-cheese-schemas>=1,<2",
 ]
 
 [project.scripts]
@@ -262,3 +263,4 @@ max_file_lines = 300
 "src/milknado/loop/_run_types.py" = { max_lines = 335, reason = "Pre-existing run-type boundary; keep its measured ceiling until types are split." }
 "src/milknado/loop/engine.py" = { max_lines = 706, reason = "Pre-existing loop engine; keep its measured ceiling until phases are split." }
 "src/milknado/mcp/todo_mutate.py" = { max_lines = 336, reason = "Pre-existing MCP mutation boundary; keep its measured ceiling until tool groups are split." }
+

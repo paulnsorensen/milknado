@@ -1,5 +1,14 @@
-from milknado.domains.planning.batching_bridge import apply_batches_to_graph
+from milknado.domains.planning.batching_bridge import (
+    apply_batches_to_graph,
+    render_batch_description,
+)
 from milknado.domains.planning.context import build_planning_context
+from milknado.domains.planning.easy_cheese import (
+    PHYSICAL_OUTCOME_SCHEMA,
+    MilknadoPlanItem,
+    MilknadoPlanV2,
+    import_milknado,
+)
 from milknado.domains.planning.manifest import (
     MANIFEST_VERSION,
     PlanChangeManifest,
@@ -30,7 +39,12 @@ __all__ = [
     "PlanningPorts",
     "PlanningProcessPort",
     "PlanningProcessResult",
+    "MilknadoPlanItem",
+    "MilknadoPlanV2",
+    "PHYSICAL_OUTCOME_SCHEMA",
+    "import_milknado",
     "apply_batches_to_graph",
+    "render_batch_description",
     "build_planning_context",
     "decode_manifest",
     "parse_manifest_from_output",

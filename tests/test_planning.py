@@ -1194,6 +1194,8 @@ class TestPlanChangeManifest:
                 FileChange(
                     id="c1",
                     path="src/auth.py",
+                    description="Extract auth",
+                    excluded_paths=("src/generated.py",),
                     hash_anchors=HashAnchors(before="before", after="after"),
                     dependencies=(
                         ChangeDependency(
@@ -1213,10 +1215,11 @@ class TestPlanChangeManifest:
                 "id": "c1",
                 "path": "src/auth.py",
                 "edit_kind": "modify",
-                "description": "",
+                "description": "Extract auth",
                 "symbols": [],
                 "depends_on": [],
                 "hash_anchors": {"before": "before", "after": "after"},
+                "excluded_paths": ["src/generated.py"],
                 "dependencies": [
                     {
                         "path": "src/models.py",
@@ -1227,6 +1230,9 @@ class TestPlanChangeManifest:
                 ],
             },
         ]
+        round_tripped = parse_manifest_from_dict(manifest_to_dict(manifest))
+        assert round_tripped is not None
+        assert round_tripped.changes[0].excluded_paths == ("src/generated.py",)
 
     def test_direct_construction_is_frozen(self) -> None:
         manifest = PlanChangeManifest(
