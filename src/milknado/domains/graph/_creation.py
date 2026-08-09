@@ -1,4 +1,4 @@
-"""Node/edge creation free functions for MikadoGraph.
+"""Node and edge persistence free functions for MikadoGraph.
 
 Inline transaction logic extracted from graph.py, mirroring the
 _persistence.py / _mutations.py / _transitions.py free-function convention.
@@ -155,6 +155,16 @@ def add_edge(conn: sqlite3.Connection, parent_id: int, child_id: int) -> MikadoE
         raise
     conn.commit()
     return MikadoEdge(parent_id=parent_id, child_id=child_id)
+
+
+def remove_edge(conn: sqlite3.Connection, parent_id: int, child_id: int) -> bool:
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            "DELETE FROM edges WHERE parent_id = ? AND child_id = ?",
+            (parent_id, child_id),
+        )
+    return cursor.rowcount > 0
 
 
 def set_batch_metadata(

@@ -64,6 +64,7 @@ def test_layering_contracts_are_declared() -> None:
         "milknado.domains.github._intent",
         "milknado.domains.graph._analytics_facade",
         "milknado.domains.graph._creation",
+        "milknado.domains.graph._edge_facade",
         "milknado.domains.graph._goal_claims",
         "milknado.domains.graph._mutations",
         "milknado.domains.graph._persistence",

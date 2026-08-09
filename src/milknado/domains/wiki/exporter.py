@@ -10,7 +10,6 @@ from milknado.domains.common import MikadoNode, NodeKind, slugify
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.reporting import build_harvest_summary, format_harvest_text
 from milknado.domains.wiki._locate import (
-    goal_file_map,
     locate_roadmap_dir,
     read_text,
     resolve_roadmap_dir,
@@ -25,6 +24,7 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
 )
+from milknado.domains.wiki.importer import _load_model
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult
 
 
@@ -65,7 +65,11 @@ def export_roadmap(
         )
     roadmap_dir, roadmap_slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
     context = _ExportContext(wiki_root, roadmap_dir, roadmap_slug, now or _now_iso())
-    files = goal_file_map(wiki_root, roadmap_dir, roadmap_slug)
+    model = _load_model(roadmap_dir, roadmap_slug)
+    files = {
+        compute_goal_ref(roadmap_slug, slug, goal.created): roadmap_dir / f"{slug}.md"
+        for slug, goal in model.goals.items()
+    }
     written = 0
     created = 0
     for goal in graph.get_children(roadmap_node_id, include_archived=True):

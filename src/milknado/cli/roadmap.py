@@ -1,24 +1,88 @@
-"""`milknado roadmap import|export` — thin CLI veneer over the wiki crossover."""
+"""Roadmap graph CLI commands."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
 from milknado.adapters.hallouminate import HallouminateIndexer
 from milknado.cli._helpers import _ensure_db, _load_or_default, console
 from milknado.domains.wiki import (
+    RoadmapModel,
     export_roadmap,
     import_roadmap,
+    load_roadmap,
+    render_html,
+    render_mermaid,
+    resolve_roadmap_dir,
     resolve_roadmap_node,
+    roadmap_json,
+    roadmap_schema,
     wiki_root,
 )
 
-roadmap_app = typer.Typer(name="roadmap", help="Import/export roadmaps to the hallouminate wiki")
+roadmap_app = typer.Typer(name="roadmap", help="Import/export and inspect roadmap graphs")
 
 _ProjectRoot = Annotated[Path, typer.Option("--project-root", help="Project root directory")]
+_Out = Annotated[Path | None, typer.Option("--out", help="Write output to this path")]
+_Format = Annotated[Literal["mermaid", "html"], typer.Option("--format", help="Render format")]
+
+
+def _roadmap_model(project_root: Path, slug: str) -> RoadmapModel:
+    root = wiki_root(project_root)
+    return load_roadmap(resolve_roadmap_dir(root, slug))
+
+
+def _emit(text: str, out: Path | None) -> None:
+    if out is None:
+        typer.echo(text, nl=not text.endswith("\n"))
+    else:
+        out.write_text(text, encoding="utf-8")
+
+
+@roadmap_app.command("schema")
+def roadmap_schema_cmd(out: _Out = None) -> None:
+    """Print or write the canonical roadmap model JSON Schema."""
+    try:
+        _emit(json.dumps(roadmap_schema(), indent=2, sort_keys=True), out)
+    except OSError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+
+@roadmap_app.command("json")
+def roadmap_json_cmd(
+    slug: Annotated[str, typer.Argument(help="Roadmap slug")],
+    project_root: _ProjectRoot = Path("."),
+    out: _Out = None,
+) -> None:
+    """Print or write a canonical roadmap JSON instance."""
+    try:
+        payload = roadmap_json(_roadmap_model(project_root.resolve(), slug))
+        _emit(json.dumps(payload, indent=2, sort_keys=True), out)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+
+@roadmap_app.command("render")
+def roadmap_render_cmd(
+    slug: Annotated[str, typer.Argument(help="Roadmap slug")],
+    format: _Format = "mermaid",
+    project_root: _ProjectRoot = Path("."),
+    out: _Out = None,
+) -> None:
+    """Render a roadmap graph as Mermaid or self-contained HTML."""
+    try:
+        model = _roadmap_model(project_root.resolve(), slug)
+        rendered = render_mermaid(model) if format == "mermaid" else render_html(model)
+        _emit(rendered, out)
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 @roadmap_app.command("import")

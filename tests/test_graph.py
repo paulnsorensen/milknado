@@ -239,6 +239,17 @@ class TestAddEdge:
             graph.add_edge(n.id, n.id)
 
 
+class TestRemoveEdge:
+    def test_removes_only_existing_edge(self, graph: MikadoGraph) -> None:
+        parent = graph.add_node("parent")
+        child = graph.add_node("child")
+        graph.add_edge(parent.id, child.id)
+
+        assert graph.remove_edge(parent.id, child.id) is True
+        assert graph.remove_edge(parent.id, child.id) is False
+        assert graph.get_children(parent.id) == []
+
+
 class TestGetNode:
     def test_existing_node(self, graph: MikadoGraph) -> None:
         created = graph.add_node("find me")
