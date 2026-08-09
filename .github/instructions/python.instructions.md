@@ -5,6 +5,7 @@ applyTo: "**/*.py"
 - Use `uv` for dependency management, not pip directly
 - Use pytest for tests, not unittest
 - Use Ruff for linting and formatting (`just lint-fix`)
-- Prefer frozen dataclasses over raw dicts for structured data
+- Model untrusted or serialized boundary data as frozen `msgspec.Struct`; validate with a typed decoder or `msgspec.convert(..., type=..., strict=True)` — the repo migrated off pydantic (#344)
+- Prefer frozen dataclasses for trusted internal records; never raw dicts for structured data
 - Use `from __future__ import annotations` for forward references
 - Raise specific exceptions; avoid `raise Exception`, and use bare `raise` only to re-raise the active exception
