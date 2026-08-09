@@ -37,8 +37,8 @@ Vertical slices, not layered tech buckets:
 - Domain slices live under `src/milknado/domains/`.
 - Infrastructure adapters live under `src/milknado/adapters/`.
 
-Entry points: `milknado` CLI (`src/milknado/cli.py`) and the `milknado-mcp` MCP
-server (`src/milknado/mcp_server.py`). Keep business logic in slices and out of the
+Entry points: `milknado` CLI (`src/milknado/cli/`) and the `milknado-mcp` MCP
+server (`src/milknado/mcp/server.py`). Keep business logic in slices and out of the
 adapters/entry points (principle 3 — separate business logic from infrastructure).
 
 ## The six engineering principles

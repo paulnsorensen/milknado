@@ -79,15 +79,17 @@ when it's claimed by a different **live** process. Design decisions and their
 why:
 
 - **`INSERT OR IGNORE` with pid written atomically in the same statement** is
-  the whole mutex (`claim_goal_row`, `_persistence.py`). The pid must ride in
+  the whole mutex (`claim_goal_row`, `_goal_claims.py`). The pid must ride in
   the INSERT: a two-step insert-then-set-pid left a window where a NULL-pid
   claim from a healthy coordinator could be "reclaimed" by a racing one
   (pass-2 review high).
-- **Same-pid exemption** (`_check_ancestor_goal_not_claimed`, `_mcp_core.py`):
-  a claim held by the current process doesn't fence sibling dispatches. See the
-  run-identity section above for why pid, not run_id.
+- **Same-pid exemption** (the `claim["pid"] != owner_pid` guard in
+  `claim_ancestor_goal_for_dispatch`, `domains/graph/graph.py`, over
+  `ancestor_goal_claimed_by_other` in `_goal_claims.py`): a claim held by the
+  current process doesn't fence sibling dispatches. See the run-identity section
+  above for why pid, not run_id.
 - **Release fires on goal-node terminalization only** (`mark_done` /
-  `mark_failed` / `mark_terminal` → `_release_goal_claim_on_terminal`). A
+  `mark_failed` / `mark_terminal` → `release_goal_claim_on_terminal`). A
   cancelled run that never terminalizes its goal leaves a claim row, but
   pid-liveness reclaim clears it at the next dispatch attempt once the process
   dies — soft leak, self-healing, no stale-timeout wait.
@@ -170,7 +172,7 @@ Refusal semantics per call site:
 | `WorktreeManager.remove` (from `rebase_and_merge` / `Executor.fail`) | **hard-fail** the caller — the old warn-and-swallow after a `--force` remove was silent destruction |
 | `cancel.py:_reconcile_cancel` (routes through `WorktreeManager.remove`, never the raw adapter) | **hard-fail** the cancel; worktree and node preserved |
 | `WorktreeManager.ensure_clean` (pre-dispatch cleanup) | **degrade** — log what is at risk, keep the orphan, dispatch relocates |
-| Orphan prune in `milknado_run_loop_start` (`mcp_ralph.py`) | **degrade** — same; the run loop is never blocked |
+| Orphan prune in `milknado_run_loop_start` (`mcp/ralph.py`) | **degrade** — same; the run loop is never blocked |
 | `WorktreeManager.discard` | unchanged — this IS the explicit destructive path |
 
 `rebase_and_merge`'s landed check runs against `feature_branch` and the
@@ -273,7 +275,7 @@ Five coordinator-facing MCP tools drive runs: `milknado_run_inline` (blocking),
 `milknado_run_inline_start` / `milknado_run_inline_poll` (async in-process worker),
 and `milknado_run_loop_start` / `milknado_run_loop_poll` (detached
 worktree-isolated ralph loop). All five return the **unified superset schema**
-`RunDict` (`_mcp_core.py`): `run_id, node_id, status, exit_code, timed_out,
+`RunDict` (`mcp/_core.py`): `run_id, node_id, status, exit_code, timed_out,
 rebased, log_path, summary`, every field nullable where it doesn't apply
 (`summary` is None until a poll tails the log; `rebased` is None for non-ralph
 runs; the start tools return `exit_code`/`timed_out` None). One client code
@@ -316,8 +318,8 @@ bugs #38/#39/#50 pointed at):
 > `domains/common/agent_argv.py`). Don't conflate the two.
 
 - **Family 3 = single-shot headless worker** — `milknado_run_inline` (blocking,
-  `mcp_run.py:47`) plus `milknado_run_inline_start` / `_poll` (async in-process,
-  `mcp_run.py:89` / `:176`). One worker pass, brief piped on stdin, no quality
+  `mcp/run.py:40`) plus `milknado_run_inline_start` / `_poll` (async in-process,
+  `mcp/run.py:80` / `:121`). One worker pass, brief piped on stdin, no quality
   gates. Isolation is **safe by default**: `worktree=ISOLATE` (the default) runs
   the worker in a fresh worktree+branch and rebase-merges it back on exit 0;
   `worktree=THIS_BRANCH` opts into the shared working tree (see
@@ -329,7 +331,7 @@ bugs #38/#39/#50 pointed at):
   `threading.Thread(_async_worker)` (`dispatch/async_run.py:119`) that dies with
   the server. Mechanics detailed above in *Subprocess workers & run-state*.
 - **Family 4 = ralph iterate-until-gates loop** — `milknado_run_loop_start` /
-  `_poll` (`mcp_ralph.py:62` / `:214`). Detached
+  `_poll` (`mcp/ralph.py:62` / `:89`). Detached
   `Popen([... _ralph_node_runner ...], start_new_session=True)`, no stdin, runs
   in its **own git worktree+branch**, loops until `quality_gates` pass
   (`run_node_to_completion`, `execution/headless.py:49`), then rebase-merges
@@ -345,7 +347,7 @@ for cheap or offline nodes — and `milknado_run_inline` blocks until that forei
 worker exits, returning the result inline. No worktree, no gate loop, no poll
 cycle: it is the "shell out to another model and wait" path. `worker_cmd` is the
 cross-harness lever — it defaults to `profile.execution_agent` but the caller
-overrides it per dispatch (`mcp_run.py:47`, docstring). **Constraint:** the
+overrides it per dispatch (`mcp/run.py:40`, docstring). **Constraint:** the
 override's executable *basename* must be one of `{claude, codex, cursor-agent,
 gemini}` (`validate_worker_argv` / `_ALLOWED_WORKER_EXECUTABLES`,
 `agent_argv.py`) — a "local LLM" is reachable only when fronted by one of those
@@ -364,7 +366,7 @@ spawned workers. `WORKER_ALLOWED_TOOLS["claude"]` (`agent_argv.py`) gives a
 worker only two milknado MCP tools — `milknado_track_follow_up` and
 `milknado_deposit_result` — never the run-dispatch tools. Family 4 additionally
 carries a **hard, permanent prohibition**: *"COORDINATOR-ONLY: never add these
-to WORKER_ALLOWED_TOOLS"* (`mcp_ralph.py:1-12`), because a worker that could
+to WORKER_ALLOWED_TOOLS"* (`mcp/ralph.py:1-12`), because a worker that could
 start sub-ralph-loops would recursively fork worktrees. (A casual read of the
 code can mis-state Family 3 as worker-allowed — it is not; re-check
 `WORKER_ALLOWED_TOOLS` before asserting otherwise.)
@@ -450,7 +452,7 @@ and lazy, matching the reclaim model above: when a poll observes a `done` run,
 run row (`cleanup_run_window`) — never a pattern sweep of the session's
 windows. The runs table is the expected set; tmux is consulted per row.
 
-**Attach.** `milknado attach <run_id>` (`cli_run.py`) resolves preconditions
+**Attach.** `milknado attach <run_id>` (`cli/run.py`) resolves preconditions
 via `resolve_attach_target` — unknown run, finished run, missing tmux binary,
 and non-tmux run each fail with a distinct message — then execs
 `tmux select-window -t =sess:=run \; attach-session` (or `switch-client` when
@@ -475,7 +477,8 @@ sentinel.
 - `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.
 - `src/milknado/domains/dispatch/tmux_run.py` — `ensure_tmux_ready` (fail-closed), `execute_in_window` (run-inline pane waiter), `cleanup_run_window` / `reconcile_run_window` (per-row lifecycle), `resolve_attach_target`.
 - `src/milknado/domains/common/agent_argv.py` — `WORKER_ALLOWED_TOOLS` (per-vendor worker tool allowlist), `_ALLOWED_WORKER_EXECUTABLES` / `validate_worker_argv` (worker-cmd basename gate), `resolve_*_agent_command`.
-- `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`), `goal_claims` repo (`claim_goal_row`, `release_goal_row`).
-- `src/milknado/mcp_run.py` — `milknado_run_inline*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
-- `src/milknado/mcp_ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
-- `src/milknado/_mcp_core.py` — `RunDict` unified run-result schema, `_check_ancestor_goal_not_claimed` / `_claim_ancestor_goal_for_dispatch` (goal-claim fencing).
+- `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`) and the `goal_claims` table schema.
+- `src/milknado/domains/graph/_goal_claims.py` — goal-claim repo + fencing helpers (`claim_goal_row`, `release_goal_row`, `ancestor_goal_claimed_by_other`, `claim_or_reclaim_goal`); `MikadoGraph.claim_ancestor_goal_for_dispatch` (`graph.py`) is the dispatch-time entry point.
+- `src/milknado/mcp/run.py` — `milknado_run_inline*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
+- `src/milknado/mcp/ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
+- `src/milknado/mcp/_core.py` — `RunDict` unified run-result schema, the shared `FastMCP` instance, and the `resolve_project_root` / `open_graph` / status-kind-flavor parsers. (The goal-claim fencing this module once held now lives on `MikadoGraph.claim_ancestor_goal_for_dispatch`; see `domains/graph/`.)
