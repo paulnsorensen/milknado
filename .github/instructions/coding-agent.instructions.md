@@ -15,7 +15,7 @@ When implementing changes:
 - Do not introduce new dependencies without explicit approval
 - Write tests for new functionality — match the existing test patterns in `tests/`
 - Prefer editing existing files over creating new ones
-- Run `just build` before opening a PR — it must pass (lint, tests, and the 90% coverage gate)
+- Run `just check-llm` before opening a PR — THE gate: lint, format, file-size, import contracts, tests, and project + diff coverage at 95%. It is non-mutating; if it fails on lint/format, run `just lint-fix` and re-run the gate
 
 ## Architecture Rules
 
@@ -24,3 +24,5 @@ When implementing changes:
 - Do not create abstract classes, interfaces, or factories unless there are 2+ concrete implementations
 - Core models must not import infrastructure code
 - Cross-slice translation belongs in an explicit bridge module, not inside the pure slice
+- No migration code — this project is pre-release; change the code directly instead of adding backfills, deprecation shims, or compatibility layers
+- A new underscore-private module inside a domain must be added to the "boundary modules must use domain barrels" import-linter contract in `pyproject.toml`

@@ -36,6 +36,7 @@ Follow vertical slice architecture:
 - Core models stay pure: no ORM decorators, no framework imports, no I/O
 - `common/` is a leaf — it imports nothing from sibling domains
 - One-directional dependencies only; cross-slice translation lives in an explicit bridge module (e.g. `domains/planning/batching_bridge.py`), never inside the pure slice
+- Slice-boundary and layering contracts are enforced mechanically by import-linter (`lint-imports`, part of `just check-llm`); see `[tool.importlinter]` in `pyproject.toml`
 
 **Growth pattern:**
 
@@ -52,6 +53,10 @@ Follow vertical slice architecture:
 - Do not wrap functions that add no logic — call the original directly
 - Do not add type annotations to every local variable — annotate function signatures and let inference handle the rest
 
+## No Migration Code
+
+This project is pre-release. Do not add migration backfills, deprecation shims, or compatibility layers.
+
 ## Tech Stack
 
 - **Language**: Python (`requires-python >= 3.11`)
@@ -59,14 +64,13 @@ Follow vertical slice architecture:
 - **Test framework**: pytest (with `pytest-cov`)
 - **Lint + format**: Ruff (`--preview`)
 - **Task runner**: `just`
-- **Key libraries**: fastmcp, ortools (CP-SAT), typer, tiktoken, pyyaml, rich, code-review-graph
-- **Shape**: MCP server (`src/milknado/mcp_server.py`) over domain slices under `src/milknado/domains/`
+- **Key libraries**: fastmcp, ortools (CP-SAT), typer, textual, tiktoken, pyyaml, rich, msgspec, code-review-graph
+- **Shape**: MCP server (`src/milknado/mcp/server.py`) and `milknado` CLI over domain slices under `src/milknado/domains/`
 
 ## Build, Test, and Lint Commands
 
-- Full build (autofix → test → coverage gate): `just build`
-- CI build (lint check, no autofix): `just build-ci`
-- Lint (check only): `just lint`
-- Lint (autofix + format): `just lint-fix`
+- **THE PR gate**: `just check-llm` — lint + format + file-size + import contracts + tests + project & diff coverage (95%, mirrors `codecov/patch`). Non-mutating; quiet on success. Green means open the PR, red means fix and re-run.
+- Lint autofix + format: `just lint-fix` (run when `check-llm` fails on lint/format, then re-run the gate)
 - Tests: `just test` (or `just test-file <path>`)
-- Coverage report: `just test-coverage` (threshold-gated by `just coverage-check`, min 90%)
+- Full autofix pipeline: `just build`; CI runs `just build-ci`
+- Install deps: `just install`
