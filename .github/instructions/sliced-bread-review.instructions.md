@@ -5,7 +5,7 @@ excludeAgent: "coding-agent"
 
 ## Sliced Bread deep review — slices, layers, and barrels
 
-Layout: pure domain slices under `src/milknado/domains/` (batching, common, config_sync, dispatch, execution, github, graph, planning, reporting, wiki), application wiring in `app/`, delivery in `cli/` and `mcp/`, adapters implementing domain ports in `adapters/`. Each domain's `__init__.py` barrel is its public API. (Diffs to a barrel itself get the stricter contract review in `barrel.instructions.md`.)
+Layout: pure domain slices under `src/milknado/domains/` (batching, common, dispatch, execution, github, graph, planning, reporting, wiki), application wiring in `app/`, delivery in `cli/` and `mcp/`, adapters implementing domain ports in `adapters/`. Each domain's `__init__.py` barrel is its public API. (Diffs to a barrel itself get the stricter contract review in `barrel.instructions.md`.)
 
 import-linter (`lint-imports`, part of `just check-llm`) already enforces the mechanical contracts — domains never import app/cli/mcp, graph never imports execution, app never imports cli/mcp, adapters never import app, and boundary layers use domain barrels — so do not re-flag plain forbidden imports. Review for what the checker cannot see, in priority order:
 
