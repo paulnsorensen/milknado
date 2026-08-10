@@ -85,6 +85,23 @@ def test_nonzero_git_diff_error_is_not_reported_as_no_change(tmp_path: Path) -> 
     assert "fatal: bad object bad-oid" in verdict.feedback
 
 
+def test_git_diff_raising_is_not_reported_as_no_change(tmp_path: Path) -> None:
+    """The committed-change probe carries the same contract as the status probe:
+    git raising (timeout, missing binary, undecodable output) means the verifier
+    got no answer, which is not the same as a clean tree."""
+    with patch("milknado.domains.execution.completion.subprocess.run") as run:
+        run.side_effect = [
+            _completed(stdout=""),
+            subprocess.TimeoutExpired("git diff", 60.0),
+        ]
+        verdict = build_completion_verifier(tmp_path, (), base_oid="dispatch-oid")()
+
+    assert verdict.ok is False
+    assert verdict.feedback != _NO_CHANGE
+    assert _HARNESS_FAILURE in verdict.feedback
+    assert "dispatch-oid" in verdict.feedback, "feedback must name the base it could not diff"
+
+
 def test_clean_tree_still_rejects_the_worker(tmp_path: Path) -> None:
     """The other side of the split: git answered, and the answer was 'no change'."""
     with patch("milknado.domains.execution.completion.subprocess.run") as run:
