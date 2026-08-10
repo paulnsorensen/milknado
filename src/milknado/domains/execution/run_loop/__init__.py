@@ -24,7 +24,10 @@ from milknado.domains.execution.run_loop._logging import configure_run_logging, 
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
 from milknado.domains.execution.run_loop.display import (
     TuiState,
+    _action_reasons,
+    _average_duration,
     _build_layout,
+    _progress_state,
     _render_overlay,
     _summarize_description,
 )
@@ -128,27 +131,18 @@ class RunLoop:
         run = self._ralph.get_run(run_id)
         state = run.state if run is not None else None
         status = getattr(state, "status", RunStatus.RUNNING)
-        progress_event = self._progress_by_run.get(run_id)
-        progress = None
-        if progress_event is not None:
-            progress = progress_event.message or f"{progress_event.work}/{progress_event.total}"
-
         stop_requested = bool(getattr(state, "stop_requested", False))
-        terminal_reasons = {
-            RunStatus.COMPLETED: "run has completed",
-            RunStatus.FAILED: "run has failed",
-            RunStatus.STOPPED: "run has stopped",
-        }
-        terminal_reason = terminal_reasons.get(status)
-        cancel_reason = terminal_reason
-        guidance_reason = terminal_reason
-        force_stop_reason = terminal_reason
-        if terminal_reason is None and stop_requested:
-            cancel_reason = "stop already requested"
-            guidance_reason = "run is stopping"
-        if terminal_reason is None and bool(getattr(state, "force_stop_requested", False)):
-            force_stop_reason = "force stop already requested"
-
+        cancel_reason, guidance_reason, force_stop_reason = _action_reasons(
+            status, stop_requested, bool(getattr(state, "force_stop_requested", False))
+        )
+        progress, progress_pct = _progress_state(self._progress_by_run.get(run_id))
+        elapsed_seconds = (now := time.monotonic()) - self._dispatched_at.get(run_id, now)
+        avg_dur = _average_duration(self._completion_durations)
+        eta_seconds = max(0.0, avg_dur - elapsed_seconds) if avg_dur is not None else None
+        cfg = self._milknado_config
+        stalled = progress_pct is None and elapsed_seconds >= (
+            cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
+        )
         return ActiveRunState(
             run_id=run_id,
             node_id=node_id,
@@ -163,6 +157,12 @@ class RunLoop:
             ),
             output=tuple(self._ralph.get_run_output_tail(run_id, 30)),
             pending_guidance=tuple(self._ralph.get_run_guidance(run_id)),
+            elapsed_seconds=elapsed_seconds,
+            progress_pct=progress_pct,
+            eta_seconds=eta_seconds,
+            attempt=self._attempts.get(node_id, 0) + 1,
+            max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
+            stalled=stalled,
         )
 
     def _publish_state(self) -> None:

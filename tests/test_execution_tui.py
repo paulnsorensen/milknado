@@ -95,6 +95,12 @@ def snapshot(
             actions=RunActionAvailability(),
             output=output,
             pending_guidance=(),
+            elapsed_seconds=12.0,
+            progress_pct=50.0,
+            eta_seconds=8.0,
+            attempt=1,
+            max_attempts=3,
+            stalled=False,
         )
     ]
     if second:
@@ -109,6 +115,12 @@ def snapshot(
                 actions=RunActionAvailability(force_stop_reason="No child process is active."),
                 output=(),
                 pending_guidance=("check tests",),
+                elapsed_seconds=30.0,
+                progress_pct=None,
+                eta_seconds=None,
+                attempt=2,
+                max_attempts=3,
+                stalled=True,
             )
         )
     return ExecutionSnapshot(
@@ -135,6 +147,7 @@ def stopped_snapshot() -> ExecutionSnapshot:
                 status=ExecutionRunStatus.STOPPED,
                 output=("[bold]literal worker output[/bold]",),
                 pending_guidance=("not delivered",),
+                duration_seconds=64.0,
             ),
         ),
         completed=0,
@@ -349,7 +362,7 @@ async def test_pointer_scroll_pauses_auto_follow() -> None:
 
         assert app.auto_follow is False
         app.query_one("#detail").on_mouse_scroll_up(None)  # type: ignore[arg-type]
-        assert "paused; press r to resume" in app.query_one("#output-text").render().plain
+        assert app.query_one("#output").border_title == "Output (paused; press r to resume)"
 
 
 @pytest.mark.asyncio

@@ -77,6 +77,12 @@ class ActiveRunSnapshot:
     actions: RunActionAvailability
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...]
+    elapsed_seconds: float
+    progress_pct: float | None
+    eta_seconds: float | None
+    attempt: int
+    max_attempts: int
+    stalled: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +95,7 @@ class TerminalRunSnapshot:
     status: ExecutionRunStatus
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...]
+    duration_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +278,12 @@ class ExecutionController:
                 ),
                 output=run.output,
                 pending_guidance=run.pending_guidance,
+                elapsed_seconds=run.elapsed_seconds,
+                progress_pct=run.progress_pct,
+                eta_seconds=run.eta_seconds,
+                attempt=run.attempt,
+                max_attempts=run.max_attempts,
+                stalled=run.stalled,
             )
             for run in state.active_runs
         )
@@ -282,6 +295,7 @@ class ExecutionController:
                 status=ExecutionRunStatus(run.status.value),
                 output=run.output,
                 pending_guidance=run.pending_guidance,
+                duration_seconds=run.duration_seconds,
             )
             for run in state.terminal_runs
         )
@@ -390,6 +404,7 @@ def run_execution_loop(
         feature_branch=feature_branch,
         concurrency_limit=config.concurrency_limit,
         strict=strict,
+        interactive=False,
     )
 
 

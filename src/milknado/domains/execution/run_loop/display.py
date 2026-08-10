@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from milknado.loop import RunStatus
+
 if TYPE_CHECKING:
     from rich.layout import Layout
     from rich.panel import Panel
@@ -50,6 +52,36 @@ def _eta_str(avg_duration: float | None, elapsed: float) -> str:
         return "~?"
     remaining = max(0.0, avg_duration - elapsed)
     return f"~{_elapsed_str(remaining)}"
+
+
+def _average_duration(durations: Sequence[float]) -> float | None:
+    values = list(durations)
+    return sum(values) / len(values) if len(values) >= 3 else None
+
+
+def _action_reasons(
+    status: RunStatus, stop_requested: bool, force_stop_requested: bool
+) -> tuple[str | None, str | None, str | None]:
+    terminal_reason = {
+        RunStatus.COMPLETED: "run has completed",
+        RunStatus.FAILED: "run has failed",
+        RunStatus.STOPPED: "run has stopped",
+    }.get(status)
+    cancel_reason = guidance_reason = force_stop_reason = terminal_reason
+    if terminal_reason is None and stop_requested:
+        cancel_reason = "stop already requested"
+        guidance_reason = "run is stopping"
+    if terminal_reason is None and force_stop_requested:
+        force_stop_reason = "force stop already requested"
+    return cancel_reason, guidance_reason, force_stop_reason
+
+
+def _progress_state(event: ProgressEvent | None) -> tuple[str | None, float | None]:
+    if event is None:
+        return None, None
+    progress = event.message or f"{event.work}/{event.total}"
+    progress_pct = event.work / event.total * 100 if event.total > 0 else None
+    return progress, progress_pct
 
 
 def _files_cell(files: list[str]) -> str:
@@ -119,8 +151,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
 
     frame = _SPINNER_FRAMES[state.tick % len(_SPINNER_FRAMES)]
     now = time.monotonic()
-    durations = list(state.completion_durations)
-    avg_dur = sum(durations) / len(durations) if len(durations) >= 3 else None
+    avg_dur = _average_duration(state.completion_durations)
     ownership_map = graph.get_file_ownership_map(state.active.values())
 
     table = Table(title=_build_title(state.active, graph), show_header=True, header_style="bold")

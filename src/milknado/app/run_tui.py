@@ -6,10 +6,9 @@ from pathlib import Path
 from threading import get_ident
 from typing import TYPE_CHECKING
 
-from textual import on, work
+from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, VerticalScroll
-from textual.events import MouseScrollDown, MouseScrollUp, Resize
+from textual.containers import Horizontal
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from milknado.app.run import (
@@ -18,51 +17,32 @@ from milknado.app.run import (
     ExecutionSnapshot,
     TerminalRunSnapshot,
 )
+from milknado.app.run_commands import ExecutionCommandsMixin
+from milknado.app.run_panels import RunDetailPanel, RunListPanel
+from milknado.app.run_view import confirmation_text, events_text, subtitle_text
 from milknado.domains.execution import RunLoopResult
 
 if TYPE_CHECKING:
     from textual.worker import Worker
 
-WIDE_MIN_COLUMNS = 100
+# Two-pane needs the full run table (64) plus a readable detail pane. Below this
+# the compact route shows the same table full-width, so nothing is lost.
+WIDE_MIN_COLUMNS = 116
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
 
-class DetailPane(VerticalScroll):
-    """Detail pane that pauses output following before consuming wheel input."""
-
-    def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
-        self.app._pause_auto_follow()
-
-    def on_mouse_scroll_down(self, event: MouseScrollDown) -> None:
-        self.app._pause_auto_follow()
-
-
-class RunTable(DataTable):
-    """Run selector that preserves the focused table across compact resizes."""
-
-    def on_focus(self) -> None:
-        if not self.app.compact:
-            self.app.route = "list"
-
-
-class ExecutionApp(App[RunLoopResult | None]):
+class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
     """Responsive, controller-only operator view for a single execution."""
 
     CSS = """
     #workspace { height: 1fr; }
-    #runs { width: 38; min-width: 30; height: 1fr; }
-    #detail { width: 1fr; height: 1fr; }
-    #output, #events, #actions, #help, #confirmation { margin: 0 1; }
-    #output { height: 1fr; overflow-y: auto; border: round $primary; }
-    #events { height: 5; border: round $secondary; }
-    #guidance { margin: 0 1 1 1; }
-    #confirmation { display: none; color: $warning; }
-    #help { display: none; }
+    #events { height: auto; max-height: 8; margin: 0 1; border: round $secondary; }
     .visible { display: block; }
     .compact #workspace { display: block; }
-    .compact #runs { width: 1fr; }
+    .compact #totals { display: block; }
+    .compact #run-panel { width: 1fr; }
     .compact.list #detail { display: none; }
-    .compact.detail #runs { display: none; }
+    .compact.detail #run-panel { display: none; }
     """
     BINDINGS = [
         ("up", "previous_run", "Previous run"),
@@ -106,21 +86,14 @@ class ExecutionApp(App[RunLoopResult | None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="workspace"):
-            yield RunTable(id="runs", cursor_type="row")
-            with DetailPane(id="detail"):
-                yield Static(id="summary", markup=False)
-                with VerticalScroll(id="output"):
-                    yield Static(id="output-text", markup=False)
-                yield Static(id="events", markup=False)
-                yield Static(id="actions", markup=False)
-                yield Static(id="help", markup=False)
-                yield Static(id="confirmation", markup=False)
-                yield Input(placeholder="Queue guidance for the selected run", id="guidance")
+            yield RunListPanel(id="run-panel")
+            yield RunDetailPanel(id="detail")
+        # Events describe the execution, not the selected run, so they stay visible
+        # across both compact routes instead of hiding inside the detail pane.
+        yield Static(id="events", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
-        table = self.query_one("#runs", DataTable)
-        table.add_columns("Run", "Status", "Progress")
         self._ui_thread_id = get_ident()
         self._unsubscribe = self.controller.subscribe(self._receive_snapshot)
         self._set_layout(self.size.width < WIDE_MIN_COLUMNS)
@@ -132,7 +105,7 @@ class ExecutionApp(App[RunLoopResult | None]):
             self._unsubscribe()
             self._unsubscribe = None
 
-    def on_resize(self, event: Resize) -> None:
+    def on_resize(self, event) -> None:
         self._set_layout(event.size.width < WIDE_MIN_COLUMNS)
 
     def _receive_snapshot(self, snapshot: ExecutionSnapshot) -> None:
@@ -161,27 +134,23 @@ class ExecutionApp(App[RunLoopResult | None]):
         self.set_class(compact, "compact")
         self.set_class(compact and self.route == "list", "list")
         self.set_class(compact and self.route == "detail", "detail")
+        if not self.auto_follow:
+            self.query_one("#detail", RunDetailPanel).preserve_output_offset()
 
     def _refresh_view(self) -> None:
-        table = self.query_one("#runs", DataTable)
-        table.clear(columns=False)
-        for run in self._runs():
-            progress = run.progress if isinstance(run, ActiveRunSnapshot) else None
-            table.add_row(run.run_id, run.status.value, progress or "—", key=run.run_id)
-        if self.selected_run_id is not None:
-            table.move_cursor(row=self._run_index())
-        selected = self._selected_run()
-        self.query_one("#summary", Static).update(self._summary(selected))
-        self.query_one("#output-text", Static).update(self._output(selected))
-        self.query_one("#events", Static).update(self._events())
-        self.query_one("#actions", Static).update(self._actions(selected))
-        self.query_one("#help", Static).update(self._help_text(selected))
-        active = selected if isinstance(selected, ActiveRunSnapshot) else None
-        self.query_one("#guidance", Input).disabled = (
-            active is None or not active.actions.can_queue_guidance
+        self.title = self.snapshot.goal
+        self.sub_title = subtitle_text(self.snapshot)
+        self.query_one("#run-panel", RunListPanel).update(
+            self.snapshot, self._runs(), self.selected_run_id
         )
-        if self.auto_follow:
-            self.query_one("#output", VerticalScroll).scroll_end(animate=False)
+        self.query_one("#detail", RunDetailPanel).update(
+            self.snapshot,
+            self._selected_run(),
+            compact=self.compact,
+            route=self.route,
+            auto_follow=self.auto_follow,
+        )
+        self.query_one("#events", Static).update(events_text(self.snapshot.event_lines))
 
     def _runs(self) -> tuple[RunSnapshot, ...]:
         return (*self.snapshot.active_runs, *reversed(self.snapshot.terminal_runs))
@@ -194,89 +163,19 @@ class ExecutionApp(App[RunLoopResult | None]):
         return run if isinstance(run, ActiveRunSnapshot) else None
 
     def _run_index(self) -> int:
-        return next(
-            (
-                index
-                for index, run in enumerate(self._runs())
-                if run.run_id == self.selected_run_id
-            ),
-            0,
-        )
-
-    def _summary(self, run: RunSnapshot | None) -> str:
-        totals = (
-            f"{self.snapshot.completed} complete · {self.snapshot.failed} failed · "
-            f"{self.snapshot.stopped} stopped"
-        )
-        if run is None:
-            return f"{self.snapshot.goal} · {totals}\nNo runs."
-        guidance = ", ".join(run.pending_guidance) or "none"
-        if isinstance(run, ActiveRunSnapshot):
-            stopping = " (stopping)" if run.stop_requested else ""
-            status = f"{run.status.value}{stopping} · {run.progress or 'progress unavailable'}"
-            guidance_label = "Pending guidance"
-        else:
-            status = run.status.value
-            guidance_label = "Undelivered guidance"
-        return (
-            f"{self.snapshot.goal} · {totals} · node {run.node_id}\n{run.description}\n"
-            f"{status}\n{guidance_label}: {guidance}"
-        )
-
-    def _output(self, run: RunSnapshot | None) -> str:
-        lines = "\n".join(run.output) if run and run.output else "No output yet."
-        suffix = "following newest output" if self.auto_follow else "paused; press r to resume"
-        return f"Output ({suffix})\n{lines}"
-
-    def _events(self) -> str:
-        events = "\n".join(self.snapshot.event_lines) or "No events yet."
-        return f"Events\n{events}"
-
-    def _actions(self, run: RunSnapshot | None) -> str:
-        if run is None:
-            return "Actions\nNo run selected."
-        if not isinstance(run, ActiveRunSnapshot):
-            return "Actions\nRun has stopped; output retained for inspection."
-        actions = run.actions
-        force = actions.force_stop_reason or "available"
-        cancel = actions.cancel_reason or "available"
-        guidance = actions.guidance_reason or "available"
-        return f"Actions\n[c] Cancel: {cancel}\n[f] Force stop: {force}\n[g] Guidance: {guidance}"
-
-    def _help_text(self, run: RunSnapshot | None) -> str:
-        actions = ["↑/↓ select", "h close help", "q quit"]
-        if self.compact:
-            actions.append("enter open" if self.route == "list" else "escape back")
-        if isinstance(run, ActiveRunSnapshot):
-            if run.actions.can_queue_guidance:
-                actions.append("g queue guidance")
-            if run.actions.can_cancel:
-                actions.append("c cancel")
-            if run.actions.can_force_stop:
-                actions.append("f force stop")
-        if not self.auto_follow:
-            actions.append("r resume output")
-        return "Help\n" + " · ".join(actions)
+        runs = self._runs()
+        ids = [run.run_id for run in runs]
+        return ids.index(self.selected_run_id) if self.selected_run_id in ids else 0
 
     def _set_confirmation(self, action: str, run_id: str | None) -> None:
         self._confirmation = (action, run_id)
-        count = len(self.snapshot.active_runs)
-        run_label = "active run" if count == 1 else "active runs"
-        message = (
-            f"Force stop {run_id}? [y] confirm [n] cancel"
-            if action == "force"
-            else (
-                f"Stop scheduling and gracefully stop {count} {run_label}? [y] confirm [n] cancel"
-            )
-        )
-        confirmation = self.query_one("#confirmation", Static)
-        confirmation.update(message)
-        confirmation.add_class("visible")
+        message = confirmation_text(action, run_id, len(self.snapshot.active_runs))
+        self.query_one("#detail", RunDetailPanel).set_confirmation(message)
         self.set_focus(None)
 
     def _clear_confirmation(self) -> None:
         self._confirmation = None
-        self.query_one("#confirmation", Static).remove_class("visible")
+        self.query_one("#detail", RunDetailPanel).clear_confirmation()
 
     @on(DataTable.RowSelected, "#runs")
     def select_row(self, event: DataTable.RowSelected) -> None:
@@ -293,63 +192,6 @@ class ExecutionApp(App[RunLoopResult | None]):
         run = self._selected_active_run()
         if text and run is not None and run.actions.can_queue_guidance:
             self._queue_guidance(run.run_id, text)
-
-    @work(thread=True, group="execution", exclusive=True)
-    def _run_execution(self) -> None:
-        result = self.controller.run(
-            feature_branch=self.feature_branch or "",
-            strict=self.strict,
-            spec_text=self.spec_text,
-            spec_path=self.spec_path,
-        )
-        self.call_from_thread(self.exit, result)
-
-    @work(thread=True, exclusive=False)
-    def _queue_guidance(self, run_id: str, text: str) -> None:
-        try:
-            accepted = self.controller.queue_guidance(run_id, text)
-        except RuntimeError:
-            accepted = False
-        if accepted:
-            self.call_from_thread(self._clear_guidance_if_unchanged, text)
-        else:
-            self.call_from_thread(
-                self.notify, "This run no longer accepts guidance.", severity="warning"
-            )
-
-    def _clear_guidance_if_unchanged(self, submitted: str) -> None:
-        guidance = self.query_one("#guidance", Input)
-        if guidance.value.strip() == submitted:
-            guidance.value = ""
-
-    @work(thread=True, group="controls", exclusive=False)
-    def _cancel(self, run_id: str) -> None:
-        try:
-            self.controller.cancel(run_id)
-        except RuntimeError as error:
-            if str(error) != "execution has finished":
-                raise
-
-    @work(thread=True, group="controls", exclusive=False)
-    def _force_stop(self, run_id: str) -> None:
-        try:
-            completed = self.controller.force_stop(run_id)
-        except RuntimeError as error:
-            if str(error) != "execution has finished":
-                raise
-            return
-        if not completed:
-            self.call_from_thread(
-                self.notify, "Force-stop cleanup did not finish in time.", severity="warning"
-            )
-
-    @work(thread=True, group="controls", exclusive=False)
-    def _stop_scheduling(self) -> None:
-        try:
-            self.controller.stop_scheduling()
-        except RuntimeError as error:
-            if str(error) != "execution has finished":
-                raise
 
     def action_previous_run(self) -> None:
         self._move_selection(-1)

@@ -100,6 +100,7 @@ def handle_completion(
                 status=RunStatus.STOPPED,
                 output=output,
                 pending_guidance=pending_guidance,
+                duration_seconds=duration,
             )
         )
         if live is not None:
