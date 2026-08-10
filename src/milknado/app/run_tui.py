@@ -36,7 +36,7 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
 
     CSS = """
     #workspace { height: 1fr; }
-    #events { height: auto; max-height: 8; margin: 0 1; border: round $secondary; }
+    #events { height: auto; max-height: 25%; margin: 0 1; border: round $secondary; }
     .visible { display: block; }
     .compact #workspace { display: block; }
     .compact #totals { display: block; }
@@ -144,7 +144,6 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
             self.snapshot, self._runs(), self.selected_run_id
         )
         self.query_one("#detail", RunDetailPanel).update(
-            self.snapshot,
             self._selected_run(),
             compact=self.compact,
             route=self.route,

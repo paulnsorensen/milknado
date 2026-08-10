@@ -83,6 +83,7 @@ def snapshot(
     *,
     second: bool = False,
     output: tuple[str, ...] = ("first output", "latest output"),
+    event_lines: tuple[str, ...] = ("run-1 started",),
 ) -> ExecutionSnapshot:
     runs = [
         ActiveRunSnapshot(
@@ -131,7 +132,7 @@ def snapshot(
         failed=0,
         stopped=0,
         available=2,
-        event_lines=("run-1 started",),
+        event_lines=event_lines,
     )
 
 
@@ -363,6 +364,20 @@ async def test_pointer_scroll_pauses_auto_follow() -> None:
         assert app.auto_follow is False
         app.query_one("#detail").on_mouse_scroll_up(None)  # type: ignore[arg-type]
         assert app.query_one("#output").border_title == "Output (paused; press r to resume)"
+        rendered = app.export_screenshot().replace("&#160;", " ")
+        assert "Output (paused; press r to resume)" in rendered
+
+
+@pytest.mark.asyncio
+async def test_events_height_budget_yields_to_workspace_at_small_terminal() -> None:
+    events = tuple(f"run-1 event {index}" for index in range(30))
+    app = ExecutionApp(FakeController(initial_snapshot=snapshot(event_lines=events)))
+
+    async with app.run_test(size=(120, 14)):
+        workspace_height = app.query_one("#workspace").region.height
+        events_height = app.query_one("#events").region.height
+
+        assert workspace_height > events_height
 
 
 @pytest.mark.asyncio
@@ -473,6 +488,39 @@ async def test_paused_scroll_offset_survives_compact_and_wide_layouts() -> None:
 
         assert app.auto_follow is False
         assert output.scroll_offset.y == paused_offset
+
+
+@pytest.mark.asyncio
+async def test_paused_output_position_survives_a_compact_route_round_trip() -> None:
+    lines = tuple(f"worker output {index}" for index in range(100))
+    app = ExecutionApp(FakeController(initial_snapshot=snapshot(output=lines)))
+
+    async with app.run_test(size=(120, 24)) as pilot:
+        app._pause_auto_follow()
+        output = app.query_one("#output")
+        output.scroll_to(y=8, animate=False)
+        await pilot.pause()
+
+        await pilot.resize_terminal(width=80, height=24)
+        await pilot.press("escape")
+        await pilot.press("enter")
+        await pilot.resize_terminal(width=120, height=24)
+
+        assert output.scroll_offset.y == 8
+
+
+@pytest.mark.asyncio
+async def test_guidance_composer_stays_on_screen_on_a_short_terminal() -> None:
+    lines = tuple(f"worker output {index}" for index in range(100))
+    events = tuple(f"run-1 event {index}" for index in range(30))
+    app = ExecutionApp(FakeController(initial_snapshot=snapshot(output=lines, event_lines=events)))
+
+    async with app.run_test(size=(120, 24)):
+        guidance = app.query_one("#guidance").region
+
+        assert guidance.height == 3
+        assert app.screen.region.contains_region(guidance)
+        assert app.query_one("#output").container_size.height >= 3
 
 
 @pytest.mark.asyncio

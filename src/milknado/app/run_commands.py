@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import TypeVar
 
 from textual import work
 from textual.widgets import Input
 
 from milknado.app.run import ExecutionController
+
+_T = TypeVar("_T")
 
 
 class ExecutionCommandsMixin:
@@ -47,7 +51,7 @@ class ExecutionCommandsMixin:
         if guidance.value.strip() == submitted:
             guidance.value = ""
 
-    def _run_control(self, action: object) -> object:
+    def _run_control(self, action: Callable[[], _T]) -> _T | None:
         try:
             return action()
         except RuntimeError as error:

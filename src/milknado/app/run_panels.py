@@ -70,7 +70,7 @@ class RunDetailPanel(VerticalScroll):
     DEFAULT_CSS = """
     RunDetailPanel { width: 1fr; height: 1fr; }
     #output, #actions, #help, #confirmation { margin: 0 1; }
-    #output { height: 1fr; min-height: 8; overflow-y: auto; border: round $primary; }
+    #output { height: 1fr; overflow-y: auto; border: round $primary; }
     #confirmation { display: none; color: $warning; }
     #help { display: none; }
     #guidance { margin: 0 1 1 1; }
@@ -93,7 +93,6 @@ class RunDetailPanel(VerticalScroll):
 
     def update(
         self,
-        snapshot: ExecutionSnapshot,
         selected: RunSnapshot | None,
         *,
         compact: bool,
