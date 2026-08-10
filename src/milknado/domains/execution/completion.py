@@ -26,7 +26,19 @@ _UNRESOLVABLE_BASE_FEEDBACK: Final[str] = (
     "the completion verifier has no immutable dispatch base, so it cannot confirm "
     "that committed work was produced"
 )
+_GIT_PROBE_FAILURE_FEEDBACK: Final[str] = (
+    "the completion verifier could not inspect this worktree with git, so it cannot tell "
+    "whether a change was produced; this is a harness failure, not a rejection of the work"
+)
 _logger = logging.getLogger(__name__)
+
+
+class _GitProbeFailure(RuntimeError):
+    """A git query the completion verifier depends on did not return an answer.
+
+    Distinct from a clean tree: the verifier learned nothing either way, so the
+    caller must not report the worker as having produced no change.
+    """
 
 
 def build_completion_verifier(
@@ -117,13 +129,17 @@ def _run_quality_gates(worktree: Path, gates: tuple[Gate, ...]) -> str | None:
 
 
 def _change_rejection(worktree: Path, base_oid: str | None) -> str | None:
-    if _has_working_tree_change(worktree):
-        return None
-    if base_oid is None:
-        _logger.warning("completion verifier: no immutable dispatch base for %s", worktree)
-        return _UNRESOLVABLE_BASE_FEEDBACK
-    if _has_committed_change(worktree, base_oid):
-        return None
+    try:
+        if _has_working_tree_change(worktree):
+            return None
+        if base_oid is None:
+            _logger.warning("completion verifier: no immutable dispatch base for %s", worktree)
+            return _UNRESOLVABLE_BASE_FEEDBACK
+        if _has_committed_change(worktree, base_oid):
+            return None
+    except _GitProbeFailure as exc:
+        _logger.warning("completion verifier: %s", exc)
+        return f"{_GIT_PROBE_FAILURE_FEEDBACK}: {exc}"
     return _NO_CHANGE_FEEDBACK
 
 
@@ -137,9 +153,13 @@ def _has_working_tree_change(worktree: Path) -> bool:
             check=True,
             timeout=_GIT_QUERY_TIMEOUT_SECONDS,
         ).stdout
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        _logger.warning("completion verifier: git status failed in %s: %s", worktree, exc)
-        return False
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        OSError,
+        UnicodeDecodeError,
+    ) as exc:
+        raise _GitProbeFailure(f"git status failed in {worktree}: {exc}") from exc
     return bool(status.strip())
 
 
@@ -152,21 +172,15 @@ def _has_committed_change(worktree: Path, base_oid: str) -> bool:
             text=True,
             timeout=_GIT_QUERY_TIMEOUT_SECONDS,
         )
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        _logger.warning(
-            "completion verifier: could not diff dispatch base %s in %s: %s",
-            base_oid,
-            worktree,
-            exc,
-        )
-        return False
+    except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError) as exc:
+        raise _GitProbeFailure(
+            f"could not diff dispatch base {base_oid} in {worktree}: {exc}"
+        ) from exc
     if diff.returncode == 1 and not diff.stderr:
         return True
     if diff.returncode != 0:
-        _logger.warning(
-            "completion verifier: git diff against dispatch base %s in %s exited %d",
-            base_oid,
-            worktree,
-            diff.returncode,
+        raise _GitProbeFailure(
+            f"git diff against dispatch base {base_oid} in {worktree} "
+            f"exited {diff.returncode}: {diff.stderr.strip()}"
         )
     return False
