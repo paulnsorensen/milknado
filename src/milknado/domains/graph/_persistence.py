@@ -534,6 +534,7 @@ def set_worktree(
 _MAX_RETAINED_RUN_MESSAGES = 1000
 _MAX_RUN_MESSAGE_BYTES = 64 * 1024
 _RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+_RUN_STATUS_RUNNING = "running"  # sole owner: runs.status compares case-sensitively
 
 _RUN_COLUMNS = (
     "run_id",
@@ -578,8 +579,8 @@ def start_run(
     conn.execute(
         "INSERT INTO runs "
         "(run_id, node_id, status, pid, log_path, started_at, timeout_seconds, timed_out) "
-        "VALUES (?, ?, 'running', ?, ?, ?, ?, 0)",
-        (run_id, node_id, pid, log_path, started_at, timeout_seconds),
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+        (run_id, node_id, _RUN_STATUS_RUNNING, pid, log_path, started_at, timeout_seconds),
     )
     conn.commit()
 
@@ -588,7 +589,7 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool
     """Write one terminal result; return whether this fenced write won."""
     cur = conn.execute(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
-        "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = 'running'",
+        "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = ?",
         (
             result.status,
             result.exit_code,
@@ -598,6 +599,7 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool
             result.detail,
             None if result.rebased is None else (1 if result.rebased else 0),
             run_id,
+            _RUN_STATUS_RUNNING,
         ),
     )
     conn.commit()
@@ -619,8 +621,8 @@ def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
     guard the sidecar path used).
     """
     conn.execute(
-        "UPDATE runs SET pid = ? WHERE run_id = ? AND status = 'running'",
-        (pid, run_id),
+        "UPDATE runs SET pid = ? WHERE run_id = ? AND status = ?",
+        (pid, run_id, _RUN_STATUS_RUNNING),
     )
     conn.commit()
 
@@ -666,16 +668,16 @@ def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
 def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:
     cutoff = datetime.fromisoformat(created_at).timestamp() - _RUN_MESSAGE_MAX_AGE_SECONDS
     cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
-    terminal = "SELECT run_id FROM runs WHERE status != 'RUNNING'"
+    terminal = "SELECT run_id FROM runs WHERE status != ?"
     conn.execute(
         f"DELETE FROM run_messages WHERE run_id IN ({terminal}) AND created_at < ?",
-        (cutoff_at,),
+        (_RUN_STATUS_RUNNING, cutoff_at),
     )
     conn.execute(
         "DELETE FROM run_messages WHERE (run_id, seq) IN ("
         f"SELECT run_id, seq FROM run_messages WHERE run_id IN ({terminal}) "
         "ORDER BY created_at DESC, seq DESC LIMIT -1 OFFSET ?)",
-        (_MAX_RETAINED_RUN_MESSAGES,),
+        (_RUN_STATUS_RUNNING, _MAX_RETAINED_RUN_MESSAGES),
     )
 
 
@@ -708,8 +710,8 @@ def deposit_review_verdict(
         ).fetchone()
         terminal = conn.execute(
             "SELECT 1 FROM runs JOIN nodes ON nodes.id = runs.node_id "
-            "WHERE runs.run_id = ? AND runs.status = 'running' AND nodes.flavor = 'review'",
-            (run_id,),
+            "WHERE runs.run_id = ? AND runs.status = ? AND nodes.flavor = 'review'",
+            (run_id, _RUN_STATUS_RUNNING),
         ).fetchone()
         if terminal is not None:
             conn.execute(
