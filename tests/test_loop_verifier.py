@@ -27,6 +27,7 @@ from milknado.domains.execution.completion import (
     _GIT_QUERY_TIMEOUT_SECONDS,
     _UNRESOLVABLE_BASE_FEEDBACK,
     NO_GATES_CONFIGURED_MESSAGE,
+    _GitProbeFailure,
     _has_committed_change,
     _has_working_tree_change,
     _run_quality_gates,
@@ -525,22 +526,28 @@ class TestFailOnStdout:
 
 
 class TestGitFailureFailsClosed:
-    """A failing git invocation must not raise out of the verifier; it logs and
-    returns a safe degraded value (no spurious accept)."""
+    """A failing git invocation must not raise out of the verifier and must never
+    produce a spurious accept — but it must also stay distinguishable from a
+    clean tree, so the probes raise and the verifier converts that to feedback
+    naming git rather than blaming the worker."""
 
-    def test_working_tree_check_on_non_git_dir_is_false(self, tmp_path: Path) -> None:
-        assert _has_working_tree_change(tmp_path) is False
+    def test_working_tree_check_on_non_git_dir_raises_probe_failure(self, tmp_path: Path) -> None:
+        with pytest.raises(_GitProbeFailure, match="git status failed"):
+            _has_working_tree_change(tmp_path)
 
-    def test_committed_check_on_non_git_dir_is_false(self, tmp_path: Path) -> None:
-        assert _has_committed_change(tmp_path, "feature") is False
+    def test_committed_check_on_non_git_dir_raises_probe_failure(self, tmp_path: Path) -> None:
+        with pytest.raises(_GitProbeFailure):
+            _has_committed_change(tmp_path, "feature")
 
-    def test_committed_check_fails_closed_on_diff_error(
+    def test_committed_check_raises_on_diff_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """An errored `git diff --quiet` (exit >=2, e.g. 128) must read as 'no
-        committed change', not be mistaken for a non-empty diff (exit 1). Only
-        exit 1 signals real change; treating a broken git call as change would
-        let a worker that produced nothing slip through completion."""
+        """An errored `git diff --quiet` (exit >=2, e.g. 128) must not be mistaken
+        for a non-empty diff (exit 1) — only exit 1 signals real change, and
+        treating a broken git call as change would let a worker that produced
+        nothing slip through completion. It must not read as 'no committed
+        change' either: git never answered, so the verifier reports its own
+        failure instead of attributing one to the worker."""
         import milknado.domains.execution.completion as completion_mod
 
         def fake_run(cmd: list[str], *args: object, **kwargs: object) -> object:
@@ -552,7 +559,20 @@ class TestGitFailureFailsClosed:
 
         monkeypatch.setattr(completion_mod.subprocess, "run", fake_run)
 
-        assert _has_committed_change(tmp_path, "feature") is False
+        with pytest.raises(_GitProbeFailure, match="exited 128"):
+            _has_committed_change(tmp_path, "feature")
+
+    def test_verifier_converts_probe_failure_into_a_non_blaming_rejection(
+        self, tmp_path: Path
+    ) -> None:
+        """End of the path the probes feed: verify() still fails closed and still
+        does not raise, but the feedback the worker receives names the git
+        failure instead of asserting the worker produced nothing."""
+        verdict = build_completion_verifier(tmp_path, (), base_oid="dispatch-oid")()
+
+        assert verdict.ok is False
+        assert "no committed/stageable change" not in verdict.feedback
+        assert "harness failure" in verdict.feedback
 
     def test_clean_tree_unresolvable_base_is_rejected(self, feature_repo: Path) -> None:
         """Detached main worktree + clean tree: no fork point, so the verifier
