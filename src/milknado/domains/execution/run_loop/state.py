@@ -23,6 +23,12 @@ class ActiveRunState:
     actions: RunActionState
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...]
+    elapsed_seconds: float
+    progress_pct: float | None
+    eta_seconds: float | None
+    attempt: int
+    max_attempts: int
+    stalled: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +39,7 @@ class TerminalRunState:
     status: RunStatus
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...]
+    duration_seconds: float
 
 
 @dataclass(frozen=True, slots=True)

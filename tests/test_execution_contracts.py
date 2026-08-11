@@ -85,6 +85,12 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         actions=actions,
         output=("line one",),
         pending_guidance=("continue",),
+        elapsed_seconds=12.0,
+        progress_pct=50.0,
+        eta_seconds=8.0,
+        attempt=1,
+        max_attempts=3,
+        stalled=False,
     )
     terminal = TerminalRunSnapshot(
         run_id="run-0",
@@ -93,6 +99,7 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         status=ExecutionRunStatus.STOPPED,
         output=("last output",),
         pending_guidance=("not delivered",),
+        duration_seconds=42.0,
     )
     snapshot = ExecutionSnapshot(
         goal="responsive-run-tui",
@@ -123,6 +130,12 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         "actions": RunActionAvailability,
         "output": tuple[str, ...],
         "pending_guidance": tuple[str, ...],
+        "elapsed_seconds": float,
+        "progress_pct": float | None,
+        "eta_seconds": float | None,
+        "attempt": int,
+        "max_attempts": int,
+        "stalled": bool,
     }
     assert get_type_hints(TerminalRunSnapshot) == {
         "run_id": str,
@@ -131,6 +144,7 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         "status": ExecutionRunStatus,
         "output": tuple[str, ...],
         "pending_guidance": tuple[str, ...],
+        "duration_seconds": float,
     }
     assert get_type_hints(ExecutionSnapshot) == {
         "goal": str,

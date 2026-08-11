@@ -87,6 +87,12 @@ def loop_state(*, output: tuple[str, ...] = ("last line",)) -> RunLoopState:
                 actions=RunActionState(cancel_reason="already stopping"),
                 output=output,
                 pending_guidance=("use domain barrels",),
+                elapsed_seconds=12.0,
+                progress_pct=50.0,
+                eta_seconds=8.0,
+                attempt=1,
+                max_attempts=3,
+                stalled=False,
             ),
         ),
         terminal_runs=(),
@@ -112,6 +118,12 @@ def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
                 actions=RunActionAvailability(cancel_reason="already stopping"),
                 output=output,
                 pending_guidance=("use domain barrels",),
+                elapsed_seconds=12.0,
+                progress_pct=50.0,
+                eta_seconds=8.0,
+                attempt=1,
+                max_attempts=3,
+                stalled=False,
             ),
         ),
         terminal_runs=(),
@@ -446,3 +458,37 @@ def _capture_control_error(controller: ExecutionController, errors: list[BaseExc
         controller.cancel("run-1")
     except BaseException as error:
         errors.append(error)
+
+
+def test_run_execution_loop_passes_interactive_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    import milknado.adapters as adapters
+    import milknado.domains.dispatch as dispatch
+    import milknado.domains.execution as execution
+    from milknado.app.run import run_execution_loop
+
+    captured: dict[str, object] = {}
+
+    class FakeRunLoop(FakeLoop):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(loop_state())
+
+        def run(self, **kwargs: object) -> str:
+            captured.update(kwargs)
+            return "result"
+
+    monkeypatch.setattr(dispatch, "reconcile_orphaned_runs", lambda graph: None)
+    monkeypatch.setattr(adapters, "GitAdapter", lambda root: ("git", root))
+    monkeypatch.setattr(adapters, "CrgAdapter", lambda root: ("crg", root))
+    monkeypatch.setattr(adapters, "LoopAdapter", lambda: "ralph")
+    monkeypatch.setattr(execution, "Executor", lambda **kwargs: object())
+    monkeypatch.setattr(execution, "RunLoop", FakeRunLoop)
+
+    run_execution_loop(
+        object(),
+        MilknadoConfig(concurrency_limit=3),
+        Path("/project"),
+        "feature",
+        False,
+    )
+
+    assert captured["interactive"] is False
