@@ -686,3 +686,34 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
     assert handle_completion(failed, "run-1", "completed", "main", live)[2] == [conflict]
     passed = make_loop(CompletionResult(1, rebased=True, newly_ready=[]))
     assert handle_completion(passed, "run-1", "completed", "main", live)[0] == 1
+
+
+def test_completion_handler_surfaces_review_notification_failure() -> None:
+    """A failed review notification reaches the operator, orthogonal to the outcome.
+
+    The review ran but its verdict could not be delivered to the worker. Without a
+    consumer the flag was set and discarded, so the operator saw a clean completion.
+    """
+    result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
+    loop = SimpleNamespace(
+        _active={"run-1": 1},
+        _dispatched_at={"run-1": 0.0},
+        _progress_by_run={},
+        _input=SimpleNamespace(overlay_state=None),
+        _graph=SimpleNamespace(get_node=lambda node_id: MikadoNode(node_id, "handler node")),
+        _executor=SimpleNamespace(complete=lambda node_id, branch: result),
+        _completion_durations=[],
+        _logs=[],
+        _attempts={},
+        _strict=True,
+        _failure_triggered=False,
+    )
+    live = SimpleNamespace(console=MagicMock())
+
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+
+    # The node still completes normally — the notice does not change the outcome.
+    assert (completed, failed, conflicts) == (1, 0, [])
+    assert any("review notification failed" in entry for entry in loop._logs)
+    printed = " ".join(str(call) for call in live.console.print.call_args_list)
+    assert "review notification failed" in printed

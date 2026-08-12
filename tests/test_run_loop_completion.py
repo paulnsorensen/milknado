@@ -17,6 +17,7 @@ class _FakeCompleteResult:
     rebase_conflict: RebaseConflict | None = None
     redispatch: Any | None = None
     blocked: bool = False
+    review_notification_failed: bool = False
 
 
 class _FakeGraph:
