@@ -39,6 +39,15 @@ def handle_completion(
 
     if outcome == "completed":
         result = loop._executor.complete(node_id, feature_branch)
+        if result.review_notification_failed:
+            # Orthogonal to the outcome below: the review ran, but its verdict could
+            # not be delivered. Surface it before any early return so the operator
+            # sees a review whose result may never have reached the worker.
+            if live is not None:
+                live.console.print(
+                    f"[yellow]![/yellow] [{node_id}] {desc} — review notification failed"
+                )
+            loop._logs.append(f"[{ts()}] ! node {node_id} review notification failed")
         if result.redispatch is not None:
             redispatch = result.redispatch
             loop._active[redispatch.run_id] = node_id

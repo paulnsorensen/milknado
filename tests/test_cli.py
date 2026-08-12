@@ -1884,7 +1884,7 @@ class TestPrintRunResult:
             )
         )
         out = capsys.readouterr().out
-        assert "Loop ended: 1 completed, 1 failed" in out
+        assert "Loop ended: 2 dispatched, 1 completed, 1 failed" in out
         assert "Rebase conflict — node 3" in out
         assert "a.py" in out
         assert "b.py" in out

@@ -102,7 +102,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             [v for v, _ in pending],
         )
         raise
-    _logger.info("migrated database user_version %d -> %d", current, pending[-1][0])
+    _logger.info("migrated database user_version %d -> %d", current, SCHEMA_VERSION)
 
 
 def _validate_schema(conn: sqlite3.Connection) -> None:

@@ -38,7 +38,8 @@ def _print_run_result(result: RunLoopResult) -> None:
         console.print("[green]All nodes complete. Root goal achieved.[/green]")
     else:
         console.print(
-            f"[yellow]Loop ended: {result.completed_total} completed, "
+            f"[yellow]Loop ended: {result.dispatched_total} dispatched, "
+            f"{result.completed_total} completed, "
             f"{result.failed_total} failed.[/yellow]"
         )
 
