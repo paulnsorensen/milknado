@@ -13,7 +13,7 @@ import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.common.errors import ArchiveIneligible
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, _persistence
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import (
     create_tables,
@@ -577,3 +577,64 @@ class TestArchiveSeed:
         assert isinstance(err, ValueError)
         message = str(err)
         assert "7" in message and "3" in message
+
+
+class TestPruneRunMessages:
+    """Run-message pruning must spare runs that are still executing.
+
+    The prune fences its two deletes on a `status != <running>` subquery against a
+    BINARY-collated column. Spell that literal with the wrong casing and the guard
+    matches every row instead of none, so a live run silently loses the history a
+    poller or reviewer is about to read. Both deletes share the subquery, so each
+    test below covers one of them.
+    """
+
+    OLD = "2026-01-01T00:00:00+00:00"
+    # More than _RUN_MESSAGE_MAX_AGE_SECONDS (7 days) after OLD, so depositing at
+    # this instant puts every OLD message behind the age cutoff.
+    PAST_CUTOFF = "2026-03-01T00:00:00+00:00"
+
+    def _seed_runs(self, conn: sqlite3.Connection) -> None:
+        """One run left running, one driven to a terminal status."""
+        _persistence.start_run(conn, "live", 1, "/l", self.OLD, 600)
+        _persistence.start_run(conn, "done", 1, "/l", self.OLD, 600)
+        _persistence.finish_run(
+            conn,
+            "done",
+            RunResult(status="done", exit_code=0, timed_out=False, ended_at=self.OLD),
+        )
+
+    def _bodies(self, conn: sqlite3.Connection, run_id: str) -> list[str]:
+        rows = conn.execute(
+            "SELECT body FROM run_messages WHERE run_id = ? ORDER BY seq", (run_id,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def test_age_cutoff_spares_running_run(self, conn: sqlite3.Connection) -> None:
+        self._seed_runs(conn)
+        _persistence.deposit_run_message(conn, "live", "result", "live-old", self.OLD)
+        _persistence.deposit_run_message(conn, "done", "result", "done-old", self.OLD)
+        _persistence.deposit_run_message(conn, "done", "result", "trigger", self.PAST_CUTOFF)
+        assert self._bodies(conn, "live") == ["live-old"], (
+            "the age cutoff deleted history for a still-running run"
+        )
+        assert self._bodies(conn, "done") == ["trigger"], (
+            "the age cutoff must still drop a terminal run's expired history"
+        )
+
+    def test_retention_cap_spares_running_run(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(_persistence, "_MAX_RETAINED_RUN_MESSAGES", 1)
+        self._seed_runs(conn)
+        _persistence.deposit_run_message(conn, "live", "result", "live-1", "2026-01-01T00:00:01Z")
+        _persistence.deposit_run_message(conn, "live", "result", "live-2", "2026-01-01T00:00:02Z")
+        _persistence.deposit_run_message(conn, "done", "result", "done-1", "2026-01-01T00:00:03Z")
+        _persistence.deposit_run_message(conn, "done", "result", "done-2", "2026-01-01T00:00:04Z")
+        _persistence.deposit_run_message(conn, "done", "result", "done-3", "2026-01-01T00:00:05Z")
+        assert self._bodies(conn, "live") == ["live-1", "live-2"], (
+            "the retention cap counted a still-running run's messages and evicted them"
+        )
+        assert self._bodies(conn, "done") == ["done-2", "done-3"], (
+            "the retention cap must still evict a terminal run's oldest message"
+        )
