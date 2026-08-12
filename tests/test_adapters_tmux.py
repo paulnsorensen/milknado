@@ -55,7 +55,7 @@ def test_wrapped_command_encodes_the_window_lifecycle(tmp_path: Path) -> None:
     assert f"echo $? > {tmp_path / f'{RUN_ID}.rc'}" in cmd
     # Success self-cleans via the exact-match target, single-quoted so no
     # shell ever `=word`-expands it; failure preserves the window.
-    assert f"then tmux kill-window -t '={adapter.session_name}:={RUN_ID}'; fi" in cmd
+    assert f"then tmux kill-window -t '={session_name_for(tmp_path)}:={RUN_ID}'; fi" in cmd
     assert "< " not in cmd  # no brief redirect unless staged
 
 

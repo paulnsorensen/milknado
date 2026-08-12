@@ -76,10 +76,10 @@ def test_next_runnable_returns_first_ready_or_none(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     task = graph.add_node("task", parent_id=goal.id)
-    assert graph.get_next_runnable(NodeKind.TASK) == task
+    assert graph.get_ready_nodes(kind=NodeKind.TASK, limit=1) == [task]
     graph.mark_running(task.id)
     graph.mark_done(task.id)
-    assert graph.get_next_runnable(NodeKind.TASK) is None
+    assert graph.get_ready_nodes(kind=NodeKind.TASK, limit=1) == []
     graph.close()
 
 

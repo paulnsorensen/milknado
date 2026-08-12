@@ -60,13 +60,6 @@ class CompletionTimeout(MilknadoError):
         )
 
 
-class PlanningFailed(MilknadoError):
-    def __init__(self, exit_code: int, stderr: str) -> None:
-        self.exit_code = exit_code
-        self.stderr = stderr
-        super().__init__(f"Planning agent exited {exit_code}. stderr: {stderr[:200]}")
-
-
 class InvalidTransition(MilknadoError, ValueError):
     def __init__(
         self,
@@ -97,39 +90,6 @@ class MegaBatchAborted(MilknadoError):
         super().__init__(
             f"Mega-batch detected: {change_count} changes packed into a single batch "
             f"(threshold={threshold}). Narrow scope or pass --force-single-batch."
-        )
-
-
-class ExistingPlanDetected(MilknadoError):
-    def __init__(self, total: int, done: int, pending: int, running: int) -> None:
-        self.total = total
-        self.done = done
-        self.pending = pending
-        self.running = running
-        super().__init__(
-            f"ERROR: existing plan with {total} nodes "
-            f"({done} done, {pending} pending, {running} running). "
-            "Pass --resume to append, --reset to drop and re-plan."
-        )
-
-
-class MultiStoryBundlingError(MilknadoError):
-    def __init__(self, bundled_changes: list[str]) -> None:
-        self.bundled_changes = bundled_changes
-        count = len(bundled_changes)
-        super().__init__(
-            f"Planner produced {count} bundled multi-story change(s). "
-            "Each change must reference exactly one US-NNN story."
-        )
-
-
-class InsufficientTestCoverageError(MilknadoError):
-    def __init__(self, orphan_changes: list[str]) -> None:
-        self.orphan_changes = orphan_changes
-        count = len(orphan_changes)
-        super().__init__(
-            f"{count} impl change(s) lack corresponding test coverage: "
-            + ", ".join(orphan_changes)
         )
 
 

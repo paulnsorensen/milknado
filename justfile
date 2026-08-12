@@ -77,11 +77,15 @@ build: lint-fix coverage-check
 file-size:
     uv run python scripts/check_file_lengths.py
 
-# Full build no autofix: lint → file-size → coverage check (for CI validation)
-build-ci: lint file-size coverage-check
+# Report unreachable code (mirrors the dead-code step in check-llm)
+dead-code:
+    uv run vulture
+
+# Full build no autofix: lint → file-size → dead-code → coverage check (for CI validation)
+build-ci: lint file-size dead-code coverage-check
     @echo "✅ CI build passed"
 
-# Agent gate: lint + format + tests + project coverage + diff coverage in one shot.
+# Agent gate: lint + format + dead code + tests + project coverage + diff coverage.
 # Quiet on success (one line), full output only on the failing step. Non-mutating.
 # diff-coverage mirrors codecov/patch: it fails if the lines THIS branch changes
 # (vs origin/main, including staged/uncommitted edits) aren't covered to threshold.
@@ -99,6 +103,7 @@ check-llm:
     steps = [
         ("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"]),
         ("import-contracts", ["uv", "run", "lint-imports"]),
+        ("dead-code", ["uv", "run", "vulture"]),
         ("lint+format", ["just", "lint"]),
         (
             "tests+coverage",
@@ -128,7 +133,10 @@ check-llm:
             print((result.stdout + result.stderr).strip())
             sys.exit(result.returncode)
 
-    print(f"✅ check:llm PASS — lint+format clean, tests green, project+diff coverage ≥{threshold}%")
+    print(
+        f"✅ check:llm PASS — lint+format clean, no dead code, tests green, "
+        f"project+diff coverage ≥{threshold}%"
+    )
 
 # Run the CLI for manual testing
 run *args:

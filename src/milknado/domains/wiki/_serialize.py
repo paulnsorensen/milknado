@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Mapping
 from datetime import date, datetime
 from typing import cast
 
@@ -45,12 +44,6 @@ def load_frontmatter(text: str) -> dict[str, object]:
         return {}
     data = yaml.safe_load(m.group(1))
     return cast(dict[str, object], data) if isinstance(data, dict) else {}
-
-
-def extract_title(text: str) -> str | None:
-    """Return the first `# ` H1 title text, or None."""
-    m = re.search(r"^# (.+)$", text, re.MULTILINE)
-    return m.group(1).strip() if m else None
 
 
 def extract_section(text: str, heading: str) -> str | None:
@@ -116,30 +109,3 @@ def parse_wikilink(value: str) -> str:
     """
     m = _WIKILINK_RE.match(value)
     return m.group(1).strip() if m else value
-
-
-def read_prereqs(frontmatter: Mapping[str, object]) -> list[str]:
-    """Return order-preserving, deduped union of `prereqs:` and parsed `down:` targets.
-
-    Raises ValueError on non-list or non-str entries (same message shape as importer).
-    """
-    raw_prereqs = frontmatter.get("prereqs")
-    raw_prereqs = [] if raw_prereqs is None else raw_prereqs
-    raw_down = frontmatter.get("down")
-    raw_down = [] if raw_down is None else raw_down
-    if not isinstance(raw_prereqs, list) or not all(isinstance(p, str) for p in raw_prereqs):
-        raise ValueError(f"`prereqs` must be a list of goal slugs, got {raw_prereqs!r}")
-    if not isinstance(raw_down, list) or not all(isinstance(p, str) for p in raw_down):
-        raise ValueError(f"`down` must be a list of wikilink strings, got {raw_down!r}")
-    seen: set[str] = set()
-    result: list[str] = []
-    for slug in cast(list[str], raw_prereqs):
-        if slug not in seen:
-            seen.add(slug)
-            result.append(slug)
-    for entry in cast(list[str], raw_down):
-        slug = parse_wikilink(entry)
-        if slug not in seen:
-            seen.add(slug)
-            result.append(slug)
-    return result

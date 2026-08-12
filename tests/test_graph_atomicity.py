@@ -134,8 +134,8 @@ def test_missing_goal_claim_rolls_back_before_next_claim(tmp_path: Path) -> None
 def test_goal_claim_atomic_reclaim_requires_dead_pid(graph: MikadoGraph, monkeypatch) -> None:
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     now = "2026-01-01T00:00:00+00:00"
-    assert graph.claim_goal(goal.id, "run-a", now=now, pid=2**31 - 1)
-    assert graph.claim_goal(goal.id, "run-a", now=now, pid=2**31 - 1) is False
+    assert graph.claim_or_reclaim_goal(goal.id, "run-a", 2**31 - 1, now=now)
+    assert graph.claim_or_reclaim_goal(goal.id, "run-a", 2**31 - 1, now=now) is False
     assert graph.claim_or_reclaim_goal(goal.id, "run-b", now=now, pid=2**31 - 1)
     from milknado.domains.graph import _goal_claims
 
@@ -146,7 +146,7 @@ def test_goal_claim_atomic_reclaim_requires_dead_pid(graph: MikadoGraph, monkeyp
 
 def test_goal_claim_keeps_null_pid_claim_blocking(graph: MikadoGraph) -> None:
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
-    assert graph.claim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00", pid=None)
+    assert graph.claim_or_reclaim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00")
     assert (
         graph.claim_or_reclaim_goal(goal.id, "run-b", now="2026-01-01T00:00:00+00:00", pid=123)
         is False
@@ -155,7 +155,7 @@ def test_goal_claim_keeps_null_pid_claim_blocking(graph: MikadoGraph) -> None:
 
 def test_goal_claim_reclaim_surfaces_pid_liveness_failure(graph: MikadoGraph, monkeypatch) -> None:
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
-    assert graph.claim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00", pid=42)
+    assert graph.claim_or_reclaim_goal(goal.id, "run-a", 42, now="2026-01-01T00:00:00+00:00")
     monkeypatch.setattr(
         "milknado.domains.graph._goal_claims.pid_alive",
         lambda _pid: (_ for _ in ()).throw(RuntimeError("probe failed")),
@@ -168,8 +168,8 @@ def test_goal_claim_row_handles_missing_row_and_dead_owner(graph: MikadoGraph) -
     from milknado.domains.graph import _goal_claims
 
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
-    assert graph.claim_goal(goal.id, "dead", now="now", pid=2**31 - 1)
-    assert graph.claim_goal(goal.id, "new", now="now", pid=2**31 - 1)
+    assert graph.claim_or_reclaim_goal(goal.id, "dead", 2**31 - 1, now="now")
+    assert graph.claim_or_reclaim_goal(goal.id, "new", 2**31 - 1, now="now")
 
     class Cursor:
         rowcount = 0
@@ -243,7 +243,7 @@ def test_ancestor_claim_refuses_foreign_pid(graph: MikadoGraph) -> None:
 
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     task = graph.add_node("task", parent_id=goal.id)
-    assert graph.claim_goal(goal.id, "run-a", now="now", pid=os.getpid())
+    assert graph.claim_or_reclaim_goal(goal.id, "run-a", os.getpid(), now="now")
     with pytest.raises(ValueError, match="ancestor goal"):
         graph.claim_ancestor_goal(task.id, "run-b", 456, now="now")
 

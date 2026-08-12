@@ -55,9 +55,6 @@ class _FakeGit:
     def resolve_ref(self, ref: str) -> str:
         return f"{ref}-oid"
 
-    def commit_all(self, worktree: Path, message: str) -> None:
-        pass
-
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
         pass
 

@@ -435,7 +435,7 @@ class TestStatusTransitions:
     def test_blocked_to_pending_via_transition(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
         graph.mark_blocked(node.id)
-        graph._transition_status(node.id, NodeStatus.PENDING)
+        graph.mark_pending(node.id)
         updated = graph.get_node(node.id)
         assert updated is not None
         assert updated.status == NodeStatus.PENDING
@@ -444,7 +444,7 @@ class TestStatusTransitions:
         node = graph.add_node("task")
         graph.mark_running(node.id)
         graph.mark_failed(node.id)
-        graph._transition_status(node.id, NodeStatus.PENDING)
+        graph.mark_pending(node.id)
         updated = graph.get_node(node.id)
         assert updated is not None
         assert updated.status == NodeStatus.PENDING
@@ -487,18 +487,6 @@ class TestStatusTransitions:
         updated = graph.get_node(node.id)
         assert updated is not None
         assert updated.run_id == "run-42"
-
-    def test_set_run_id(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("task")
-        graph.mark_running(node.id)
-        graph.set_run_id(node.id, "run-99")
-        updated = graph.get_node(node.id)
-        assert updated is not None
-        assert updated.run_id == "run-99"
-
-    def test_set_run_id_nonexistent_raises(self, graph: MikadoGraph) -> None:
-        with pytest.raises(ValueError, match="not found"):
-            graph.set_run_id(999, "run-99")
 
     def test_failed_clears_run_id(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")

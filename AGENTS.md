@@ -14,14 +14,18 @@ of repository instructions.
 **`just check-llm` is the gate. Run it before opening any PR — and only this command.**
 
 ```
-just check-llm   # lint + format + tests + project coverage + diff coverage (95%)
+just check-llm   # lint + format + dead code + tests + project coverage + diff coverage (95%)
 ```
 
 It is token-efficient by design: on success it prints a single PASS line; on failure
 it prints only the failing step's output. Do not run the individual recipes to gate —
-`check-llm` covers lint, format, tests, project coverage, and **diff coverage** in one
-shot. Diff coverage mirrors `codecov/patch`: it fails if the lines this branch changes
-(vs `origin/main`) aren't covered to 95% — catching a CI patch failure before you push.
+`check-llm` covers lint, format, **dead code**, tests, project coverage, and **diff
+coverage** in one shot. Diff coverage mirrors `codecov/patch`: it fails if the lines this
+branch changes (vs `origin/main`) aren't covered to 95% — catching a CI patch failure
+before you push. Dead code is `vulture` over `src/` only (config in `pyproject.toml`):
+code reachable solely from tests counts as dead, so deleting a symbol means deleting its
+tests too. Suppress a genuine false positive with a line-level `# noqa: V1xx`, or add a
+framework-owned name to `ignore_names` — never by widening `paths` to include `tests/`.
 
 - **Green** (PASS line printed) → open the PR.
 - **Red** → do not open a PR. Fix the reported failure, then re-run `just check-llm`.
@@ -42,7 +46,7 @@ just lint           # Ruff check + format check (no changes — used by CI)
 just lint-fix       # Ruff check + format with autofix
 just test           # Run pytest (supports args: just test -k pattern)
 just test-file <f>  # Run a single test file
-just check-llm      # THE PR GATE — lint + format + tests + project & diff coverage, quiet on success
+just check-llm      # THE PR GATE — lint + format + dead code + tests + project & diff coverage, quiet on success
 just build          # Full pipeline with autofix (lint-fix → test → coverage)
 just build-ci       # Full pipeline no autofix — CI uses this
 just mcp-dev        # Run milknado-mcp under watchfiles, restarting on src/ changes

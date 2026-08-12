@@ -230,15 +230,15 @@ class TestNextRunnableSkipsArchived:
         live = graph.add_node("Live second", parent_id=root.id)
         assert shelved.id < live.id  # archived candidate sorts first by id
         _archive(graph, shelved.id)
-        nxt = graph.get_next_runnable()
-        assert nxt is not None
-        assert nxt.id == live.id
+        ready = graph.get_ready_nodes(limit=1)
+        assert ready
+        assert ready[0].id == live.id
 
     def test_next_runnable_none_when_only_candidate_archived(self, graph):
         root = graph.add_node("Root")
         shelved = graph.add_node("Shelved only", parent_id=root.id)
         _archive(graph, shelved.id)
-        assert graph.get_next_runnable() is None
+        assert graph.get_ready_nodes(limit=1) == []
 
 
 class TestSummariesCombinedFilters:

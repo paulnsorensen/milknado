@@ -59,15 +59,6 @@ def claim_goal_row(
         raise
 
 
-def set_goal_claim_pid(conn: sqlite3.Connection, goal_id: int, run_id: str, pid: int) -> None:
-    """Update a legacy claim's PID without creating or replacing the claim."""
-    conn.execute(
-        "UPDATE goal_claims SET pid = ? WHERE goal_id = ? AND run_id = ?",
-        (pid, goal_id, run_id),
-    )
-    conn.commit()
-
-
 def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> bool:
     """Delete a goal claim gated on the owning run_id. Returns True iff deleted."""
     cur = conn.execute(

@@ -18,5 +18,8 @@ class PluginHook(Protocol):
     def meta(self) -> PluginMeta: ...
 
     def on_node_status_change(
-        self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+        self,
+        node: MikadoNode,
+        old_status: NodeStatus,  # noqa: V107
+        new_status: NodeStatus,  # noqa: V107
     ) -> None: ...

@@ -43,10 +43,6 @@ class TmuxAdapter:
         # production uses the default server (socket_path=None).
         self._socket = socket_path
 
-    @property
-    def session_name(self) -> str:
-        return self._session
-
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         cmd = ["tmux"]
         if self._socket is not None:

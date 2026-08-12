@@ -318,7 +318,7 @@ class TestSetSubtreeStatusSkipsArchived:
         goal_claims row, mirroring mark_done/mark_terminal."""
         goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
         graph.add_node("task", parent_id=goal.id)
-        assert graph.claim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00")
+        assert graph.claim_or_reclaim_goal(goal.id, "run-a", now="2026-01-01T00:00:00+00:00")
 
         pipeline = StatusPipeline([])
         _status.set_subtree_status(pipeline, graph._conn, goal.id, NodeStatus.DONE)

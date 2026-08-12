@@ -199,9 +199,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
         _creation.set_parent_id(self._conn, node_id, parent_id)
 
-    def _creates_cycle(self, parent_id: int, child_id: int) -> bool:
-        return _mutations.would_create_cycle(self._conn, parent_id, child_id)
-
     # ── Mutations ────────────────────────────────────────────────────────────
 
     @_synchronized
@@ -359,11 +356,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _reads.get_roots(self._conn, include_archived=include_archived)
 
     @_synchronized
-    def get_next_runnable(self, kind: NodeKind | None = None) -> MikadoNode | None:
-        ready = _reads.get_ready_nodes(self._conn, kind=kind, limit=1)
-        return ready[0] if ready else None
-
-    @_synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:
         """Return one lock-held snapshot of graph facts for execution policy."""
         self._conn.execute("SAVEPOINT execution_snapshot")
@@ -388,13 +380,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         finally:
             self._conn.execute("RELEASE SAVEPOINT execution_snapshot")
 
-    def _node_status(self, node_id: int) -> NodeStatus | None:
-        return _reads.node_status(self._conn, node_id)
-
     # ── Status transitions (pipeline-driven) ─────────────────────────────────
-
-    def _transition_status(self, node_id: int, target: NodeStatus) -> None:
-        _status.transition_status(self._pipeline, self._conn, node_id, target)
 
     @_synchronized
     def mark_done(self, node_id: int) -> None:
@@ -520,10 +506,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def set_github_ref(self, node_id: int, github_ref: str) -> None:
         """Bind the GitHub Projects node id recorded when this goal is linked/bound."""
         self._update_node_field("github_ref", github_ref, node_id)
-
-    @_synchronized
-    def set_run_id(self, node_id: int, run_id: str) -> None:
-        self._update_node_field("run_id", run_id, node_id)
 
     @_synchronized
     def replace_run_id(self, node_id: int, expected_run_id: str, run_id: str) -> bool:
@@ -663,18 +645,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     # ── Goal-claim fencing ───────────────────────────────────────────────────
 
     @_synchronized
-    def claim_goal(self, goal_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
-        owner_pid = os.getpid() if pid is None else pid
-        node = self.get_node(goal_id)
-        if node is None:
-            raise ValueError(f"node {goal_id} not found")
-        if node.kind != NodeKind.GOAL:
-            raise ValueError(
-                f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
-            )
-        return _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=owner_pid)
-
-    @_synchronized
     def claim_or_reclaim_goal(
         self, goal_id: int, owner: str, pid: int | None = None, *, now: str
     ) -> bool:
@@ -687,10 +657,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
                 f"node {goal_id} has kind={node.kind.value}; only goal nodes can be claimed"
             )
         return _goal_claims.claim_or_reclaim_goal(self._conn, goal_id, owner, owner_pid, now=now)
-
-    @_synchronized
-    def set_goal_pid(self, goal_id: int, run_id: str, pid: int) -> None:
-        _goal_claims.set_goal_claim_pid(self._conn, goal_id, run_id, pid)
 
     @_synchronized
     def release_goal(self, goal_id: int, run_id: str) -> bool:

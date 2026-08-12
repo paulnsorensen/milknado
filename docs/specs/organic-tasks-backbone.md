@@ -94,7 +94,7 @@ FlavorProfile.worktree: bool                             # default True (impleme
 milknado_todo_add(description, kind, parent_id, files, flavor, artifact=None, prereqs=[])
 milknado_track_follow_up(..., artifact=None, prereqs=[])
 milknado_edit_node(..., artifact=...)
-milknado_goal_claim(goal_id, owner) / milknado_goal_release(goal_id, owner)   # NEW; wraps claim_goal_row/release_goal_row; owner env-inherited by sub-agents
+milknado_goal_claim(goal_id, owner) / milknado_goal_release(goal_id, owner)   # NEW; wraps claim_or_reclaim_goal/release_goal_row; owner env-inherited by sub-agents
 milknado_todo_claim(node_id, worktree=None)   # None -> profile default; False -> in-place claim (no worktree, runs row + fence kept)
 milknado_node_verify(run_id)                  # cwd = worktree_path or project_root; evidence per ADR-006
 

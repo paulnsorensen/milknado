@@ -377,19 +377,6 @@ class TestCurrentBranch:
         assert adapter.current_branch() == "feat/cool"
 
 
-class TestCommitAll:
-    @patch("milknado.adapters.git.subprocess.run")
-    def test_stages_and_commits(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
-        mock_run.return_value = _ok()
-        wt = Path("/tmp/wt")
-        adapter.commit_all(wt, "fix: something")
-        assert mock_run.call_count == 2
-        add_call = mock_run.call_args_list[0]
-        assert add_call.args[0] == ["git", "add", "-A"]
-        commit_call = mock_run.call_args_list[1]
-        assert commit_call.args[0] == ["git", "commit", "-m", "fix: something"]
-
-
 class TestSquashAndCommit:
     @patch("milknado.adapters.git.subprocess.run")
     def test_squashes_and_commits_when_staged(

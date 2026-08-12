@@ -21,7 +21,7 @@ class NodeKind(Enum):
 
 class WorktreeMode(Enum):
     ISOLATE = "isolate"
-    THIS_BRANCH = "this_branch"
+    THIS_BRANCH = "this_branch"  # noqa: V107 - reached by value at app/run.py
 
 
 # Flavor is a free string validated against BUILTIN_FLAVORS ∪ TOML-declared
@@ -70,7 +70,7 @@ class MikadoNode:
     dispatched_at: datetime | None = None
     oversized: bool = False
     batch_index: int | None = None
-    completion_duration_seconds: float | None = None
+    completion_duration_seconds: float | None = None  # noqa: V107 - SQLite persistence contract
     kind: NodeKind = NodeKind.TASK
     flavor: str | None = None
     goal_run_id: str | None = None  # coordinator run that claimed this goal (goal_claims table)

@@ -674,8 +674,8 @@ def test_goal_claim_reclaims_dead_pid_owner(repo: Path) -> None:
     try:
         from milknado.domains.dispatch import now_iso
 
-        assert graph.claim_goal(goal_id, "stale-owner", now=now_iso()) is True
-        graph.set_goal_pid(goal_id, "stale-owner", _DEAD_PID)
+        claimed = graph.claim_or_reclaim_goal(goal_id, "stale-owner", _DEAD_PID, now=now_iso())
+        assert claimed is True
     finally:
         graph.close()
 

@@ -52,13 +52,12 @@ class GoalDocument(_WikiModel, frozen=True, kw_only=True):
     title: str
     status: NodeStatus | None = None
     lifecycle: Lifecycle = Lifecycle.ACTIVE
-    last_synced: str | None = None
-    last_verified: date | None = None
+    last_synced: str | None = None  # noqa: V107 - written by wiki/exporter.py
     prereqs: tuple[str, ...] = ()
     up: tuple[str, ...] = ()
     down: tuple[str, ...] = ()
     intent: str | None = None
-    acceptance: str | None = None
+    acceptance: str | None = None  # noqa: V107 - enforced in __post_init__ below
     outcome: str | None = None
 
     def __post_init__(self) -> None:
