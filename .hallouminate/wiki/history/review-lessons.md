@@ -188,3 +188,52 @@ The corrected sentinel still exposed a production race: after the process-group 
 [^lingering-tests]: `tests/loop/test_agent.py:2107-2145`
 
 _Source: PR #325 affinage · Updated: 2026-07-26 · Supersedes: none_
+
+## Execution: a swallowed signal reads as success, not as "unknown" (#355, #356, #359)
+
+Three sibling fixes from the same review cycle share one root cause: a
+failure signal was captured correctly but then either miscompared, dropped
+on the floor, or folded into the wrong caller-facing verdict.
+
+- **Literal-string drift between writer and filter.** `runs.status` is
+  written lowercase (`'running'`) everywhere but was filtered
+  uppercase (`status != 'RUNNING'`) in one query. SQLite's BINARY collation
+  makes that comparison case-sensitive, so the "terminal runs only" prune
+  guard matched every run and could delete a still-running node's message
+  history.[^status-casing] No test exercised pruning at all before the fix.
+- **A swallowed exception was misattributed to the wrong party.** The
+  completion verifier's git probes caught their own failures
+  (`CalledProcessError`/`TimeoutExpired`/`OSError`, plus an unhandled
+  `UnicodeDecodeError`) and returned `False`, which the caller read as "clean
+  tree" and then as "worker produced no change" — feeding that verbatim back
+  into the worker's next-iteration rejection feedback. A non-zero exit, a
+  timeout, or a missing `git` binary was attributed to the agent, and the
+  node was rejected and redispatched against a still-broken
+  environment.[^git-probe] The fix gives infra failure its own exception
+  (`_GitProbeFailure`) and its own caller-facing message, distinct from a
+  genuinely clean tree.
+- **A written-but-unread result field hid a real failure as a clean
+  completion.** `CompletionResult.review_notification_failed` was set on
+  three paths in `executor.py` but had no consumer in the run loop — a
+  review whose verdict never reached the worker rendered as an ordinary
+  completed node. Found via a `vulture` dead-code sweep, not a
+  reported bug.[^notify-field]
+
+**Rule:** when a result/status value is computed on a failure path,
+grep for every sibling field on the same result type and confirm each has a
+consumer — an unread field is a silent failure waiting to be misread as
+success. When an except-block converts an infrastructure failure into a
+caller-facing verdict, give "I couldn't tell" its own return value or
+exception; collapsing it into the same `False`/`None` as the negative case
+misattributes the failure to whichever party the caller blames for a
+negative result. For any hand-written SQL literal compared against a
+column written elsewhere in the module, bind one named constant instead of
+inlining the string at each call site — casing/spelling drift between a
+writer and a filter is invisible in review because the permissive branch is
+the one that fires.
+
+[^status-casing]: `src/milknado/domains/graph/_persistence.py:537` (`_RUN_STATUS_RUNNING`); issue #329, PR #355 commit `b1713c95d22be260de8bedd64023403cf0aac988`
+[^git-probe]: `src/milknado/domains/execution/completion.py` (`_GitProbeFailure`, `_change_rejection`); issue #330, PR #356 commit `3d2c46d58fdd76ab17640954e3d64201dff517d6`
+[^notify-field]: `src/milknado/domains/execution/run_loop/_completion.py`, `src/milknado/domains/execution/executor.py`; PR #359 commit `0a094144d14042741d963472d67203703487b88b`
+
+_Source: PRs #355, #356, #359 · Updated: 2026-08-16 · Supersedes: none_

@@ -55,7 +55,23 @@ Lifecycle semantics live in [[execution]]; the repo invariants live here:
 - **`deposit_run_message`** assigns `seq` and inserts in **one statement**
   (`INSERT … SELECT COALESCE(MAX(seq),0)+1 … RETURNING seq`) so concurrent
   depositors for the same run cannot race `MAX(seq)` into a UNIQUE collision.
-  Requires SQLite ≥3.35 (`RETURNING`).
+  Requires SQLite ≥3.35 (`RETURNING`). It also calls `_prune_run_messages`
+  unconditionally on every deposit (7-day age cutoff + 1000-row retention cap,
+  both scoped to terminal runs only).
+- **`runs.status` has exactly one string owner**: `_RUN_STATUS_RUNNING =
+  "running"`, bound as a query parameter everywhere the column is compared
+  (`start_run`, `finish_run`, `set_run_pid`, `_prune_run_messages`,
+  `deposit_review_verdict`). Before this, `_prune_run_messages` inlined the
+  literal as `status != 'RUNNING'` (uppercase) while every writer stored
+  lowercase `'running'`; SQLite's default BINARY collation made that
+  comparison case-sensitive, so the "terminal runs only" guard matched *every*
+  run, including ones still executing, and `deposit_run_message`'s
+  unconditional prune could delete message history out from under a
+  long-running node a poller was about to read. Invisible because the wrong
+  branch was the permissive one — no test exercised pruning at all until the
+  fix (issue #329, commit b1713c9). The constant lives here rather than
+  importing `loop._run_types.RunStatus`, to avoid putting a `domains/` module
+  behind a private symbol of the vendored loop engine (see [[review-lessons]]).
 - **`runs_for_node(run_id=…)`** pushes the fence into the SQL so
   fence-before-latest holds: a stale run with a later `ended_at` cannot mask
   the owning run.
