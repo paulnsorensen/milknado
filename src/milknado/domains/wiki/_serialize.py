@@ -46,6 +46,22 @@ def load_frontmatter(text: str) -> dict[str, object]:
     return cast(dict[str, object], data) if isinstance(data, dict) else {}
 
 
+def extract_title(text: str) -> str | None:
+    """Return the first `# ` H1 title text, or None."""
+    m = re.search(r"^# (.+)$", text, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def extract_section(text: str, heading: str) -> str | None:
+    """Return the stripped body under `## <heading>`, up to the next `## ` or EOF."""
+    pattern = re.compile(
+        rf"^## {re.escape(heading)}[^\n]*\n(.*?)(?=^## |\Z)",
+        re.DOTALL | re.MULTILINE,
+    )
+    m = pattern.search(text)
+    return m.group(1).strip() if m else None
+
+
 def set_frontmatter_field(text: str, key: str, value: str) -> str:
     """Rewrite (or insert) one frontmatter `key: value` line, surgically.
 

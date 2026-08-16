@@ -255,7 +255,6 @@ venv = ".venv"
 [[tool.basedpyright.executionEnvironments]]
 root = "tests"
 extraPaths = ["."]
-
 [tool.vulture]
 # src/ only, deliberately: code reachable solely from tests is dead code in a
 # shipped package, not live code. Adding tests/ here would hide exactly that.
@@ -311,6 +310,43 @@ allow = [
     # Windows job-object helpers execute only on Windows.
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",
+]
+[dependency-groups]
+dev = [
+    "diff-cover>=9.0.0",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.15.13",
+    "import-linter>=2.13",
+    "ty>=0.0.38",
+    "watchfiles>=1.2.0",
+    "pytest-xdist>=3.8.0",
+    "vulture>=2.16",
+]
+[tool.vulture]
+# src/ only, deliberately: code reachable solely from tests is dead code in a
+# shipped package, not live code. Adding tests/ here would hide exactly that.
+paths = ["src", "vulture-whitelist-loop.py"]
+min_confidence = 60
+# Entry points a framework registers by decorator and never calls by name:
+# typer commands, fastmcp tools, and Textual's @on / @work handlers.
+ignore_decorators = ["@*.command", "@mcp.tool", "@on", "@work"]
+# Names a framework or C library owns, so milknado never reads them itself.
+ignore_names = [
+    # Textual App/Widget lifecycle, styling, and key-binding actions.
+    "compose",
+    "on_*",
+    "action_*",
+    "CSS",
+    "DEFAULT_CSS",
+    "BINDINGS",
+    "disabled",
+    "border_title",  # Textual Widget border caption, set and rendered by the framework
+    "sub_title",     # Textual App header subtitle, set and rendered by the framework
+    "row_factory",          # sqlite3.Connection knob
+    "max_time_in_seconds",  # ortools CpSolver parameter
+    "LimitFlags",           # Windows ctypes JOBOBJECT field
 ]
 
 [tool.milknado.quality]
