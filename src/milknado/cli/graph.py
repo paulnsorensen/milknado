@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
-from milknado.cli._helpers import _ensure_db, _load_or_default, console
+from milknado.cli._helpers import _emit, _ensure_db, _load_or_default, console
+from milknado.domains.graph import render_dot
 
 edge_app = typer.Typer(name="edge", help="Direct edge operations on the Mikado graph")
 graph_app = typer.Typer(name="graph", help="Archive lifecycle operations on the Mikado graph")
@@ -87,3 +88,34 @@ def add(
         console.print(f"Added edge {parent_id} -> {child_id}")
     finally:
         graph.close()
+
+
+@graph_app.command("export")
+def export(
+    format: Annotated[  # noqa: ARG001 — only "dot" is supported; Literal enforces the value.
+        Literal["dot"], typer.Option("--format", help="Export format")
+    ] = "dot",
+    out: Annotated[Path | None, typer.Option("--out", help="Write output to this path")] = None,
+    include_archived: Annotated[
+        bool, typer.Option("--include-archived", help="Include archived nodes")
+    ] = False,
+    project_root: Annotated[
+        Path, typer.Option("--project-root", help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Export the live Mikado graph as Graphviz DOT."""
+    project_root = project_root.resolve()
+    config, plugins = _load_or_default(project_root)
+    graph = _ensure_db(config, plugins)
+    try:
+        nodes = graph.get_all_nodes(include_archived=include_archived)
+        children = graph.get_children_map(include_archived=include_archived)
+        content = render_dot(nodes, children)
+    finally:
+        graph.close()
+
+    try:
+        _emit(content, out)
+    except OSError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None

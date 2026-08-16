@@ -9,7 +9,7 @@ from typing import Annotated, Literal
 import typer
 
 from milknado.adapters.hallouminate import HallouminateIndexer
-from milknado.cli._helpers import _ensure_db, _load_or_default, console
+from milknado.cli._helpers import _emit, _ensure_db, _load_or_default, console
 from milknado.domains.wiki import (
     RoadmapModel,
     export_roadmap,
@@ -34,13 +34,6 @@ _Format = Annotated[Literal["mermaid", "html"], typer.Option("--format", help="R
 def _roadmap_model(project_root: Path, slug: str) -> RoadmapModel:
     root = wiki_root(project_root)
     return load_roadmap(resolve_roadmap_dir(root, slug))
-
-
-def _emit(text: str, out: Path | None) -> None:
-    if out is None:
-        typer.echo(text, nl=not text.endswith("\n"))
-    else:
-        out.write_text(text, encoding="utf-8")
 
 
 @roadmap_app.command("schema")
