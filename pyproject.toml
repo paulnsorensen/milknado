@@ -254,8 +254,11 @@ ignore_names = [
     "on_*",
     "action_*",
     "CSS",
+    "DEFAULT_CSS",
     "BINDINGS",
     "disabled",
+    "border_title",  # Textual Widget border caption, set and rendered by the framework
+    "sub_title",     # Textual App header subtitle, set and rendered by the framework
     "row_factory",          # sqlite3.Connection knob
     "max_time_in_seconds",  # ortools CpSolver parameter
     "LimitFlags",           # Windows ctypes JOBOBJECT field
