@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import typer
 from rich.console import Console
 
 from milknado.domains.common import MilknadoConfig
@@ -65,3 +66,10 @@ def _maybe_block_parent(graph: MikadoGraph, parent: int | None) -> None:
     if parent_node and parent_node.status.value == "running":
         graph.mark_blocked(parent)
         console.print(f"Parent node {parent} marked as blocked.")
+
+
+def _emit(text: str, out: Path | None) -> None:
+    if out is None:
+        typer.echo(text, nl=not text.endswith("\n"))
+    else:
+        out.write_text(text, encoding="utf-8")
