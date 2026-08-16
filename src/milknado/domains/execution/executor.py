@@ -458,7 +458,6 @@ class Executor:
         self._wt = WorktreeManager(git)
         self._ralph = ralph
         self._crg = crg
-        self._attempts_by_node: dict[int, int] = {}
         self._config_by_node: dict[int, ExecutionConfig] = {}
         self._session_by_node: dict[int, NodeAgentSession] = {}
         self._review_round_by_node: dict[int, int] = {}
@@ -494,23 +493,15 @@ class Executor:
         )
 
         def _attempt() -> DispatchResult:
-            attempt_index = retryer.statistics["attempt_number"] - 1
-            try:
-                result = self._dispatch_once(
-                    node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
-                )
-            except (InvalidTransition, ValueError):
-                raise
-            except Exception:
-                self._attempts_by_node[node_id] = attempt_index
-                raise
+            result = self._dispatch_once(
+                node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
+            )
             self._base_oid_by_node[node_id] = target_oid
             self._worker_run_id_by_node[node_id] = result.run_id
             if parent_run_id is not None:
                 self._owner_fence_by_node[node_id] = parent_run_id
             self._target_branch_by_node[node_id] = target_branch
             self._target_oid_by_node[node_id] = target_oid
-            self._attempts_by_node[node_id] = attempt_index
             self._config_by_node[node_id] = config
             return result
 
@@ -1483,6 +1474,3 @@ class Executor:
             self._graph.release(node_id, node.run_id)
         else:
             self._graph.mark_pending(node_id)
-
-    def get_attempt_count(self, node_id: int) -> int:
-        return self._attempts_by_node.get(node_id, 0)

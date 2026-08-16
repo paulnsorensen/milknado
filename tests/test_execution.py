@@ -96,9 +96,6 @@ class FakeGit:
     def diff_for_review(self, worktree: Path, base_oid: str) -> str:
         return f"diff from {base_oid}"
 
-    def commit_all(self, worktree: Path, message: str) -> None:
-        self.commits.append((worktree, message))
-
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
         self.commits.append((worktree, msg))
 
@@ -1326,7 +1323,6 @@ class TestExecutorFail:
         assert node.worktree_path is None
         assert node.branch_name is None
         assert worktree in fake_git.removed
-        assert executor.get_attempt_count(1) == 0
 
     def test_cancel_releases_node_when_worktree_cleanup_preserves_unlanded_work(
         self,
@@ -1484,25 +1480,7 @@ class TestShouldRetryDispatch:
         assert not _should_retry_dispatch(RuntimeError("something broke"))
 
 
-class TestGetAttemptCount:
-    def test_returns_zero_before_dispatch(
-        self,
-        executor: Executor,
-        graph: MikadoGraph,
-    ) -> None:
-        graph.add_node("task")
-        assert executor.get_attempt_count(1) == 0
-
-    def test_returns_zero_after_first_success(
-        self,
-        graph: MikadoGraph,
-        config: ExecutionConfig,
-    ) -> None:
-        ex = Executor(graph=graph, git=FakeGit(), ralph=FakeRalph(), crg=FakeCrg())
-        graph.add_node("task")
-        ex.dispatch(1, config)
-        assert ex.get_attempt_count(1) == 0
-
+class TestDispatchRetry:
     def test_increments_on_transient_retry(
         self,
         graph: MikadoGraph,
@@ -1540,7 +1518,7 @@ class TestGetAttemptCount:
         ex = Executor(graph=graph, git=FakeGit(), ralph=BurstRalph(), crg=FakeCrg())
         graph.add_node("task")
         ex.dispatch(1, config_retry)
-        assert ex.get_attempt_count(1) == 1
+        assert call_count == 2  # one transient failure, then success
 
     def test_non_transient_raises_immediately(
         self,
@@ -1566,7 +1544,6 @@ class TestGetAttemptCount:
         graph.add_node("task")
         with pytest.raises(ValueError, match="bad config"):
             ex.dispatch(1, config)
-        assert ex.get_attempt_count(1) == 0
 
     def test_transient_exhausted_raises(
         self,

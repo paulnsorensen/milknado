@@ -196,7 +196,7 @@ class TestDropAll:
         foreign_keys=ON, so drop_all must clear goal_claims before nodes or the
         DELETE FROM nodes raises IntegrityError. Seed a claim, then prove reset works."""
         goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
-        graph.claim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
+        graph.claim_or_reclaim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
         assert get_goal_claim(graph._conn, goal.id) is not None
         # Must not raise sqlite3.IntegrityError, and must clear the claim row.
         assert graph.drop_all() == 1

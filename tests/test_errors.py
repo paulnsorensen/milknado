@@ -4,13 +4,9 @@ from pathlib import Path
 
 from milknado.domains.common.errors import (
     CompletionTimeout,
-    ExistingPlanDetected,
-    InsufficientTestCoverageError,
     InvalidTransition,
     MegaBatchAborted,
     MilknadoError,
-    MultiStoryBundlingError,
-    PlanningFailed,
     RalphMarkdownWriteError,
     RebaseAbortError,
     TransientDispatchError,
@@ -77,19 +73,6 @@ class TestCompletionTimeout:
         assert err.waited_seconds == 0.0
 
 
-class TestPlanningFailed:
-    def test_message_includes_exit_code_and_stderr(self) -> None:
-        err = PlanningFailed(exit_code=2, stderr="something went wrong")
-        msg = str(err)
-        assert "2" in msg
-        assert "something went wrong" in msg
-
-    def test_truncates_long_stderr(self) -> None:
-        long_stderr = "x" * 500
-        err = PlanningFailed(exit_code=1, stderr=long_stderr)
-        assert len(str(err)) < 600
-
-
 class TestInvalidTransition:
     def test_message_includes_states(self) -> None:
         err = InvalidTransition(
@@ -142,43 +125,3 @@ class TestMegaBatchAborted:
         err = MegaBatchAborted(change_count=10, threshold=5)
         assert err.change_count == 10
         assert err.threshold == 5
-
-
-class TestExistingPlanDetected:
-    def test_message_includes_counts(self) -> None:
-        err = ExistingPlanDetected(total=10, done=3, pending=5, running=2)
-        msg = str(err)
-        assert "10" in msg
-        assert "3" in msg
-        assert "5" in msg
-        assert "2" in msg
-
-    def test_stores_attributes(self) -> None:
-        err = ExistingPlanDetected(total=4, done=1, pending=2, running=1)
-        assert err.total == 4
-        assert err.done == 1
-        assert err.pending == 2
-        assert err.running == 1
-
-
-class TestMultiStoryBundlingError:
-    def test_message_includes_count(self) -> None:
-        err = MultiStoryBundlingError(bundled_changes=["a", "b", "c"])
-        assert "3" in str(err)
-
-    def test_stores_changes(self) -> None:
-        changes = ["change-1", "change-2"]
-        err = MultiStoryBundlingError(bundled_changes=changes)
-        assert err.bundled_changes == changes
-
-
-class TestInsufficientTestCoverageError:
-    def test_message_includes_count(self) -> None:
-        err = InsufficientTestCoverageError(orphan_changes=["impl-1", "impl-2"])
-        assert "2" in str(err)
-        assert "impl-1" in str(err)
-
-    def test_stores_changes(self) -> None:
-        changes = ["impl-x"]
-        err = InsufficientTestCoverageError(orphan_changes=changes)
-        assert err.orphan_changes == changes

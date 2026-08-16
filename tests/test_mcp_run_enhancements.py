@@ -60,6 +60,12 @@ finally:
 """
 
 
+def _force_run_id(graph, node_id: int, run_id: str) -> None:
+    """Seed a node's run_id directly; no production API sets it in isolation."""
+    graph._conn.execute("UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id))
+    graph._conn.commit()
+
+
 def _init_git(root: Path) -> None:
     import subprocess
 
@@ -1045,7 +1051,7 @@ class TestAsyncCancel:
         graph, _cfg = open_graph(tmp_path)
         try:
             graph.mark_running(node_id)
-            graph.set_run_id(node_id, run_id)
+            _force_run_id(graph, node_id, run_id)
         finally:
             graph.close()
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
@@ -1091,7 +1097,7 @@ class TestPidCancelReconcile:
         graph, _cfg = open_graph(tmp_path)
         try:
             graph.mark_running(node_id)
-            graph.set_run_id(node_id, run_id)
+            _force_run_id(graph, node_id, run_id)
         finally:
             graph.close()
         return node_id
@@ -1143,7 +1149,7 @@ class TestPidCancelReconcile:
         # Re-own the still-RUNNING node under the newer run, then cancel the stale one.
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.set_run_id(node_id, newer_run)
+            _force_run_id(graph, node_id, newer_run)
         finally:
             graph.close()
         self._write_pid_state(tmp_path, stale_run, node_id)
@@ -1233,7 +1239,7 @@ class TestCancelFinalizeAndRace:
         graph, _cfg = open_graph(tmp_path)
         try:
             graph.mark_running(node_id)
-            graph.set_run_id(node_id, run_id)
+            _force_run_id(graph, node_id, run_id)
         finally:
             graph.close()
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")

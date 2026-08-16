@@ -92,10 +92,10 @@ _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prep
 class PromptsTable(msgspec.Struct, frozen=True, kw_only=True):
     """Schema for the ``[milknado.prompts]`` TOML table."""
 
-    planning_prepend: str | None = None
-    planning_prepend_path: str | None = None
+    planning_prepend: str | None = None  # noqa: V107 - read via getattr over _PROMPT_PREPEND_SLOTS
+    planning_prepend_path: str | None = None  # noqa: V107 - read via _PROMPT_PREPEND_SLOTS
     worker_brief_prepend: str | None = None
-    worker_brief_prepend_path: str | None = None
+    worker_brief_prepend_path: str | None = None  # noqa: V107 - read via _PROMPT_PREPEND_SLOTS
 
     def __post_init__(self) -> None:
         for slot in _PROMPT_PREPEND_SLOTS:

@@ -17,10 +17,8 @@ from milknado.domains.wiki._serialize import (
     compute_goal_ref,
     compute_roadmap_ref,
     extract_section,
-    extract_title,
     load_frontmatter,
     parse_wikilink,
-    read_prereqs,
     replace_harvest_block,
     set_frontmatter_field,
     validate_slug,
@@ -109,12 +107,6 @@ class TestSections:
 
     def test_extract_section_missing_returns_none(self) -> None:
         assert extract_section(GOAL_FILE, "Nonexistent") is None
-
-    def test_extract_title_returns_h1(self) -> None:
-        assert extract_title(GOAL_FILE) == "Wire the export path"
-
-    def test_extract_title_missing_returns_none(self) -> None:
-        assert extract_title("no title here") is None
 
 
 class TestHarvestBlock:
@@ -214,64 +206,3 @@ class TestParseWikilink:
 
     def test_padded_aliased_target_is_stripped(self) -> None:
         assert parse_wikilink("[[ a | alias ]]") == "a"
-
-
-class TestReadPrereqs:
-    def test_down_only_parses_wikilinks(self) -> None:
-        fm = {"down": ["[[a]]", "[[b|alias]]"]}
-        assert read_prereqs(fm) == ["a", "b"]
-
-    def test_prereqs_only_passes_through(self) -> None:
-        fm = {"prereqs": ["a", "b"]}
-        assert read_prereqs(fm) == ["a", "b"]
-
-    def test_union_of_prereqs_and_down(self) -> None:
-        fm = {"prereqs": ["a"], "down": ["[[b]]", "[[a]]"]}
-        result = read_prereqs(fm)
-        # union: a from prereqs, b from down, a deduplicated
-        assert result == ["a", "b"]
-
-    def test_order_preserving_dedup(self) -> None:
-        fm = {"prereqs": ["x", "y"], "down": ["[[y]]", "[[z]]"]}
-        assert read_prereqs(fm) == ["x", "y", "z"]
-
-    def test_empty_frontmatter_returns_empty(self) -> None:
-        assert read_prereqs({}) == []
-
-    def test_neither_field_returns_empty(self) -> None:
-        assert read_prereqs({"kind": "goal"}) == []
-
-    def test_non_list_prereqs_raises(self) -> None:
-        with pytest.raises(ValueError, match="prereqs"):
-            read_prereqs({"prereqs": "not-a-list"})
-
-    def test_non_str_entry_in_prereqs_raises(self) -> None:
-        with pytest.raises(ValueError, match="prereqs"):
-            read_prereqs({"prereqs": [1, 2]})
-
-    def test_non_list_down_raises(self) -> None:
-        with pytest.raises(ValueError, match="`down`"):
-            read_prereqs({"down": "not-a-list"})
-
-    def test_non_str_entry_in_down_raises(self) -> None:
-        with pytest.raises(ValueError, match="`down`"):
-            read_prereqs({"down": [1]})
-
-    def test_explicit_empty_down_list_returns_empty(self) -> None:
-        # An explicit `down: []` is falsy, so `or []` triggers the same path as
-        # missing `down:`.  Both must return []; this pins the coercion contract.
-        assert read_prereqs({"down": []}) == []
-
-    def test_empty_string_prereqs_raises(self) -> None:
-        # "" is falsy but not None — must not be silently coerced to [].
-        # The isinstance check must catch it and raise.
-        with pytest.raises(ValueError, match="prereqs"):
-            read_prereqs({"prereqs": ""})
-
-    def test_zero_down_raises(self) -> None:
-        # 0 is falsy but not None — must not be silently coerced to [].
-        with pytest.raises(ValueError, match="down"):
-            read_prereqs({"down": 0})
-
-    def test_absent_keys_return_empty(self) -> None:
-        assert read_prereqs({}) == []

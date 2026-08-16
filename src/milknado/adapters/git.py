@@ -309,10 +309,6 @@ class GitAdapter:
                 )
             raise
 
-    def commit_all(self, worktree: Path, message: str) -> None:
-        self._run(["add", "-A"], cwd=worktree)
-        self._run(["commit", "-m", message], cwd=worktree)
-
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         """Squash the worktree's work into one commit on top of `onto`'s merge-base.
 
