@@ -265,6 +265,41 @@ ignore_names = [
     "LimitFlags",           # Windows ctypes JOBOBJECT field
 ]
 
+# Allowlist for scripts/check_dead_code_coverage.py: whole-symbol zero-hit code
+# reviewed and kept live. Entries are "module.dotted.path:qualname" (dotted module
+# derived from the file path relative to src/, qualname dot-joined through class
+# nesting), matching the format of [project.scripts] targets.
+[tool.milknado.dead-code]
+allow = [
+    "milknado.adapters.crg:CrgAdapter.build_graph",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.find_executable",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.run",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.system",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.machine",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.environment",
+    "milknado.adapters.toolchain:SystemToolchainAdapter.home",
+    "milknado.domains.batching.weights:_configure_tiktoken_cache",
+    "milknado.domains.batching.weights:_get_encoder",
+    "milknado.domains.execution.executor:Executor.note_unconfirmed_stop",
+    "milknado.domains.graph._analytics_facade:_AnalyticsFacade._conn",
+    "milknado.domains.graph._edge_facade:_EdgeFacade._conn",
+    "milknado.domains.graph._pipeline:StatusMiddleware.meta",
+    "milknado.domains.graph._pipeline:StatusMiddleware.before_status_change",
+    "milknado.domains.graph._pipeline:StatusMiddleware.after_status_change",
+    # Confirmed dead reference cycle, grandfathered on adoption; triage in #365
+    # (delete confirmed-dead, test untested-live).
+    "milknado.domains.graph._status:complete_root",
+    "milknado.domains.graph.graph:MikadoGraph.complete_root",
+    "milknado.domains.graph.status_flow:assert_done_verified",
+    "milknado.domains.planning.planner:Planner.replan_with_delta",
+    "milknado.loop._agent:_load_kernel32",
+    "milknado.loop._agent:_resume_windows_process",
+    "milknado.loop._events:EventEmitter.wants_agent_output_lines",
+    "milknado.loop.engine:_build_tool_use_bridge._on_tool_use",
+    "milknado.loop.adapters._generic:GenericAdapter.matches",
+    "milknado.loop.adapters._generic:GenericAdapter.install_wind_down_hook",
+]
+
 [tool.milknado.quality]
 max_file_lines = 300
 

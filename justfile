@@ -117,6 +117,10 @@ check-llm:
             ],
         ),
         (
+            "dead-code-coverage",
+            ["uv", "run", "python", "scripts/check_dead_code_coverage.py"],
+        ),
+        (
             "diff-coverage",
             [
                 "uv", "run", "diff-cover", "coverage.xml",
