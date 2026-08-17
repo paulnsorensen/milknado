@@ -971,7 +971,9 @@ def test_load_config_flavor_review_agent_not_string_raises(tmp_path: Path) -> No
 
 
 # AC — cursor-agent resume fail-fast (adversarial-review-loops-F001), enforced
-# at both FlavorTable (config load) and resolve_flavor_profile.
+# at both FlavorTable (explicit per-flavor command) and MilknadoConfig
+# (family-inherited command). The rejection is validated once at the config
+# boundary, never re-checked at flavor-resolution time.
 
 
 def test_load_config_flavor_resume_cursor_agent_execution_agent_raises(tmp_path: Path) -> None:
@@ -1014,18 +1016,22 @@ def test_load_config_flavor_resume_checks_both_configured_agents(tmp_path: Path)
         load_config(cfg_path)
 
 
-def test_resolve_flavor_profile_resume_cursor_agent_family_raises(tmp_path: Path) -> None:
-    """agent_family alone (no execution_agent override) drives the effective family."""
-    cfg = MilknadoConfig(
-        agent_family="cursor-agent",
-        project_root=tmp_path,
-        db_path=tmp_path / ".milknado" / "milknado.db",
-        flavors={
-            "implement": FlavorOverride(session_mode="resume", execution_agent=""),
-        },
-    )
+def test_config_resume_cursor_agent_family_raises(tmp_path: Path) -> None:
+    """agent_family alone (no execution_agent override) drives the effective family.
+
+    Regression for the double-validation removal: the family-inherited resume
+    rejection is owned by the MilknadoConfig boundary, so it fails fast at
+    construction rather than being re-checked in resolve_flavor_profile.
+    """
     with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
-        resolve_flavor_profile(cfg, "implement")
+        MilknadoConfig(
+            agent_family="cursor-agent",
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            flavors={
+                "implement": FlavorOverride(session_mode="resume", execution_agent=""),
+            },
+        )
 
 
 # AC — resolve_flavor_profile: default review, session_mode/on_reject/
