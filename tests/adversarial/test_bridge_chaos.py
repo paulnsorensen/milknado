@@ -9,10 +9,7 @@ import pytest
 
 from milknado.domains.batching.change import Batch, BatchPlan, FileChange
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.planning.batching_bridge import (
-    _batch_description,
-    apply_batches_to_graph,
-)
+from milknado.domains.planning import apply_batches_to_graph, render_batch_description
 from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
 
 
@@ -94,8 +91,13 @@ class TestBatchDescriptionStacking:
         # Each FileChange description is 10k chars; stacked result should be ~20k.
         big_desc = "A" * 10_000
         batch = Batch(index=0, change_ids=("c1", "c2"), depends_on=())
-        desc_by_change: dict[str, str] = {"c1": big_desc, "c2": big_desc}
-        result = _batch_description(batch, desc_by_change)
+        manifest = _make_manifest(
+            changes=(
+                _make_change("c1", description=big_desc),
+                _make_change("c2", description=big_desc),
+            )
+        )
+        result = render_batch_description(batch, manifest)
         # Should contain both descriptions numbered
         assert result.startswith("1. ")
         assert "2. " in result
@@ -112,17 +114,15 @@ class TestBatchDescriptionStacking:
         assert root.description == tricky_summary  # stored verbatim
 
     def test_batch_with_unknown_change_id_uses_id_as_fallback(self) -> None:
-        # change_ids in batch includes a cid not in desc_by_change
+        # A batch can mention an ID omitted from a defensive caller's manifest.
         batch = Batch(index=0, change_ids=("unknown_cid",), depends_on=())
-        desc_by_change: dict[str, str] = {}
-        result = _batch_description(batch, desc_by_change)
+        result = render_batch_description(batch, _make_manifest())
         # Should fall back to the change id itself
         assert "unknown_cid" in result
 
     def test_empty_change_ids_uses_fallback_label(self) -> None:
         batch = Batch(index=3, change_ids=(), depends_on=())
-        desc_by_change: dict[str, str] = {}
-        result = _batch_description(batch, desc_by_change)
+        result = render_batch_description(batch, _make_manifest())
         assert "Batch 3" in result
 
     def test_oversized_batch_node_annotated(self, graph: MikadoGraph) -> None:

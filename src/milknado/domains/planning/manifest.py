@@ -91,6 +91,7 @@ class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
     symbols: list[_SymbolModel] = msgspec.field(default_factory=list)
     hash_anchors: _HashAnchorsModel | None = None
     dependencies: list[_DependencyModel] = msgspec.field(default_factory=list)
+    excluded_paths: list[str] = msgspec.field(default_factory=list)
     depends_on: list[str] = msgspec.field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -101,6 +102,10 @@ class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
         if not description:
             raise ValueError("description must be a non-empty string")
         structs.force_setattr(self, "description", description)
+        for excluded_path in self.excluded_paths:
+            _validate_relative_path(excluded_path, field_name="excluded path")
+        if len(set(self.excluded_paths)) != len(self.excluded_paths):
+            raise ValueError("excluded paths must be unique")
 
 
 class _RelationshipModel(_PlanningModel, frozen=True, kw_only=True):
@@ -150,6 +155,8 @@ def _change_to_dict(change: FileChange) -> dict[str, object]:
         "symbols": [{"name": s.name, "file": s.file} for s in change.symbols],
         "depends_on": list(change.depends_on),
     }
+    if change.excluded_paths:
+        result["excluded_paths"] = list(change.excluded_paths)
     if change.hash_anchors is not None:
         result["hash_anchors"] = _hash_anchors_to_dict(change.hash_anchors)
     if change.dependencies:
@@ -291,6 +298,7 @@ def _decode_manifest_or_none(raw: object) -> PlanChangeManifest | None:
                 ),
                 depends_on=tuple(change.depends_on),
                 description=change.description,
+                excluded_paths=tuple(change.excluded_paths),
             )
             for change in model.changes
         ),
