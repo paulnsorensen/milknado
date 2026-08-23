@@ -94,6 +94,20 @@ stays under the 300-line ceiling. Every function takes the `sqlite3.Connection`:
   `_creation` transaction functions.
 - **`traversals.py`** — `walk_ancestors`, a leaf→root single-path walk.
 - **`display.py`** — rendering only.
+- **`render_dot.py`** — pure Graphviz DOT renderer for the *live* graph
+  (`render_dot(nodes, children_map)`, PR #362), the sibling of the wiki
+  domain's roadmap-document renderer. Output is deterministic: nodes sorted by
+  `id`, edges collected into a sorted deduped set (so diamonds and repeated
+  wiring collapse), labels escaped for backslash/quote/control chars. Shape
+  encodes `NodeKind` (`box3d`/`folder`/`box`); archived nodes render dashed in
+  a grey palette. It declares its **own** `_STATUS_STYLES` status→colour map —
+  value-identical to the wiki domain's map in `domains/wiki/render.py` (that
+  map keys by string literal, this one by `NodeStatus.*.value`), yet
+  deliberately *not* imported from it, to avoid a `graph → wiki` dependency.
+  This is the same "duplicate a small constant to keep a domain boundary clean"
+  call recorded for `_RUN_STATUS_RUNNING` above: the two maps coincide only
+  because both render the shared `NodeStatus` vocabulary, so keep them aligned
+  by intent, not by collapsing them into one import.
 
 ## Status state machine (`_transitions.py`)
 
