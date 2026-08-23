@@ -101,7 +101,8 @@ stays under the 300-line ceiling. Every function takes the `sqlite3.Connection`:
   wiring collapse), labels escaped for backslash/quote/control chars. Shape
   encodes `NodeKind` (`box3d`/`folder`/`box`); archived nodes render dashed in
   a grey palette. It declares its **own** `_STATUS_STYLES` status→colour map —
-  byte-identical to the wiki domain's map in `domains/wiki/render.py`, yet
+  value-identical to the wiki domain's map in `domains/wiki/render.py` (that
+  map keys by string literal, this one by `NodeStatus.*.value`), yet
   deliberately *not* imported from it, to avoid a `graph → wiki` dependency.
   This is the same "duplicate a small constant to keep a domain boundary clean"
   call recorded for `_RUN_STATUS_RUNNING` above: the two maps coincide only
