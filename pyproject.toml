@@ -243,23 +243,23 @@ dev = [
 [tool.vulture]
 # src/ only, deliberately: code reachable solely from tests is dead code in a
 # shipped package, not live code. Adding tests/ here would hide exactly that.
-paths = ["src", "vulture-whitelist-loop.py"]
+# scripts/check_dead_code.py wraps this config with an owner-qualified classifier
+# (see .hallouminate/wiki/history/dead-code-coverage-gate-decision.md); ignore_names
+# below is only what the classifier cannot verify by AST ownership.
+paths = ["src"]
 min_confidence = 60
 # Entry points a framework registers by decorator and never calls by name:
 # typer commands, fastmcp tools, and Textual's @on / @work handlers.
 ignore_decorators = ["@*.command", "@mcp.tool", "@on", "@work"]
-# Names a framework or C library owns, so milknado never reads them itself.
+# Names a framework or C library owns, so milknado never reads them itself. Names an
+# object's own base class inheritance can verify (Textual lifecycle overrides, class
+# attributes, App.sub_title) are owner-qualified in scripts/check_dead_code.py instead;
+# these remain here because acceptance would otherwise require inferring the runtime
+# type of an arbitrary expression (query_one() results, sqlite3 connections, ortools
+# solver parameters, ctypes structure fields) rather than a class's own declared base.
 ignore_names = [
-    # Textual App/Widget lifecycle, styling, and key-binding actions.
-    "compose",
-    "on_*",
-    "action_*",
-    "CSS",
-    "DEFAULT_CSS",
-    "BINDINGS",
-    "disabled",
-    "border_title",  # Textual Widget border caption, set and rendered by the framework
-    "sub_title",     # Textual App header subtitle, set and rendered by the framework
+    "disabled",             # Textual Widget attribute set via query_one(...).disabled
+    "border_title",         # Textual Widget attribute set via query_one(...).border_title
     "row_factory",          # sqlite3.Connection knob
     "max_time_in_seconds",  # ortools CpSolver parameter
     "LimitFlags",           # Windows ctypes JOBOBJECT field
@@ -290,11 +290,22 @@ allow = [
     # (delete confirmed-dead, test untested-live).
     "milknado.domains.graph._status:complete_root",
     "milknado.domains.graph.graph:MikadoGraph.complete_root",
-    "milknado.domains.graph.status_flow:assert_done_verified",
     "milknado.domains.planning.planner:Planner.replan_with_delta",
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",
     "milknado.loop._events:EventEmitter.wants_agent_output_lines",
+    # Vendored ralph-loop engine hook surface (src/milknado/loop/ is vendored
+    # wholesale from ralphify; matches the classifier's _VENDORED_LOOP_FINDINGS
+    # philosophy: exact symbols, never a subtree glob). Formerly exempt via the
+    # "on_*" ignore_names glob removed when the classifier took ownership.
+    "milknado.loop.hooks:NoOpAgentHook.on_commands_completed",
+    "milknado.loop.hooks:NoOpAgentHook.on_tool_use",
+    "milknado.loop.hooks:NoOpAgentHook.on_turn_approaching_limit",
+    "milknado.loop.hooks:NoOpAgentHook.on_turn_capped",
+    "milknado.loop.hooks:NoOpAgentHook.on_completion_signal",
+    "milknado.loop.hooks:CombinedAgentHook.on_commands_completed",
+    "milknado.loop.hooks:CombinedAgentHook.on_turn_approaching_limit",
+    "milknado.loop.hooks:CombinedAgentHook.on_completion_signal",
     "milknado.loop.engine:_build_tool_use_bridge._on_tool_use",
     "milknado.loop.adapters._generic:GenericAdapter.matches",
     "milknado.loop.adapters._generic:GenericAdapter.install_wind_down_hook",

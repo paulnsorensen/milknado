@@ -10,11 +10,10 @@ from milknado.domains.wiki._locate import (
 )
 from milknado.domains.wiki._serialize import extract_section, load_frontmatter
 from milknado.domains.wiki.exporter import (
-    ExportResult,
     export_roadmap,
     resolve_roadmap_node,
 )
-from milknado.domains.wiki.importer import ImportResult, import_roadmap
+from milknado.domains.wiki.importer import import_roadmap
 from milknado.domains.wiki.model import (
     GoalDocument,
     Lifecycle,
@@ -29,9 +28,7 @@ from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult, WikiIn
 from milknado.domains.wiki.render import render_html, render_mermaid
 
 __all__ = [
-    "ExportResult",
     "GoalDocument",
-    "ImportResult",
     "Lifecycle",
     "RoadmapDocument",
     "RoadmapModel",
