@@ -26,6 +26,11 @@ ignore_names = []
 allow = []
 """
 
+_GUIDANCE = (
+    "coverage.xml is malformed, empty, or references a missing source file — "
+    "run the tests+coverage step first"
+)
+
 
 def _write_fixture(tmp_path: Path, files: dict[str, str]) -> Path:
     for relpath, content in files.items():
@@ -188,10 +193,15 @@ allow = ["entrypoints:reviewed_dead"]
     assert "reviewed_dead" not in result.stdout
 
 
-# --- ignore_names globs ------------------------------------------------------
+# --- ignore_names globs are vulture-only, not a coverage-gate exemption -----
 
 
-def test_ignore_names_globs_exempt_matching_bare_names(tmp_path: Path) -> None:
+def test_ignore_names_globs_do_not_exempt_dead_functions(tmp_path: Path) -> None:
+    """[tool.vulture].ignore_names is an unqualified name-glob for vulture's
+    scanner; unioning it into the coverage gate would let any ignore_names entry
+    added for a vulture-only reason silently exempt every same-named function
+    project-wide. The coverage gate must not consult it.
+    """
     pyproject = """
 [tool.vulture]
 ignore_decorators = []
@@ -215,9 +225,8 @@ allow = []
     result = _run_gate(fixture_dir)
 
     assert result.returncode == 1
-    assert "not_exempt_dead" in result.stdout
-    assert "on_click" not in result.stdout
-    assert "action_quit" not in result.stdout
+    for dead_name in ("not_exempt_dead", "on_click", "action_quit"):
+        assert dead_name in result.stdout
 
 
 # --- AST edge cases: body-only span computation ------------------------------
@@ -385,6 +394,28 @@ def test_relative_filename_resolves_under_absolute_sources_dir(tmp_path: Path) -
     assert "dead_fn" in result.stdout
 
 
+# --- Documented blind spot: zero measured lines reads as live --------------
+
+
+def test_docstring_only_body_with_zero_hits_is_not_flagged(tmp_path: Path) -> None:
+    """A docstring-only function body (or a Protocol stub of just ``...``) has no
+    coverage.py-instrumented line, so measured is empty and the gate cannot tell
+    dead from live — documented blind spot, pinned here.
+    """
+    lines: list[tuple[str, int | None]] = [
+        ("def dead_docstring_only():", 1),
+        ('    """Never called."""', None),
+    ]
+    fixture_dir = _write_lines_fixture(
+        tmp_path, "docstring_only.py", lines, _EMPTY_DEAD_CODE_CONFIG
+    )
+
+    result = _run_gate(fixture_dir)
+
+    assert result.returncode == 0
+    assert "dead_docstring_only" not in result.stdout
+
+
 # --- Fail-loud on malformed input --------------------------------------------
 
 
@@ -398,9 +429,16 @@ def test_malformed_coverage_xml_fails_loud(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "dead-code-coverage: no whole-symbol" not in result.stdout
-    assert (
-        "coverage.xml is malformed or empty — run the tests+coverage step first" in result.stderr
-    )
+    assert _GUIDANCE in result.stderr
+
+
+def test_missing_coverage_xml_fails_loud(tmp_path: Path) -> None:
+    fixture_dir = _write_fixture(tmp_path, {"pyproject.toml": _EMPTY_DEAD_CODE_CONFIG})
+
+    result = _run_gate(fixture_dir)
+
+    assert result.returncode != 0
+    assert _GUIDANCE in result.stderr
 
 
 def test_empty_coverage_xml_fails_loud(tmp_path: Path) -> None:
@@ -411,6 +449,7 @@ def test_empty_coverage_xml_fails_loud(tmp_path: Path) -> None:
     result = _run_gate(fixture_dir)
 
     assert result.returncode != 0
+    assert _GUIDANCE in result.stderr
 
 
 def test_coverage_xml_naming_missing_source_file_fails_loud(tmp_path: Path) -> None:
@@ -436,3 +475,4 @@ def test_coverage_xml_naming_missing_source_file_fails_loud(tmp_path: Path) -> N
     result = _run_gate(fixture_dir)
 
     assert result.returncode != 0
+    assert _GUIDANCE in result.stderr

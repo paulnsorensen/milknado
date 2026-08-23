@@ -26,6 +26,11 @@ Scope choices:
   consumers. A non-Protocol export that exists solely for external consumers (unused
   anywhere in this project's own src/tests) would be flagged dead here; that's accepted
   scope for a leaf app and is not an exemption this gate makes.
+- Limitation: uses are name-based, not import-resolved. An attribute access
+  (`module.Name`) counts as a use of `Name` via the accessed attribute; an unrelated
+  object that happens to share the export's bare name or attribute name reads as a use
+  too (false accept, not caught). Symmetrically, an export accessed only that way is
+  no longer missed as dead (false reject fixed by indexing ast.Attribute).
 """
 
 from __future__ import annotations
@@ -67,6 +72,8 @@ def _analyze_file(path: Path) -> tuple[set[str], set[str], set[str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             used.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            used.add(node.attr)
         elif isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             defined.add(node.name)
             if isinstance(node, ast.ClassDef) and _is_protocol_class(node):
@@ -151,3 +158,27 @@ def test_liveness_checker_catches_a_fabricated_dead_name() -> None:
         protocols=set(),
     )
     assert dead == ["ZzzDefinitelyNotUsedSymbol"]
+
+
+def test_end_to_end_over_a_fixture_tree_reports_a_dead_export(tmp_path: Path) -> None:
+    """Exercises _analyze_file + _build_indices + _dead_exports together, not hand-built
+    dicts, so a regression in wiring between them (e.g. the use index never actually
+    populated from _analyze_file's output) would fail this test.
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        '__all__ = ["live_export", "dead_export"]\nfrom .mod import live_export, dead_export\n'
+    )
+    (pkg / "mod.py").write_text(
+        "def live_export() -> int:\n    return 1\n\n\ndef dead_export() -> int:\n    return 2\n"
+    )
+    (pkg / "consumer.py").write_text(
+        "from .mod import live_export\n\n\ndef use_it() -> int:\n    return live_export()\n"
+    )
+
+    use_by_file, defined_by_name, protocols = _build_indices(pkg, pkg, excluded=set())
+
+    dead = _dead_exports(["live_export", "dead_export"], use_by_file, defined_by_name, protocols)
+
+    assert dead == ["dead_export"]

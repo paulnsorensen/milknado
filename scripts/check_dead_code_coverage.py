@@ -4,12 +4,16 @@
 Cross-checks coverage.xml against an AST pass: a function or method whose every
 measured line has zero hits is whole-symbol dead code that vulture's name-based
 matching misses (name-collision blindness, dead reference cycles). See
-specs/dead-code-coverage-gate.md.
+.hallouminate/wiki/history/dead-code-coverage-gate-decision.md.
 
-Known limitation: a function whose entire body is on the ``def`` line (e.g.
-``def f(): return x``) cannot be flagged. coverage.py records only the def
-line as hit (at import), and the body shares that line, so the measured span
-never shows zero hits even when the body never runs.
+Known limitations:
+- A function whose entire body is on the ``def`` line (e.g.
+  ``def f(): return x``) cannot be flagged. coverage.py records only the def
+  line as hit (at import), and the body shares that line, so the measured span
+  never shows zero hits even when the body never runs.
+- A function with zero measured lines (a docstring-only body, or a Protocol
+  stub body of just ``...``) is treated as live, not dead — coverage.py never
+  instruments a line for it, so there is no hit/no-hit signal to check.
 """
 
 from __future__ import annotations
@@ -40,10 +44,8 @@ class Exemptions:
     script_targets: tuple[str, ...]
     allowlist: tuple[str, ...]
 
-    def is_exempt(self, module_qualname: str, name: str, decorators: list[str]) -> bool:
+    def is_exempt(self, module_qualname: str, decorators: list[str]) -> bool:
         if module_qualname in self.allowlist or module_qualname in self.script_targets:
-            return True
-        if any(fnmatch.fnmatch(name, pattern) for pattern in self.ignore_names):
             return True
         return any(
             fnmatch.fnmatch(decorator, pattern)
@@ -149,7 +151,7 @@ def find_whole_dead_symbols(coverage_xml: Path, cwd: Path, exempt: Exemptions) -
             if not measured or any(hits > 0 for hits in measured.values()):
                 continue
             module_qualname = f"{module}:{qualname}"
-            if exempt.is_exempt(module_qualname, node.name, decorators):
+            if exempt.is_exempt(module_qualname, decorators):
                 continue
             dead_symbols.append(DeadSymbol(module=module, qualname=qualname, lineno=node.lineno))
     return dead_symbols
@@ -160,9 +162,10 @@ def main() -> int:
     exempt = _load_exemptions(cwd / PYPROJECT_TOML)
     try:
         dead_symbols = find_whole_dead_symbols(cwd / COVERAGE_XML, cwd, exempt)
-    except ET.ParseError:
+    except (ET.ParseError, OSError):
         print(
-            "coverage.xml is malformed or empty — run the tests+coverage step first",
+            "coverage.xml is malformed, empty, or references a missing source file — "
+            "run the tests+coverage step first",
             file=sys.stderr,
         )
         return 1

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Protocol
 
 from milknado.domains.common import VALID_TRANSITIONS, MikadoNode, NodeStatus
@@ -13,9 +12,6 @@ CLAIM_ROLE = "claim"
 
 
 class _StatusGraph(Protocol):
-    def latest_run_message(self, run_id: str, role: str) -> str | None: ...
-
-    def get_run(self, run_id: str) -> Mapping[str, object] | None: ...
     def set_todo_status(self, node_id: int, target: NodeStatus) -> bool: ...
 
 
