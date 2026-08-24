@@ -557,8 +557,8 @@ def test_resolve_model_extracts_flag_and_defaults() -> None:
     assert _resolve_model("codex exec --sandbox workspace-write") == "sonnet"
 
 
-@pytest.mark.parametrize("verdict", ["not json", "[]"])
-def test_done_transition_rejects_malformed_verdict(repo: Path, verdict: str) -> None:
+@pytest.mark.parametrize("verdict", ["not json", "[]", "true", "42"])
+def test_done_transition_rejects_invalid_verdict(repo: Path, verdict: str) -> None:
     from milknado.domains.dispatch import now_iso
     from milknado.domains.graph.status_flow import VERIFY_ROLE
 
