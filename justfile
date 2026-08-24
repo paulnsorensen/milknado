@@ -90,7 +90,6 @@ dead-code-coverage:
 # campaign reaches zero diagnostics.
 typecheck:
     uv run basedpyright
-
 # Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage (for CI validation)
 build-ci: lint file-size dead-code coverage-check dead-code-coverage
     @echo "✅ CI build passed"
