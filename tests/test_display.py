@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from milknado.domains.common import NodeStatus
-from milknado.domains.graph import render_tree, summarize
+from milknado.domains.graph import render_tree
+from milknado.domains.graph.display import summarize
 
 
 class TestSummarize:

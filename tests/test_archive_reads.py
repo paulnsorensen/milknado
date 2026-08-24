@@ -15,8 +15,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
-from milknado.domains.graph import _reads, render_tree, summarize
-from milknado.domains.graph.display import format_node
+from milknado.domains.graph import _reads, render_tree
+from milknado.domains.graph.display import format_node, summarize
 from milknado.domains.reporting.harvest import build_harvest_summary
 
 

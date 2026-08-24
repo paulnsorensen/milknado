@@ -748,7 +748,7 @@ class TestIssueHelpers:
             materialize_issue_spec([], project_dir, MagicMock())
 
     def test_normalize_plan_identifier_has_fallback_and_preserves_spec_stems(self) -> None:
-        from milknado.domains.planning import normalize_plan_identifier
+        from milknado.domains.planning.source_material import normalize_plan_identifier
 
         assert normalize_plan_identifier("  no_heading.v2  ", "plan") == "no_heading.v2"
         assert normalize_plan_identifier("!!!", "plan") == "plan"

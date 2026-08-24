@@ -1,4 +1,4 @@
-from milknado.domains.graph.display import render_tree, summarize
+from milknado.domains.graph.display import render_tree
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.rebalance import (
     INBOX_DESCRIPTION,
@@ -34,7 +34,6 @@ __all__ = [
     "render_report",
     "render_tree",
     "subtree_post_order",
-    "summarize",
     "invalid_subtree_node_ids",
     "VERIFY_ROLE",
     "validate_runnable_roots",

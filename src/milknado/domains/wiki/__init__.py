@@ -8,7 +8,7 @@ from milknado.domains.wiki._locate import (
     resolve_roadmap_dir,
     wiki_root,
 )
-from milknado.domains.wiki._serialize import extract_section, load_frontmatter
+from milknado.domains.wiki._serialize import load_frontmatter
 from milknado.domains.wiki.exporter import (
     ExportResult,
     export_roadmap,
@@ -39,7 +39,6 @@ __all__ = [
     "WikiIndexResult",
     "WikiIndexStatus",
     "export_roadmap",
-    "extract_section",
     "goal_file_map",
     "import_roadmap",
     "load_frontmatter",

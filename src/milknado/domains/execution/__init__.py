@@ -8,7 +8,6 @@ from milknado.domains.execution.executor import (
     ExecutionConfig,
     Executor,
     RebaseConflict,
-    WorktreeManager,
     get_dispatchable_nodes,
     get_execution_overview,
 )
@@ -27,7 +26,6 @@ __all__ = [
     "RunLoop",
     "RunLoopResult",
     "RunLoopState",
-    "WorktreeManager",
     "build_completion_verifier",
     "get_dispatchable_nodes",
     "get_execution_overview",

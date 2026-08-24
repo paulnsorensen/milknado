@@ -27,9 +27,9 @@ from milknado.domains.execution import (
     DispatchResult,
     ExecutionConfig,
     Executor,
-    WorktreeManager,
     get_dispatchable_nodes,
 )
+from milknado.domains.execution.executor import WorktreeManager
 from milknado.domains.graph import MikadoGraph
 from milknado.loop import RunStatus
 
