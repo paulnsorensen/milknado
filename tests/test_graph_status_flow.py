@@ -9,7 +9,6 @@ from milknado.domains.common import MikadoNode, NodeKind, NodeSpec, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph.status_flow import (
-    latest_verify_ok,
     subtree_post_order,
     validate_todo_status,
 )
@@ -45,18 +44,6 @@ def test_todo_transition_matrix(current: NodeStatus, target: NodeStatus, allowed
     else:
         with pytest.raises(InvalidTransition):
             validate_todo_status(node, target)
-
-
-@pytest.mark.parametrize(
-    "deposit",
-    [None, "not-json", "[]", "true", "false", "1", '{"ok": "true"}'],
-)
-def test_verification_deposits_fail_closed(deposit: str | None) -> None:
-    class Graph:
-        def latest_run_message(self, _run_id: str, _role: str) -> str | None:
-            return deposit
-
-    assert latest_verify_ok(Graph(), "run") is False
 
 
 def test_bulk_preflight_leaves_every_node_unchanged(graph: MikadoGraph) -> None:

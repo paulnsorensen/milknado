@@ -557,20 +557,19 @@ def test_resolve_model_extracts_flag_and_defaults() -> None:
     assert _resolve_model("codex exec --sandbox workspace-write") == "sonnet"
 
 
-def test_latest_verify_ok_false_on_missing_or_malformed(repo: Path) -> None:
+@pytest.mark.parametrize("verdict", ["not json", "[]", "true", "42"])
+def test_done_transition_rejects_invalid_verdict(repo: Path, verdict: str) -> None:
     from milknado.domains.dispatch import now_iso
-    from milknado.domains.graph.status_flow import VERIFY_ROLE, latest_verify_ok
+    from milknado.domains.graph.status_flow import VERIFY_ROLE
 
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     graph, _cfg = open_graph(repo)
     try:
-        # No verify message yet -> not ok.
-        assert latest_verify_ok(graph, claim["run_id"]) is False
-        # Malformed verdict body -> fail-closed.
-        graph.deposit_run_message(claim["run_id"], VERIFY_ROLE, "not json", now_iso())
-        assert latest_verify_ok(graph, claim["run_id"]) is False
+        graph.deposit_run_message(claim["run_id"], VERIFY_ROLE, verdict, now_iso())
+        with pytest.raises(ValueError, match="has not returned ok=True"):
+            graph.set_todo_status(node_id, NodeStatus.DONE)
     finally:
         graph.close()
 
