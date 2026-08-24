@@ -83,6 +83,7 @@ dead-code:
 
 # Full build no autofix: lint → file-size → dead-code → coverage check (for CI validation)
 build-ci: lint file-size dead-code coverage-check
+    uv run python scripts/check_dead_code_coverage.py
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + dead code + tests + project coverage + diff coverage.

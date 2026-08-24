@@ -36,14 +36,11 @@ class DeadSymbol:
 @dataclass(frozen=True)
 class Exemptions:
     ignore_decorators: tuple[str, ...]
-    ignore_names: tuple[str, ...]
     script_targets: tuple[str, ...]
     allowlist: tuple[str, ...]
 
-    def is_exempt(self, module_qualname: str, name: str, decorators: list[str]) -> bool:
+    def is_exempt(self, module_qualname: str, decorators: list[str]) -> bool:
         if module_qualname in self.allowlist or module_qualname in self.script_targets:
-            return True
-        if any(fnmatch.fnmatch(name, pattern) for pattern in self.ignore_names):
             return True
         return any(
             fnmatch.fnmatch(decorator, pattern)
@@ -89,7 +86,6 @@ def _load_exemptions(pyproject: Path) -> Exemptions:
     dead_code = config.get("tool", {}).get("milknado", {}).get("dead-code", {})
     return Exemptions(
         ignore_decorators=tuple(vulture.get("ignore_decorators", [])),
-        ignore_names=tuple(vulture.get("ignore_names", [])),
         script_targets=tuple(scripts.values()),
         allowlist=tuple(dead_code.get("allow", [])),
     )
@@ -119,6 +115,8 @@ def _parse_coverage_xml(coverage_xml: Path, cwd: Path) -> dict[Path, dict[int, i
             for line in class_elem.findall("./lines/line")
         }
         line_hits_by_file.setdefault(resolved, {}).update(line_hits)
+    if not line_hits_by_file:
+        raise ValueError("contains no usable class filenames")
     return line_hits_by_file
 
 
@@ -149,7 +147,7 @@ def find_whole_dead_symbols(coverage_xml: Path, cwd: Path, exempt: Exemptions) -
             if not measured or any(hits > 0 for hits in measured.values()):
                 continue
             module_qualname = f"{module}:{qualname}"
-            if exempt.is_exempt(module_qualname, node.name, decorators):
+            if exempt.is_exempt(module_qualname, decorators):
                 continue
             dead_symbols.append(DeadSymbol(module=module, qualname=qualname, lineno=node.lineno))
     return dead_symbols
@@ -160,9 +158,10 @@ def main() -> int:
     exempt = _load_exemptions(cwd / PYPROJECT_TOML)
     try:
         dead_symbols = find_whole_dead_symbols(cwd / COVERAGE_XML, cwd, exempt)
-    except ET.ParseError:
+    except (ET.ParseError, OSError, ValueError) as exc:
         print(
-            "coverage.xml is malformed or empty — run the tests+coverage step first",
+            f"{cwd / COVERAGE_XML}: cannot analyze coverage ({exc}) — "
+            "run the tests+coverage step first",
             file=sys.stderr,
         )
         return 1

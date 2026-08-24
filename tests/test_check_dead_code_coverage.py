@@ -1,7 +1,6 @@
 """Adversarial tests-only hardening for scripts/check_dead_code_coverage.py.
 
-Attacks the gate at its CLI seam (subprocess, exit code + stdout) with cases the
-hand-written oracle fixtures in tests/dead_code_coverage_cut/ do not cover:
+Attacks the gate at its CLI seam (subprocess, exit code + stdout) with
 realistic coverage.py output (regression guard for the def-line-hits-at-import
 no-op), call-syntax decorator exemptions (regression guard for @mcp.tool()),
 AST edge cases, Cobertura <sources> resolution, and fail-loud behavior on
@@ -188,36 +187,28 @@ allow = ["entrypoints:reviewed_dead"]
     assert "reviewed_dead" not in result.stdout
 
 
-# --- ignore_names globs ------------------------------------------------------
+# --- vulture-only ignore_names -----------------------------------------------
 
 
-def test_ignore_names_globs_exempt_matching_bare_names(tmp_path: Path) -> None:
+def test_ignore_names_globs_do_not_exempt_dead_functions(tmp_path: Path) -> None:
     pyproject = """
 [tool.vulture]
 ignore_decorators = []
-ignore_names = ["on_*", "action_*"]
+ignore_names = ["on_*"]
 
 [tool.milknado.dead-code]
 allow = []
 """
     lines: list[tuple[str, int | None]] = [
         ("def on_click():", 1),
-        ("    x = 1", 0),
-        ("", None),
-        ("def action_quit():", 1),
-        ("    y = 1", 0),
-        ("", None),
-        ("def not_exempt_dead():", 1),
-        ("    z = 1", 0),
+        ("    return 1", 0),
     ]
     fixture_dir = _write_lines_fixture(tmp_path, "widgets.py", lines, pyproject)
 
     result = _run_gate(fixture_dir)
 
     assert result.returncode == 1
-    assert "not_exempt_dead" in result.stdout
-    assert "on_click" not in result.stdout
-    assert "action_quit" not in result.stdout
+    assert "on_click" in result.stdout
 
 
 # --- AST edge cases: body-only span computation ------------------------------
@@ -398,9 +389,8 @@ def test_malformed_coverage_xml_fails_loud(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "dead-code-coverage: no whole-symbol" not in result.stdout
-    assert (
-        "coverage.xml is malformed or empty — run the tests+coverage step first" in result.stderr
-    )
+    assert "coverage.xml: cannot analyze coverage" in result.stderr
+    assert "syntax error" in result.stderr
 
 
 def test_empty_coverage_xml_fails_loud(tmp_path: Path) -> None:
@@ -411,6 +401,21 @@ def test_empty_coverage_xml_fails_loud(tmp_path: Path) -> None:
     result = _run_gate(fixture_dir)
 
     assert result.returncode != 0
+
+
+def test_valid_coverage_xml_without_usable_classes_fails_loud(tmp_path: Path) -> None:
+    fixture_dir = _write_fixture(
+        tmp_path,
+        {
+            "coverage.xml": "<coverage><packages /></coverage>",
+            "pyproject.toml": _EMPTY_DEAD_CODE_CONFIG,
+        },
+    )
+
+    result = _run_gate(fixture_dir)
+
+    assert result.returncode != 0
+    assert "contains no usable class filenames" in result.stderr
 
 
 def test_coverage_xml_naming_missing_source_file_fails_loud(tmp_path: Path) -> None:
