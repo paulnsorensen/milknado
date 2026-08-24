@@ -347,6 +347,7 @@ ignore_names = [
     "row_factory",          # sqlite3.Connection knob
     "max_time_in_seconds",  # ortools CpSolver parameter
     "LimitFlags",           # Windows ctypes JOBOBJECT field
+    "__getattr__",          # PEP 562 module-level lazy-attribute hook, called by the interpreter
 ]
 
 [tool.milknado.quality]
