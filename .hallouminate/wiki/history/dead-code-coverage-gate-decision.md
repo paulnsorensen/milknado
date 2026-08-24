@@ -17,3 +17,10 @@ milknado's toolchain is Astral end-to-end (`ruff`, `uv`, `ty>=0.0.38` as a dev d
 
 - **Decision:** Run the whole-symbol coverage check immediately after coverage generation in both `check-llm` and `build-ci`; keep the vulture step in both paths.
 - **Consequence:** A green local PR gate and CI evaluate the same dead-code contracts against the same generated report. Invalid, missing, unreadable, or structurally empty coverage XML fails with its path and parser or filesystem cause.
+
+### ADR-dead-code-coverage-gate-002: owner-qualified Textual exemptions plus an exact vendored-loop compatibility allowlist  [status: accepted]
+
+- **Context:** Vulture's global `ignore_names` accepts every same-named symbol regardless of owner. Textual lifecycle methods and class attributes can be identified from an imported `textual.*` base, but `src/milknado/loop/` is vendored wholesale from ralphify (PR #137, `49ac978`) at upstream `ec494875d0309c273c03f5f52a2cc3fabc96fa16`. Milknado intentionally consumes only the six-name public boundary in `loop/__init__.py`.
+- **Decision:** Replace owner-identifiable Textual wildcards with AST ownership checks. Preserve the 33 reviewed vendored findings as exact `(path, name)` pairs in `_VENDORED_LOOP_FINDINGS`, and validate every pair still resolves. This is an explicit compatibility allowlist, not a structural exemption and not a whitelist-free design.
+- **Rationale:** The vendored event fields are written payload schema; frontmatter constants and serialization belong to upstream's schema; adapter flags form its protocol; manager methods retain upstream lifecycle surface. Trimming manager methods cascades into `FanoutEmitter`, `RunResult`, reaping, pause/resume state, and `RunStatus.PAUSED`. Diverging would create a local fork of code the project chose to vendor wholesale.
+- **Consequence:** Only the enumerated upstream surface is exempt, so new dead code under `loop/` still fails. Milknado-owned findings must be connected or deleted. Re-audit or remove the list if the engine is re-vendored or intentionally trimmed.
