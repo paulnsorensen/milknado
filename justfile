@@ -79,11 +79,14 @@ file-size:
 
 # Report unreachable code (mirrors the dead-code step in check-llm)
 dead-code:
-    uv run vulture
+    uv run python scripts/check_dead_code.py
 
-# Full build no autofix: lint → file-size → dead-code → coverage check (for CI validation)
-build-ci: lint file-size dead-code coverage-check
+# Report whole-symbol zero-coverage dead code (requires coverage.xml from coverage-check)
+dead-code-coverage:
     uv run python scripts/check_dead_code_coverage.py
+
+# Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage (for CI validation)
+build-ci: lint file-size dead-code coverage-check dead-code-coverage
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + dead code + tests + project coverage + diff coverage.
@@ -104,7 +107,7 @@ check-llm:
     steps = [
         ("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"]),
         ("import-contracts", ["uv", "run", "lint-imports"]),
-        ("dead-code", ["uv", "run", "vulture"]),
+        ("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"]),
         ("lint+format", ["just", "lint"]),
         (
             "tests+coverage",
