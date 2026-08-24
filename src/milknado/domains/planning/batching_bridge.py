@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from milknado.domains.batching import DUMB_ZONE_BUDGET, plan_batches
+from milknado.domains.batching import DUMB_ZONE_BUDGET
 from milknado.domains.common import VALID_CHILD_KINDS, NodeKind, NodeSpec
 
 if TYPE_CHECKING:
@@ -22,6 +22,8 @@ def run_batching(
     budget: int = DUMB_ZONE_BUDGET,
     time_limit_s: float = 10.0,
 ) -> BatchPlan:
+    from milknado.domains.batching import plan_batches
+
     return plan_batches(
         manifest.changes,
         budget=budget,

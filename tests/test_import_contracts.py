@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 ROOT = Path(__file__).parents[1]
 _PYPROJECT = ROOT / "pyproject.toml"
@@ -114,3 +118,29 @@ def test_application_policy_has_no_cli_presentation_dependencies() -> None:
         assert "from typer" not in text
         assert "from rich" not in text
         assert "Console(" not in text
+
+
+def test_startup_does_not_import_ortools_solver() -> None:
+    """CLI and MCP startup must not load the CP-SAT solver (ortools ~145ms native
+    import); it loads lazily only when a batch plan is actually solved."""
+    probe = (
+        "import sys\n"
+        "import {module}\n"
+        "loaded = sorted(m for m in sys.modules if m.startswith('ortools'))\n"
+        "assert not loaded, loaded\n"
+    )
+    for module in ("milknado.cli", "milknado.mcp.server"):
+        result = subprocess.run(
+            [sys.executable, "-c", probe.format(module=module)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"{module} eagerly imported ortools: {result.stderr}"
+
+
+def test_batching_crust_rejects_unknown_attribute() -> None:
+    import milknado.domains.batching as batching
+
+    with pytest.raises(AttributeError):
+        _ = batching.does_not_exist
