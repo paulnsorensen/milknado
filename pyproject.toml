@@ -291,7 +291,6 @@ allow = [
     # (delete confirmed-dead, test untested-live).
     "milknado.domains.graph._status:complete_root",
     "milknado.domains.graph.graph:MikadoGraph.complete_root",
-    "milknado.domains.graph.status_flow:assert_done_verified",
     "milknado.domains.planning.planner:Planner.replan_with_delta",
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",

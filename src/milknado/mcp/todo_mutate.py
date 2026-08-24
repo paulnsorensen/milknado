@@ -12,7 +12,6 @@ from milknado.domains.common import (
     normalize_hint_paths,
     validate_hint_path,
 )
-from milknado.domains.graph import apply_todo_status
 from milknado.mcp._core import (
     Flavor,
     Kind,
@@ -111,7 +110,7 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
-        apply_todo_status(graph, node, target)
+        graph.set_todo_status(node.id, target)
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after status update")
