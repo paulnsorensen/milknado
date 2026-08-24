@@ -263,6 +263,7 @@ ignore_names = [
     "row_factory",          # sqlite3.Connection knob
     "max_time_in_seconds",  # ortools CpSolver parameter
     "LimitFlags",           # Windows ctypes JOBOBJECT field
+    "__getattr__",          # PEP 562 module-level lazy-attribute hook, called by the interpreter
 ]
 
 # Allowlist for scripts/check_dead_code_coverage.py: whole-symbol zero-hit code

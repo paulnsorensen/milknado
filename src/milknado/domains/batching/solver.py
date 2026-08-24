@@ -13,6 +13,7 @@ from milknado.domains.batching._model import (
     build_model,
 )
 from milknado.domains.batching.change import (
+    DUMB_ZONE_BUDGET,
     Batch,
     BatchPlan,
     FileChange,
@@ -39,11 +40,6 @@ class SolverConfig:
     time_limit_s: float = 10.0
     root: Path = field(default_factory=Path.cwd)
 
-
-# Per-batch token budget ceiling. One batch is one implementation context
-# window; past ~120K the model enters the "dumb zone" and degrades rather than
-# improving. See domains/batching/README.md "Choosing a Budget".
-DUMB_ZONE_BUDGET = 120_000
 
 STATUS_OPTIMAL: SolverStatus = "OPTIMAL"
 STATUS_FEASIBLE: SolverStatus = "FEASIBLE"

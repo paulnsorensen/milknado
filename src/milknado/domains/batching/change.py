@@ -70,6 +70,12 @@ class SymbolSpread:
 MEGA_BATCH_THRESHOLD = 5
 
 
+# Per-batch token budget ceiling. One batch is one implementation context
+# window; past ~120K the model enters the "dumb zone" and degrades rather than
+# improving. See domains/batching/README.md "Choosing a Budget".
+DUMB_ZONE_BUDGET = 120_000
+
+
 @dataclass(frozen=True)
 class BatchPlan:
     batches: tuple[Batch, ...]
