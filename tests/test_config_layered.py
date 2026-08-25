@@ -7,13 +7,8 @@ from pathlib import Path
 import msgspec
 import pytest
 
-from milknado.domains.common import (
-    default_config,
-    global_config_path,
-    load_config,
-    save_config,
-)
-from milknado.domains.common.config import WorkerTable
+from milknado.domains.common import default_config, load_config, save_config
+from milknado.domains.common.config import WorkerTable, global_config_path
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 

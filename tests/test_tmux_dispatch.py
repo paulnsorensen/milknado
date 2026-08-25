@@ -283,10 +283,10 @@ def test_run_inline_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monk
     assert _node_status(root, node_id) == NodeStatus.PENDING
 
 
-def test_run_inline_use_tmux_success_delivers_brief_without_poll_reconcile(
+def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
     tmp_path, monkeypatch
 ) -> None:
-    """Worker reads the staged brief; normal polling never touches tmux."""
+    """Worker reads the staged brief; successful polling cleans up its tmux window."""
     fake = SpawningFakeTmux("cat {brief} >> {log}; echo 0 > {rc}")
     monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
     monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
@@ -307,7 +307,7 @@ def test_run_inline_use_tmux_success_delivers_brief_without_poll_reconcile(
     assert window.env["MILKNADO_PROJECT_ROOT"] == str(tmp_path.resolve())
     assert "tmux-task" in final["summary"]  # brief made it through the stdin redirect
     assert _node_status(root, node_id) == NodeStatus.DONE
-    assert fake.killed == [], "normal polling must not reconcile tmux windows"
+    assert fake.killed == [started["run_id"]]
     # The staged brief and rc file are transient: the worker's finally clears
     # them once the terminal state is written (log stays as the diagnostic).
     rdir = runs_dir(tmp_path)

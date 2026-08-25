@@ -1,6 +1,5 @@
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
-    cancel_path,
     clear_cancel,
     exit_code_path,
     is_cancel_requested,
@@ -72,7 +71,6 @@ __all__ = [
     "ProcessTerminationPort",
     "RunWindow",
     "TmuxPort",
-    "cancel_path",
     "cancel_run",
     "clear_cancel",
     "build_worker_env",

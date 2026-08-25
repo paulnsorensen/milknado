@@ -17,7 +17,6 @@ from milknado.domains.wiki._locate import RoadmapPathError
 from milknado.domains.wiki._serialize import (
     HARVEST_END,
     HARVEST_START,
-    extract_section,
     load_frontmatter,
 )
 from milknado.domains.wiki.exporter import export_roadmap, resolve_roadmap_node
@@ -106,8 +105,7 @@ class TestExportMembrane:
         graph.mark_done(result.goal_node_ids["wire-export"])
         export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         after = _goal_path(wiki_root).read_text()
-        assert extract_section(before, "Intent") == extract_section(after, "Intent")
-        assert extract_section(before, "Acceptance") == extract_section(after, "Acceptance")
+        assert _human_region(before) == _human_region(after)
 
     def test_status_and_harvest_updated(self, wiki_root: Path, graph: MikadoGraph) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)

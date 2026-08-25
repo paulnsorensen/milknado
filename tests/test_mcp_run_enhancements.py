@@ -796,8 +796,8 @@ class TestRunCancel:
         """A run stuck "running" with no pid and no live worker (crashed sync run)
         must still be cleared: cancel falls back to writing the terminal state,
         reconciles the node, and leaves no stale sentinel."""
-        from milknado.domains.dispatch import cancel_path
         from milknado.domains.dispatch import runs_dir as _runs_dir
+        from milknado.domains.dispatch._runstate import cancel_path
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="sync-stuck", kind="task", project_root=root)
@@ -957,8 +957,8 @@ class TestAsyncCancel:
     def test_cancel_stops_async_worker_and_finalizes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
     ) -> None:
-        from milknado.domains.dispatch import cancel_path
         from milknado.domains.dispatch import runs_dir as _runs_dir
+        from milknado.domains.dispatch._runstate import cancel_path
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="async-cancel", kind="task", project_root=root)
@@ -1453,6 +1453,33 @@ class TestDepositResult:
         )
         final = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
         assert final["result"] is None, "no deposit -> result is None, not a missing key"
+
+    def test_inline_poll_reconciles_tmux_window_only_for_done(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tmux = object()
+        adapter_roots: list[Path] = []
+        reconciled: list[tuple[object, str, str]] = []
+
+        def build_tmux(root: Path) -> object:
+            adapter_roots.append(root)
+            return tmux
+
+        def reconcile(adapter: object, state: dict) -> None:
+            reconciled.append((adapter, state["run_id"], state["status"]))
+
+        monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", build_tmux)
+        monkeypatch.setattr("milknado.mcp.run.reconcile_run_window", reconcile)
+        done_id = "node-1-20260101T000000Z-abcd"
+        failed_id = "node-2-20260101T000000Z-cafe"
+        _seed_run(tmp_path, run_id=done_id, node_id=1, status="done", exit_code=0)
+        _seed_run(tmp_path, run_id=failed_id, node_id=2, status="failed", exit_code=1)
+
+        _call(milknado_run_inline_poll, run_id=done_id, project_root=str(tmp_path))
+        _call(milknado_run_inline_poll, run_id=failed_id, project_root=str(tmp_path))
+
+        assert adapter_roots == [tmp_path]
+        assert reconciled == [(tmux, done_id, "done")]
 
     def test_run_inline_poll_derives_log_path_from_run_id(self, tmp_path: Path) -> None:
         """The poll must tail the log derived from the validated run_id — a

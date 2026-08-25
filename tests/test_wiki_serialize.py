@@ -16,7 +16,6 @@ from milknado.domains.wiki._serialize import (
     HARVEST_START,
     compute_goal_ref,
     compute_roadmap_ref,
-    extract_section,
     load_frontmatter,
     parse_wikilink,
     replace_harvest_block,
@@ -98,17 +97,6 @@ class TestFrontmatter:
         assert out[out.index(body_marker) :] == GOAL_FILE[GOAL_FILE.index(body_marker) :]
 
 
-class TestSections:
-    def test_extract_section_returns_intent(self) -> None:
-        intent = extract_section(GOAL_FILE, "Intent")
-        assert intent is not None
-        assert "durable" in intent
-        assert "Acceptance" not in intent
-
-    def test_extract_section_missing_returns_none(self) -> None:
-        assert extract_section(GOAL_FILE, "Nonexistent") is None
-
-
 class TestHarvestBlock:
     def test_replace_harvest_block_swaps_inner_only(self) -> None:
         out = replace_harvest_block(GOAL_FILE, "result: done · tasks: 5 done / 0 failed")
@@ -117,12 +105,9 @@ class TestHarvestBlock:
 
     def test_replace_harvest_block_keeps_intent_acceptance_byte_identical(self) -> None:
         out = replace_harvest_block(GOAL_FILE, "result: done")
-        intent_before = extract_section(GOAL_FILE, "Intent")
-        intent_after = extract_section(out, "Intent")
-        assert intent_before == intent_after
-        accept_before = extract_section(GOAL_FILE, "Acceptance")
-        accept_after = extract_section(out, "Acceptance")
-        assert accept_before == accept_after
+        before_harvest = GOAL_FILE.partition(HARVEST_START)[0]
+        after_harvest = out.partition(HARVEST_START)[0]
+        assert after_harvest == before_harvest
 
     def test_replace_harvest_block_idempotent_markers(self) -> None:
         out = replace_harvest_block(GOAL_FILE, "result: done")

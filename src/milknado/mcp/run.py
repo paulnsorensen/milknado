@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import cast
 
-from milknado.adapters import (  # noqa: F401  # TmuxAdapter is a monkeypatch seam for tests
+from milknado.adapters import (
     GitAdapter,
     ProcessAdapter,
     TmuxAdapter,
@@ -23,6 +23,7 @@ from milknado.domains.dispatch import (
     now_iso,
     poll_async_run,
     reconcile_node_status,
+    reconcile_run_window,
 )
 from milknado.mcp._core import (
     RunDict,
@@ -131,6 +132,8 @@ def milknado_run_inline_poll(run_id: str, project_root: str = "") -> RunDict:
                 cast(str, state["status"]),
                 run_id=cast(str | None, state.get("run_id")),
             )
+        if state["status"] == "done":
+            reconcile_run_window(TmuxAdapter(root), state)
         state["result"] = graph.latest_run_message(run_id, "result")
     finally:
         graph.close()
