@@ -22,6 +22,7 @@ from milknado.domains.common.config_layers import (
     remove_origin_prefix,
 )
 from milknado.domains.common.flavor_codec import (
+    CURSOR_RESUME_REJECTION,
     FlavorOverride,
     FlavorTable,
     Gate,
@@ -33,6 +34,7 @@ from milknado.domains.common.flavor_codec import (
     serialize_gates,
     validate_loop_mode,
     validate_positive_int,
+    worker_command_family,
 )
 from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.paths import resolve_project_path, trust_global_path
@@ -84,6 +86,40 @@ class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
     loop_mode: str = DEFAULT_LOOP_MODE
     max_iterations: int = DEFAULT_MAX_ITERATIONS
     max_turns: int = DEFAULT_MAX_TURNS
+
+    def __post_init__(self) -> None:
+        _reject_cursor_resume_flavors(self)
+
+
+def _effective_flavor_command(config: MilknadoConfig, flavor: FlavorOverride) -> str | None:
+    """The execution command a flavor resolves to: explicit override, else its
+    worker-tools derivation, else the config-level execution agent."""
+    if flavor.execution_agent is not None:
+        return flavor.execution_agent
+    if flavor.tools is not None:
+        return resolve_execution_agent_command(
+            config.agent_family,
+            tools=resolve_worker_tools(config.agent_family, list(flavor.tools)),
+        )
+    return config.execution_agent
+
+
+def _reject_cursor_resume_flavors(config: MilknadoConfig) -> None:
+    """Reject any resume flavor whose effective execution family is cursor-agent.
+
+    ``FlavorTable`` rejects an explicit per-flavor cursor-agent execution/review
+    command at the TOML boundary; the family a flavor inherits from
+    ``agent_family`` (or derives from its worker tools) is only knowable once the
+    config-level ``execution_agent`` is resolved, so it is validated here rather
+    than at flavor-resolution time.
+    """
+    for flavor in config.flavors.values():
+        if flavor.session_mode != "resume":
+            continue
+        command = _effective_flavor_command(config, flavor)
+        family = worker_command_family(command) or config.agent_family
+        if family in ("cursor-agent", "cursor"):
+            raise ValueError(CURSOR_RESUME_REJECTION)
 
 
 _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")

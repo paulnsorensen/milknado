@@ -13,6 +13,22 @@ from msgspec import structs
 from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.common.paths import resolve_project_path, trust_global_path
 
+CURSOR_RESUME_REJECTION = (
+    "session_mode 'resume' is not supported for the cursor-agent family "
+    "(headless resume mechanics are unverified — see "
+    "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+    "different agent"
+)
+
+
+def worker_command_family(command: str | None) -> str | None:
+    """Return the worker-executable basename of a command, or None if unrecognized."""
+    argv = shlex.split(command) if command else []
+    if not argv:
+        return None
+    name = Path(argv[0]).name
+    return name if name in ALLOWED_WORKER_EXECUTABLES else None
+
 
 class Gate(msgspec.Struct, frozen=True, kw_only=True):
     command: str
@@ -157,16 +173,8 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
 
     def _reject_cursor_resume(self) -> None:
         for command in (self.execution_agent, self.review_agent):
-            if command is None:
-                continue
-            argv = shlex.split(command)
-            if argv and Path(argv[0]).name == "cursor-agent":
-                raise ValueError(
-                    "session_mode 'resume' is not supported for the cursor-agent family "
-                    "(headless resume mechanics are unverified — see "
-                    "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
-                    "different agent"
-                )
+            if worker_command_family(command) == "cursor-agent":
+                raise ValueError(CURSOR_RESUME_REJECTION)
 
     def to_override(self, name: str, project_root: Path) -> FlavorOverride:
         return FlavorOverride(
