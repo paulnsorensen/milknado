@@ -6,17 +6,16 @@
 //
 // ── INSTALL / DISCOVERY ──────────────────────────────────────────────────────
 // `workflows/` is not a recognized plugin component, so this file is NOT
-// auto-loaded from the plugin payload. The plugin's SessionStart hook
-// (hooks/hooks.json -> hooks/install-workflow.sh) closes that gap: it
-// idempotently copies this file into the project's `.claude/workflows/`
-// (copy when absent, no-op when identical, refresh when this copy changes,
-// never delete) — installing the plugin IS the install step; the workflow is
-// runnable as of the next session start. This file is the in-repo
-// source-of-truth the hook copies from.
-// Power-user shortcut (UNVERIFIED against public docs — only milknado's
-// internal live test of 2026-06-15 corroborates it): skip the copy and invoke
-// by explicit path: Workflow({ scriptPath: "<path>/node-runner.js",
-// args: { claims: [...] } }). Do not rest tooling on it.
+// auto-loaded from the plugin payload, and the plugin does NOT install it for
+// you: the former SessionStart auto-copy hook was removed by design (it wrote
+// into the project's `.claude/workflows/`, which leaked into git). This file is
+// the in-repo source-of-truth; install it yourself one of two ways:
+//   1. Copy it into the project's `.claude/workflows/` (the project-local
+//      discovery path) — gitignore `.claude/workflows/` so it stays untracked.
+//   2. Power-user shortcut (UNVERIFIED against public docs — only milknado's
+//      internal live test of 2026-06-15 corroborates it): invoke by explicit
+//      path: Workflow({ scriptPath: "<path>/node-runner.js",
+//      args: { claims: [...] } }). Do not rest tooling on it.
 //
 // ── WHY THIS IS FAN-OUT ONLY (hard runtime constraint) ───────────────────────
 // A Workflow SCRIPT body can call only agent()/parallel()/pipeline()/log()/

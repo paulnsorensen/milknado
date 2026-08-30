@@ -43,3 +43,17 @@ discovered is part of the locked payload layout.
 - Constraint preserved: the Workflow script still does `agent()` fan-out only and
   calls no MCP tool at script scope (the script-scope `undefined` constraint from
   the decision page must not regress).
+
+## Outcome (2026-08-30)
+
+The copy-on-install approach for gap 1 was implemented as a **SessionStart hook**
+(`hooks/hooks.json` → `hooks/install-workflow.sh`) that idempotently copied
+`node-runner.js` into the project's `.claude/workflows/`, then **reverted**: the
+copied file landed in git in any target repo that didn't gitignore
+`.claude/workflows/` (observed in the easy-cheese repo). The auto-install hook and
+script were removed. Install is back to manual — copy `node-runner.js` into
+`.claude/workflows/` (gitignore that path) or invoke by explicit `scriptPath` —
+and the `node-runner.js` header + `workflow-executor-decision.md` document this.
+Gap 2 (change-id→node-id resolution) remains satisfied by the documented
+convention. A friction-minimal install that does **not** write into a tracked
+path is still open.
