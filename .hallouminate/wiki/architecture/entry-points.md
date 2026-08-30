@@ -128,3 +128,6 @@ reconnect to pick up the new process and the freshly-registered tools.
 
 - `pyproject.toml` `[project.scripts]` — the two console-script entry points.
 - `src/milknado/domains/` — where both facades delegate the actual engine logic.
+- [[batching]] §Startup cost — the CP-SAT solver (`ortools`) is lazily loaded so
+  it no longer taxes every CLI/MCP startup; `fastmcp`/`pandas` import cost is a
+  tracked follow-up (#381).
