@@ -85,6 +85,12 @@ dead-code:
 dead-code-coverage:
     uv run python scripts/check_dead_code_coverage.py
 
+# Type-check all Python (basedpyright recommended tier; fails on warnings too).
+# Not yet part of check-llm/build-ci — joins the gates when the burn-down
+# campaign reaches zero diagnostics.
+typecheck:
+    uv run basedpyright
+
 # Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage (for CI validation)
 build-ci: lint file-size dead-code coverage-check dead-code-coverage
     @echo "✅ CI build passed"

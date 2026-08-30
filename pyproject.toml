@@ -235,10 +235,27 @@ dev = [
     "ruff>=0.15.13",
     "import-linter>=2.13",
     "ty>=0.0.38",
+    "basedpyright>=1.39.10",
     "watchfiles>=1.2.0",
     "pytest-xdist>=3.8.0",
     "vulture>=2.16",
 ]
+
+# typeCheckingMode is deliberately unset: basedpyright's default "recommended"
+# tier matches the editor LSP diagnostics. The gate target is zero diagnostics
+# across src, scripts, and tests (issue-tracked burn-down; typecheck joins
+# check-llm/build-ci only once the tree is clean).
+[tool.basedpyright]
+include = ["src", "scripts", "tests"]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+
+# Tests import `tests.loop.helpers` and sibling helper modules relative to the
+# repo root (pytest rootdir insertion); mirror that for static resolution.
+[[tool.basedpyright.executionEnvironments]]
+root = "tests"
+extraPaths = ["."]
 
 [tool.vulture]
 # src/ only, deliberately: code reachable solely from tests is dead code in a
