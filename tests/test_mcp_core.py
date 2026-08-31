@@ -2,30 +2,38 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from milknado.app.project import (
-    _worktree_main_checkout,
+    _worktree_main_checkout,  # pyright: ignore[reportPrivateUsage]
     require_worker_run,
     resolve_project_root,
 )
 from milknado.domains.common import BUILTIN_FLAVORS, NodeKind, NodeStatus
 from milknado.mcp._core import (
     RunDict,
-    _parse_flavor,
-    _parse_kind,
-    _parse_todo_status,
+    _parse_flavor,  # pyright: ignore[reportPrivateUsage]
+    _parse_kind,  # pyright: ignore[reportPrivateUsage]
+    _parse_todo_status,  # pyright: ignore[reportPrivateUsage]
     build_run_dict,
 )
 from milknado.mcp.todo import milknado_todo_next
 from milknado.mcp.todo_mutate import milknado_todo_set_status
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+def _call(tool: object, **kwargs: object) -> object:
+    fn = cast(Callable[..., object], getattr(tool, "fn", tool))
     return fn(**kwargs)
+
+
+def _failed_git_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["git"], returncode=128, stdout="", stderr="not a repository"
+    )
 
 
 def test_run_dict_builder_is_the_canonical_superset() -> None:
@@ -81,7 +89,7 @@ def test_parse_todo_status_rejects_running_without_output(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(ValueError, match="invalid status 'running'"):
-        _parse_todo_status("running")
+        _ = _parse_todo_status("running")
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -102,7 +110,7 @@ def test_parse_flavor_rejects_unknown_name_without_output(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(ValueError, match="invalid flavor 'not-a-flavor'"):
-        _parse_flavor("not-a-flavor", frozenset(BUILTIN_FLAVORS))
+        _ = _parse_flavor("not-a-flavor", frozenset(BUILTIN_FLAVORS))
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -113,9 +121,11 @@ def test_invalid_mcp_handler_inputs_raise_without_stdout_or_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(ValueError, match="invalid kind 'not-a-kind'"):
-        _call(milknado_todo_next, kind="not-a-kind", project_root=str(tmp_path))
+        _ = _call(milknado_todo_next, kind="not-a-kind", project_root=str(tmp_path))
     with pytest.raises(ValueError, match="invalid status 'running'"):
-        _call(milknado_todo_set_status, node_id=1, status="running", project_root=str(tmp_path))
+        _ = _call(
+            milknado_todo_set_status, node_id=1, status="running", project_root=str(tmp_path)
+        )
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -130,7 +140,7 @@ def test_worker_cannot_select_different_project_root(
     monkeypatch.setenv("MILKNADO_PROJECT_ROOT", str(injected))
 
     with pytest.raises(ValueError, match="does not match injected root"):
-        resolve_project_root(str(tmp_path / "other"))
+        _ = resolve_project_root(str(tmp_path / "other"))
     assert resolve_project_root(None) == injected.resolve()
 
 
@@ -141,7 +151,7 @@ def test_worker_identity_requires_injected_project_root(
     monkeypatch.delenv("MILKNADO_PROJECT_ROOT", raising=False)
 
     with pytest.raises(ValueError, match="requires MILKNADO_PROJECT_ROOT"):
-        resolve_project_root(None)
+        _ = resolve_project_root(None)
 
 
 def test_worker_cannot_deposit_for_different_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,10 +167,7 @@ def test_git_root_discovery_warns_before_fallback(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    failed = subprocess.CompletedProcess(
-        args=["git"], returncode=128, stdout="", stderr="not a repository"
-    )
-    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: failed)
+    monkeypatch.setattr(subprocess, "run", _failed_git_run)
 
     with caplog.at_level(logging.WARNING, logger="milknado.app.project"):
         assert _worktree_main_checkout(tmp_path) is None

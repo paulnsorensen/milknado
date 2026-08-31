@@ -4,9 +4,11 @@ import importlib
 import logging
 import sys
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from milknado.domains.common import PluginHook
 from milknado.plugins.loader import load_plugins
 from milknado.plugins.scaffold import scaffold_plugin
 
@@ -25,28 +27,28 @@ class TestScaffoldPlugin:
         assert set(result.files_created) == {"__init__.py", "plugin.py", "README.md"}
 
     def test_plugin_class_name_from_snake_case(self, tmp_path: Path) -> None:
-        scaffold_plugin("my_cool_plugin", tmp_path)
+        _ = scaffold_plugin("my_cool_plugin", tmp_path)
         content = (tmp_path / "my_cool_plugin" / "plugin.py").read_text()
         assert "class MyCoolPlugin:" in content
 
     def test_plugin_class_name_from_kebab_case(self, tmp_path: Path) -> None:
-        scaffold_plugin("my-cool-plugin", tmp_path)
+        _ = scaffold_plugin("my-cool-plugin", tmp_path)
         content = (tmp_path / "my-cool-plugin" / "plugin.py").read_text()
         assert "class MyCoolPlugin:" in content
 
     def test_plugin_has_hook_method(self, tmp_path: Path) -> None:
-        scaffold_plugin("demo", tmp_path)
+        _ = scaffold_plugin("demo", tmp_path)
         content = (tmp_path / "demo" / "plugin.py").read_text()
         assert "def on_node_status_change" in content
         assert "PluginHook" in content
 
     def test_init_imports_plugin_class(self, tmp_path: Path) -> None:
-        scaffold_plugin("demo", tmp_path)
+        _ = scaffold_plugin("demo", tmp_path)
         content = (tmp_path / "demo" / "__init__.py").read_text()
         assert "from demo.plugin import Demo" in content
 
     def test_readme_contains_name(self, tmp_path: Path) -> None:
-        scaffold_plugin("analytics", tmp_path)
+        _ = scaffold_plugin("analytics", tmp_path)
         content = (tmp_path / "analytics" / "README.md").read_text()
         assert "# analytics" in content
         assert 'plugins = ["analytics"]' in content
@@ -54,33 +56,33 @@ class TestScaffoldPlugin:
     def test_raises_if_directory_exists(self, tmp_path: Path) -> None:
         (tmp_path / "existing").mkdir()
         with pytest.raises(FileExistsError, match="already exists"):
-            scaffold_plugin("existing", tmp_path)
+            _ = scaffold_plugin("existing", tmp_path)
 
     def test_generated_plugin_is_importable(self, tmp_path: Path) -> None:
-        scaffold_plugin("importable_plug", tmp_path)
+        _ = scaffold_plugin("importable_plug", tmp_path)
         sys.path.insert(0, str(tmp_path))
         try:
             mod = importlib.import_module("importable_plug")
-            cls = mod.ImportablePlug
+            cls = cast(type[PluginHook], mod.ImportablePlug)
             instance = cls()
             assert instance.meta.name == "importable_plug"
             assert instance.meta.version == "0.1.0"
         finally:
             sys.path.remove(str(tmp_path))
-            sys.modules.pop("importable_plug", None)
-            sys.modules.pop("importable_plug.plugin", None)
+            _ = sys.modules.pop("importable_plug", None)
+            _ = sys.modules.pop("importable_plug.plugin", None)
 
 
 class TestLoadPlugins:
     def _make_plugin_module(self, tmp_path: Path, name: str) -> None:
-        scaffold_plugin(name, tmp_path)
+        _ = scaffold_plugin(name, tmp_path)
         if str(tmp_path) not in sys.path:
             sys.path.insert(0, str(tmp_path))
 
     def _cleanup_modules(self, *names: str) -> None:
         for name in names:
-            sys.modules.pop(name, None)
-            sys.modules.pop(f"{name}.plugin", None)
+            _ = sys.modules.pop(name, None)
+            _ = sys.modules.pop(f"{name}.plugin", None)
 
     def test_loads_valid_plugin(self, tmp_path: Path) -> None:
         self._make_plugin_module(tmp_path, "valid_plug")
@@ -115,7 +117,7 @@ class TestLoadPlugins:
     ) -> None:
         pkg = tmp_path / "empty_pkg"
         pkg.mkdir()
-        (pkg / "__init__.py").write_text("X = 1\n")
+        _ = (pkg / "__init__.py").write_text("X = 1\n")
         sys.path.insert(0, str(tmp_path))
         try:
             with caplog.at_level(logging.WARNING, logger="milknado.plugins"):
@@ -124,7 +126,7 @@ class TestLoadPlugins:
             assert "No plugin class found" in caplog.text
         finally:
             sys.path.remove(str(tmp_path))
-            sys.modules.pop("empty_pkg", None)
+            _ = sys.modules.pop("empty_pkg", None)
 
     def test_empty_plugins_tuple(self) -> None:
         assert load_plugins(()) == []
@@ -145,7 +147,7 @@ class TestLoadPlugins:
         self._make_plugin_module(tmp_path, "log_plug")
         try:
             with caplog.at_level(logging.INFO, logger="milknado.plugins"):
-                load_plugins(("log_plug",))
+                _ = load_plugins(("log_plug",))
             assert "Loaded plugin: log_plug v0.1.0" in caplog.text
         finally:
             sys.path.remove(str(tmp_path))
@@ -241,7 +243,10 @@ class TestPluginDispatch:
                 return PluginMeta(name="boom", version="0.1.0", description="")
 
             def on_node_status_change(
-                self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+                self,
+                node: MikadoNode,  # pyright: ignore[reportUnusedParameter]
+                old_status: NodeStatus,  # pyright: ignore[reportUnusedParameter]
+                new_status: NodeStatus,  # pyright: ignore[reportUnusedParameter]
             ) -> None:
                 raise RuntimeError("plugin exploded")
 
