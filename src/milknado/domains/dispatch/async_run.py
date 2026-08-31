@@ -42,9 +42,9 @@ from milknado.domains.dispatch.isolate import (
 from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
-    _execute_cancellable,
-    _resolve_worker_cmd,
     build_worker_env,
+    execute_cancellable,
+    resolve_worker_cmd,
 )
 from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
 
@@ -100,7 +100,7 @@ def _run_worker_process(
     cancelled)``.
     """
     if tmux is None:
-        return _execute_cancellable(
+        return execute_cancellable(
             cwd,
             request.node_id,
             log_path,
@@ -145,7 +145,7 @@ def _run_in_tmux_window(
     """
     run_id = request.run_id
     staged_brief = _brief_path(rdir, run_id)
-    staged_brief.write_text(brief, encoding="utf-8")
+    _ = staged_brief.write_text(brief, encoding="utf-8")
     log_path.touch()
     window = RunWindow(
         run_id=run_id,
@@ -208,7 +208,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
     log_path = context.log_path
     run_id = request.run_id
     rdir = _runs_dir(project_root)
-    graph = None
+    graph: MikadoGraph | None = None
     try:
         graph, _cfg = context.graph_sessions.open_graph(project_root)
         _logger.info("async dispatch started: run_id=%s node_id=%d", run_id, request.node_id)
@@ -269,8 +269,10 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             ):
                 raise RuntimeError(f"terminal run write lost its fence for {run_id}")
             _logger.info(
-                "async dispatch terminal: run_id=%s node_id=%d status=%s "
-                "exit_code=%d timed_out=%s cancelled=%s rebased=%s",
+                (
+                    "async dispatch terminal: run_id=%s node_id=%d status=%s "
+                    + "exit_code=%d timed_out=%s cancelled=%s rebased=%s"
+                ),
                 run_id,
                 request.node_id,
                 terminal,
@@ -290,7 +292,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # subprocess output that did make it to disk is preserved.
         try:
             with log_path.open("a", encoding="utf-8") as log_fh:
-                log_fh.write(f"\n--- async worker raised: {original_detail} ---\n")
+                _ = log_fh.write(f"\n--- async worker raised: {original_detail} ---\n")
         except OSError:
             # Annotating the log is best-effort; the terminal run write below is
             # what actually releases the node, so a log-write failure here is
@@ -317,20 +319,18 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 )
             if written is False:
                 with suppress(OSError):
-                    (rdir / f"{run_id}.terminal-error").write_text(
+                    _ = (rdir / f"{run_id}.terminal-error").write_text(
                         f"run_id={run_id}\n"
-                        f"node_id={request.node_id}\n"
-                        f"log_path={log_path}\n"
-                        f"{terminal_detail}\n",
+                        + f"node_id={request.node_id}\n"
+                        + f"log_path={log_path}\n"
+                        + f"{terminal_detail}\n",
                         encoding="utf-8",
                     )
     finally:
         if graph is not None:
             graph.close()
-        # Clear the sentinel after the terminal write (both branches) so a reused
-        # run dir never carries a stale cancel request into the next run. The
-        # tmux path's staged brief and rc file are equally transient — the log
-        # (and a failed run's preserved window) carry the diagnostics.
+        # Clear the sentinel after terminal write so reused run dirs cannot carry stale cancel.
+        # The tmux brief and rc are transient; the log and preserved window carry diagnostics.
         _clear_cancel(rdir, run_id)
         for staged in (_brief_path(rdir, run_id), _exit_code_path(rdir, run_id)):
             with suppress(FileNotFoundError):
@@ -344,7 +344,7 @@ def start_headless_async(
     process: ProcessPort,
     tmux: TmuxPort | None = None,
 ) -> AsyncStartRef:
-    argv = tuple(_resolve_worker_cmd(request.worker_cmd, request.default_cmd))
+    argv = tuple(resolve_worker_cmd(request.worker_cmd, request.default_cmd))
     runs = _runs_dir(request.project_root)
     log_path = runs / f"{request.run_id}.log"
     log_path.touch()
@@ -381,9 +381,9 @@ def start_headless_async(
 def poll_async_run(graph: MikadoGraph, project_root: Path, run_id: str) -> dict[str, object]:
     if not _RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    state = graph.get_run(run_id)
-    if state is None:
+    if (record := graph.get_run(run_id)) is None:
         raise ValueError(f"run {run_id!r} not found")
+    state: dict[str, object] = dict(record)
     # Derive the log path from the validated run_id rather than trusting the
     # stored field: no arbitrary-file read via a tampered log_path.
     log_path = _runs_dir(project_root) / f"{run_id}.log"

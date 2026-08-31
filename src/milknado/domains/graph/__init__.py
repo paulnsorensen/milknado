@@ -1,3 +1,4 @@
+from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph.display import render_tree
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import DurableRun, ObserverSnapshot, read_observer_snapshot
@@ -27,6 +28,7 @@ __all__ = [
     "DurableRun",
     "MikadoGraph",
     "ObserverSnapshot",
+    "RunRecord",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",

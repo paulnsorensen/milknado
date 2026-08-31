@@ -10,12 +10,17 @@ preserve the worktree for inspection.
 from __future__ import annotations
 
 import fcntl
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from milknado.domains.common import GitPort, UnlandedWorkError, slugify
+from milknado.domains.common import GitPort, MikadoNode, UnlandedWorkError, slugify
 from milknado.domains.common.errors import GitOperationError
+
+if TYPE_CHECKING:
+    from milknado.domains.graph import MikadoGraph
 
 
 @dataclass(frozen=True)
@@ -51,7 +56,7 @@ def _create_node_worktree(
     target_ref = f"refs/heads/{target_branch}"
     base_oid = git.resolve_ref(target_ref)
     worker_branch = f"milknado/{node_id}-{slug}"
-    git.create_worktree(wt_path, worker_branch)
+    _ = git.create_worktree(wt_path, worker_branch)
     if git.resolve_ref(worker_branch) != base_oid:
         git.force_remove_worktree(wt_path)
         raise GitOperationError("checkout changed while isolated worktree was being created")
@@ -76,7 +81,7 @@ def create_isolated_worktree(
 
 
 @contextmanager
-def _merge_back_lock(root: Path):
+def _merge_back_lock(root: Path) -> Generator[None, None, None]:
     """Serialize merge-backs across processes on a repo-scoped ``flock``.
 
     Both the sync (``_maybe_merge_back``) and async (``_async_merge_back``) paths
@@ -93,10 +98,10 @@ def _merge_back_lock(root: Path):
 
 
 def setup_isolated_worktree(
-    graph,
+    graph: MikadoGraph,
     git: GitPort,
     root: Path,
-    node,
+    node: MikadoNode,
     run_id: str,
     worktree_pattern: str,
 ) -> IsolateContext:
@@ -115,7 +120,7 @@ def merge_back_isolated(git: GitPort, root: Path, ctx: IsolateContext) -> MergeB
                     "merge-back target",
                     f"caller requested {ctx.target_branch!r}, checkout is {current_target!r}",
                 )
-            git.squash_and_commit(
+            _ = git.squash_and_commit(
                 ctx.worktree_path,
                 ctx.base_oid,
                 f"feat: complete node {ctx.node_id} — {ctx.description}",

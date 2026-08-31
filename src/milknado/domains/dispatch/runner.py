@@ -42,7 +42,7 @@ class AsyncStartRef:
     log_path: Path
 
 
-def _resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
+def resolve_worker_cmd(explicit: str | None, default: str) -> list[str]:
     """Resolve the final worker argv from an explicit override or the profile default.
 
     explicit (MCP arg) → default (profile.execution_agent). Both are validated
@@ -157,7 +157,7 @@ def _execute(
     return outcome.exit_code, outcome.timed_out
 
 
-def _execute_cancellable(
+def execute_cancellable(
     cwd: Path,
     node_id: int,
     log_path: Path,
@@ -204,7 +204,7 @@ def run_headless(
     cwd: Path | None = None,
     process: ProcessPort,
 ) -> RunResult:
-    argv = _resolve_worker_cmd(worker_cmd, default_cmd)
+    argv = resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
         _runs_dir(project_root) / f"{run_id}.log"
         if run_id is not None

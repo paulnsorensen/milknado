@@ -1,3 +1,4 @@
+from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     clear_cancel,
@@ -49,7 +50,6 @@ from milknado.domains.dispatch.runner import (
     RunResult,
     build_worker_env,
     run_headless,
-    validate_worker_argv,
 )
 from milknado.domains.dispatch.tmux_run import (
     ensure_tmux_ready,

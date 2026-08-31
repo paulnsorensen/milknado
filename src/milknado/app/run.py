@@ -419,7 +419,7 @@ def validate_worker_cmd(worker_cmd: str | None) -> None:
     """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
 
     Eager pre-check on the MCP arg; the env fallback and built-in default are
-    validated again where they're resolved (``runner._resolve_worker_cmd``). Both
+    validated again where they're resolved (``runner.resolve_worker_cmd``). Both
     routes share ``validate_worker_argv``, so the allowlist lives in one place.
     """
     from milknado.domains.dispatch import validate_worker_argv
@@ -502,7 +502,7 @@ def run_inline(
             worktree_pattern=cfg.worktree_pattern,
         ),
     )
-    return state if isinstance(state, dict) else vars(state)
+    return state
 
 
 def run_inline_start(
