@@ -23,10 +23,7 @@ from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunSta
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
-# A worker that self-heals across iterations may fail a few times, but a
-# command that cannot start (e.g. an unknown CLI flag) fails identically
-# every ~1s forever. Three failures in a row ends the run loudly instead.
-MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3
+MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3  # Stop after three launch failures.
 
 
 _logger = logging.getLogger(__name__)
@@ -57,8 +54,7 @@ class LoopAdapter:
         session = getattr(runtime_policy, "session", None)
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
-        # Only the claude CLI understands --mcp-config; omp/codex/gemini reject
-        # the flag at launch and the worker crash-loops without ever starting.
+        # Only Claude supports --mcp-config; other CLIs reject it at launch.
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
@@ -103,6 +99,10 @@ class LoopAdapter:
 
     def get_run(self, run_id: str) -> Any | None:
         return self._manager.get_run(run_id)
+
+    def is_run_alive(self, run_id: str) -> bool:
+        run = self._manager.get_run(run_id)
+        return run is not None and (run.thread is None or run.thread.is_alive())
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         run = self._manager.get_run(run_id)
