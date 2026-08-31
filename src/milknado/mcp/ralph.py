@@ -28,10 +28,10 @@ from milknado.app.ralph import (
     _DEFAULT_RUNNER,  # pyright: ignore[reportPrivateUsage]
     RalphClaim,
     RalphStartRequest,
-    _record_spawn_failure,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
+    _record_spawn_failure,  # pyright: ignore[reportPrivateUsage]
     _remove_reclaimed_worktree,  # pyright: ignore[reportPrivateUsage]
     _resolve_runner_cmd,  # pyright: ignore[reportPrivateUsage]
-    start_ralph_run,  # pyright: ignore[reportUnknownVariableType]
+    start_ralph_run,
 )
 from milknado.domains.dispatch import (
     RUN_ID_RE,

@@ -11,11 +11,13 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from typing import cast
 
 import pytest
 
-from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
+from milknado.domains.common import MikadoNode, MilknadoConfig, NodeKind, NodeSpec, NodeStatus
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
+from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import open_graph
 from milknado.mcp.node import (
     GOAL_OWNER_ENV_VAR,
@@ -729,10 +731,13 @@ def test_provision_claim_run_fails_loudly_when_terminal_release_loses_fence(
     )
     with pytest.raises(RuntimeError, match="startup terminal node write lost its fence"):
         node_app._provision_claim_run(
-            Graph(),
+            cast(MikadoGraph, cast(object, Graph())),
             tmp_path,
-            SimpleNamespace(id=4, description="task", flavor=None),
+            cast(MikadoNode, cast(object, SimpleNamespace(id=4, description="task", flavor=None))),
             "run-4",
             False,
-            SimpleNamespace(worktree_pattern="milknado-{node_id}"),
+            cast(
+                MilknadoConfig,
+                cast(object, SimpleNamespace(worktree_pattern="milknado-{node_id}")),
+            ),
         )

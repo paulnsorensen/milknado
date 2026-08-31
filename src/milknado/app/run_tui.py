@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -86,12 +87,12 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     def action_focus_guidance(self) -> None:  # noqa: V105 - Textual binding action
         run = self._selected_active_run()
         if run is not None and run.actions.can_queue_guidance:
-            self.query_one("#guidance", Input).focus()
+            _ = self.query_one("#guidance", Input).focus()
 
     def action_cancel(self) -> None:  # noqa: V105 - Textual binding action
         run = self._selected_active_run()
         if run is not None and run.actions.can_cancel:
-            self._cancel(run.run_id)
+            _ = self._cancel(run.run_id)
 
     def action_force(self) -> None:  # noqa: V105 - Textual binding action
         run = self._selected_active_run()
@@ -115,12 +116,15 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             action, run_id = self._confirmation
             self._clear_confirmation()
             if action == "force" and run_id is not None:
-                self._force_stop(run_id)
+                _ = self._force_stop(run_id)
             elif action == "quit":
-                self._stop_scheduling()
+                _ = self._stop_scheduling()
         elif event.key in {"n", "escape"}:
             self._clear_confirmation()
-        event.stop()
+        _ = event.stop()
+
+
+type.__setattr__(ExecutionApp, "action_back", ExecutionApp.go_back)
 
 
 def run_execution_tui(

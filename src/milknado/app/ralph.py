@@ -14,6 +14,10 @@ import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from milknado.domains.graph import MikadoGraph
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
 from milknado.domains.common import NodeKind, NodeStatus, RunResult, UnlandedWorkError
@@ -64,7 +68,7 @@ class RalphClaim:
     stale_worktree: Path | None
 
 
-def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:
+def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:
     node = graph.get_node(request.node_id)
     if node is None:
         raise ValueError(f"node {request.node_id} not found")
@@ -74,7 +78,7 @@ def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphCla
         )
     stale_worktree = Path(node.worktree_path) if node.worktree_path else None
     if node.status == NodeStatus.RUNNING:
-        fail_stale_running_runs(graph, request.node_id)
+        _ = fail_stale_running_runs(graph, request.node_id)
         winner = latest_terminal_run(
             find_terminal_runs_for_node(graph, request.node_id, run_id=node.run_id)
         )
@@ -85,7 +89,7 @@ def _claim_ralph(graph, git: GitAdapter, request: RalphStartRequest) -> RalphCla
                 winner["status"],
                 run_id=winner.get("run_id"),
             )
-        graph.try_reclaim(request.node_id, now=now_iso())
+        _ = graph.try_reclaim(request.node_id, now=now_iso())
     run_id = make_run_id(request.node_id)
     graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
     target_branch = git.current_branch()
@@ -163,7 +167,7 @@ def _spawn_ralph(
     return process.spawn_detached(tuple(argv), request.root, log_path, env)
 
 
-def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:
+def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception) -> None:
     run_written = False
     node_written = False
     persistence_error: Exception | None = None
@@ -204,7 +208,7 @@ def _record_spawn_failure(graph, claim: RalphClaim, exc: Exception) -> None:
         raise RuntimeError(detail) from persistence_error
 
 
-def start_ralph_run(graph, request: RalphStartRequest) -> dict:
+def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str, object]:
     """Claim a task node and spawn its detached ralph loop; return the run state dict.
 
     Owns the adapter composition (git, process, tmux) and the claim/spawn policy

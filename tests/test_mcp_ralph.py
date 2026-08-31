@@ -4,9 +4,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from milknado.domains.graph import MikadoGraph
 from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo import milknado_todo_tree
@@ -422,7 +424,9 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
     )
     graph = Graph()
     with pytest.raises(RuntimeError, match="spawn failure persistence failed"):
-        _record_spawn_failure(graph, claim, OSError("missing runner"))
+        _record_spawn_failure(
+            cast(MikadoGraph, cast(object, graph)), claim, OSError("missing runner")
+        )
     assert graph.terminal == (6, claim.run_id, NodeStatus.FAILED)
     assert "spawn failure persistence failed" in caplog.text
 
@@ -445,7 +449,9 @@ def test_spawn_failure_preserves_node_persistence_exception() -> None:
         stale_worktree=None,
     )
     with pytest.raises(RuntimeError, match="spawn failure persistence failed") as error:
-        _record_spawn_failure(Graph(), claim, OSError("missing runner"))
+        _record_spawn_failure(
+            cast(MikadoGraph, cast(object, Graph())), claim, OSError("missing runner")
+        )
     assert isinstance(error.value.__cause__, RuntimeError)
 
 
