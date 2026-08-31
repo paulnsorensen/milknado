@@ -2,12 +2,15 @@
 
 import pytest
 
-from milknado.loop._promise import has_promise_completion, parse_promise_tags
+from milknado.loop._promise import (  # pyright: ignore[reportMissingTypeStubs]
+    has_promise_completion,
+    parse_promise_tags,
+)
 
 
 class TestParsePromiseTags:
     @pytest.mark.parametrize("raw_text", [None, "", "plain text", "<promise>missing close"])
-    def test_parse_promise_tags_invalid_input_returns_empty_list(self, raw_text):
+    def test_parse_promise_tags_invalid_input_returns_empty_list(self, raw_text: str):
         assert parse_promise_tags(raw_text) == []
 
     def test_parse_promise_tags_normalizes_whitespace_and_preserves_unicode(self):

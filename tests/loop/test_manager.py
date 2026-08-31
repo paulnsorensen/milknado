@@ -3,17 +3,38 @@
 import sys
 import threading
 import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.loop._events import EventType, FanoutEmitter, QueueEmitter
-from milknado.loop._run_types import RUN_ID_LENGTH, CompletionVerdict, RunResult, RunStatus
-from milknado.loop.manager import ManagedRun, RunManager
-from tests.loop.helpers import MOCK_SUBPROCESS, drain_events, event_types, make_config, ok_proc
+from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+    EventType,
+    FanoutEmitter,
+    QueueEmitter,
+)
+from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
+    RUN_ID_LENGTH,
+    CompletionVerdict,
+    RunConfig,
+    RunResult,
+    RunState,
+    RunStatus,
+)
+from milknado.loop.manager import ManagedRun, RunManager  # pyright: ignore[reportMissingTypeStubs]
+from tests.loop.helpers import (
+    MOCK_SUBPROCESS,
+    drain_events,  # pyright: ignore[reportUnknownVariableType]
+    event_types,  # pyright: ignore[reportUnknownVariableType]
+    make_config,
+    ok_proc,
+)
 
 
-def _returns_without_blocking(fn, timeout=2.0):
+def _returns_without_blocking(fn: Callable[[], object], timeout: float = 2.0) -> object:
     """Run *fn* in a watchdog thread; fail if it doesn't return in *timeout*.
 
     Lets us assert the wait helpers never block on empty/unknown run_ids
@@ -21,15 +42,15 @@ def _returns_without_blocking(fn, timeout=2.0):
     hung test run if the guard is ever removed.
     """
     box = {}
-    thread = threading.Thread(target=lambda: box.update(result=fn()), daemon=True)
+    thread = threading.Thread(target=lambda: box.update(result=fn()), daemon=True)  # pyright: ignore[reportUnknownMemberType]
     thread.start()
     thread.join(timeout)
     assert not thread.is_alive(), "wait helper blocked instead of returning"
-    return box["result"]
+    return box["result"]  # pyright: ignore[reportUnknownVariableType]
 
 
 class TestRunManagerCreateRun:
-    def test_create_run_returns_managed_run(self, tmp_path):
+    def test_create_run_returns_managed_run(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         managed = manager.create_run(config)
@@ -40,7 +61,7 @@ class TestRunManagerCreateRun:
         assert managed.thread is None
         assert isinstance(managed.emitter, QueueEmitter)
 
-    def test_create_run_assigns_unique_ids(self, tmp_path):
+    def test_create_run_assigns_unique_ids(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         run1 = manager.create_run(config)
@@ -48,7 +69,7 @@ class TestRunManagerCreateRun:
 
         assert run1.state.run_id != run2.state.run_id
 
-    def test_create_run_id_is_12_hex_chars(self, tmp_path):
+    def test_create_run_id_is_12_hex_chars(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         managed = manager.create_run(config)
@@ -60,7 +81,7 @@ class TestRunManagerCreateRun:
 
 class TestRunManagerStartRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_start_run_starts_thread(self, mock_run, tmp_path):
+    def test_start_run_starts_thread(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=1)
         managed = manager.create_run(config)
@@ -73,7 +94,7 @@ class TestRunManagerStartRun:
         assert managed.state.status == RunStatus.COMPLETED
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_start_run_thread_is_daemon(self, mock_run, tmp_path):
+    def test_start_run_thread_is_daemon(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=1)
         managed = manager.create_run(config)
@@ -86,7 +107,7 @@ class TestRunManagerStartRun:
         managed.thread.join(timeout=5)
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_start_run_emits_events_to_queue(self, mock_run, tmp_path):
+    def test_start_run_emits_events_to_queue(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=1)
         managed = manager.create_run(config)
@@ -96,7 +117,7 @@ class TestRunManagerStartRun:
         assert managed.thread is not None
         managed.thread.join(timeout=5)
 
-        events = drain_events(managed.emitter)
+        events = drain_events(cast(QueueEmitter, managed.emitter))  # pyright: ignore[reportUnknownVariableType]
         types = event_types(events)
         assert EventType.RUN_STARTED in types
         assert EventType.RUN_STOPPED in types
@@ -104,7 +125,7 @@ class TestRunManagerStartRun:
 
 class TestRunManagerStartRunGuards:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_start_run_raises_on_double_start(self, mock_run, tmp_path):
+    def test_start_run_raises_on_double_start(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=1)
         managed = manager.create_run(config)
@@ -142,12 +163,12 @@ class TestRunManagerInvalidRunId:
     def test_queue_guidance_raises_key_error_for_unknown_id(self):
         manager = RunManager()
         with pytest.raises(KeyError, match="No run with ID 'nonexistent'"):
-            manager.queue_guidance("nonexistent", "check this")
+            _ = manager.queue_guidance("nonexistent", "check this")
 
 
 class TestRunManagerStopRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_stop_run_stops_running_run(self, mock_run, tmp_path):
+    def test_stop_run_stops_running_run(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=100, delay=0.1)
         managed = manager.create_run(config)
@@ -163,12 +184,14 @@ class TestRunManagerStopRun:
         assert managed.state.status == RunStatus.STOPPED
 
     @patch("milknado.loop.engine._run_iteration")
-    def test_graceful_stop_wins_before_soft_completion(self, mock_iteration, tmp_path):
+    def test_graceful_stop_wins_before_soft_completion(
+        self, mock_iteration: MagicMock, tmp_path: Path
+    ):
         verifier = MagicMock()
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path, completion_verifier=verifier))
 
-        def simultaneous_stop(_config, state, *_args):
+        def simultaneous_stop(_config: RunConfig, state: RunState, *_args: object):
             state.mark_completed()
             state.request_stop()
             return False, True
@@ -185,7 +208,7 @@ class TestRunManagerStopRun:
 
     @patch("milknado.loop.engine._run_iteration", return_value=(True, True))
     def test_graceful_stop_wins_while_completion_verifier_is_running(
-        self, _mock_iteration, tmp_path
+        self, _mock_iteration: MagicMock, tmp_path: Path
     ):
         verifier_started = threading.Event()
         release_verifier = threading.Event()
@@ -210,7 +233,7 @@ class TestRunManagerStopRun:
 
     @patch("milknado.loop.engine._run_iteration", return_value=(True, True))
     def test_graceful_stop_wins_when_blocked_completion_verifier_raises(
-        self, _mock_iteration, tmp_path
+        self, _mock_iteration: MagicMock, tmp_path: Path
     ):
         verifier_started = threading.Event()
         release_verifier = threading.Event()
@@ -233,39 +256,39 @@ class TestRunManagerStopRun:
         assert not managed.thread.is_alive()
         assert managed.state.status is RunStatus.STOPPED
 
-    def test_stop_and_join_without_started_thread_proves_exit(self, tmp_path) -> None:
+    def test_stop_and_join_without_started_thread_proves_exit(self, tmp_path: Path) -> None:
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path))
 
         assert manager.stop_and_join(managed.state.run_id, timeout=0.01) is True
         assert managed.state.stop_requested is True
 
-    def test_stop_and_join_reports_live_thread_after_timeout(self, tmp_path) -> None:
+    def test_stop_and_join_reports_live_thread_after_timeout(self, tmp_path: Path) -> None:
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path))
         thread = MagicMock()
-        thread.is_alive.return_value = True
+        thread.is_alive.return_value = True  # pyright: ignore[reportAny]
         managed.thread = thread
 
         assert manager.stop_and_join(managed.state.run_id, timeout=0.25) is False
-        thread.join.assert_called_once_with(timeout=0.25)
+        thread.join.assert_called_once_with(timeout=0.25)  # pyright: ignore[reportAny]
         assert managed.state.stop_requested is True
 
 
 class TestRunManagerPauseResume:
     @patch(MOCK_SUBPROCESS)
-    def test_pause_and_resume(self, mock_run, tmp_path):
+    def test_pause_and_resume(self, mock_run: MagicMock, tmp_path: Path):
         pause_done = threading.Event()
         resume_allowed = threading.Event()
         call_count = 0
 
-        def counting_ok(*args, **kwargs):
+        def counting_ok(*_args: object, **_kwargs: object):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 pause_done.set()
-                resume_allowed.wait(timeout=5)
-            return ok_proc(*args, **kwargs)
+                _ = resume_allowed.wait(timeout=5)
+            return ok_proc()
 
         mock_run.side_effect = counting_ok
 
@@ -276,7 +299,7 @@ class TestRunManagerPauseResume:
 
         manager.start_run(run_id)
 
-        pause_done.wait(timeout=5)
+        _ = pause_done.wait(timeout=5)
         manager.pause_run(run_id)
         assert managed.state.status == RunStatus.PAUSED
 
@@ -290,7 +313,7 @@ class TestRunManagerPauseResume:
 
 
 class TestRunManagerForceStop:
-    def test_force_stop_closes_guidance_and_reports_unstarted_cleanup(self, tmp_path):
+    def test_force_stop_closes_guidance_and_reports_unstarted_cleanup(self, tmp_path: Path):
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path))
 
@@ -300,7 +323,7 @@ class TestRunManagerForceStop:
         assert managed.state.take_guidance() == ("stop after this turn",)
         assert managed.state.queue_guidance("later") is False
 
-    def test_public_queue_guidance_delegates_to_run_state(self, tmp_path):
+    def test_public_queue_guidance_delegates_to_run_state(self, tmp_path: Path):
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path))
 
@@ -308,13 +331,15 @@ class TestRunManagerForceStop:
         assert managed.state.pending_guidance == ("check the output",)
 
     @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
-    def test_force_stop_reaps_live_worker_tree_and_classifies_stopped(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)
+    def test_force_stop_reaps_live_worker_tree_and_classifies_stopped(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ):
+        monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         ready = tmp_path / "child-ready"
         stopped = tmp_path / "child-stopped"
         script = tmp_path / "worker.py"
-        script.write_text(
-            "import signal, subprocess, sys, time\n"
+        _ = script.write_text(
+            "import signal, subprocess, sys, time\n"  # pyright: ignore[reportImplicitStringConcatenation]
             "from pathlib import Path\n"
             "def stop(*_):\n"
             "    Path(sys.argv[2]).write_text('stopped')\n"
@@ -340,7 +365,7 @@ class TestRunManagerForceStop:
 
         deadline = time.monotonic() + 5
         while not ready.exists() and time.monotonic() < deadline:
-            managed.state.wait_for_stop(timeout=0.01)
+            _ = managed.state.wait_for_stop(timeout=0.01)
         assert ready.exists(), "descendant never reached its controllable ready point"
 
         assert manager.force_stop_and_join(managed.state.run_id, timeout=5) is True
@@ -362,7 +387,7 @@ class TestRunManagerForceStop:
 
 
 class TestRunManagerListAndGet:
-    def test_list_runs_returns_all_runs(self, tmp_path):
+    def test_list_runs_returns_all_runs(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
 
@@ -381,7 +406,7 @@ class TestRunManagerListAndGet:
         manager = RunManager()
         assert manager.list_runs() == []
 
-    def test_get_run_returns_correct_run(self, tmp_path):
+    def test_get_run_returns_correct_run(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         managed = manager.create_run(config)
@@ -396,7 +421,7 @@ class TestRunManagerListAndGet:
 
 
 class TestManagedRunBuildEmitter:
-    def test_build_emitter_returns_queue_emitter_without_extras(self, tmp_path):
+    def test_build_emitter_returns_queue_emitter_without_extras(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         managed = manager.create_run(config)
@@ -405,7 +430,7 @@ class TestManagedRunBuildEmitter:
         assert emitter is managed.emitter
         assert isinstance(emitter, QueueEmitter)
 
-    def test_build_emitter_returns_fanout_with_extras(self, tmp_path):
+    def test_build_emitter_returns_fanout_with_extras(self, tmp_path: Path):
         manager = RunManager()
         config = make_config(tmp_path)
         managed = manager.create_run(config)
@@ -419,7 +444,7 @@ class TestManagedRunBuildEmitter:
 
 class TestRunManagerExtraListeners:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_extra_listeners_receive_events(self, mock_run, tmp_path):
+    def test_extra_listeners_receive_events(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         config = make_config(tmp_path, max_iterations=1)
         managed = manager.create_run(config)
@@ -432,16 +457,16 @@ class TestRunManagerExtraListeners:
         assert managed.thread is not None
         managed.thread.join(timeout=5)
 
-        primary_events = drain_events(managed.emitter)
-        extra_events = drain_events(extra)
+        primary_events = drain_events(cast(QueueEmitter, managed.emitter))  # pyright: ignore[reportUnknownVariableType]
+        extra_events = drain_events(extra)  # pyright: ignore[reportUnknownVariableType]
 
-        assert len(primary_events) > 0
-        assert len(extra_events) == len(primary_events)
+        assert len(primary_events) > 0  # pyright: ignore[reportUnknownArgumentType]
+        assert len(extra_events) == len(primary_events)  # pyright: ignore[reportUnknownArgumentType]
 
 
 class TestRunManagerWaitForAny:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_wait_for_any_returns_first_finisher(self, mock_run, tmp_path):
+    def test_wait_for_any_returns_first_finisher(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         # Run A finishes after one iteration; run B runs long with a delay.
         fast = manager.create_run(make_config(tmp_path, max_iterations=1))
@@ -455,16 +480,16 @@ class TestRunManagerWaitForAny:
         assert fast.state.run_id in finished
         assert slow.state.run_id not in finished
 
-        manager.shutdown(timeout=5)
+        _ = manager.shutdown(timeout=5)
 
-    def test_wait_for_any_times_out_to_empty_list(self, tmp_path):
+    def test_wait_for_any_times_out_to_empty_list(self, tmp_path: Path):
         manager = RunManager()
         # Never started — never finishes.
         managed = manager.create_run(make_config(tmp_path))
         assert manager.wait_for_any([managed.state.run_id], timeout=0.05) == []
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_wait_for_any_ignores_unknown_ids(self, mock_run, tmp_path):
+    def test_wait_for_any_ignores_unknown_ids(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         # Docstring contract: unknown IDs are never reported as finished,
         # only the real run that completes is returned.
         manager = RunManager()
@@ -496,7 +521,7 @@ class TestRunManagerWaitForAny:
 
 class TestRunManagerWaitForAll:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_wait_for_all_returns_true_when_all_finish(self, mock_run, tmp_path):
+    def test_wait_for_all_returns_true_when_all_finish(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         a = manager.create_run(make_config(tmp_path, max_iterations=1))
         b = manager.create_run(make_config(tmp_path, max_iterations=1))
@@ -508,19 +533,19 @@ class TestRunManagerWaitForAll:
         assert a.state.status == RunStatus.COMPLETED
         assert b.state.status == RunStatus.COMPLETED
 
-    def test_wait_for_all_times_out_to_false(self, tmp_path):
+    def test_wait_for_all_times_out_to_false(self, tmp_path: Path):
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path))
         assert manager.wait_for_all([managed.state.run_id], timeout=0.05) is False
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_wait_for_all_false_when_an_id_is_unknown(self, mock_run, tmp_path):
+    def test_wait_for_all_false_when_an_id_is_unknown(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         # Docstring contract: an unknown ID can never finish, so even when
         # the real run completes the whole set never resolves -> times out.
         manager = RunManager()
         real = manager.create_run(make_config(tmp_path, max_iterations=1))
         manager.start_run(real.state.run_id)
-        manager.wait_for_all([real.state.run_id], timeout=5)  # let real finish
+        _ = manager.wait_for_all([real.state.run_id], timeout=5)  # let real finish
 
         assert manager.wait_for_all([real.state.run_id, "ghost"], timeout=0.05) is False
 
@@ -538,7 +563,7 @@ class TestRunManagerWaitForAll:
 
 class TestRunManagerGetResult:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_get_result_matches_run_state_counts(self, mock_run, tmp_path):
+    def test_get_result_matches_run_state_counts(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         managed = manager.create_run(make_config(tmp_path, max_iterations=3))
         run_id = managed.state.run_id
@@ -560,9 +585,9 @@ class TestRunManagerGetResult:
     def test_get_result_raises_key_error_for_unknown_id(self):
         manager = RunManager()
         with pytest.raises(KeyError, match="No run with ID 'nope'"):
-            manager.get_result("nope")
+            _ = manager.get_result("nope")
 
-    def test_get_result_snapshots_non_terminal_run(self, tmp_path):
+    def test_get_result_snapshots_non_terminal_run(self, tmp_path: Path):
         # Docstring contract: returns current counts "regardless of terminal
         # state". An unstarted run is PENDING with zeroed counters.
         manager = RunManager()
@@ -579,7 +604,7 @@ class TestRunManagerGetResult:
 
 class TestRunManagerShutdown:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_shutdown_stops_and_joins_live_runs(self, mock_run, tmp_path):
+    def test_shutdown_stops_and_joins_live_runs(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
         a = manager.create_run(make_config(tmp_path, max_iterations=100, delay=10))
         b = manager.create_run(make_config(tmp_path, max_iterations=100, delay=10))
@@ -598,7 +623,7 @@ class TestRunManagerShutdown:
         assert manager.get_run(b.state.run_id) is None
         assert manager.list_runs() == []
 
-    def test_reap_evicts_only_terminal_runs(self, tmp_path):
+    def test_reap_evicts_only_terminal_runs(self, tmp_path: Path):
         manager = RunManager()
         finished = manager.create_run(make_config(tmp_path))
         pending = manager.create_run(make_config(tmp_path))
@@ -614,8 +639,8 @@ class TestRunManagerShutdown:
         manager = RunManager()
         assert manager.shutdown(timeout=1) is True
 
-    def test_shutdown_ignores_unstarted_runs(self, tmp_path):
+    def test_shutdown_ignores_unstarted_runs(self, tmp_path: Path):
         manager = RunManager()
-        manager.create_run(make_config(tmp_path))
+        _ = manager.create_run(make_config(tmp_path))
         # No thread to join; request_stop is harmless.
         assert manager.shutdown(timeout=1) is True

@@ -10,17 +10,23 @@ maintainer at the fixture that needs updating.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
-from milknado.loop.adapters.claude import ClaudeAdapter
-from milknado.loop.adapters.codex import CodexAdapter
-from milknado.loop.adapters.copilot import CopilotAdapter
-from milknado.loop.adapters.crush import CrushAdapter
-from milknado.loop.adapters.opencode import OpenCodeAdapter
+from milknado.loop.adapters import CLIAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+    CopilotAdapter,
+)
+from milknado.loop.adapters.crush import CrushAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+    OpenCodeAdapter,
+)
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures" / "adapters"
 
 
-def _parse_kinds(adapter, text: str) -> list[str]:
+def _parse_kinds(adapter: CLIAdapter, text: str) -> list[str]:
     """Return the ``kind`` of every non-None event in the fixture."""
     kinds: list[str] = []
     for line in text.splitlines():
@@ -146,13 +152,15 @@ def _last_result_text(text: str) -> str | None:
         if not stripped:
             continue
         try:
-            parsed = json.loads(stripped)
+            # json.loads is typed Any in the stdlib stubs; object is the honest widening.
+            raw: object = json.loads(stripped)  # pyright: ignore[reportAny]
         except json.JSONDecodeError:
             continue
-        if (
-            isinstance(parsed, dict)
-            and parsed.get("type") == "result"
-            and isinstance(parsed.get("result"), str)
-        ):
-            latest = parsed["result"]
+        if not isinstance(raw, dict):
+            continue
+        # Truthful post-guard cast: isinstance proved dict, and JSON object keys are str.
+        parsed = cast(dict[str, object], raw)
+        result = parsed.get("result")
+        if parsed.get("type") == "result" and isinstance(result, str):
+            latest = result
     return latest

@@ -13,25 +13,31 @@ from pathlib import Path
 from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
+from _pytest.capture import CaptureFixture
+from _pytest.logging import LogCaptureFixture
+from _pytest.monkeypatch import MonkeyPatch
+from typing_extensions import override
 
-import milknado.loop._agent as agent_module
-from milknado.loop._agent import (
-    _OUTPUT_TAIL_CHARS,
-    _STREAM_QUEUE_MAX_LINES,
+import milknado.loop._agent as agent_module  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
+    _OUTPUT_TAIL_CHARS,  # pyright: ignore[reportPrivateUsage]
+    _STREAM_QUEUE_MAX_LINES,  # pyright: ignore[reportPrivateUsage]
     AgentResult,
     AgentRunSpec,
-    _BoundedOutput,
-    _kill_process_group,
-    _pump_stream,
-    _read_agent_stream,
-    _ResolvedAgentRun,
-    _run_agent_blocking,
-    _run_agent_streaming,
-    _terminate_lingering_group,
+    OutputLineCallback,
+    _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
+    _kill_process_group,  # pyright: ignore[reportPrivateUsage]
+    _pump_stream,  # pyright: ignore[reportPrivateUsage]
+    _read_agent_stream,  # pyright: ignore[reportPrivateUsage]
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
+    _terminate_lingering_group,  # pyright: ignore[reportPrivateUsage]
     execute_agent,
 )
-from milknado.loop.adapters import select_adapter
-from milknado.loop.adapters.claude import ClaudeAdapter
+from milknado.loop._events import OutputStream  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import select_adapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
 
 
@@ -40,6 +46,7 @@ class TestReadAgentStream:
         stream = io.StringIO("line1\nline2\nline3\n")
         result = _read_agent_stream(stream, deadline=None, on_activity=None)
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 3
         assert result.timed_out is False
 
@@ -60,9 +67,9 @@ class TestReadAgentStream:
     def test_parses_json_lines(self):
         activities = []
         stream = io.StringIO('{"type": "status", "msg": "ok"}\n')
-        _read_agent_stream(stream, deadline=None, on_activity=activities.append)
+        _ = _read_agent_stream(stream, deadline=None, on_activity=activities.append)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
-        assert len(activities) == 1
+        assert len(activities) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert activities[0]["type"] == "status"
 
     def test_captures_result_text(self):
@@ -74,30 +81,33 @@ class TestReadAgentStream:
     def test_ignores_non_json_lines(self):
         activities = []
         stream = io.StringIO("not json\n")
-        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)
+        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 1
-        assert len(activities) == 0
+        assert len(activities) == 0  # pyright: ignore[reportUnknownArgumentType]
 
     @pytest.mark.parametrize("line", ["42\n", '"hello"\n', "[1,2,3]\n", "true\n", "null\n"])
-    def test_ignores_valid_json_non_object_lines(self, line):
+    def test_ignores_valid_json_non_object_lines(self, line: str):
         """Valid JSON that is not a JSON object (e.g. number, string, array)
         should be silently skipped, not crash with AttributeError."""
         activities = []
         stream = io.StringIO(line)
-        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)
+        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 1
-        assert len(activities) == 0
+        assert len(activities) == 0  # pyright: ignore[reportUnknownArgumentType]
         assert result.result_text is None
 
     def test_skips_empty_lines(self):
         activities = []
         stream = io.StringIO("\n\n")
-        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)
+        result = _read_agent_stream(stream, deadline=None, on_activity=activities.append)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 2
-        assert len(activities) == 0
+        assert len(activities) == 0  # pyright: ignore[reportUnknownArgumentType]
 
     def test_timeout_returns_early(self):
         stream = io.StringIO("line1\nline2\n")
@@ -115,7 +125,7 @@ class TestReadAgentStream:
         reader = os.fdopen(r_fd, "r")
         writer = os.fdopen(w_fd, "w")
         try:
-            writer.write("line1\nline2\n")
+            _ = writer.write("line1\nline2\n")
             writer.flush()
             # Don't close writer — stream stays open so reader blocks on
             # readline after the two lines, and the deadline fires.
@@ -123,6 +133,7 @@ class TestReadAgentStream:
             result = _read_agent_stream(reader, deadline=deadline, on_activity=None)
 
             assert result.timed_out is True
+            assert result.stdout_lines is not None
             assert len(result.stdout_lines) >= 1
             assert result.stdout_lines[0] == "line1\n"
         finally:
@@ -137,7 +148,7 @@ class TestReadAgentStream:
         reader = os.fdopen(r_fd, "r")
         writer = os.fdopen(w_fd, "w")
         try:
-            writer.write('{"type": "result", "result": "Done"}\n')
+            _ = writer.write('{"type": "result", "result": "Done"}\n')
             writer.flush()
             deadline = time.monotonic() + 0.5
             result = _read_agent_stream(reader, deadline=deadline, on_activity=None)
@@ -156,13 +167,13 @@ class TestReadAgentStream:
         writer = os.fdopen(w_fd, "w")
         try:
             activities = []
-            writer.write('{"type": "status", "msg": "working"}\n')
+            _ = writer.write('{"type": "status", "msg": "working"}\n')
             writer.flush()
             deadline = time.monotonic() + 0.5
-            result = _read_agent_stream(reader, deadline=deadline, on_activity=activities.append)
+            result = _read_agent_stream(reader, deadline=deadline, on_activity=activities.append)  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
 
             assert result.timed_out is True
-            assert len(activities) == 1
+            assert len(activities) == 1  # pyright: ignore[reportUnknownArgumentType]
             assert activities[0]["type"] == "status"
         finally:
             writer.close()
@@ -197,7 +208,7 @@ class TestReadAgentStream:
         entire streaming run."""
         call_count = 0
 
-        def raising_callback(line, stream):
+        def raising_callback(line: str, stream: OutputStream):  # pyright: ignore[reportUnusedParameter]
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -208,6 +219,7 @@ class TestReadAgentStream:
             stream, deadline=None, on_activity=None, on_output_line=raising_callback
         )
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 3
         assert call_count == 3
         assert result.timed_out is False
@@ -216,7 +228,7 @@ class TestReadAgentStream:
         """A raising on_activity callback must not crash the stream reader."""
         call_count = 0
 
-        def raising_activity(data):
+        def raising_activity(data: dict[str, object]):  # pyright: ignore[reportUnusedParameter]
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -225,6 +237,7 @@ class TestReadAgentStream:
         stream = io.StringIO('{"type": "status", "msg": "a"}\n{"type": "status", "msg": "b"}\n')
         result = _read_agent_stream(stream, deadline=None, on_activity=raising_activity)
 
+        assert result.stdout_lines is not None
         assert len(result.stdout_lines) == 2
         assert call_count == 2
         assert result.timed_out is False
@@ -232,7 +245,7 @@ class TestReadAgentStream:
 
 class TestExecuteAgentBlocking:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_success(self, mock_popen):
+    def test_success(self, mock_popen: MagicMock):  # pyright: ignore[reportUnusedParameter]
         result = execute_agent(
             AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
         )
@@ -243,7 +256,7 @@ class TestExecuteAgentBlocking:
         assert result.elapsed >= 0
 
     @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
-    def test_failure(self, mock_popen):
+    def test_failure(self, mock_popen: MagicMock):  # pyright: ignore[reportUnusedParameter]
         result = execute_agent(
             AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
         )
@@ -252,7 +265,7 @@ class TestExecuteAgentBlocking:
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
-    def test_timeout(self, mock_popen):
+    def test_timeout(self, mock_popen: MagicMock):  # pyright: ignore[reportUnusedParameter]
         result = execute_agent(
             AgentRunSpec(["echo"], "prompt", timeout=5, log_dir=None, iteration=1)
         )
@@ -261,7 +274,7 @@ class TestExecuteAgentBlocking:
         assert result.timed_out is True
 
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
-    def test_returncode_is_none_on_blocking_timeout(self, mock_popen):
+    def test_returncode_is_none_on_blocking_timeout(self, mock_popen: MagicMock):  # pyright: ignore[reportUnusedParameter]
         """Blocking path returns returncode=None on timeout, matching the
         ProcessResult contract and the streaming path's behavior."""
         result = _run_agent_blocking(
@@ -272,7 +285,7 @@ class TestExecuteAgentBlocking:
         assert result.timed_out is True
 
     @patch(MOCK_SUBPROCESS)
-    def test_writes_log_on_success(self, mock_popen, tmp_path):
+    def test_writes_log_on_success(self, mock_popen: MagicMock, tmp_path: Path):
         mock_popen.return_value = ok_proc(stdout_text="agent output\n")
         result = execute_agent(
             AgentRunSpec(
@@ -290,7 +303,7 @@ class TestExecuteAgentBlocking:
         assert "agent output" in result.log_file.read_text()
 
     @patch(MOCK_SUBPROCESS)
-    def test_writes_log_on_timeout(self, mock_popen, tmp_path):
+    def test_writes_log_on_timeout(self, mock_popen: MagicMock, tmp_path: Path):
         mock_popen.return_value = timeout_proc(stdout_text="partial", stderr_text="err")
         result = execute_agent(
             AgentRunSpec(
@@ -306,7 +319,7 @@ class TestExecuteAgentBlocking:
         assert result.log_file.exists()
 
     @patch(MOCK_SUBPROCESS)
-    def test_timeout_captures_partial_output(self, mock_popen, tmp_path):
+    def test_timeout_captures_partial_output(self, mock_popen: MagicMock, tmp_path: Path):
         """When logging is enabled and the agent times out, partial output
         is captured on the AgentResult for the engine to echo."""
         mock_popen.return_value = timeout_proc(
@@ -326,7 +339,9 @@ class TestExecuteAgentBlocking:
         assert result.captured_stderr == "partial stderr"
 
     @patch(MOCK_SUBPROCESS)
-    def test_capture_result_text_does_not_buffer_blocking_output_without_log_dir(self, mock_popen):
+    def test_capture_result_text_does_not_buffer_blocking_output_without_log_dir(
+        self, mock_popen: MagicMock
+    ):
         mock_popen.return_value = ok_proc(
             stdout_text="<promise>done</promise>\n",
             stderr_text="some stderr\n",
@@ -346,13 +361,13 @@ class TestExecuteAgentBlocking:
         assert result.captured_stderr is None
         assert result.result_text is None
 
-        call_kwargs = mock_popen.call_args[1]
-        assert call_kwargs.get("stdin") == subprocess.PIPE
-        assert call_kwargs.get("stdout") == subprocess.PIPE
-        assert call_kwargs.get("stderr") is None
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdin") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdout") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stderr") is None  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_no_log_when_dir_not_set(self, mock_popen):
+    def test_no_log_when_dir_not_set(self, mock_popen: MagicMock):  # pyright: ignore[reportUnusedParameter]
         result = execute_agent(
             AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
         )
@@ -362,7 +377,7 @@ class TestExecuteAgentBlocking:
     @patch(MOCK_SUBPROCESS)
     def test_bounded_capture_keeps_complete_log_and_detects_early_marker(
         self,
-        mock_popen,
+        mock_popen: MagicMock,
         tmp_path: Path,
     ) -> None:
         lines = ["<promise>done</promise>\n"] + [
@@ -370,6 +385,10 @@ class TestExecuteAgentBlocking:
         ]
         callbacks: list[str] = []
         mock_popen.return_value = ok_proc(stdout_text="".join(lines))
+
+        def on_output_line(line: str, _stream: OutputStream) -> None:
+            time.sleep(0.0001)
+            callbacks.append(line)
 
         result = execute_agent(
             AgentRunSpec(
@@ -380,7 +399,7 @@ class TestExecuteAgentBlocking:
                 iteration=1,
                 capture_stdout=True,
                 completion_signal="done",
-                on_output_line=lambda line, _stream: (time.sleep(0.0001), callbacks.append(line)),
+                on_output_line=on_output_line,
             )
         )
 
@@ -405,7 +424,7 @@ class TestExecuteAgentBlocking:
     @patch(MOCK_SUBPROCESS)
     def test_missing_subprocess_pipes_raise_runtime_error(
         self,
-        mock_popen,
+        mock_popen: MagicMock,
         tmp_path: Path,
         missing: str,
         expected: str,
@@ -423,14 +442,14 @@ class TestExecuteAgentBlocking:
         )
 
         with pytest.raises(RuntimeError, match=expected):
-            _run_agent_blocking(run)
+            _ = _run_agent_blocking(run)
 
     @patch(MOCK_SUBPROCESS)
-    def test_file_not_found_propagates(self, mock_popen):
+    def test_file_not_found_propagates(self, mock_popen: MagicMock):
         mock_popen.side_effect = FileNotFoundError("not found")
 
         with pytest.raises(FileNotFoundError):
-            execute_agent(
+            _ = execute_agent(
                 AgentRunSpec(
                     ["nonexistent"],
                     "prompt",
@@ -464,7 +483,7 @@ class TestAgentResult:
         ],
         ids=["zero-exit", "nonzero-exit", "timed-out"],
     )
-    def test_success(self, result, expected):
+    def test_success(self, result: AgentResult, expected: bool):
         assert result.success is expected
 
 
@@ -472,7 +491,9 @@ class TestExecuteAgentDispatch:
     """Tests for execute_agent routing to streaming vs blocking mode."""
 
     @patch(MOCK_SUBPROCESS)
-    def test_dispatches_to_streaming_for_claude(self, mock_popen, monkeypatch):
+    def test_dispatches_to_streaming_for_claude(
+        self, mock_popen: MagicMock, monkeypatch: MonkeyPatch
+    ):
         """execute_agent uses the streaming path when the adapter renders
         structured output."""
         claude_adapter = select_adapter(["claude"])
@@ -496,7 +517,9 @@ class TestExecuteAgentDispatch:
         assert result.result_text == "done"
         mock_popen.assert_called_once()
 
-    def test_execute_agent_passes_capture_result_text_to_streaming_helper(self, monkeypatch):
+    def test_execute_agent_passes_capture_result_text_to_streaming_helper(
+        self, monkeypatch: MonkeyPatch
+    ):
         on_activity = MagicMock()
         on_output_line = MagicMock()
         fake_streaming = MagicMock(return_value=AgentResult(returncode=0, elapsed=0.01))
@@ -506,7 +529,7 @@ class TestExecuteAgentDispatch:
         monkeypatch.setattr(claude_adapter, "supports_streaming", True)
         monkeypatch.setattr("milknado.loop._agent._run_agent_streaming", fake_streaming)
 
-        execute_agent(
+        _ = execute_agent(
             AgentRunSpec(
                 ["claude", "-p"],
                 "prompt",
@@ -538,7 +561,9 @@ class TestExecuteAgentDispatch:
             )
         )
 
-    def test_execute_agent_passes_capture_result_text_to_blocking_helper(self, monkeypatch):
+    def test_execute_agent_passes_capture_result_text_to_blocking_helper(
+        self, monkeypatch: MonkeyPatch
+    ):
         on_output_line = MagicMock()
         fake_blocking = MagicMock(return_value=AgentResult(returncode=0, elapsed=0.01))
 
@@ -549,7 +574,7 @@ class TestExecuteAgentDispatch:
         # assertion matches the adapter arg with ``ANY``.
         monkeypatch.setattr("milknado.loop._agent._run_agent_blocking", fake_blocking)
 
-        execute_agent(
+        _ = execute_agent(
             AgentRunSpec(
                 ["echo"],
                 "prompt",
@@ -584,7 +609,7 @@ class TestExecuteAgentStreaming:
     """Tests for the streaming execution path (_run_agent_streaming)."""
 
     @patch(MOCK_SUBPROCESS)
-    def test_streaming_result_event_populates_result_text(self, mock_popen):
+    def test_streaming_result_event_populates_result_text(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines='{"type": "result", "result": "early done"}\n',
             returncode=0,
@@ -603,7 +628,9 @@ class TestExecuteAgentStreaming:
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS)
-    def test_blocking_result_event_populates_result_text_when_captured(self, mock_popen, tmp_path):
+    def test_blocking_result_event_populates_result_text_when_captured(
+        self, mock_popen: MagicMock, tmp_path: Path
+    ):
         mock_popen.return_value = make_mock_popen(
             stdout_lines='{"type": "result", "result": "early done"}\n',
             returncode=0,
@@ -623,7 +650,7 @@ class TestExecuteAgentStreaming:
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS)
-    def test_result_text_absent_when_no_result_event(self, mock_popen):
+    def test_result_text_absent_when_no_result_event(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines="status: working\n",
             returncode=0,
@@ -642,7 +669,7 @@ class TestExecuteAgentStreaming:
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS)
-    def test_last_result_event_wins(self, mock_popen):
+    def test_last_result_event_wins(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines=(
                 '{"type": "result", "result": "first"}\n{"type": "result", "result": "second"}\n'
@@ -663,7 +690,7 @@ class TestExecuteAgentStreaming:
         assert result.timed_out is False
 
     @patch(MOCK_SUBPROCESS)
-    def test_success(self, mock_popen):
+    def test_success(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines='{"type": "status", "msg": "working"}\n',
             returncode=0,
@@ -683,7 +710,7 @@ class TestExecuteAgentStreaming:
         assert result.elapsed >= 0
 
     @patch(MOCK_SUBPROCESS)
-    def test_failure(self, mock_popen):
+    def test_failure(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(returncode=1)
         result = _run_agent_streaming(
             _ResolvedAgentRun(
@@ -700,7 +727,7 @@ class TestExecuteAgentStreaming:
         assert result.success is False
 
     @patch(MOCK_SUBPROCESS)
-    def test_captures_result_text(self, mock_popen):
+    def test_captures_result_text(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines='{"type": "result", "result": "All tests passed"}\n',
             returncode=0,
@@ -718,10 +745,10 @@ class TestExecuteAgentStreaming:
         assert result.result_text == "All tests passed"
 
     @patch(MOCK_SUBPROCESS)
-    def test_sends_prompt_to_stdin(self, mock_popen):
+    def test_sends_prompt_to_stdin(self, mock_popen: MagicMock):
         proc = make_mock_popen(returncode=0)
         mock_popen.return_value = proc
-        _run_agent_streaming(
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["claude", "-p"],
                 "my prompt text",
@@ -731,15 +758,15 @@ class TestExecuteAgentStreaming:
             )
         )
 
-        proc.stdin.write.assert_called_once_with("my prompt text")
-        proc.stdin.close.assert_called_once()
+        proc.stdin.write.assert_called_once_with("my prompt text")  # pyright: ignore[reportAny]
+        proc.stdin.close.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS)
-    def test_passes_cmd_verbatim_to_popen(self, mock_popen):
+    def test_passes_cmd_verbatim_to_popen(self, mock_popen: MagicMock):
         """_run_agent_streaming no longer appends its own flags — the caller
         (via ``adapter.build_command``) owns CLI flags now."""
         mock_popen.return_value = make_mock_popen(returncode=0)
-        _run_agent_streaming(
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["claude", "-p", "--output-format", "stream-json", "--verbose"],
                 "prompt",
@@ -750,7 +777,7 @@ class TestExecuteAgentStreaming:
         )
 
         call_args = mock_popen.call_args
-        cmd = call_args[0][0]
+        cmd = call_args[0][0]  # pyright: ignore[reportAny]
         assert cmd == [
             "claude",
             "-p",
@@ -760,7 +787,7 @@ class TestExecuteAgentStreaming:
         ]
 
     @patch(MOCK_SUBPROCESS)
-    def test_writes_log_on_success(self, mock_popen, tmp_path):
+    def test_writes_log_on_success(self, mock_popen: MagicMock, tmp_path: Path):
         mock_popen.return_value = make_mock_popen(
             stdout_lines="agent output\n",
             stderr_text="some stderr\n",
@@ -784,7 +811,7 @@ class TestExecuteAgentStreaming:
         assert "some stderr" in content
 
     @patch(MOCK_SUBPROCESS)
-    def test_captured_output_set_when_logging(self, mock_popen, tmp_path):
+    def test_captured_output_set_when_logging(self, mock_popen: MagicMock, tmp_path: Path):
         """When log_dir is set, captured_stdout and captured_stderr
         must be populated so the engine can echo them via the event system
         — matching the blocking path's behavior."""
@@ -807,7 +834,9 @@ class TestExecuteAgentStreaming:
         assert result.captured_stderr == "some stderr\n"
 
     @patch(MOCK_SUBPROCESS)
-    def test_capture_result_text_does_not_buffer_stream_output_without_log_dir(self, mock_popen):
+    def test_capture_result_text_does_not_buffer_stream_output_without_log_dir(
+        self, mock_popen: MagicMock
+    ):
         mock_popen.return_value = make_mock_popen(
             stdout_lines="<promise>done</promise>\n",
             stderr_text="some stderr\n",
@@ -830,13 +859,13 @@ class TestExecuteAgentStreaming:
 
         call_args = mock_popen.call_args
         assert call_args.args[0] == ["claude", "-p"]
-        call_kwargs = call_args[1]
-        assert call_kwargs.get("stdin") == subprocess.PIPE
-        assert call_kwargs.get("stdout") == subprocess.PIPE
-        assert call_kwargs.get("stderr") is None
+        call_kwargs = call_args[1]  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdin") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdout") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stderr") is None  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS)
-    def test_no_log_when_dir_not_set(self, mock_popen):
+    def test_no_log_when_dir_not_set(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(returncode=0)
         result = _run_agent_streaming(
             _ResolvedAgentRun(
@@ -851,30 +880,30 @@ class TestExecuteAgentStreaming:
         assert result.log_file is None
 
     @patch(MOCK_SUBPROCESS)
-    def test_on_activity_callback_invoked(self, mock_popen):
+    def test_on_activity_callback_invoked(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(
             stdout_lines='{"type": "status", "msg": "working"}\n{"type": "progress"}\n',
             returncode=0,
         )
         activities = []
-        _run_agent_streaming(
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["claude", "-p"],
                 "prompt",
                 timeout=None,
                 log_dir=None,
                 iteration=1,
-                on_activity=activities.append,
+                on_activity=activities.append,  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
             )
         )
 
-        assert len(activities) == 2
+        assert len(activities) == 2  # pyright: ignore[reportUnknownArgumentType]
         assert activities[0]["type"] == "status"
         assert activities[1]["type"] == "progress"
 
     @patch("milknado.loop._agent.time.monotonic")
     @patch(MOCK_SUBPROCESS)
-    def test_timeout_kills_process(self, mock_popen, mock_time):
+    def test_timeout_kills_process(self, mock_popen: MagicMock, mock_time: MagicMock):
         # start=0 → deadline=5.  First loop check: remaining=5 (positive,
         # so queue.get waits up to 5 real seconds — succeeds immediately
         # because the StringIO reader fills the queue).  Post-line check
@@ -887,7 +916,9 @@ class TestExecuteAgentStreaming:
             stdout_lines="line1\nline2\n",
             returncode=0,
         )
-        proc.poll.return_value = None  # process still running when timeout fires
+        proc.poll.return_value = (  # pyright: ignore[reportAny]
+            None  # process still running when timeout fires
+        )
         mock_popen.return_value = proc
 
         result = _run_agent_streaming(
@@ -905,19 +936,21 @@ class TestExecuteAgentStreaming:
 
 
 class TestInterruptibleReap:
-    def test_force_stop_after_stdout_eof_uses_bounded_cleanup(self, monkeypatch, caplog):
+    def test_force_stop_after_stdout_eof_uses_bounded_cleanup(
+        self, monkeypatch: MonkeyPatch, caplog: LogCaptureFixture
+    ):
         force_stop = threading.Event()
         proc = make_mock_popen(stdout_lines="", returncode=0)
         proc.pid = 4242
         proc.returncode = None
-        proc.poll.return_value = None
+        proc.poll.return_value = None  # pyright: ignore[reportAny]
 
-        def wait_until_force_observed(timeout=None):
+        def wait_until_force_observed(timeout: float | None = None):
             assert timeout is not None
             force_stop.set()
-            raise subprocess.TimeoutExpired(proc.args, timeout)
+            raise subprocess.TimeoutExpired(proc.args, timeout)  # pyright: ignore[reportAny]
 
-        proc.wait.side_effect = wait_until_force_observed
+        proc.wait.side_effect = wait_until_force_observed  # pyright: ignore[reportAny]
         claude_adapter = select_adapter(["claude"])
         monkeypatch.setattr(claude_adapter, "supports_streaming", True)
 
@@ -944,13 +977,15 @@ class TestInterruptibleReap:
 
 
 class TestWindowsJobContainment:
-    def test_force_stop_terminates_assigned_job_instead_of_parent_only(self, monkeypatch):
+    def test_force_stop_terminates_assigned_job_instead_of_parent_only(
+        self, monkeypatch: MonkeyPatch
+    ):
         kernel32 = MagicMock()
-        kernel32.CreateJobObjectW.return_value = 123
-        kernel32.SetInformationJobObject.return_value = 1
-        kernel32.AssignProcessToJobObject.return_value = 1
-        kernel32.TerminateJobObject.return_value = 1
-        kernel32.CloseHandle.return_value = 1
+        kernel32.CreateJobObjectW.return_value = 123  # pyright: ignore[reportAny]
+        kernel32.SetInformationJobObject.return_value = 1  # pyright: ignore[reportAny]
+        kernel32.AssignProcessToJobObject.return_value = 1  # pyright: ignore[reportAny]
+        kernel32.TerminateJobObject.return_value = 1  # pyright: ignore[reportAny]
+        kernel32.CloseHandle.return_value = 1  # pyright: ignore[reportAny]
         proc = MagicMock(pid=42)
         proc._handle = 456
         resume_process = MagicMock()
@@ -959,38 +994,40 @@ class TestWindowsJobContainment:
         monkeypatch.setattr(agent_module, "IS_WINDOWS", True)
         monkeypatch.setattr(agent_module, "_load_kernel32", lambda: kernel32)
 
-        job = agent_module._WindowsJob.assign(proc)
+        job = agent_module._WindowsJob.assign(proc)  # pyright: ignore[reportPrivateUsage]
         assert job is not None
-        agent_module._kill_process_group(proc, job)
+        agent_module._kill_process_group(proc, job)  # pyright: ignore[reportPrivateUsage]
         resume_process.assert_called_once_with(proc)
 
-        kernel32.AssignProcessToJobObject.assert_called_once_with(123, 456)
-        kernel32.TerminateJobObject.assert_called_once_with(123, 1)
-        kernel32.CloseHandle.assert_called_once_with(123)
-        proc.kill.assert_not_called()
+        kernel32.AssignProcessToJobObject.assert_called_once_with(123, 456)  # pyright: ignore[reportAny]
+        kernel32.TerminateJobObject.assert_called_once_with(123, 1)  # pyright: ignore[reportAny]
+        kernel32.CloseHandle.assert_called_once_with(123)  # pyright: ignore[reportAny]
+        proc.kill.assert_not_called()  # pyright: ignore[reportAny]
 
 
 class TestProcessGroupCleanup:
     """Process group cleanup, isolation, and _kill_process_group tests."""
 
-    pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only behavior")
+    pytestmark: object = pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only behavior")
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_session_leader_gets_sigterm(self, mock_getpgid, mock_killpg):
+    def test_session_leader_gets_sigterm(self, mock_getpgid: MagicMock, mock_killpg: MagicMock):
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
         mock_getpgid.return_value = 42
 
         _kill_process_group(proc)
 
         mock_killpg.assert_any_call(42, signal.SIGTERM)
-        proc.wait.assert_called_once_with(timeout=3)
+        proc.wait.assert_called_once_with(timeout=3)  # pyright: ignore[reportAny]
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_escalates_to_sigkill_on_timeout(self, mock_getpgid, mock_killpg):
+    def test_escalates_to_sigkill_on_timeout(
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock
+    ):
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
-        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="agent", timeout=3)
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="agent", timeout=3)  # pyright: ignore[reportAny]
         mock_getpgid.return_value = 42
 
         _kill_process_group(proc)
@@ -1000,10 +1037,12 @@ class TestProcessGroupCleanup:
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_sigkill_failure_falls_back_to_proc_kill(self, mock_getpgid, mock_killpg):
+    def test_sigkill_failure_falls_back_to_proc_kill(
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock
+    ):
         """When SIGTERM times out and SIGKILL also fails, fall back to proc.kill()."""
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
-        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="agent", timeout=3)
+        proc.wait.side_effect = subprocess.TimeoutExpired(cmd="agent", timeout=3)  # pyright: ignore[reportAny]
         mock_getpgid.return_value = 42
         # SIGTERM succeeds but SIGKILL fails (process vanished between attempts)
         mock_killpg.side_effect = [None, ProcessLookupError("No such process")]
@@ -1012,35 +1051,39 @@ class TestProcessGroupCleanup:
 
         mock_killpg.assert_any_call(42, signal.SIGTERM)
         mock_killpg.assert_any_call(42, signal.SIGKILL)
-        proc.kill.assert_called_once()
+        proc.kill.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_not_session_leader_falls_back_to_kill(self, mock_getpgid, mock_killpg):
+    def test_not_session_leader_falls_back_to_kill(
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock
+    ):
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
         mock_getpgid.return_value = 1
 
         _kill_process_group(proc)
 
         mock_killpg.assert_not_called()
-        proc.kill.assert_called_once()
+        proc.kill.assert_called_once()  # pyright: ignore[reportAny]
 
     def test_already_exited_falls_back_to_kill(self):
         proc = MagicMock(pid=42, poll=MagicMock(return_value=0))
 
         _kill_process_group(proc)
 
-        proc.kill.assert_called_once()
+        proc.kill.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_blocking_uses_start_new_session(self, mock_popen):
-        execute_agent(AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1))
-        assert mock_popen.call_args[1].get("start_new_session") is True
+    def test_blocking_uses_start_new_session(self, mock_popen: MagicMock):
+        _ = execute_agent(
+            AgentRunSpec(["echo"], "prompt", timeout=None, log_dir=None, iteration=1)
+        )
+        assert mock_popen.call_args[1].get("start_new_session") is True  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS)
-    def test_streaming_uses_start_new_session(self, mock_popen):
+    def test_streaming_uses_start_new_session(self, mock_popen: MagicMock):
         mock_popen.return_value = make_mock_popen(returncode=0)
-        _run_agent_streaming(
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["claude", "-p"],
                 "prompt",
@@ -1049,11 +1092,13 @@ class TestProcessGroupCleanup:
                 iteration=1,
             )
         )
-        assert mock_popen.call_args[1].get("start_new_session") is True
+        assert mock_popen.call_args[1].get("start_new_session") is True  # pyright: ignore[reportAny]
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_killpg_oserror_falls_back_to_proc_kill(self, mock_getpgid, mock_killpg):
+    def test_killpg_oserror_falls_back_to_proc_kill(
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock
+    ):
         """When os.killpg raises OSError (e.g. process already gone), fall back to proc.kill()."""
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
         mock_getpgid.return_value = 42  # session leader
@@ -1062,11 +1107,13 @@ class TestProcessGroupCleanup:
         _kill_process_group(proc)
 
         mock_killpg.assert_called_once_with(42, signal.SIGTERM)
-        proc.kill.assert_called_once()
+        proc.kill.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
-    def test_killpg_process_lookup_error_falls_back_to_proc_kill(self, mock_getpgid, mock_killpg):
+    def test_killpg_process_lookup_error_falls_back_to_proc_kill(
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock
+    ):
         """When os.killpg raises ProcessLookupError, fall back to proc.kill()."""
         proc = MagicMock(pid=42, poll=MagicMock(return_value=None))
         mock_getpgid.return_value = 42
@@ -1074,13 +1121,13 @@ class TestProcessGroupCleanup:
 
         _kill_process_group(proc)
 
-        proc.kill.assert_called_once()
+        proc.kill.assert_called_once()  # pyright: ignore[reportAny]
 
     @pytest.mark.parametrize("pid", [0, -1, None])
     @patch("milknado.loop._agent.os.killpg")
     @patch("milknado.loop._agent.os.getpgid")
     def test_kill_process_group_short_circuits_on_sentinel_pid(
-        self, mock_getpgid, mock_killpg, pid
+        self, mock_getpgid: MagicMock, mock_killpg: MagicMock, pid: int
     ):
         """Non-positive or None pids must never reach os.getpgid/os.killpg."""
         proc = MagicMock(pid=pid, poll=MagicMock(return_value=None))
@@ -1089,21 +1136,23 @@ class TestProcessGroupCleanup:
 
         mock_getpgid.assert_not_called()
         mock_killpg.assert_not_called()
-        proc.kill.assert_not_called()
+        proc.kill.assert_not_called()  # pyright: ignore[reportAny]
 
 
 class TestRunAgentStreamingPipeGuard:
     """Test the defensive RuntimeError when Popen fails to create PIPE streams."""
 
     @patch(MOCK_SUBPROCESS)
-    def test_raises_when_stdin_is_none(self, mock_popen):
+    def test_raises_when_stdin_is_none(self, mock_popen: MagicMock):
         proc = make_mock_popen(returncode=0)
         proc.stdin = None
-        proc.poll.return_value = None  # process still running for finally cleanup
+        proc.poll.return_value = (  # pyright: ignore[reportAny]
+            None  # process still running for finally cleanup
+        )
         mock_popen.return_value = proc
 
         with pytest.raises(RuntimeError, match="PIPE stdin"):
-            _run_agent_streaming(
+            _ = _run_agent_streaming(
                 _ResolvedAgentRun(
                     ["claude", "-p"],
                     "prompt",
@@ -1118,7 +1167,7 @@ class TestRunAgentBlockingKeyboardInterrupt:
     """Test that KeyboardInterrupt during blocking execution kills the process and re-raises."""
 
     @patch(MOCK_SUBPROCESS)
-    def test_keyboard_interrupt_kills_and_reraises(self, mock_popen):
+    def test_keyboard_interrupt_kills_and_reraises(self, mock_popen: MagicMock):
         proc = MagicMock()
         proc.pid = 0  # sentinel: skip real process-group manipulation
         proc.stdin = MagicMock()
@@ -1127,15 +1176,15 @@ class TestRunAgentBlockingKeyboardInterrupt:
         # First wait() raises KeyboardInterrupt; all subsequent calls
         # return -2.  Uses itertools.chain so the exact number of wait()
         # calls made by cleanup paths can drift without breaking the test.
-        proc.wait.side_effect = itertools.chain([KeyboardInterrupt], itertools.repeat(-2))
+        proc.wait.side_effect = itertools.chain([KeyboardInterrupt], itertools.repeat(-2))  # pyright: ignore[reportAny]
         # First poll() (inside _kill_process_group) sees a live process;
         # every later poll() sees it as reaped so cleanup paths don't
         # re-enter kill/wait.
-        proc.poll.side_effect = itertools.chain([None], itertools.repeat(0))
+        proc.poll.side_effect = itertools.chain([None], itertools.repeat(0))  # pyright: ignore[reportAny]
         mock_popen.return_value = proc
 
         with pytest.raises(KeyboardInterrupt):
-            execute_agent(
+            _ = execute_agent(
                 AgentRunSpec(
                     ["echo"],
                     "prompt",
@@ -1145,7 +1194,7 @@ class TestRunAgentBlockingKeyboardInterrupt:
                 )
             )
 
-        proc.wait.assert_called()
+        proc.wait.assert_called()  # pyright: ignore[reportAny]
 
 
 class TestRunAgentBlockingLineStreaming:
@@ -1155,7 +1204,7 @@ class TestRunAgentBlockingLineStreaming:
     the actual reader-thread path and observe lines as the process runs.
     """
 
-    def test_on_output_line_receives_lines_in_order(self, tmp_path):
+    def test_on_output_line_receives_lines_in_order(self, tmp_path: Path):
         script = "import sys; print('first'); print('second'); print('third')"
         received: list[tuple[str, str]] = []
 
@@ -1181,7 +1230,7 @@ class TestRunAgentBlockingLineStreaming:
         assert "second" in log_text
         assert "third" in log_text
 
-    def test_on_output_line_captures_stderr_separately(self, tmp_path):
+    def test_on_output_line_captures_stderr_separately(self, tmp_path: Path):
         script = (
             "import sys; "
             "print('out-line', file=sys.stdout); "
@@ -1190,7 +1239,7 @@ class TestRunAgentBlockingLineStreaming:
         )
         received: list[tuple[str, str]] = []
 
-        _run_agent_blocking(
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 [sys.executable, "-u", "-c", script],
                 stdin_text="",
@@ -1207,12 +1256,12 @@ class TestRunAgentBlockingLineStreaming:
         assert lines_by_stream["stdout"] == "out-line"
         assert lines_by_stream["stderr"] == "err-line"
 
-    def test_stdin_prompt_delivered_to_subprocess(self, tmp_path):
+    def test_stdin_prompt_delivered_to_subprocess(self, tmp_path: Path):
         """The prompt must reach the child via stdin so real agents get it."""
         script = "import sys; sys.stdout.write(sys.stdin.read())"
         received: list[str] = []
 
-        _run_agent_blocking(
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 [sys.executable, "-c", script],
                 stdin_text="hello-from-prompt\n",
@@ -1225,7 +1274,7 @@ class TestRunAgentBlockingLineStreaming:
 
         assert received == ["hello-from-prompt"]
 
-    def test_large_prompt_with_concurrent_stderr_does_not_deadlock(self, tmp_path):
+    def test_large_prompt_with_concurrent_stderr_does_not_deadlock(self, tmp_path: Path):
         """Regression guard for the pipe-buffer deadlock.
 
         If the child writes a burst of stderr larger than the OS pipe
@@ -1259,7 +1308,7 @@ class TestRunAgentBlockingLineStreaming:
         assert result.returncode == 0
         assert result.timed_out is False
 
-    def test_early_exit_with_large_prompt_does_not_crash(self, tmp_path):
+    def test_early_exit_with_large_prompt_does_not_crash(self, tmp_path: Path):
         """If the agent exits without consuming its stdin, the parent's
         write will raise ``BrokenPipeError``; the blocking path must
         swallow it and still return the child's real exit code.
@@ -1280,7 +1329,7 @@ class TestRunAgentBlockingLineStreaming:
         assert result.returncode == 0
         assert result.timed_out is False
 
-    def test_streaming_large_stderr_drained_concurrently(self, tmp_path):
+    def test_streaming_large_stderr_drained_concurrently(self, tmp_path: Path):
         """Regression guard for the streaming path.
 
         An agent that writes substantial stderr before emitting its result
@@ -1310,7 +1359,7 @@ class TestRunAgentBlockingLineStreaming:
         assert result.timed_out is False
         assert result.result_text == "ok"
 
-    def test_timeout_enforced_when_agent_does_not_read_stdin(self, tmp_path):
+    def test_timeout_enforced_when_agent_does_not_read_stdin(self, tmp_path: Path):
         """If the agent never reads stdin, --timeout must still fire.
 
         Before the writer-thread fix, proc.stdin.write(prompt) blocked on
@@ -1355,12 +1404,12 @@ class TestExecuteAgentCwd:
     """
 
     @staticmethod
-    def _pwd_probe_cmd(out_file):
+    def _pwd_probe_cmd(out_file: Path):
         # A fake agent that records its own working directory and exits.
         script = "import os, sys; open(sys.argv[1], 'w').write(os.getcwd())"
         return [sys.executable, "-c", script, str(out_file)]
 
-    def test_execute_agent_spawns_in_requested_cwd(self, tmp_path):
+    def test_execute_agent_spawns_in_requested_cwd(self, tmp_path: Path):
         """execute_agent(..., cwd=dir) runs the agent process inside *dir*."""
         work_dir = tmp_path / "worker-worktree"
         work_dir.mkdir()
@@ -1383,7 +1432,7 @@ class TestExecuteAgentCwd:
         recorded = Path(out_file.read_text())
         assert recorded.resolve() == work_dir.resolve()
 
-    def test_execute_agent_cwd_none_inherits_parent_cwd(self, tmp_path):
+    def test_execute_agent_cwd_none_inherits_parent_cwd(self, tmp_path: Path):
         """cwd=None preserves the inherit-cwd behaviour for direct engine
         callers — the child must NOT run in some unrelated directory."""
         out_file = tmp_path / "pwd.txt"
@@ -1402,13 +1451,13 @@ class TestExecuteAgentCwd:
         recorded = Path(out_file.read_text())
         assert recorded.resolve() == Path(os.getcwd()).resolve()
 
-    def test_blocking_helper_honours_cwd(self, tmp_path):
+    def test_blocking_helper_honours_cwd(self, tmp_path: Path):
         """The blocking helper passes cwd straight through to Popen."""
         work_dir = tmp_path / "blocking-cwd"
         work_dir.mkdir()
         out_file = tmp_path / "pwd.txt"
 
-        _run_agent_blocking(
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 self._pwd_probe_cmd(out_file),
                 stdin_text="",
@@ -1421,13 +1470,13 @@ class TestExecuteAgentCwd:
 
         assert Path(out_file.read_text()).resolve() == work_dir.resolve()
 
-    def test_streaming_helper_honours_cwd(self, tmp_path):
+    def test_streaming_helper_honours_cwd(self, tmp_path: Path):
         """The streaming helper passes cwd straight through to Popen."""
         work_dir = tmp_path / "streaming-cwd"
         work_dir.mkdir()
         out_file = tmp_path / "pwd.txt"
 
-        _run_agent_streaming(
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 self._pwd_probe_cmd(out_file),
                 stdin_text="",
@@ -1450,7 +1499,7 @@ class TestStreamingDeadlineAndBuffering:
     level, where mocks would be misleading.
     """
 
-    def test_streaming_timeout_enforced_on_silent_agent(self, tmp_path):
+    def test_streaming_timeout_enforced_on_silent_agent(self, tmp_path: Path):
         """A hung agent that produces no output must still be killed by --timeout.
 
         Before the fix, ``for line in stdout`` blocked in readline()
@@ -1478,7 +1527,7 @@ class TestStreamingDeadlineAndBuffering:
         # Must return well before the child's 30-second sleep.
         assert elapsed < 10.0
 
-    def test_streaming_peek_flows_line_at_a_time(self, tmp_path):
+    def test_streaming_peek_flows_line_at_a_time(self, tmp_path: Path):
         """Peek callbacks must fire promptly as lines arrive, not in 8KB bursts.
 
         A fake agent emits timestamped lines with 200ms sleeps.  Each
@@ -1497,7 +1546,7 @@ class TestStreamingDeadlineAndBuffering:
         )
         receive_times: list[float] = []
 
-        def on_line(line: str, stream: str) -> None:
+        def on_line(line: str, stream: str) -> None:  # pyright: ignore[reportUnusedParameter]
             receive_times.append(time.monotonic())
 
         result = _run_agent_streaming(
@@ -1539,7 +1588,7 @@ class TestBlockingInheritPath:
     """
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_no_pipe_when_no_log_no_callback(self, mock_popen):
+    def test_no_pipe_when_no_log_no_callback(self, mock_popen: MagicMock):
         """Popen must NOT receive stdout/stderr=PIPE when no one needs capture."""
         result = _run_agent_blocking(
             _ResolvedAgentRun(
@@ -1552,16 +1601,16 @@ class TestBlockingInheritPath:
             )
         )
 
-        call_kwargs = mock_popen.call_args[1]
-        assert call_kwargs.get("stdout") is None
-        assert call_kwargs.get("stderr") is None
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdout") is None  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stderr") is None  # pyright: ignore[reportAny]
         assert result.returncode == 0
         assert result.log_file is None
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_still_pipes_when_callback_set(self, mock_popen):
+    def test_still_pipes_when_callback_set(self, mock_popen: MagicMock):
         """When on_output_line is provided, stdout/stderr must be PIPE'd."""
-        _run_agent_blocking(
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 ["echo"],
                 "prompt",
@@ -1572,14 +1621,14 @@ class TestBlockingInheritPath:
             )
         )
 
-        call_kwargs = mock_popen.call_args[1]
-        assert call_kwargs.get("stdout") == subprocess.PIPE
-        assert call_kwargs.get("stderr") == subprocess.PIPE
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdout") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stderr") == subprocess.PIPE  # pyright: ignore[reportAny]
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_still_pipes_when_log_dir_set(self, mock_popen, tmp_path):
+    def test_still_pipes_when_log_dir_set(self, mock_popen: MagicMock, tmp_path: Path):
         """When log_dir is provided, stdout/stderr must be PIPE'd."""
-        _run_agent_blocking(
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 ["echo"],
                 "prompt",
@@ -1590,11 +1639,11 @@ class TestBlockingInheritPath:
             )
         )
 
-        call_kwargs = mock_popen.call_args[1]
-        assert call_kwargs.get("stdout") == subprocess.PIPE
-        assert call_kwargs.get("stderr") == subprocess.PIPE
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stdout") == subprocess.PIPE  # pyright: ignore[reportAny]
+        assert call_kwargs.get("stderr") == subprocess.PIPE  # pyright: ignore[reportAny]
 
-    def test_inherit_path_shows_output(self, capfd):
+    def test_inherit_path_shows_output(self, capfd: CaptureFixture[str]):
         """Real subprocess in inherit mode: child output reaches the parent's
         stdout, verifying the ``ralph run | cat`` scenario works.
 
@@ -1619,7 +1668,7 @@ class TestBlockingInheritPath:
         captured = capfd.readouterr()
         assert "visible-output" in captured.out
 
-    def test_callback_only_does_not_buffer(self, tmp_path):
+    def test_callback_only_does_not_buffer(self, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         """When on_output_line is set but log_dir is None, lines should
         be forwarded to the callback but NOT accumulated (no unbounded
         buffering).  Verified indirectly: log_file is None (no buffer to
@@ -1652,7 +1701,7 @@ class TestPumpStreamExceptionHandling:
         script = "import sys; print('line1'); print('line2'); print('line3'); sys.stdout.flush()"
         call_count = 0
 
-        def raising_callback(line, stream):
+        def raising_callback(line: str, stream: OutputStream):  # pyright: ignore[reportUnusedParameter]
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -1674,12 +1723,12 @@ class TestPumpStreamExceptionHandling:
         # the first invocation raised.
         assert call_count == 3
 
-    def test_buffers_all_lines_when_callback_raises(self, tmp_path):
+    def test_buffers_all_lines_when_callback_raises(self, tmp_path: Path):
         """When logging is enabled, all lines must be captured in the log
         even if the callback raises on every single line."""
         script = "import sys; print('a'); print('b'); print('c'); sys.stdout.flush()"
 
-        def always_raises(line, stream):
+        def always_raises(line: str, stream: OutputStream):  # pyright: ignore[reportUnusedParameter]
             raise ValueError("always fails")
 
         result = _run_agent_blocking(
@@ -1719,7 +1768,7 @@ class TestPumpStreamExceptionHandling:
         thread.start()
 
         # Write a line so the thread is actively reading, then close.
-        write_file.write("hello\n")
+        _ = write_file.write("hello\n")
         write_file.flush()
         write_file.close()
 
@@ -1780,7 +1829,7 @@ class TestBoundedReaderThreadJoins:
     hang the CLI, and that joins always happen in the finally block.
     """
 
-    def test_grandchild_inheriting_stdout_does_not_hang(self, tmp_path):
+    def test_grandchild_inheriting_stdout_does_not_hang(self, tmp_path: Path):
         """Spawn an agent that forks a grandchild inheriting stdout.
 
         The grandchild sleeps for 30s holding the pipe open.  The parent
@@ -1848,41 +1897,47 @@ class TestBoundedReaderThreadJoins:
             "print('err', file=sys.stderr); sys.stderr.flush()"
         )
 
-        class InjectErrorPopen(subprocess.Popen):
+        class InjectErrorPopen(subprocess.Popen[str]):
             """Popen subclass whose wait() raises RuntimeError on first call.
 
             This simulates an unexpected exception after the process has
             been started and reader threads are running.
             """
 
-            _first_wait = True
+            _first_wait: bool = True
 
-            def wait(self, timeout=None):
+            @override
+            def wait(self, timeout: float | None = None) -> int:
                 if InjectErrorPopen._first_wait:
                     InjectErrorPopen._first_wait = False
                     raise RuntimeError("injected error")
                 return super().wait(timeout=timeout)
 
         with pytest.raises(RuntimeError, match="injected error"):
-            with patch(MOCK_SUBPROCESS, side_effect=lambda *a, **kw: InjectErrorPopen(*a, **kw)):
+            with patch(MOCK_SUBPROCESS, side_effect=lambda *a, **kw: InjectErrorPopen(*a, **kw)):  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
                 # Capture thread references by patching _start_pump_thread
-                original_start_pump = __import__(
+                original_start_pump = __import__(  # pyright: ignore[reportAny]
                     "milknado.loop._agent", fromlist=["_start_pump_thread"]
                 )._start_pump_thread
 
-                def tracking_start_pump(stream, buffer, stream_name, on_output_line):
-                    t = original_start_pump(stream, buffer, stream_name, on_output_line)
+                def tracking_start_pump(  # pyright: ignore[reportAny]
+                    stream: io.StringIO,
+                    buffer: _BoundedOutput | None,
+                    stream_name: OutputStream,
+                    on_output_line: OutputLineCallback | None,
+                ):
+                    t = original_start_pump(stream, buffer, stream_name, on_output_line)  # pyright: ignore[reportAny]
                     if stream_name == "stdout":
-                        stdout_thread_ref.append(t)
+                        stdout_thread_ref.append(t)  # pyright: ignore[reportAny]
                     else:
-                        stderr_thread_ref.append(t)
-                    return t
+                        stderr_thread_ref.append(t)  # pyright: ignore[reportAny]
+                    return t  # pyright: ignore[reportAny]
 
                 with patch(
                     "milknado.loop._agent._start_pump_thread",
                     side_effect=tracking_start_pump,
                 ):
-                    _run_agent_blocking(
+                    _ = _run_agent_blocking(
                         _ResolvedAgentRun(
                             [sys.executable, "-c", script],
                             stdin_text="",
@@ -1918,8 +1973,10 @@ class TestArgDeliveryStdin:
 
     @patch("milknado.loop._agent._start_writer_thread")
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_streaming_arg_delivery_uses_devnull_and_no_writer(self, mock_popen, mock_writer):
-        _run_agent_streaming(
+    def test_streaming_arg_delivery_uses_devnull_and_no_writer(
+        self, mock_popen: MagicMock, mock_writer: MagicMock
+    ):
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["opencode", "run", "--format", "json", "hi"],
                 None,
@@ -1934,8 +1991,10 @@ class TestArgDeliveryStdin:
 
     @patch("milknado.loop._agent._start_writer_thread")
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_streaming_stdin_delivery_pipes_and_writes(self, mock_popen, mock_writer):
-        _run_agent_streaming(
+    def test_streaming_stdin_delivery_pipes_and_writes(
+        self, mock_popen: MagicMock, mock_writer: MagicMock
+    ):
+        _ = _run_agent_streaming(
             _ResolvedAgentRun(
                 ["claude", "-p"],
                 "the prompt",
@@ -1950,8 +2009,10 @@ class TestArgDeliveryStdin:
 
     @patch("milknado.loop._agent._start_writer_thread")
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_blocking_arg_delivery_uses_devnull_and_no_writer(self, mock_popen, mock_writer):
-        _run_agent_blocking(
+    def test_blocking_arg_delivery_uses_devnull_and_no_writer(
+        self, mock_popen: MagicMock, mock_writer: MagicMock
+    ):
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 ["aider", "the prompt"],
                 None,
@@ -1966,8 +2027,10 @@ class TestArgDeliveryStdin:
 
     @patch("milknado.loop._agent._start_writer_thread")
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_blocking_stdin_delivery_pipes_and_writes(self, mock_popen, mock_writer):
-        _run_agent_blocking(
+    def test_blocking_stdin_delivery_pipes_and_writes(
+        self, mock_popen: MagicMock, mock_writer: MagicMock
+    ):
+        _ = _run_agent_blocking(
             _ResolvedAgentRun(
                 ["aider"],
                 "the prompt",
@@ -1980,14 +2043,14 @@ class TestArgDeliveryStdin:
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.PIPE
         mock_writer.assert_called_once()
 
-    def test_execute_agent_threads_arg_delivery_through_opencode(self, tmp_path):
+    def test_execute_agent_threads_arg_delivery_through_opencode(self, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         """execute_agent must route the opencode adapter to DEVNULL stdin.
 
         The opencode adapter appends the prompt to argv and reports
         ``stdin_text=None``; execute_agent must spawn with stdin=DEVNULL.
         """
         with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
-            execute_agent(
+            _ = execute_agent(
                 AgentRunSpec(
                     ["opencode", "run"],
                     "do the work",
@@ -1997,13 +2060,13 @@ class TestArgDeliveryStdin:
                 )
             )
 
-        spawn_cmd = mock_popen.call_args.args[0]
+        spawn_cmd = mock_popen.call_args.args[0]  # pyright: ignore[reportAny]
         assert spawn_cmd == ["opencode", "run", "--format", "json", "do the work"]
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
     def test_execute_agent_threads_arg_delivery_through_omp(self):
         with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
-            execute_agent(
+            _ = execute_agent(
                 AgentRunSpec(
                     ["omp", "-p", "--auto-approve"],
                     "do the work",
@@ -2023,7 +2086,7 @@ class TestArgDeliveryStdin:
         ]
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
-    def test_arg_delivery_does_not_hang_when_child_ignores_stdin(self, tmp_path):
+    def test_arg_delivery_does_not_hang_when_child_ignores_stdin(self, tmp_path: Path):
         """Real subprocess: an arg-delivery agent that never reads stdin must
         still complete and have its stdout parsed.
 
@@ -2050,7 +2113,7 @@ class TestArgDeliveryStdin:
         assert result.result_text == "ok"
         assert elapsed < 9.0
 
-    def test_arg_delivery_devnull_gives_child_eof_when_it_reads_stdin(self, tmp_path):
+    def test_arg_delivery_devnull_gives_child_eof_when_it_reads_stdin(self, tmp_path: Path):
         """Real subprocess: a child that *blocks reading stdin* must still
         finish under arg delivery.
 

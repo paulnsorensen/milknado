@@ -2,18 +2,20 @@
 
 import queue
 from datetime import UTC, datetime
+from typing import cast
 
-from milknado.loop._events import (
+from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
     LOG_ERROR,
     LOG_INFO,
     BoundEmitter,
     Event,
+    EventData,
     EventType,
     FanoutEmitter,
     NullEmitter,
     QueueEmitter,
 )
-from tests.loop.helpers import drain_events
+from tests.loop.helpers import drain_events  # pyright: ignore[reportUnknownVariableType]
 
 
 class TestEvent:
@@ -22,7 +24,7 @@ class TestEvent:
         event = Event(
             type=EventType.RUN_STARTED,
             run_id="abc123",
-            data={"max_iterations": 5},
+            data=cast(EventData, cast(object, {"max_iterations": 5})),
             timestamp=ts,
         )
         result = event.to_dict()
@@ -33,7 +35,7 @@ class TestEvent:
         assert result["timestamp"] == "2025-01-15T12:00:00+00:00"
 
     def test_to_dict_empty_data(self):
-        event = Event(type=EventType.RUN_STOPPED, run_id="x")
+        event = Event(type=EventType.RUN_STOPPED, run_id="x")  # pyright: ignore[reportUnknownVariableType]
 
         result = event.to_dict()
 
@@ -41,19 +43,19 @@ class TestEvent:
         assert result["type"] == "run_stopped"
 
     def test_default_data_is_empty_dict(self):
-        event = Event(type=EventType.LOG_MESSAGE, run_id="r1")
-        assert event.data == {}
+        event = Event(type=EventType.LOG_MESSAGE, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
+        assert event.data == {}  # pyright: ignore[reportUnknownMemberType]
 
     def test_default_timestamp_is_utc(self):
-        event = Event(type=EventType.RUN_STARTED, run_id="r1")
+        event = Event(type=EventType.RUN_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
         assert event.timestamp.tzinfo == UTC
 
 
 class TestNullEmitter:
     def test_emit_does_not_raise(self):
         emitter = NullEmitter()
-        event = Event(type=EventType.RUN_STARTED, run_id="x")
-        emitter.emit(event)  # should not raise
+        event = Event(type=EventType.RUN_STARTED, run_id="x")  # pyright: ignore[reportUnknownVariableType]
+        emitter.emit(event)  # should not raise  # pyright: ignore[reportUnknownArgumentType]
 
     def test_wants_agent_output_lines_false(self):
         assert NullEmitter().wants_agent_output_lines() is False
@@ -62,7 +64,11 @@ class TestNullEmitter:
 class TestQueueEmitter:
     def test_emit_pushes_to_queue(self):
         emitter = QueueEmitter()
-        event = Event(type=EventType.ITERATION_STARTED, run_id="r1", data={"iteration": 1})
+        event = Event(
+            type=EventType.ITERATION_STARTED,
+            run_id="r1",
+            data=cast(EventData, cast(object, {"iteration": 1})),
+        )
 
         emitter.emit(event)
 
@@ -71,24 +77,24 @@ class TestQueueEmitter:
 
     def test_multiple_events_queued_in_order(self):
         emitter = QueueEmitter()
-        e1 = Event(type=EventType.RUN_STARTED, run_id="r1")
-        e2 = Event(type=EventType.ITERATION_STARTED, run_id="r1")
-        e3 = Event(type=EventType.RUN_STOPPED, run_id="r1")
+        e1 = Event(type=EventType.RUN_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
+        e2 = Event(type=EventType.ITERATION_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
+        e3 = Event(type=EventType.RUN_STOPPED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
 
-        emitter.emit(e1)
-        emitter.emit(e2)
-        emitter.emit(e3)
+        emitter.emit(e1)  # pyright: ignore[reportUnknownArgumentType]
+        emitter.emit(e2)  # pyright: ignore[reportUnknownArgumentType]
+        emitter.emit(e3)  # pyright: ignore[reportUnknownArgumentType]
 
         assert emitter.queue.get() is e1
         assert emitter.queue.get() is e2
         assert emitter.queue.get() is e3
 
     def test_accepts_external_queue(self):
-        q: queue.Queue[Event] = queue.Queue()
-        emitter = QueueEmitter(q)
-        event = Event(type=EventType.RUN_STARTED, run_id="r1")
+        q: queue.Queue[Event] = queue.Queue()  # pyright: ignore[reportMissingTypeArgument, reportUnknownVariableType]
+        emitter = QueueEmitter(q)  # pyright: ignore[reportUnknownArgumentType]
+        event = Event(type=EventType.RUN_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
 
-        emitter.emit(event)
+        emitter.emit(event)  # pyright: ignore[reportUnknownArgumentType]
 
         assert q.get() is event
 
@@ -102,20 +108,20 @@ class TestBoundEmitter:
         emit = BoundEmitter(q, "run-abc")
         emit(EventType.ITERATION_STARTED, {"iteration": 1})
 
-        events = drain_events(q)
-        assert len(events) == 1
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert events[0].run_id == "run-abc"
         assert events[0].type == EventType.ITERATION_STARTED
-        assert events[0].data == {"iteration": 1}
+        assert events[0].data == {"iteration": 1}  # pyright: ignore[reportUnknownMemberType]
 
     def test_emits_empty_data_when_none_provided(self):
         q = QueueEmitter()
         emit = BoundEmitter(q, "run-xyz")
         emit(EventType.RUN_PAUSED)
 
-        events = drain_events(q)
-        assert len(events) == 1
-        assert events[0].data == {}
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert events[0].data == {}  # pyright: ignore[reportUnknownMemberType]
 
     def test_multiple_events_share_run_id(self):
         q = QueueEmitter()
@@ -124,42 +130,42 @@ class TestBoundEmitter:
         emit(EventType.ITERATION_STARTED, {"iteration": 1})
         emit(EventType.RUN_STOPPED)
 
-        events = drain_events(q)
-        assert all(e.run_id == "run-123" for e in events)
-        assert len(events) == 3
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert all(e.run_id == "run-123" for e in events)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 3  # pyright: ignore[reportUnknownArgumentType]
 
     def test_log_info_emits_log_message_at_info_level(self):
         q = QueueEmitter()
         emit = BoundEmitter(q, "run-log")
         emit.log_info("Waiting 5s...")
 
-        events = drain_events(q)
-        assert len(events) == 1
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert events[0].type == EventType.LOG_MESSAGE
-        assert events[0].data["message"] == "Waiting 5s..."
-        assert events[0].data["level"] == LOG_INFO
+        assert events[0].data["message"] == "Waiting 5s..."  # pyright: ignore[reportUnknownMemberType]
+        assert events[0].data["level"] == LOG_INFO  # pyright: ignore[reportUnknownMemberType]
 
     def test_log_error_emits_log_message_at_error_level(self):
         q = QueueEmitter()
         emit = BoundEmitter(q, "run-log")
         emit.log_error("Something broke")
 
-        events = drain_events(q)
-        assert len(events) == 1
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert events[0].type == EventType.LOG_MESSAGE
-        assert events[0].data["message"] == "Something broke"
-        assert events[0].data["level"] == LOG_ERROR
-        assert "traceback" not in events[0].data
+        assert events[0].data["message"] == "Something broke"  # pyright: ignore[reportUnknownMemberType]
+        assert events[0].data["level"] == LOG_ERROR  # pyright: ignore[reportUnknownMemberType]
+        assert "traceback" not in events[0].data  # pyright: ignore[reportUnknownMemberType]
 
     def test_agent_output_line_emits_event(self):
         q = QueueEmitter()
         emit = BoundEmitter(q, "run-peek")
         emit.agent_output_line("a line", "stdout", 3)
 
-        events = drain_events(q)
-        assert len(events) == 1
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert events[0].type == EventType.AGENT_OUTPUT_LINE
-        assert events[0].data == {
+        assert events[0].data == {  # pyright: ignore[reportUnknownMemberType]
             "line": "a line",
             "stream": "stdout",
             "iteration": 3,
@@ -180,11 +186,11 @@ class TestBoundEmitter:
         emit = BoundEmitter(q, "run-log")
         emit.log_error("Crashed", traceback="Traceback (most recent call last):\n  ...")
 
-        events = drain_events(q)
-        assert len(events) == 1
-        assert events[0].data["message"] == "Crashed"
-        assert events[0].data["level"] == LOG_ERROR
-        assert events[0].data["traceback"] == "Traceback (most recent call last):\n  ..."
+        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert events[0].data["message"] == "Crashed"  # pyright: ignore[reportUnknownMemberType]
+        assert events[0].data["level"] == LOG_ERROR  # pyright: ignore[reportUnknownMemberType]
+        assert events[0].data["traceback"] == "Traceback (most recent call last):\n  ..."  # pyright: ignore[reportUnknownMemberType]
 
 
 class TestFanoutEmitter:
@@ -192,25 +198,25 @@ class TestFanoutEmitter:
         q1 = QueueEmitter()
         q2 = QueueEmitter()
         fanout = FanoutEmitter([q1, q2])
-        event = Event(type=EventType.RUN_STARTED, run_id="r1")
+        event = Event(type=EventType.RUN_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
 
-        fanout.emit(event)
+        fanout.emit(event)  # pyright: ignore[reportUnknownArgumentType]
 
         assert q1.queue.get() is event
         assert q2.queue.get() is event
 
     def test_empty_emitters_list(self):
         fanout = FanoutEmitter([])
-        event = Event(type=EventType.RUN_STARTED, run_id="r1")
-        fanout.emit(event)  # should not raise
+        event = Event(type=EventType.RUN_STARTED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
+        fanout.emit(event)  # should not raise  # pyright: ignore[reportUnknownArgumentType]
 
     def test_fanout_with_null_emitter(self):
         null = NullEmitter()
         q = QueueEmitter()
         fanout = FanoutEmitter([null, q])
-        event = Event(type=EventType.ITERATION_COMPLETED, run_id="r1")
+        event = Event(type=EventType.ITERATION_COMPLETED, run_id="r1")  # pyright: ignore[reportUnknownVariableType]
 
-        fanout.emit(event)
+        fanout.emit(event)  # pyright: ignore[reportUnknownArgumentType]
 
         assert q.queue.get() is event
 

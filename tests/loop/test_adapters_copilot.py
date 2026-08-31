@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from milknado.loop.adapters import Invocation, select_adapter
-from milknado.loop.adapters.copilot import CopilotAdapter
+from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+    Invocation,
+    select_adapter,
+)
+from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+    CopilotAdapter,
+)
 
 
 def test_matches_copilot_binary_stem() -> None:
@@ -114,10 +120,10 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_raises_not_implemented(tmp_path) -> None:
+def test_install_wind_down_hook_raises_not_implemented(tmp_path: Path) -> None:
     adapter = CopilotAdapter()
     with pytest.raises(NotImplementedError, match="no hook system"):
-        adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
+        _ = adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
 
 
 def test_capability_flags() -> None:

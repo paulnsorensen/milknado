@@ -1,12 +1,13 @@
 """Shared pytest fixtures for ralphify tests."""
 
 import pytest
+from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.loop.adapters import ADAPTERS
+from milknado.loop.adapters import ADAPTERS  # pyright: ignore[reportMissingTypeStubs]
 
 
 @pytest.fixture(autouse=True)
-def _disable_streaming(monkeypatch):
+def _disable_streaming(monkeypatch: MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Force the blocking path and raw peek on every registered adapter.
 
     Tests that explicitly need the Popen streaming path or structured

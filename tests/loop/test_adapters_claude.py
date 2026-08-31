@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import cast
 
-from milknado.loop.adapters import Invocation, select_adapter
-from milknado.loop.adapters.claude import ClaudeAdapter
+from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+    Invocation,
+    select_adapter,
+)
+from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
 
 
-def _assistant_event(*blocks: dict) -> str:
+def _assistant_event(*blocks: dict[str, object]) -> str:
     """Build one JSON line matching Claude's assistant message schema."""
     return json.dumps(
         {
@@ -158,15 +163,20 @@ def test_extract_completion_signal_handles_missing_result_text() -> None:
     )
 
 
-def test_install_wind_down_hook_writes_settings(tmp_path) -> None:
+def test_install_wind_down_hook_writes_settings(tmp_path: Path) -> None:
     adapter = ClaudeAdapter()
     counter = tmp_path / "counter"
     env = adapter.install_wind_down_hook(tmp_path, counter, 10, 2)
     assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path)
-    settings = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    hooks = settings["hooks"]["PreToolUse"]
-    assert hooks[0]["matcher"] == "*"
-    command = hooks[0]["hooks"][0]["command"]
+    settings = cast(
+        dict[str, object],
+        cast(object, json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))),
+    )
+    hooks = cast(dict[str, object], settings["hooks"])
+    pretool_use = cast(list[dict[str, object]], hooks["PreToolUse"])
+    assert pretool_use[0]["matcher"] == "*"
+    hook = cast(list[dict[str, object]], pretool_use[0]["hooks"])
+    command = cast(str, hook[0]["command"])
     assert "milknado.loop._wind_down_shim" in command
     assert str(counter) in command
     assert " 10 " in command

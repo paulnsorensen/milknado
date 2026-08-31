@@ -2,7 +2,7 @@
 
 import pytest
 
-from milknado.loop._output import (
+from milknado.loop._output import (  # pyright: ignore[reportMissingTypeStubs]
     ProcessResult,
     collect_output,
     ensure_str,
@@ -84,7 +84,9 @@ class TestCollectOutput:
             "mixed_str_and_bytes",
         ],
     )
-    def test_collect_output(self, stdout, stderr, expected):
+    def test_collect_output(
+        self, stdout: str | bytes | None, stderr: str | bytes | None, expected: str
+    ):
         assert collect_output(stdout, stderr) == expected
 
     def test_stdout_without_trailing_newline_gets_separator(self):

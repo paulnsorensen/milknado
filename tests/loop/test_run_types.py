@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop._frontmatter import RALPH_MARKER
-from milknado.loop._run_types import (
+from milknado.loop._frontmatter import RALPH_MARKER  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
     DEFAULT_COMMAND_TIMEOUT,
     RUN_ID_LENGTH,
     Command,
@@ -44,7 +44,7 @@ class TestCommand:
 
 
 class TestRunConfig:
-    def test_default_project_root_is_dot(self, tmp_path):
+    def test_default_project_root_is_dot(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
             ralph_dir=tmp_path,
@@ -52,7 +52,7 @@ class TestRunConfig:
         )
         assert config.project_root == Path(".")
 
-    def test_defaults(self, tmp_path):
+    def test_defaults(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
             ralph_dir=tmp_path,
@@ -68,7 +68,7 @@ class TestRunConfig:
         assert config.commit_footer is None
         assert config.prompt is None
 
-    def test_prompt_body_instead_of_ralph_file(self, tmp_path):
+    def test_prompt_body_instead_of_ralph_file(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
             ralph_dir=tmp_path,
@@ -77,13 +77,13 @@ class TestRunConfig:
         assert config.prompt == "do work"
         assert config.ralph_file is None
 
-    def test_requires_prompt_or_ralph_file(self, tmp_path):
+    def test_requires_prompt_or_ralph_file(self, tmp_path: Path):
         with pytest.raises(ValueError, match="exactly one of `prompt` or `ralph_file`"):
-            RunConfig(agent="echo", ralph_dir=tmp_path)
+            _ = RunConfig(agent="echo", ralph_dir=tmp_path)
 
-    def test_rejects_both_prompt_and_ralph_file(self, tmp_path):
+    def test_rejects_both_prompt_and_ralph_file(self, tmp_path: Path):
         with pytest.raises(ValueError, match="exactly one of `prompt` or `ralph_file`"):
-            RunConfig(
+            _ = RunConfig(
                 agent="echo",
                 ralph_dir=tmp_path,
                 ralph_file=tmp_path / RALPH_MARKER,
@@ -100,14 +100,14 @@ class TestCompletionVerdict:
     def test_is_frozen(self):
         verdict = CompletionVerdict(ok=True, feedback="")
         with pytest.raises(AttributeError):
-            verdict.ok = False  # type: ignore[misc]
+            verdict.ok = False  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_is_public_loop_api(self):
-        import milknado.loop
+        import milknado.loop  # pyright: ignore[reportMissingTypeStubs]
 
         assert milknado.loop.CompletionVerdict is CompletionVerdict
 
-    def test_run_config_defaults_completion_verifier_to_none(self, tmp_path):
+    def test_run_config_defaults_completion_verifier_to_none(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
             ralph_dir=tmp_path,
@@ -143,7 +143,7 @@ class TestRunResult:
             timed_out_count=0,
         )
         with pytest.raises(AttributeError):
-            result.completed = 5  # type: ignore[misc]
+            result.completed = 5  # pyright: ignore[reportAttributeAccessIssue]
 
 
 class TestRunState:
@@ -219,7 +219,7 @@ class TestRunState:
 
         result = state.wait_for_unpause(timeout=1.0)
         assert result is True
-        resumed.wait(timeout=1.0)
+        _ = resumed.wait(timeout=1.0)
 
     def test_wait_for_unpause_times_out(self):
         state = RunState(run_id="r1")
@@ -249,7 +249,7 @@ class TestRunState:
 
         result = state.wait_for_stop(timeout=1.0)
         assert result is True
-        stopped.wait(timeout=1.0)
+        _ = stopped.wait(timeout=1.0)
 
     def test_guidance_wins_soft_completion_once_then_closes_admission(self):
         state = RunState(run_id="r1")
@@ -266,18 +266,18 @@ class TestRunState:
         outcomes: dict[str, bool] = {}
 
         def queue_guidance() -> None:
-            barrier.wait()
+            _ = barrier.wait()
             outcomes["guidance"] = state.queue_guidance("inspect the final output")
 
         def commit_completion() -> None:
-            barrier.wait()
+            _ = barrier.wait()
             outcomes["completion"] = state.try_commit_soft_completion()
 
         guidance_thread = threading.Thread(target=queue_guidance)
         completion_thread = threading.Thread(target=commit_completion)
         guidance_thread.start()
         completion_thread.start()
-        barrier.wait()
+        _ = barrier.wait()
         guidance_thread.join(timeout=1)
         completion_thread.join(timeout=1)
 
@@ -310,7 +310,7 @@ class TestRunStatus:
             (RunStatus.FAILED, "failed"),
         ],
     )
-    def test_enum_values(self, status, value):
+    def test_enum_values(self, status: RunStatus, value: str):
         assert status.value == value
 
     @pytest.mark.parametrize(
@@ -321,10 +321,10 @@ class TestRunStatus:
             (RunStatus.STOPPED, "user_requested"),
         ],
     )
-    def test_reason_for_terminal_statuses(self, status, expected_reason):
+    def test_reason_for_terminal_statuses(self, status: RunStatus, expected_reason: str):
         assert status.reason == expected_reason
 
     @pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING, RunStatus.PAUSED])
-    def test_reason_raises_for_non_terminal_statuses(self, status):
+    def test_reason_raises_for_non_terminal_statuses(self, status: RunStatus):
         with pytest.raises(ValueError, match="not a terminal status"):
             _ = status.reason

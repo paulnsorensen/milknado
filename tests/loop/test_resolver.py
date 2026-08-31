@@ -1,6 +1,9 @@
 """Tests for ralphify._resolver — the template placeholder resolution engine."""
 
-from milknado.loop._resolver import resolve_all, resolve_args
+from milknado.loop._resolver import (  # pyright: ignore[reportMissingTypeStubs]
+    resolve_all,
+    resolve_args,
+)
 
 
 class TestResolveAll:
