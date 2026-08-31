@@ -29,24 +29,19 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import cast
 
 from milknado.app.node import (
     GOAL_OWNER_ENV_VAR,
-    _provision_claim_run,
-    _resolve_model,
-    _resolve_node_tools,
-    _resolve_owner,
+    _provision_claim_run,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
+    _resolve_model,  # pyright: ignore[reportPrivateUsage]
+    _resolve_node_tools,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
+    _resolve_owner,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.common import NodeKind, resolve_flavor_profile
 from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso, render_brief
 from milknado.domains.execution import build_completion_verifier
 from milknado.domains.graph import VERIFY_ROLE
-from milknado.mcp._core import (
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
+from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
 
 _logger = logging.getLogger(__name__)
 
@@ -60,7 +55,7 @@ __all__ = [
 
 
 @mcp.tool()
-def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -> dict:
+def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -> Response:
     """Claim a GOAL node's subtree as this session's task list (ADR-003).
 
     Acquires or reclaims the owner token and coordinator PID in one transaction.
@@ -86,7 +81,7 @@ def milknado_goal_claim(goal_id: int, owner: str = "", project_root: str = "") -
 
 
 @mcp.tool()
-def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "") -> dict:
+def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "") -> Response:
     """Release a GOAL claim held by `owner` (ADR-003); wraps release_goal_row.
 
     `owner` falls back to GOAL_OWNER_ENV_VAR when omitted. Fenced on the owning
@@ -111,7 +106,7 @@ def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "")
 @mcp.tool()
 def milknado_todo_claim(
     node_id: int, worktree: bool | None = None, project_root: str = ""
-) -> dict:
+) -> Response:
     """Claim a task node for native (in-session Workflow) execution; spawn nothing.
 
     Atomically CAS-claims the node PENDING/FAILED/BLOCKED -> RUNNING, writes a
@@ -173,7 +168,7 @@ def milknado_todo_claim(
 
 
 @mcp.tool()
-def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
+def milknado_node_verify(run_id: str, project_root: str = "") -> Response:
     """Run the node's resolved quality_gates in worktree_path or project_root; return the verdict.
 
     Exposes the tier-2 completion verifier as a callable: runs every resolved
@@ -194,7 +189,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
         run = graph.get_run(run_id)
         if run is None:
             raise ValueError(f"run {run_id!r} not found")
-        node = graph.get_node(cast(int, run["node_id"]))
+        node = graph.get_node(run["node_id"])
         if node is None:
             raise ValueError(f"node {run['node_id']} for run {run_id!r} not found")
 
@@ -207,7 +202,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
             artifact_path=node.artifact_path,
         )
         verdict = verifier()
-        graph.deposit_run_message(
+        _ = graph.deposit_run_message(
             run_id,
             VERIFY_ROLE,
             json.dumps({"ok": verdict.ok, "feedback": verdict.feedback}),

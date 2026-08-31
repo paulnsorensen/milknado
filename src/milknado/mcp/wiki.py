@@ -18,7 +18,7 @@ from milknado.domains.wiki import (
     roadmap_schema,
     wiki_root,
 )
-from milknado.mcp._core import mcp, open_graph, resolve_project_root
+from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
 
 
 def _wiki_root_for(project_root: str) -> tuple[Path, Path]:
@@ -32,13 +32,13 @@ def _load_model(project_root: str, roadmap_slug: str) -> RoadmapModel:
 
 
 @mcp.tool()
-def milknado_roadmap_schema() -> dict:
+def milknado_roadmap_schema() -> Response:
     """Return the canonical roadmap model JSON Schema."""
     return roadmap_schema()
 
 
 @mcp.tool()
-def milknado_roadmap_json(roadmap_slug: str, project_root: str = "") -> dict:
+def milknado_roadmap_json(roadmap_slug: str, project_root: str = "") -> Response:
     """Return a canonical JSON-compatible roadmap document and resolved edges."""
     return roadmap_json(_load_model(project_root, roadmap_slug))
 
@@ -48,7 +48,7 @@ def milknado_roadmap_render(
     roadmap_slug: str,
     format: str = "mermaid",
     project_root: str = "",
-) -> dict:
+) -> Response:
     """Render a roadmap as Mermaid or self-contained HTML."""
     if format not in {"mermaid", "html"}:
         raise ValueError("format must be 'mermaid' or 'html'")
@@ -58,7 +58,7 @@ def milknado_roadmap_render(
 
 
 @mcp.tool()
-def milknado_roadmap_import(roadmap_slug: str, project_root: str = "") -> dict:
+def milknado_roadmap_import(roadmap_slug: str, project_root: str = "") -> Response:
     """Seed milknado roadmap + goal nodes from the wiki roadmap directory.
 
     Reads <project_root>/.hallouminate/wiki/roadmaps/<roadmap_slug>/; idempotent
@@ -81,7 +81,7 @@ def milknado_roadmap_import(roadmap_slug: str, project_root: str = "") -> dict:
 
 
 @mcp.tool()
-def milknado_roadmap_export(roadmap_slug: str, project_root: str = "") -> dict:
+def milknado_roadmap_export(roadmap_slug: str, project_root: str = "") -> Response:
     """Harvest milknado execution state back into the wiki goal files.
 
     Overwrites only each goal's harvest block + status/last_synced; human-authored

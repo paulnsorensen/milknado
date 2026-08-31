@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import pytest
 
@@ -415,14 +416,14 @@ def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeyp
         graph.close()
 
 
-def test_plan_apply_nonexistent_parent_id_raises(tmp_path, monkeypatch) -> None:
+def test_plan_apply_nonexistent_parent_id_raises(tmp_path: Path, monkeypatch) -> None:
     """A parent_id with no matching node raises ValueError at apply time."""
     _stub_crg(monkeypatch)
     with pytest.raises(ValueError, match="parent"):
-        _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=99999)
+        _ = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=99999)
 
 
-def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None:
+def test_plan_apply_kind_invalid_parent_id_raises(tmp_path: Path, monkeypatch) -> None:
     """A parent whose kind rejects TASK children fails loud at the tool boundary.
 
     ROADMAP accepts only GOAL children, so attaching TASK batches under it must raise.
@@ -440,7 +441,9 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path, monkeypatch) -> None
         graph.close()
 
     with pytest.raises(ValueError, match="TASK is not a valid child"):
-        _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=roadmap_id)
+        _ = _call_tool(
+            manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=roadmap_id
+        )
 
 
 def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) -> None:
@@ -472,15 +475,15 @@ def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) 
     assert root_entry["status"] == "pending"
 
 
-def test_plan_apply_invalid_manifest_raises_value_error(tmp_path, monkeypatch) -> None:
+def test_plan_apply_invalid_manifest_raises_value_error(tmp_path: Path, monkeypatch) -> None:
     """An invalid manifest dict fails loud at the tool boundary, not a silent None."""
     _stub_crg(monkeypatch)
     bad = {"manifest_version": "wrong.version", "goal": "x", "goal_summary": "y", "changes": []}
     with pytest.raises(ValueError, match="milknado.plan.v2"):
-        _call_tool(manifest=bad, project_root=str(tmp_path))
+        _ = _call_tool(manifest=bad, project_root=str(tmp_path))
 
 
-def test_plan_apply_mega_batch_aborts(tmp_path, monkeypatch) -> None:
+def test_plan_apply_mega_batch_aborts(tmp_path: Path, monkeypatch) -> None:
     """A single oversized batch over the threshold raises MegaBatchAborted unless forced."""
     from milknado.domains.common.errors import MegaBatchAborted
 
@@ -496,10 +499,10 @@ def test_plan_apply_mega_batch_aborts(tmp_path, monkeypatch) -> None:
         ],
     }
     with pytest.raises(MegaBatchAborted):
-        _call_tool(manifest=manifest, project_root=str(tmp_path), budget=70_000)
+        _ = _call_tool(manifest=manifest, project_root=str(tmp_path), budget=70_000)
 
 
-def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch) -> None:
+def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path: Path, monkeypatch) -> None:
     """force_single_batch=True lands the nodes despite exceeding the mega-batch threshold."""
     from milknado.mcp.server import open_graph
 
@@ -531,7 +534,7 @@ def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path, monkeypatch
     assert set(created) <= persisted
 
 
-def test_plan_apply_traversal_path_raises_value_error(tmp_path, monkeypatch) -> None:
+def test_plan_apply_traversal_path_raises_value_error(tmp_path: Path, monkeypatch) -> None:
     """A manifest with a traversal path in changes[].path is rejected at the tool boundary."""
     _stub_crg(monkeypatch)
     manifest = {
@@ -543,4 +546,4 @@ def test_plan_apply_traversal_path_raises_value_error(tmp_path, monkeypatch) -> 
         ],
     }
     with pytest.raises(ValueError):
-        _call_tool(manifest=manifest, project_root=str(tmp_path))
+        _ = _call_tool(manifest=manifest, project_root=str(tmp_path))
