@@ -17,7 +17,7 @@ from milknado.domains.github import (
     resolve_github_roadmap_node,
 )
 from milknado.domains.wiki import resolve_roadmap_node, wiki_root
-from milknado.mcp._core import mcp, open_graph, resolve_project_root
+from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
 
 
 def _roots(project_root: str) -> tuple[Path, Path]:
@@ -26,7 +26,7 @@ def _roots(project_root: str) -> tuple[Path, Path]:
 
 
 @mcp.tool()
-def milknado_github_roadmap_import(owner: str, number: int, project_root: str = "") -> dict:
+def milknado_github_roadmap_import(owner: str, number: int, project_root: str = "") -> Response:
     """Seed milknado roadmap + goal nodes from a GitHub Project (github-origin).
 
     Idempotent via UNIQUE(github_ref); seeds the goal layer only (no task nodes).
@@ -47,7 +47,7 @@ def milknado_github_roadmap_import(owner: str, number: int, project_root: str = 
 
 
 @mcp.tool()
-def milknado_github_roadmap_bind(roadmap_slug: str, project_root: str = "") -> dict:
+def milknado_github_roadmap_bind(roadmap_slug: str, project_root: str = "") -> Response:
     """Project a wiki-origin roadmap onto a GitHub Project (one-time bind).
 
     Resolves the binding from the roadmap index.md `github_project`/`github_repo`
@@ -71,7 +71,7 @@ def milknado_github_roadmap_bind(roadmap_slug: str, project_root: str = "") -> d
 
 
 @mcp.tool()
-def milknado_github_roadmap_export(owner: str, number: int, project_root: str = "") -> dict:
+def milknado_github_roadmap_export(owner: str, number: int, project_root: str = "") -> Response:
     """Harvest milknado execution state onto the bound Project item fields.
 
     Writes Status + harvest per bound goal; overwrites the Issue body only for

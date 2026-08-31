@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
+# Keep this import surface compact; the module has a strict source-size budget.
+# ruff: noqa: I001
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import (
-    NodeKind,
-    NodeSpec,
-    normalize_hint_paths,
-    validate_hint_path,
-)
-from milknado.mcp._core import (
-    Flavor,
-    Kind,
-    TodoStatus,
-    _parse_flavor,
-    _parse_kind,
-    _parse_todo_status,
-    mcp,
-    open_graph,
-    resolve_project_root,
-)
+from milknado.domains.common import MilknadoConfig, NodeKind, NodeSpec
+from milknado.domains.common import normalize_hint_paths, validate_hint_path
+from milknado.domains.graph import MikadoGraph
+from milknado.mcp._core import Flavor, Kind, NodeSummary, Response, TodoStatus
+from milknado.mcp._core import mcp, open_graph, parse_flavor, parse_kind, parse_todo_status
+from milknado.mcp._core import resolve_project_root
 from milknado.mcp.todo import follow_up_parent_id, node_to_summary
 
 _logger = logging.getLogger(__name__)
@@ -39,20 +30,22 @@ class _CreateTodo:
     root: Path
 
 
-def _create_todo(graph, cfg, parent_id: int | None, request: _CreateTodo) -> dict:
+def _create_todo(
+    graph: MikadoGraph, cfg: MilknadoConfig, parent_id: int | None, request: _CreateTodo
+) -> NodeSummary:
     if request.artifact is not None:
         validate_hint_path(request.artifact, request.root, label="artifact")
     files = (
         normalize_hint_paths(request.files, request.root) if request.files is not None else None
     )
     flavor = (
-        _parse_flavor(request.flavor, cfg.flavor_registry) if request.flavor is not None else None
+        parse_flavor(request.flavor, cfg.flavor_registry) if request.flavor is not None else None
     )
     node = graph.add_node(
         request.description,
         parent_id=parent_id,
         spec=NodeSpec(
-            kind=_parse_kind(request.kind),
+            kind=parse_kind(request.kind),
             flavor=flavor,
             artifact_path=request.artifact,
             prereqs=request.prereqs or (),
@@ -74,9 +67,8 @@ def milknado_todo_add(
     flavor: Flavor | None = None,
     artifact: str | None = None,
     prereqs: list[int] | None = None,
-) -> dict:
+) -> NodeSummary:
     """Add a todo node (kind: roadmap|goal|task), optionally linked under parent_id.
-
     files: optional paths this node will touch, confined to the project root.
     flavor: a built-in flavor or a registry name declared in milknado.toml;
     validation uses the resolved project flavor registry and is valid only for tasks.
@@ -101,16 +93,18 @@ def milknado_todo_add(
 
 
 @mcp.tool()
-def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str = "") -> dict:
+def milknado_todo_set_status(
+    node_id: int, status: TodoStatus, project_root: str = ""
+) -> NodeSummary:
     """Set todo status: pending | in_progress | blocked | done."""
-    target = _parse_todo_status(status)
+    target = parse_todo_status(status)
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
         node = graph.get_node(node_id)
         if node is None:
             raise ValueError(f"node {node_id} not found")
-        graph.set_todo_status(node.id, target)
+        _ = graph.set_todo_status(node.id, target)
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after status update")
@@ -123,14 +117,15 @@ def milknado_todo_set_status(node_id: int, status: TodoStatus, project_root: str
 
 
 @mcp.tool()
-def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: str = "") -> dict:
+def milknado_set_subtree_status(
+    root_id: int, status: TodoStatus, project_root: str = ""
+) -> Response:
     """Set status on every live node in root_id's subtree, children before parents.
-
     Archived nodes are skipped — bulk reconciliation never resurrects shelved
     work. Returns {"updated": <count>}. Validates the whole live set before
     writing, so illegal transitions leave the graph unchanged.
     """
-    target = _parse_todo_status(status)
+    target = parse_todo_status(status)
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
@@ -147,7 +142,7 @@ def milknado_set_subtree_status(root_id: int, status: TodoStatus, project_root: 
 
 
 @mcp.tool()
-def milknado_archive_node(node_id: int, project_root: str = "") -> dict:
+def milknado_archive_node(node_id: int, project_root: str = "") -> Response:
     """Archive an all-DONE subtree (soft-hide, reversible via unarchive).
 
     Fails loud naming the live offenders when any node in the subtree is not
@@ -166,7 +161,7 @@ def milknado_archive_node(node_id: int, project_root: str = "") -> dict:
 
 
 @mcp.tool()
-def milknado_unarchive_node(node_id: int, project_root: str = "") -> dict:
+def milknado_unarchive_node(node_id: int, project_root: str = "") -> Response:
     """Restore an archived subtree; refuses while an ancestor stays archived.
 
     Returns {"unarchived": <count>}.
@@ -193,9 +188,8 @@ def milknado_track_follow_up(
     flavor: Flavor | None = None,
     artifact: str | None = None,
     prereqs: list[int] | None = None,
-) -> dict:
+) -> NodeSummary:
     """Register discovered follow-up work as a new node.
-
     Without parent_id, attaches beside the worker's current node; without worker
     context, creates a root node. Flavor accepts a built-in or a registry name
     declared in milknado.toml and is valid only for task nodes.
@@ -219,7 +213,7 @@ def milknado_track_follow_up(
 
 
 @mcp.tool()
-def milknado_delete_node(node_id: int, cascade: bool = False, project_root: str = "") -> dict:
+def milknado_delete_node(node_id: int, cascade: bool = False, project_root: str = "") -> Response:
     """Delete a node (coordinator-only). Refuses a node with children unless cascade=True."""
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
@@ -234,9 +228,10 @@ def milknado_delete_node(node_id: int, cascade: bool = False, project_root: str 
 
 
 @mcp.tool()
-def milknado_move_node(node_id: int, new_parent_id: int | None, project_root: str = "") -> dict:
+def milknado_move_node(
+    node_id: int, new_parent_id: int | None, project_root: str = ""
+) -> NodeSummary:
     """Re-parent a node under new_parent_id (None moves it to root level).
-
     Preserves the node id and its children; rejects a move that would make the
     node its own ancestor (cycle). Returns the moved node's summary.
     """
@@ -262,7 +257,7 @@ def milknado_edit_node(
     project_root: str = "",
     files: list[str] | None = None,
     artifact: str | None = None,
-) -> dict:
+) -> NodeSummary:
     """Edit a node's description, kind, flavor, and/or artifact (coordinator-only).
 
     Status is not editable. files: None leaves hints untouched; [] clears all hints;
@@ -280,14 +275,14 @@ def milknado_edit_node(
         raise ValueError(
             "nothing to edit: provide description, kind, flavor, files, and/or artifact"
         )
-    node_kind = _parse_kind(kind) if kind is not None else None
+    node_kind = parse_kind(kind) if kind is not None else None
     root = resolve_project_root(project_root or None)
     if artifact is not None:
         validate_hint_path(artifact, root, label="artifact")
     hint_paths = normalize_hint_paths(files, root) if files is not None else None
     graph, cfg = open_graph(root)
     try:
-        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
+        node_flavor = parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
             raise ValueError(
                 "flavor is only valid for task nodes; cannot set flavor with non-task kind"
@@ -299,8 +294,8 @@ def milknado_edit_node(
                 raise ValueError(f"node {node_id} not found")
             if existing.kind != NodeKind.TASK:
                 raise ValueError(
-                    f"flavor is only valid for task nodes; node {node_id} has kind"
-                    f" {existing.kind.value!r}"
+                    "flavor is only valid for task nodes; "
+                    + f"node {node_id} has kind {existing.kind.value!r}"
                 )
         if (
             description is not None

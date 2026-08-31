@@ -7,21 +7,24 @@ import os
 
 from milknado.domains.common import MikadoNode, resolve_flavor_profile
 from milknado.domains.dispatch import render_brief
+from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import (
     Flavor,
     Kind,
-    _parse_flavor,
-    _parse_kind,
+    NodeSummary,
+    Response,
     mcp,
     open_graph,
+    parse_flavor,
+    parse_kind,
     resolve_project_root,
 )
 
 _logger = logging.getLogger(__name__)
 
 
-def node_to_summary(node: MikadoNode) -> dict:
-    result: dict = {
+def node_to_summary(node: MikadoNode) -> NodeSummary:
+    result: NodeSummary = {
         "id": node.id,
         "kind": node.kind.value,
         "status": node.status.value,
@@ -36,7 +39,7 @@ def _build_subtree(
     node: MikadoNode,
     children_map: dict[int, list[MikadoNode]],
     max_depth: int | None = None,
-) -> dict:
+) -> NodeSummary:
     payload = node_to_summary(node)
     if max_depth is not None and max_depth <= 0:
         payload["children"] = []
@@ -54,7 +57,7 @@ def milknado_todo_tree(
     root_id: int | None = None,
     max_depth: int | None = None,
     include_archived: bool = False,
-) -> list[dict]:
+) -> list[NodeSummary]:
     """Return the todo tree from root_id, or the forest of all top-level nodes.
 
     max_depth bounds how far to descend: 0 returns each root node only, 1 adds
@@ -85,16 +88,16 @@ def milknado_todo_next(
     kind: Kind = "task",
     flavor: Flavor | None = None,
     project_root: str = "",
-) -> dict | None:
+) -> NodeSummary | None:
     """Return the next runnable node (leaf with no incomplete prereqs).
 
     flavor: if provided, only returns nodes with the matching flavor.
     """
-    node_kind = _parse_kind(kind)
+    node_kind = parse_kind(kind)
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        node_flavor = _parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
+        node_flavor = parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
         for node in graph.get_ready_nodes():
             if node.kind != node_kind:
                 continue
@@ -107,7 +110,7 @@ def milknado_todo_next(
 
 
 @mcp.tool()
-def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
+def milknado_todo_brief(node_id: int, project_root: str = "") -> Response:
     """Render a markdown brief for a task (description, ancestor goals, prereqs, files)."""
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
@@ -128,7 +131,7 @@ def milknado_todo_brief(node_id: int, project_root: str = "") -> dict:
 
 
 @mcp.tool()
-def milknado_get_node(node_id: int, project_root: str = "") -> dict:
+def milknado_get_node(node_id: int, project_root: str = "") -> Response:
     """Read one node by id: summary fields plus parent_id and prerequisite_ids.
 
     A node's prerequisites are its children (a node is ready once all children
@@ -155,7 +158,7 @@ def _worker_node_id() -> int | None:
     return int(raw) if raw else None
 
 
-def follow_up_parent_id(graph) -> int | None:
+def follow_up_parent_id(graph: MikadoGraph) -> int | None:
     """Parent for an auto-parented follow-up: the worker node's own parent.
 
     The worker's exit-0 reconcile drives MILKNADO_NODE_ID's node to done, and

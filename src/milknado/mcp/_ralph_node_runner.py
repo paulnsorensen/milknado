@@ -14,6 +14,7 @@ import argparse
 import logging
 import os
 from pathlib import Path
+from typing import Protocol, cast
 
 from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
@@ -21,9 +22,23 @@ from milknado.domains.dispatch import now_iso, runs_dir
 _logger = logging.getLogger("milknado")
 
 
-def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:
+class _RunFinisher(Protocol):
+    def finish_run(self, run_id: str, result: RunResult) -> bool: ...
+
+
+class _RunnerArgs(Protocol):
+    node_id: int
+    project_root: str
+    run_id: str
+    timeout: float
+    target_branch: str
+    base_oid: str
+
+
+def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bool:
     try:
-        written = graph.finish_run(run_id, result)
+        finish_run = cast(_RunFinisher, graph).finish_run
+        written = finish_run(run_id, result)
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
     else:
@@ -32,9 +47,13 @@ def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:
         detail = "finish_run lost its running-row fence"
     _logger.error("ralph terminal persistence failed: run_id=%s detail=%s", run_id, detail)
     try:
-        runs_dir(root).joinpath(f"{run_id}.terminal-error").write_text(
-            detail + "\n",
-            encoding="utf-8",
+        _ = (
+            runs_dir(root)
+            .joinpath(f"{run_id}.terminal-error")
+            .write_text(
+                detail + "\n",
+                encoding="utf-8",
+            )
         )
     except OSError:
         _logger.exception("ralph terminal error sidecar write failed: run_id=%s", run_id)
@@ -43,13 +62,13 @@ def _finish_run(graph, root: Path, run_id: str, result: RunResult) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="milknado.mcp._ralph_node_runner")
-    parser.add_argument("--node-id", type=int, required=True)
-    parser.add_argument("--project-root", required=True)
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--timeout", type=float, default=1800.0)
-    parser.add_argument("--target-branch", required=True)
-    parser.add_argument("--base-oid", required=True)
-    args = parser.parse_args(argv)
+    _ = parser.add_argument("--node-id", type=int, required=True)
+    _ = parser.add_argument("--project-root", required=True)
+    _ = parser.add_argument("--run-id", required=True)
+    _ = parser.add_argument("--timeout", type=float, default=1800.0)
+    _ = parser.add_argument("--target-branch", required=True)
+    _ = parser.add_argument("--base-oid", required=True)
+    args = cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
 
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.common import resolve_flavor_profile
@@ -84,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.node_id,
                 NO_GATES_CONFIGURED_MESSAGE,
             )
-            _finish_run(
+            _ = _finish_run(
                 graph,
                 root,
                 args.run_id,
@@ -154,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
             args.run_id,
             args.node_id,
         )
-        _finish_run(
+        _ = _finish_run(
             graph,
             root,
             args.run_id,
