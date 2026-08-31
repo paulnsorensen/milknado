@@ -20,11 +20,11 @@ class OmpAdapter(GenericAdapter):
     supports_streaming: bool = True
 
     @override
-    def matches(self, cmd: list[str]) -> bool:
+    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportImplicitOverride]
         return bool(cmd) and Path(cmd[0]).stem == "omp"
 
     @override
-    def build_command(self, cmd: list[str]) -> list[str]:
+    def build_command(self, cmd: list[str]) -> list[str]:  # pyright: ignore[reportImplicitOverride]
         """Replace any configured output mode with Oh My Pi's JSON event stream."""
         command: list[str] = []
         emitted_mode = False
@@ -47,11 +47,11 @@ class OmpAdapter(GenericAdapter):
         return command
 
     @override
-    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:
+    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:  # pyright: ignore[reportImplicitOverride]
         return Invocation([*cmd, prompt], None)
 
     @override
-    def parse_event(self, line: str) -> AdapterEvent | None:
+    def parse_event(self, line: str) -> AdapterEvent | None:  # pyright: ignore[reportImplicitOverride]
         try:
             raw = cast(object, json.loads(line))
         except json.JSONDecodeError:
