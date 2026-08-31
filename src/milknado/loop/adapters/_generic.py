@@ -30,7 +30,7 @@ class GenericAdapter:
     # the full stdout buffer if it wants promise detection.
     requires_full_stdout_for_completion: bool = True
 
-    def matches(self, cmd: list[str]) -> bool:
+    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportUnusedParameter]
         return False
 
     def build_command(self, cmd: list[str]) -> list[str]:
@@ -40,7 +40,7 @@ class GenericAdapter:
         """Unknown CLIs are assumed to read the prompt from stdin."""
         return stdin_invocation(cmd, prompt)
 
-    def parse_event(self, line: str) -> AdapterEvent | None:
+    def parse_event(self, line: str) -> AdapterEvent | None:  # pyright: ignore[reportUnusedParameter]
         return None
 
     def extract_completion_signal(
@@ -67,10 +67,10 @@ class GenericAdapter:
 
     def install_wind_down_hook(
         self,
-        tempdir: Path,
-        counter_path: Path,
-        cap: int,
-        grace: int,
+        tempdir: Path,  # pyright: ignore[reportUnusedParameter]
+        counter_path: Path,  # pyright: ignore[reportUnusedParameter]
+        cap: int,  # pyright: ignore[reportUnusedParameter]
+        grace: int,  # pyright: ignore[reportUnusedParameter]
     ) -> dict[str, str]:
         raise NotImplementedError(
             "GenericAdapter does not support soft wind-down; max_turns will hard-kill."

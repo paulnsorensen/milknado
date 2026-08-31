@@ -53,12 +53,12 @@ def _register_builtin_adapters() -> None:
     is contained.
     """
     from milknado.loop.adapters import (
-        claude,
-        codex,
-        copilot,
-        crush,
-        omp,
-        opencode,
+        claude,  # pyright: ignore[reportUnusedImport]
+        codex,  # pyright: ignore[reportUnusedImport]
+        copilot,  # pyright: ignore[reportUnusedImport]
+        crush,  # pyright: ignore[reportUnusedImport]
+        omp,  # pyright: ignore[reportUnusedImport]
+        opencode,  # pyright: ignore[reportUnusedImport]
     )
 
 

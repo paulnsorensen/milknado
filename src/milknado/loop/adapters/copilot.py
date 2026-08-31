@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
@@ -102,11 +103,12 @@ class CopilotAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = parsed.get("type") or parsed.get("event") or parsed.get("kind")
         if not isinstance(event_type, str):
@@ -147,9 +149,10 @@ class CopilotAdapter:
         cap: int,
         grace: int,
     ) -> dict[str, str]:
+        del tempdir, counter_path, cap, grace
         raise NotImplementedError(
             "Copilot CLI has no hook system as of 2026-04; max_turns "
-            "will hard-kill without soft wind-down signal."
+            + "will hard-kill without soft wind-down signal."
         )
 
 

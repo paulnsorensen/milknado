@@ -118,9 +118,10 @@ class CrushAdapter:
         cap: int,
         grace: int,
     ) -> dict[str, str]:
+        del tempdir, counter_path, cap, grace
         raise NotImplementedError(
             "crush has no hook system; soft wind-down is unavailable and "
-            "max_turns will hard-kill without a wind-down signal."
+            + "max_turns will hard-kill without a wind-down signal."
         )
 
 

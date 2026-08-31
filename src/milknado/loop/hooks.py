@@ -20,7 +20,7 @@ import logging
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 _log = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class AgentHook(Protocol):
 
     def on_turn_capped(self, *, iteration: int, count: int) -> None: ...
 
-    def on_iteration_completed(self, *, iteration: int, result: dict[str, Any]) -> None: ...
+    def on_iteration_completed(self, *, iteration: int, result: dict[str, object]) -> None: ...
 
     def on_completion_signal(self, *, iteration: int, signal: str) -> None: ...
 
@@ -81,28 +81,50 @@ class NoOpAgentHook:
     events — override the methods you need, inherit the rest.
     """
 
-    def on_iteration_started(self, *, iteration: int) -> None:
+    def on_iteration_started(self, *, iteration: int) -> None:  # pyright: ignore[reportUnusedParameter]
         pass
 
-    def on_commands_completed(self, *, iteration: int, outputs: dict[str, str]) -> None:
+    def on_commands_completed(
+        self,
+        *,
+        iteration: int,  # pyright: ignore[reportUnusedParameter]
+        outputs: dict[str, str],  # pyright: ignore[reportUnusedParameter]
+    ) -> None:
         pass
 
-    def on_prompt_assembled(self, *, iteration: int, prompt: str) -> None:
+    def on_prompt_assembled(self, *, iteration: int, prompt: str) -> None:  # pyright: ignore[reportUnusedParameter]
         pass
 
-    def on_tool_use(self, *, iteration: int, tool_name: str, count: int) -> None:
+    def on_tool_use(
+        self,
+        *,
+        iteration: int,  # pyright: ignore[reportUnusedParameter]
+        tool_name: str,  # pyright: ignore[reportUnusedParameter]
+        count: int,  # pyright: ignore[reportUnusedParameter]
+    ) -> None:
         pass
 
-    def on_turn_approaching_limit(self, *, iteration: int, count: int, max_turns: int) -> None:
+    def on_turn_approaching_limit(
+        self,
+        *,
+        iteration: int,  # pyright: ignore[reportUnusedParameter]
+        count: int,  # pyright: ignore[reportUnusedParameter]
+        max_turns: int,  # pyright: ignore[reportUnusedParameter]
+    ) -> None:
         pass
 
-    def on_turn_capped(self, *, iteration: int, count: int) -> None:
+    def on_turn_capped(self, *, iteration: int, count: int) -> None:  # pyright: ignore[reportUnusedParameter]
         pass
 
-    def on_iteration_completed(self, *, iteration: int, result: dict[str, Any]) -> None:
+    def on_iteration_completed(
+        self,
+        *,
+        iteration: int,  # pyright: ignore[reportUnusedParameter]
+        result: dict[str, object],  # pyright: ignore[reportUnusedParameter]
+    ) -> None:
         pass
 
-    def on_completion_signal(self, *, iteration: int, signal: str) -> None:
+    def on_completion_signal(self, *, iteration: int, signal: str) -> None:  # pyright: ignore[reportUnusedParameter]
         pass
 
 
@@ -114,9 +136,9 @@ class CombinedAgentHook:
     """
 
     def __init__(self, hooks: list[AgentHook]) -> None:
-        self._hooks = hooks
+        self._hooks: list[AgentHook] = hooks
 
-    def _fanout(self, event_name: str, **kwargs: Any) -> None:
+    def _fanout(self, event_name: str, **kwargs: object) -> None:
         for hook in self._hooks:
             method = getattr(hook, event_name, None)
             if method is None:
@@ -159,7 +181,7 @@ class CombinedAgentHook:
     def on_turn_capped(self, *, iteration: int, count: int) -> None:
         self._fanout("on_turn_capped", iteration=iteration, count=count)
 
-    def on_iteration_completed(self, *, iteration: int, result: dict[str, Any]) -> None:
+    def on_iteration_completed(self, *, iteration: int, result: dict[str, object]) -> None:
         self._fanout("on_iteration_completed", iteration=iteration, result=result)
 
     def on_completion_signal(self, *, iteration: int, signal: str) -> None:
@@ -186,12 +208,12 @@ class ShellAgentHook(NoOpAgentHook):
             raise ValueError(
                 f"unknown hook event {event!r}; expected one of {sorted(HOOK_EVENT_NAMES)}"
             )
-        self._event = event
-        self._command = command
-        self._cwd = cwd
+        self._event: str = event
+        self._command: str = command
+        self._cwd: Path | None = cwd
         setattr(self, event, self._invoke)
 
-    def _invoke(self, **payload: Any) -> None:
+    def _invoke(self, **payload: object) -> None:
         try:
             data = json.dumps(payload, default=str)
         except (TypeError, ValueError) as exc:

@@ -68,10 +68,10 @@ class RunManager:
 
     def __init__(self) -> None:
         self._runs: dict[str, ManagedRun] = {}
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
         # Notified once whenever any run thread exits, so waiters can wake
         # and re-check terminal status without polling.
-        self._done = threading.Condition()
+        self._done: threading.Condition = threading.Condition()
 
     def _lookup(self, run_id: str) -> ManagedRun:
         """Look up a run by ID. Caller must hold ``_lock``."""
@@ -216,7 +216,7 @@ class RunManager:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return []
-                self._done.wait(timeout=remaining)
+                _ = self._done.wait(timeout=remaining)
 
     def wait_for_all(self, run_ids: Sequence[str], timeout: float | None = None) -> bool:
         """Block until every run in *run_ids* finishes or *timeout* elapses.
@@ -240,7 +240,7 @@ class RunManager:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return False
-                self._done.wait(timeout=remaining)
+                _ = self._done.wait(timeout=remaining)
 
     def get_result(self, run_id: str) -> RunResult:
         """Snapshot the run's status and iteration counts.
@@ -300,5 +300,5 @@ class RunManager:
             thread.join(timeout=remaining)
             if thread.is_alive():
                 all_joined = False
-        self.reap()
+        _ = self.reap()
         return all_joined
