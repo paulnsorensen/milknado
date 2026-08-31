@@ -53,7 +53,7 @@ class _SymbolModel(_PlanningModel, frozen=True, kw_only=True):
     file: str
 
     def __post_init__(self) -> None:
-        _validate_relative_path(self.file, field_name="symbol file")
+        _ = _validate_relative_path(self.file, field_name="symbol file")
 
 
 class _HashAnchorsModel(_PlanningModel, frozen=True, kw_only=True):
@@ -96,7 +96,7 @@ class _ChangeModel(_PlanningModel, frozen=True, kw_only=True):
     def __post_init__(self) -> None:
         if not self.id:
             raise ValueError("change id must be a non-empty string")
-        _validate_relative_path(self.path, field_name="change path")
+        _ = _validate_relative_path(self.path, field_name="change path")
         description = self.description.strip()
         if not description:
             raise ValueError("description must be a non-empty string")
@@ -181,7 +181,7 @@ def parse_manifest_from_output(text: str) -> PlanChangeManifest | None:
         _logger.warning("manifest missing fenced json block")
         return None
     try:
-        raw = json.loads(block)
+        raw = cast(object, json.loads(block))
     except json.JSONDecodeError as exc:
         _logger.warning("manifest json decode failed: %s", exc)
         return None

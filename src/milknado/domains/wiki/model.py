@@ -12,7 +12,7 @@ from msgspec import structs
 
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.wiki._locate import read_text, roadmap_markdown_files
-from milknado.domains.wiki._markdown import _frontmatter_and_body, _parse_body
+from milknado.domains.wiki._markdown import frontmatter_and_body, parse_body
 from milknado.domains.wiki._serialize import parse_wikilink
 
 
@@ -33,9 +33,13 @@ def _validate_slug_value(value: str) -> None:
 def _list_of_slugs(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+    if not isinstance(value, list):
         raise ValueError("must be a list of goal slugs")
-    return tuple(parse_wikilink(item.strip()) for item in value)
+    items = cast(list[object], value)
+    if not all(isinstance(item, str) for item in items):
+        raise ValueError("must be a list of goal slugs")
+    string_items = cast(list[str], items)
+    return tuple(parse_wikilink(item.strip()) for item in string_items)
 
 
 def _normalize_last_synced(value: object) -> object:
@@ -162,11 +166,11 @@ def parse_goal_document(text: str, *, slug: str) -> GoalDocument:
     """Parse one goal markdown document, naming validation errors by filename."""
     filename = f"{slug}.md"
     try:
-        frontmatter, body = _frontmatter_and_body(text, filename)
+        frontmatter, body = frontmatter_and_body(text, filename)
         data = dict(frontmatter)
         if data.get("slug") != slug:
             raise ValueError(f"{filename}: slug must match filename")
-        title, sections = _parse_body(body, filename)
+        title, sections = parse_body(body, filename)
         data.update(
             title=title,
             intent=sections.get("Intent"),
@@ -183,7 +187,7 @@ def parse_goal_document(text: str, *, slug: str) -> GoalDocument:
 
 def _parse_roadmap_document(text: str, filename: str) -> RoadmapDocument:
     try:
-        frontmatter, _ = _frontmatter_and_body(text, filename)
+        frontmatter, _ = frontmatter_and_body(text, filename)
         return msgspec.convert(frontmatter, type=RoadmapDocument, strict=True)
     except (msgspec.ValidationError, ValueError) as exc:
         compact = " ".join(str(exc).split())

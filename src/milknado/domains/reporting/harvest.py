@@ -98,7 +98,7 @@ def format_harvest_text(summary: HarvestSummary) -> str:
     """
     lines = [
         f"result: {summary.status} · tasks: "
-        f"{summary.tasks_done} done / {summary.tasks_failed} failed"
+        + f"{summary.tasks_done} done / {summary.tasks_failed} failed"
     ]
     if summary.result_summaries:
         lines.append("summary: " + " | ".join(summary.result_summaries))

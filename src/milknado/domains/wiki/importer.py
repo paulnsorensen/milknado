@@ -22,6 +22,7 @@ from milknado.domains.wiki._locate import (
     write_text_atomic,
 )
 from milknado.domains.wiki._serialize import (
+    Created,
     compute_goal_ref,
     compute_roadmap_ref,
     set_frontmatter_field,
@@ -61,7 +62,7 @@ def import_roadmap(
     stamp = today or _today_iso()
     counters = _Counters()
     _stamp_missing_created(wiki_root, roadmap_dir, stamp, counters)
-    model = _load_model(roadmap_dir, roadmap_slug)
+    model = load_model(roadmap_dir, roadmap_slug)
     roadmap_id, _ = _ingest_file(
         graph,
         kind=NodeKind.ROADMAP,
@@ -112,7 +113,7 @@ def _stamp_missing_created(
         counters.stamped.append(path.stem)
 
 
-def _load_model(roadmap_dir: Path, roadmap_slug: str) -> RoadmapModel:
+def load_model(roadmap_dir: Path, roadmap_slug: str) -> RoadmapModel:
     """Load the canonical model; roadmap_slug remains for signature stability."""
     del roadmap_slug
     return load_roadmap(roadmap_dir)
@@ -123,9 +124,9 @@ def _ingest_file(
     *,
     kind: NodeKind,
     parent_id: int | None,
-    created: object,
+    created: Created,
     title: str,
-    ref_for: Callable[[object], str],
+    ref_for: Callable[[Created], str],
     counters: _Counters,
     document: GoalDocument | None = None,
 ) -> tuple[int, tuple[str, ...]]:
@@ -149,17 +150,15 @@ def _apply_document_state(graph: MikadoGraph, node_id: int, document: GoalDocume
     current = graph.get_node(node_id)
     if current is None:
         raise ValueError(f"goal {document.slug!r} was not created")
-    if document.status is not None and not isinstance(document.status, NodeStatus):
-        raise ValueError(f"goal {document.slug!r} has invalid status")
     for child in graph.get_children(node_id, include_archived=True):
         if child.kind is NodeKind.GOAL and child.parent_id != node_id:
-            graph.remove_edge(node_id, child.id)
+            _ = graph.remove_edge(node_id, child.id)
     if current.status is not NodeStatus.DONE:
-        graph.set_todo_status(node_id, NodeStatus.DONE)
+        _ = graph.set_todo_status(node_id, NodeStatus.DONE)
         current = graph.get_node(node_id)
     if current is None:
         raise ValueError(f"goal {document.slug!r} was not created")
-    graph.archive_subtree(node_id)
+    _ = graph.archive_subtree(node_id)
 
 
 def _wire_prereqs(
@@ -177,7 +176,7 @@ def _wire_prereqs(
             if prereq_id is None:
                 raise ValueError(
                     f"goal {goal_slug!r} lists unknown prereq {prereq_slug!r} "
-                    f"(not a goal in roadmap {roadmap_slug!r})"
+                    + f"(not a goal in roadmap {roadmap_slug!r})"
                 )
             if prereq_id not in existing:
-                graph.add_edge(goal_id, prereq_id)
+                _ = graph.add_edge(goal_id, prereq_id)

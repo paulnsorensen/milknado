@@ -92,7 +92,7 @@ def _two_pass_solve(
         return None, status1
     pass1 = _take_snapshot(solver, bundle.batch_of, bundle.spread_vars)
     cost_star = int(solver.value(cost_objective))
-    model.add(cost_objective == cost_star)
+    _ = model.add(cost_objective == cost_star)
     model.minimize(sum(bundle.spread_vars.values()) if bundle.spread_vars else cost_objective)
     solver.parameters.max_time_in_seconds = time_limit_s / 2
     status2 = _status_name(solver.solve(model))

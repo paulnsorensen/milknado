@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 from milknado.domains.common import NodeKind
 from milknado.domains.github._fields import (
@@ -73,24 +74,25 @@ def bind_github_project(
             continue
         intent = goal_intent(goal, file_map, wiki_root)
         marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
-        matches = _correlated_items(items, marker)
-        attempt = graph.get_github_bind_attempt(goal.id)
+        matches = _correlated_item_ids(items, marker)
+        attempt = cast(dict[str, object] | None, graph.get_github_bind_attempt(goal.id))
 
         if attempt is not None:
             if len(matches) > 1:
                 raise RuntimeError(
                     f"cannot safely recover goal {goal.id}: correlation marker "
-                    f"matched {len(matches)} project items"
+                    + f"matched {len(matches)} project items"
                 )
             if len(matches) == 1:
-                graph.set_github_ref(goal.id, matches[0].id)
+                recovered_id = matches[0]
+                graph.set_github_ref(goal.id, recovered_id)
                 graph.clear_github_bind_attempt(goal.id)
                 continue
             issue_url = attempt.get("issue_url")
-            if not issue_url:
+            if not isinstance(issue_url, str) or not issue_url:
                 raise RuntimeError(
                     f"cannot safely recover goal {goal.id}: issue creation outcome "
-                    "is unknown and no project item carries its correlation marker"
+                    + "is unknown and no project item carries its correlation marker"
                 )
             item_id = github.item_add(owner, number, issue_url)
             graph.set_github_ref(goal.id, item_id)
@@ -102,9 +104,10 @@ def bind_github_project(
             if len(matches) != 1:
                 raise RuntimeError(
                     f"cannot safely recover goal {goal.id}: correlation marker "
-                    f"matched {len(matches)} project items"
+                    + f"matched {len(matches)} project items"
                 )
-            graph.set_github_ref(goal.id, matches[0].id)
+            recovered_id = matches[0]
+            graph.set_github_ref(goal.id, recovered_id)
             continue
 
         graph.set_github_bind_attempt(goal.id, marker, None, datetime.now(UTC).isoformat())
@@ -137,7 +140,7 @@ def _bind_roadmap_ref(
     if current_ref != project_id:
         raise ValueError(
             f"roadmap node {roadmap_node_id} is already bound to github_ref "
-            f"{current_ref!r}, cannot rebind to {project_id!r}"
+            + f"{current_ref!r}, cannot rebind to {project_id!r}"
         )
 
 
@@ -145,8 +148,18 @@ def _correlation_marker(roadmap_ref: str, goal_ref: str) -> str:
     return f"<!-- milknado-bind:roadmap={roadmap_ref};goal={goal_ref} -->"
 
 
-def _correlated_items(items: list[GithubItem], marker: str) -> list[GithubItem]:
-    return [item for item in items if marker in item.body]
+def _correlated_item_ids(items: list[GithubItem], marker: str) -> list[str]:
+    """Match items by marker first; only a matching item's id must be present."""
+    ids: list[str] = []
+    for item in items:
+        if marker not in item.body:
+            continue
+        if item.id is None:
+            raise RuntimeError(
+                f"cannot bind: project item matching correlation marker {marker!r} has no id"
+            )
+        ids.append(item.id)
+    return ids
 
 
 def _resolve_project(
@@ -159,7 +172,7 @@ def _resolve_project(
     if config.github_project is None:
         raise ValueError(
             "bind requires owner/number args or a `github_project: owner/number` "
-            "field in the roadmap index.md frontmatter"
+            + "field in the roadmap index.md frontmatter"
         )
     return config.project
 
@@ -169,8 +182,8 @@ def _ensure_fields(github: GithubProjectPort, owner: str, number: int) -> bool:
     fields = github.field_list(owner, number)
     status_created = False
     if find_field(fields, STATUS_FIELD_NAME) is None:
-        github.field_create(number, owner, STATUS_FIELD_NAME, STATUS_OPTIONS)
+        _ = github.field_create(number, owner, STATUS_FIELD_NAME, STATUS_OPTIONS)
         status_created = True
     if find_field(fields, HARVEST_FIELD_NAME) is None:
-        github.field_create_text(number, owner, HARVEST_FIELD_NAME)
+        _ = github.field_create_text(number, owner, HARVEST_FIELD_NAME)
     return status_created

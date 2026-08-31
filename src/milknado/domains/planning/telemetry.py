@@ -35,7 +35,7 @@ def record_batch_snapshot(
         payload = (json.dumps(record) + "\n").encode("utf-8")
         fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
         try:
-            os.write(fd, payload)
+            _ = os.write(fd, payload)
         finally:
             os.close(fd)
     except OSError as exc:

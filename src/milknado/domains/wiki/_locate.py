@@ -63,7 +63,7 @@ def _roadmap_indexes(root: Path) -> list[Path]:
                     continue
                 candidate = container / name / "index.md"
                 try:
-                    read_text(root, candidate)
+                    _ = read_text(root, candidate)
                 except FileNotFoundError:
                     continue
                 indexes.append(candidate)
@@ -74,11 +74,11 @@ def _roadmap_indexes(root: Path) -> list[Path]:
 
 def resolve_roadmap_dir(root: Path, slug: str) -> Path:
     """Return nested or legacy-flat roadmap directory, without following links."""
-    validate_slug(slug)
+    _ = validate_slug(slug)
     candidates = (root / "roadmaps" / slug, root / slug)
     for candidate in candidates:
         try:
-            read_text(root, candidate / "index.md")
+            _ = read_text(root, candidate / "index.md")
         except FileNotFoundError:
             continue
         return candidate
@@ -135,7 +135,7 @@ def write_text_atomic(root: Path, path: Path, content: str) -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 fd = -1
-                handle.write(content)
+                _ = handle.write(content)
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_name, name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
