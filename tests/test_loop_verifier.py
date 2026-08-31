@@ -671,6 +671,7 @@ class TestCreateRunAttachesVerifier:
         )
 
         verifier = run.config.completion_verifier
+        assert callable(verifier)
         verdict = verifier()
 
         assert verdict.ok is False

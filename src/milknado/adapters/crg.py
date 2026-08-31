@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import cast
 
-from code_review_graph.analysis import find_bridge_nodes, find_hub_nodes
-from code_review_graph.communities import get_architecture_overview, get_communities
-from code_review_graph.flows import get_flows
-from code_review_graph.graph import GraphStore
+from code_review_graph.analysis import (  # pyright: ignore[reportMissingTypeStubs]
+    find_bridge_nodes,  # pyright: ignore[reportUnknownVariableType]
+    find_hub_nodes,  # pyright: ignore[reportUnknownVariableType]
+)
+from code_review_graph.communities import (  # pyright: ignore[reportMissingTypeStubs]
+    get_architecture_overview,
+    get_communities,
+)
+from code_review_graph.flows import (  # pyright: ignore[reportMissingTypeStubs]
+    get_flows,  # pyright: ignore[reportUnknownVariableType]
+)
+from code_review_graph.graph import GraphStore  # pyright: ignore[reportMissingTypeStubs]
 
 _SOURCE_EXTENSIONS = frozenset(
     {
@@ -52,7 +60,7 @@ _SKIP_DIRS = frozenset(
 
 class CrgAdapter:
     def __init__(self, project_root: Path) -> None:
-        self._root = project_root
+        self._root: Path = project_root
         self._store: GraphStore | None = None
 
     def _crg_dir(self) -> Path:
@@ -103,51 +111,58 @@ class CrgAdapter:
                 check=True,
             )
         except subprocess.CalledProcessError as exc:
+            stderr = cast(str | None, exc.stderr)
             raise RuntimeError(
-                f"code-review-graph {command!r} failed (exit {exc.returncode}): {exc.stderr}"
+                f"code-review-graph {command!r} failed (exit {exc.returncode}): {stderr}"
             ) from exc
 
     def build_graph(self, project_root: Path) -> None:
         self._root = project_root
         self._store = None
-        self._run_crg("build")
-        self._get_store()
+        _ = self._run_crg("build")
+        _ = self._get_store()
 
     def ensure_graph(self, project_root: Path) -> None:
         self._root = project_root
         self._store = None
         if not self._is_built():
-            self._run_crg("build")
+            _ = self._run_crg("build")
         elif self._is_stale():
-            self._run_crg("update")
-        self._get_store()
+            _ = self._run_crg("update")
+        _ = self._get_store()
 
-    def get_impact_radius(self, files: list[str]) -> dict[str, Any]:
-        return self._get_store().get_impact_radius(files)
+    def get_impact_radius(self, files: list[str]) -> dict[str, object]:
+        return cast(dict[str, object], self._get_store().get_impact_radius(files))
 
-    def get_architecture_overview(self) -> dict[str, Any]:
-        return get_architecture_overview(self._get_store())
+    def get_architecture_overview(self) -> dict[str, object]:
+        return cast(dict[str, object], get_architecture_overview(self._get_store()))
 
     def list_communities(
         self,
         sort_by: str = "size",
         min_size: int = 0,
-    ) -> list[dict[str, Any]]:
-        return get_communities(
-            self._get_store(),
-            sort_by=sort_by,
-            min_size=min_size,
+    ) -> list[dict[str, object]]:
+        return cast(
+            list[dict[str, object]],
+            get_communities(
+                self._get_store(),
+                sort_by=sort_by,
+                min_size=min_size,
+            ),
         )
 
     def list_flows(
         self,
         sort_by: str = "criticality",
         limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        return get_flows(self._get_store(), sort_by=sort_by, limit=limit)
+    ) -> list[dict[str, object]]:
+        return cast(
+            list[dict[str, object]],
+            get_flows(self._get_store(), sort_by=sort_by, limit=limit),
+        )
 
-    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
-        return find_bridge_nodes(self._get_store(), top_n=top_n)
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        return cast(list[dict[str, object]], find_bridge_nodes(self._get_store(), top_n=top_n))
 
-    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
-        return find_hub_nodes(self._get_store(), top_n=top_n)
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        return cast(list[dict[str, object]], find_hub_nodes(self._get_store(), top_n=top_n))

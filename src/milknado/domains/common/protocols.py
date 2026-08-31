@@ -104,6 +104,8 @@ class RunStateView(Protocol):
     @property
     def status(self) -> Enum: ...
     @property
+    def total(self) -> int: ...
+    @property
     def stop_requested(self) -> bool: ...
     @property
     def force_stop_requested(self) -> bool: ...
@@ -121,7 +123,8 @@ class ReviewResult(Protocol):
 class RunHandle(Protocol):
     """Handle returned by a loop port for run inspection."""
 
-    state: RunStateView
+    @property
+    def state(self) -> RunStateView: ...
 
 
 class LoopPort(Protocol):
