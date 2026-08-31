@@ -8,6 +8,7 @@ task-status rollup, and that a missing `hallouminate` CLI is non-fatal.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import final
 
 import pytest
 
@@ -63,13 +64,14 @@ result: pending
 NOW = "2026-06-08T12:00:00Z"
 
 
+@final
 class StubIndexer:
     def __init__(self, result: WikiIndexResult | None = None) -> None:
         self.result = result or WikiIndexResult(WikiIndexStatus.REFRESHED)
         self.roots: list[Path] = []
 
-    def refresh(self, root: Path) -> WikiIndexResult:
-        self.roots.append(root)
+    def refresh(self, wiki_root: Path) -> WikiIndexResult:
+        self.roots.append(wiki_root)
         return self.result
 
 
@@ -77,8 +79,8 @@ class StubIndexer:
 def wiki_root(tmp_path: Path) -> Path:
     d = tmp_path / ".hallouminate" / "wiki" / "roadmaps" / ROADMAP_SLUG
     d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "wire-export.md").write_text(GOAL_MD)
+    _ = (d / "index.md").write_text(INDEX_MD)
+    _ = (d / "wire-export.md").write_text(GOAL_MD)
     return tmp_path / ".hallouminate" / "wiki"
 
 
@@ -103,7 +105,7 @@ class TestExportMembrane:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         graph.mark_running(result.goal_node_ids["wire-export"])
         graph.mark_done(result.goal_node_ids["wire-export"])
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         after = _goal_path(wiki_root).read_text()
         assert _human_region(before) == _human_region(after)
 
@@ -127,7 +129,7 @@ class TestExportMembrane:
         goal_id = result.goal_node_ids["wire-export"]
         graph.mark_running(goal_id)
         graph.mark_done(goal_id)
-        graph.archive_subtree(goal_id)
+        _ = graph.archive_subtree(goal_id)
 
         exported = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
 
@@ -146,7 +148,7 @@ class TestExportMembrane:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         graph.mark_running(result.goal_node_ids["wire-export"])
         graph.mark_done(result.goal_node_ids["wire-export"])
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         after = _goal_path(wiki_root).read_text()
         assert _human_region(after) == _human_region(before)
         assert after.split(HARVEST_END, 1)[1] == before.split(HARVEST_END, 1)[1]
@@ -167,12 +169,12 @@ class TestExportMembrane:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_path = _goal_path(wiki_root)
         outside = tmp_path / "outside.md"
-        outside.write_text(GOAL_MD)
+        _ = outside.write_text(GOAL_MD)
         goal_path.unlink()
         goal_path.symlink_to(outside)
 
         with pytest.raises(RoadmapPathError, match="symlinked roadmap path"):
-            export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+            _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
 
         assert outside.read_text() == GOAL_MD
 
@@ -186,7 +188,7 @@ class TestTaskRollup:
         graph.mark_running(t1.id)
         graph.mark_done(t1.id)
         graph.mark_failed(t2.id)
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         text = _goal_path(wiki_root).read_text()
         assert "tasks: 1 done / 1 failed" in text
 
@@ -194,14 +196,14 @@ class TestTaskRollup:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
         task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
-        graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
-        graph.finish_run(
+        _ = graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
+        _ = graph.finish_run(
             "run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW)
         )
-        graph.deposit_run_message("run-1", "result", "shipped the exporter", NOW)
+        _ = graph.deposit_run_message("run-1", "result", "shipped the exporter", NOW)
         graph.mark_running(task.id)
         graph.mark_done(task.id)
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         text = _goal_path(wiki_root).read_text()
         assert "shipped the exporter" in text
 
@@ -210,7 +212,7 @@ class TestTaskRollup:
         goal_id = result.goal_node_ids["wire-export"]
         task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.mark_running(task.id, worktree_path="/wt", branch_name="claude/t1", run_id="r1")
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         text = _goal_path(wiki_root).read_text()
         assert "claude/t1" in text
 
@@ -236,10 +238,10 @@ class TestOrphanGoal:
         self, wiki_root: Path, graph: MikadoGraph
     ) -> None:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node(
+        _ = graph.add_node(
             "Discovered goal", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
         )
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         second = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         # second export rewrites the now-existing file, does not create again.
         assert second.files_created == 0
@@ -250,10 +252,10 @@ class TestOrphanGoal:
         # L1: two discovered goals with the SAME description must not overwrite
         # each other's file or collide on the UNIQUE(wiki_ref) index.
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node(
+        _ = graph.add_node(
             "Same name", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
         )
-        graph.add_node(
+        _ = graph.add_node(
             "Same name", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
         )
         r = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
@@ -267,10 +269,10 @@ class TestOrphanGoal:
         # frontmatter, the human-owned Intent/Acceptance scaffold, and the
         # harvest markers must all be present or the next import/export breaks.
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
-        graph.add_node(
+        _ = graph.add_node(
             "Discovered goal", parent_id=result.roadmap_node_id, spec=NodeSpec(kind=NodeKind.GOAL)
         )
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         text = (wiki_root / "roadmaps" / ROADMAP_SLUG / "discovered-goal.md").read_text()
         fm = load_frontmatter(text)
         assert fm["kind"] == "goal"
@@ -303,12 +305,12 @@ class TestExportGuards:
     def test_non_roadmap_node_raises(self, wiki_root: Path, graph: MikadoGraph) -> None:
         node = graph.add_node("not a roadmap")
         with pytest.raises(ValueError, match="roadmap"):
-            export_roadmap(graph, node.id, wiki_root, StubIndexer(), now=NOW)
+            _ = export_roadmap(graph, node.id, wiki_root, StubIndexer(), now=NOW)
 
     def test_roadmap_without_wiki_ref_raises(self, wiki_root: Path, graph: MikadoGraph) -> None:
         node = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         with pytest.raises(ValueError, match="wiki_ref"):
-            export_roadmap(graph, node.id, wiki_root, StubIndexer(), now=NOW)
+            _ = export_roadmap(graph, node.id, wiki_root, StubIndexer(), now=NOW)
 
     def test_export_raises_when_wiki_files_deleted_after_import(
         self, wiki_root: Path, graph: MikadoGraph
@@ -319,12 +321,12 @@ class TestExportGuards:
 
         _shutil.rmtree(wiki_root / "roadmaps" / ROADMAP_SLUG)
         with pytest.raises(FileNotFoundError):
-            export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+            _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
 
     def test_resolve_rejects_unsafe_slug(self, wiki_root: Path, graph: MikadoGraph) -> None:
         # L2: the export resolve path validates the slug before joining it too.
         with pytest.raises(ValueError, match="unsafe roadmap slug"):
-            resolve_roadmap_node(graph, wiki_root, "../escape")
+            _ = resolve_roadmap_node(graph, wiki_root, "../escape")
 
 
 class TestFlatLayoutExport:
@@ -335,11 +337,11 @@ class TestFlatLayoutExport:
         root = tmp_path / ".hallouminate" / "wiki"
         d = root / ROADMAP_SLUG
         d.mkdir(parents=True)
-        (d / "index.md").write_text(
+        _ = (d / "index.md").write_text(
             "---\nkind: roadmap\nslug: demo-roadmap\ncreated: 2026-06-01\nstatus: pending\n"
-            "---\n# Demo Roadmap\n\nVision prose.\n"
+            + "---\n# Demo Roadmap\n\nVision prose.\n"
         )
-        (d / "wire-export.md").write_text(GOAL_MD)
+        _ = (d / "wire-export.md").write_text(GOAL_MD)
         return root
 
     def test_flat_layout_import_then_export(
@@ -363,7 +365,7 @@ class TestFlatLayoutExport:
         result = import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
         graph.mark_running(result.goal_node_ids["wire-export"])
         graph.mark_done(result.goal_node_ids["wire-export"])
-        export_roadmap(graph, result.roadmap_node_id, flat_wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, flat_wiki_root, StubIndexer(), now=NOW)
         after = goal_path.read_text()
         assert _human_region(after) == _human_region(before)
         assert after.split(HARVEST_END, 1)[1] == before.split(HARVEST_END, 1)[1]
@@ -371,7 +373,7 @@ class TestFlatLayoutExport:
     def test_resolve_roadmap_node_flat_layout(
         self, flat_wiki_root: Path, graph: MikadoGraph
     ) -> None:
-        import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
+        _ = import_roadmap(flat_wiki_root, ROADMAP_SLUG, graph)
         node = resolve_roadmap_node(graph, flat_wiki_root, ROADMAP_SLUG)
         from milknado.domains.common import NodeKind
 
@@ -398,18 +400,18 @@ class TestFlatLayoutExport:
         # to the nested dir, not the flat one.
         flat_dir = wiki_root / ROADMAP_SLUG
         flat_dir.mkdir(parents=True)
-        (flat_dir / "index.md").write_text(
+        _ = (flat_dir / "index.md").write_text(
             "---\nkind: roadmap\nslug: demo-roadmap\ncreated: 2026-06-01\nstatus: pending\n"
-            "---\n# Demo Roadmap (flat copy)\n\nShould not be touched.\n"
+            + "---\n# Demo Roadmap (flat copy)\n\nShould not be touched.\n"
         )
-        (flat_dir / "flat-only-goal.md").write_text(
+        _ = (flat_dir / "flat-only-goal.md").write_text(
             "---\nkind: goal\ncreated: 2026-06-04\nstatus: pending\n---\n# Flat Goal\n"
         )
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
         graph.mark_running(goal_id)
         graph.mark_done(goal_id)
-        export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
+        _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)
         # The nested goal file is updated
         nested_text = _goal_path(wiki_root).read_text()
         assert "status: done" in nested_text

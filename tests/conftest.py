@@ -13,7 +13,7 @@ pytest_plugins = ("tests.rebalance_helpers",)
 
 
 @pytest.fixture(autouse=True)
-def _isolate_global_milknado_config(
+def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
