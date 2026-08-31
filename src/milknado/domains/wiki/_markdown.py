@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import cast
 
 import yaml
 
@@ -10,7 +11,7 @@ _HEADING_RE = re.compile(r"^(#{1,6})(?:[ \t]+)(.*?)\s*$")
 _ALLOWED_SECTIONS = frozenset({"Intent", "Acceptance", "Outcome"})
 
 
-def _frontmatter_and_body(text: str, filename: str) -> tuple[dict[str, object], str]:
+def frontmatter_and_body(text: str, filename: str) -> tuple[dict[str, object], str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise ValueError(f"{filename}: frontmatter is required")
@@ -19,12 +20,14 @@ def _frontmatter_and_body(text: str, filename: str) -> tuple[dict[str, object], 
     except StopIteration as exc:
         raise ValueError(f"{filename}: unterminated frontmatter") from exc
     try:
-        frontmatter = yaml.safe_load("\n".join(lines[1:end])) or {}
+        frontmatter: object = cast(object, yaml.safe_load("\n".join(lines[1:end])))
+        if not frontmatter:
+            frontmatter = {}
     except yaml.YAMLError as exc:
         raise ValueError(f"{filename}: frontmatter: invalid YAML") from exc
     if not isinstance(frontmatter, dict):
         raise ValueError(f"{filename}: frontmatter must be a mapping")
-    return frontmatter, "\n".join(lines[end + 1 :]).strip()
+    return cast(dict[str, object], frontmatter), "\n".join(lines[end + 1 :]).strip()
 
 
 def _parse_heading(
@@ -43,7 +46,7 @@ def _parse_heading(
     return len(match.group(1)), heading
 
 
-def _parse_body(body: str, filename: str) -> tuple[str, dict[str, str | None]]:  # noqa: PLR0915
+def parse_body(body: str, filename: str) -> tuple[str, dict[str, str | None]]:  # noqa: PLR0915
     title: str | None = None
     sections: dict[str, str | None] = {}
     current: str | None = None

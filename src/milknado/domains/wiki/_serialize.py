@@ -42,7 +42,7 @@ def load_frontmatter(text: str) -> dict[str, object]:
     m = _FRONTMATTER_RE.match(text)
     if not m:
         return {}
-    data = yaml.safe_load(m.group(1))
+    data = cast(object, yaml.safe_load(m.group(1)))
     return cast(dict[str, object], data) if isinstance(data, dict) else {}
 
 

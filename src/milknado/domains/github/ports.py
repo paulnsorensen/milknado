@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Protocol
 
-from milknado.domains.github.models import GithubField, GithubItem, GithubProject
+from milknado.domains.github.models import (
+    GithubField,
+    GithubItem,
+    GithubProject,
+)
 
 
 class GithubProjectPort(Protocol):

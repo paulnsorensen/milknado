@@ -25,7 +25,12 @@ from milknado.adapters.gh import (
     gh_item_list,
     gh_project_view,
 )
-from milknado.domains.github import GithubField, GithubIssue, GithubItem, GithubProject
+from milknado.domains.github import (
+    GithubField,
+    GithubIssue,
+    GithubItem,
+    GithubProject,
+)
 
 GH_BIN = "/usr/bin/gh"
 

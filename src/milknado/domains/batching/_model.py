@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import cast
 
 from ortools.sat.python import cp_model
 
@@ -25,6 +27,14 @@ class ModelBundle:
     batch_of: dict[str, cp_model.IntVar]
     total_cost: cp_model.IntVar
     spread_vars: dict[str, cp_model.IntVar] = field(default_factory=dict)
+
+
+def _only_enforce_if(constraint: cp_model.Constraint, literal: cp_model.LiteralT) -> None:
+    only_enforce_if = cast(
+        Callable[[cp_model.LiteralT], cp_model.Constraint],
+        constraint.only_enforce_if,
+    )
+    _ = only_enforce_if(literal)
 
 
 @dataclass(frozen=True)
@@ -62,7 +72,7 @@ def _add_ordering_constraints(
     batch_of: dict[str, cp_model.IntVar],
 ) -> None:
     for src, dst in dag_edges:
-        model.add(batch_of[src] <= batch_of[dst])
+        _ = model.add(batch_of[src] <= batch_of[dst])
 
 
 def _add_batch_compactness(
@@ -71,21 +81,21 @@ def _add_batch_compactness(
     batch_of: dict[str, cp_model.IntVar],
 ) -> None:
     """Remove equivalent assignments that leave gaps between active batches."""
-    active_by_batch: list[cp_model.BoolVar] = []
+    active_by_batch: list[cp_model.IntVar] = []
     for batch in range(len(sccs)):
-        active = model.new_bool_var(f"active_b{batch}")
+        active: cp_model.IntVar = model.new_bool_var(f"active_b{batch}")
         active_by_batch.append(active)
-        members = []
+        members: list[cp_model.IntVar] = []
         for scc in sccs:
-            in_batch = model.new_bool_var(f"in_b{batch}_{scc}")
-            model.add(batch_of[scc] == batch).only_enforce_if(in_batch)
-            model.add(batch_of[scc] != batch).only_enforce_if(in_batch.negated())
-            model.add_implication(in_batch, active)
+            in_batch: cp_model.IntVar = model.new_bool_var(f"in_b{batch}_{scc}")
+            _only_enforce_if(model.add(batch_of[scc] == batch), in_batch)
+            _only_enforce_if(model.add(batch_of[scc] != batch), in_batch.negated())
+            _ = model.add_implication(in_batch, active)
             members.append(in_batch)
-        model.add_bool_or(members).only_enforce_if(active)
+        _only_enforce_if(model.add_bool_or(members), active)
 
     for batch in range(1, len(active_by_batch)):
-        model.add_implication(active_by_batch[batch], active_by_batch[batch - 1])
+        _ = model.add_implication(active_by_batch[batch], active_by_batch[batch - 1])
 
 
 def _isolate_oversized(
@@ -97,7 +107,7 @@ def _isolate_oversized(
     for ov in oversized_sccs:
         for other in sccs:
             if other != ov:
-                model.add(batch_of[ov] != batch_of[other])
+                _ = model.add(batch_of[ov] != batch_of[other])
 
 
 def _add_budget_constraints(
@@ -110,7 +120,7 @@ def _add_budget_constraints(
         return
     K = max((b for _, b in in_batch), default=-1) + 1
     for b in range(K):
-        model.add(
+        _ = model.add(
             sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs) <= inputs.budget
         )
 
@@ -125,8 +135,8 @@ def _build_in_batch_vars(
     for s in normal_sccs:
         for b in range(K):
             in_batch[(s, b)] = model.new_bool_var(f"ib_{s}_{b}")
-            model.add(batch_of[s] == b).only_enforce_if(in_batch[(s, b)])
-            model.add(batch_of[s] != b).only_enforce_if(in_batch[(s, b)].negated())
+            _only_enforce_if(model.add(batch_of[s] == b), in_batch[(s, b)])
+            _only_enforce_if(model.add(batch_of[s] != b), in_batch[(s, b)].negated())
     return in_batch
 
 
@@ -158,26 +168,30 @@ def _build_total_cost(
     per_batch_costs: list[cp_model.IntVar] = []
     for b in range(K):
         size_b = model.new_int_var(0, max_size, f"size_b{b}")
-        model.add(size_b == sum(in_batch[(s, b)] for s in normal_sccs))
+        _ = model.add(size_b == sum(in_batch[(s, b)] for s in normal_sccs))
         file_b = model.new_int_var(0, sum_tokens, f"file_b{b}")
-        model.add(file_b == sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs))
+        _ = model.add(
+            file_b == sum(inputs.tokens_by_scc[s] * in_batch[(s, b)] for s in normal_sccs)
+        )
         at_size: dict[int, cp_model.IntVar] = {}
         for k in range(max_size + 1):
             at_size[k] = model.new_bool_var(f"atsize_b{b}_k{k}")
-            model.add(size_b == k).only_enforce_if(at_size[k])
-            model.add(size_b != k).only_enforce_if(at_size[k].negated())
-        model.add_exactly_one(list(at_size.values()))
+            _only_enforce_if(model.add(size_b == k), at_size[k])
+            _only_enforce_if(model.add(size_b != k), at_size[k].negated())
+        _ = model.add_exactly_one(list(at_size.values()))
         size_cost_b = model.new_int_var(0, max_size_cost, f"sizecost_b{b}")
-        model.add(size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(max_size + 1)))
+        _ = model.add(
+            size_cost_b == sum(at_size[k] * size_cost_x100[k] for k in range(max_size + 1))
+        )
         file_cost_b = model.new_int_var(0, sum_tokens * max_mult, f"filecost_b{b}")
         for k in range(max_size + 1):
-            model.add(file_cost_b == file_b * file_mult_x100[k]).only_enforce_if(at_size[k])
+            _only_enforce_if(model.add(file_cost_b == file_b * file_mult_x100[k]), at_size[k])
         cost_b = model.new_int_var(0, big_m, f"cost_b{b}")
-        model.add(cost_b == size_cost_b + file_cost_b)
+        _ = model.add(cost_b == size_cost_b + file_cost_b)
         per_batch_costs.append(cost_b)
 
     total = model.new_int_var(0, big_m * K, "total_cost")
-    model.add(total == sum(per_batch_costs))
+    _ = model.add(total == sum(per_batch_costs))
     return total
 
 
@@ -200,10 +214,10 @@ def _build_spread_vars(
         b_vars = [batch_of[s] for s in scc_list]
         lo = model.new_int_var(0, K - 1, f"lo_{key}")
         hi = model.new_int_var(0, K - 1, f"hi_{key}")
-        model.add_min_equality(lo, b_vars)
-        model.add_max_equality(hi, b_vars)
+        _ = model.add_min_equality(lo, b_vars)
+        _ = model.add_max_equality(hi, b_vars)
         spread = model.new_int_var(0, K - 1, f"sp_{key}")
-        model.add(spread == hi - lo)
+        _ = model.add(spread == hi - lo)
         spread_vars[key] = spread
     return spread_vars
 

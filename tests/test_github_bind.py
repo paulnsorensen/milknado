@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import msgspec
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.github import GithubField, GithubItem, GithubProject
+from milknado.domains.github import (
+    GithubField,
+    GithubItem,
+    GithubProject,
+)
 from milknado.domains.github._fields import STATUS_FIELD_NAME, STATUS_OPTIONS
 from milknado.domains.github._intent import goal_file_map, goal_intent
 from milknado.domains.github.bind import bind_github_project
@@ -83,14 +88,14 @@ class FakeGh:
         self.fail_item_add_once = fail_item_add_once
         self.issues: list[tuple[str, str, str, str]] = []
         self.items: list[str] = []
-        self.created_fields: list[tuple[str, list[str]]] = []
+        self.created_fields: list[tuple[str, Sequence[str]]] = []
         self.created_text_fields: list[str] = []
         self._counter = 0
 
     def preflight(self) -> None:
         pass
 
-    def project_view(self, _owner: str, _number: int) -> GithubProject:
+    def project_view(self, owner: str, number: int) -> GithubProject:
         return GithubProject(id="PVT_1", title="Demo")
 
     def issue_create(self, owner: str, repo: str, title: str, body: str) -> str:
@@ -98,24 +103,38 @@ class FakeGh:
         self._counter += 1
         return f"https://github.com/{owner}/{repo}/issues/{self._counter}"
 
-    def item_add(self, _owner: str, _number: int, url: str) -> str:
+    def item_add(self, owner: str, number: int, issue_url: str) -> str:
         if self.fail_item_add_once:
             self.fail_item_add_once = False
             raise RuntimeError("simulated item_add failure")
-        self.items.append(url)
+        self.items.append(issue_url)
         return f"PVTI_{len(self.items)}"
 
-    def item_list(self, _owner: str, _number: int) -> list[GithubItem]:
+    def item_list(self, owner: str, number: int) -> list[GithubItem]:
         return list(self.existing_items)
 
-    def field_list(self, _owner: str, _number: int) -> list[GithubField]:
+    def item_edit(
+        self,
+        project_id: str,
+        item_id: str,
+        field_id: str,
+        *,
+        single_select_option_id: str | None = None,
+        text: str | None = None,
+    ) -> None:
+        pass
+
+    def issue_edit_body(self, issue_url: str, body: str) -> None:
+        pass
+
+    def field_list(self, owner: str, number: int) -> list[GithubField]:
         return list(self.fields)
 
-    def field_create(self, _number: int, _owner: str, name: str, options: list[str]) -> str:
+    def field_create(self, number: int, owner: str, name: str, options: Sequence[str]) -> str:
         self.created_fields.append((name, options))
         return "F_status"
 
-    def field_create_text(self, _number: int, _owner: str, name: str) -> str:
+    def field_create_text(self, number: int, owner: str, name: str) -> str:
         self.created_text_fields.append(name)
         return "F_harvest"
 
@@ -359,6 +378,32 @@ def test_bind_recovers_existing_marker_without_pending_attempt(
     bind_github_project(graph, rid, root, github)
 
     assert graph.get_node(goal.id).github_ref == "PVTI_existing"
+
+
+def test_bind_tolerates_unrelated_item_missing_id(tmp_path: Path, graph: MikadoGraph) -> None:
+    """An unrelated project item with no id must not block binding (marker-first)."""
+    rid, root = _import(tmp_path, graph)
+    github = FakeGh(existing_items=[{"title": "some other item", "body": "no marker here"}])
+
+    result = bind_github_project(graph, rid, root, github)
+
+    assert result.issues_created == 2
+    assert result.items_added == 2
+
+
+def test_bind_rejects_marker_matching_item_without_id(tmp_path: Path, graph: MikadoGraph) -> None:
+    """A project item that carries the correlation marker but has no id is a
+    domain error: it can never be adopted as the goal's github_ref."""
+    from milknado.domains.github.bind import _correlation_marker
+
+    rid, root = _import(tmp_path, graph)
+    goal = graph.get_children(rid)[0]
+    roadmap = graph.get_node(rid)
+    marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
+    github = FakeGh(existing_items=[{"body": marker}])
+
+    with pytest.raises(RuntimeError, match="has no id"):
+        bind_github_project(graph, rid, root, github)
 
 
 class TestGoalIntent:
