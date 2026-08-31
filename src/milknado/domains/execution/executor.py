@@ -34,7 +34,7 @@ from milknado.domains.common.errors import (
     UnlandedWorkError,
 )
 from milknado.domains.common.paths import slugify
-from milknado.domains.common.protocols import GraphExecutionSnapshot
+from milknado.domains.common.protocols import GraphExecutionSnapshot, ReviewResult
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoNode,
