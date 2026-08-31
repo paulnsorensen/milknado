@@ -14,7 +14,7 @@ from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 def _write(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    _ = path.write_text(body, encoding="utf-8")
     return path
 
 
@@ -44,7 +44,7 @@ def test_global_config_path_falls_back_to_home(
 
 
 def test_local_overrides_global(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         '[milknado]\nagent_family = "claude"\nconcurrency_limit = 7\n',
     )
@@ -57,7 +57,7 @@ def test_local_overrides_global(xdg: Path, tmp_path: Path) -> None:
 
 
 def test_local_worktree_overrides_global_default(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         '[milknado]\nagent_family = "claude"\nworktree = false\n',
     )
@@ -74,7 +74,7 @@ def test_missing_worktree_uses_true_default(tmp_path: Path) -> None:
 
 
 def test_global_fills_unset_local_keys(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         ('[milknado]\nagent_family = "claude"\nstall_threshold_seconds = 999\n'),
     )
@@ -88,7 +88,7 @@ def test_global_fills_unset_local_keys(xdg: Path, tmp_path: Path) -> None:
 
 def test_global_local_only_keys_ignored(xdg: Path, tmp_path: Path) -> None:
     # plugins and db_path are per-project — global cannot dictate them.
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
@@ -108,7 +108,7 @@ def test_global_local_only_keys_ignored(xdg: Path, tmp_path: Path) -> None:
 
 
 def test_include_global_false_skips_global(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         '[milknado]\nagent_family = "claude"\nconcurrency_limit = 99\n',
     )
@@ -123,7 +123,7 @@ def test_include_global_false_skips_global(xdg: Path, tmp_path: Path) -> None:
 def test_global_worker_tools_single_list_affects_execution_agent(
     xdg: Path, tmp_path: Path
 ) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
@@ -143,7 +143,7 @@ def test_global_worker_tools_single_list_affects_execution_agent(
 def test_local_worker_tools_single_list_replaces_global(xdg: Path, tmp_path: Path) -> None:
     """Local single-list replaces the global single-list entirely (last write wins
     in deep-merge on the same key, with local winning)."""
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
@@ -168,7 +168,7 @@ def test_local_worker_tools_single_list_replaces_global(xdg: Path, tmp_path: Pat
 
 
 def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             '[milknado]\nagent_family = "claude"\n\n'
@@ -191,6 +191,7 @@ def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path
 
     cfg = load_config(local)
     profile = resolve_flavor_profile(cfg, "research")
+    assert profile.quality_gates is not None
     assert profile.quality_gates[0].command == "echo global"
     assert profile.brief_prepend == "local brief"
     assert profile.worktree is False
@@ -201,8 +202,10 @@ def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path
 def test_global_flavor_brief_path_resolves_against_global_dir(xdg: Path, tmp_path: Path) -> None:
     global_dir = xdg / "milknado"
     (global_dir / "briefs").mkdir(parents=True)
-    (global_dir / "briefs" / "research.md").write_text("global research brief\n", encoding="utf-8")
-    _write(
+    _ = (global_dir / "briefs" / "research.md").write_text(
+        "global research brief\n", encoding="utf-8"
+    )
+    _ = _write(
         global_dir / "milknado.toml",
         (
             '[milknado]\nagent_family = "claude"\n\n'
@@ -235,7 +238,7 @@ def test_planning_prompt_prepend_inline(tmp_path: Path) -> None:
 
 def test_planning_prompt_prepend_path(tmp_path: Path) -> None:
     extras = tmp_path / "planner-extras.md"
-    extras.write_text("global team conventions\n", encoding="utf-8")
+    _ = extras.write_text("global team conventions\n", encoding="utf-8")
     local = _write(
         tmp_path / "milknado.toml",
         (
@@ -275,7 +278,7 @@ def test_prompt_prepend_inline_and_path_mutually_exclusive(tmp_path: Path) -> No
         ),
     )
     with pytest.raises(ValueError, match="mutually exclusive"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_prompt_prepend_path_missing_raises(tmp_path: Path) -> None:
@@ -289,7 +292,7 @@ def test_prompt_prepend_path_missing_raises(tmp_path: Path) -> None:
         ),
     )
     with pytest.raises(FileNotFoundError):
-        load_config(local)
+        _ = load_config(local)
 
 
 @pytest.mark.parametrize("key", ("planning_prepend_path", "worker_brief_prepend_path"))
@@ -306,7 +309,7 @@ def test_local_prompt_path_cannot_escape_project_root(tmp_path: Path, key: str) 
         ValueError,
         match=rf"\[milknado\.prompts\] {key} .*escapes project_root",
     ):
-        load_config(local, include_global=False)
+        _ = load_config(local, include_global=False)
 
 
 def test_local_flavor_brief_path_cannot_escape_project_root(tmp_path: Path) -> None:
@@ -323,12 +326,12 @@ def test_local_flavor_brief_path_cannot_escape_project_root(tmp_path: Path) -> N
         ValueError,
         match=r"\[milknado\.flavor\.research\] brief_prepend_path .*escapes project_root",
     ):
-        load_config(local, include_global=False)
+        _ = load_config(local, include_global=False)
 
 
 def test_local_prompt_symlink_cannot_escape_project_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.md"
-    outside.write_text("outside", encoding="utf-8")
+    _ = outside.write_text("outside", encoding="utf-8")
     link = tmp_path / "linked.md"
     link.symlink_to(outside)
     local = _write(
@@ -340,12 +343,12 @@ def test_local_prompt_symlink_cannot_escape_project_root(tmp_path: Path) -> None
         ),
     )
     with pytest.raises(ValueError, match=r"worker_brief_prepend_path .*escapes project_root"):
-        load_config(local, include_global=False)
+        _ = load_config(local, include_global=False)
 
 
 def test_local_flavor_symlink_cannot_escape_project_root(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside.md"
-    outside.write_text("outside", encoding="utf-8")
+    _ = outside.write_text("outside", encoding="utf-8")
     link = tmp_path / "linked.md"
     link.symlink_to(outside)
     local = _write(
@@ -357,14 +360,14 @@ def test_local_flavor_symlink_cannot_escape_project_root(tmp_path: Path) -> None
         ),
     )
     with pytest.raises(ValueError, match=r"brief_prepend_path .*escapes project_root"):
-        load_config(local, include_global=False)
+        _ = load_config(local, include_global=False)
 
 
 def test_prompt_prepend_empty_string_plus_path_still_rejected(tmp_path: Path) -> None:
     """Empty-string inline + path is still a misconfigured pair: surface it
     rather than silently picking the path branch."""
     extras = tmp_path / "p.md"
-    extras.write_text("contents", encoding="utf-8")
+    _ = extras.write_text("contents", encoding="utf-8")
     local = _write(
         tmp_path / "milknado.toml",
         (
@@ -376,13 +379,13 @@ def test_prompt_prepend_empty_string_plus_path_still_rejected(tmp_path: Path) ->
         ),
     )
     with pytest.raises(ValueError, match="mutually exclusive"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_local_path_overrides_global_inline(xdg: Path, tmp_path: Path) -> None:
     """A global ``planning_prepend`` plus a local ``planning_prepend_path``
     should resolve to the local path's contents, not raise mutual-exclusion."""
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
@@ -392,7 +395,7 @@ def test_local_path_overrides_global_inline(xdg: Path, tmp_path: Path) -> None:
         ),
     )
     extras = tmp_path / "local.md"
-    extras.write_text("local from path", encoding="utf-8")
+    _ = extras.write_text("local from path", encoding="utf-8")
     local = _write(
         tmp_path / "milknado.toml",
         (
@@ -409,8 +412,8 @@ def test_local_path_overrides_global_inline(xdg: Path, tmp_path: Path) -> None:
 def test_local_inline_overrides_global_path(xdg: Path, tmp_path: Path) -> None:
     """Reverse direction: global uses ``_path``, local replaces with inline."""
     global_extras = xdg / "global.md"
-    global_extras.write_text("global from path", encoding="utf-8")
-    _write(
+    _ = global_extras.write_text("global from path", encoding="utf-8")
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\n"
@@ -439,7 +442,7 @@ def test_worker_tools_scalar_string_rejected(tmp_path: Path) -> None:
         ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "Read"\n'),
     )
     with pytest.raises(ValueError, match="must be a list of strings"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_worker_tools_non_string_item_rejected(tmp_path: Path) -> None:
@@ -451,7 +454,7 @@ def test_worker_tools_non_string_item_rejected(tmp_path: Path) -> None:
         ValueError,
         match=r"\[milknado.worker.tools.claude\]\[0\] must be a non-empty string",
     ):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_worker_not_table_rejected(tmp_path: Path) -> None:
@@ -461,7 +464,7 @@ def test_worker_not_table_rejected(tmp_path: Path) -> None:
         '[milknado]\nagent_family = "claude"\nworker = "oops"\n',
     )
     with pytest.raises(ValueError, match=r"\[milknado\.worker\] must be a table"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_worker_tools_not_table_rejected(tmp_path: Path) -> None:
@@ -471,7 +474,7 @@ def test_worker_tools_not_table_rejected(tmp_path: Path) -> None:
         '[milknado]\nagent_family = "claude"\n\n[milknado.worker]\ntools = "oops"\n',
     )
     with pytest.raises(ValueError, match=r"\[milknado\.worker\.tools\] must be a table"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_prompts_not_table_rejected(tmp_path: Path) -> None:
@@ -481,7 +484,7 @@ def test_prompts_not_table_rejected(tmp_path: Path) -> None:
         '[milknado]\nagent_family = "claude"\nprompts = "oops"\n',
     )
     with pytest.raises(ValueError, match=r"\[milknado\.prompts\] must be a table"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_worker_table_without_tools_yields_no_overrides(tmp_path: Path) -> None:
@@ -501,28 +504,32 @@ def test_worker_tools_family_not_list_rejected(tmp_path: Path) -> None:
         '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "oops"\n',
     )
     with pytest.raises(ValueError, match=r"must be a list of strings"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_parse_worker_tools_non_string_family_rejected() -> None:
     """Non-string family keys (only reachable via a raw dict, not TOML) are rejected."""
     with pytest.raises(ValueError, match="tools"):
-        msgspec.convert({"tools": {1: ["Read"]}}, type=WorkerTable, strict=True)
+        _ = msgspec.convert({"tools": {1: ["Read"]}}, type=WorkerTable, strict=True)
 
 
 def test_top_level_milknado_not_table_rejected(tmp_path: Path) -> None:
     """A top-level scalar `milknado` value is not the [milknado] table; reject."""
     local = _write(tmp_path / "milknado.toml", 'milknado = "oops"\n')
     with pytest.raises(ValueError, match=r"\[milknado\] is not a table"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_save_config_single_list_tools_round_trips(tmp_path: Path) -> None:
     """A single-list tools override round-trips through save->load."""
     src = _write(
         tmp_path / "in.toml",
-        '[milknado]\nagent_family = "claude"\n\n'
-        '[milknado.worker.tools]\nclaude = ["Read", "Edit"]\n',
+        """[milknado]
+agent_family = "claude"
+
+[milknado.worker.tools]
+claude = ["Read", "Edit"]
+""",
     )
     cfg = load_config(src, include_global=False)
     out = tmp_path / "milknado.toml"
@@ -566,14 +573,14 @@ def test_global_relative_prompt_path_resolves_against_global_dir(
     """A relative prompt `_path` in the GLOBAL config resolves next to the global
     config file, not the local project root."""
     global_dir = xdg / "milknado"
-    _write(
+    _ = _write(
         global_dir / "milknado.toml",
         '[milknado.prompts]\nplanning_prepend_path = "team.md"\n',
     )
-    (global_dir / "team.md").write_text("GLOBAL TEAM NOTE", encoding="utf-8")
+    _ = (global_dir / "team.md").write_text("GLOBAL TEAM NOTE", encoding="utf-8")
     # A decoy with the same relative name in the project root: the buggy
     # behaviour resolved against here and would pick this up.
-    (tmp_path / "team.md").write_text("LOCAL DECOY", encoding="utf-8")
+    _ = (tmp_path / "team.md").write_text("LOCAL DECOY", encoding="utf-8")
     local = _write(tmp_path / "milknado.toml", '[milknado]\nagent_family = "claude"\n')
     cfg = load_config(local)
     assert cfg.planning_prompt_prepend == "GLOBAL TEAM NOTE"
@@ -587,15 +594,19 @@ def test_prompt_inline_non_string_rejected(tmp_path: Path) -> None:
         '[milknado]\nagent_family = "claude"\n\n[milknado.prompts]\nplanning_prepend = ["x"]\n',
     )
     with pytest.raises(ValueError, match="planning_prepend must be a string"):
-        load_config(local)
+        _ = load_config(local)
 
 
 def test_prompt_path_non_string_rejected(tmp_path: Path) -> None:
     """A non-string `_path` is rejected rather than coerced into a filename."""
     local = _write(
         tmp_path / "milknado.toml",
-        '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.prompts]\nworker_brief_prepend_path = 42\n",
+        """[milknado]
+agent_family = "claude"
+
+[milknado.prompts]
+worker_brief_prepend_path = 42
+""",
     )
     with pytest.raises(ValueError, match=r"prepend_path must be a string"):
-        load_config(local)
+        _ = load_config(local)

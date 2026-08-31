@@ -43,8 +43,8 @@ do the thing
 def _seed(project_root: Path) -> None:
     d = project_root / ".hallouminate" / "wiki" / "roadmaps" / "demo"
     d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "g1.md").write_text(GOAL_MD)
+    _ = (d / "index.md").write_text(INDEX_MD)
+    _ = (d / "g1.md").write_text(GOAL_MD)
 
 
 def test_import_then_export_roundtrip(tmp_path: Path) -> None:
@@ -61,7 +61,7 @@ def test_import_then_export_roundtrip(tmp_path: Path) -> None:
 
 
 def test_import_missing_roadmap_exits_nonzero(tmp_path: Path) -> None:
-    (tmp_path / ".hallouminate" / "wiki").mkdir(parents=True)
+    _ = (tmp_path / ".hallouminate" / "wiki").mkdir(parents=True)
     result = runner.invoke(app, ["roadmap", "import", "ghost", "--project-root", str(tmp_path)])
     assert result.exit_code == 1
     assert "roadmap not found" in result.output
@@ -79,11 +79,24 @@ def test_import_unknown_prereq_exits_nonzero(tmp_path: Path) -> None:
     # to a clean exit-1 message, not a raw traceback (M1).
     d = tmp_path / ".hallouminate" / "wiki" / "roadmaps" / "demo"
     d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "g1.md").write_text(
-        "---\nkind: goal\nslug: g1\nroadmap: demo\ncreated: 2026-06-02\n"
-        "status: pending\nprereqs: [ghost-goal]\n---\n# Goal one\n"
-        "\n## Intent\ndo the thing\n\n## Acceptance\n- done\n"
+    _ = (d / "index.md").write_text(INDEX_MD)
+    _ = (d / "g1.md").write_text(
+        """---
+kind: goal
+slug: g1
+roadmap: demo
+created: 2026-06-02
+status: pending
+prereqs: [ghost-goal]
+---
+# Goal one
+
+## Intent
+do the thing
+
+## Acceptance
+- done
+""",
     )
     result = runner.invoke(app, ["roadmap", "import", "demo", "--project-root", str(tmp_path)])
     assert result.exit_code == 1
@@ -103,7 +116,7 @@ def test_schema_json_and_render_commands(tmp_path: Path) -> None:
         ["roadmap", "json", "demo", "--project-root", str(tmp_path), "--out", str(output)],
     )
     assert result.exit_code == 0, result.output
-    payload = json.loads(output.read_text())
+    payload = json.loads(output.read_text())  # pyright: ignore[reportAny]
     assert payload["roadmap"]["slug"] == "demo"
     assert payload["goals"]["g1"]["slug"] == "g1"
     assert payload["edges"] == []

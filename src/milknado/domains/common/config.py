@@ -22,9 +22,10 @@ from milknado.domains.common.config_layers import (
     remove_origin_prefix,
 )
 from milknado.domains.common.flavor_codec import (
-    FlavorOverride,
+    FlavorOverride as FlavorOverride,
+)
+from milknado.domains.common.flavor_codec import (
     FlavorTable,
-    Gate,
     absolutize_global_flavor_paths,
     coerce_tool_list,
     normalize_flavor_table,
@@ -33,6 +34,9 @@ from milknado.domains.common.flavor_codec import (
     serialize_gates,
     validate_loop_mode,
     validate_positive_int,
+)
+from milknado.domains.common.flavor_codec import (
+    Gate as Gate,
 )
 from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.paths import resolve_project_path, trust_global_path

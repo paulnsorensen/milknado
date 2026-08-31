@@ -15,7 +15,7 @@ runner = CliRunner()
 
 
 def _init_graph(tmp_path: Path) -> tuple[int, int]:
-    runner.invoke(app, ["init", str(tmp_path)])
+    _ = runner.invoke(app, ["init", str(tmp_path)])
     config = default_config(tmp_path)
     graph = MikadoGraph(config.db_path)
     goal = graph.add_node("goal")
@@ -39,7 +39,7 @@ def test_export_dot_to_stdout_contains_seeded_nodes_and_edge(tmp_path: Path) -> 
 
 
 def test_export_writes_dot_file_with_out_option(tmp_path: Path) -> None:
-    _init_graph(tmp_path)
+    _ = _init_graph(tmp_path)
     out_path = tmp_path / "graph.dot"
 
     result = runner.invoke(
@@ -63,7 +63,7 @@ def test_export_writes_dot_file_with_out_option(tmp_path: Path) -> None:
 
 
 def test_export_empty_graph_is_valid_digraph(tmp_path: Path) -> None:
-    runner.invoke(app, ["init", str(tmp_path)])
+    _ = runner.invoke(app, ["init", str(tmp_path)])
 
     result = runner.invoke(
         app, ["graph", "export", "--format", "dot", "--project-root", str(tmp_path)]
@@ -79,10 +79,10 @@ def test_export_empty_graph_is_valid_digraph(tmp_path: Path) -> None:
 def test_export_out_write_failure_reports_error_and_exits_nonzero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _init_graph(tmp_path)
+    _ = _init_graph(tmp_path)
     out_path = tmp_path / "graph.dot"
 
-    def _raise(self: Path, *args: object, **kwargs: object) -> None:
+    def _raise(_self: Path, *_args: object, **_kwargs: object) -> None:
         raise OSError("disk full")
 
     monkeypatch.setattr(Path, "write_text", _raise)

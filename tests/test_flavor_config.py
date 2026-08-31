@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import msgspec
 import pytest
@@ -59,22 +60,22 @@ def test_resolve_worker_tools_sentinel_dedupes_first_wins() -> None:
 
 def test_resolve_worker_tools_at_most_one_sentinel_validated_at_load(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.worker.tools]\n"
-        'claude = ["...", "Read", "..."]\n',
+        + "[milknado.worker.tools]\n"
+        + 'claude = ["...", "Read", "..."]\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="at most one"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_single_list_worker_tools(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.worker.tools]\n"
-        'claude = ["...", "Bash(just:*)"]\n',
+        + "[milknado.worker.tools]\n"
+        + 'claude = ["...", "Bash(just:*)"]\n',
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -91,12 +92,12 @@ def test_load_config_single_list_worker_tools(tmp_path: Path) -> None:
 
 def test_load_config_single_list_bare_string_rejected(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = "Read"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="must be a list"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 # ── AC1: FlavorOverride config parsing + validation ──────────────────────────
@@ -104,11 +105,11 @@ def test_load_config_single_list_bare_string_rejected(tmp_path: Path) -> None:
 
 def test_load_config_flavor_table_parses(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.research]\n"
-        "quality_gates = []\n"
-        'brief_prepend = "Research mode."\n',
+        + "[milknado.flavor.research]\n"
+        + "quality_gates = []\n"
+        + 'brief_prepend = "Research mode."\n',
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -121,10 +122,10 @@ def test_load_config_flavor_table_parses(tmp_path: Path) -> None:
 def test_load_config_flavor_custom_key_registers(tmp_path: Path) -> None:
     """A TOML-declared flavor name outside BUILTIN_FLAVORS is its own registration (ADR-004)."""
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.customflavorkey]\n"
-        "quality_gates = []\n",
+        + "[milknado.flavor.customflavorkey]\n"
+        + "quality_gates = []\n",
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -134,10 +135,10 @@ def test_load_config_flavor_custom_key_registers(tmp_path: Path) -> None:
 def test_flavor_registry_includes_builtins_and_declared(tmp_path: Path) -> None:
     """MilknadoConfig.flavor_registry is BUILTIN_FLAVORS unioned with declared TOML names."""
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.customflavorkey]\n"
-        "quality_gates = []\n",
+        + "[milknado.flavor.customflavorkey]\n"
+        + "quality_gates = []\n",
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -146,14 +147,14 @@ def test_flavor_registry_includes_builtins_and_declared(tmp_path: Path) -> None:
 
 def test_flavor_registry_defaults_to_builtins_only(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
+    _ = cfg_path.write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
     cfg = load_config(cfg_path)
     assert cfg.flavor_registry == BUILTIN_FLAVORS
 
 
 def test_load_config_flavor_worktree_parses(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = false\n',
         encoding="utf-8",
     )
@@ -163,24 +164,24 @@ def test_load_config_flavor_worktree_parses(tmp_path: Path) -> None:
 
 def test_load_config_flavor_worktree_not_bool_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spec]\nworktree = "nope"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="worktree"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'execution_agent = "evil-bin --flag"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'execution_agent = "evil-bin --flag"\n',
         encoding="utf-8",
     )
     with pytest.raises(msgspec.ValidationError) as exc_info:
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
     message = str(exc_info.value)
     assert "execution_agent must start with one of" in message
@@ -189,75 +190,75 @@ def test_load_config_flavor_invalid_execution_agent_raises(tmp_path: Path) -> No
 
 def test_load_config_flavor_tools_malformed_bare_string_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\ntools = "Read"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="must be a list"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_tools_multiple_sentinels_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'tools = ["...", "Read", "..."]\n',
+        + "[milknado.flavor.spike]\n"
+        + 'tools = ["...", "Read", "..."]\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="at most one"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_brief_prepend_path_conflict_raises(tmp_path: Path) -> None:
     brief_file = tmp_path / "house.md"
-    brief_file.write_text("rules", encoding="utf-8")
+    _ = brief_file.write_text("rules", encoding="utf-8")
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'brief_prepend = "inline"\n'
-        'brief_prepend_path = "house.md"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'brief_prepend = "inline"\n'
+        + 'brief_prepend_path = "house.md"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="mutually exclusive"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_brief_prepend_path_missing_file_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'brief_prepend_path = "nonexistent.md"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'brief_prepend_path = "nonexistent.md"\n',
         encoding="utf-8",
     )
     with pytest.raises(FileNotFoundError):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_quality_gates_must_be_list(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'quality_gates = "uv run pytest"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'quality_gates = "uv run pytest"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="must be a list"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_brief_prepend_path_list(tmp_path: Path) -> None:
     f1 = tmp_path / "house.md"
     f2 = tmp_path / "research.md"
-    f1.write_text("house rules", encoding="utf-8")
-    f2.write_text("research rules", encoding="utf-8")
+    _ = f1.write_text("house rules", encoding="utf-8")
+    _ = f2.write_text("research rules", encoding="utf-8")
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.research]\n"
-        'brief_prepend_path = ["house.md", "research.md"]\n',
+        + "[milknado.flavor.research]\n"
+        + 'brief_prepend_path = ["house.md", "research.md"]\n',
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -272,7 +273,7 @@ def test_load_config_flavor_brief_prepend_path_list(tmp_path: Path) -> None:
 
 def test_save_load_roundtrip_with_flavors(tmp_path: Path) -> None:
     brief_file = tmp_path / "house.md"
-    brief_file.write_text("house rules here", encoding="utf-8")
+    _ = brief_file.write_text("house rules here", encoding="utf-8")
     cfg_path = tmp_path / "milknado.toml"
     cfg = MilknadoConfig(
         agent_family="claude",
@@ -512,9 +513,7 @@ def test_runner_no_default_worker_cmd_constant() -> None:
     )
 
 
-def test_runner_no_milknado_worker_cmd_env_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_runner_no_milknado_worker_cmd_env_fallback() -> None:
     """$MILKNADO_WORKER_CMD must no longer influence dispatch."""
     import inspect
 
@@ -530,7 +529,7 @@ def test_validate_worker_argv_still_rejects_unknown_executable() -> None:
     import milknado.domains.dispatch.runner as runner
 
     with pytest.raises(ValueError, match="worker_cmd must start with"):
-        runner.validate_worker_argv(["evil-bin", "--flag"])
+        runner.validate_worker_argv(["evil-bin", "--flag"])  # pyright: ignore[reportPrivateImportUsage]
 
 
 # ── AC7: brief semantics ─────────────────────────────────────────────────────
@@ -567,10 +566,10 @@ def test_flavor_brief_replaces_global() -> None:
 def test_load_config_flavor_valid_execution_agent(tmp_path: Path) -> None:
     """A valid execution_agent in a flavor entry parses and stores correctly."""
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'execution_agent = "claude -p --model opus"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'execution_agent = "claude -p --model opus"\n',
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -581,10 +580,10 @@ def test_load_config_flavor_valid_execution_agent(tmp_path: Path) -> None:
 
 def test_load_config_flavor_omp_execution_agent(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.spike]\n"
-        'execution_agent = "omp -p --auto-approve --no-session"\n',
+        + "[milknado.flavor.spike]\n"
+        + 'execution_agent = "omp -p --auto-approve --no-session"\n',
         encoding="utf-8",
     )
 
@@ -630,29 +629,29 @@ def test_save_load_roundtrip_flavor_worktree(tmp_path: Path) -> None:
 def test_load_config_flavor_not_a_table_raises(tmp_path: Path) -> None:
     """[milknado.flavor] being a scalar raises ValueError."""
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\nflavor = "oops"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="\\[milknado.flavor\\] must be a table"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
-def test_load_config_flavor_entry_not_a_table_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_entry_not_a_table_raises() -> None:
     """A scalar flavor entry raises ValueError."""
     # We simulate this via a raw dict through the [milknado] schema directly.
     from milknado.domains.common.config import decode_milknado_section
 
     with pytest.raises(ValueError, match="\\[milknado.flavor.spike\\] must be a table"):
-        decode_milknado_section({"flavor": {"spike": "oops"}})
+        _ = decode_milknado_section({"flavor": {"spike": "oops"}})
 
 
-def test_load_config_flavor_execution_agent_not_string_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_execution_agent_not_string_raises() -> None:
     """Non-string execution_agent in a flavor entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="execution_agent"):
-        msgspec.convert({"execution_agent": 42}, type=FlavorTable, strict=True)
+        _ = msgspec.convert({"execution_agent": 42}, type=FlavorTable, strict=True)
 
 
 @pytest.mark.parametrize(
@@ -674,7 +673,7 @@ def test_flavor_validation_hides_invalid_input(payload: dict[str, object]) -> No
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(msgspec.ValidationError) as exc_info:
-        msgspec.convert(payload, type=FlavorTable, strict=True)
+        _ = msgspec.convert(payload, type=FlavorTable, strict=True)
 
     assert "TOPSECRET" not in str(exc_info.value)
 
@@ -682,44 +681,44 @@ def test_flavor_validation_hides_invalid_input(payload: dict[str, object]) -> No
 def test_load_config_flavor_quality_gates_non_string_item_raises(tmp_path: Path) -> None:
     """Non-string quality_gates item in a flavor entry raises ValueError."""
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nquality_gates = [42]\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="string or a table"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
-def test_load_config_flavor_quality_gates_error_names_quality_gates_key(tmp_path: Path) -> None:
+def test_load_config_flavor_quality_gates_error_names_quality_gates_key() -> None:
     """Parse errors in a flavor's quality_gates mention 'quality_gates' in the message."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="quality_gates"):
-        msgspec.convert({"quality_gates": [42]}, type=FlavorTable, strict=True)
+        _ = msgspec.convert({"quality_gates": [42]}, type=FlavorTable, strict=True)
 
 
-def test_load_config_flavor_brief_prepend_not_string_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_brief_prepend_not_string_raises() -> None:
     """Non-string brief_prepend in a flavor entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="brief_prepend"):
-        msgspec.convert({"brief_prepend": 42}, type=FlavorTable, strict=True)
+        _ = msgspec.convert({"brief_prepend": 42}, type=FlavorTable, strict=True)
 
 
-def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_brief_prepend_path_not_string_or_list_raises() -> None:
     """brief_prepend_path being a number raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="brief_prepend_path"):
-        msgspec.convert({"brief_prepend_path": 42}, type=FlavorTable, strict=True)
+        _ = msgspec.convert({"brief_prepend_path": 42}, type=FlavorTable, strict=True)
 
 
-def test_load_config_flavor_brief_prepend_path_list_non_string_raises(tmp_path: Path) -> None:
+def test_load_config_flavor_brief_prepend_path_list_non_string_raises() -> None:
     """A list brief_prepend_path with a non-string entry raises ValueError."""
     from milknado.domains.common.flavor_codec import FlavorTable
 
     with pytest.raises(ValueError, match="brief_prepend_path"):
-        msgspec.convert({"brief_prepend_path": [42, "ok.md"]}, type=FlavorTable, strict=True)
+        _ = msgspec.convert({"brief_prepend_path": [42, "ok.md"]}, type=FlavorTable, strict=True)
 
 
 def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
@@ -730,7 +729,7 @@ def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
 
     base_dir = tmp_path / "global"
     base_dir.mkdir()
-    raw: dict = {
+    raw: dict[str, object] = {
         "flavor": {
             "research": {
                 "brief_prepend_path": ["house.md", "/abs/path.md"],
@@ -741,11 +740,12 @@ def test_absolutize_global_flavor_paths(tmp_path: Path) -> None:
         }
     }
     _absolutize_global_flavor_paths(raw, base_dir)
-    assert raw["flavor"]["research"]["brief_prepend_path"] == [
+    flavors = cast(dict[str, dict[str, object]], raw["flavor"])
+    assert cast(list[str], flavors["research"]["brief_prepend_path"]) == [
         str((base_dir / "house.md").resolve()),
         "/abs/path.md",
     ]
-    assert raw["flavor"]["spike"]["brief_prepend_path"] == str(
+    assert cast(str, flavors["spike"]["brief_prepend_path"]) == str(
         (base_dir / "relative.md").resolve()
     )
 
@@ -820,24 +820,26 @@ def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
     from milknado.mcp.todo import milknado_todo_brief
     from milknado.mcp.todo_mutate import milknado_todo_add
 
-    def _call(tool, **kwargs):
+    def _call(tool: object, **kwargs: object) -> dict[str, object]:
         fn = getattr(tool, "fn", tool)
-        return fn(**kwargs)
+        if not callable(fn):
+            raise TypeError("tool is not callable")
+        return cast(dict[str, object], fn(**kwargs))
 
     root = str(tmp_path)
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.research]\n"
-        'brief_prepend = "RESEARCH_MARKER: go deep."\n',
+        + "[milknado.flavor.research]\n"
+        + 'brief_prepend = "RESEARCH_MARKER: go deep."\n',
         encoding="utf-8",
     )
 
     task = _call(
         milknado_todo_add, description="investigate X", flavor="research", project_root=root
     )
-    result = _call(milknado_todo_brief, node_id=task["id"], project_root=root)
-    assert "RESEARCH_MARKER: go deep." in result["brief"]
+    result = _call(milknado_todo_brief, node_id=cast(int, task["id"]), project_root=root)
+    assert "RESEARCH_MARKER: go deep." in cast(str, result["brief"])
 
 
 def test_todo_brief_resolves_custom_flavor_brief_path(tmp_path: Path) -> None:
@@ -845,19 +847,21 @@ def test_todo_brief_resolves_custom_flavor_brief_path(tmp_path: Path) -> None:
     from milknado.mcp.todo import milknado_todo_brief
     from milknado.mcp.todo_mutate import milknado_todo_add
 
-    def _call(tool, **kwargs):
+    def _call(tool: object, **kwargs: object) -> dict[str, object]:
         fn = getattr(tool, "fn", tool)
-        return fn(**kwargs)
+        if not callable(fn):
+            raise TypeError("tool is not callable")
+        return cast(dict[str, object], fn(**kwargs))
 
     marker = "TRIAGE_MARKER: evidence first."
     brief_file = tmp_path / "triage.md"
-    brief_file.write_text(marker, encoding="utf-8")
+    _ = brief_file.write_text(marker, encoding="utf-8")
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.triage]\n"
-        "quality_gates = []\n"
-        'brief_prepend_path = "triage.md"\n',
+        + "[milknado.flavor.triage]\n"
+        + "quality_gates = []\n"
+        + 'brief_prepend_path = "triage.md"\n',
         encoding="utf-8",
     )
 
@@ -867,9 +871,13 @@ def test_todo_brief_resolves_custom_flavor_brief_path(tmp_path: Path) -> None:
         flavor="triage",
         project_root=str(tmp_path),
     )
-    result = _call(milknado_todo_brief, node_id=task["id"], project_root=str(tmp_path))
+    result = _call(
+        milknado_todo_brief,
+        node_id=cast(int, task["id"]),
+        project_root=str(tmp_path),
+    )
 
-    assert result["brief"].startswith(marker)
+    assert cast(str, result["brief"]).startswith(marker)
 
 
 # ── adversarial-review-loops: session_mode/review config contract ───────────
@@ -886,7 +894,7 @@ def test_validate_session_mode_rejects_invalid() -> None:
     from milknado.domains.common.flavor_codec import validate_session_mode
 
     with pytest.raises(ValueError, match="session_mode"):
-        validate_session_mode("eventual")
+        _ = validate_session_mode("eventual")
 
 
 def test_validate_on_reject_accepts_block_and_warn() -> None:
@@ -900,19 +908,19 @@ def test_validate_on_reject_rejects_invalid() -> None:
     from milknado.domains.common.flavor_codec import validate_on_reject
 
     with pytest.raises(ValueError, match="on_reject"):
-        validate_on_reject("ignore")
+        _ = validate_on_reject("ignore")
 
 
 def test_load_config_flavor_review_fields_parse(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.implement]\n"
-        'session_mode = "resume"\n'
-        "review = true\n"
-        'review_agent = "claude -p --model opus"\n'
-        "review_max_rounds = 5\n"
-        'on_reject = "warn"\n',
+        + "[milknado.flavor.implement]\n"
+        + 'session_mode = "resume"\n'
+        + "review = true\n"
+        + 'review_agent = "claude -p --model opus"\n'
+        + "review_max_rounds = 5\n"
+        + 'on_reject = "warn"\n',
         encoding="utf-8",
     )
     cfg = load_config(cfg_path)
@@ -952,22 +960,22 @@ def test_save_load_roundtrip_flavor_review_fields(tmp_path: Path) -> None:
 
 def test_load_config_flavor_review_not_bool_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nreview = "yes"\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="review must be a boolean"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_review_agent_not_string_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nreview_agent = 42\n',
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="review_agent must be a string"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 # AC — cursor-agent resume fail-fast (adversarial-review-loops-F001), enforced
@@ -976,42 +984,42 @@ def test_load_config_flavor_review_agent_not_string_raises(tmp_path: Path) -> No
 
 def test_load_config_flavor_resume_cursor_agent_execution_agent_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.implement]\n"
-        'session_mode = "resume"\n'
-        'execution_agent = "cursor-agent -p"\n',
+        + "[milknado.flavor.implement]\n"
+        + 'session_mode = "resume"\n'
+        + 'execution_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
     with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_resume_cursor_agent_review_agent_raises(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.implement]\n"
-        'session_mode = "resume"\n'
-        'review_agent = "cursor-agent -p"\n',
+        + "[milknado.flavor.implement]\n"
+        + 'session_mode = "resume"\n'
+        + 'review_agent = "cursor-agent -p"\n',
         encoding="utf-8",
     )
     with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_flavor_resume_checks_both_configured_agents(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.flavor.implement]\n"
-        'session_mode = "resume"\n'
-        'execution_agent = "cursor-agent -p"\n'
-        'review_agent = "claude -p"\n',
+        + "[milknado.flavor.implement]\n"
+        + 'session_mode = "resume"\n'
+        + 'execution_agent = "cursor-agent -p"\n'
+        + 'review_agent = "claude -p"\n',
         encoding="utf-8",
     )
     with pytest.raises(msgspec.ValidationError, match="adversarial-review-loops-F001"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_resolve_flavor_profile_resume_cursor_agent_family_raises(tmp_path: Path) -> None:
@@ -1025,7 +1033,7 @@ def test_resolve_flavor_profile_resume_cursor_agent_family_raises(tmp_path: Path
         },
     )
     with pytest.raises(ValueError, match="adversarial-review-loops-F001"):
-        resolve_flavor_profile(cfg, "implement")
+        _ = resolve_flavor_profile(cfg, "implement")
 
 
 # AC — resolve_flavor_profile: default review, session_mode/on_reject/
@@ -1094,11 +1102,15 @@ def test_flavor_preset_toml_examples_parse_and_use_codec_vocabulary() -> None:
         / "references"
         / "flavor-presets.md"
     )
-    snippets = re.findall(r"```toml\n(.*?)\n```", doc_path.read_text(encoding="utf-8"), re.DOTALL)
+    snippets = cast(
+        list[str],
+        re.findall(r"```toml\n(.*?)\n```", doc_path.read_text(encoding="utf-8"), re.DOTALL),
+    )
     assert snippets
     for snippet in snippets:
-        raw = tomllib.loads(snippet)
-        flavor_tables = raw.get("milknado", {}).get("flavor", {}).values()
-        for flavor in flavor_tables:
+        raw = cast(dict[str, object], tomllib.loads(snippet))
+        milknado_section = cast(dict[str, object], raw.get("milknado", {}))
+        flavor_tables = cast(dict[str, dict[str, object]], milknado_section.get("flavor", {}))
+        for flavor in flavor_tables.values():
             if "on_reject" in flavor:
                 assert flavor["on_reject"] in {"block", "warn"}

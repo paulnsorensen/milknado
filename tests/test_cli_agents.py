@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.cli.agents import _redact_extra
+from milknado.cli.agents import _redact_extra  # pyright: ignore[reportPrivateUsage]
 
 runner = CliRunner()
 
