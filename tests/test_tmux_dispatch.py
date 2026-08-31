@@ -8,7 +8,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn, TypedDict, cast
 
 import pytest
 
@@ -27,6 +29,8 @@ from milknado.domains.dispatch.tmux_run import (
     execute_in_window,
     read_exit_code,
 )
+from milknado.domains.graph import MikadoGraph
+from milknado.mcp._core import NodeSummary
 from milknado.mcp.ralph import milknado_run_loop_start
 from milknado.mcp.run import (
     milknado_run_inline_poll,
@@ -35,30 +39,45 @@ from milknado.mcp.run import (
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo_mutate import milknado_todo_add
 
+
+class _RunResult(TypedDict):
+    id: int
+    run_id: str
+    status: str
+    pid: int | None
+    exit_code: int | None
+    log_path: str
+    summary: str
+    timed_out: bool
+
+
 RUN_ID = "node-1-20260101T000000Z-deadbeef"
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+def _call(tool: object, **kwargs: object) -> _RunResult:
+    fn = cast(Callable[..., _RunResult], getattr(tool, "fn", tool))
     # run_inline{,_start} now default to ISOLATE (per-dispatch worktree). These
     # legacy tmux tests target the shared-checkout path, so pin THIS_BRANCH.
-    if fn.__name__ in ("milknado_run_inline", "milknado_run_inline_start"):
-        kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+    if getattr(fn, "__name__", "") in (
+        "milknado_run_inline",
+        "milknado_run_inline_start",
+    ):
+        _ = kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
     return fn(**kwargs)
 
 
 class FakeTmux:
     """In-memory stand-in for TmuxAdapter honouring its window-set semantics."""
 
-    session_name = "milknado-proj"
+    session_name: str = "milknado-proj"
 
     def __init__(self, *, available: bool = True, fail_session: bool = False) -> None:
-        self._available = available
-        self._fail_session = fail_session
+        self._available: bool = available
+        self._fail_session: bool = fail_session
         self.windows: set[str] = set()
         self.opened: list[RunWindow] = []
         self.killed: list[str] = []
-        self.pane_pid = os.getpid()
+        self.pane_pid: int = os.getpid()
 
     def available(self) -> bool:
         return self._available
@@ -94,11 +113,13 @@ class SpawningFakeTmux(FakeTmux):
 
     def __init__(self, script: str) -> None:
         super().__init__()
-        self._script = script
-        self.procs: list[subprocess.Popen] = []
+        self._script: str = script
+        self.procs: list[subprocess.Popen[bytes]] = []
 
-    def open_run_window(self, window: RunWindow) -> int:
-        super().open_run_window(window)
+    def open_run_window(  # pyright: ignore[reportImplicitOverride]
+        self, window: RunWindow
+    ) -> int:
+        _ = super().open_run_window(window)
         cmd = self._script.format(
             brief=window.brief_path, log=window.log_path, rc=window.exit_code_path
         )
@@ -107,6 +128,13 @@ class SpawningFakeTmux(FakeTmux):
         # Reap promptly so pid-liveness sees the death (tmux would do this).
         threading.Thread(target=proc.wait, daemon=True).start()
         return proc.pid
+
+
+def _fake_adapter(fake: FakeTmux) -> Callable[[str], FakeTmux]:
+    def _factory(_root: str) -> FakeTmux:
+        return fake
+
+    return _factory
 
 
 # --- fail-closed preflight -------------------------------------------------
@@ -132,8 +160,8 @@ def test_ensure_tmux_ready_fails_closed_when_server_cannot_start() -> None:
 def _add_task(root: str) -> int:
     project = Path(root)
     if not (project / ".git").exists():
-        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=project, check=True)
-        subprocess.run(
+        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=project, check=True)
+        _ = subprocess.run(
             [
                 "git",
                 "-c",
@@ -148,26 +176,30 @@ def _add_task(root: str) -> int:
             cwd=project,
             check=True,
         )
-    return _call(
-        milknado_todo_add,
-        description="tmux-task",
-        kind="task",
-        project_root=root,
-    )["id"]
+    # milknado_todo_add returns NodeSummary, not the run-shaped _RunResult the
+    # shared _call helper is typed for — give it its own typed path.
+    raw_tool = getattr(milknado_todo_add, "fn", milknado_todo_add)
+    add_task = cast(Callable[..., NodeSummary], raw_tool)
+    summary = add_task(description="tmux-task", kind="task", project_root=root)
+    return summary["id"]
 
 
-def _node_status(root, node_id: int) -> NodeStatus:
+def _node_status(root: str, node_id: int) -> NodeStatus:
     graph, _cfg = open_graph(Path(root))
     try:
-        return graph.get_node(node_id).status
+        node = graph.get_node(node_id)
+        assert node is not None
+        return node.status
     finally:
         graph.close()
 
 
-def test_loop_start_without_use_tmux_never_touches_tmux(tmp_path, monkeypatch) -> None:
+def test_loop_start_without_use_tmux_never_touches_tmux(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The default detached path must not construct a tmux adapter at all."""
 
-    def _boom(*args, **kwargs):
+    def _boom(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("TmuxAdapter constructed on the default path")
 
     monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", _boom)
@@ -182,14 +214,16 @@ def test_loop_start_without_use_tmux_never_touches_tmux(tmp_path, monkeypatch) -
     assert started["status"] == "running"
 
 
-def test_loop_start_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monkeypatch) -> None:
+def test_loop_start_use_tmux_fails_closed_and_leaves_node_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = FakeTmux(available=False)
-    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     node_id = _add_task(root)
     with pytest.raises(ValueError, match="not on PATH"):
-        _call(
+        _ = _call(
             milknado_run_loop_start,
             node_id=node_id,
             runner_cmd=f"{sys.executable} -c pass",
@@ -200,10 +234,12 @@ def test_loop_start_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monk
     assert fake.opened == []
 
 
-def test_loop_start_use_tmux_opens_window_named_after_run_id(tmp_path, monkeypatch) -> None:
+def test_loop_start_use_tmux_opens_window_named_after_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = FakeTmux()
-    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     started = _call(
         milknado_run_loop_start,
@@ -223,17 +259,21 @@ def test_loop_start_use_tmux_opens_window_named_after_run_id(tmp_path, monkeypat
     assert started["pid"] == fake.pane_pid
     graph, _cfg = open_graph(tmp_path)
     try:
-        assert graph.get_run(started["run_id"])["pid"] == fake.pane_pid
+        row = graph.get_run(started["run_id"])
+        assert row is not None
+        assert row["pid"] == fake.pane_pid
     finally:
         graph.close()
 
 
-def test_loop_start_window_collision_releases_claim_as_failed(tmp_path, monkeypatch) -> None:
+def test_loop_start_window_collision_releases_claim_as_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A tmux failure after the claim must release the node (mirrors the
     OSError spawn-failure guard), not strand it RUNNING."""
     fake = FakeTmux()
-    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", _fake_adapter(fake))
 
     def _collide(window: RunWindow) -> int:
         raise TmuxDispatchError(f"tmux window {window.run_id!r} already exists")
@@ -242,7 +282,7 @@ def test_loop_start_window_collision_releases_claim_as_failed(tmp_path, monkeypa
     root = str(tmp_path)
     node_id = _add_task(root)
     with pytest.raises(TmuxDispatchError, match="already exists"):
-        _call(
+        _ = _call(
             milknado_run_loop_start,
             node_id=node_id,
             runner_cmd=f"{sys.executable} -c pass",
@@ -255,9 +295,9 @@ def test_loop_start_window_collision_releases_claim_as_failed(tmp_path, monkeypa
 # --- run-inline path (milknado_run_inline_start) --------------------------------
 
 
-def _wait_for_terminal(root: str, run_id: str, timeout: float = 10.0) -> dict:
+def _wait_for_terminal(root: str, run_id: str, timeout: float = 10.0) -> _RunResult:
     deadline = time.monotonic() + timeout
-    last: dict | None = None
+    last: _RunResult | None = None
     while time.monotonic() < deadline:
         last = _call(milknado_run_inline_poll, run_id=run_id, project_root=root)
         if last["status"] in ("done", "failed"):
@@ -266,14 +306,16 @@ def _wait_for_terminal(root: str, run_id: str, timeout: float = 10.0) -> dict:
     raise AssertionError(f"run {run_id} did not finish; last={last}")
 
 
-def test_run_inline_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monkeypatch) -> None:
+def test_run_inline_use_tmux_fails_closed_and_leaves_node_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = FakeTmux(available=False)
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     node_id = _add_task(root)
     with pytest.raises(ValueError, match="not on PATH"):
-        _call(
+        _ = _call(
             milknado_run_inline_start,
             node_id=node_id,
             worker_cmd="claude",
@@ -284,12 +326,12 @@ def test_run_inline_use_tmux_fails_closed_and_leaves_node_pending(tmp_path, monk
 
 
 def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
-    tmp_path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Worker reads the staged brief; successful polling cleans up its tmux window."""
     fake = SpawningFakeTmux("cat {brief} >> {log}; echo 0 > {rc}")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     node_id = _add_task(root)
     started = _call(
@@ -318,12 +360,12 @@ def test_run_inline_use_tmux_success_delivers_brief_and_reconciles_window(
     assert not (rdir / f"{started['run_id']}.rc").exists()
 
 
-def test_run_inline_use_tmux_failure_preserves_window(tmp_path, monkeypatch) -> None:
+def test_run_inline_use_tmux_failure_preserves_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = SpawningFakeTmux("echo boom >> {log}; echo 7 > {rc}; exit 7")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     started = _call(
         milknado_run_inline_start,
@@ -340,14 +382,14 @@ def test_run_inline_use_tmux_failure_preserves_window(tmp_path, monkeypatch) -> 
     assert started["run_id"] in fake.windows
 
 
-def test_run_inline_use_tmux_records_pane_pid_on_run_row(tmp_path, monkeypatch) -> None:
+def test_run_inline_use_tmux_records_pane_pid_on_run_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A tmux pane outlives an MCP-server restart, so the pane pid must land
     on the run row for the stale sweep's pid-liveness skip and cancel."""
     fake = SpawningFakeTmux("cat {brief} > /dev/null; echo 0 > {rc}")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     started = _call(
         milknado_run_inline_start,
@@ -360,14 +402,16 @@ def test_run_inline_use_tmux_records_pane_pid_on_run_row(tmp_path, monkeypatch) 
     assert final["pid"] == fake.procs[0].pid
 
 
-def test_run_cancel_of_tmux_run_inline_kills_pane_group(tmp_path, monkeypatch) -> None:
+def test_run_cancel_of_tmux_run_inline_kills_pane_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """With the pane pid recorded, milknado_run_cancel takes the pid route:
     the pane's process group is signalled and the run finalizes failed."""
     from milknado.mcp.run import milknado_run_cancel
 
     fake = SpawningFakeTmux("sleep 30")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     node_id = _add_task(root)
     started = _call(
@@ -381,9 +425,13 @@ def test_run_cancel_of_tmux_run_inline_kills_pane_group(tmp_path, monkeypatch) -
     graph, _cfg = open_graph(tmp_path)
     try:
         deadline = time.monotonic() + 5.0
-        while graph.get_run(started["run_id"]).get("pid") is None:
+        row = graph.get_run(started["run_id"])
+        assert row is not None
+        while row["pid"] is None:
             assert time.monotonic() < deadline, "pane pid never recorded"
             time.sleep(0.05)
+            row = graph.get_run(started["run_id"])
+            assert row is not None
     finally:
         graph.close()
     final = _call(milknado_run_cancel, run_id=started["run_id"], project_root=root)
@@ -395,10 +443,12 @@ def test_run_cancel_of_tmux_run_inline_kills_pane_group(tmp_path, monkeypatch) -
     assert _node_status(root, node_id) == NodeStatus.FAILED
 
 
-def test_run_inline_use_tmux_timeout_kills_pane_group(tmp_path, monkeypatch) -> None:
+def test_run_inline_use_tmux_timeout_kills_pane_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     fake = SpawningFakeTmux("sleep 30")
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", _fake_adapter(fake))
     root = str(tmp_path)
     started = _call(
         milknado_run_inline_start,
@@ -417,7 +467,7 @@ def test_run_inline_use_tmux_timeout_kills_pane_group(tmp_path, monkeypatch) -> 
 # --- execute_in_window (pane waiter) ----------------------------------------
 
 
-def test_execute_in_window_honours_cancel_sentinel(tmp_path) -> None:
+def test_execute_in_window_honours_cancel_sentinel(tmp_path: Path) -> None:
     fake = SpawningFakeTmux("sleep 30")
     rdir = runs_dir(tmp_path)
     request_cancel(rdir, RUN_ID)
@@ -433,34 +483,36 @@ def test_execute_in_window_honours_cancel_sentinel(tmp_path) -> None:
     assert not pid_alive(fake.procs[0].pid)
 
 
-def test_terminate_pane_escalates_to_sigkill(monkeypatch) -> None:
+def test_terminate_pane_escalates_to_sigkill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from milknado.domains.dispatch import tmux_run
 
     monkeypatch.setattr(tmux_run, "_PANE_KILL_GRACE_SECS", 0.2)
     proc = subprocess.Popen(["sh", "-c", 'trap "" TERM; sleep 30'], start_new_session=True)
     threading.Thread(target=proc.wait, daemon=True).start()
     time.sleep(0.2)  # let the trap install so SIGTERM is really ignored
-    tmux_run._terminate_pane(proc.pid)
+    tmux_run._terminate_pane(proc.pid)  # pyright: ignore[reportPrivateUsage]
     deadline = time.monotonic() + 2.0
     while pid_alive(proc.pid) and time.monotonic() < deadline:
         time.sleep(0.05)  # SIGKILL delivery + reap are asynchronous
     assert not pid_alive(proc.pid)
 
 
-def test_read_exit_code_missing_or_garbled_is_minus_one(tmp_path) -> None:
+def test_read_exit_code_missing_or_garbled_is_minus_one(tmp_path: Path) -> None:
     assert read_exit_code(tmp_path / "absent.rc") == -1
     garbled = tmp_path / "garbled.rc"
-    garbled.write_text("not-a-number")
+    _ = garbled.write_text("not-a-number")
     assert read_exit_code(garbled) == -1
     ok = tmp_path / "ok.rc"
-    ok.write_text("7\n")
+    _ = ok.write_text("7\n")
     assert read_exit_code(ok) == 7
 
 
 # --- window lifecycle reconciliation ----------------------------------------
 
 
-def test_cleanup_kills_completed_run_window_once(tmp_path) -> None:
+def test_cleanup_kills_completed_run_window_once() -> None:
     fake = FakeTmux()
     fake.windows.add(RUN_ID)
     state = {"run_id": RUN_ID, "status": "done"}
@@ -473,27 +525,29 @@ def test_cleanup_kills_completed_run_window_once(tmp_path) -> None:
     assert fake.opened == []
 
 
-def test_cleanup_preserves_failed_run_window(tmp_path) -> None:
+def test_cleanup_preserves_failed_run_window() -> None:
     fake = FakeTmux()
     fake.windows.add(RUN_ID)
     assert cleanup_run_window(fake, {"run_id": RUN_ID, "status": "failed"}) is False
     assert RUN_ID in fake.windows
 
 
-def test_cleanup_leaves_running_run_window_alone(tmp_path) -> None:
+def test_cleanup_leaves_running_run_window_alone() -> None:
     fake = FakeTmux()
     fake.windows.add(RUN_ID)
     assert cleanup_run_window(fake, {"run_id": RUN_ID, "status": "running"}) is False
     assert RUN_ID in fake.windows
 
 
-def test_cleanup_is_noop_without_tmux_binary(tmp_path) -> None:
+def test_cleanup_is_noop_without_tmux_binary() -> None:
     fake = FakeTmux(available=False)
     fake.windows.add(RUN_ID)
     assert cleanup_run_window(fake, {"run_id": RUN_ID, "status": "done"}) is False
 
 
-def test_loop_poll_does_not_reconcile_done_run_window(tmp_path, monkeypatch) -> None:
+def test_loop_poll_does_not_reconcile_done_run_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Normal terminal polling reads durable state without touching tmux."""
     from milknado.mcp.ralph import milknado_run_loop_poll
 
@@ -502,7 +556,7 @@ def test_loop_poll_does_not_reconcile_done_run_window(tmp_path, monkeypatch) -> 
     try:
         node = graph.add_node("loop-reconcile")
         graph.start_run(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
-        graph.finish_run(
+        _ = graph.finish_run(
             run_id,
             RunResult(
                 status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:01:00+00:00"
@@ -512,30 +566,35 @@ def test_loop_poll_does_not_reconcile_done_run_window(tmp_path, monkeypatch) -> 
         graph.close()
     fake = FakeTmux()
     fake.windows.add(run_id)
-    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", lambda root: fake)
-    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.ralph.TmuxAdapter", _fake_adapter(fake))
+    monkeypatch.setattr("milknado.mcp.ralph.TmuxAdapter", _fake_adapter(fake))
     state = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
     assert state["status"] == "done"
     assert fake.killed == []
 
 
-def test_reconcile_run_window_never_breaks_a_poll(caplog) -> None:
-    class BrokenTmux:
-        def available(self) -> bool:
+def test_reconcile_run_window_never_breaks_a_poll(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class BrokenTmux(FakeTmux):
+        def available(self) -> bool:  # pyright: ignore[reportImplicitOverride]
             raise RuntimeError("tmux exploded")
 
-    reconcile_run_window(BrokenTmux(), {"run_id": RUN_ID, "status": "done"})
+    reconcile_run_window(
+        BrokenTmux(),
+        {"run_id": RUN_ID, "status": "done"},
+    )
     assert "tmux window reconcile failed" in caplog.text
 
 
 # --- attach preconditions ----------------------------------------------------
 
 
-def _seed_run(graph, run_id: str, status: str = "running") -> None:
+def _seed_run(graph: MikadoGraph, run_id: str, status: str = "running") -> None:
     node = graph.add_node("attach-target")
     graph.start_run(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
     if status != "running":
-        graph.finish_run(
+        _ = graph.finish_run(
             run_id,
             RunResult(
                 status=status,
@@ -546,35 +605,37 @@ def _seed_run(graph, run_id: str, status: str = "running") -> None:
         )
 
 
-def test_attach_rejects_malformed_run_id(graph) -> None:
+def test_attach_rejects_malformed_run_id(graph: MikadoGraph) -> None:
     with pytest.raises(ValueError, match="invalid run_id format"):
-        resolve_attach_target(graph, FakeTmux(), "not-a-run-id")
+        _ = resolve_attach_target(graph, FakeTmux(), "not-a-run-id")
 
 
-def test_attach_rejects_unknown_run(graph) -> None:
+def test_attach_rejects_unknown_run(graph: MikadoGraph) -> None:
     with pytest.raises(ValueError, match="not found"):
-        resolve_attach_target(graph, FakeTmux(), RUN_ID)
+        _ = resolve_attach_target(graph, FakeTmux(), RUN_ID)
 
 
-def test_attach_rejects_finished_run(graph) -> None:
+def test_attach_rejects_finished_run(graph: MikadoGraph) -> None:
     _seed_run(graph, RUN_ID, status="failed")
     with pytest.raises(ValueError, match="already finished .status=failed."):
-        resolve_attach_target(graph, FakeTmux(), RUN_ID)
+        _ = resolve_attach_target(graph, FakeTmux(), RUN_ID)
 
 
-def test_attach_rejects_when_tmux_missing(graph) -> None:
+def test_attach_rejects_when_tmux_missing(graph: MikadoGraph) -> None:
     _seed_run(graph, RUN_ID)
     with pytest.raises(ValueError, match="tmux is not installed"):
-        resolve_attach_target(graph, FakeTmux(available=False), RUN_ID)
+        _ = resolve_attach_target(graph, FakeTmux(available=False), RUN_ID)
 
 
-def test_attach_rejects_non_tmux_run(graph) -> None:
+def test_attach_rejects_non_tmux_run(graph: MikadoGraph) -> None:
     _seed_run(graph, RUN_ID)
     with pytest.raises(ValueError, match="has no tmux window"):
-        resolve_attach_target(graph, FakeTmux(), RUN_ID)
+        _ = resolve_attach_target(graph, FakeTmux(), RUN_ID)
 
 
-def test_attach_returns_exact_match_target_for_live_tmux_run(graph) -> None:
+def test_attach_returns_exact_match_target_for_live_tmux_run(
+    graph: MikadoGraph,
+) -> None:
     _seed_run(graph, RUN_ID)
     fake = FakeTmux()
     fake.windows.add(RUN_ID)
@@ -585,7 +646,7 @@ def test_attach_returns_exact_match_target_for_live_tmux_run(graph) -> None:
 # --- milknado attach CLI -------------------------------------------------------
 
 
-def _seed_cli_run(tmp_path, status: str = "running") -> None:
+def _seed_cli_run(tmp_path: Path, status: str = "running") -> None:
     graph, _cfg = open_graph(tmp_path)
     try:
         _seed_run(graph, RUN_ID, status=status)
@@ -593,7 +654,7 @@ def _seed_cli_run(tmp_path, status: str = "running") -> None:
         graph.close()
 
 
-def test_cli_attach_unknown_run_exits_with_clear_message(tmp_path) -> None:
+def test_cli_attach_unknown_run_exits_with_clear_message(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
     from milknado.cli import app
@@ -603,7 +664,7 @@ def test_cli_attach_unknown_run_exits_with_clear_message(tmp_path) -> None:
     assert "not found" in result.output
 
 
-def test_cli_attach_finished_run_exits_with_clear_message(tmp_path) -> None:
+def test_cli_attach_finished_run_exits_with_clear_message(tmp_path: Path) -> None:
     from typer.testing import CliRunner
 
     from milknado.cli import app
@@ -614,7 +675,9 @@ def test_cli_attach_finished_run_exits_with_clear_message(tmp_path) -> None:
     assert "already finished" in result.output
 
 
-def test_cli_attach_execs_tmux_focused_on_the_run_window(tmp_path, monkeypatch) -> None:
+def test_cli_attach_execs_tmux_focused_on_the_run_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from typer.testing import CliRunner
 
     from milknado.cli import app
@@ -622,10 +685,14 @@ def test_cli_attach_execs_tmux_focused_on_the_run_window(tmp_path, monkeypatch) 
     _seed_cli_run(tmp_path)
     fake = FakeTmux()
     fake.windows.add(RUN_ID)
-    monkeypatch.setattr("milknado.app.run.TmuxAdapter", lambda root: fake)
+    monkeypatch.setattr("milknado.app.run.TmuxAdapter", _fake_adapter(fake))
     monkeypatch.delenv("TMUX", raising=False)
     execs: list[list[str]] = []
-    monkeypatch.setattr("os.execvp", lambda prog, argv: execs.append(argv))
+
+    def _record_exec(_prog: str, argv: list[str]) -> None:
+        execs.append(argv)
+
+    monkeypatch.setattr("os.execvp", _record_exec)
     result = CliRunner().invoke(app, ["attach", RUN_ID, "--project-root", str(tmp_path)])
     assert result.exit_code == 0
     target = f"=milknado-proj:={RUN_ID}"
@@ -634,8 +701,10 @@ def test_cli_attach_execs_tmux_focused_on_the_run_window(tmp_path, monkeypatch) 
     ]
 
 
-def test_cli_attach_inside_tmux_switches_client(monkeypatch) -> None:
-    from milknado.cli.run import _tmux_attach_argv
+def test_cli_attach_inside_tmux_switches_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from milknado.cli.run import _tmux_attach_argv  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setenv("TMUX", "/tmp/sock,1,0")
     argv = _tmux_attach_argv("=milknado-proj:=w")
