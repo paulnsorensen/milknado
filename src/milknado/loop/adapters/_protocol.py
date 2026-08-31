@@ -11,7 +11,7 @@ leaf module makes the import graph acyclic.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
 from milknado.loop._promise import has_promise_completion
 
@@ -32,7 +32,7 @@ class AdapterEvent(NamedTuple):
 
     kind: AdapterEventKind
     name: str | None = None
-    raw: dict[str, Any] | None = None
+    raw: dict[str, object] | None = None
 
 
 class Invocation(NamedTuple):

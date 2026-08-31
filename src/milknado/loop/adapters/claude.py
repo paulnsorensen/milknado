@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
@@ -111,11 +111,12 @@ class ClaudeAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = parsed.get("type")
         if event_type == _EVENT_TYPE_RESULT:
@@ -179,22 +180,24 @@ class ClaudeAdapter:
         """
         settings_path = tempdir / _SETTINGS_FILENAME
         command = _build_shim_command(counter_path, cap, grace)
-        settings_path.write_text(
+        _ = settings_path.write_text(
             json.dumps(_build_settings_payload(command), indent=2),
             encoding="utf-8",
         )
         return {"CLAUDE_CONFIG_DIR": str(tempdir)}
 
 
-def _iter_content_blocks(raw: dict[str, Any]) -> list[dict[str, Any]]:
+def _iter_content_blocks(raw: dict[str, object]) -> list[dict[str, object]]:
     """Return the ``message.content`` list, filtered to dict blocks only."""
     message = raw.get("message")
     if not isinstance(message, dict):
         return []
+    message = cast(dict[str, object], message)
     content = message.get("content")
     if not isinstance(content, list):
         return []
-    return [block for block in content if isinstance(block, dict)]
+    content = cast(list[object], content)
+    return [cast(dict[str, object], block) for block in content if isinstance(block, dict)]
 
 
 def _build_shim_command(counter_path: Path, cap: int, grace: int) -> str:
@@ -206,7 +209,7 @@ def _build_shim_command(counter_path: Path, cap: int, grace: int) -> str:
     return f"{sys.executable} -m milknado.loop._wind_down_shim {counter_path} {cap} {grace} claude"
 
 
-def _build_settings_payload(command: str) -> dict[str, Any]:
+def _build_settings_payload(command: str) -> dict[str, object]:
     """Return the JSON dict written to ``settings.json``.
 
     The shape matches Claude Code's hook reference: the top-level

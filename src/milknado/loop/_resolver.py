@@ -40,7 +40,7 @@ def resolve_args(prompt: str, user_args: dict[str, str]) -> str:
     assembled prompt.
     """
 
-    def _replace(match: re.Match) -> str:
+    def _replace(match: re.Match[str]) -> str:
         return user_args.get(match.group(1), "")
 
     return _ARGS_RE.sub(_replace, prompt)
@@ -83,7 +83,7 @@ def resolve_all(
         FIELD_RALPH: ralph_context or {},
     }
 
-    def _replace(match: re.Match) -> str:
+    def _replace(match: re.Match[str]) -> str:
         kind = match.group(1)
         name = match.group(2)
         return lookups[kind].get(name, "")

@@ -11,7 +11,7 @@ don't leak into the assembled prompt.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import cast
 
 import yaml
 
@@ -107,7 +107,7 @@ def _extract_frontmatter_block(text: str) -> tuple[str, str]:
     return "", text
 
 
-def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """Parse a RALPH.md file with YAML frontmatter.
 
     Frontmatter is delimited by ``---`` lines at the start of the file.
@@ -123,22 +123,24 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     fm_raw, body = _extract_frontmatter_block(text)
     if fm_raw:
         try:
-            frontmatter = yaml.safe_load(fm_raw)
-            if frontmatter is None:
-                frontmatter = {}
+            raw_frontmatter: object = cast(object, yaml.safe_load(fm_raw))
         except yaml.YAMLError as exc:
             raise ValueError(f"Invalid YAML in frontmatter: {exc}") from exc
-        if not isinstance(frontmatter, dict):
+        if raw_frontmatter is None:
+            frontmatter: dict[str, object] = {}
+        elif not isinstance(raw_frontmatter, dict):
             raise ValueError(
-                f"Frontmatter must be a YAML mapping, got {type(frontmatter).__name__}"
+                f"Frontmatter must be a YAML mapping, got {type(raw_frontmatter).__name__}"
             )
+        else:
+            frontmatter = cast(dict[str, object], raw_frontmatter)
     else:
         frontmatter = {}
     body = _strip_html_comments(body).strip()
     return frontmatter, body
 
 
-def serialize_frontmatter(frontmatter: dict[str, Any], body: str) -> str:
+def serialize_frontmatter(frontmatter: dict[str, object], body: str) -> str:
     """Serialize frontmatter and body back to a markdown string.
 
     This is the inverse of :func:`parse_frontmatter`.  If *frontmatter*

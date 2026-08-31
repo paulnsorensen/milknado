@@ -12,6 +12,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from milknado.loop._output import SUBPROCESS_TEXT_KWARGS, ProcessResult, collect_output
 
@@ -50,13 +51,16 @@ def run_command(
     merged_env = {**os.environ, **env} if env else None
 
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            **SUBPROCESS_TEXT_KWARGS,
-            cwd=cwd,
-            timeout=timeout,
-            env=merged_env,
+        result = cast(
+            subprocess.CompletedProcess[str],
+            subprocess.run(  # pyright: ignore[reportCallIssue]
+                cmd,
+                capture_output=True,
+                **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
+                cwd=cwd,
+                timeout=timeout,
+                env=merged_env,
+            ),
         )
         return RunResult(
             returncode=result.returncode,

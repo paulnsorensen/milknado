@@ -13,7 +13,7 @@ import shlex
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import NamedTuple, cast
 
 from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.loop._agent import (
@@ -136,12 +136,12 @@ def _run_commands(
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 f"Command '{cmd.name}' binary not found: {run_str!r}. "
-                f"{_field_hint(FIELD_COMMANDS)}"
+                + f"{_field_hint(FIELD_COMMANDS)}"
             ) from exc
         except ValueError as exc:
             raise ValueError(
                 f"Command '{cmd.name}' has invalid syntax: {run_str!r}. "
-                f"{_field_hint(FIELD_COMMANDS)}"
+                + f"{_field_hint(FIELD_COMMANDS)}"
             ) from exc
         output = result.output
         if result.timed_out:
@@ -240,7 +240,7 @@ def _build_agent_callbacks(
         max_turns_grace=config.max_turns_grace,
     )
 
-    def on_activity(data: dict[str, Any]) -> None:
+    def on_activity(data: dict[str, object]) -> None:
         emit(EventType.AGENT_ACTIVITY, AgentActivityData(raw=data, iteration=state.iteration))
 
     return _AgentCallbacks(on_output_line, on_tool_use, on_activity)
@@ -401,7 +401,7 @@ def _notify_iteration_hooks(
         },
     )
     if promise_completed:
-        hooks.on_completion_signal(iteration=state.iteration, signal=completion_signal)
+        hooks.on_completion_signal(iteration=state.iteration, signal=cast(str, completion_signal))
 
 
 def _run_agent_phase(
@@ -591,7 +591,7 @@ def _run_iteration(
         state.status = RunStatus.FAILED
         emit.log_error(
             f"Stopping after {state.consecutive_failures} consecutive failed iterations "
-            "(max_consecutive_failures); the agent command may be unable to start."
+            + "(max_consecutive_failures); the agent command may be unable to start."
         )
         return False, promise_would_complete
     return True, promise_would_complete
@@ -607,7 +607,7 @@ def _delay_if_needed(config: RunConfig, state: RunState, emit: BoundEmitter) -> 
         config.max_iterations is None or state.iteration < config.max_iterations
     ):
         emit.log_info(f"Waiting {format_duration(config.delay)}...")
-        state.wait_for_stop(timeout=config.delay)
+        _ = state.wait_for_stop(timeout=config.delay)
 
 
 def run_loop(
@@ -656,7 +656,7 @@ def run_loop(
                 if verifier_rejected and state.try_commit_failure():
                     emit.log_error(
                         "Completion verifier never accepted within the "
-                        f"{config.max_iterations}-iteration budget."
+                        + f"{config.max_iterations}-iteration budget."
                     )
                 break
             state.iteration += 1
@@ -672,7 +672,7 @@ def run_loop(
                 verdict = config.completion_verifier() if config.completion_verifier else None
                 if (verdict is None or verdict.ok) and state.try_commit_soft_completion():
                     break
-                if state.status is RunStatus.STOPPED:
+                if cast(RunStatus, cast(object, state.status)) is RunStatus.STOPPED:
                     break
                 if verdict is not None and not verdict.ok:
                     verifier_rejected = True
@@ -691,7 +691,7 @@ def run_loop(
             emit.log_error(f"Run crashed: {exc}", traceback=tb)
 
     if state.status == RunStatus.RUNNING:
-        state.try_commit_completion()
+        _ = state.try_commit_completion()
     state.close_guidance()
 
     emit(

@@ -4,22 +4,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from milknado.loop.adapters._generic import GenericAdapter
-from milknado.loop.adapters._protocol import ADAPTERS, AdapterEvent, Invocation
+from milknado.loop.adapters._protocol import ADAPTERS, AdapterEvent, CountsWhat, Invocation
 
 
 class OmpAdapter(GenericAdapter):
     """Launch Oh My Pi in its newline-delimited JSON event mode."""
 
-    name = "omp"
-    counts_what = "tool_use"
-    supports_streaming = True
+    name: str = "omp"
+    counts_what: CountsWhat = "tool_use"
+    supports_streaming: bool = True
 
-    def matches(self, cmd: list[str]) -> bool:
+    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportImplicitOverride]
         return bool(cmd) and Path(cmd[0]).stem == "omp"
 
-    def build_command(self, cmd: list[str]) -> list[str]:
+    def build_command(self, cmd: list[str]) -> list[str]:  # pyright: ignore[reportImplicitOverride]
         """Replace any configured output mode with Oh My Pi's JSON event stream."""
         command: list[str] = []
         emitted_mode = False
@@ -41,15 +42,18 @@ class OmpAdapter(GenericAdapter):
             command.extend(("--mode", "json"))
         return command
 
-    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:
+    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:  # pyright: ignore[reportImplicitOverride]
         return Invocation([*cmd, prompt], None)
 
-    def parse_event(self, line: str) -> AdapterEvent | None:
+    def parse_event(self, line: str) -> AdapterEvent | None:  # pyright: ignore[reportImplicitOverride]
         try:
-            raw = json.loads(line)
+            raw = cast(object, json.loads(line))
         except json.JSONDecodeError:
             return None
-        if not isinstance(raw, dict) or raw.get("type") != "tool_execution_start":
+        if not isinstance(raw, dict):
+            return None
+        raw = cast(dict[str, object], raw)
+        if raw.get("type") != "tool_execution_start":
             return None
         tool_name = raw.get("toolName")
         if not isinstance(tool_name, str):

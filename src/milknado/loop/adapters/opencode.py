@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
@@ -113,11 +113,12 @@ class OpenCodeAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = parsed.get("type")
         if event_type == _TOOL_USE_EVENT:
@@ -156,13 +157,14 @@ class OpenCodeAdapter:
         cap: int,
         grace: int,
     ) -> dict[str, str]:
+        del tempdir, counter_path, cap, grace
         raise NotImplementedError(
             "opencode has no hook system; soft wind-down is scheduled for "
-            "Phase 3 of the CLI adapter layer spec."
+            + "Phase 3 of the CLI adapter layer spec."
         )
 
 
-def _tool_name(parsed: dict[str, Any]) -> str | None:
+def _tool_name(parsed: dict[str, object]) -> str | None:
     """Best-effort extraction of the tool name from a ``tool_use`` event.
 
     opencode nests event data under ``part``; the tool name may live there
@@ -175,6 +177,7 @@ def _tool_name(parsed: dict[str, Any]) -> str | None:
             return value
     part = parsed.get("part")
     if isinstance(part, dict):
+        part = cast(dict[str, object], part)
         for key in ("name", "tool", "tool_name"):
             value = part.get(key)
             if isinstance(value, str):

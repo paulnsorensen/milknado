@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Any
 
 # Platform flag used by _agent.py and cli.py to guard Windows-specific code
 # paths (process-group handling, console encoding).  Centralised here next to
@@ -14,7 +13,7 @@ IS_WINDOWS = sys.platform == "win32"
 # Shared subprocess kwargs for text-mode execution with UTF-8 decoding.
 # Every subprocess.run / subprocess.Popen call that reads text output should
 # unpack these to ensure consistent encoding behavior across the codebase.
-SUBPROCESS_TEXT_KWARGS: dict[str, Any] = {
+SUBPROCESS_TEXT_KWARGS: dict[str, object] = {
     "text": True,
     "encoding": "utf-8",
     "errors": "replace",
@@ -23,10 +22,7 @@ SUBPROCESS_TEXT_KWARGS: dict[str, Any] = {
     # streaming path where peek must flow line-at-a-time.
 }
 
-# Subprocess kwargs that isolate child processes in their own session/group.
-# On POSIX this uses start_new_session so the child and all its descendants
-# form a separate process group that can be killed together.
-SESSION_KWARGS: dict[str, Any] = {} if IS_WINDOWS else {"start_new_session": True}
+SESSION_KWARGS: dict[str, object] = {} if IS_WINDOWS else {"start_new_session": True}
 
 
 @dataclass(slots=True)

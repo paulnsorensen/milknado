@@ -11,13 +11,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from typing import (
-    Any,
     Generic,
     Literal,
     NotRequired,
     Protocol,
     TypedDict,
     TypeVar,
+    cast,
     runtime_checkable,
 )
 
@@ -144,7 +144,7 @@ class PromptAssembledData(TypedDict):
 
 
 class AgentActivityData(TypedDict):
-    raw: dict[str, Any]
+    raw: dict[str, object]
     iteration: int
 
 
@@ -223,10 +223,10 @@ class Event(Generic[DataT]):
 
     type: EventType
     run_id: str
-    data: DataT = field(default_factory=dict)  # empty dict for no-payload events
+    data: DataT = field(default_factory=lambda: cast(DataT, cast(object, {})))
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         """Serialize this event to a JSON-compatible dict."""
         return {
             "type": self.type.value,
@@ -256,7 +256,7 @@ class NullEmitter:
     """Discards all events silently."""
 
     def emit(self, event: Event[EventData]) -> None:
-        pass
+        del event
 
     def wants_agent_output_lines(self) -> bool:
         return False
@@ -279,7 +279,7 @@ class FanoutEmitter:
     """Broadcasts events to multiple emitters."""
 
     def __init__(self, emitters: list[EventEmitter]) -> None:
-        self._emitters = emitters
+        self._emitters: list[EventEmitter] = emitters
 
     def emit(self, event: Event[EventData]) -> None:
         for e in self._emitters:
@@ -298,8 +298,8 @@ class BoundEmitter:
     """
 
     def __init__(self, emitter: EventEmitter, run_id: str) -> None:
-        self._emitter = emitter
-        self._run_id = run_id
+        self._emitter: EventEmitter = emitter
+        self._run_id: str = run_id
 
     def wants_agent_output_lines(self) -> bool:
         """Delegate to the underlying emitter (checked per-call, not cached)."""

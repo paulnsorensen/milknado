@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 CLAUDE = "claude"
 CODEX = "codex"
@@ -39,7 +38,7 @@ def _build_message(count: int, cap: int) -> str:
     return f"You have used {count} of {cap} tool uses. Wrap up your work in the next 1-2 turns."
 
 
-def _claude_payload(message: str) -> dict[str, Any]:
+def _claude_payload(message: str) -> dict[str, object]:
     """Build the Claude PreToolUse ``additionalContext`` payload.
 
     Matches the schema documented in the Claude Code hook reference: an
@@ -55,7 +54,7 @@ def _claude_payload(message: str) -> dict[str, Any]:
     }
 
 
-def _codex_payload(message: str) -> dict[str, Any]:
+def _codex_payload(message: str) -> dict[str, object]:
     """Build the Codex PostToolUse ``systemMessage`` payload.
 
     Codex's hook output schema treats ``systemMessage`` as a free-form
@@ -86,7 +85,7 @@ def _read_counter(path: Path) -> int:
 def _resolve_agent_payload(
     agent: str,
     message: str,
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     if agent == CLAUDE:
         return _claude_payload(message)
     if agent == CODEX:
@@ -121,8 +120,8 @@ def main(argv: list[str]) -> int:
     payload = _resolve_agent_payload(agent, _build_message(count, cap))
     if payload is None:
         return 0
-    json.dump(payload, sys.stdout)
-    sys.stdout.write("\n")
+    _ = json.dump(payload, sys.stdout)
+    _ = sys.stdout.write("\n")
     return 0
 
 
