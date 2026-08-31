@@ -3,7 +3,7 @@
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.loop.adapters import ADAPTERS  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import ADAPTERS
 
 
 @pytest.fixture(autouse=True)

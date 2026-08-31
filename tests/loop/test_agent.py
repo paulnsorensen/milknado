@@ -18,8 +18,8 @@ from _pytest.logging import LogCaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
 from typing_extensions import override
 
-import milknado.loop._agent as agent_module  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
+import milknado.loop._agent as agent_module
+from milknado.loop._agent import (
     _OUTPUT_TAIL_CHARS,  # pyright: ignore[reportPrivateUsage]
     _STREAM_QUEUE_MAX_LINES,  # pyright: ignore[reportPrivateUsage]
     AgentResult,
@@ -35,9 +35,9 @@ from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
     _terminate_lingering_group,  # pyright: ignore[reportPrivateUsage]
     execute_agent,
 )
-from milknado.loop._events import OutputStream  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters import select_adapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import OutputStream
+from milknado.loop.adapters import select_adapter
+from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
 
 

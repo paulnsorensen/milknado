@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 from typing_extensions import override
 
-from milknado.loop.hooks import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.hooks import (
     HOOK_EVENT_NAMES,
     AgentHook,
     CombinedAgentHook,

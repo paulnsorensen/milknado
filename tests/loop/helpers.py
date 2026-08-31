@@ -13,24 +13,24 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import (
     Event,
     EventType,
     QueueEmitter,
 )
-from milknado.loop._frontmatter import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._frontmatter import (
     RALPH_MARKER,
     serialize_frontmatter,
 )
-from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._run_types import (
     DEFAULT_COMPLETION_SIGNAL,
     Command,
     CompletionVerdict,
     RunConfig,
     RunState,
 )
-from milknado.loop._runner import RunResult  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.hooks import AgentHook  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._runner import RunResult
+from milknado.loop.hooks import AgentHook
 
 # ── Patch targets ─────────────────────────────────────────────────────
 

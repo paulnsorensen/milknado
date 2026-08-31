@@ -2,7 +2,7 @@
 
 import pytest
 
-from milknado.loop._promise import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._promise import (
     has_promise_completion,
     parse_promise_tags,
 )

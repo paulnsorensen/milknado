@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     CLIAdapter,
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.omp import OmpAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.omp import OmpAdapter
 
 
 def test_matches_omp_binary_stem() -> None:

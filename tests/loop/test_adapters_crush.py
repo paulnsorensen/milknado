@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.crush import CrushAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.crush import CrushAdapter
 
 
 def test_matches_crush_binary_stem() -> None:

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     CLIAdapter,
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.opencode import (
     OpenCodeAdapter,
 )
 

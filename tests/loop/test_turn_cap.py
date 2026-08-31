@@ -22,8 +22,8 @@ from unittest.mock import patch
 from _pytest.logging import LogCaptureFixture
 from typing_extensions import override
 
-import milknado.loop._agent as agent_mod  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
+import milknado.loop._agent as agent_mod
+from milknado.loop._agent import (
     AgentResult,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
     _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
@@ -34,29 +34,29 @@ from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
     _setup_wind_down,  # pyright: ignore[reportPrivateUsage]
     _wrap_tool_use_with_counter,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import (
     EventType,
     QueueEmitter,
 )
-from milknado.loop._run_types import RunStatus  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._run_types import RunStatus
+from milknado.loop.adapters import (
     AdapterEvent,
     CountsWhat,
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.claude import ClaudeAdapter
+from milknado.loop.adapters.codex import CodexAdapter
+from milknado.loop.adapters.copilot import (
     CopilotAdapter,
 )
-from milknado.loop.adapters.crush import CrushAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.omp import OmpAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.crush import CrushAdapter
+from milknado.loop.adapters.omp import OmpAdapter
+from milknado.loop.adapters.opencode import (
     OpenCodeAdapter,
 )
-from milknado.loop.engine import run_loop  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.hooks import NoOpAgentHook  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.engine import run_loop
+from milknado.loop.hooks import NoOpAgentHook
 from tests.loop.helpers import (
     drain_events,  # pyright: ignore[reportUnknownVariableType]
     event_types,  # pyright: ignore[reportUnknownVariableType]

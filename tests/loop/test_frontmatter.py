@@ -2,7 +2,7 @@
 
 import pytest
 
-from milknado.loop._frontmatter import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._frontmatter import (
     RALPH_MARKER,
     _extract_frontmatter_block,  # pyright: ignore[reportPrivateUsage]
     parse_frontmatter,

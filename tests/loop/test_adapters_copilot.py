@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.copilot import (
     CopilotAdapter,
 )
 

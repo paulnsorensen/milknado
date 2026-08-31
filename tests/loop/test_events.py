@@ -4,7 +4,7 @@ import queue
 from datetime import UTC, datetime
 from typing import cast
 
-from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import (
     LOG_ERROR,
     LOG_INFO,
     BoundEmitter,

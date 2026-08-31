@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop._frontmatter import RALPH_MARKER  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._frontmatter import RALPH_MARKER
+from milknado.loop._run_types import (
     DEFAULT_COMMAND_TIMEOUT,
     RUN_ID_LENGTH,
     Command,
@@ -103,7 +103,7 @@ class TestCompletionVerdict:
             verdict.ok = False  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_is_public_loop_api(self):
-        import milknado.loop  # pyright: ignore[reportMissingTypeStubs]
+        import milknado.loop
 
         assert milknado.loop.CompletionVerdict is CompletionVerdict
 
