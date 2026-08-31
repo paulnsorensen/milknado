@@ -6,10 +6,12 @@ runs against a tmp_path project root with a fake GitPort at the boundary.
 
 from __future__ import annotations
 
+# These helpers intentionally expose private graph seams to rebalance tests.
 import sqlite3
 import subprocess
 from collections.abc import Generator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -17,6 +19,7 @@ from milknado.adapters.git import GitAdapter
 from milknado.app.rebalance import RebalanceOptions
 from milknado.app.rebalance import rebalance as _run_rebalance
 from milknado.domains.common.errors import GitOperationError
+from milknado.domains.common.protocols import GitPort
 from milknado.domains.graph import _rebalance as graph_rebalance
 from milknado.domains.graph._persistence import create_tables, migrate
 from milknado.domains.graph.rebalance import (
@@ -25,13 +28,13 @@ from milknado.domains.graph.rebalance import (
 
 NOW = "2026-07-24T00:00:00+00:00"
 
-find_archivable_roots = graph_rebalance._find_archivable_roots
+find_archivable_roots = graph_rebalance._find_archivable_roots  # pyright: ignore[reportPrivateUsage]
 structural_report = graph_rebalance.structural_report
-sweep_archivable = graph_rebalance._sweep_archivable
+sweep_archivable = graph_rebalance._sweep_archivable  # pyright: ignore[reportPrivateUsage]
 
 
 def group_orphans(conn: sqlite3.Connection) -> int:
-    return graph_rebalance._group_orphans(conn)[0]
+    return graph_rebalance._group_orphans(conn)[0]  # pyright: ignore[reportPrivateUsage]
 
 
 def run_rebalance(
@@ -40,7 +43,7 @@ def run_rebalance(
     **passes: bool,
 ) -> RebalanceReport:
     options = RebalanceOptions(**passes)
-    return _run_rebalance(project_root, options, git)
+    return _run_rebalance(project_root, options, cast(GitPort | None, git))
 
 
 @pytest.fixture()
@@ -52,7 +55,7 @@ def conn() -> Generator[sqlite3.Connection, None, None]:
     c.close()
 
 
-def _insert_node(
+def _insert_node(  # pyright: ignore[reportUnusedFunction]
     conn: sqlite3.Connection,
     description: str,
     status: str,
@@ -65,25 +68,34 @@ def _insert_node(
 ) -> int:
     cur = conn.execute(
         "INSERT INTO nodes (description, status, parent_id, kind, created_at, archived_at, "
-        "worktree_path, branch_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        + "worktree_path, branch_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (description, status, parent_id, kind, NOW, archived_at, worktree_path, branch_name),
     )
     node_id = cur.lastrowid
     assert node_id is not None
     if parent_id is not None:
-        conn.execute("INSERT INTO edges (parent_id, child_id) VALUES (?, ?)", (parent_id, node_id))
+        _ = conn.execute(
+            "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
+            (parent_id, node_id),
+        )
     return node_id
 
 
-def _register_run(conn: sqlite3.Connection, node_id: int, status: str = "completed") -> None:
-    conn.execute(
+def _register_run(  # pyright: ignore[reportUnusedFunction]
+    conn: sqlite3.Connection, node_id: int, status: str = "completed"
+) -> None:
+    _ = conn.execute(
         "INSERT INTO runs (run_id, node_id, status, log_path, started_at) VALUES (?, ?, ?, '', ?)",
         (f"run-{node_id}", node_id, status, NOW),
     )
 
 
-def _archived_ids(conn: sqlite3.Connection) -> set[int]:
-    return {r[0] for r in conn.execute("SELECT id FROM nodes WHERE archived_at IS NOT NULL")}
+def _archived_ids(conn: sqlite3.Connection) -> set[int]:  # pyright: ignore[reportUnusedFunction]
+    rows = cast(
+        list[sqlite3.Row],
+        conn.execute("SELECT id FROM nodes WHERE archived_at IS NOT NULL").fetchall(),
+    )
+    return {cast(int, row[0]) for row in rows}
 
 
 class FakeGit:
@@ -92,11 +104,11 @@ class FakeGit:
     def __init__(self) -> None:
         self.removed: list[Path] = []
         self.deleted_branches: list[str] = []
-        self.pruned = 0
+        self.pruned: int = 0
         self.fail_remove: set[str] = set()
         self.fail_delete: set[str] = set()
 
-    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+    def remove_worktree(self, path: Path, _target: str = "HEAD") -> None:
         if str(path) in self.fail_remove:
             raise GitOperationError("worktree remove", "simulated teardown failure")
         self.removed.append(path)
@@ -109,13 +121,13 @@ class FakeGit:
     def prune_worktrees(self) -> None:
         self.pruned += 1
 
-    def worktree_teardown_blocker(self, path: Path, target: str = "HEAD") -> str | None:
+    def worktree_teardown_blocker(self, path: Path, _target: str = "HEAD") -> str | None:
         if str(path) in self.fail_remove:
             return "simulated teardown failure"
         return None
 
 
-def _project_with_db(tmp_path: Path) -> sqlite3.Connection:
+def _project_with_db(tmp_path: Path) -> sqlite3.Connection:  # pyright: ignore[reportUnusedFunction]
     db_path = tmp_path / ".milknado" / "milknado.db"
     db_path.parent.mkdir(exist_ok=True)
     connection = sqlite3.connect(db_path)
@@ -125,8 +137,8 @@ def _project_with_db(tmp_path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
+def _git(repo: Path, *args: str) -> None:  # pyright: ignore[reportUnusedFunction]
+    _ = subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
         cwd=repo,
         check=True,

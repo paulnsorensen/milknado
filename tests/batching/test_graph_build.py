@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# CRG mock attributes and ignored graph return values are intentional test seams.
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,23 +21,23 @@ def mock_crg() -> MagicMock:
     return MagicMock(spec=CrgPort)
 
 
-def test_new_relationships_basic(mock_crg: MagicMock) -> None:
+def test_new_relationships_basic() -> None:
     a = FileChange(id="a", path="a.py")
     b = FileChange(id="b", path="b.py")
     rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_import")
-    nodes, edges, _ = build_change_graph([a, b], new_relationships=[rel])
+    _, edges, _ = build_change_graph([a, b], new_relationships=[rel])
     assert ("a", "b") in edges
 
 
 def test_depends_on_emits_edge() -> None:
     a = FileChange(id="a", path="a.py")
     b = FileChange(id="b", path="b.py", depends_on=("a",))
-    nodes, edges, _ = build_change_graph([a, b])
+    _, edges, _ = build_change_graph([a, b])
     assert ("a", "b") in edges
 
 
 def test_crg_impacted_files_key(mock_crg: MagicMock) -> None:
-    mock_crg.get_impact_radius.return_value = {"impacted_files": ["b.py"]}
+    mock_crg.get_impact_radius.return_value = {"impacted_files": ["b.py"]}  # pyright: ignore[reportAny]
     a = FileChange(id="a", path="a.py")
     b = FileChange(id="b", path="b.py")
     _, edges, _ = build_change_graph([a, b], crg=mock_crg)
@@ -44,7 +45,7 @@ def test_crg_impacted_files_key(mock_crg: MagicMock) -> None:
 
 
 def test_crg_edges_key(mock_crg: MagicMock) -> None:
-    mock_crg.get_impact_radius.return_value = {"edges": [{"src": "a.py", "dst": "b.py"}]}
+    mock_crg.get_impact_radius.return_value = {"edges": [{"src": "a.py", "dst": "b.py"}]}  # pyright: ignore[reportAny]
     a = FileChange(id="a", path="a.py")
     b = FileChange(id="b", path="b.py")
     _, edges, _ = build_change_graph([a, b], crg=mock_crg)
@@ -52,7 +53,7 @@ def test_crg_edges_key(mock_crg: MagicMock) -> None:
 
 
 def test_unknown_crg_path_dropped(mock_crg: MagicMock) -> None:
-    mock_crg.get_impact_radius.return_value = {"impacted_files": ["unknown.py"]}
+    mock_crg.get_impact_radius.return_value = {"impacted_files": ["unknown.py"]}  # pyright: ignore[reportAny]
     a = FileChange(id="a", path="a.py")
     _, edges, _ = build_change_graph([a], crg=mock_crg)
     assert edges == ()
@@ -61,7 +62,7 @@ def test_unknown_crg_path_dropped(mock_crg: MagicMock) -> None:
 def test_unknown_dep_id_raises() -> None:
     a = FileChange(id="a", path="a.py", depends_on=("nonexistent",))
     with pytest.raises(ValueError, match="unknown depends_on id"):
-        build_change_graph([a])
+        _ = build_change_graph([a])
 
 
 def test_scc_linear_dag() -> None:
@@ -124,7 +125,7 @@ def test_multi_change_per_path_distinct_symbols(mock_crg: MagicMock) -> None:
         id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),)
     )
     change_x = FileChange(id="change_x", path="src/bar.py", symbols=(sym_x,))
-    mock_crg.get_impact_radius.return_value = {
+    mock_crg.get_impact_radius.return_value = {  # pyright: ignore[reportAny]
         "edges": [{"src": "src/foo.py::a", "dst": "src/bar.py::x"}]
     }
     _, edges, _ = build_change_graph([change_a, change_b, change_x], crg=mock_crg)
@@ -144,7 +145,7 @@ def test_multi_change_per_path_unknown_symbol_fans_out(mock_crg: MagicMock) -> N
     change_x = FileChange(
         id="change_x", path="src/bar.py", symbols=(SymbolRef(name="x", file="src/bar.py"),)
     )
-    mock_crg.get_impact_radius.return_value = {
+    mock_crg.get_impact_radius.return_value = {  # pyright: ignore[reportAny]
         "edges": [{"src": "src/foo.py", "dst": "src/bar.py::x"}]
     }
     _, edges, _ = build_change_graph([change_a, change_b, change_x], crg=mock_crg)
@@ -161,7 +162,7 @@ def test_multi_change_per_path_ambiguous_symbol_fans_out(mock_crg: MagicMock) ->
         id="change_b", path="src/foo.py", symbols=(SymbolRef(name="b", file="src/foo.py"),)
     )
     change_x = FileChange(id="change_x", path="src/bar.py")
-    mock_crg.get_impact_radius.return_value = {
+    mock_crg.get_impact_radius.return_value = {  # pyright: ignore[reportAny]
         "edges": [{"src": "src/foo.py::unknown_sym", "dst": "src/bar.py"}]
     }
     _, edges, _ = build_change_graph([change_a, change_b, change_x], crg=mock_crg)
@@ -174,7 +175,7 @@ def test_impacted_files_fans_out(mock_crg: MagicMock) -> None:
     change_a = FileChange(id="change_a", path="src/foo.py")
     change_b = FileChange(id="change_b", path="src/foo.py")
     change_bar = FileChange(id="change_bar", path="src/bar.py")
-    mock_crg.get_impact_radius.return_value = {"impacted_files": ["src/foo.py"]}
+    mock_crg.get_impact_radius.return_value = {"impacted_files": ["src/foo.py"]}  # pyright: ignore[reportAny]
     _, edges, _ = build_change_graph([change_a, change_b, change_bar], crg=mock_crg)
     # change_bar is the queried change; both change_a and change_b are on "src/foo.py"
     assert ("change_bar", "change_a") in edges
@@ -187,7 +188,7 @@ def test_overlapping_symbols_rejected() -> None:
     change_a = FileChange(id="change_a", path="src/foo.py", symbols=(sym,))
     change_b = FileChange(id="change_b", path="src/foo.py", symbols=(sym,))
     with pytest.raises(ValueError, match="overlapping symbol"):
-        plan_batches([change_a, change_b])
+        _ = plan_batches([change_a, change_b])
 
 
 def test_cross_file_symbol_ref_no_overlap() -> None:

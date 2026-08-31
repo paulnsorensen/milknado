@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+# These tests intentionally exercise private database helpers.
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 from milknado.domains.graph.rebalance import (
     INBOX_DESCRIPTION,
@@ -13,10 +15,10 @@ from milknado.domains.graph.rebalance import (
 from tests.rebalance_helpers import (
     NOW,
     FakeGit,
-    _archived_ids,
-    _insert_node,
-    _project_with_db,
-    _register_run,
+    _archived_ids,  # pyright: ignore[reportPrivateUsage]
+    _insert_node,  # pyright: ignore[reportPrivateUsage]
+    _project_with_db,  # pyright: ignore[reportPrivateUsage]
+    _register_run,  # pyright: ignore[reportPrivateUsage]
     run_rebalance,
 )
 
@@ -52,11 +54,17 @@ class TestDryRun:
         check = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
         check.row_factory = sqlite3.Row
         assert _archived_ids(check) == set()
-        row = check.execute("SELECT parent_id FROM nodes WHERE id = ?", (orphan,)).fetchone()
+        row = cast(
+            sqlite3.Row,
+            check.execute("SELECT parent_id FROM nodes WHERE id = ?", (orphan,)).fetchone(),
+        )
         assert row["parent_id"] is None
-        inbox = check.execute(
-            "SELECT 1 FROM nodes WHERE description = ?", (INBOX_DESCRIPTION,)
-        ).fetchone()
+        inbox = cast(
+            sqlite3.Row | None,
+            check.execute(
+                "SELECT 1 FROM nodes WHERE description = ?", (INBOX_DESCRIPTION,)
+            ).fetchone(),
+        )
         assert inbox is None
         check.close()
 
@@ -71,13 +79,13 @@ class TestDryRun:
         # with "database is locked" here).
         conn = _project_with_db(tmp_path)
         done_root = _insert_node(conn, "done goal", "done", kind="goal")
-        _insert_node(conn, "orphan", "pending")
+        _ = _insert_node(conn, "orphan", "pending")
         conn.commit()
         conn.close()
 
         holder = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
-        holder.execute("BEGIN IMMEDIATE")
-        holder.execute(
+        _ = holder.execute("BEGIN IMMEDIATE")
+        _ = holder.execute(
             "INSERT INTO nodes (description, status, kind, created_at) VALUES (?, ?, ?, ?)",
             ("held", "pending", "task", NOW),
         )
@@ -96,8 +104,8 @@ class TestDryRun:
 
     def test_dry_run_migrates_only_its_snapshot(self, tmp_path: Path) -> None:
         conn = _project_with_db(tmp_path)
-        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
-        conn.execute("PRAGMA user_version = 2")
+        _ = conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
+        _ = conn.execute("PRAGMA user_version = 2")
         conn.commit()
         conn.close()
 
@@ -105,7 +113,13 @@ class TestDryRun:
 
         check = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
         assert check.execute("PRAGMA user_version").fetchone()[0] == 2
-        columns = {row[1] for row in check.execute("PRAGMA table_info(nodes)")}
+        columns = {
+            cast(str, row[1])
+            for row in cast(
+                list[tuple[object, ...]],
+                check.execute("PRAGMA table_info(nodes)").fetchall(),
+            )
+        }
         assert "archived_at" not in columns
         check.close()
 
@@ -113,7 +127,7 @@ class TestDryRun:
         self, tmp_path: Path
     ) -> None:
         conn = _project_with_db(tmp_path)
-        _insert_node(conn, "orphan", "pending")
+        _ = _insert_node(conn, "orphan", "pending")
         conn.commit()
         conn.close()
 
@@ -130,7 +144,7 @@ class TestDryRun:
 def _seed_rebalance_project(root: Path) -> dict[str, int | str]:
     conn = _project_with_db(root)
     done_root = _insert_node(conn, "done goal", "done", kind="goal")
-    _insert_node(conn, "orphan", "pending")
+    _ = _insert_node(conn, "orphan", "pending")
     wt = str(root / ".worktrees" / "wt-x")
     reaped = _insert_node(conn, "done wt", "done", worktree_path=wt, branch_name="milknado/x")
     _register_run(conn, reaped)
@@ -145,8 +159,8 @@ class TestDryRunParity:
         dry_root.mkdir()
         real_root = tmp_path / "real"
         real_root.mkdir()
-        _seed_rebalance_project(dry_root)
-        _seed_rebalance_project(real_root)
+        _ = _seed_rebalance_project(dry_root)
+        _ = _seed_rebalance_project(real_root)
 
         dry = run_rebalance(dry_root, dry_run=True, git=FakeGit())
         real = run_rebalance(real_root, git=FakeGit())
@@ -176,7 +190,7 @@ class TestArchivedInboxEndToEnd:
         # the archived one.
         conn = _project_with_db(tmp_path)
         inbox = _insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
-        _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
+        _ = _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
         orphan = _insert_node(conn, "fresh live orphan", "pending")
         conn.commit()
         conn.close()
@@ -188,15 +202,24 @@ class TestArchivedInboxEndToEnd:
 
         check = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
         check.row_factory = sqlite3.Row
-        row = check.execute("SELECT parent_id FROM nodes WHERE id = ?", (orphan,)).fetchone()
+        row = cast(
+            sqlite3.Row,
+            check.execute("SELECT parent_id FROM nodes WHERE id = ?", (orphan,)).fetchone(),
+        )
         assert row["parent_id"] == report.inbox_id
-        parent = check.execute(
-            "SELECT archived_at, description FROM nodes WHERE id = ?", (report.inbox_id,)
-        ).fetchone()
+        parent = cast(
+            sqlite3.Row,
+            check.execute(
+                "SELECT archived_at, description FROM nodes WHERE id = ?", (report.inbox_id,)
+            ).fetchone(),
+        )
         assert parent["archived_at"] is None
         assert parent["description"] == INBOX_DESCRIPTION
         # The shelved Inbox was never mutated.
-        old = check.execute("SELECT archived_at FROM nodes WHERE id = ?", (inbox,)).fetchone()
+        old = cast(
+            sqlite3.Row,
+            check.execute("SELECT archived_at FROM nodes WHERE id = ?", (inbox,)).fetchone(),
+        )
         assert old["archived_at"] is not None
         check.close()
 
@@ -208,8 +231,8 @@ def _seed_swept_inbox_project(root: Path) -> int:
     """An all-DONE Inbox subtree (sweep-eligible) plus one live orphan."""
     conn = _project_with_db(root)
     inbox = _insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
-    _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
-    _insert_node(conn, "fresh live orphan", "pending")
+    _ = _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
+    _ = _insert_node(conn, "fresh live orphan", "pending")
     conn.commit()
     conn.close()
     return inbox

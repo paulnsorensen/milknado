@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -12,6 +13,7 @@ from milknado.domains.batching.change import (
     BatchPlan,
     FileChange,
     NewRelationship,
+    SolverStatus,
     SymbolRef,
     SymbolSpread,
 )
@@ -19,6 +21,10 @@ from milknado.domains.planning.manifest import PlanChangeManifest
 from milknado.domains.planning.telemetry import record_batch_snapshot
 
 MANIFEST_VERSION = "milknado.plan.v2"
+
+
+def _record(line: str) -> dict[str, object]:
+    return cast(dict[str, object], cast(object, json.loads(line)))
 
 
 def _make_manifest(
@@ -40,12 +46,12 @@ def _make_plan(
     *,
     batches: tuple[Batch, ...] = (),
     spread_report: tuple[SymbolSpread, ...] = (),
-    solver_status: str = "OPTIMAL",
+    solver_status: SolverStatus = "OPTIMAL",
 ) -> BatchPlan:
     return BatchPlan(
         batches=batches,
         spread_report=spread_report,
-        solver_status=solver_status,  # ty: ignore[invalid-argument-type]
+        solver_status=solver_status,
     )
 
 
@@ -67,7 +73,7 @@ class TestHappyPath:
         jsonl = (tmp_path / ".milknado" / "calibration.jsonl").read_text()
         lines = [ln for ln in jsonl.splitlines() if ln.strip()]
         assert len(lines) == 1
-        record = json.loads(lines[0])
+        record = _record(lines[0])
         assert isinstance(record, dict)
 
     def test_record_fields_present(self, tmp_path: Path) -> None:
@@ -77,7 +83,7 @@ class TestHappyPath:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = _record(line)
         assert "timestamp" in record
         assert "change_count" in record
         assert "batch_count" in record
@@ -133,7 +139,7 @@ class TestOversizedCount:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = _record(line)
         assert record["oversized_count"] == 1
         assert record["batch_count"] == 3
 
@@ -156,7 +162,7 @@ class TestNewRelationshipCount:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = _record(line)
         assert record["new_relationship_count"] == 1
 
 
@@ -170,7 +176,7 @@ class TestDiskError:
         def bad_open(self: Path, *args: object, **kwargs: object) -> object:
             if "calibration.jsonl" in str(self):
                 raise OSError("disk full")
-            return original_open(self, *args, **kwargs)  # ty: ignore[no-matching-overload]
+            return original_open(self, *args, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]  # ty: ignore[no-matching-overload]
 
         monkeypatch.setattr(Path, "open", bad_open)
 
@@ -188,8 +194,8 @@ class TestTimestamp:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
-        ts: str = record["timestamp"]
+        record = _record(line)
+        ts = cast(str, record["timestamp"])
         assert ts.endswith("+00:00") or ts.endswith("Z"), f"Expected UTC timestamp, got: {ts!r}"
 
 
@@ -207,9 +213,9 @@ class TestSpreadStats:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = _record(line)
         assert record["max_spread"] == 7
-        assert abs(record["mean_spread"] - 5.0) < 0.001
+        assert abs(cast(float, record["mean_spread"]) - 5.0) < 0.001
 
     def test_empty_spread_report(self, tmp_path: Path) -> None:
         """Empty spread_report → max_spread=0, mean_spread=0.0."""
@@ -218,6 +224,6 @@ class TestSpreadStats:
         record_batch_snapshot(tmp_path, manifest, plan)
 
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = _record(line)
         assert record["max_spread"] == 0
         assert record["mean_spread"] == 0.0

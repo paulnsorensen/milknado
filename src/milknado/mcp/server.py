@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from typing import cast
 
 from milknado.app.plan_batches import _solve_manifest  # pyright: ignore[reportPrivateUsage]
@@ -71,10 +72,10 @@ def milknado_graph_summary(
 
 @mcp.tool()
 def milknado_plan_batches(
-    changes: list[dict[str, object]],
+    changes: Sequence[dict[str, object]],
     budget: int = DUMB_ZONE_BUDGET,
     project_root: str = "",
-    new_relationships: list[dict[str, object]] | None = None,
+    new_relationships: Sequence[dict[str, object]] | None = None,
     force_single_batch: bool = False,
 ) -> BatchPlanResponse:
     """Compute token-budgeted, precedence-respecting batches for changes."""

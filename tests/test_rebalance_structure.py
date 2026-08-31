@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# Structural report setup intentionally ignores database write results.
 import sqlite3
 
 from milknado.domains.graph.rebalance import (
@@ -10,7 +11,7 @@ from milknado.domains.graph.rebalance import (
 )
 from tests.rebalance_helpers import (
     NOW,
-    _insert_node,
+    _insert_node,  # pyright: ignore[reportPrivateUsage]
     structural_report,
 )
 
@@ -36,7 +37,7 @@ class TestStructuralReport:
         assert report.lopsided == ()
 
     def test_chain_at_depth_3_is_not_reported(self, conn: sqlite3.Connection) -> None:
-        self._goal_chain(conn, 3)
+        _ = self._goal_chain(conn, 3)
         assert structural_report(conn).chains == ()
 
     def test_chain_head_only_is_reported_for_longer_chains(self, conn: sqlite3.Connection) -> None:
@@ -50,20 +51,20 @@ class TestStructuralReport:
         g2 = _insert_node(conn, "g2", "in_progress", kind="goal", parent_id=g1)
         g3 = _insert_node(conn, "g3", "in_progress", kind="goal", parent_id=g2)
         # g3 forks into two goal children, so no single-child run reaches 4.
-        _insert_node(conn, "g4a", "in_progress", kind="goal", parent_id=g3)
-        _insert_node(conn, "g4b", "in_progress", kind="goal", parent_id=g3)
+        _ = _insert_node(conn, "g4a", "in_progress", kind="goal", parent_id=g3)
+        _ = _insert_node(conn, "g4b", "in_progress", kind="goal", parent_id=g3)
         assert structural_report(conn).chains == ()
 
     def test_goal_with_20_direct_tasks_is_reported(self, conn: sqlite3.Connection) -> None:
         goal = _insert_node(conn, "fat goal", "in_progress", kind="goal")
         for i in range(20):
-            _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
         assert structural_report(conn).lopsided == (goal,)
 
     def test_goal_with_19_direct_tasks_is_not_reported(self, conn: sqlite3.Connection) -> None:
         goal = _insert_node(conn, "almost fat goal", "in_progress", kind="goal")
         for i in range(19):
-            _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
         assert structural_report(conn).lopsided == ()
 
     def test_archived_nodes_are_excluded(self, conn: sqlite3.Connection) -> None:
@@ -80,10 +81,10 @@ class TestStructuralReport:
         assert structural_report(conn).chains == ()
 
     def test_structural_report_never_mutates(self, conn: sqlite3.Connection) -> None:
-        self._goal_chain(conn, 4)
+        _ = self._goal_chain(conn, 4)
         goal = _insert_node(conn, "fat goal", "in_progress", kind="goal")
         for i in range(20):
-            _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
         nodes_before = conn.execute("SELECT * FROM nodes ORDER BY id").fetchall()
         edges_before = conn.execute("SELECT * FROM edges ORDER BY parent_id, child_id").fetchall()
         report = structural_report(conn)
@@ -144,7 +145,7 @@ class TestRenderReport:
             "Restructure: found 01 deep chain(s) (roots: 4)",
             "Restructure: found 01 lopsided goal(s) (ids: 8)",
             "Reap: removed 02 worktree(s), deleted 01 branch(es), preserved 00, "
-            "kept 00 branch(es)",
+            + "kept 00 branch(es)",
             "Reap worktrees: remove [/a, /b]; preserve [none]",
             "Reap branches: delete [b1]; keep [none]",
         ]
@@ -156,7 +157,7 @@ class TestRenderReport:
             "[dry-run] Would Restructure: found 01 deep chain(s) (roots: 4)",
             "[dry-run] Would Restructure: found 01 lopsided goal(s) (ids: 8)",
             "[dry-run] Would Reap: removed 02 worktree(s), deleted 01 branch(es), "
-            "preserved 00, kept 00 branch(es)",
+            + "preserved 00, kept 00 branch(es)",
             "[dry-run] Would Reap worktrees: remove [/a, /b]; preserve [none]",
             "[dry-run] Would Reap branches: delete [b1]; keep [none]",
         ]
