@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.loop._runner import run_command
+from milknado.loop._runner import run_command  # pyright: ignore[reportMissingTypeStubs]
 from tests.loop.helpers import MOCK_RUNNER_SUBPROCESS, fail_result, ok_result
 
 

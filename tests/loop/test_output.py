@@ -2,7 +2,7 @@
 
 import pytest
 
-from milknado.loop._output import (
+from milknado.loop._output import (  # pyright: ignore[reportMissingTypeStubs]
     ProcessResult,
     collect_output,
     ensure_str,
