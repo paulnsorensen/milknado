@@ -9,7 +9,7 @@ from typing import Literal
 
 import msgspec
 
-from milknado.domains.graph import _persistence
+from milknado.domains.graph import _run_persistence
 
 _READY_COUNT_SQL = """
 WITH ready(id) AS (
@@ -87,7 +87,7 @@ def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...
     ).fetchall()
     return tuple(
         msgspec.convert(
-            _persistence._run_row_to_dict(row) | {"description": row["description"]},
+            _run_persistence._run_row_to_dict(row) | {"description": row["description"]},
             type=DurableRun,
             strict=True,
         )

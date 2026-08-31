@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 
 from milknado.cli._helpers import (
-    _find_config,
-    _load_or_default,
-    _maybe_block_parent,
-    _open_project,
+    DEFAULT_PROJECT_ROOT,
     console,
+    find_config,
+    load_or_default,
+    maybe_block_parent,
+    open_project_for_cli,
+    typer_argument,
+    typer_option,
 )
 from milknado.cli.agents import agents_app
 from milknado.cli.config import config_app
@@ -24,10 +27,10 @@ from milknado.cli.plan import plan
 from milknado.cli.roadmap import roadmap_app
 from milknado.cli.run import attach, run, watch
 from milknado.cli.tools import (
-    _install_rust_tools_or_exit,
-    _write_worker_hooks,
+    install_rust_tools_or_exit,
     plugin_app,
     tools_app,
+    write_worker_hooks,
 )
 from milknado.domains.common import (
     MikadoNode,
@@ -43,31 +46,32 @@ from milknado.domains.common import (
 )
 from milknado.domains.graph import render_tree
 
-# Public surface of this facade: the Typer app plus the `_derive_goal`
-# re-export consumed by tests/adversarial/test_cli_chaos.py. Listing the
-# re-export here marks it exported (clears CodeQL py/unused-import #55).
+ProjectRootArgument = Annotated[Path, typer_argument(help="Project root directory")]
+ProjectRootOption = Annotated[Path, typer_option("--project-root", help="Project root directory")]
 __all__ = ["_derive_goal", "app"]
 
 app = typer.Typer(name="milknado", help="Mikado execution engine")
 
-app.add_typer(agents_app)
-app.add_typer(config_app)
-app.add_typer(edge_app)
-app.add_typer(graph_app)
-app.add_typer(plugin_app)
-app.add_typer(tools_app)
-app.add_typer(roadmap_app)
-app.add_typer(github_roadmap_app)
-for command in (plan, run, attach, watch):
-    app.command()(command)
+_ = app.add_typer(agents_app)
+_ = app.add_typer(config_app)
+_ = app.add_typer(edge_app)
+_ = app.add_typer(graph_app)
+_ = app.add_typer(plugin_app)
+_ = app.add_typer(tools_app)
+_ = app.add_typer(roadmap_app)
+_ = app.add_typer(github_roadmap_app)
+_ = app.command()(plan)
+_ = app.command()(run)
+_ = app.command()(attach)
+_ = app.command()(watch)
 
 
 @app.command()
 def init(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
     install_rust_tools: Annotated[
         bool,
-        typer.Option(
+        typer_option(
             "--install-rust-tools",
             help="Install missing mergiraf/rtk via cargo.",
         ),
@@ -77,7 +81,7 @@ def init(
     from milknado.adapters.crg import CrgAdapter
 
     project_root = project_root.resolve()
-    config_path = _find_config(project_root)
+    config_path = find_config(project_root)
 
     if config_path.exists():
         console.print(f"Config already exists: {config_path}")
@@ -92,14 +96,14 @@ def init(
         else:
             console.print(
                 "[yellow]No project type detected — quality_gates not set.[/yellow]\n"
-                "[yellow]milknado fails closed until quality_gates is configured.[/yellow]\n"
-                "[yellow]Add [milknado] quality_gates to milknado.toml, "
-                "or run /milknado-config to set up per-flavor gates.[/yellow]"
+                + "[yellow]milknado fails closed until quality_gates is configured.[/yellow]\n"
+                + "[yellow]Add [milknado] quality_gates to milknado.toml, "
+                + "or run /milknado-config to set up per-flavor gates.[/yellow]"
             )
         save_config(config, config_path)
         console.print(f"Created config: {config_path}")
 
-    project = _open_project(project_root, config)
+    project = open_project_for_cli(project_root, config)
     project.graph.close()
     console.print(f"Database ready: {config.db_path}")
 
@@ -109,33 +113,33 @@ def init(
         console.print("Code-review-graph ready.")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]CRG build failed (exit {e.returncode}).[/red]")
-        if e.stderr:
-            console.print(e.stderr)
+        if stderr := cast(str | bytes | None, e.stderr):
+            console.print(stderr)
         raise typer.Exit(code=1) from None
 
     if install_rust_tools:
-        _install_rust_tools_or_exit()
+        install_rust_tools_or_exit()
 
-    _write_worker_hooks(project_root, config)
+    write_worker_hooks(project_root, config)
 
 
 @app.command()
 def index(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Rebuild the code-review-graph index."""
     from milknado.adapters.crg import CrgAdapter
 
     project_root = project_root.resolve()
-    _load_or_default(project_root)
+    _ = load_or_default(project_root)
     crg = CrgAdapter(project_root)
     try:
         crg.build_graph(project_root)
         console.print("Code-review-graph rebuilt.")
     except subprocess.CalledProcessError as e:
         console.print(f"[red]CRG build failed (exit {e.returncode}).[/red]")
-        if e.stderr:
-            console.print(e.stderr)
+        if stderr := cast(str | bytes | None, e.stderr):
+            console.print(stderr)
         raise typer.Exit(code=1) from None
 
 
@@ -163,15 +167,15 @@ def _fetch_run_states(
 
 @app.command()
 def status(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
     show_all: Annotated[
         bool,
-        typer.Option("--all", help="Include archived (soft-hidden) nodes."),
+        typer_option("--all", help="Include archived (soft-hidden) nodes."),
     ] = False,
 ) -> None:
     """Show the current state of the Mikado graph."""
     project_root = project_root.resolve()
-    project = _open_project(project_root)
+    project = open_project_for_cli(project_root)
     graph = project.graph
 
     try:
@@ -189,8 +193,8 @@ def status(
         if failures:
             console.print(
                 f"[yellow]Degraded status: {len(failures)} run state"
-                f"{'s' if len(failures) != 1 else ''} unavailable "
-                f"({'; '.join(failures)})[/yellow]"
+                + f"{'s' if len(failures) != 1 else ''} unavailable "
+                + f"({'; '.join(failures)})[/yellow]"
             )
         console.print(render_tree(graph, run_states=run_states, include_archived=show_all))
     finally:
@@ -199,22 +203,22 @@ def status(
 
 @app.command()
 def rebalance(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
     dry_run: Annotated[
         bool,
-        typer.Option("--dry-run", help="Print the plan without mutating anything."),
+        typer_option("--dry-run", help="Print the plan without mutating anything."),
     ] = False,
     no_sweep: Annotated[
         bool,
-        typer.Option("--no-sweep", help="Skip archiving all-DONE subtrees."),
+        typer_option("--no-sweep", help="Skip archiving all-DONE subtrees."),
     ] = False,
     no_restructure: Annotated[
         bool,
-        typer.Option("--no-restructure", help="Skip orphan grouping and structural findings."),
+        typer_option("--no-restructure", help="Skip orphan grouping and structural findings."),
     ] = False,
     no_reap: Annotated[
         bool,
-        typer.Option("--no-reap", help="Skip archived-worktree teardown."),
+        typer_option("--no-reap", help="Skip archived-worktree teardown."),
     ] = False,
 ) -> None:
     """Rebalance the working tree: sweep finished work, regroup orphans, reap worktrees."""
@@ -229,13 +233,12 @@ def rebalance(
         reap=not no_reap,
     )
     report = run_rebalance(project_root.resolve(), options)
-    # markup=False: the report's literal "[dry-run]" prefix is not rich markup.
     console.print(render_report(report, dry_run=dry_run), markup=False)
 
 
 @app.command()
 def crg(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Show the code-review-graph architecture overview."""
     import json
@@ -255,35 +258,33 @@ def crg(
 
 @app.command("add-node")
 def add_node(
-    description: Annotated[str, typer.Argument(help="Node description")],
-    parent: Annotated[int | None, typer.Option("--parent", "-p", help="Parent node ID")] = None,
+    description: Annotated[str, typer_argument(help="Node description")],
+    parent: Annotated[int | None, typer_option("--parent", "-p", help="Parent node ID")] = None,
     kind: Annotated[
         NodeKind,
-        typer.Option("--kind", "-k", help="Node kind"),
+        typer_option("--kind", "-k", help="Node kind"),
     ] = NodeKind.TASK,
     flavor: Annotated[
         str | None,
-        typer.Option("--flavor", help="Task flavor, including config-registered names"),
+        typer_option("--flavor", help="Task flavor, including config-registered names"),
     ] = None,
     artifact: Annotated[
         str | None,
-        typer.Option("--artifact", help="Artifact path associated with this node"),
+        typer_option("--artifact", help="Artifact path associated with this node"),
     ] = None,
     prereq: Annotated[
         list[int] | None,
-        typer.Option("--prereq", help="Prerequisite node ID; repeatable"),
+        typer_option("--prereq", help="Prerequisite node ID; repeatable"),
     ] = None,
     files: Annotated[
         list[str] | None,
-        typer.Option("--files", "-f", help="Files this node will touch"),
+        typer_option("--files", "-f", help="Files this node will touch"),
     ] = None,
-    project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+    project_root: ProjectRootOption = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Add a node to the Mikado graph."""
     project_root = project_root.resolve()
-    project = _open_project(project_root)
+    project = open_project_for_cli(project_root)
     graph = project.graph
 
     try:
@@ -302,7 +303,7 @@ def add_node(
         )
         if files:
             graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
-        _maybe_block_parent(graph, parent)
+        maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
     finally:
         graph.close()
@@ -310,14 +311,14 @@ def add_node(
 
 @app.command()
 def doctor(
-    project_root: Annotated[Path, typer.Argument(help="Project root directory")] = Path("."),
+    project_root: ProjectRootArgument = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Run health checks on the milknado installation."""
     from milknado.domains.common import render_report, run_doctor
 
     project_root = project_root.resolve()
-    config_path = _find_config(project_root)
-    config, _ = _load_or_default(project_root)
+    config_path = find_config(project_root)
+    config, _ = load_or_default(project_root)
     report = run_doctor(config_path, config)
     text, issue_count = render_report(report)
     typer.echo(text)

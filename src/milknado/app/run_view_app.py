@@ -185,10 +185,10 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     def action_quit_all(self) -> None:
         self.exit()
 
-    def _pause_auto_follow(self) -> None:
+    def pause_auto_follow(self) -> None:
         self.auto_follow = False
         self._refresh_view()
 
     def on_key(self, event: Key) -> None:
         if event.key in {"home", "end", "pageup", "pagedown"}:
-            self._pause_auto_follow()
+            self.pause_auto_follow()

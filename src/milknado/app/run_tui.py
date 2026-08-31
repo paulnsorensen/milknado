@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -122,9 +121,6 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         elif event.key in {"n", "escape"}:
             self._clear_confirmation()
         _ = event.stop()
-
-
-type.__setattr__(ExecutionApp, "action_back", ExecutionApp.go_back)
 
 
 def run_execution_tui(
