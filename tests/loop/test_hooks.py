@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import pytest
+from typing_extensions import override
 
-from milknado.loop.hooks import (
+from milknado.loop.hooks import (  # pyright: ignore[reportMissingTypeStubs]
     HOOK_EVENT_NAMES,
     AgentHook,
     CombinedAgentHook,
@@ -21,11 +22,13 @@ class _RecordingHook(NoOpAgentHook):
     """Records every call for assertions."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.calls: list[tuple[str, dict[str, object]]] = []
 
+    @override
     def on_iteration_started(self, *, iteration: int) -> None:
         self.calls.append(("on_iteration_started", {"iteration": iteration}))
 
+    @override
     def on_tool_use(self, *, iteration: int, tool_name: str, count: int) -> None:
         self.calls.append(
             (
@@ -34,6 +37,7 @@ class _RecordingHook(NoOpAgentHook):
             )
         )
 
+    @override
     def on_turn_capped(self, *, iteration: int, count: int) -> None:
         self.calls.append(("on_turn_capped", {"iteration": iteration, "count": count}))
 
@@ -41,6 +45,7 @@ class _RecordingHook(NoOpAgentHook):
 class _RaisingHook(NoOpAgentHook):
     """Always raises — used to verify fanout isolation."""
 
+    @override
     def on_iteration_started(self, *, iteration: int) -> None:
         raise RuntimeError("boom")
 
@@ -77,16 +82,16 @@ def test_combined_fanout_isolates_exceptions() -> None:
 
 def test_combined_fanout_skips_missing_methods() -> None:
     class _PartialHook:
-        def on_iteration_started(self, *, iteration: int) -> None:
+        def on_iteration_started(self, *, iteration: int) -> None:  # pyright: ignore[reportUnusedParameter]
             pass
 
-    combined = CombinedAgentHook([_PartialHook()])
+    combined = CombinedAgentHook([cast(AgentHook, cast(object, _PartialHook()))])
     combined.on_turn_capped(iteration=1, count=10)
 
 
 def test_shell_hook_rejects_unknown_event() -> None:
     with pytest.raises(ValueError, match="unknown hook event"):
-        ShellAgentHook("on_nonexistent_event", "true")
+        _ = ShellAgentHook("on_nonexistent_event", "true")
 
 
 def test_shell_hook_swallows_nonzero_exit(caplog: pytest.LogCaptureFixture) -> None:
@@ -99,7 +104,7 @@ def test_shell_hook_swallows_nonzero_exit(caplog: pytest.LogCaptureFixture) -> N
 def test_shell_hook_swallows_timeout(
     caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def raise_timeout(*args: Any, **kwargs: Any) -> None:
+    def raise_timeout(*_args: object, **_kwargs: object) -> None:
         raise subprocess.TimeoutExpired(cmd="sleep 999", timeout=60.0)
 
     monkeypatch.setattr("milknado.loop.hooks.subprocess.run", raise_timeout)
@@ -116,7 +121,7 @@ def test_shell_hook_swallows_missing_binary(caplog: pytest.LogCaptureFixture) ->
     assert any("failed to start" in record.message for record in caplog.records)
 
 
-def test_shell_hook_pipes_payload_to_stdin(tmp_path: Any) -> None:
+def test_shell_hook_pipes_payload_to_stdin(tmp_path: Path) -> None:
     out = tmp_path / "payload.json"
     hook = ShellAgentHook(
         "on_iteration_started",
@@ -127,7 +132,7 @@ def test_shell_hook_pipes_payload_to_stdin(tmp_path: Any) -> None:
     assert '"iteration": 7' in out.read_text()
 
 
-def test_shell_hook_runs_in_configured_worktree(tmp_path: Any) -> None:
+def test_shell_hook_runs_in_configured_worktree(tmp_path: Path) -> None:
     worktree = tmp_path / "node-worktree"
     worktree.mkdir()
     out = tmp_path / "observed_cwd.txt"
@@ -142,7 +147,9 @@ def test_shell_hook_runs_in_configured_worktree(tmp_path: Any) -> None:
     assert Path(observed).resolve() == worktree.resolve()
 
 
-def test_shell_hook_none_cwd_inherits_parent(tmp_path: Any, monkeypatch: Any) -> None:
+def test_shell_hook_none_cwd_inherits_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     work = tmp_path / "orchestrator-cwd"
     work.mkdir()
     monkeypatch.chdir(work)
@@ -154,17 +161,11 @@ def test_shell_hook_none_cwd_inherits_parent(tmp_path: Any, monkeypatch: Any) ->
 
 
 def test_shell_hook_passes_cwd_to_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
+    captured: dict[str, object] = {}
 
-    def fake_run(*args: Any, **kwargs: Any) -> Any:
+    def fake_run(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
         captured.update(kwargs)
-
-        class _Proc:
-            returncode = 0
-            stdout = ""
-            stderr = ""
-
-        return _Proc()
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr("milknado.loop.hooks.subprocess.run", fake_run)
     worktree = Path("/some/node/worktree")

@@ -5,8 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.domains.common import MilknadoConfig, default_config
-from milknado.domains.common.agent_argv import (
+from milknado.domains.common import (  # pyright: ignore[reportMissingTypeStubs]
+    MilknadoConfig,
+    default_config,
+)
+from milknado.domains.common.agent_argv import (  # pyright: ignore[reportMissingTypeStubs]
     WORKER_ALLOWED_TOOLS,
     build_minimal_mcp_env,
     build_planning_subprocess,
@@ -15,8 +18,13 @@ from milknado.domains.common.agent_argv import (
     resolve_worker_tools,
     validate_worker_argv,
 )
-from milknado.domains.common.config import load_config, save_config
-from milknado.domains.dispatch.runner import run_headless
+from milknado.domains.common.config import (  # pyright: ignore[reportMissingTypeStubs]
+    load_config,
+    save_config,
+)
+from milknado.domains.dispatch.runner import (  # pyright: ignore[reportMissingTypeStubs]
+    run_headless,
+)
 
 
 @pytest.mark.parametrize(
@@ -63,7 +71,7 @@ def test_worker_allowlist_grants_track_follow_up_not_delete_or_edit() -> None:
 def test_dispatch_rejects_path_spoof_before_process_spawn(tmp_path: Path) -> None:
     process = MagicMock()
     with pytest.raises(ValueError, match="worker_cmd"):
-        run_headless(
+        _ = run_headless(
             tmp_path,
             node_id=1,
             brief="brief",
@@ -128,7 +136,7 @@ def test_resolve_execution_uses_override() -> None:
 
 def test_custom_planning_agent_is_forced_into_read_only_mode(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     override = "claude --model custom -p --dangerously-skip-permissions"
 
     planning_command = resolve_planning_agent_command("claude", planning_agent=override)
@@ -155,7 +163,7 @@ def test_custom_planning_agent_is_forced_into_read_only_mode(tmp_path: Path) -> 
 
 def test_build_planning_subprocess_uses_stdin(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     argv, extra = build_planning_subprocess(context, "claude --model opus -p")
     assert argv == [
         "claude",
@@ -179,7 +187,7 @@ def test_build_planning_subprocess_replaces_duplicate_claude_capability_options(
     tmp_path: Path,
 ) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
 
     argv, extra = build_planning_subprocess(
         context,
@@ -207,7 +215,7 @@ def test_build_planning_subprocess_replaces_duplicate_claude_capability_options(
 
 def test_build_planning_subprocess_sandboxes_gemini_exactly(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
 
     argv, extra = build_planning_subprocess(
         context,
@@ -230,7 +238,7 @@ def test_build_planning_subprocess_sandboxes_gemini_exactly(tmp_path: Path) -> N
 
 def test_build_planning_subprocess_sandboxes_codex_exactly(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
 
     argv, extra = build_planning_subprocess(
         context,
@@ -249,7 +257,7 @@ def test_build_planning_subprocess_sandboxes_omp_and_forwards_openrouter(
     tmp_path: Path,
 ) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     command = (
         "omp --model openrouter/example --thinking high --tools=bash --auto-approve "
         "--approval-mode=yolo --plan-yolo --config ignored --extension=evil "
@@ -284,7 +292,7 @@ def test_build_planning_subprocess_omp_drops_unrecognized_flags(tmp_path: Path) 
     set, so a repo-local milknado.toml cannot widen omp planning's sandbox by
     smuggling them into the configured command."""
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     command = "omp --model foo --add-dir /tmp --cwd /tmp --profile evil"
     env = {"HOME": "/home/test", "PATH": "/bin"}
     with patch("milknado.domains.common.agent_argv.os.environ", env):
@@ -299,7 +307,7 @@ def test_build_planning_subprocess_omp_drops_unrecognized_flags(tmp_path: Path) 
 
 def test_build_planning_subprocess_omp_keeps_equals_form_kept_flag(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     command = "omp --model=foo"
     env = {"HOME": "/home/test", "PATH": "/bin"}
     with patch("milknado.domains.common.agent_argv.os.environ", env):
@@ -312,7 +320,7 @@ def test_build_planning_subprocess_omp_has_no_trailing_stdin_sentinel(tmp_path: 
     """omp treats a bare '-' as a positional message, not a stdin marker —
     appending it (as every other planning agent gets) would corrupt the argv."""
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
     env = {"HOME": "/home/test", "PATH": "/bin"}
     with patch("milknado.domains.common.agent_argv.os.environ", env):
         argv, _extra = build_planning_subprocess(context, "omp --model foo")
@@ -324,19 +332,19 @@ def test_build_planning_subprocess_rejects_cursor_without_read_only_mode(
     tmp_path: Path,
 ) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
 
     with pytest.raises(
         ValueError,
         match="cursor-agent cannot enforce read-only planning capabilities",
     ):
-        build_planning_subprocess(context, "cursor-agent -p")
+        _ = build_planning_subprocess(context, "cursor-agent -p")
 
 
 def test_build_planning_subprocess_allows_external_mcp(tmp_path: Path) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
-    (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
+    _ = (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
     argv, extra = build_planning_subprocess(
         context,
         "claude -p",
@@ -351,8 +359,8 @@ def test_build_planning_subprocess_does_not_forward_repo_mcp_by_default(
     tmp_path: Path,
 ) -> None:
     context = tmp_path / "ctx.md"
-    context.write_text("hello world", encoding="utf-8")
-    (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+    _ = context.write_text("hello world", encoding="utf-8")
+    _ = (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
     argv, extra = build_planning_subprocess(
         context,
         "claude -p",
@@ -398,7 +406,7 @@ def test_load_config_roundtrip_split_agents(tmp_path: Path) -> None:
 
 def test_load_config_accepts_omp_with_explicit_execution_agent(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p --tools=read"\n',
         encoding="utf-8",
     )
@@ -414,12 +422,12 @@ def test_load_config_accepts_omp_with_explicit_execution_agent(tmp_path: Path) -
     [
         ('[milknado]\nagent_family = "omp"\n', "requires an explicit execution_agent"),
         (
-            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'
+            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'  # pyright: ignore[reportImplicitStringConcatenation]
             "[milknado.worker.tools]\nomp = []\n",
             "worker.tools.omp",
         ),
         (
-            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'
+            '[milknado]\nagent_family = "omp"\nexecution_agent = "omp -p"\n'  # pyright: ignore[reportImplicitStringConcatenation]
             "[milknado.flavor.implement]\ntools = []\n",
             "flavor.*].tools",
         ),
@@ -429,10 +437,10 @@ def test_load_config_rejects_omp_implicit_or_translated_tools(
     tmp_path: Path, config: str, message: str
 ) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(config, encoding="utf-8")
+    _ = cfg_path.write_text(config, encoding="utf-8")
 
     with pytest.raises(ValueError, match=message):
-        load_config(cfg_path, include_global=False)
+        _ = load_config(cfg_path, include_global=False)
 
 
 def test_default_config_uses_claude_preset(tmp_path: Path) -> None:
@@ -444,12 +452,12 @@ def test_default_config_uses_claude_preset(tmp_path: Path) -> None:
 
 def test_load_config_rejects_unknown_family(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         '[milknado]\nagent_family = "unknown"\n',
         encoding="utf-8",
     )
     try:
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
         pytest.fail("Expected ValueError for invalid agent_family")
     except ValueError as exc:
         assert "Invalid agent_family" in str(exc)
@@ -515,7 +523,7 @@ def test_resolve_execution_agent_unknown_family_raises() -> None:
     # No default command template exists for an unrecognised family; building
     # one must fail loudly rather than silently emit a broken CLI string.
     try:
-        resolve_execution_agent_command("powershell", tools=["Read"])
+        _ = resolve_execution_agent_command("powershell", tools=["Read"])
         pytest.fail("Expected KeyError for unknown execution family")
     except KeyError as exc:
         assert "powershell" in str(exc)
@@ -542,7 +550,7 @@ def test_resolve_execution_agent_codex_ignores_tools() -> None:
 
 def test_load_config_structured_worker_tools_single_list(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
@@ -557,7 +565,7 @@ def test_load_config_structured_worker_tools_single_list(tmp_path: Path) -> None
 
 def test_load_config_structured_worker_tools_replace(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n\n'
@@ -574,17 +582,17 @@ def test_load_config_structured_worker_tools_replace(tmp_path: Path) -> None:
 
 def test_load_config_structured_worker_tools_rejects_non_string_item(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         ('[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = [42]\n'),
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="must be a non-empty string"):
-        load_config(cfg_path)
+        _ = load_config(cfg_path)
 
 
 def test_load_config_explicit_execution_agent_bypasses_worker_tools(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
-    cfg_path.write_text(
+    _ = cfg_path.write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n'

@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import cast
 
-from milknado.loop.adapters import Invocation, select_adapter
-from milknado.loop.adapters.codex import CodexAdapter
+from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+    Invocation,
+    select_adapter,
+)
+from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
 
 
 def test_matches_codex_binary_stem() -> None:
@@ -138,15 +143,19 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_writes_hooks_json(tmp_path) -> None:
+def test_install_wind_down_hook_writes_hooks_json(tmp_path: Path) -> None:
     adapter = CodexAdapter()
     counter = tmp_path / "counter"
     env = adapter.install_wind_down_hook(tmp_path, counter, 10, 2)
     assert env["CODEX_HOME"] == str(tmp_path)
-    hooks = json.loads((tmp_path / "hooks.json").read_text(encoding="utf-8"))
-    entries = hooks["PostToolUse"]
+    hooks = cast(
+        dict[str, object],
+        cast(object, json.loads((tmp_path / "hooks.json").read_text(encoding="utf-8"))),
+    )
+    entries = cast(list[dict[str, object]], hooks["PostToolUse"])
     assert entries[0]["matcher"] == "*"
-    command = entries[0]["hooks"][0]["command"]
+    hook = cast(list[dict[str, object]], entries[0]["hooks"])
+    command = cast(str, hook[0]["command"])
     assert "milknado.loop._wind_down_shim" in command
     assert str(counter) in command
     assert command.rstrip().endswith("codex")

@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from milknado.loop.adapters import CLIAdapter, Invocation, select_adapter
-from milknado.loop.adapters.opencode import OpenCodeAdapter
+from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+    CLIAdapter,
+    Invocation,
+    select_adapter,
+)
+from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+    OpenCodeAdapter,
+)
 
 
 def test_matches_opencode_binary_stem() -> None:
@@ -159,10 +166,10 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_raises_not_implemented(tmp_path) -> None:
+def test_install_wind_down_hook_raises_not_implemented(tmp_path: Path) -> None:
     adapter = OpenCodeAdapter()
     with pytest.raises(NotImplementedError):
-        adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
+        _ = adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
 
 
 def test_capability_flags() -> None:

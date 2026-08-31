@@ -2,9 +2,9 @@
 
 import pytest
 
-from milknado.loop._frontmatter import (
+from milknado.loop._frontmatter import (  # pyright: ignore[reportMissingTypeStubs]
     RALPH_MARKER,
-    _extract_frontmatter_block,
+    _extract_frontmatter_block,  # pyright: ignore[reportPrivateUsage]
     parse_frontmatter,
     serialize_frontmatter,
 )
@@ -188,7 +188,7 @@ class TestParseFrontmatter:
     def test_invalid_yaml_raises_value_error(self):
         text = "---\n: invalid: yaml: [unclosed\n---\nBody"
         with pytest.raises(ValueError, match="Invalid YAML"):
-            parse_frontmatter(text)
+            _ = parse_frontmatter(text)
 
     def test_empty_frontmatter_returns_empty_dict(self):
         text = "---\n---\nBody"
@@ -207,7 +207,9 @@ class TestParseFrontmatter:
         text = "---\nagent: claude\nnotes: |\n  first\n  ---\n  third\n---\nBody"
         fm, body = parse_frontmatter(text)
         assert fm["agent"] == "claude"
-        assert "---" in fm["notes"]
+        notes = fm["notes"]
+        assert isinstance(notes, str)
+        assert "---" in notes
         assert body == "Body"
 
     def test_utf8_bom_does_not_break_frontmatter(self):
@@ -221,17 +223,17 @@ class TestParseFrontmatter:
     def test_non_dict_frontmatter_raises_value_error(self):
         text = "---\n- item1\n- item2\n---\nBody"
         with pytest.raises(ValueError, match="must be a YAML mapping"):
-            parse_frontmatter(text)
+            _ = parse_frontmatter(text)
 
     def test_scalar_frontmatter_raises_value_error(self):
         text = "---\njust a string\n---\nBody"
         with pytest.raises(ValueError, match="must be a YAML mapping"):
-            parse_frontmatter(text)
+            _ = parse_frontmatter(text)
 
 
 class TestSerializeFrontmatter:
     def test_roundtrip(self):
-        original_fm = {"agent": "claude"}
+        original_fm: dict[str, object] = {"agent": "claude"}
         original_body = "Do the thing"
         serialized = serialize_frontmatter(original_fm, original_body)
         fm, body = parse_frontmatter(serialized)
