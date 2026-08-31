@@ -7,16 +7,23 @@ machinery.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
 import milknado.adapters as adapters
-from milknado.domains.common import RebaseResult, WorktreeMode
+from milknado.domains.common import MikadoNode, RebaseResult, WorktreeMode
+from milknado.domains.common.protocols import GitPort
+from milknado.domains.dispatch import ProcessOutcome
+from milknado.domains.dispatch.isolate import IsolateContext
+from milknado.mcp._core import NodeSummary, RunDict
 from milknado.mcp.run import (
     milknado_run_inline,
     milknado_run_inline_poll,
@@ -26,8 +33,10 @@ from milknado.mcp.server import open_graph
 from milknado.mcp.todo_mutate import milknado_todo_add
 
 
-def _call(tool, **kwargs):
+def _call(tool: object, **kwargs: object) -> object:
     fn = getattr(tool, "fn", tool)
+    if not callable(fn):
+        raise TypeError(f"tool is not callable: {tool!r}")
     return fn(**kwargs)
 
 
@@ -44,80 +53,130 @@ def _git(cwd: Path, *args: str) -> str:
 def _init_repo(root: Path) -> None:
     """A real git repo on branch `main` with one commit — the dispatch branch."""
     root.mkdir(parents=True, exist_ok=True)
-    _git(root, "init", "-b", "main")
-    _git(root, "config", "user.email", "t@t.com")
-    _git(root, "config", "user.name", "T")
-    (root / "README").write_text("x")
-    _git(root, "add", ".")
-    _git(root, "commit", "-m", "init")
+    _ = _git(root, "init", "-b", "main")
+    _ = _git(root, "config", "user.email", "t@t.com")
+    _ = _git(root, "config", "user.name", "T")
+    _ = (root / "README").write_text("x")
+    _ = _git(root, "add", ".")
+    _ = _git(root, "commit", "-m", "init")
 
 
 @pytest.fixture()
-def worker_stub(tmp_path_factory, monkeypatch):
+def worker_stub(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
     """Install a `claude` shim that exec's its args, so a worker_cmd can run `sh -c`."""
     bindir = tmp_path_factory.mktemp("worker-stub-bin")
     stub = bindir / "claude"
-    stub.write_text('#!/bin/sh\nexec "$@"\n')
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}:{__import__('os').environ.get('PATH', '')}")
+    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
+    _ = stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:{os.environ.get('PATH', '')}")
 
 
 @pytest.fixture()
-def worker_writes_pwd(worker_stub):
+def worker_writes_pwd(worker_stub: None) -> str:
     """A worker that writes its cwd to a deliverable and exits 0."""
-    # Record the worker's cwd (proves ISOLATE ran outside project_root) and leave a
+    _ = worker_stub
     # deliverable the merge-back can land.
     return "claude sh -c 'pwd > deliverable.txt'"
 
 
-def _spy_worker_cwd(monkeypatch) -> dict:
+def _spy_worker_cwd(monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     """Capture the cwd handed to the spawned worker while still spawning it."""
-    captured: dict = {}
+    captured: dict[str, Path] = {}
     real = adapters.ProcessAdapter.run
 
-    def spy(self, argv, cwd, *args, **kwargs):
-        captured["cwd"] = Path(cwd)
-        return real(self, argv, cwd, *args, **kwargs)
+    def spy(  # noqa: PLR0913 - mirrors ProcessAdapter.run for monkeypatch typing
+        self: adapters.ProcessAdapter,
+        argv: tuple[str, ...],
+        cwd: Path,
+        log_path: Path,
+        stdin: bytes,
+        env: dict[str, str],
+        timeout: float,
+        *,
+        cancel_requested: Callable[[], bool] | None = None,
+        on_started: Callable[[int], None] | None = None,
+    ) -> ProcessOutcome:
+        captured["cwd"] = cwd
+        return real(
+            self,
+            argv,
+            cwd,
+            log_path,
+            stdin,
+            env,
+            timeout,
+            cancel_requested=cancel_requested,
+            on_started=on_started,
+        )
 
     monkeypatch.setattr(adapters.ProcessAdapter, "run", spy)
     return captured
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 10.0) -> dict:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 10.0) -> RunDict:
     deadline = time.monotonic() + timeout
-    last = None
+    last: RunDict | None = None
     while time.monotonic() < deadline:
-        last = _call(milknado_run_inline_poll, run_id=run_id, project_root=root)
+        last = cast(RunDict, _call(milknado_run_inline_poll, run_id=run_id, project_root=root))
         if last["status"] in ("done", "failed"):
             return last
         time.sleep(0.05)
     raise AssertionError(f"run {run_id} did not finish; last={last}")
 
 
-def _node(root: Path, node_id: int):
+def _node(root: Path, node_id: int) -> MikadoNode:
     graph, _cfg = open_graph(root)
     try:
-        return graph.get_node(node_id)
+        node = graph.get_node(node_id)
+        if node is None:
+            raise AssertionError(f"node {node_id} not found")
+        return node
     finally:
         graph.close()
+
+
+def _squash_success(_worktree: Path, _onto: str, _message: str) -> bool:
+    return True
+
+
+def _rebase_success(_worktree: Path, _onto: str) -> RebaseResult:
+    return RebaseResult(success=True)
+
+
+def _rebase_failure(_worktree: Path, _onto: str) -> RebaseResult:
+    return RebaseResult(success=False)
+
+
+def _resolve_worker_oid(_ref: str) -> str:
+    return "worker-oid"
+
+
+def _ignore_compare_and_swap(_ref: str, _expected_oid: str, _new_oid: str) -> None:
+    return None
 
 
 class TestIsolateDefault:
     """Criterion 2: omitted worktree → ISOLATE + merge_back."""
 
     def test_runs_in_worktree_merges_back_and_tears_down(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
         captured = _spy_worker_cwd(monkeypatch)
-        task = _call(milknado_todo_add, description="isolate", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="isolate", kind="task", project_root=str(root)),
+        )
 
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
         )
 
         assert result["exit_code"] == 0
@@ -130,6 +189,7 @@ class TestIsolateDefault:
         assert (root / "deliverable.txt").exists()
         # Worktree torn down.
         node = _node(root, task["id"])
+        assert node.worktree_path is not None
         assert not Path(node.worktree_path).exists()
 
 
@@ -137,26 +197,31 @@ class TestIsolateNoMergeBack:
     """Criterion 3: ISOLATE + merge_back=False leaves the branch/worktree in place."""
 
     def test_worktree_persists_and_caller_untouched(
-        self, tmp_path: Path, worker_writes_pwd
+        self, tmp_path: Path, worker_writes_pwd: str
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
-        task = _call(milknado_todo_add, description="keep", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="keep", kind="task", project_root=str(root)),
+        )
 
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            merge_back=False,
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                merge_back=False,
+                project_root=str(root),
+            ),
         )
 
         assert result["status"] == "done"
         assert result["rebased"] is None  # no merge attempted
         node = _node(root, task["id"])
+        assert node.worktree_path is not None
         wt = Path(node.worktree_path)
-        # worktree + its deliverable survive; the caller checkout is untouched.
-        assert wt.exists()
         assert (wt / "deliverable.txt").exists()
         assert not (root / "deliverable.txt").exists()
 
@@ -165,19 +230,25 @@ class TestThisBranch:
     """Criterion 4: worktree=THIS_BRANCH runs in the shared checkout."""
 
     def test_runs_in_project_root_no_worktree(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
         captured = _spy_worker_cwd(monkeypatch)
-        task = _call(milknado_todo_add, description="shared", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="shared", kind="task", project_root=str(root)),
+        )
 
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            worktree=WorktreeMode.THIS_BRANCH,
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+            ),
         )
 
         assert result["status"] == "done"
@@ -192,111 +263,177 @@ class TestThisBranch:
 class TestDoneTerminalization:
     """Criterion 5: exit 0 marks the node DONE-terminal; re-dispatch is refused."""
 
-    def test_second_dispatch_refused_after_done(self, tmp_path: Path, worker_writes_pwd) -> None:
-        root = tmp_path / "repo"
-        _init_repo(root)
-        task = _call(milknado_todo_add, description="once", kind="task", project_root=str(root))
-
-        first = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
-        )
-        assert first["status"] == "done"
-        assert _node(root, task["id"]).status.value == "done"
-
-        with pytest.raises(ValueError, match="already done|set status back to pending"):
-            _call(
-                milknado_run_inline_start,
-                node_id=task["id"],
-                worker_cmd=worker_writes_pwd,
-                project_root=str(root),
-            )
-
-    def test_sync_second_dispatch_refused_without_spawning(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+    def test_second_dispatch_refused_after_done(
+        self, tmp_path: Path, worker_writes_pwd: str
     ) -> None:
-        """The sync path refuses a DONE node up front and never spawns a worker —
-        no run with a run_id it cannot finalize."""
         root = tmp_path / "repo"
         _init_repo(root)
-        task = _call(milknado_todo_add, description="sonce", kind="task", project_root=str(root))
-
-        first = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="once", kind="task", project_root=str(root)),
         )
-        assert first["status"] == "done"
 
-        spawned: list = []
-        real = adapters.ProcessAdapter.run
-
-        def spy(self, *args, **kwargs):
-            spawned.append(args)
-            return real(self, *args, **kwargs)
-
-        monkeypatch.setattr(adapters.ProcessAdapter, "run", spy)
-
-        with pytest.raises(ValueError, match="already done"):
+        first = cast(
+            RunDict,
             _call(
                 milknado_run_inline,
                 node_id=task["id"],
                 worker_cmd=worker_writes_pwd,
                 project_root=str(root),
+            ),
+        )
+        assert first["status"] == "done"
+        assert _node(root, task["id"]).status.value == "done"
+
+        with pytest.raises(ValueError, match="already done|set status back to pending"):
+            _ = cast(
+                RunDict,
+                _call(
+                    milknado_run_inline_start,
+                    node_id=task["id"],
+                    worker_cmd=worker_writes_pwd,
+                    project_root=str(root),
+                ),
+            )
+
+    def test_sync_second_dispatch_refused_without_spawning(
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The sync path refuses a DONE node up front and never spawns a worker —
+        no run with a run_id it cannot finalize."""
+        root = tmp_path / "repo"
+        _init_repo(root)
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="sonce", kind="task", project_root=str(root)),
+        )
+
+        first = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
+        )
+        assert first["status"] == "done"
+
+        spawned: list[tuple[str, ...]] = []
+        real = adapters.ProcessAdapter.run
+
+        def spy(  # noqa: PLR0913 - mirrors ProcessAdapter.run for monkeypatch typing
+            self: adapters.ProcessAdapter,
+            argv: tuple[str, ...],
+            cwd: Path,
+            log_path: Path,
+            stdin: bytes,
+            env: dict[str, str],
+            timeout: float,
+            *,
+            cancel_requested: Callable[[], bool] | None = None,
+            on_started: Callable[[int], None] | None = None,
+        ) -> ProcessOutcome:
+            spawned.append(argv)
+            return real(
+                self,
+                argv,
+                cwd,
+                log_path,
+                stdin,
+                env,
+                timeout,
+                cancel_requested=cancel_requested,
+                on_started=on_started,
+            )
+
+        monkeypatch.setattr(adapters.ProcessAdapter, "run", spy)
+
+        with pytest.raises(ValueError, match="already done"):
+            _ = cast(
+                RunDict,
+                _call(
+                    milknado_run_inline,
+                    node_id=task["id"],
+                    worker_cmd=worker_writes_pwd,
+                    project_root=str(root),
+                ),
             )
         assert spawned == []
 
 
 class TestMergeBackReuse:
     def test_compare_and_swap_uses_captured_target(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
         calls: list[tuple[str, str, str]] = []
         original = adapters.GitAdapter.compare_and_swap_ref
 
-        def spy(self, ref, expected_oid, new_oid):
+        def spy(
+            self: adapters.GitAdapter,
+            ref: str,
+            expected_oid: str,
+            new_oid: str,
+        ) -> None:
             calls.append((ref, expected_oid, new_oid))
             return original(self, ref, expected_oid, new_oid)
 
         monkeypatch.setattr(adapters.GitAdapter, "compare_and_swap_ref", spy)
-        task = _call(milknado_todo_add, description="reuse", kind="task", project_root=str(root))
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add,
+                description="reuse",
+                kind="task",
+                project_root=str(root),
+            ),
+        )
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
         )
         assert result["status"] == "done"
         assert len(calls) == 1
         assert calls[0][0] == "refs/heads/main"
 
-    def test_branch_switch_cannot_redirect_merge_target(self, tmp_path: Path, worker_stub) -> None:
+    def test_branch_switch_cannot_redirect_merge_target(
+        self, tmp_path: Path, worker_stub: None
+    ) -> None:
+        _ = worker_stub
         root = tmp_path / "repo"
         _init_repo(root)
         worker = tmp_path / "switch-worker.py"
-        worker.write_text(
+        _ = worker.write_text(
             "import pathlib, subprocess\n"
-            f"root = pathlib.Path({str(root)!r})\n"
-            "subprocess.run(['git', '-C', str(root), 'switch', '-q', '-c', "
-            "'diversion'], check=True)\n"
-            "pathlib.Path('landed.txt').write_text('immutable-target')\n"
+            + f"root = pathlib.Path({str(root)!r})\n"
+            + "subprocess.run(['git', '-C', str(root), 'switch', '-q', '-c', "
+            + "'diversion'], check=True)\n"
+            + "pathlib.Path('landed.txt').write_text('immutable-target')\n"
         )
-        task = _call(
-            milknado_todo_add,
-            description="immutable target",
-            kind="task",
-            project_root=str(root),
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add,
+                description="immutable target",
+                kind="task",
+                project_root=str(root),
+            ),
         )
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=f"claude {sys.executable} {worker}",
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=f"claude {sys.executable} {worker}",
+                project_root=str(root),
+            ),
         )
         assert result["status"] == "failed"
         assert _git(root, "branch", "--show-current").strip() == "diversion"
@@ -307,24 +444,33 @@ class TestMergeBackReuse:
 class TestIsolateAsync:
     """The async start path also isolates + merges back (deferred, post-exit)."""
 
-    def test_async_isolate_merges_back(self, tmp_path: Path, worker_writes_pwd) -> None:
+    def test_async_isolate_merges_back(self, tmp_path: Path, worker_writes_pwd: str) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
-        task = _call(milknado_todo_add, description="async", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="async", kind="task", project_root=str(root)),
+        )
 
-        started = _call(
-            milknado_run_inline_start,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        started = cast(
+            RunDict,
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
         )
         assert started["status"] == "running"
-        final = _wait_for_terminal(started["run_id"], str(root))
+        run_id = started["run_id"]
+        assert run_id is not None
+        final = _wait_for_terminal(run_id, str(root))
 
         assert final["status"] == "done"
         assert final["rebased"] is True
         assert (root / "deliverable.txt").exists()
         node = _node(root, task["id"])
+        assert node.worktree_path is not None
         assert not Path(node.worktree_path).exists()
 
 
@@ -333,7 +479,7 @@ class TestMergeBackFailure:
     preserves the worktree for inspection rather than falsely reporting DONE."""
 
     def test_sync_merge_failure_fails_node_and_preserves_worktree(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import milknado.domains.dispatch.lifecycle as lifecycle_mod
         from milknado.domains.dispatch.isolate import MergeBackResult
@@ -341,19 +487,27 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_git, _root, ctx):
+        def _fail(_git: GitPort, _root: Path, ctx: IsolateContext) -> MergeBackResult:
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _fail)
-        task = _call(
-            milknado_todo_add, description="conflict", kind="task", project_root=str(root)
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add,
+                description="conflict",
+                kind="task",
+                project_root=str(root),
+            ),
         )
-
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
         )
 
         # Clean worker exit but the branch never landed → node FAILED, not DONE.
@@ -362,35 +516,45 @@ class TestMergeBackFailure:
         assert result["rebased"] is False
         node = _node(root, task["id"])
         assert node.status.value == "failed"
-        # The preserved worktree is surfaced on the result and still on disk for
-        # inspection; mark_failed nulls the node's worktree_path (shared convention).
-        assert result["worktree_preserved"] == str(root / "milknado-1-conflict")
-        assert Path(result["worktree_preserved"]).exists()
+        preserved = result["worktree_preserved"]
+        assert preserved is not None
+        assert preserved == str(root / "milknado-1-conflict")
+        assert Path(preserved).exists()
         assert node.worktree_path is None
 
     def test_sync_merge_back_raise_terminalizes_node_and_run(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A merge-back that RAISES (not just returns unlanded) must finalize the node
-        and run FAILED before re-raising — never strand them on RUNNING."""
+        """A merge-back that RAISES must finalize the node and run FAILED."""
         import milknado.domains.dispatch.lifecycle as lifecycle_mod
         from milknado.domains.common.errors import RebaseAbortError
 
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _boom(_git, _root, ctx):
+        def _boom(_git: GitPort, _root: Path, ctx: IsolateContext) -> None:
             raise RebaseAbortError(ctx.worktree_path, "rebase --abort failed")
 
         monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _boom)
-        task = _call(milknado_todo_add, description="raise", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add,
+                description="raise",
+                kind="task",
+                project_root=str(root),
+            ),
+        )
 
         with pytest.raises(RebaseAbortError):
-            _call(
-                milknado_run_inline,
-                node_id=task["id"],
-                worker_cmd=worker_writes_pwd,
-                project_root=str(root),
+            _ = cast(
+                RunDict,
+                _call(
+                    milknado_run_inline,
+                    node_id=task["id"],
+                    worker_cmd=worker_writes_pwd,
+                    project_root=str(root),
+                ),
             )
 
         assert _node(root, task["id"]).status.value == "failed"
@@ -402,7 +566,7 @@ class TestMergeBackFailure:
         assert latest["status"] == "failed"
 
     def test_async_merge_failure_fails_node(
-        self, tmp_path: Path, worker_writes_pwd, monkeypatch
+        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import milknado.domains.dispatch.async_run as async_mod
         from milknado.domains.dispatch.isolate import MergeBackResult
@@ -410,35 +574,42 @@ class TestMergeBackFailure:
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _fail(_git, _root, ctx):
+        def _fail(_git: GitPort, _root: Path, ctx: IsolateContext) -> MergeBackResult:
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
 
         monkeypatch.setattr(async_mod, "merge_back_isolated", _fail)
-        task = _call(
-            milknado_todo_add, description="asyncfail", kind="task", project_root=str(root)
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add,
+                description="asyncfail",
+                kind="task",
+                project_root=str(root),
+            ),
         )
-
-        started = _call(
-            milknado_run_inline_start,
-            node_id=task["id"],
-            worker_cmd=worker_writes_pwd,
-            project_root=str(root),
+        started = cast(
+            RunDict,
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
         )
-        final = _wait_for_terminal(started["run_id"], str(root))
+        run_id = started["run_id"]
+        assert run_id is not None
+        final = _wait_for_terminal(run_id, str(root))
 
         assert final["status"] == "failed"
         assert final["rebased"] is False
-        # The unlanded worktree is surfaced on the async poll result too — the async
-        # path persists it via the run row's `detail` column, mirroring the sync
-        # dispatch dict key and milknado_run_cancel.
+        # The unlanded worktree is surfaced on the async poll result too.
         assert final["worktree_preserved"] == str(root / "milknado-1-asyncfail")
 
 
 class TestFailClosedPreservation:
     """Merge-back failures preserve the isolated worktree for recovery."""
 
-    def _ctx(self, root: Path):
-        from milknado.domains.dispatch.isolate import IsolateContext
+    def _ctx(self, root: Path) -> tuple[adapters.GitAdapter, IsolateContext]:
 
         wt = root / "milknado-1-x"
         git = adapters.GitAdapter(root)
@@ -454,7 +625,7 @@ class TestFailClosedPreservation:
     def test_target_mismatch_preserves_refs_before_merge_mutation(
         self,
         tmp_path: Path,
-        monkeypatch,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from milknado.domains.dispatch.isolate import merge_back_isolated
 
@@ -482,7 +653,9 @@ class TestFailClosedPreservation:
         compare_and_swap.assert_not_called()
         remove.assert_not_called()
 
-    def test_unlanded_work_error_preserves_worktree(self, tmp_path: Path, monkeypatch) -> None:
+    def test_unlanded_work_error_preserves_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A teardown refusal (UnlandedWorkError) preserves the worktree and reports
         rebased=False — the branch never landed on the dispatch branch, so the merge
         did not succeed even though the worker exited clean."""
@@ -492,12 +665,13 @@ class TestFailClosedPreservation:
         root = tmp_path / "repo"
         _init_repo(root)
         git, ctx = self._ctx(root)
-        monkeypatch.setattr(git, "squash_and_commit", lambda *a, **k: True)
-        monkeypatch.setattr(git, "rebase", lambda *a, **k: RebaseResult(success=True))
-        monkeypatch.setattr(git, "resolve_ref", lambda *a, **k: "worker-oid")
-        monkeypatch.setattr(git, "compare_and_swap_ref", lambda *a, **k: None)
+        monkeypatch.setattr(git, "squash_and_commit", _squash_success)
+        monkeypatch.setattr(git, "rebase", _rebase_success)
+        monkeypatch.setattr(git, "resolve_ref", _resolve_worker_oid)
+        monkeypatch.setattr(git, "compare_and_swap_ref", _ignore_compare_and_swap)
 
-        def _refuse(*a, **k):
+        def _refuse(_worktree: Path, target: str = "HEAD") -> None:
+            _ = target
             raise UnlandedWorkError(ctx.worktree_path, "dirty files:\nx")
 
         monkeypatch.setattr(git, "remove_worktree", _refuse)
@@ -506,21 +680,18 @@ class TestFailClosedPreservation:
         assert result.rebased is False
         assert result.worktree_preserved == str(ctx.worktree_path)
 
-    def test_unlanded_rebase_preserves_worktree(self, tmp_path: Path, monkeypatch) -> None:
+    def test_unlanded_rebase_preserves_worktree(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A rebase that did not land (RebaseResult.success is False) is surfaced as
         rebased=False with the worktree preserved for inspection."""
-        from milknado.domains.common.types import RebaseResult
         from milknado.domains.dispatch.isolate import merge_back_isolated
 
         root = tmp_path / "repo"
         _init_repo(root)
         git, ctx = self._ctx(root)
-        monkeypatch.setattr(
-            git,
-            "squash_and_commit",
-            lambda *a, **k: True,
-        )
-        monkeypatch.setattr(git, "rebase", lambda *a, **k: RebaseResult(success=False))
+        monkeypatch.setattr(git, "squash_and_commit", _squash_success)
+        monkeypatch.setattr(git, "rebase", _rebase_failure)
         result = merge_back_isolated(git, root, ctx)
 
         assert result.rebased is False
@@ -533,18 +704,25 @@ class TestIsolateWorkerFailure:
     """
 
     def test_nonzero_exit_fails_node_and_skips_merge_back(
-        self, tmp_path: Path, worker_stub
+        self, tmp_path: Path, worker_stub: None
     ) -> None:
+        _ = worker_stub
         root = tmp_path / "repo"
         _init_repo(root)
-        task = _call(milknado_todo_add, description="boom", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="boom", kind="task", project_root=str(root)),
+        )
 
         # Worker produces a deliverable in its worktree, then fails.
-        result = _call(
-            milknado_run_inline,
-            node_id=task["id"],
-            worker_cmd="claude sh -c 'pwd > deliverable.txt; exit 7'",
-            project_root=str(root),
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd="claude sh -c 'pwd > deliverable.txt; exit 7'",
+                project_root=str(root),
+            ),
         )
 
         assert result["exit_code"] == 7
@@ -561,27 +739,33 @@ class TestAsyncStartFailure:
     milknado.app.run.run_inline_start."""
 
     def test_start_headless_failure_releases_claim_as_failed(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import milknado.domains.dispatch as dispatch_mod
 
         root = tmp_path / "repo"
         _init_repo(root)
-        task = _call(milknado_todo_add, description="boom", kind="task", project_root=str(root))
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description="boom", kind="task", project_root=str(root)),
+        )
 
-        def _explode(*args, **kwargs):
+        def _explode(*_args: object, **_kwargs: object) -> None:
             raise RuntimeError("spawn exploded")
 
         monkeypatch.setattr(dispatch_mod, "start_headless_async", _explode)
 
         with pytest.raises(RuntimeError, match="spawn exploded"):
-            _call(
-                milknado_run_inline_start,
-                node_id=task["id"],
-                worker_cmd="claude sh -c 'true'",
-                worktree=WorktreeMode.THIS_BRANCH,
-                merge_back=False,
-                project_root=str(root),
+            _ = cast(
+                RunDict,
+                _call(
+                    milknado_run_inline_start,
+                    node_id=task["id"],
+                    worker_cmd="claude sh -c 'true'",
+                    worktree=WorktreeMode.THIS_BRANCH,
+                    merge_back=False,
+                    project_root=str(root),
+                ),
             )
 
         # The claim was released with a fenced terminal write — not stranded RUNNING.
@@ -602,7 +786,7 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
         def resolve_ref(self, ref: str) -> str:
             return "base-before" if ref == "refs/heads/main" else "base-after"
 
-        def create_worktree(self, path: Path, branch: str) -> None:
+        def create_worktree(self, path: Path, _branch: str) -> None:
             path.mkdir(parents=True)
 
         def force_remove_worktree(self, path: Path) -> None:
@@ -611,7 +795,9 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
     git = Git()
     expected = tmp_path / "milknado-8-race"
     with pytest.raises(GitOperationError, match="checkout changed"):
-        create_isolated_worktree(git, tmp_path, 8, "race", "milknado-{node_id}-{slug}")  # type: ignore[arg-type]
+        _ = create_isolated_worktree(
+            cast(GitPort, cast(object, git)), tmp_path, 8, "race", "milknado-{node_id}-{slug}"
+        )
     assert git.removed == [expected]
 
 
@@ -619,23 +805,22 @@ class TestMergeBackLock:
     """merge_back_isolated serializes concurrent merge-backs on a cross-process
     flock, so two dispatches never rebase onto the same dispatch branch at once."""
 
-    def test_concurrent_merge_backs_do_not_overlap(self, tmp_path: Path, monkeypatch) -> None:
+    def test_concurrent_merge_backs_do_not_overlap(self, tmp_path: Path) -> None:
         import threading
 
-        from milknado.domains.common.types import RebaseResult
         from milknado.domains.dispatch.isolate import IsolateContext, merge_back_isolated
 
         root = tmp_path / "repo"
         _init_repo(root)
         base_oid = adapters.GitAdapter(root).resolve_ref("refs/heads/main")
-        intervals: list = []
+        intervals: list[tuple[float, float]] = []
         record_lock = threading.Lock()
 
         class _Git:
             def current_branch(self) -> str:
                 return "main"
 
-            def squash_and_commit(self, *args, **kwargs):
+            def squash_and_commit(self, _worktree: Path, _onto: str, _message: str) -> bool:
                 start = time.monotonic()
                 time.sleep(0.05)
                 end = time.monotonic()
@@ -643,16 +828,17 @@ class TestMergeBackLock:
                     intervals.append((start, end))
                 return True
 
-            def rebase(self, *args, **kwargs):
+            def rebase(self, _worktree: Path, _onto: str) -> RebaseResult:
                 return RebaseResult(success=True)
 
             def resolve_ref(self, ref: str) -> str:
                 return f"{ref}-oid"
 
-            def compare_and_swap_ref(self, *args, **kwargs) -> None:
+            def compare_and_swap_ref(self, _ref: str, _expected_oid: str, _new_oid: str) -> None:
                 return None
 
-            def remove_worktree(self, *args, **kwargs) -> None:
+            def remove_worktree(self, _path: Path, target: str = "HEAD") -> None:
+                _ = target
                 return None
 
         def _run(n: int) -> None:
@@ -664,7 +850,7 @@ class TestMergeBackLock:
                 node_id=n,
                 description="x",
             )
-            merge_back_isolated(_Git(), root, ctx)
+            _ = merge_back_isolated(cast(GitPort, cast(object, _Git())), root, ctx)
 
         threads = [threading.Thread(target=_run, args=(n,)) for n in (1, 2)]
         for t in threads:
@@ -687,21 +873,23 @@ def test_async_start_reports_lost_terminal_fence(
 
     root = tmp_path / "repo"
     _init_repo(root)
-    task = _call(milknado_todo_add, description="async fence", kind="task", project_root=str(root))
+    task = cast(
+        NodeSummary,
+        _call(milknado_todo_add, description="async fence", kind="task", project_root=str(root)),
+    )
     graph, cfg = open_graph(root)
     try:
-        monkeypatch.setattr(
-            dispatch_mod,
-            "start_headless_async",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
-        )
-        monkeypatch.setattr(
-            type(graph),
-            "mark_terminal",
-            lambda *_args, **_kwargs: False,
-        )
+
+        def _worker_failed(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("worker failed")
+
+        def _terminal_write_failed(*_args: object, **_kwargs: object) -> bool:
+            return False
+
+        monkeypatch.setattr(dispatch_mod, "start_headless_async", _worker_failed)
+        monkeypatch.setattr(type(graph), "mark_terminal", _terminal_write_failed)
         with pytest.raises(RuntimeError, match="startup terminal node write lost its fence"):
-            run_inline_start(
+            _ = run_inline_start(
                 graph,
                 cfg,
                 root,
