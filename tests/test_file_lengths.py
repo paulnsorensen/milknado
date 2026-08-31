@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.check_file_lengths import _violations, main
+import pytest
+
+from scripts.check_file_lengths import _violations, main  # pyright: ignore[reportPrivateUsage]
 
 
 def _write_source(root: Path, name: str, lines: int) -> None:
     path = root / "src" / "milknado" / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("line\n" * lines, encoding="utf-8")
+    _ = path.parent.mkdir(parents=True, exist_ok=True)
+    _ = path.write_text("line\n" * lines, encoding="utf-8")
 
 
 def _write_pyproject(root: Path, max_lines: int, file_exceptions: str = "") -> None:
-    (root / "pyproject.toml").write_text(
-        "[tool.milknado.quality]\n"
-        f"max_file_lines = {max_lines}\n\n"
-        "[tool.milknado.quality.file_exceptions]\n"
-        f"{file_exceptions}",
-        encoding="utf-8",
+    content = (
+        f"[tool.milknado.quality]\nmax_file_lines = {max_lines}\n\n"
+        f"[tool.milknado.quality.file_exceptions]\n{file_exceptions}"
     )
+    _ = (root / "pyproject.toml").write_text(content, encoding="utf-8")
 
 
 def test_violations_use_global_budget(tmp_path: Path) -> None:
@@ -29,14 +29,14 @@ def test_violations_use_global_budget(tmp_path: Path) -> None:
 
 def test_violations_apply_measured_waiver(tmp_path: Path) -> None:
     _write_source(tmp_path, "large.py", 3)
-    exceptions = {"src/milknado/large.py": {"max_lines": 3}}
+    exceptions: dict[str, dict[str, object]] = {"src/milknado/large.py": {"max_lines": 3}}
 
     assert _violations(tmp_path, 2, exceptions) == []
 
 
 def test_violations_flags_file_exceeding_waiver(tmp_path: Path) -> None:
     _write_source(tmp_path, "large.py", 4)
-    exceptions = {"src/milknado/large.py": {"max_lines": 3}}
+    exceptions: dict[str, dict[str, object]] = {"src/milknado/large.py": {"max_lines": 3}}
 
     assert _violations(tmp_path, 2, exceptions) == ["src/milknado/large.py: 4 lines (limit 3)"]
 
@@ -48,7 +48,9 @@ def test_main_passes_on_clean_tree(tmp_path: Path) -> None:
     assert main(tmp_path) == 0
 
 
-def test_main_fails_and_prints_violation(tmp_path: Path, capsys) -> None:
+def test_main_fails_and_prints_violation(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     _write_source(tmp_path, "big.py", 4)
     _write_pyproject(tmp_path, 2)
 
@@ -58,7 +60,7 @@ def test_main_fails_and_prints_violation(tmp_path: Path, capsys) -> None:
     assert "src/milknado/big.py: 4 lines (limit 2)" in out
 
 
-def test_main_fails_on_missing_reason(tmp_path: Path, capsys) -> None:
+def test_main_fails_on_missing_reason(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_source(tmp_path, "big.py", 4)
     _write_pyproject(
         tmp_path,
@@ -71,7 +73,7 @@ def test_main_fails_on_missing_reason(tmp_path: Path, capsys) -> None:
     assert "File-size waivers need reasons: src/milknado/big.py" in out
 
 
-def test_main_fails_on_stale_waiver(tmp_path: Path, capsys) -> None:
+def test_main_fails_on_stale_waiver(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_source(tmp_path, "small.py", 2)
     _write_pyproject(
         tmp_path,
