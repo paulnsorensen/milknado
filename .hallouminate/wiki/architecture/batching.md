@@ -75,6 +75,26 @@ startup overhead, 2000 tokens/batch when non-empty) plus a token cost scaled by 
 batch-size-dependent multiplier `(k*12 - 1)*10` — larger batches pay more per token, nudging
 the solver toward more, smaller batches. All values are ×100 to stay integer for CP-SAT.
 
+## Startup cost — lazy loading (PR #380)
+
+`ortools` (`cp_model`) is a ~145ms native import and `weights.py`'s tiktoken setup
+adds more; eagerly importing `solver.py`/`weights.py` at module load put both on
+**every** `milknado` CLI invocation (even `--help`) and every `milknado-mcp`
+startup, since `domains/batching/__init__.py` used to import `plan_batches`
+top-level. Fix: `DUMB_ZONE_BUDGET` moved into the dependency-free `change.py`
+module, and the crust exposes `plan_batches`/`estimate_tokens` via a PEP 562
+`__getattr__` in `__init__.py` — ortools and tiktoken now load only on first
+real use (first solve). Measured via `python -X importtime`: the batching crust
+dropped from ~163ms to ~2.7ms in the CLI import graph, and `ortools` disappeared
+from the MCP server's import graph entirely. A regression test asserts neither
+`milknado.cli` nor `milknado.mcp.server` imports any `ortools` module at
+startup.
+
+This closed the ortools slice of MCP/CLI cold start but not the rest: `fastmcp`
+(~225ms) and a transitive `pandas` import (~86ms, via `mcp`'s `key_value`
+adapter) remain, plus ortools itself is still a hard dependency rather than an
+optional extra — both tracked as open follow-ups in #381, not yet decided.
+
 ## Weights (`weights.py`)
 
 `estimate_tokens` uses path-level costs:
