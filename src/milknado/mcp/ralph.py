@@ -101,10 +101,11 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> RunDict:
         raise ValueError(f"run {run_id!r} not found")
     summary = tail(rdir / f"{run_id}.log")
     if not summary:
-        log_path = state.get("log_path")
+        log_path = state["log_path"]
         if log_path:
             candidate = Path(log_path).resolve()
             if candidate.is_dir() and candidate.is_relative_to(root.resolve()):
                 summary = tail_latest_iteration_log(candidate)
-    state["summary"] = summary
-    return build_run_dict(state)
+    result = build_run_dict(state)
+    result["summary"] = summary
+    return result

@@ -5,8 +5,10 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
+from typing import cast
 
 from milknado.domains.graph._persistence import children_id_map
+from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 from milknado.domains.graph.rebalance import (
     INBOX_DESCRIPTION,
     ReapOutcome,
@@ -16,6 +18,12 @@ from milknado.domains.graph.rebalance import (
 )
 
 MIN_CHAIN_DEPTH = 4
+
+
+def _values(row: sqlite3.Row) -> tuple[object, ...]:
+    return cast(tuple[object, ...], cast(object, row))
+
+
 LOPSIDED_TASK_THRESHOLD = 20
 
 
@@ -55,9 +63,14 @@ def _all_done_map(status: dict[int, str], children: dict[int, list[int]]) -> dic
 
 def _find_archivable_roots(conn: sqlite3.Connection) -> list[int]:
     """Find maximal all-DONE live subtrees using every canonical parent edge."""
-    rows = conn.execute("SELECT id, status, archived_at FROM nodes").fetchall()
-    status = {row[0]: row[1] for row in rows}
-    archived_at = {row[0]: row[2] for row in rows}
+    rows = fetchall(conn, "SELECT id, status, archived_at FROM nodes")
+    status: dict[int, str] = {}
+    archived_at: dict[int, str | None] = {}
+    for row in rows:
+        values = _values(row)
+        node_id = cast(int, values[0])
+        status[node_id] = cast(str, values[1])
+        archived_at[node_id] = cast(str | None, values[2])
     children = children_id_map(conn)
     parents: dict[int, set[int]] = {}
     for parent_id, child_ids in children.items():
@@ -82,32 +95,32 @@ def _sweep_archivable(conn: sqlite3.Connection) -> list[int]:
     for root_id in roots:
         ids = _subtree_ids(children, root_id)
         placeholders = ",".join("?" for _ in ids)
-        conn.execute(
+        _ = conn.execute(
             f"UPDATE nodes SET archived_at = ? WHERE id IN ({placeholders}) "
-            "AND archived_at IS NULL",
+            + "AND archived_at IS NULL",
             [stamp, *ids],
         )
     return roots
 
 
 def _find_inbox_id(conn: sqlite3.Connection) -> int | None:
-    row = conn.execute(
+    row = fetchone(
+        conn,
         "SELECT id FROM nodes WHERE parent_id IS NULL AND kind = 'goal' "
-        "AND description = ? AND archived_at IS NULL ORDER BY id LIMIT 1",
+        + "AND description = ? AND archived_at IS NULL ORDER BY id LIMIT 1",
         (INBOX_DESCRIPTION,),
-    ).fetchone()
-    return row[0] if row is not None else None
+    )
+    return cast(int, _values(row)[0]) if row is not None else None
 
 
 def _orphan_candidates(conn: sqlite3.Connection) -> list[int]:
     """Return exactly live root-level tasks, ordered for deterministic grouping."""
-    return [
-        row[0]
-        for row in conn.execute(
-            "SELECT id FROM nodes WHERE kind = 'task' AND parent_id IS NULL "
-            "AND archived_at IS NULL ORDER BY id"
-        ).fetchall()
-    ]
+    rows = fetchall(
+        conn,
+        "SELECT id FROM nodes WHERE kind = 'task' AND parent_id IS NULL "
+        + "AND archived_at IS NULL ORDER BY id",
+    )
+    return [cast(int, _values(row)[0]) for row in rows]
 
 
 def _find_or_create_inbox(conn: sqlite3.Connection) -> tuple[int, bool]:
@@ -116,7 +129,7 @@ def _find_or_create_inbox(conn: sqlite3.Connection) -> tuple[int, bool]:
         return inbox_id, False
     cur = conn.execute(
         "INSERT INTO nodes (description, status, parent_id, kind, created_at) "
-        "VALUES (?, 'pending', NULL, 'goal', ?)",
+        + "VALUES (?, 'pending', NULL, 'goal', ?)",
         (INBOX_DESCRIPTION, datetime.now(UTC).isoformat()),
     )
     if cur.lastrowid is None:
@@ -129,11 +142,11 @@ def _group_orphans(conn: sqlite3.Connection) -> tuple[int, int | None, bool]:
     if not candidates:
         return 0, _find_inbox_id(conn), False
     inbox_id, created = _find_or_create_inbox(conn)
-    conn.executemany(
+    _ = conn.executemany(
         "UPDATE nodes SET parent_id = ? WHERE id = ?",
         [(inbox_id, node_id) for node_id in candidates],
     )
-    conn.executemany(
+    _ = conn.executemany(
         "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
         [(inbox_id, node_id) for node_id in candidates],
     )
@@ -144,8 +157,13 @@ def _visible_structure(
     conn: sqlite3.Connection, exclude_ids: Iterable[int] = ()
 ) -> tuple[dict[int, str], dict[int, list[int]]]:
     excluded = set(exclude_ids)
-    rows = conn.execute("SELECT id, kind FROM nodes WHERE archived_at IS NULL").fetchall()
-    kind_of = {row[0]: row[1] for row in rows if row[0] not in excluded}
+    rows = fetchall(conn, "SELECT id, kind FROM nodes WHERE archived_at IS NULL")
+    kind_of: dict[int, str] = {}
+    for row in rows:
+        values = _values(row)
+        node_id = cast(int, values[0])
+        if node_id not in excluded:
+            kind_of[node_id] = cast(str, values[1])
     children = {
         parent: [child for child in kids if child in kind_of]
         for parent, kids in children_id_map(conn).items()
@@ -213,7 +231,7 @@ def rebalance_graph(conn: sqlite3.Connection, *, sweep: bool, restructure: bool)
     archived: list[int] = []
     moved, inbox_id, inbox_created = 0, None, False
     if sweep or restructure:
-        conn.execute("BEGIN IMMEDIATE")
+        _ = conn.execute("BEGIN IMMEDIATE")
         try:
             if sweep:
                 archived = _sweep_archivable(conn)
@@ -236,7 +254,8 @@ def rebalance_graph(conn: sqlite3.Connection, *, sweep: bool, restructure: bool)
 
 def get_reap_targets(conn: sqlite3.Connection) -> tuple[ReapTarget, ...]:
     """Return archived worktrees not owned by any currently running run."""
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         """
         SELECT n.id, n.worktree_path, n.branch_name
         FROM nodes n
@@ -246,16 +265,23 @@ def get_reap_targets(conn: sqlite3.Connection) -> tuple[ReapTarget, ...]:
               SELECT 1 FROM runs r WHERE r.node_id = n.id AND r.status = 'running'
           )
         ORDER BY n.id
-        """
-    ).fetchall()
-    return tuple(ReapTarget(row[0], row[1], row[2]) for row in rows)
+        """,
+    )
+    return tuple(
+        ReapTarget(
+            cast(int, values[0]),
+            cast(str, values[1]),
+            cast(str | None, values[2]),
+        )
+        for values in (_values(row) for row in rows)
+    )
 
 
 def reap_archived(
     conn: sqlite3.Connection, processor: Callable[[ReapTarget], ReapOutcome]
 ) -> tuple[ReapOutcome, ...]:
     """Fence archive eligibility while processing every destructive Git target."""
-    conn.execute("BEGIN IMMEDIATE")
+    _ = conn.execute("BEGIN IMMEDIATE")
     try:
         outcomes = tuple(processor(target) for target in get_reap_targets(conn))
         conn.commit()
@@ -266,5 +292,5 @@ def reap_archived(
 
 
 def count_archived(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT COUNT(*) FROM nodes WHERE archived_at IS NOT NULL").fetchone()
-    return int(row[0])
+    row = fetchone(conn, "SELECT COUNT(*) FROM nodes WHERE archived_at IS NOT NULL")
+    return cast(int, _values(row)[0]) if row else 0
