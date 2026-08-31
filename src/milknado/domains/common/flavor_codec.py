@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import msgspec
 from msgspec import structs
@@ -27,34 +27,34 @@ class Gate(msgspec.Struct, frozen=True, kw_only=True):
         pattern = pattern.strip()
         if pattern:
             try:
-                re.compile(pattern)
+                _ = re.compile(pattern)
             except re.error as exc:
                 raise ValueError("fail_on_stdout is not a valid regex") from exc
         structs.force_setattr(self, "fail_on_stdout", pattern or None)
 
 
-def normalize_gate(value: Any) -> dict[str, Any]:
+def normalize_gate(value: object) -> dict[str, object]:
     if isinstance(value, str):
         if not value.strip():
             raise ValueError("command must be a non-empty string")
         return {"command": value}
     if not isinstance(value, dict):
         raise ValueError(f"must be a string or a table with 'command', got {type(value).__name__}")
-    return value
+    return cast(dict[str, object], value)
 
 
-def normalize_gates(value: Any, ctx: str = "quality_gates") -> Any:
+def normalize_gates(value: object, ctx: str = "quality_gates") -> list[dict[str, object]] | None:
     if value is None:
         return None
     if not isinstance(value, list):
         raise ValueError(f"{ctx} must be a list (use [] to explicitly skip gates)")
     try:
-        return [normalize_gate(gate) for gate in value]
+        return [normalize_gate(gate) for gate in cast(list[object], value)]
     except ValueError as exc:
         raise ValueError(f"{ctx}: {exc}") from exc
 
 
-def serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
+def serialize_gates(gates: tuple[Gate, ...]) -> list[object]:
     return [
         gate.command
         if gate.fail_on_stdout is None
@@ -63,12 +63,13 @@ def serialize_gates(gates: tuple[Gate, ...]) -> list[Any]:
     ]
 
 
-def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
+def coerce_tool_list(value: object, ctx: str) -> tuple[str, ...]:
     if isinstance(value, str) or not isinstance(value, (list, tuple)):
         raise ValueError(f"{ctx} must be a list of strings, got {type(value).__name__}")
+    values = cast(list[object] | tuple[object, ...], value)
     items: list[str] = []
     sentinels = 0
-    for index, item in enumerate(value):
+    for index, item in enumerate(values):
         if not isinstance(item, str) or not item:
             raise ValueError(f"{ctx}[{index}] must be a non-empty string")
         if item == "...":
@@ -79,28 +80,28 @@ def coerce_tool_list(value: Any, ctx: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def validate_loop_mode(value: Any) -> str:
+def validate_loop_mode(value: object) -> str:
     mode = str(value)
     if mode not in ("redispatch", "single"):
         raise ValueError("loop_mode must be one of ['redispatch', 'single']")
     return mode
 
 
-def validate_session_mode(value: Any) -> str:
+def validate_session_mode(value: object) -> str:
     mode = str(value)
     if mode not in ("fresh", "resume"):
         raise ValueError("session_mode must be one of ['fresh', 'resume']")
     return mode
 
 
-def validate_on_reject(value: Any) -> str:
+def validate_on_reject(value: object) -> str:
     policy = str(value)
     if policy not in ("block", "warn"):
         raise ValueError("on_reject must be one of ['block', 'warn']")
     return policy
 
 
-def validate_positive_int(value: Any, ctx: str) -> int | None:
+def validate_positive_int(value: object, ctx: str) -> int | None:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int):
@@ -146,12 +147,12 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
                 raise ValueError(f"execution_agent must start with one of {allowed!r}")
         if self.brief_prepend is not None and self.brief_prepend_path is not None:
             raise ValueError("brief_prepend and brief_prepend_path are mutually exclusive")
-        validate_loop_mode(self.loop_mode) if self.loop_mode is not None else None
-        validate_session_mode(self.session_mode)
-        validate_on_reject(self.on_reject)
-        validate_positive_int(self.max_iterations, "max_iterations")
-        validate_positive_int(self.max_turns, "max_turns")
-        validate_positive_int(self.review_max_rounds, "review_max_rounds")
+        _ = validate_loop_mode(self.loop_mode) if self.loop_mode is not None else None
+        _ = validate_session_mode(self.session_mode)
+        _ = validate_on_reject(self.on_reject)
+        _ = validate_positive_int(self.max_iterations, "max_iterations")
+        _ = validate_positive_int(self.max_turns, "max_turns")
+        _ = validate_positive_int(self.review_max_rounds, "review_max_rounds")
         if self.session_mode == "resume":
             self._reject_cursor_resume()
 
@@ -163,9 +164,9 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
             if argv and Path(argv[0]).name == "cursor-agent":
                 raise ValueError(
                     "session_mode 'resume' is not supported for the cursor-agent family "
-                    "(headless resume mechanics are unverified — see "
-                    "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
-                    "different agent"
+                    + "(headless resume mechanics are unverified — see "
+                    + "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+                    + "different agent"
                 )
 
     def to_override(self, name: str, project_root: Path) -> FlavorOverride:
@@ -206,10 +207,10 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         return "\n\n".join(part for part in parts if part) or None
 
 
-def normalize_flavor_table(value: Any) -> Any:
+def normalize_flavor_table(value: object) -> object:
     if not isinstance(value, dict):
         return value
-    normalized = dict(value)
+    normalized = dict(cast(dict[str, object], value))
     for key in ("execution_agent", "brief_prepend", "agent_type", "review_agent"):
         field = normalized.get(key)
         if field is not None and not isinstance(field, str):
@@ -222,17 +223,19 @@ def normalize_flavor_table(value: Any) -> Any:
         if key in normalized:
             if not isinstance(normalized[key], str):
                 raise ValueError(f"{key} must be a string")
-            validator(normalized[key])
+            _ = validator(normalized[key])
     for key in ("review", "worktree"):
         field = normalized.get(key)
         if field is not None and not isinstance(field, bool):
             raise ValueError(f"{key} must be a boolean")
     for key in ("max_iterations", "max_turns", "review_max_rounds"):
         if key in normalized:
-            validate_positive_int(normalized[key], key)
+            _ = validate_positive_int(normalized[key], key)
     path = normalized.get("brief_prepend_path")
     if path is not None and not (
-        isinstance(path, str) or isinstance(path, list) and all(isinstance(p, str) for p in path)
+        isinstance(path, str)
+        or isinstance(path, list)
+        and all(isinstance(item, str) for item in cast(list[object], path))
     ):
         raise ValueError("brief_prepend_path must be a string or list of strings")
     if "tools" in normalized and normalized["tools"] is not None:
@@ -242,10 +245,12 @@ def normalize_flavor_table(value: Any) -> Any:
     return normalized
 
 
-def serialize_flavor_tables(flavors: dict[str, FlavorOverride]) -> dict[str, dict[str, Any]]:
-    tables: dict[str, dict[str, Any]] = {}
+def serialize_flavor_tables(
+    flavors: dict[str, FlavorOverride],
+) -> dict[str, dict[str, object]]:
+    tables: dict[str, dict[str, object]] = {}
     for name, flavor in flavors.items():
-        entry = {
+        entry: dict[str, object] = {
             key: value
             for key, value in (
                 ("execution_agent", flavor.execution_agent),
@@ -275,18 +280,21 @@ def serialize_flavor_tables(flavors: dict[str, FlavorOverride]) -> dict[str, dic
     return tables
 
 
-def absolutize_global_flavor_paths(raw: dict[str, Any], base_dir: Path) -> None:
+def absolutize_global_flavor_paths(raw: dict[str, object], base_dir: Path) -> None:
     flavors = raw.get("flavor")
     if not isinstance(flavors, dict):
         return
+    flavors = cast(dict[str, object], flavors)
     for entry in flavors.values():
         if not isinstance(entry, dict):
             continue
+        entry = cast(dict[str, object], entry)
         value = entry.get("brief_prepend_path")
         if isinstance(value, str):
             entry["brief_prepend_path"] = trust_global_path(value, base_dir)
         elif isinstance(value, list):
+            items = cast(list[object], value)
             entry["brief_prepend_path"] = [
                 trust_global_path(item, base_dir) if isinstance(item, str) else item
-                for item in value
+                for item in items
             ]

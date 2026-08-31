@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import cast
 
 OriginMap = dict[tuple[str, ...], str]
 
 
 def record_origins(
-    origins: OriginMap, values: dict[str, Any], source: str, prefix: tuple[str, ...] = ()
+    origins: OriginMap, values: dict[str, object], source: str, prefix: tuple[str, ...] = ()
 ) -> None:
     """Record the layer that supplied every leaf in values."""
     for key, value in values.items():
         path = (*prefix, key)
         if isinstance(value, dict):
-            record_origins(origins, value, source, path)
+            record_origins(origins, cast(dict[str, object], value), source, path)
         else:
             origins[path] = source
 
