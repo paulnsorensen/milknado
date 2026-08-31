@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from threading import get_ident
-from typing import TYPE_CHECKING
+from typing import Protocol, final
 
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
+from textual.events import Key, Resize
 from textual.widgets import DataTable, Footer, Header, Input, Static
+from typing_extensions import override
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -22,15 +25,18 @@ from milknado.app.run_panels import RunDetailPanel, RunListPanel
 from milknado.app.run_view import confirmation_text, events_text, subtitle_text
 from milknado.domains.execution import RunLoopResult
 
-if TYPE_CHECKING:
-    from textual.worker import Worker
 
-# Two-pane needs the full run table (64) plus a readable detail pane. Below this
-# the compact route shows the same table full-width, so nothing is lost.
+class _ExecutionWorker(Protocol):
+    @property
+    def is_finished(self) -> bool: ...
+
+
+# Compact layout preserves full run table visibility.
 WIDE_MIN_COLUMNS = 116
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
 
+@final
 class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
     """Responsive, controller-only operator view for a single execution."""
 
@@ -79,10 +85,11 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
         self.compact = False
         self.auto_follow = True
         self._ui_thread_id: int | None = None
-        self._execution_worker: Worker | None = None
-        self._unsubscribe = None
+        self._execution_worker: _ExecutionWorker | None = None
+        self._unsubscribe: Callable[[], None] | None = None
         self._confirmation: tuple[str, str | None] | None = None
 
+    @override
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="workspace"):
@@ -105,7 +112,7 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
             self._unsubscribe()
             self._unsubscribe = None
 
-    def on_resize(self, event) -> None:
+    def on_resize(self, event: Resize) -> None:
         self._set_layout(event.size.width < WIDE_MIN_COLUMNS)
 
     def _receive_snapshot(self, snapshot: ExecutionSnapshot) -> None:
@@ -131,9 +138,9 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
         if compact:
             self._sync_compact_route_to_focus()
         self.compact = compact
-        self.set_class(compact, "compact")
-        self.set_class(compact and self.route == "list", "list")
-        self.set_class(compact and self.route == "detail", "detail")
+        _ = self.set_class(compact, "compact")
+        _ = self.set_class(compact and self.route == "list", "list")
+        _ = self.set_class(compact and self.route == "detail", "detail")
         if not self.auto_follow:
             self.query_one("#detail", RunDetailPanel).preserve_output_offset()
 
@@ -190,7 +197,7 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
         self.set_focus(None)
         run = self._selected_active_run()
         if text and run is not None and run.actions.can_queue_guidance:
-            self._queue_guidance(run.run_id, text)
+            _ = self._queue_guidance(run.run_id, text)
 
     def action_previous_run(self) -> None:
         self._move_selection(-1)
@@ -210,24 +217,24 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
             self.route = "detail"
             self._set_layout(True)
 
-    def action_back(self) -> None:
+    def go_back(self) -> None:
         if self._confirmation is not None:
             self._clear_confirmation()
         elif self.compact and self.route == "detail":
             self.route = "list"
             self._set_layout(True)
         else:
-            self.query_one("#help", Static).remove_class("visible")
+            _ = self.query_one("#help", Static).remove_class("visible")
 
     def action_focus_guidance(self) -> None:
         run = self._selected_active_run()
         if run is not None and run.actions.can_queue_guidance:
-            self.query_one("#guidance", Input).focus()
+            _ = self.query_one("#guidance", Input).focus()
 
     def action_cancel(self) -> None:
         run = self._selected_active_run()
         if run is not None and run.actions.can_cancel:
-            self._cancel(run.run_id)
+            _ = self._cancel(run.run_id)
 
     def action_force(self) -> None:
         run = self._selected_active_run()
@@ -240,7 +247,7 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
 
     def action_help(self) -> None:
         help_panel = self.query_one("#help", Static)
-        help_panel.toggle_class("visible")
+        _ = help_panel.toggle_class("visible")
 
     def action_quit_all(self) -> None:
         if self.snapshot.active_runs or self._execution_in_flight():
@@ -251,25 +258,28 @@ class ExecutionApp(ExecutionCommandsMixin, App[RunLoopResult | None]):
     def _execution_in_flight(self) -> bool:
         return self._execution_worker is not None and not self._execution_worker.is_finished
 
-    def _pause_auto_follow(self) -> None:
+    def pause_auto_follow(self) -> None:
         self.auto_follow = False
         self._refresh_view()
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Key) -> None:
         if self._confirmation is None:
             if event.key in {"home", "end", "pageup", "pagedown"}:
-                self._pause_auto_follow()
+                self.pause_auto_follow()
             return
         if event.key == "y":
             action, run_id = self._confirmation
             self._clear_confirmation()
             if action == "force" and run_id is not None:
-                self._force_stop(run_id)
+                _ = self._force_stop(run_id)
             elif action == "quit":
-                self._stop_scheduling()
+                _ = self._stop_scheduling()
         elif event.key in {"n", "escape"}:
             self._clear_confirmation()
-        event.stop()
+        _ = event.stop()
+
+
+type.__setattr__(ExecutionApp, "action_back", ExecutionApp.go_back)
 
 
 def run_execution_tui(

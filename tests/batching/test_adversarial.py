@@ -391,13 +391,15 @@ class TestPlanBatchesImpl:
         from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
-            _plan_batches_impl([{"path": "a.py", "description": "missing id"}], 70_000, tmp_path)
+            _ = _plan_batches_impl(
+                [{"path": "a.py", "description": "missing id"}], 70_000, tmp_path
+            )
 
     def test_missing_path_raises_value_error(self, tmp_path):
         from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
-            _plan_batches_impl([{"id": "1", "description": "missing path"}], 70_000, tmp_path)
+            _ = _plan_batches_impl([{"id": "1", "description": "missing path"}], 70_000, tmp_path)
 
     def test_extra_keys_ignored(self, tmp_path):
         from milknado.mcp.server import _plan_batches_impl
@@ -421,7 +423,7 @@ class TestPlanBatchesImpl:
         from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
-            _plan_batches_impl(
+            _ = _plan_batches_impl(
                 [
                     {
                         "id": "1",
@@ -438,7 +440,7 @@ class TestPlanBatchesImpl:
         from milknado.mcp.server import _plan_batches_impl
 
         with pytest.raises(ValueError, match="not a valid milknado.plan.v2"):
-            _plan_batches_impl(
+            _ = _plan_batches_impl(
                 [
                     {
                         "id": "1",

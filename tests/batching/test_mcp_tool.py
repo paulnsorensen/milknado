@@ -242,7 +242,7 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
         for i in range(3)
     ]
     with pytest.raises(MegaBatchAborted) as exc_info:
-        _plan_batches_impl(changes, 70_000, tmp_path)
+        _ = _plan_batches_impl(changes, 70_000, tmp_path)
     assert exc_info.value.change_count == 3
 
 
@@ -285,7 +285,7 @@ def test_telemetry_written_via_mcp(tmp_path, monkeypatch) -> None:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
-    _plan_batches_impl(
+    _ = _plan_batches_impl(
         [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
         70_000,
         tmp_path,

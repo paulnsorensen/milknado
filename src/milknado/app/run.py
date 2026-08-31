@@ -3,8 +3,7 @@
 The CLI ``run``/``attach`` commands and the MCP ``milknado_run_inline*`` tools are
 thin: they parse I/O and call the functions here, which own the policy (protected
 branch refusal, execution-config assembly, worker-cmd validation, worktree
-isolation) and construct the adapters (git, loop, crg, process, tmux). Entry
-modules therefore hold no inline dispatch policy and build no adapters.
+isolation) and construct adapters; entry modules hold no inline dispatch policy.
 """
 
 from __future__ import annotations
@@ -17,7 +16,9 @@ from enum import StrEnum
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock, Thread
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast, final
+
+from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
@@ -166,6 +167,7 @@ class _ControlRequest:
     error: BaseException | None = None
 
 
+@final
 class ExecutionController:
     """UI-neutral application boundary for one execution run."""
 
@@ -197,24 +199,24 @@ class ExecutionController:
             if self._running:
                 raise RuntimeError("execution controller is already running")
             self._running = True
-        result: RunLoopResult | None = None
-        error: BaseException | None = None
+        outcomes: Queue[RunLoopResult | BaseException] = Queue(maxsize=1)
 
         def execute() -> None:
-            nonlocal result, error
             try:
-                result = self._loop.run(
-                    config=self._execution_config,
-                    feature_branch=feature_branch,
-                    concurrency_limit=self._concurrency_limit,
-                    strict=strict,
-                    spec_text=spec_text,
-                    spec_path=spec_path,
-                    process_controls=self._drain_controls,
-                    interactive=False,
+                outcomes.put(
+                    self._loop.run(
+                        config=self._execution_config,
+                        feature_branch=feature_branch,
+                        concurrency_limit=self._concurrency_limit,
+                        strict=strict,
+                        spec_text=spec_text,
+                        spec_path=spec_path,
+                        process_controls=self._drain_controls,
+                        interactive=False,
+                    )
                 )
             except BaseException as exc:
-                error = exc
+                outcomes.put(exc)
             finally:
                 with self._state_lock:
                     self._running = False
@@ -222,12 +224,11 @@ class ExecutionController:
 
         worker = Thread(target=execute, name="milknado-execution", daemon=True)
         worker.start()
+        outcome = outcomes.get()
         worker.join()
-        if error is not None:
-            raise error
-        if result is None:
-            raise RuntimeError("execution loop returned no result")
-        return result
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
     def snapshot(self) -> ExecutionSnapshot:
         """Return the controller's current immutable presentation snapshot."""
@@ -314,14 +315,14 @@ class ExecutionController:
         return bool(self._control("queue_guidance", run_id, text))
 
     def cancel(self, run_id: str) -> None:
-        self._control("cancel", run_id)
+        _ = self._control("cancel", run_id)
 
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
         return bool(self._control("force_stop", run_id, timeout))
 
     def stop_scheduling(self) -> None:
         """Stop admitting new work and request terminal completion of active runs."""
-        self._control("stop_scheduling")
+        _ = self._control("stop_scheduling")
 
     def _control(self, operation: str, *args: object) -> object:
         request: _ControlRequest | None = None
@@ -332,8 +333,9 @@ class ExecutionController:
                 request = _ControlRequest(operation=operation, args=args)
                 self._controls.put(request)
         if request is None:
-            return getattr(self._loop, operation)(*args)
-        request.done.wait()
+            operation_fn = cast(Callable[..., object], getattr(self._loop, operation))
+            return operation_fn(*args)
+        _ = request.done.wait()
         if request.error is not None:
             raise request.error
         return request.result
@@ -365,7 +367,7 @@ def build_execution_controller(
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
-    reconcile_orphaned_runs(graph)
+    _ = reconcile_orphaned_runs(graph)
     ralph = LoopAdapter()
     executor = Executor(
         graph=graph,
@@ -393,7 +395,7 @@ def run_execution_loop(
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
-    reconcile_orphaned_runs(graph)
+    _ = reconcile_orphaned_runs(graph)
     git = GitAdapter(project_root)
     ralph = LoopAdapter()
     crg = CrgAdapter(project_root)
@@ -419,8 +421,7 @@ def validate_worker_cmd(worker_cmd: str | None) -> None:
     """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
 
     Eager pre-check on the MCP arg; the env fallback and built-in default are
-    validated again where they're resolved (``runner.resolve_worker_cmd``). Both
-    routes share ``validate_worker_argv``, so the allowlist lives in one place.
+    validated again where they're resolved (``runner.resolve_worker_cmd``).
     """
     from milknado.domains.dispatch import validate_worker_argv
 
@@ -527,13 +528,13 @@ def run_inline_start(
     )
 
     class _GraphSessions(GraphSessionPort):
+        @override
         def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
             return open_graph(project_root)
 
     tmux: TmuxAdapter | None = None
     if use_tmux:
-        # Fail closed BEFORE any claim: tmux was explicitly requested, so a
-        # missing binary or unstartable server fails the dispatch loudly.
+        # Explicit tmux requests fail closed before any claim.
         tmux = TmuxAdapter(root)
         ensure_tmux_ready(tmux)
     git = GitAdapter(root)
@@ -578,8 +579,7 @@ def run_inline_start(
             tmux,
         )
     except Exception:
-        # Startup failed after the claim: release the claim with a fenced terminal
-        # write so the node is not stranded RUNNING, then re-raise.
+        # Failed startup releases the claim with a fenced terminal write.
         if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):
             raise RuntimeError(
                 f"startup terminal node write lost its fence for node {request.node_id}"

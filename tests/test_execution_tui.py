@@ -476,7 +476,7 @@ async def test_paused_scroll_offset_survives_compact_and_wide_layouts() -> None:
     app = ExecutionApp(FakeController(initial_snapshot=snapshot(output=lines)))
 
     async with app.run_test(size=(120, 24)) as pilot:
-        app._pause_auto_follow()
+        app.pause_auto_follow()
         output = app.query_one("#output")
         output.scroll_to(y=8, animate=False)
         await pilot.pause()
@@ -496,7 +496,7 @@ async def test_paused_output_position_survives_a_compact_route_round_trip() -> N
     app = ExecutionApp(FakeController(initial_snapshot=snapshot(output=lines)))
 
     async with app.run_test(size=(120, 24)) as pilot:
-        app._pause_auto_follow()
+        app.pause_auto_follow()
         output = app.query_one("#output")
         output.scroll_to(y=8, animate=False)
         await pilot.pause()
@@ -551,14 +551,14 @@ async def test_navigation_actions_and_resume_auto_follow() -> None:
 
         app.action_open_detail()
         assert app.route == "detail"
-        app.action_back()
+        _ = app.action_back()
         assert app.route == "list"
         app.action_open_detail()
 
         app.action_focus_guidance()
         await pilot.pause()
         assert app.query_one("#guidance").has_focus
-        app._pause_auto_follow()
+        app.pause_auto_follow()
         app.action_resume_output()
         assert app.auto_follow is True
 

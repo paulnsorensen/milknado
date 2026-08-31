@@ -6,9 +6,7 @@ import logging
 from typing import cast
 
 from milknado.app.plan_batches import _solve_manifest  # pyright: ignore[reportPrivateUsage]
-from milknado.app.plan_batches import (
-    plan_batches as _plan_batches_impl,  # pyright: ignore[reportUnknownVariableType]
-)
+from milknado.app.plan_batches import plan_batches as _plan_batches_impl
 from milknado.domains.batching import DUMB_ZONE_BUDGET
 from milknado.mcp._core import (
     BatchPlanResponse,

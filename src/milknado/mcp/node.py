@@ -32,10 +32,10 @@ from pathlib import Path
 
 from milknado.app.node import (
     GOAL_OWNER_ENV_VAR,
-    _provision_claim_run,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
-    _resolve_model,  # pyright: ignore[reportPrivateUsage]
-    _resolve_node_tools,  # pyright: ignore[reportPrivateUsage, reportUnknownVariableType]
-    _resolve_owner,  # pyright: ignore[reportPrivateUsage]
+    _provision_claim_run,
+    _resolve_model,
+    _resolve_node_tools,
+    _resolve_owner,
 )
 from milknado.domains.common import NodeKind, resolve_flavor_profile
 from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso, render_brief

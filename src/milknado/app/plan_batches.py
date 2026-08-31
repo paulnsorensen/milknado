@@ -9,6 +9,7 @@ adapter and holds no batching policy inline.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-def _plan_to_dict(plan: BatchPlan) -> dict:
+def _plan_to_dict(plan: BatchPlan) -> dict[str, object]:
     return {
         "batches": [
             {
@@ -79,8 +80,8 @@ def _solve_manifest(
 
 
 def _decode_mcp_changes(
-    changes: list[dict],
-    new_relationships: list[dict] | None,
+    changes: Sequence[Mapping[str, object]],
+    new_relationships: Sequence[Mapping[str, object]] | None,
 ) -> PlanChangeManifest:
     from milknado.domains.planning import MANIFEST_VERSION, decode_manifest
 
@@ -97,13 +98,13 @@ def _decode_mcp_changes(
 
 
 def plan_batches(
-    changes: list[dict],
+    changes: Sequence[Mapping[str, object]],
     budget: int,
     project_root: Path,
-    new_relationships: list[dict] | None = None,
+    new_relationships: Sequence[Mapping[str, object]] | None = None,
     *,
     force_single_batch: bool = False,
-) -> dict:
+) -> dict[str, object]:
     """Decode, solve, and serialize a batch plan from an MCP planning request."""
     manifest = _decode_mcp_changes(changes, new_relationships)
     plan = _solve_manifest(
