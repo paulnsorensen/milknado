@@ -111,11 +111,11 @@ def render_report(report: RebalanceReport, dry_run: bool = False) -> str:
         f"{prefix}Restructure: found {chains} deep chain(s) (roots: {chain_roots})",
         f"{prefix}Restructure: found {lopsided} lopsided goal(s) (ids: {lopsided_ids})",
         f"{prefix}Reap: removed {reaped} worktree(s), deleted {branches} branch(es), "
-        f"preserved {preserved}, kept {kept} branch(es)",
+        + f"preserved {preserved}, kept {kept} branch(es)",
         f"{prefix}Reap worktrees: remove [{_format_targets(report.reaped)}]; "
-        f"preserve [{_format_targets(report.preserved)}]",
+        + f"preserve [{_format_targets(report.preserved)}]",
         f"{prefix}Reap branches: delete [{_format_targets(report.branches_deleted)}]; "
-        f"keep [{_format_targets(report.branches_kept)}]",
+        + f"keep [{_format_targets(report.branches_kept)}]",
     ]
     lines.extend(
         f"{prefix}Reap failure: {failure.operation} {failure.target}: {failure.reason}"

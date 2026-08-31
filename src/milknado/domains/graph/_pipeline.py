@@ -17,17 +17,21 @@ if TYPE_CHECKING:
     from milknado.domains.common import MikadoNode, NodeStatus, PluginHook, PluginMeta
 
 _logger = logging.getLogger(__name__)
+__all__ = ["_PluginAsMiddleware"]
 
 
 class StatusMiddleware(Protocol):
     @property
-    def meta(self) -> PluginMeta:
+    def meta(self) -> PluginMeta: ...
+
+    def before_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus, /
+    ) -> None:
         pass
 
-    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
-        pass
-
-    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+    def after_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus, /
+    ) -> None:
         pass
 
 
@@ -35,17 +39,21 @@ class _PluginAsMiddleware:
     """Adapt a legacy after-only PluginHook into StatusMiddleware."""
 
     def __init__(self, hook: PluginHook) -> None:
-        self._hook = hook
+        self._hook: PluginHook = hook
 
     @property
     def meta(self) -> PluginMeta:
         return self._hook.meta
 
-    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
-        pass
+    def before_status_change(
+        self, _node: MikadoNode, _old: NodeStatus | None, _new: NodeStatus
+    ) -> None: ...
 
-    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
-        self._hook.on_node_status_change(node, old, new)
+    def after_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
+    ) -> None:
+        if old is not None:
+            self._hook.on_node_status_change(node, old, new)
 
 
 class StatusPipeline:
@@ -56,7 +64,7 @@ class StatusPipeline:
     """
 
     def __init__(self, middleware: Sequence[StatusMiddleware]) -> None:
-        self._middleware = tuple(middleware)
+        self._middleware: tuple[StatusMiddleware, ...] = tuple(middleware)
 
     def run(
         self,

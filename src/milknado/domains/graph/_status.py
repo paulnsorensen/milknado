@@ -7,17 +7,19 @@ write, in the original log-then-notify order.
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
+from typing import cast
 
+import milknado.domains.graph._reads as _reads
+import milknado.domains.graph._transitions as _transitions
 from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
-from milknado.domains.graph import _reads, _transitions
 from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
 from milknado.domains.graph._pipeline import StatusPipeline
+from milknado.domains.graph._sqlite_rows import as_tuple as _values
+from milknado.domains.graph._sqlite_rows import fetchone
+from milknado.domains.graph._verification import validate_done_verification
 from milknado.domains.graph.status_flow import (
-    CLAIM_ROLE,
-    VERIFY_ROLE,
     subtree_post_order,
     todo_status_steps,
     validate_todo_status,
@@ -28,49 +30,9 @@ _logger = logging.getLogger(__name__)
 
 def _reject_archived(conn: sqlite3.Connection, node_id: int) -> None:
     """Refuse status writes on an archived node (shelved work is immutable)."""
-    row = conn.execute("SELECT archived_at FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    if row is not None and row[0] is not None:
+    row = fetchone(conn, "SELECT archived_at FROM nodes WHERE id = ?", (node_id,))
+    if row is not None and _values(row)[0] is not None:
         raise ValueError(f"Node {node_id} is archived; unarchive it first.")
-
-
-def _validate_done_verification(
-    conn: sqlite3.Connection, root_id: int, nodes: list[MikadoNode]
-) -> None:
-    rows = conn.execute(
-        """
-        WITH RECURSIVE subtree(id) AS (
-            SELECT ?
-            UNION
-            SELECT e.child_id FROM edges e JOIN subtree s ON e.parent_id = s.id
-        )
-        SELECT n.id, r.run_id, m.role, m.body, m.seq
-        FROM subtree s
-        JOIN nodes n ON n.id = s.id
-        JOIN runs r ON r.run_id = n.run_id
-        LEFT JOIN run_messages m ON m.run_id = r.run_id
-        ORDER BY m.seq
-        """,
-        (root_id,),
-    ).fetchall()
-    existing: set[int] = set()
-    messages: dict[int, dict[str, str]] = {}
-    for node_id, _run_id, role, body, _seq in rows:
-        existing.add(node_id)
-        if role is not None:
-            messages.setdefault(node_id, {})[role] = body
-    for node in nodes:
-        latest = messages.get(node.id, {})
-        if node.id not in existing or not ({CLAIM_ROLE, VERIFY_ROLE} & latest.keys()):
-            continue
-        try:
-            verified = json.loads(latest.get(VERIFY_ROLE, "")).get("ok") is True
-        except (ValueError, TypeError, AttributeError):
-            verified = False
-        if not verified:
-            raise ValueError(
-                f"node {node.id} cannot be marked done: milknado_node_verify(run_id="
-                f"{node.run_id!r}) has not returned ok=True. Run milknado_node_verify first."
-            )
 
 
 def _apply_subtree_status(
@@ -99,7 +61,7 @@ def transition_status(
         _logger.debug("node %d: %s → %s", node_id, old.value if old else "?", target.value)
         return True
 
-    pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, target, mutate)
+    _ = pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, target, mutate)
 
 
 def mark_done(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
@@ -115,7 +77,9 @@ def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int
         _transitions.mark_failed(conn, node_id)
         return True
 
-    pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.FAILED, mutate)
+    _ = pipeline.run(
+        lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.FAILED, mutate
+    )
     release_goal_claim_on_terminal(conn, node_id)
 
 
@@ -134,7 +98,9 @@ def mark_running(
         _transitions.mark_running(conn, node_id, worktree_path, branch_name, run_id)
         return True
 
-    pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.RUNNING, mutate)
+    _ = pipeline.run(
+        lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.RUNNING, mutate
+    )
 
 
 def mark_pending(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
@@ -145,7 +111,9 @@ def mark_pending(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: in
         _transitions.mark_pending(conn, node_id)
         return True
 
-    pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.PENDING, mutate)
+    _ = pipeline.run(
+        lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.PENDING, mutate
+    )
 
 
 def mark_blocked(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
@@ -161,7 +129,7 @@ def set_todo_status(
         raise ValueError(f"Node {node_id} not found")
     _reject_archived(conn, node_id)
     if target is NodeStatus.DONE:
-        _validate_done_verification(conn, node_id, [node])
+        validate_done_verification(conn, node_id, [node])
     validate_todo_status(node, target)
     return _apply_subtree_status(pipeline, conn, node, target)
 
@@ -179,7 +147,7 @@ def set_subtree_status(
     )
     live = [node for node in ordered if node.archived_at is None]
     if target is NodeStatus.DONE:
-        _validate_done_verification(conn, root_id, live)
+        validate_done_verification(conn, root_id, live)
     for node in live:
         validate_todo_status(node, target)
     return sum(_apply_subtree_status(pipeline, conn, node, target) for node in live)
@@ -323,10 +291,17 @@ def try_reclaim(
     Returns True iff a dead owner was actually released, so the dispatch boundary
     can log the recovery (an operationally interesting event on the worker path).
     """
-    row = conn.execute("SELECT status, run_id, pid FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    if row is None or NodeStatus(row["status"]) != NodeStatus.RUNNING:
+    # Kept for symmetry with claim_node/mark_terminal's now= convention;
+    # pid_alive is the sole signal here.
+    _ = now
+    row = fetchone(conn, "SELECT status, run_id, pid FROM nodes WHERE id = ?", (node_id,))
+    if row is None:
         return False
-    owner_run_id, pid = row["run_id"], row["pid"]
+    values = _values(row)
+    if NodeStatus(cast(str, values[0])) != NodeStatus.RUNNING:
+        return False
+    owner_run_id = cast(str | None, values[1])
+    pid = cast(int | None, values[2])
     if owner_run_id is None or pid is None or pid_alive(pid):
         return False
 

@@ -297,6 +297,7 @@ def test_bind_recovers_item_add_after_issue_creation(tmp_path: Path, graph: Mika
     first_goal = next(goal for goal in graph.get_children(rid) if goal.description == "Goal one")
     attempt = graph.get_github_bind_attempt(first_goal.id)
     assert attempt is not None
+    assert attempt["issue_url"] is not None
     assert attempt["issue_url"].endswith("/issues/1")
     assert first_goal.github_ref is None
     assert len(github.issues) == 1

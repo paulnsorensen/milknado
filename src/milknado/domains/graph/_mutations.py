@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime
+from typing import cast
 
 from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.common.errors import ArchiveIneligible, InvalidContainment
 from milknado.domains.common.types import BUILTIN_FLAVORS, VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
+from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+
+
+def _values(row: sqlite3.Row) -> tuple[object, ...]:
+    return cast(tuple[object, ...], cast(object, row))
 
 
 def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int) -> list[int]:
@@ -38,41 +44,26 @@ def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int
 
 
 def _delete_one(conn: sqlite3.Connection, node_id: int) -> None:
-    """Delete one node and every row referencing it, without committing.
-
-    The edges/file_ownership/goal_claims/node_reviews/runs FKs lack ON DELETE
-    CASCADE, so dependent rows go first — run_messages before its parent runs
-    row, and both
-    before the node whose runs.node_id FK would otherwise abort the delete.
-    `nodes.parent_id` carries no FK, so a `set_parent_id` link (no edge) would
-    otherwise dangle once its target is gone — null those references here.
-    """
-    conn.execute("DELETE FROM edges WHERE parent_id = ? OR child_id = ?", (node_id, node_id))
-    conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (node_id,))
-    conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
-    conn.execute(
+    """Delete one node and its dependent rows without committing."""
+    _ = conn.execute("DELETE FROM edges WHERE parent_id = ? OR child_id = ?", (node_id, node_id))
+    _ = conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (node_id,))
+    _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
+    _ = conn.execute(
         "DELETE FROM run_messages WHERE run_id IN (SELECT run_id FROM runs WHERE node_id = ?)",
         (node_id,),
     )
-    conn.execute("DELETE FROM node_reviews WHERE node_id = ?", (node_id,))
-    conn.execute("DELETE FROM runs WHERE node_id = ?", (node_id,))
-    conn.execute("UPDATE nodes SET parent_id = NULL WHERE parent_id = ?", (node_id,))
-    conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+    _ = conn.execute("DELETE FROM node_reviews WHERE node_id = ?", (node_id,))
+    _ = conn.execute("DELETE FROM runs WHERE node_id = ?", (node_id,))
+    _ = conn.execute("UPDATE nodes SET parent_id = NULL WHERE parent_id = ?", (node_id,))
+    _ = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
 
 
 def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int:
-    """Delete a node (and, with cascade, its whole subtree) atomically.
-
-    A node with edge-children is refused unless cascade=True. The cascade runs
-    inside one transaction (single commit) so a mid-delete failure rolls the
-    whole subtree back rather than leaving it half-removed. Returns the count
-    of nodes deleted.
-    """
-    if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+    """Delete a node, optionally including its whole subtree, atomically."""
+    if fetchone(conn, "SELECT 1 FROM nodes WHERE id = ?", (node_id,)) is None:
         raise ValueError(f"Node {node_id} not found")
     has_children = (
-        conn.execute("SELECT 1 FROM edges WHERE parent_id = ? LIMIT 1", (node_id,)).fetchone()
-        is not None
+        fetchone(conn, "SELECT 1 FROM edges WHERE parent_id = ? LIMIT 1", (node_id,)) is not None
     )
     if has_children and not cascade:
         raise ValueError(f"Node {node_id} has children; pass cascade=True to delete subtree")
@@ -89,11 +80,12 @@ def delete_subtree(conn: sqlite3.Connection, node_id: int, cascade: bool) -> int
 
 def archive_subtree(conn: sqlite3.Connection, node_id: int, *, now: str | None = None) -> int:
     """Atomically validate and archive an all-DONE canonical subtree."""
-    conn.execute("BEGIN IMMEDIATE")
+    _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+        if fetchone(conn, "SELECT 1 FROM nodes WHERE id = ?", (node_id,)) is None:
             raise ValueError(f"Node {node_id} not found")
-        rows = conn.execute(
+        rows = fetchall(
+            conn,
             """
             WITH RECURSIVE subtree(id) AS (
                 SELECT ?
@@ -103,12 +95,16 @@ def archive_subtree(conn: sqlite3.Connection, node_id: int, *, now: str | None =
             SELECT n.id, n.status FROM nodes n JOIN subtree s ON s.id = n.id
             """,
             (node_id,),
-        ).fetchall()
-        non_done = sorted(row[0] for row in rows if row[1] != NodeStatus.DONE.value)
+        )
+        non_done = sorted(
+            cast(int, values[0])
+            for values in (_values(row) for row in rows)
+            if cast(str, values[1]) != NodeStatus.DONE.value
+        )
         if non_done:
             raise ArchiveIneligible(tuple(non_done))
         stamp = now or datetime.now(UTC).isoformat()
-        conn.execute(
+        _ = conn.execute(
             """
             WITH RECURSIVE subtree(id) AS (
                 SELECT ?
@@ -127,7 +123,8 @@ def archive_subtree(conn: sqlite3.Connection, node_id: int, *, now: str | None =
 
 
 def _external_archived_ancestor(conn: sqlite3.Connection, node_id: int) -> int | None:
-    row = conn.execute(
+    row = fetchone(
+        conn,
         """
         WITH RECURSIVE subtree(id) AS (
             SELECT ?
@@ -146,12 +143,13 @@ def _external_archived_ancestor(conn: sqlite3.Connection, node_id: int) -> int |
           AND a.id NOT IN (SELECT id FROM subtree)
         """,
         (node_id,),
-    ).fetchone()
-    return row[0]
+    )
+    return cast(int | None, _values(row)[0]) if row else None
 
 
 def _archived_subtree_ids(conn: sqlite3.Connection, node_id: int) -> list[int]:
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         """
         WITH RECURSIVE subtree(id) AS (
             SELECT ?
@@ -162,24 +160,24 @@ def _archived_subtree_ids(conn: sqlite3.Connection, node_id: int) -> list[int]:
         WHERE n.archived_at IS NOT NULL
         """,
         (node_id,),
-    ).fetchall()
-    return [row[0] for row in rows]
+    )
+    return [cast(int, _values(row)[0]) for row in rows]
 
 
 def unarchive_subtree(conn: sqlite3.Connection, node_id: int) -> int:
     """Atomically restore a subtree unless an external archived ancestor remains."""
-    conn.execute("BEGIN IMMEDIATE")
+    _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        if conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone() is None:
+        if fetchone(conn, "SELECT 1 FROM nodes WHERE id = ?", (node_id,)) is None:
             raise ValueError(f"Node {node_id} not found")
         ancestor = _external_archived_ancestor(conn, node_id)
         if ancestor is not None:
             raise ValueError(
                 f"Cannot unarchive {node_id} under archived ancestor {ancestor}; "
-                "unarchive the ancestor first."
+                + "unarchive the ancestor first."
             )
         archived = _archived_subtree_ids(conn, node_id)
-        conn.executemany(
+        _ = conn.executemany(
             "UPDATE nodes SET archived_at = NULL WHERE id = ?",
             [(nid,) for nid in archived],
         )
@@ -198,20 +196,22 @@ def _validate_kind_change_containment(
     Mirrors the containment guard in ``reparent``/``add_node`` so editing a
     node's kind cannot bypass ``VALID_CHILD_KINDS`` via its existing edges.
     """
-    parent = conn.execute(
+    parent = fetchone(
+        conn,
         "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.parent_id WHERE e.child_id = ?",
         (node_id,),
-    ).fetchone()
+    )
     if parent is not None:
-        parent_kind = NodeKind(parent["kind"])
+        parent_kind = NodeKind(cast(str, _values(parent)[0]))
         if new_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
             raise InvalidContainment(parent_kind, new_kind)
-    children = conn.execute(
+    children = fetchall(
+        conn,
         "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.child_id WHERE e.parent_id = ?",
         (node_id,),
-    ).fetchall()
+    )
     for child in children:
-        child_kind = NodeKind(child["kind"])
+        child_kind = NodeKind(cast(str, _values(child)[0]))
         if child_kind not in VALID_CHILD_KINDS.get(new_kind, set()):
             raise InvalidContainment(new_kind, child_kind)
 
@@ -241,7 +241,7 @@ def update_node_fields(
             if flavor is not None:
                 raise ValueError(
                     f"flavor must be None for kind={kind.value} nodes; "
-                    "cannot set a non-None flavor on a non-task node"
+                    + "cannot set a non-None flavor on a non-task node"
                 )
             # Changing to non-task: clear flavor to preserve the invariant
             fields.append("flavor = ?")
@@ -276,45 +276,44 @@ def would_create_cycle(conn: sqlite3.Connection, parent_id: int, child_id: int) 
         if current in visited:
             continue
         visited.add(current)
-        rows = conn.execute(
-            "SELECT parent_id FROM edges WHERE child_id = ?", (current,)
-        ).fetchall()
-        stack.extend(row[0] for row in rows)
+        rows = fetchall(conn, "SELECT parent_id FROM edges WHERE child_id = ?", (current,))
+        stack.extend(cast(int, _values(row)[0]) for row in rows)
     return False
 
 
 def reparent(conn: sqlite3.Connection, node_id: int, new_parent_id: int | None) -> None:
     """Atomically move a node, refusing missing, archived, illegal, or cyclic parents."""
-    conn.execute("BEGIN IMMEDIATE")
+    _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        node_row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        node_row = fetchone(conn, "SELECT kind FROM nodes WHERE id = ?", (node_id,))
         if node_row is None:
             raise ValueError(f"Node {node_id} not found")
         if new_parent_id is not None:
-            parent_row = conn.execute(
-                "SELECT kind, archived_at FROM nodes WHERE id = ?", (new_parent_id,)
-            ).fetchone()
+            parent_row = fetchone(
+                conn, "SELECT kind, archived_at FROM nodes WHERE id = ?", (new_parent_id,)
+            )
             if parent_row is None:
                 raise ValueError(f"new_parent_id {new_parent_id} not found")
-            if parent_row["archived_at"] is not None:
+            parent_values = _values(parent_row)
+            if parent_values[1] is not None:
                 raise ValueError(
                     f"Cannot add a node under archived parent {new_parent_id}; unarchive it first."
                 )
-            node_kind = NodeKind(node_row["kind"])
-            parent_kind = NodeKind(parent_row["kind"])
+            node_kind = NodeKind(cast(str, _values(node_row)[0]))
+            parent_kind = NodeKind(cast(str, parent_values[0]))
             if node_kind not in VALID_CHILD_KINDS.get(parent_kind, set()):
                 raise InvalidContainment(parent_kind, node_kind)
             if new_parent_id == node_id or would_create_cycle(conn, new_parent_id, node_id):
                 raise ValueError(
                     f"re-parenting {node_id} under {new_parent_id} would create a cycle"
                 )
-        conn.execute("DELETE FROM edges WHERE child_id = ?", (node_id,))
+        _ = conn.execute("DELETE FROM edges WHERE child_id = ?", (node_id,))
         if new_parent_id is not None:
-            conn.execute(
+            _ = conn.execute(
                 "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
                 (new_parent_id, node_id),
             )
-        conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (new_parent_id, node_id))
+        _ = conn.execute("UPDATE nodes SET parent_id = ? WHERE id = ?", (new_parent_id, node_id))
         conn.commit()
     except Exception:
         conn.rollback()

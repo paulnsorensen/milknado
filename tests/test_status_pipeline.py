@@ -25,10 +25,14 @@ class _RecordingMiddleware:
     def meta(self) -> PluginMeta:
         return self._meta
 
-    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+    def before_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
+    ) -> None:
         self._log.append(f"{self._meta.name}:before")
 
-    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+    def after_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
+    ) -> None:
         self._log.append(f"{self._meta.name}:after")
 
 
@@ -41,11 +45,15 @@ class _RaisingMiddleware:
     def meta(self) -> PluginMeta:
         return self._meta
 
-    def before_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+    def before_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
+    ) -> None:
         self._log.append(f"{self._meta.name}:before")
         raise RuntimeError("boom in before hook")
 
-    def after_status_change(self, node: MikadoNode, old: NodeStatus, new: NodeStatus) -> None:
+    def after_status_change(
+        self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
+    ) -> None:
         self._log.append(f"{self._meta.name}:after")
         raise RuntimeError("boom in after hook")
 

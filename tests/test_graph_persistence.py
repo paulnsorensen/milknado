@@ -13,7 +13,7 @@ import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.common.errors import ArchiveIneligible
-from milknado.domains.graph import MikadoGraph, _persistence
+from milknado.domains.graph import MikadoGraph, _persistence, _run_persistence
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import (
     create_tables,
@@ -612,9 +612,9 @@ class TestPruneRunMessages:
 
     def test_age_cutoff_spares_running_run(self, conn: sqlite3.Connection) -> None:
         self._seed_runs(conn)
-        _persistence.deposit_run_message(conn, "live", "result", "live-old", self.OLD)
-        _persistence.deposit_run_message(conn, "done", "result", "done-old", self.OLD)
-        _persistence.deposit_run_message(conn, "done", "result", "trigger", self.PAST_CUTOFF)
+        _run_persistence.deposit_run_message(conn, "live", "result", "live-old", self.OLD)
+        _run_persistence.deposit_run_message(conn, "done", "result", "done-old", self.OLD)
+        _run_persistence.deposit_run_message(conn, "done", "result", "trigger", self.PAST_CUTOFF)
         assert self._bodies(conn, "live") == ["live-old"], (
             "the age cutoff deleted history for a still-running run"
         )
@@ -625,13 +625,14 @@ class TestPruneRunMessages:
     def test_retention_cap_spares_running_run(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(_persistence, "_MAX_RETAINED_RUN_MESSAGES", 1)
+        monkeypatch.setattr(_run_persistence, "_MAX_RETAINED_RUN_MESSAGES", 1)
         self._seed_runs(conn)
-        _persistence.deposit_run_message(conn, "live", "result", "live-1", "2026-01-01T00:00:01Z")
-        _persistence.deposit_run_message(conn, "live", "result", "live-2", "2026-01-01T00:00:02Z")
-        _persistence.deposit_run_message(conn, "done", "result", "done-1", "2026-01-01T00:00:03Z")
-        _persistence.deposit_run_message(conn, "done", "result", "done-2", "2026-01-01T00:00:04Z")
-        _persistence.deposit_run_message(conn, "done", "result", "done-3", "2026-01-01T00:00:05Z")
+        deposit = _run_persistence.deposit_run_message
+        deposit(conn, "live", "result", "live-1", "2026-01-01T00:00:01Z")
+        deposit(conn, "live", "result", "live-2", "2026-01-01T00:00:02Z")
+        deposit(conn, "done", "result", "done-1", "2026-01-01T00:00:03Z")
+        deposit(conn, "done", "result", "done-2", "2026-01-01T00:00:04Z")
+        deposit(conn, "done", "result", "done-3", "2026-01-01T00:00:05Z")
         assert self._bodies(conn, "live") == ["live-1", "live-2"], (
             "the retention cap counted a still-running run's messages and evicted them"
         )

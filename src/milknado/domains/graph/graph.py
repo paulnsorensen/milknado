@@ -5,11 +5,22 @@ import os
 import sqlite3
 import traceback
 from collections.abc import Callable, Iterable, Sequence
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from typing_extensions import override
+
+import milknado.domains.graph._creation as _creation
+import milknado.domains.graph._goal_claims as _goal_claims
+import milknado.domains.graph._mutations as _mutations
+import milknado.domains.graph._persistence as _persistence
+import milknado.domains.graph._reads as _reads
+import milknado.domains.graph._rebalance as _rebalance
+import milknado.domains.graph._run_persistence as _run_persistence
+import milknado.domains.graph._status as _status
 from milknado.domains.common import (
     GraphExecutionSnapshot,
     MikadoNode,
@@ -19,23 +30,27 @@ from milknado.domains.common import (
     RunResult,
 )
 from milknado.domains.common.types import BUILTIN_FLAVORS
-from milknado.domains.graph import (
-    _creation,
-    _goal_claims,
-    _mutations,
-    _persistence,
-    _reads,
-    _rebalance,
-    _status,
-)
-from milknado.domains.graph._analytics_facade import _AnalyticsFacade, _synchronized
+from milknado.domains.graph._analytics_facade import _AnalyticsFacade, synchronized
 from milknado.domains.graph._edge_facade import _EdgeFacade
-from milknado.domains.graph._pipeline import StatusPipeline, _PluginAsMiddleware
+from milknado.domains.graph._pipeline import (
+    StatusMiddleware,
+    StatusPipeline,
+    _PluginAsMiddleware,
+)
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
+    from milknado.domains.graph._goal_claims import GoalClaim
+    from milknado.domains.graph._persistence import GithubBindAttempt
+    from milknado.domains.graph._run_persistence import NodeReviewRecord, RunRecord
     from milknado.domains.graph.rebalance import ReapOutcome, ReapTarget, RebalanceState
 _logger = logging.getLogger(__name__)
+
+
+def _quick_check(conn: sqlite3.Connection) -> str:
+    row = cast(object, conn.execute("PRAGMA quick_check").fetchone())
+    values = cast(tuple[object, ...], row)
+    return cast(str, values[0])
 
 
 class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
@@ -46,14 +61,28 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     observe before/after each change. Rich docstrings live on the free functions.
     """
 
+    _lock: RLock
+    _db_path: Path
+    _closed: bool
+    _close_stack: list[str] | None
+    _raw_conn: sqlite3.Connection | None
+    _pipeline: StatusPipeline
+    _dispatch_exclusions: set[int]
+
+    @property
+    def synchronization_lock(self) -> AbstractContextManager[object]:
+        return self._lock
+
     def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
         self._lock = RLock()
         self._db_path = db_path
         self._closed = False
-        self._close_stack: list[str] | None = None
+        self._close_stack = None
         self._raw_conn = self._open(db_path)
-        self._pipeline = StatusPipeline([_PluginAsMiddleware(p) for p in plugins])
-        self._dispatch_exclusions: set[int] = set()
+        self._pipeline = StatusPipeline(
+            cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
+        )
+        self._dispatch_exclusions = set()
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:
@@ -62,11 +91,11 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         source = sqlite3.connect(uri, uri=True, check_same_thread=False)
         snapshot = sqlite3.connect(":memory:", check_same_thread=False)
         try:
-            if source.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            if _quick_check(source) != "ok":
                 raise sqlite3.DatabaseError(f"database failed PRAGMA quick_check: {db_path}")
             source.backup(snapshot)
             snapshot.row_factory = sqlite3.Row
-            snapshot.execute("PRAGMA foreign_keys=ON")
+            _ = snapshot.execute("PRAGMA foreign_keys=ON")
             _persistence.create_tables(snapshot)
             _persistence.migrate(snapshot)
         except Exception:
@@ -97,7 +126,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             candidate = Path(f"{db_path}{suffix}")
             if candidate.exists():
                 target = Path(f"{candidate}.corrupt-{ts}")
-                candidate.rename(target)
+                _ = candidate.rename(target)
                 moved.append(target)
         return moved
 
@@ -105,7 +134,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         """Open the database, quarantining a corrupt file and healing schema drift."""
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:
-            quick_check = conn.execute("PRAGMA quick_check").fetchone()[0]
+            quick_check = _quick_check(conn)
         except sqlite3.DatabaseError:
             quick_check = "error"
         if quick_check != "ok":
@@ -128,11 +157,11 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             )
             conn = sqlite3.connect(str(db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        _ = conn.execute("PRAGMA journal_mode=WAL")
+        _ = conn.execute("PRAGMA foreign_keys=ON")
         # Explicit so the concurrent-writer wait window (detached runner + server
         # both writing the same db) is documented, not implicit in connect()'s default.
-        conn.execute("PRAGMA busy_timeout=5000")
+        _ = conn.execute("PRAGMA busy_timeout=5000")
         try:
             _persistence.create_tables(conn)
             _persistence.migrate(conn)
@@ -155,7 +184,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         heal_stack = traceback.format_stack()
         _logger.warning(
             "graph connection reopened unexpectedly (%s); db=%s"
-            "\nclose stack:\n%s\nheal stack:\n%s",
+            + "\nclose stack:\n%s\nheal stack:\n%s",
             reason,
             self._db_path,
             "".join(self._close_stack) if self._close_stack else "(no close() recorded)",
@@ -165,6 +194,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         self._closed = False
 
     @property
+    @override
     def _conn(self) -> sqlite3.Connection:
         """Health-checked connection access: reopen on unexpected close.
 
@@ -176,7 +206,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             self._heal_conn("closed" if self._closed else "missing")
         else:
             try:
-                raw.execute("SELECT 1")
+                _ = raw.execute("SELECT 1")
             except sqlite3.ProgrammingError:
                 self._heal_conn("connection died without close()")
         if self._raw_conn is None:
@@ -185,27 +215,27 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     # ── Creation ─────────────────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def add_node(
         self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
     ) -> MikadoNode:
         return _creation.add_node(self._conn, description, parent_id, spec or NodeSpec())
 
-    @_synchronized
+    @synchronized
     def set_batch_metadata(self, node_id: int, oversized: bool, batch_index: int | None) -> None:
         _creation.set_batch_metadata(self._conn, node_id, oversized, batch_index)
 
-    @_synchronized
+    @synchronized
     def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
         _creation.set_parent_id(self._conn, node_id, parent_id)
 
     # ── Mutations ────────────────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def delete_node(self, node_id: int, cascade: bool = False) -> int:
         return _mutations.delete_subtree(self._conn, node_id, cascade)
 
-    @_synchronized
+    @synchronized
     def update_node(
         self,
         node_id: int,
@@ -219,103 +249,103 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             self._conn, node_id, description, kind, flavor, artifact_path, flavor_registry
         )
 
-    @_synchronized
+    @synchronized
     def archive_subtree(self, node_id: int) -> int:
         """Soft-hide an all-DONE subtree; returns nodes archived. Fail-loud on live work."""
         return _mutations.archive_subtree(self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def unarchive_subtree(self, node_id: int) -> int:
         """Cascade-restore an archived subtree; refuses under an archived ancestor."""
         return _mutations.unarchive_subtree(self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def set_todo_status(self, node_id: int, target: NodeStatus) -> bool:
         """Apply one todo status request after complete preflight."""
         return _status.set_todo_status(self._pipeline, self._conn, node_id, target)
 
-    @_synchronized
+    @synchronized
     def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
         """Set status across root_id's live (non-archived) subtree, children first."""
         return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
 
-    @_synchronized
+    @synchronized
     def reconcile_completed_goals(self) -> int:
         """Reconcile completed goal children through the state machine."""
         return _status.reconcile_completed_goals(self._pipeline, self._conn)
 
-    @_synchronized
+    @synchronized
     def set_dispatch_exclusions(self, node_ids: set[int]) -> None:
         self._dispatch_exclusions = set(node_ids)
 
-    @_synchronized
+    @synchronized
     def dispatch_exclusions(self) -> set[int]:
         return set(self._dispatch_exclusions)
 
-    @_synchronized
+    @synchronized
     def move_node(self, node_id: int, new_parent_id: int | None) -> None:
         _mutations.reparent(self._conn, node_id, new_parent_id)
 
-    @_synchronized
+    @synchronized
     def rebalance(self, *, sweep: bool = True, restructure: bool = True) -> RebalanceState:
         """Apply graph-only rebalance passes in one database transaction."""
         return _rebalance.rebalance_graph(self._conn, sweep=sweep, restructure=restructure)
 
-    @_synchronized
+    @synchronized
     def get_reap_targets(self) -> tuple[ReapTarget, ...]:
         """Return archived worktrees that have no running run."""
         return _rebalance.get_reap_targets(self._conn)
 
-    @_synchronized
+    @synchronized
     def reap_archived(
         self, processor: Callable[[ReapTarget], ReapOutcome]
     ) -> tuple[ReapOutcome, ...]:
         """Process eligible worktrees while archive eligibility is write-fenced."""
         return _rebalance.reap_archived(self._conn, processor)
 
-    @_synchronized
+    @synchronized
     def count_archived(self) -> int:
         return _rebalance.count_archived(self._conn)
 
     # ── Reads ────────────────────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def get_node(self, node_id: int) -> MikadoNode | None:
         return _reads.get_node(self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def get_nodes(self, node_ids: Iterable[int]) -> list[MikadoNode]:
         return _reads.get_nodes(self._conn, node_ids)
 
-    @_synchronized
+    @synchronized
     def latest_results_for_nodes(self, node_ids: Iterable[int]) -> dict[int, str]:
         return _reads.latest_results_for_nodes(self._conn, node_ids)
 
-    @_synchronized
+    @synchronized
     def find_node_by_wiki_ref(self, wiki_ref: str) -> MikadoNode | None:
         return _reads.find_node_by_wiki_ref(self._conn, wiki_ref)
 
-    @_synchronized
+    @synchronized
     def find_node_by_github_ref(self, github_ref: str) -> MikadoNode | None:
         return _reads.find_node_by_github_ref(self._conn, github_ref)
 
-    @_synchronized
+    @synchronized
     def get_all_nodes(self, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_all_nodes(self._conn, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_children(self, node_id: int, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_children(self._conn, node_id, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_children_map(self, *, include_archived: bool = False) -> dict[int, list[MikadoNode]]:
         return _reads.get_children_map(self._conn, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_leaves(self, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_leaves(self._conn, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_ready_nodes(
         self,
         *,
@@ -328,7 +358,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             self._conn, kind=kind, flavor=flavor, limit=limit, include_archived=include_archived
         )
 
-    @_synchronized
+    @synchronized
     def get_node_summaries(
         self,
         *,
@@ -347,18 +377,18 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             include_archived=include_archived,
         )
 
-    @_synchronized
+    @synchronized
     def get_root(self, *, include_archived: bool = False) -> MikadoNode | None:
         return _reads.get_root(self._conn, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_roots(self, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_roots(self._conn, include_archived=include_archived)
 
-    @_synchronized
+    @synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:
         """Return one lock-held snapshot of graph facts for execution policy."""
-        self._conn.execute("SAVEPOINT execution_snapshot")
+        _ = self._conn.execute("SAVEPOINT execution_snapshot")
         try:
             ready = _reads.get_ready_nodes(self._conn)
             running = tuple(
@@ -378,19 +408,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
                 ),
             )
         finally:
-            self._conn.execute("RELEASE SAVEPOINT execution_snapshot")
+            _ = self._conn.execute("RELEASE SAVEPOINT execution_snapshot")
 
     # ── Status transitions (pipeline-driven) ─────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def mark_done(self, node_id: int) -> None:
         _status.mark_done(self._pipeline, self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def mark_failed(self, node_id: int) -> None:
         _status.mark_failed(self._pipeline, self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def mark_running(
         self,
         node_id: int,
@@ -402,27 +432,27 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             self._pipeline, self._conn, node_id, worktree_path, branch_name, run_id
         )
 
-    @_synchronized
+    @synchronized
     def mark_pending(self, node_id: int) -> None:
         _status.mark_pending(self._pipeline, self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def mark_blocked(self, node_id: int) -> None:
         _status.mark_blocked(self._pipeline, self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def complete_root(self) -> bool:
         return _status.complete_root(self._pipeline, self._conn)
 
-    @_synchronized
+    @synchronized
     def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
         return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now, pid=pid)
 
-    @_synchronized
+    @synchronized
     def release(self, node_id: int, run_id: str) -> bool:
         return _status.release(self._pipeline, self._conn, node_id, run_id)
 
-    @_synchronized
+    @synchronized
     def mark_terminal(
         self,
         node_id: int,
@@ -440,18 +470,18 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             preserve_recovery=preserve_recovery,
         )
 
-    @_synchronized
+    @synchronized
     def mark_blocked_fenced(self, node_id: int, run_id: str) -> bool:
         """Block the owning run without releasing its pinned worktree."""
         return _status.mark_blocked_fenced(self._pipeline, self._conn, node_id, run_id)
 
-    @_synchronized
+    @synchronized
     def try_reclaim(self, node_id: int, *, now: str) -> bool:
         return _status.try_reclaim(self._pipeline, self._conn, node_id, now=now)
 
     # ── Dispatch orchestration ───────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def claim_ancestor_goal_for_dispatch(
         self,
         node_id: int,
@@ -466,13 +496,13 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         if claim is not None and claim["pid"] != owner_pid:
             raise ValueError(
                 f"node {node_id}'s ancestor goal is claimed by a different run "
-                f"({claim['run_id']!r}); dispatch refused"
+                + f"({claim['run_id']!r}); dispatch refused"
             )
-        self.claim_ancestor_goal(
+        _ = self.claim_ancestor_goal(
             node_id, run_id, owner_pid, now=now or datetime.now(UTC).isoformat()
         )
 
-    @_synchronized
+    @synchronized
     def claim_node_for_dispatch(
         self, node_id: int, run_id: str, *, now: str, pid: int | None = None
     ) -> None:
@@ -497,17 +527,17 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             raise ValueError(f"Node {node_id} not found")
         self._conn.commit()
 
-    @_synchronized
+    @synchronized
     def set_wiki_ref(self, node_id: int, wiki_ref: str) -> None:
         """Set the deterministic wiki key so an orphan goal node round-trips on export."""
         self._update_node_field("wiki_ref", wiki_ref, node_id)
 
-    @_synchronized
+    @synchronized
     def set_github_ref(self, node_id: int, github_ref: str) -> None:
         """Bind the GitHub Projects node id recorded when this goal is linked/bound."""
         self._update_node_field("github_ref", github_ref, node_id)
 
-    @_synchronized
+    @synchronized
     def replace_run_id(self, node_id: int, expected_run_id: str, run_id: str) -> bool:
         """Replace a provisional dispatch fence without crossing an owner."""
         cur = self._conn.execute(
@@ -517,27 +547,27 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         self._conn.commit()
         return cur.rowcount == 1
 
-    @_synchronized
+    @synchronized
     def set_pid(self, node_id: int, run_id: str, pid: int) -> None:
         _persistence.set_pid(self._conn, node_id, run_id, pid)
 
-    @_synchronized
+    @synchronized
     def set_worktree(
         self, node_id: int, run_id: str, worktree_path: str, branch_name: str
     ) -> None:
         _persistence.set_worktree(self._conn, node_id, run_id, worktree_path, branch_name)
 
-    @_synchronized
+    @synchronized
     def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
         return _persistence.check_parallel_safety(self._conn, node_ids)
 
-    @_synchronized
+    @synchronized
     def drop_all(self) -> int:
         return _persistence.drop_all(self._conn)
 
     # ── Run repository ───────────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def start_run(
         self,
         run_id: str,
@@ -547,51 +577,51 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         timeout_seconds: int | None,
         pid: int | None = None,
     ) -> None:
-        _persistence.start_run(
+        _run_persistence.start_run(
             self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid
         )
 
-    @_synchronized
+    @synchronized
     def finish_run(self, run_id: str, result: RunResult) -> bool:
-        return _persistence.finish_run(self._conn, run_id, result)
+        return _run_persistence.finish_run(self._conn, run_id, result)
 
-    @_synchronized
+    @synchronized
     def set_run_pid(self, run_id: str, pid: int) -> None:
-        _persistence.set_run_pid(self._conn, run_id, pid)
+        _run_persistence.set_run_pid(self._conn, run_id, pid)
 
-    @_synchronized
-    def get_run(self, run_id: str) -> dict | None:
-        return _persistence.get_run(self._conn, run_id)
+    @synchronized
+    def get_run(self, run_id: str) -> RunRecord | None:
+        return _run_persistence.get_run(self._conn, run_id)
 
-    @_synchronized
+    @synchronized
     def runs_for_node(
         self, node_id: int, *, terminal_only: bool = False, run_id: str | None = None
-    ) -> list[dict]:
-        return _persistence.runs_for_node(
+    ) -> list[RunRecord]:
+        return _run_persistence.runs_for_node(
             self._conn, node_id, terminal_only=terminal_only, run_id=run_id
         )
 
-    @_synchronized
-    def recent_runs(self, limit: int) -> list[dict]:
-        return _persistence.recent_runs(self._conn, limit)
+    @synchronized
+    def recent_runs(self, limit: int) -> list[RunRecord]:
+        return _run_persistence.recent_runs(self._conn, limit)
 
-    @_synchronized
+    @synchronized
     def deposit_run_message(self, run_id: str, role: str, body: str, created_at: str) -> int:
-        return _persistence.deposit_run_message(self._conn, run_id, role, body, created_at)
+        return _run_persistence.deposit_run_message(self._conn, run_id, role, body, created_at)
 
-    @_synchronized
+    @synchronized
     def deposit_review_verdict(
         self, run_id: str, verdict: str, findings: str, created_at: str
     ) -> int:
-        return _persistence.deposit_review_verdict(
+        return _run_persistence.deposit_review_verdict(
             self._conn, run_id, verdict, findings, created_at
         )
 
-    @_synchronized
+    @synchronized
     def latest_run_message(self, run_id: str, role: str) -> str | None:
-        return _persistence.latest_run_message(self._conn, run_id, role)
+        return _run_persistence.latest_run_message(self._conn, run_id, role)
 
-    @_synchronized
+    @synchronized
     def insert_node_review(
         self,
         node_id: int,
@@ -600,35 +630,35 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         findings: str,
         created_at: str,
     ) -> None:
-        _persistence.insert_node_review(
+        _run_persistence.insert_node_review(
             self._conn, node_id, round_number, verdict, findings, created_at
         )
 
-    @_synchronized
-    def node_reviews_for_node(self, node_id: int) -> list[dict]:
-        return _persistence.node_reviews_for_node(self._conn, node_id)
+    @synchronized
+    def node_reviews_for_node(self, node_id: int) -> list[NodeReviewRecord]:
+        return _run_persistence.node_reviews_for_node(self._conn, node_id)
 
     # ── File ownership ───────────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def set_file_ownership(self, node_id: int, files: list[str]) -> None:
         _persistence.set_file_ownership(self._conn, node_id, files)
 
-    @_synchronized
+    @synchronized
     def get_file_ownership(self, node_id: int) -> list[str]:
         return _persistence.get_file_ownership(self._conn, node_id)
 
-    @_synchronized
+    @synchronized
     def get_file_ownership_map(
         self, node_ids: Iterable[int] | None = None
     ) -> dict[int, list[str]]:
         return _persistence.get_file_ownership_map(self._conn, node_ids)
 
-    @_synchronized
-    def get_github_bind_attempt(self, goal_id: int) -> dict | None:
+    @synchronized
+    def get_github_bind_attempt(self, goal_id: int) -> GithubBindAttempt | None:
         return _persistence.get_github_bind_attempt(self._conn, goal_id)
 
-    @_synchronized
+    @synchronized
     def set_github_bind_attempt(
         self,
         goal_id: int,
@@ -638,13 +668,13 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     ) -> None:
         _persistence.set_github_bind_attempt(self._conn, goal_id, marker, issue_url, created_at)
 
-    @_synchronized
+    @synchronized
     def clear_github_bind_attempt(self, goal_id: int) -> None:
         _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
     # ── Goal-claim fencing ───────────────────────────────────────────────────
 
-    @_synchronized
+    @synchronized
     def claim_or_reclaim_goal(
         self, goal_id: int, owner: str, pid: int | None = None, *, now: str
     ) -> bool:
@@ -658,11 +688,11 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             )
         return _goal_claims.claim_or_reclaim_goal(self._conn, goal_id, owner, owner_pid, now=now)
 
-    @_synchronized
+    @synchronized
     def release_goal(self, goal_id: int, run_id: str) -> bool:
         return _goal_claims.release_goal_row(self._conn, goal_id, run_id)
 
-    @_synchronized
+    @synchronized
     def claim_ancestor_goal(self, node_id: int, run_id: str, pid: int, *, now: str) -> int | None:
         goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
         if goal_id is None:
@@ -673,19 +703,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
                 raise ValueError(f"ancestor goal {goal_id} is already claimed; dispatch refused")
         return goal_id
 
-    @_synchronized
+    @synchronized
     def try_reclaim_goal(self, goal_id: int, *, now: str) -> bool:
         return _goal_claims.try_reclaim_goal(self._conn, goal_id, now=now)
 
-    @_synchronized
+    @synchronized
     def ancestor_goal_claimed_by_other(
         self, node_id: int, *, caller_run_id: str | None = None
-    ) -> dict | None:
+    ) -> GoalClaim | None:
         return _goal_claims.ancestor_goal_claimed_by_other(
             self._conn, node_id, caller_run_id=caller_run_id
         )
 
-    @_synchronized
+    @synchronized
     def close(self) -> None:
         # Already closed: no-op WITHOUT touching _close_stack — the recorded
         # stack names the close that actually closed, and a redundant close
@@ -706,7 +736,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         # checkpoint, so without this an MCP tool call or detached run can leave
         # its tail in the -wal sidecar and lose it on container reclaim.
         try:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except sqlite3.Error:
             _logger.warning("WAL checkpoint on close failed", exc_info=True)
         finally:

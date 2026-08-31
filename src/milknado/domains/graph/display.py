@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import MikadoNode, NodeStatus
-from milknado.domains.graph.graph import MikadoGraph
 
 if TYPE_CHECKING:
     from rich.console import Console
+    from rich.tree import Tree
+
+    from milknado.domains.graph.graph import MikadoGraph
 
 STATUS_COLORS: dict[NodeStatus, str] = {
     NodeStatus.PENDING: "dim",
@@ -98,7 +100,7 @@ def render_tree(
 
 
 def _build_subtree(
-    graph: MikadoGraph, node_id: int, tree: Any, *, include_archived: bool = False
+    graph: MikadoGraph, node_id: int, tree: Tree, *, include_archived: bool = False
 ) -> None:
     children = graph.get_children(node_id, include_archived=include_archived)
     for child in children:
@@ -114,10 +116,10 @@ def _print_summary(
     pct = summary.pct_complete
     console.print(
         f"[bold]Progress:[/bold] {summary.done}/{summary.total} "
-        f"({pct:.0f}%) — "
-        f"[cyan]{summary.running} running[/cyan], "
-        f"[red]{summary.failed} failed[/red], "
-        f"[yellow]{summary.blocked} blocked[/yellow]"
+        + f"({pct:.0f}%) — "
+        + f"[cyan]{summary.running} running[/cyan], "
+        + f"[red]{summary.failed} failed[/red], "
+        + f"[yellow]{summary.blocked} blocked[/yellow]"
     )
 
     if summary.active_worktrees:
@@ -126,8 +128,8 @@ def _print_summary(
             run_status = _run_status_label(node.run_id, run_states)
             console.print(
                 f"  [cyan]◉[/cyan] [{node.id}] {node.description}"
-                f" [dim]({node.worktree_path})[/dim]"
-                f"{run_status}"
+                + f" [dim]({node.worktree_path})[/dim]"
+                + f"{run_status}"
             )
 
     if summary.ready:

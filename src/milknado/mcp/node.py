@@ -29,6 +29,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import cast
 
 from milknado.app.node import (
     GOAL_OWNER_ENV_VAR,
@@ -193,7 +194,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> dict:
         run = graph.get_run(run_id)
         if run is None:
             raise ValueError(f"run {run_id!r} not found")
-        node = graph.get_node(run["node_id"])
+        node = graph.get_node(cast(int, run["node_id"]))
         if node is None:
             raise ValueError(f"node {run['node_id']} for run {run_id!r} not found")
 

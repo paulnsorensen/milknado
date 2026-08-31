@@ -8,18 +8,25 @@ an illegal move raises InvalidTransition rather than corrupting the row.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import cast
 
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
+from milknado.domains.graph._sqlite_rows import fetchone
+
+
+def _values(row: sqlite3.Row) -> tuple[object, ...]:
+    return cast(tuple[object, ...], cast(object, row))
 
 
 def assert_transition(conn: sqlite3.Connection, node_id: int, target: NodeStatus) -> NodeStatus:
     """Validate target is reachable from the node's current status; return current."""
-    row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    row = fetchone(conn, "SELECT status FROM nodes WHERE id = ?", (node_id,))
     if row is None:
         raise ValueError(f"Node {node_id} not found")
-    current = NodeStatus(row[0])
+    current = NodeStatus(cast(str, _values(row)[0]))
     allowed = VALID_TRANSITIONS.get(current, set())
     if target not in allowed:
         raise InvalidTransition(
@@ -36,7 +43,7 @@ def _apply_transition(
     node_id: int,
     target: NodeStatus,
     sql: str,
-    params: tuple,
+    params: Sequence[object],
 ) -> None:
     """Run a CAS UPDATE gated on the source status observed by assert_transition,
     committing then raising InvalidTransition on 0 rows.
@@ -50,10 +57,10 @@ def _apply_transition(
     cur = conn.execute(sql, params)
     conn.commit()
     if cur.rowcount == 0:
-        row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        row = fetchone(conn, "SELECT status FROM nodes WHERE id = ?", (node_id,))
         if row is None:
             raise ValueError(f"Node {node_id} not found")
-        actual = NodeStatus(row[0])
+        actual = NodeStatus(cast(str, _values(row)[0]))
         raise InvalidTransition(
             node_id=node_id,
             current=actual,
@@ -82,7 +89,7 @@ def mark_failed(conn: sqlite3.Connection, node_id: int) -> None:
         node_id,
         NodeStatus.FAILED,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        + "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
         (NodeStatus.FAILED.value, node_id, current.value),
     )
 
@@ -100,7 +107,7 @@ def mark_running(
         node_id,
         NodeStatus.RUNNING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ?",
+        + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ?",
         (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
     )
 
@@ -112,7 +119,7 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
         node_id,
         NodeStatus.PENDING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        + "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
         (NodeStatus.PENDING.value, node_id, current.value),
     )
 
@@ -131,8 +138,8 @@ def claim_node(
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
     cur = conn.execute(
-        f"UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
-        f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
+        "UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
+        + f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
         (run_id, now, pid, node_id),
     )
     conn.commit()
@@ -152,8 +159,8 @@ def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
     """
     cur = conn.execute(
         "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
-        "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
-        "WHERE id = ? AND run_id = ? AND status = 'running'",
+        + "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
+        + "WHERE id = ? AND run_id = ? AND status = 'running'",
         (node_id, owner_run_id),
     )
     conn.commit()
@@ -173,7 +180,7 @@ def mark_terminal(
         completed_at = datetime.now(UTC).isoformat()
         cur = conn.execute(
             "UPDATE nodes SET status = ?, completed_at = ? "
-            "WHERE id = ? AND run_id = ? AND status = 'running'",
+            + "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.DONE.value, completed_at, node_id, run_id),
         )
     elif status is NodeStatus.FAILED:
@@ -184,7 +191,7 @@ def mark_terminal(
         )
         cur = conn.execute(
             f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "
-            "WHERE id = ? AND run_id = ? AND status = 'running'",
+            + "WHERE id = ? AND run_id = ? AND status = 'running'",
             (NodeStatus.FAILED.value, node_id, run_id),
         )
     else:
@@ -197,7 +204,7 @@ def mark_blocked(conn: sqlite3.Connection, node_id: int, run_id: str) -> bool:
     """Fence a RUNNING node into BLOCKED without clearing its worktree pin."""
     cur = conn.execute(
         "UPDATE nodes SET status = ?, completed_at = NULL "
-        "WHERE id = ? AND run_id = ? AND status = ?",
+        + "WHERE id = ? AND run_id = ? AND status = ?",
         (NodeStatus.BLOCKED.value, node_id, run_id, NodeStatus.RUNNING.value),
     )
     conn.commit()
