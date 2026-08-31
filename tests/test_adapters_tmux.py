@@ -7,7 +7,9 @@ import shlex
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import NoReturn, TypedDict, Unpack
 
 import pytest
 
@@ -17,14 +19,33 @@ from milknado.domains.dispatch import RunWindow
 RUN_ID = "node-1-20260101T000000Z-deadbeef"
 
 
-def _window(tmp_path: Path, run_id: str = RUN_ID, **overrides) -> RunWindow:
-    defaults = dict(
-        run_id=run_id,
-        argv=("sh", "-c", "true"),
-        cwd=tmp_path,
-        log_path=tmp_path / f"{run_id}.log",
-        exit_code_path=tmp_path / f"{run_id}.rc",
-    )
+def _missing_tmux(_name: str) -> None:
+    return None
+
+
+def _found_tmux(_name: str) -> str:
+    return "/usr/bin/tmux"
+
+
+class WindowOverrides(TypedDict, total=False):
+    run_id: str
+    argv: tuple[str, ...]
+    cwd: Path
+    log_path: Path
+    exit_code_path: Path
+    env: dict[str, str]
+    brief_path: Path | None
+
+
+def _window(tmp_path: Path, **overrides: Unpack[WindowOverrides]) -> RunWindow:
+    run_id = overrides.get("run_id", RUN_ID)
+    defaults: WindowOverrides = {
+        "run_id": run_id,
+        "argv": ("sh", "-c", "true"),
+        "cwd": tmp_path,
+        "log_path": tmp_path / f"{run_id}.log",
+        "exit_code_path": tmp_path / f"{run_id}.rc",
+    }
     defaults.update(overrides)
     return RunWindow(**defaults)
 
@@ -45,7 +66,7 @@ def test_session_name_falls_back_when_dirname_sanitizes_away() -> None:
 
 def test_wrapped_command_encodes_the_window_lifecycle(tmp_path: Path) -> None:
     adapter = TmuxAdapter(tmp_path)
-    cmd = adapter._wrapped_command(_window(tmp_path))
+    cmd = adapter._wrapped_command(_window(tmp_path))  # pyright: ignore[reportPrivateUsage]
     # remain-on-exit set from inside the pane, before the runner, targeting the
     # pane explicitly (without -t the option lands on the wrong window).
     assert 'tmux set-option -w -t "$TMUX_PANE" remain-on-exit on' in cmd
@@ -62,7 +83,9 @@ def test_wrapped_command_encodes_the_window_lifecycle(tmp_path: Path) -> None:
 def test_wrapped_command_redirects_staged_brief_to_stdin(tmp_path: Path) -> None:
     adapter = TmuxAdapter(tmp_path)
     brief = tmp_path / f"{RUN_ID}.brief"
-    cmd = adapter._wrapped_command(_window(tmp_path, brief_path=brief))
+    cmd = adapter._wrapped_command(  # pyright: ignore[reportPrivateUsage]
+        _window(tmp_path, brief_path=brief)
+    )
     assert f"< {brief} 2>&1" in cmd
 
 
@@ -71,49 +94,57 @@ def test_wrapped_command_gives_runner_exactly_the_filtered_env(tmp_path: Path) -
     inherits the tmux *server's* environment (which may carry user secrets),
     so the runner must be started with only the allowlisted vars."""
     adapter = TmuxAdapter(tmp_path)
-    cmd = adapter._wrapped_command(
+    cmd = adapter._wrapped_command(  # pyright: ignore[reportPrivateUsage]
         _window(tmp_path, env={"MILKNADO_RUN_ID": RUN_ID, "PATH": "/usr/bin"})
     )
     assert f"env -i {shlex.quote(f'MILKNADO_RUN_ID={RUN_ID}')} PATH=/usr/bin sh -c true" in cmd
 
 
-def test_run_translates_a_wedged_tmux_into_dispatch_error(tmp_path: Path, monkeypatch) -> None:
+def test_run_translates_a_wedged_tmux_into_dispatch_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """TimeoutExpired is not an OSError: untranslated it would escape the
     dispatchers' claim-release guards and strand a node RUNNING."""
 
-    def _hang(*args, **kwargs):
+    def _hang(*_args: object, **_kwargs: object) -> NoReturn:
         raise subprocess.TimeoutExpired(cmd=["tmux"], timeout=30)
 
     monkeypatch.setattr(subprocess, "run", _hang)
     with pytest.raises(TmuxDispatchError, match="timed out after"):
-        TmuxAdapter(tmp_path)._run(["list-windows"])
+        _ = TmuxAdapter(tmp_path)._run(["list-windows"])  # pyright: ignore[reportPrivateUsage]
 
 
 # --- availability and error branches (stubbed tmux binary) --------------------
 
 
-def test_available_reflects_binary_presence(tmp_path: Path, monkeypatch) -> None:
+def test_available_reflects_binary_presence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     adapter = TmuxAdapter(tmp_path)
-    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr(shutil, "which", _missing_tmux)
     assert adapter.available() is False
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/tmux")
+    monkeypatch.setattr(shutil, "which", _found_tmux)
     assert adapter.available() is True
 
 
-def _stub_run(responses: dict[str, subprocess.CompletedProcess]):
+def _stub_run(
+    responses: dict[str, subprocess.CompletedProcess[str]],
+) -> Callable[[object, list[str]], subprocess.CompletedProcess[str]]:
     """Map a tmux subcommand name to a canned CompletedProcess."""
 
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+    def _run(_self: object, args: list[str]) -> subprocess.CompletedProcess[str]:
         return responses[args[0]]
 
     return _run
 
 
-def _completed(rc: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
+def _completed(rc: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], rc, stdout, stderr)
 
 
-def test_ensure_session_raises_when_server_cannot_start(tmp_path: Path, monkeypatch) -> None:
+def test_ensure_session_raises_when_server_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -123,7 +154,9 @@ def test_ensure_session_raises_when_server_cannot_start(tmp_path: Path, monkeypa
         TmuxAdapter(tmp_path).ensure_session()
 
 
-def test_ensure_session_raises_when_default_shell_pin_fails(tmp_path: Path, monkeypatch) -> None:
+def test_ensure_session_raises_when_default_shell_pin_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -133,7 +166,9 @@ def test_ensure_session_raises_when_default_shell_pin_fails(tmp_path: Path, monk
         TmuxAdapter(tmp_path).ensure_session()
 
 
-def test_window_exists_is_exact_not_prefix(tmp_path: Path, monkeypatch) -> None:
+def test_window_exists_is_exact_not_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -144,14 +179,18 @@ def test_window_exists_is_exact_not_prefix(tmp_path: Path, monkeypatch) -> None:
     assert adapter.window_exists(f"{RUN_ID}-longer") is True
 
 
-def test_window_exists_false_when_session_absent(tmp_path: Path, monkeypatch) -> None:
+def test_window_exists_false_when_session_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter, "_run", _stub_run({"list-windows": _completed(1, stderr="no server")})
     )
     assert TmuxAdapter(tmp_path).window_exists(RUN_ID) is False
 
 
-def test_open_run_window_collision_is_a_hard_error(tmp_path: Path, monkeypatch) -> None:
+def test_open_run_window_collision_is_a_hard_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -164,10 +203,12 @@ def test_open_run_window_collision_is_a_hard_error(tmp_path: Path, monkeypatch) 
         ),
     )
     with pytest.raises(TmuxDispatchError, match="already exists"):
-        TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
+        _ = TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
 
 
-def test_open_run_window_surfaces_tmux_failure(tmp_path: Path, monkeypatch) -> None:
+def test_open_run_window_surfaces_tmux_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -181,10 +222,12 @@ def test_open_run_window_surfaces_tmux_failure(tmp_path: Path, monkeypatch) -> N
         ),
     )
     with pytest.raises(TmuxDispatchError, match="could not open a window .*create failed"):
-        TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
+        _ = TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
 
 
-def test_open_run_window_rejects_unparseable_pane_pid(tmp_path: Path, monkeypatch) -> None:
+def test_open_run_window_rejects_unparseable_pane_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -198,13 +241,13 @@ def test_open_run_window_rejects_unparseable_pane_pid(tmp_path: Path, monkeypatc
         ),
     )
     with pytest.raises(TmuxDispatchError, match="unparseable pane pid"):
-        TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
+        _ = TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
 
 
 @pytest.mark.parametrize("stdout", ["0\n", "-1\n"])
 def test_open_run_window_rejects_non_positive_pane_pid(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     stdout: str,
 ) -> None:
     monkeypatch.setattr(
@@ -220,10 +263,12 @@ def test_open_run_window_rejects_non_positive_pane_pid(
         ),
     )
     with pytest.raises(TmuxDispatchError, match="invalid pane pid"):
-        TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
+        _ = TmuxAdapter(tmp_path).open_run_window(_window(tmp_path))
 
 
-def test_kill_window_surfaces_tmux_failure(tmp_path: Path, monkeypatch) -> None:
+def test_kill_window_surfaces_tmux_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         TmuxAdapter,
         "_run",
@@ -235,13 +280,13 @@ def test_kill_window_surfaces_tmux_failure(tmp_path: Path, monkeypatch) -> None:
         ),
     )
     with pytest.raises(TmuxDispatchError, match="could not kill window .*denied"):
-        TmuxAdapter(tmp_path).kill_window(RUN_ID)
+        _ = TmuxAdapter(tmp_path).kill_window(RUN_ID)
 
 
 # --- the one real-tmux integration test ---------------------------------------
 
 
-def _wait_until(condition, timeout: float = 10.0) -> None:
+def _wait_until(condition: Callable[[], bool], timeout: float = 10.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if condition():
@@ -251,7 +296,7 @@ def _wait_until(condition, timeout: float = 10.0) -> None:
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
-def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
+def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Drives a real headless tmux server (private socket, no TTY) through the
     full window contract: env isolation, log tee, brief redirect, success
     self-clean, failure preservation, collision, and exact-match kill."""
@@ -287,8 +332,8 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
         # Brief redirect: worker reads the staged brief on stdin.
         br = "node-2-20260101T000000Z-0000bbbb"
         brief = rdir / f"{br}.brief"
-        brief.write_text("brief-payload")
-        adapter.open_run_window(
+        _ = brief.write_text("brief-payload")
+        _ = adapter.open_run_window(
             RunWindow(
                 run_id=br,
                 argv=("cat",),
@@ -303,7 +348,7 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
 
         # Failure: the window survives as an inspectable dead pane.
         bad = "node-3-20260101T000000Z-0000cccc"
-        adapter.open_run_window(
+        _ = adapter.open_run_window(
             RunWindow(
                 run_id=bad,
                 argv=("sh", "-c", "echo boom; exit 7"),
@@ -320,7 +365,7 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
 
         # Collision on a still-open window name is a hard error, never reuse.
         with pytest.raises(TmuxDispatchError, match="already exists"):
-            adapter.open_run_window(
+            _ = adapter.open_run_window(
                 RunWindow(
                     run_id=bad,
                     argv=("sh", "-c", "true"),
@@ -350,9 +395,9 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch) -> None:
             )
         )
         _wait_until(lambda: pid_alive(live_pid))
-        adapter.kill_window(live)
+        _ = adapter.kill_window(live)
         _wait_until(lambda: not pid_alive(live_pid))
     finally:
-        subprocess.run(
+        _ = subprocess.run(
             ["tmux", "-S", str(socket), "kill-server"], capture_output=True, check=False
         )
