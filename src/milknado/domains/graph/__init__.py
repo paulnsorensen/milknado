@@ -1,3 +1,4 @@
+from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph.display import render_tree
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.rebalance import (
@@ -24,6 +25,7 @@ __all__ = [
     "CLAIM_ROLE",
     "INBOX_DESCRIPTION",
     "MikadoGraph",
+    "RunRecord",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",

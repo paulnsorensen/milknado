@@ -1010,7 +1010,7 @@ class TestAsyncCancel:
     def test_async_worker_timeout_marks_failed_and_timed_out(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
     ) -> None:
-        """The async poll loop (`_execute_cancellable`) enforces the run's own
+        """The async poll loop (`execute_cancellable`) enforces the run's own
         timeout deadline — distinct from the sync `_execute` `communicate(timeout=)`
         path. A worker that outlives its timeout must be terminated and finalized
         `failed` / `timed_out=True`, with no cancel sentinel involved."""

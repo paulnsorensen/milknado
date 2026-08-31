@@ -41,7 +41,7 @@ def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
     size = path.stat().st_size
     with path.open("rb") as fh:
         if size > max_bytes:
-            fh.seek(size - max_bytes)
+            _ = fh.seek(size - max_bytes)
         data = fh.read()
     return data.decode("utf-8", errors="replace")
 
