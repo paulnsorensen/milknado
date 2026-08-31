@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 
 import pytest
 
-from milknado.adapters import gh
 from milknado.adapters.gh import (
     gh_field_create,
     gh_field_create_text,
@@ -40,34 +40,38 @@ class Recorder:
 
     def __init__(self, stdout: str = "") -> None:
         self.calls: list[list[str]] = []
-        self.stdout = stdout
+        self.stdout: str = stdout
 
-    def __call__(self, args, **_kwargs):
+    def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         self.calls.append(list(args))
         return subprocess.CompletedProcess(args, 0, stdout=self.stdout, stderr="")
 
 
 @pytest.fixture()
-def wire(monkeypatch: pytest.MonkeyPatch):
+def wire(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Recorder]:
     """Pin `gh` on PATH and swap subprocess.run for a Recorder factory."""
-    monkeypatch.setattr(gh.shutil, "which", lambda _name: GH_BIN)
+
+    def _which(_name: str) -> str:
+        return GH_BIN
+
+    monkeypatch.setattr("milknado.adapters.gh.shutil.which", _which)
 
     def _install(stdout: str = "") -> Recorder:
         rec = Recorder(stdout)
-        monkeypatch.setattr(gh.subprocess, "run", rec)
+        monkeypatch.setattr("milknado.adapters.gh.subprocess.run", rec)
         return rec
 
     return _install
 
 
 class TestWrapperArgv:
-    def test_project_view_builds_argv_and_parses(self, wire) -> None:
+    def test_project_view_builds_argv_and_parses(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire(json.dumps({"id": "PVT_1", "title": "RM"}))
         out = gh_project_view("acme", 7)
         assert out == GithubProject(id="PVT_1", title="RM")
         assert rec.calls[0][1:] == ["project", "view", "7", "--owner", "acme", "--format", "json"]
 
-    def test_item_list_returns_items_key(self, wire) -> None:
+    def test_item_list_returns_items_key(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire(json.dumps({"items": [{"id": "PVTI_1", "title": "g"}]}))
         out = gh_item_list("acme", 7, limit=3)
         assert out == [GithubItem(id="PVTI_1", title="g")]
@@ -83,11 +87,11 @@ class TestWrapperArgv:
             "3",
         ]
 
-    def test_item_list_defaults_empty_when_no_items(self, wire) -> None:
-        wire(json.dumps({}))
+    def test_item_list_defaults_empty_when_no_items(self, wire: Callable[[str], Recorder]) -> None:
+        _ = wire(json.dumps({}))
         assert gh_item_list("acme", 7) == []
 
-    def test_item_add_returns_item_id(self, wire) -> None:
+    def test_item_add_returns_item_id(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire(json.dumps({"id": "PVTI_new"}))
         assert gh_item_add("acme", 7, "https://x/1") == "PVTI_new"
         assert rec.calls[0][1:] == [
@@ -102,7 +106,7 @@ class TestWrapperArgv:
             "json",
         ]
 
-    def test_item_edit_text_branch(self, wire) -> None:
+    def test_item_edit_text_branch(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire("{}")
         gh_item_edit("PVT_1", "PVTI_1", "F_1", text="hello")
         assert rec.calls[0][1:] == [
@@ -118,22 +122,22 @@ class TestWrapperArgv:
             "hello",
         ]
 
-    def test_item_edit_option_branch(self, wire) -> None:
+    def test_item_edit_option_branch(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire("{}")
         gh_item_edit("PVT_1", "PVTI_1", "F_1", single_select_option_id="opt-9")
         assert rec.calls[0][-2:] == ["--single-select-option-id", "opt-9"]
 
-    def test_item_edit_rejects_both(self, wire) -> None:
-        wire("{}")
+    def test_item_edit_rejects_both(self, wire: Callable[[str], Recorder]) -> None:
+        _ = wire("{}")
         with pytest.raises(ValueError, match="exactly one"):
             gh_item_edit("PVT_1", "PVTI_1", "F_1", text="x", single_select_option_id="y")
 
-    def test_item_edit_rejects_neither(self, wire) -> None:
-        wire("{}")
+    def test_item_edit_rejects_neither(self, wire: Callable[[str], Recorder]) -> None:
+        _ = wire("{}")
         with pytest.raises(ValueError, match="exactly one"):
             gh_item_edit("PVT_1", "PVTI_1", "F_1")
 
-    def test_field_list_returns_fields_key(self, wire) -> None:
+    def test_field_list_returns_fields_key(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire(json.dumps({"fields": [{"id": "F_1", "name": "Milknado Status"}]}))
         out = gh_field_list("acme", 7)
         assert out == [GithubField(id="F_1", name="Milknado Status")]
@@ -147,7 +151,9 @@ class TestWrapperArgv:
             "json",
         ]
 
-    def test_field_create_single_select_joins_options(self, wire) -> None:
+    def test_field_create_single_select_joins_options(
+        self, wire: Callable[[str], Recorder]
+    ) -> None:
         rec = wire(json.dumps({"id": "F_new"}))
         out = gh_field_create(7, "acme", "Milknado Status", ["Pending", "Done"])
         assert out == "F_new"
@@ -165,7 +171,7 @@ class TestWrapperArgv:
             "Pending,Done",
         ]
 
-    def test_field_create_text_uses_text_data_type(self, wire) -> None:
+    def test_field_create_text_uses_text_data_type(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire(json.dumps({"id": "F_txt"}))
         out = gh_field_create_text(7, "acme", "Milknado Harvest")
         assert out == "F_txt"
@@ -181,7 +187,7 @@ class TestWrapperArgv:
             "TEXT",
         ]
 
-    def test_issue_create_returns_stripped_url(self, wire) -> None:
+    def test_issue_create_returns_stripped_url(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire("https://github.com/acme/repo/issues/3\n")
         url = gh_issue_create("acme", "repo", "Title", "Body")
         assert url == "https://github.com/acme/repo/issues/3"
@@ -196,15 +202,17 @@ class TestWrapperArgv:
             "Body",
         ]
 
-    def test_issue_edit_body_argv(self, wire) -> None:
+    def test_issue_edit_body_argv(self, wire: Callable[[str], Recorder]) -> None:
         rec = wire("")
         gh_issue_edit_body("https://x/3", "new body")
         assert rec.calls[0][1:] == ["issue", "edit", "https://x/3", "--body", "new body"]
 
-    def test_issue_view_builds_argv_and_returns_typed_issue(self, wire) -> None:
+    def test_issue_view_builds_argv_and_returns_typed_issue(
+        self, wire: Callable[[str], Recorder]
+    ) -> None:
         rec = wire(
             '{"title":"Bug","body":"Details","number":7,'
-            '"url":"https://github.com/acme/app/issues/7"}'
+            + '"url":"https://github.com/acme/app/issues/7"}'
         )
 
         issue = gh_issue_view("acme/app#7")
@@ -228,18 +236,20 @@ class TestWrapperArgv:
 
 
 class TestZeroGraphql:
-    def test_no_wrapper_argv_contains_graphql_or_api(self, wire) -> None:
+    def test_no_wrapper_argv_contains_graphql_or_api(
+        self, wire: Callable[[str], Recorder]
+    ) -> None:
         # Acceptance 8: the entire transport is `gh project`/`gh issue` — never
         # a raw GraphQL/api call. Exercise every wrapper and scan the argv.
         rec = wire(json.dumps({"id": "x", "title": "t", "items": [], "fields": []}))
-        gh_project_view("a", 1)
-        gh_item_list("a", 1)
-        gh_item_add("a", 1, "u")
+        _ = gh_project_view("a", 1)
+        _ = gh_item_list("a", 1)
+        _ = gh_item_add("a", 1, "u")
         gh_item_edit("PVT", "PVTI", "F", text="t")
-        gh_field_list("a", 1)
-        gh_field_create(1, "a", "n", ["o"])
-        gh_field_create_text(1, "a", "n")
-        gh_issue_create("a", "r", "t", "b")
+        _ = gh_field_list("a", 1)
+        _ = gh_field_create(1, "a", "n", ["o"])
+        _ = gh_field_create_text(1, "a", "n")
+        _ = gh_issue_create("a", "r", "t", "b")
         gh_issue_edit_body("u", "b")
         tokens = [tok for call in rec.calls for tok in call]
         assert "graphql" not in tokens

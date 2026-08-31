@@ -25,31 +25,31 @@ def _make_crg_db(root: Path) -> Path:
 
 class TestIsBuilt:
     def test_false_when_no_crg_dir(self, adapter: CrgAdapter) -> None:
-        assert adapter._is_built() is False
+        assert adapter._is_built() is False  # pyright: ignore[reportPrivateUsage]
 
     def test_true_when_db_exists(self, tmp_path: Path) -> None:
-        _make_crg_db(tmp_path)
+        _ = _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_built() is True
+        assert adapter._is_built() is True  # pyright: ignore[reportPrivateUsage]
 
 
 class TestIsStale:
     def test_false_when_no_db(self, adapter: CrgAdapter) -> None:
-        assert adapter._is_stale() is False
+        assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
     def test_false_when_no_sources(self, tmp_path: Path) -> None:
-        _make_crg_db(tmp_path)
+        _ = _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is False
+        assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
     def test_false_when_sources_older_than_db(self, tmp_path: Path) -> None:
         src = tmp_path / "src"
         src.mkdir()
-        (src / "main.py").write_text("x = 1")
+        _ = (src / "main.py").write_text("x = 1")
         time.sleep(0.05)
-        _make_crg_db(tmp_path)
+        _ = _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is False
+        assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
     def test_true_when_source_newer_than_db(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
@@ -57,12 +57,12 @@ class TestIsStale:
         src = tmp_path / "src"
         src.mkdir()
         py_file = src / "main.py"
-        py_file.write_text("x = 1")
+        _ = py_file.write_text("x = 1")
         import os
 
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is True
+        assert adapter._is_stale() is True  # pyright: ignore[reportPrivateUsage]
 
     def test_detects_stale_outside_src(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
@@ -70,23 +70,23 @@ class TestIsStale:
         tests_dir = tmp_path / "tests"
         tests_dir.mkdir()
         py_file = tests_dir / "test_foo.py"
-        py_file.write_text("assert True")
+        _ = py_file.write_text("assert True")
         import os
 
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is True
+        assert adapter._is_stale() is True  # pyright: ignore[reportPrivateUsage]
 
     def test_detects_stale_at_project_root(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
         db_mtime = db.stat().st_mtime
         py_file = tmp_path / "setup.py"
-        py_file.write_text("setup()")
+        _ = py_file.write_text("setup()")
         import os
 
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is True
+        assert adapter._is_stale() is True  # pyright: ignore[reportPrivateUsage]
 
     def test_ignores_non_source_files(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
@@ -94,12 +94,12 @@ class TestIsStale:
         src = tmp_path / "src"
         src.mkdir()
         txt = src / "notes.txt"
-        txt.write_text("not source")
+        _ = txt.write_text("not source")
         import os
 
         os.utime(txt, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is False
+        assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
     def test_skips_excluded_dirs(self, tmp_path: Path) -> None:
         db = _make_crg_db(tmp_path)
@@ -107,19 +107,19 @@ class TestIsStale:
         venv = tmp_path / ".venv" / "lib"
         venv.mkdir(parents=True)
         py_file = venv / "site.py"
-        py_file.write_text("x = 1")
+        _ = py_file.write_text("x = 1")
         import os
 
         os.utime(py_file, (db_mtime + 10, db_mtime + 10))
         adapter = CrgAdapter(tmp_path)
-        assert adapter._is_stale() is False
+        assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
 
 class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")
     def test_builds_when_not_built(
-        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+        self, mock_run: MagicMock, _mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
@@ -134,14 +134,14 @@ class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")
     def test_updates_when_stale(
-        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+        self, mock_run: MagicMock, _mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
         db = _make_crg_db(tmp_path)
         db_mtime = db.stat().st_mtime
         src = tmp_path / "src"
         src.mkdir()
         py = src / "app.py"
-        py.write_text("x = 1")
+        _ = py.write_text("x = 1")
         import os
 
         os.utime(py, (db_mtime + 10, db_mtime + 10))
@@ -159,9 +159,9 @@ class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")
     def test_skips_when_built_and_fresh(
-        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+        self, mock_run: MagicMock, _mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
-        _make_crg_db(tmp_path)
+        _ = _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
         mock_run.assert_not_called()
@@ -169,11 +169,11 @@ class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")
     def test_resets_cached_store(
-        self, mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
+        self, _mock_run: MagicMock, mock_store_cls: MagicMock, tmp_path: Path
     ) -> None:
-        _make_crg_db(tmp_path)
+        _ = _make_crg_db(tmp_path)
         adapter = CrgAdapter(tmp_path)
-        adapter._get_store()
+        _ = adapter._get_store()  # pyright: ignore[reportPrivateUsage]
         adapter.ensure_graph(tmp_path)
         assert mock_store_cls.call_count == 2
 
@@ -182,11 +182,12 @@ class TestGetImpactRadius:
     @patch("milknado.adapters.crg.GraphStore")
     def test_delegates_to_store(self, mock_store_cls: MagicMock, adapter: CrgAdapter) -> None:
         mock_store = MagicMock()
-        mock_store.get_impact_radius.return_value = {"nodes": []}
+        get_impact_radius = MagicMock(return_value={"nodes": []})
+        mock_store.get_impact_radius = get_impact_radius
         mock_store_cls.return_value = mock_store
 
         result = adapter.get_impact_radius(["src/foo.py"])
-        mock_store.get_impact_radius.assert_called_once_with(["src/foo.py"])
+        get_impact_radius.assert_called_once_with(["src/foo.py"])
         assert result == {"nodes": []}
 
 
@@ -242,7 +243,7 @@ class TestListCommunities:
         mock_store_cls.return_value = mock_store
         mock_get_communities.return_value = []
 
-        adapter.list_communities(sort_by="name", min_size=5)
+        _ = adapter.list_communities(sort_by="name", min_size=5)
 
         mock_get_communities.assert_called_once_with(
             mock_store,
@@ -285,7 +286,7 @@ class TestListFlows:
         mock_store_cls.return_value = mock_store
         mock_get_flows.return_value = []
 
-        adapter.list_flows(sort_by="name", limit=10)
+        _ = adapter.list_flows(sort_by="name", limit=10)
 
         mock_get_flows.assert_called_once_with(
             mock_store,
@@ -324,7 +325,7 @@ class TestGetBridgeNodes:
         mock_store_cls.return_value = mock_store
         mock_find_bridges.return_value = []
 
-        adapter.get_bridge_nodes(top_n=5)
+        _ = adapter.get_bridge_nodes(top_n=5)
 
         mock_find_bridges.assert_called_once_with(mock_store, top_n=5)
 
@@ -376,7 +377,7 @@ class TestGetHubNodes:
         mock_store_cls.return_value = mock_store
         mock_find_hubs.return_value = []
 
-        adapter.get_hub_nodes(top_n=3)
+        _ = adapter.get_hub_nodes(top_n=3)
 
         mock_find_hubs.assert_called_once_with(mock_store, top_n=3)
 

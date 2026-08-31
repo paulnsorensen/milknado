@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from milknado.adapters.git import GitAdapter, _try_mergiraf_resolve
+from milknado.adapters.git import (
+    GitAdapter,
+    _try_mergiraf_resolve,  # pyright: ignore[reportPrivateUsage]
+)
 from milknado.domains.common.errors import (
     GitOperationError,
     RebaseAbortError,
@@ -35,7 +38,7 @@ class TestCreateWorktree:
         result = adapter.create_worktree(wt, "feat-branch")
         mock_run.assert_called_once_with(
             ["git", "worktree", "add", "-b", "feat-branch", str(wt)],
-            cwd=adapter._root,
+            cwd=adapter._root,  # pyright: ignore[reportPrivateUsage]
             capture_output=True,
             text=True,
             check=True,
@@ -48,7 +51,7 @@ class TestCreateWorktree:
         with pytest.raises(
             GitOperationError, match=r"git worktree add -b branch /tmp/wt failed"
         ) as exc_info:
-            adapter.create_worktree(Path("/tmp/wt"), "branch")
+            _ = adapter.create_worktree(Path("/tmp/wt"), "branch")
         assert exc_info.value.operation == "worktree add -b branch /tmp/wt"
         assert exc_info.value.detail == "worktree failed"
 
@@ -68,22 +71,22 @@ def repo(tmp_path: Path) -> Path:
     """A real git repo on branch `feature` with one seed commit."""
     root = tmp_path / "repo"
     root.mkdir()
-    _git(root, "init", "-q", "-b", "feature", str(root))
-    _git(root, "config", "user.email", "test@test.com")
-    _git(root, "config", "user.name", "Test")
-    (root / "README.md").write_text("seed\n")
-    _git(root, "add", ".")
-    _git(root, "commit", "-qm", "seed")
+    _ = _git(root, "init", "-q", "-b", "feature", str(root))
+    _ = _git(root, "config", "user.email", "test@test.com")
+    _ = _git(root, "config", "user.name", "Test")
+    _ = (root / "README.md").write_text("seed\n")
+    _ = _git(root, "add", ".")
+    _ = _git(root, "commit", "-qm", "seed")
     return root
 
 
 def test_diff_for_review_includes_committed_and_untracked_changes(repo: Path) -> None:
-    (repo / "committed.py").write_text("committed = True\n")
-    _git(repo, "add", "committed.py")
-    _git(repo, "commit", "-qm", "committed change")
+    _ = (repo / "committed.py").write_text("committed = True\n")
+    _ = _git(repo, "add", "committed.py")
+    _ = _git(repo, "commit", "-qm", "committed change")
     base_oid = _git(repo, "rev-parse", "HEAD^").strip()
-    (repo / "README.md").write_text("unstaged change\n")
-    (repo / "untracked.py").write_text("untracked = True\n")
+    _ = (repo / "README.md").write_text("unstaged change\n")
+    _ = (repo / "untracked.py").write_text("untracked = True\n")
 
     diff = GitAdapter(repo).diff_for_review(repo, base_oid)
 
@@ -98,28 +101,28 @@ def test_diff_for_review_includes_committed_and_untracked_changes(repo: Path) ->
 def test_diff_for_review_rejects_unexpected_untracked_diff_status(
     adapter: GitAdapter,
 ) -> None:
-    adapter._run = MagicMock(side_effect=[_ok(), _ok("new.txt\n")])  # type: ignore[method-assign]
+    adapter._run = MagicMock(side_effect=[_ok(), _ok("new.txt\n")])  # pyright: ignore[reportPrivateUsage]
     with patch(
         "milknado.adapters.git.subprocess.run",
         return_value=_fail(2, stderr="diff failed"),
     ):
         with pytest.raises(GitOperationError, match="diff --no-index failed"):
-            adapter.diff_for_review(adapter._root, "base")
+            _ = adapter.diff_for_review(adapter._root, "base")  # pyright: ignore[reportPrivateUsage]
 
 
 def test_diff_for_review_translates_os_error(adapter: GitAdapter) -> None:
-    adapter._run = MagicMock(side_effect=OSError("git unavailable"))  # type: ignore[method-assign]
+    adapter._run = MagicMock(side_effect=OSError("git unavailable"))  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(GitOperationError, match="diff for review failed"):
-        adapter.diff_for_review(adapter._root, "base")
+        _ = adapter.diff_for_review(adapter._root, "base")  # pyright: ignore[reportPrivateUsage]
 
 
 def _worktree_with_commit(repo: Path, name: str) -> Path:
     """A worktree on its own branch with one committed (unlanded) change."""
     wt = repo.parent / name
-    _git(repo, "worktree", "add", "-q", "-b", f"wb-{name}", str(wt))
-    (wt / f"{name}.py").write_text("x = 1\n")
-    _git(wt, "add", ".")
-    _git(wt, "commit", "-qm", f"work in {name}")
+    _ = _git(repo, "worktree", "add", "-q", "-b", f"wb-{name}", str(wt))
+    _ = (wt / f"{name}.py").write_text("x = 1\n")
+    _ = _git(wt, "add", ".")
+    _ = _git(wt, "commit", "-qm", f"work in {name}")
     return wt
 
 
@@ -129,14 +132,14 @@ class TestRemoveWorktreeFailClosed:
 
     def test_removes_clean_worktree_with_no_new_work(self, repo: Path) -> None:
         wt = repo.parent / "wt-clean"
-        _git(repo, "worktree", "add", "-q", "-b", "wb-clean", str(wt))
+        _ = _git(repo, "worktree", "add", "-q", "-b", "wb-clean", str(wt))
         GitAdapter(repo).remove_worktree(wt, "feature")
         assert not wt.exists()
 
     def test_refuses_dirty_worktree_naming_files(self, repo: Path) -> None:
         wt = repo.parent / "wt-dirty"
-        _git(repo, "worktree", "add", "-q", "-b", "wb-dirty", str(wt))
-        (wt / "uncommitted.py").write_text("at risk\n")
+        _ = _git(repo, "worktree", "add", "-q", "-b", "wb-dirty", str(wt))
+        _ = (wt / "uncommitted.py").write_text("at risk\n")
         with pytest.raises(UnlandedWorkError) as exc_info:
             GitAdapter(repo).remove_worktree(wt, "feature")
         assert str(wt) in str(exc_info.value)
@@ -167,9 +170,9 @@ class TestRemoveWorktreeFailClosed:
         ancestor — refuse, never destroy on a guess."""
         wt = _worktree_with_commit(repo, "wt-conflict")
         # Diverge the feature branch with conflicting content in the same file.
-        (repo / "wt-conflict.py").write_text("x = 2  # conflicts\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-qm", "feature diverges")
+        _ = (repo / "wt-conflict.py").write_text("x = 2  # conflicts\n")
+        _ = _git(repo, "add", ".")
+        _ = _git(repo, "commit", "-qm", "feature diverges")
         with pytest.raises(UnlandedWorkError):
             GitAdapter(repo).remove_worktree(wt, "feature")
         assert wt.exists()
@@ -181,7 +184,7 @@ class TestRemoveWorktreeFailClosed:
         FALSE UnlandedWorkError naming the root's files. It must raise a plain
         ValueError (non-refusal: managers warn-and-swallow it, as the old
         CalledProcessError path did) and never touch the stale dir."""
-        (repo / "root-dirt.py").write_text("uncommitted root work\n")
+        _ = (repo / "root-dirt.py").write_text("uncommitted root work\n")
         stale = repo / "milknado-stale"
         stale.mkdir()
         with pytest.raises(ValueError, match="not a registered worktree"):
@@ -192,14 +195,14 @@ class TestRemoveWorktreeFailClosed:
         """RALPH.md / .ralph-logs are git-ignored in real worktrees — they must
         not count as dirt (verified against git 2.53: plain `worktree remove`
         deletes ignored files without --force)."""
-        (repo / ".gitignore").write_text("RALPH.md\n.ralph-logs/\n")
-        _git(repo, "add", ".gitignore")
-        _git(repo, "commit", "-qm", "ignore scaffolding")
+        _ = (repo / ".gitignore").write_text("RALPH.md\n.ralph-logs/\n")
+        _ = _git(repo, "add", ".gitignore")
+        _ = _git(repo, "commit", "-qm", "ignore scaffolding")
         wt = repo.parent / "wt-scaffold"
-        _git(repo, "worktree", "add", "-q", "-b", "wb-scaffold", str(wt))
-        (wt / "RALPH.md").write_text("# scaffolding\n")
+        _ = _git(repo, "worktree", "add", "-q", "-b", "wb-scaffold", str(wt))
+        _ = (wt / "RALPH.md").write_text("# scaffolding\n")
         (wt / ".ralph-logs").mkdir()
-        (wt / ".ralph-logs" / "run.log").write_text("log\n")
+        _ = (wt / ".ralph-logs" / "run.log").write_text("log\n")
         GitAdapter(repo).remove_worktree(wt, "feature")
         assert not wt.exists()
 
@@ -209,17 +212,17 @@ class TestForceRemoveWorktree:
         """The explicitly-named destructive variant: discards what the
         fail-closed path refuses."""
         wt = _worktree_with_commit(repo, "wt-doomed")
-        (wt / "dirty.py").write_text("also at risk\n")
+        _ = (wt / "dirty.py").write_text("also at risk\n")
         GitAdapter(repo).force_remove_worktree(wt)
         assert not wt.exists()
 
     @patch("milknado.adapters.git.subprocess.run")
     def test_passes_force_flag(self, mock_run: MagicMock, adapter: GitAdapter) -> None:
         mock_run.return_value = _ok()
-        adapter.force_remove_worktree(Path("/tmp/wt"))
+        _ = adapter.force_remove_worktree(Path("/tmp/wt"))
         mock_run.assert_called_once_with(
             ["git", "worktree", "remove", "--force", "/tmp/wt"],
-            cwd=adapter._root,
+            cwd=adapter._root,  # pyright: ignore[reportPrivateUsage]
             capture_output=True,
             text=True,
             check=True,
@@ -233,7 +236,7 @@ class TestPruneWorktrees:
         adapter.prune_worktrees()
         mock_run.assert_called_once_with(
             ["git", "worktree", "prune"],
-            cwd=adapter._root,
+            cwd=adapter._root,  # pyright: ignore[reportPrivateUsage]
             capture_output=True,
             text=True,
             check=True,
@@ -282,7 +285,7 @@ class TestRebase:
         ]
 
         with pytest.raises(RebaseAbortError) as exc_info:
-            adapter.rebase(Path("/tmp/wt"), "main")
+            _ = adapter.rebase(Path("/tmp/wt"), "main")
 
         assert "fatal: no rebase in progress" in exc_info.value.stderr
 
@@ -390,7 +393,7 @@ class TestSquashAndCommit:
             _fail(1),  # diff --cached --quiet returns 1 means staged changes exist
             _ok(),  # commit
         ]
-        adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
+        _ = adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
         commit_call = mock_run.call_args_list[-1]
         assert "commit" in commit_call.args[0]
         assert "feat: squashed" in commit_call.args[0]
@@ -405,9 +408,9 @@ class TestSquashAndCommit:
             _ok(),  # reset --soft
             _ok(),  # diff --cached --quiet returns 0 = nothing staged
         ]
-        adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
+        _ = adapter.squash_and_commit(tmp_path, "main", "feat: squashed")
         calls = [c.args[0] for c in mock_run.call_args_list]
-        assert not any("commit" in c for c in calls)
+        assert not any("commit" in c for c in calls)  # pyright: ignore[reportAny]
 
     @patch("milknado.adapters.git.subprocess.run")
     def test_merge_base_failure_skips_reset(
@@ -425,10 +428,10 @@ class TestSquashAndCommit:
             subprocess.CalledProcessError(1, "git"),  # merge-base raises CalledProcessError
             _ok(),  # diff --cached --quiet returns 0
         ]
-        adapter.squash_and_commit(tmp_path, "main", "msg")
+        _ = adapter.squash_and_commit(tmp_path, "main", "msg")
         # Should not raise; commit skipped because nothing staged
         calls = [c.args[0] for c in mock_run.call_args_list]
-        assert not any("commit" in c for c in calls if isinstance(c, list))
+        assert not any("commit" in c for c in calls if isinstance(c, list))  # pyright: ignore[reportAny]
 
 
 class TestBranchExists:
@@ -441,7 +444,7 @@ class TestBranchExists:
         assert adapter.branch_exists("no-such-branch") is False
 
     def test_recognizes_namespaced_relocation_branch(self, repo: Path) -> None:
-        _git(repo, "branch", "milknado/1-slug-2")
+        _ = _git(repo, "branch", "milknado/1-slug-2")
         adapter = GitAdapter(repo)
         assert adapter.branch_exists("milknado/1-slug-2") is True
 
@@ -453,11 +456,11 @@ class TestAtomicRefUpdate:
 
     def test_checked_out_ref_update_synchronizes_worktree(self, repo: Path) -> None:
         old_oid = _git(repo, "rev-parse", "HEAD").strip()
-        (repo / "landed.txt").write_text("landed")
-        _git(repo, "add", "landed.txt")
-        _git(repo, "commit", "-qm", "next")
+        _ = (repo / "landed.txt").write_text("landed")
+        _ = _git(repo, "add", "landed.txt")
+        _ = _git(repo, "commit", "-qm", "next")
         new_oid = _git(repo, "rev-parse", "HEAD").strip()
-        _git(repo, "reset", "--hard", old_oid)
+        _ = _git(repo, "reset", "--hard", old_oid)
 
         GitAdapter(repo).compare_and_swap_ref("refs/heads/feature", old_oid, new_oid)
 
@@ -470,7 +473,7 @@ class TestAtomicRefUpdate:
         new_oid = _git(
             repo, "commit-tree", f"{old_oid}^{{tree}}", "-p", old_oid, "-m", "next"
         ).strip()
-        (repo / "README.md").write_text("dirty")
+        _ = (repo / "README.md").write_text("dirty")
 
         with pytest.raises(GitOperationError, match="tracked changes"):
             GitAdapter(repo).compare_and_swap_ref("feature", old_oid, new_oid)
@@ -506,8 +509,8 @@ class TestAtomicRefUpdate:
 
     def test_switched_branch_ref_update_does_not_touch_worktree(self, repo: Path) -> None:
         old_oid = _git(repo, "rev-parse", "feature").strip()
-        _git(repo, "branch", "other")
-        _git(repo, "switch", "other")
+        _ = _git(repo, "branch", "other")
+        _ = _git(repo, "switch", "other")
         new_oid = _git(
             repo, "commit-tree", f"{old_oid}^{{tree}}", "-p", old_oid, "-m", "next"
         ).strip()
@@ -524,7 +527,7 @@ class TestAtomicRefUpdate:
             subprocess.CompletedProcess([], 0),
         ]
         adapter = GitAdapter(repo)
-        adapter._run = MagicMock(
+        adapter._run = MagicMock(  # pyright: ignore[reportPrivateUsage]
             side_effect=[
                 _ok("old\n"),
                 _ok(),
@@ -537,7 +540,7 @@ class TestAtomicRefUpdate:
         with pytest.raises(GitOperationError, match="collision"):
             adapter.compare_and_swap_ref("feature", "old", "new")
 
-        assert adapter._run.call_args_list[-2:] == [
+        assert adapter._run.call_args_list[-2:] == [  # pyright: ignore[reportPrivateUsage]
             call(["read-tree", "-u", "-m", "new", "old"]),
             call(["update-ref", "refs/heads/feature", "old", "new"]),
         ]
@@ -551,7 +554,7 @@ class TestAtomicRefUpdate:
             subprocess.CompletedProcess([], 0),
         ]
         adapter = GitAdapter(repo)
-        adapter._run = MagicMock(
+        adapter._run = MagicMock(  # pyright: ignore[reportPrivateUsage]
             side_effect=[
                 _ok("old\n"),
                 _ok(),

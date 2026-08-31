@@ -51,8 +51,8 @@ do the thing
 def _seed_wiki(project_root: Path) -> None:
     d = project_root / ".hallouminate" / "wiki" / "roadmaps" / "demo"
     d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "g1.md").write_text(GOAL_MD)
+    _ = (d / "index.md").write_text(INDEX_MD)
+    _ = (d / "g1.md").write_text(GOAL_MD)
 
 
 def test_import_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -60,12 +60,12 @@ def test_import_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     result = runner.invoke(
         app, ["github-roadmap", "import", "acme", "7", "--project-root", str(tmp_path)]
@@ -99,16 +99,16 @@ def test_bind_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
-    monkeypatch.setattr(GhProjectAdapter, "item_list", staticmethod(lambda _o, _n: []))
+    monkeypatch.setattr(GhProjectAdapter, "item_list", staticmethod(lambda _o, _n: []))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(
         GhProjectAdapter,
         "issue_create",
-        staticmethod(lambda o, r, _t, _b: f"https://x/{o}/{r}/1"),
+        staticmethod(lambda o, r, _t, _b: f"https://x/{o}/{r}/1"),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
-    monkeypatch.setattr(GhProjectAdapter, "item_add", staticmethod(lambda _o, _n, _u: "PVTI_1"))
-    monkeypatch.setattr(GhProjectAdapter, "field_list", staticmethod(lambda _o, _n: []))
+    monkeypatch.setattr(GhProjectAdapter, "item_add", staticmethod(lambda _o, _n, _u: "PVTI_1"))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(GhProjectAdapter, "field_list", staticmethod(lambda _o, _n: []))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(GhProjectAdapter, "field_create", staticmethod(lambda *_a: "F"))
     monkeypatch.setattr(GhProjectAdapter, "field_create_text", staticmethod(lambda *_a: "F2"))
 
@@ -125,12 +125,12 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", title="g")]),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     imp = runner.invoke(
         app, ["github-roadmap", "import", "acme", "7", "--project-root", str(tmp_path)]
@@ -141,13 +141,13 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "project_view",
-        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),
+        staticmethod(lambda _o, _n: GithubProject(id="PVT_1", title="RM")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     monkeypatch.setattr(
         GhProjectAdapter,
         "field_list",
-        staticmethod(
-            lambda _o, _n: [
+        staticmethod(  # pyright: ignore[reportUnknownArgumentType]
+            lambda _o, _n: [  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
                 msgspec.convert(
                     {
                         "id": "F_status",
@@ -164,7 +164,7 @@ def test_export_command_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         GhProjectAdapter,
         "item_list",
-        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", url="https://x/1")]),
+        staticmethod(lambda _o, _n: [GithubItem(id="PVTI_1", url="https://x/1")]),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     monkeypatch.setattr(GhProjectAdapter, "item_edit", staticmethod(lambda *_a, **_k: None))
     monkeypatch.setattr(GhProjectAdapter, "issue_edit_body", staticmethod(lambda *_a: None))

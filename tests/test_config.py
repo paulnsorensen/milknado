@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import msgspec
 import pytest
@@ -42,7 +41,7 @@ class TestDefaultConfig:
 class TestLoadConfig:
     def _write_toml(self, tmp_path: Path, content: str) -> Path:
         p = tmp_path / "milknado.toml"
-        p.write_text(content, encoding="utf-8")
+        _ = p.write_text(content, encoding="utf-8")
         return p
 
     def test_loads_minimal_config(self, tmp_path: Path) -> None:
@@ -82,18 +81,18 @@ class TestLoadConfig:
     )
     def test_rejects_coercible_numeric_strings(self, field: str, value: str) -> None:
         with pytest.raises(msgspec.ValidationError, match=field):
-            msgspec.convert({field: value}, type=MilknadoSection, strict=True)
+            _ = msgspec.convert({field: value}, type=MilknadoSection, strict=True)
 
     def test_invalid_family_error_hides_input(self) -> None:
         with pytest.raises(msgspec.ValidationError) as exc_info:
-            decode_milknado_section({"agent_family": "TOPSECRET"})
+            _ = decode_milknado_section({"agent_family": "TOPSECRET"})
 
         assert "topsecret" not in str(exc_info.value).lower()
 
     def test_decoder_does_not_mutate_raw_worker_tools(self) -> None:
         raw: dict[str, object] = {"worker": {"tools": {"claude": ["Read"]}}}
 
-        decode_milknado_section(raw)
+        _ = decode_milknado_section(raw)
 
         assert raw == {"worker": {"tools": {"claude": ["Read"]}}}
 
@@ -122,7 +121,7 @@ class TestLoadConfig:
         toml = '[milknado]\nagent_family = "openai"\n'
         path = self._write_toml(tmp_path, toml)
         with pytest.raises(ValueError, match="Invalid agent_family"):
-            load_config(path)
+            _ = load_config(path)
 
     def test_db_path_relative_to_project(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\ndb_path = ".milknado/custom.db"\n'
@@ -170,13 +169,13 @@ class TestLoadConfig:
         toml = '[milknado]\nagent_family = "claude"\ndb_path = "../../evil.db"\n'
         path = self._write_toml(tmp_path, toml)
         with pytest.raises(ValueError, match="escapes project_root"):
-            load_config(path)
+            _ = load_config(path)
 
     def test_db_path_absolute_path_raises(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\ndb_path = "/etc/evil.db"\n'
         path = self._write_toml(tmp_path, toml)
         with pytest.raises(ValueError, match="escapes project_root"):
-            load_config(path)
+            _ = load_config(path)
 
     def test_worktree_config_requires_boolean(self, tmp_path: Path) -> None:
         path = self._write_toml(
@@ -184,7 +183,7 @@ class TestLoadConfig:
             '[milknado]\nagent_family = "claude"\nworktree = "nope"\n',
         )
         with pytest.raises(ValueError, match=r"\[milknado\] worktree must be a boolean"):
-            load_config(path)
+            _ = load_config(path)
 
 
 class TestSaveConfig:
@@ -247,11 +246,13 @@ class TestSaveConfig:
         # is the command DERIVED from the override — the realistic shape that
         # save_config suppresses and a reload re-derives.
         src = tmp_path / "in.toml"
-        src.write_text(
-            "[milknado]\n"
-            'agent_family = "claude"\n\n'
-            "[milknado.worker.tools]\n"
-            'claude = ["...", "mcp__github__*"]\n',
+        _ = src.write_text(
+            """[milknado]
+agent_family = "claude"
+
+[milknado.worker.tools]
+claude = [\"...\", \"mcp__github__*\"]
+""",
             encoding="utf-8",
         )
         cfg = load_config(src, include_global=False)
@@ -268,7 +269,7 @@ class TestSaveConfig:
         # entirely); dropping it on save would silently restore the default
         # tool set on reload.
         src = tmp_path / "in.toml"
-        src.write_text(
+        _ = src.write_text(
             '[milknado]\nagent_family = "claude"\n\n[milknado.worker.tools]\nclaude = []\n',
             encoding="utf-8",
         )
@@ -345,7 +346,7 @@ class TestSaveConfig:
         assert "milknado.db" in content
 
 
-def _section_gates(raw: Any) -> tuple[Gate, ...] | None:
+def _section_gates(raw: object) -> tuple[Gate, ...] | None:
     """Validate raw TOML ``quality_gates`` through the ``[milknado]`` schema."""
     return decode_milknado_section({"quality_gates": raw}).quality_gates
 
@@ -373,36 +374,36 @@ class TestParseGates:
 
     def test_non_list_raises_value_error(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="must be a list"):
-            _section_gates("uv run pytest")
+            _ = _section_gates("uv run pytest")
 
     def test_empty_string_entry_raises_value_error(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="non-empty string"):
-            _section_gates([""])
+            _ = _section_gates([""])
 
     def test_bad_regex_fail_on_stdout_raises(self) -> None:
         raw = [{"command": "godot", "fail_on_stdout": "[invalid"}]
         with pytest.raises(msgspec.ValidationError, match="not a valid regex"):
-            _section_gates(raw)
+            _ = _section_gates(raw)
 
     def test_dict_missing_command_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="command"):
-            _section_gates([{"fail_on_stdout": "ERROR"}])
+            _ = _section_gates([{"fail_on_stdout": "ERROR"}])
 
     def test_wrong_type_entry_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="string or a table"):
-            _section_gates([42])
+            _ = _section_gates([42])
 
     def test_non_string_fail_on_stdout_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="fail_on_stdout"):
-            _section_gates([{"command": "godot", "fail_on_stdout": 42}])
+            _ = _section_gates([{"command": "godot", "fail_on_stdout": 42}])
 
     def test_whitespace_only_string_entry_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="non-empty string"):
-            _section_gates(["   "])
+            _ = _section_gates(["   "])
 
     def test_whitespace_only_command_raises(self) -> None:
         with pytest.raises(msgspec.ValidationError, match="non-empty string"):
-            _section_gates([{"command": "   "}])
+            _ = _section_gates([{"command": "   "}])
 
     def test_whitespace_only_fail_on_stdout_treated_as_absent(self) -> None:
         result = _section_gates([{"command": "godot", "fail_on_stdout": "   "}])
@@ -411,7 +412,7 @@ class TestParseGates:
 
 class TestDetectProjectGates:
     def test_python_project_returns_python_triple(self, tmp_path: Path) -> None:
-        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        _ = (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         commands = [g.command for g in result]
@@ -419,28 +420,28 @@ class TestDetectProjectGates:
         assert "uv run ruff check" in commands
 
     def test_rust_project_returns_cargo_gates(self, tmp_path: Path) -> None:
-        (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
+        _ = (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         commands = [g.command for g in result]
         assert any("cargo" in c for c in commands)
 
     def test_node_project_returns_npm_test(self, tmp_path: Path) -> None:
-        (tmp_path / "package.json").write_text('{"name":"x"}', encoding="utf-8")
+        _ = (tmp_path / "package.json").write_text('{"name":"x"}', encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         commands = [g.command for g in result]
         assert any("npm" in c for c in commands)
 
     def test_go_project_returns_go_gates(self, tmp_path: Path) -> None:
-        (tmp_path / "go.mod").write_text("module x\ngo 1.21\n", encoding="utf-8")
+        _ = (tmp_path / "go.mod").write_text("module x\ngo 1.21\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         commands = [g.command for g in result]
         assert any("go" in c for c in commands)
 
     def test_godot_project_returns_gate_with_fail_on_stdout(self, tmp_path: Path) -> None:
-        (tmp_path / "project.godot").write_text("[gd_resource]\n", encoding="utf-8")
+        _ = (tmp_path / "project.godot").write_text("[gd_resource]\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         patterns = [g.fail_on_stdout for g in result if g.fail_on_stdout is not None]
@@ -456,8 +457,8 @@ class TestDetectProjectGates:
 
     def test_pyproject_wins_over_cargo(self, tmp_path: Path) -> None:
         """First match wins: pyproject.toml before Cargo.toml."""
-        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
-        (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
+        _ = (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n", encoding="utf-8")
+        _ = (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")
         result = detect_project_gates(tmp_path)
         assert result is not None
         # Python triple includes uv run pytest

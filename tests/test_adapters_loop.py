@@ -8,9 +8,9 @@ from milknado.adapters.loop import (
     MAX_CONSECUTIVE_AGENT_FAILURES,
     MILKNADO_COMPLETION_SIGNAL,
     LoopAdapter,
-    _build_ralph_content,
-    _build_verify_prompt,
-    _parse_verify_output,
+    _build_ralph_content,  # pyright: ignore[reportPrivateUsage]
+    _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
+    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
@@ -27,10 +27,10 @@ def mock_manager() -> MagicMock:
 @pytest.fixture()
 def adapter(mock_manager: MagicMock) -> LoopAdapter:
     a = LoopAdapter.__new__(LoopAdapter)
-    a._manager = mock_manager
-    a._queue = queue.Queue()
-    a._emitter = MagicMock()
-    a._agent = ""
+    a._manager = mock_manager  # pyright: ignore[reportPrivateUsage]
+    a._queue = queue.Queue()  # pyright: ignore[reportPrivateUsage]
+    a._emitter = MagicMock()  # pyright: ignore[reportPrivateUsage]
+    a._agent = ""  # pyright: ignore[reportPrivateUsage]
     return a
 
 
@@ -45,7 +45,7 @@ class TestCreateRun:
         mock_config = MagicMock()
         mock_config_cls.return_value = mock_config
         mock_run = MagicMock()
-        mock_manager.create_run.return_value = mock_run
+        mock_manager.create_run.return_value = mock_run  # pyright: ignore[reportAny]
 
         result = adapter.create_run(
             agent="claude",
@@ -67,8 +67,10 @@ class TestCreateRun:
             commit_footer="Co-authored-by: Team <team@example.com>",
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
-        mock_manager.create_run.assert_called_once_with(
-            mock_config, emitter=adapter._emitter, run_id=None
+        mock_manager.create_run.assert_called_once_with(  # pyright: ignore[reportAny]
+            mock_config,
+            emitter=adapter._emitter,  # pyright: ignore[reportPrivateUsage]
+            run_id=None,
         )
         assert result is mock_run
 
@@ -76,89 +78,89 @@ class TestCreateRun:
 class TestStartStopRun:
     def test_start_delegates(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         adapter.start_run("run-1")
-        mock_manager.start_run.assert_called_once_with("run-1")
+        mock_manager.start_run.assert_called_once_with("run-1")  # pyright: ignore[reportAny]
 
     def test_stop_joins_worker(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
-        mock_manager.stop_and_join.return_value = True
+        mock_manager.stop_and_join.return_value = True  # pyright: ignore[reportAny]
         assert adapter.stop_run("run-1", timeout=3.0) is True
-        mock_manager.stop_and_join.assert_called_once_with("run-1", 3.0)
+        mock_manager.stop_and_join.assert_called_once_with("run-1", 3.0)  # pyright: ignore[reportAny]
 
     def test_queue_guidance_uses_public_manager_boundary(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        mock_manager.queue_guidance.return_value = True
+        mock_manager.queue_guidance.return_value = True  # pyright: ignore[reportAny]
 
         assert adapter.queue_guidance("run-1", "check the result") is True
-        mock_manager.queue_guidance.assert_called_once_with("run-1", "check the result")
+        mock_manager.queue_guidance.assert_called_once_with("run-1", "check the result")  # pyright: ignore[reportAny]
 
     def test_control_and_state_ports_delegate_to_the_managed_run(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.state.last_captured_stdout = None
-        run.state.last_result_text = "result line"
-        run.state.pending_guidance = ("pending guidance",)
-        mock_manager.get_run.return_value = run
-        mock_manager.force_stop_and_join.return_value = True
+        run.state.last_captured_stdout = None  # pyright: ignore[reportAny]
+        run.state.last_result_text = "result line"  # pyright: ignore[reportAny]
+        run.state.pending_guidance = ("pending guidance",)  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        mock_manager.force_stop_and_join.return_value = True  # pyright: ignore[reportAny]
 
         assert adapter.request_stop_run("run-1") is None
         assert adapter.force_stop_run("run-1") is True
         assert adapter.get_run_output_tail("run-1", 5) == ["result line"]
         assert adapter.get_run_guidance("run-1") == ("pending guidance",)
-        mock_manager.stop_run.assert_called_once_with("run-1")
-        mock_manager.force_stop_and_join.assert_called_once_with("run-1", None)
+        mock_manager.stop_run.assert_called_once_with("run-1")  # pyright: ignore[reportAny]
+        mock_manager.force_stop_and_join.assert_called_once_with("run-1", None)  # pyright: ignore[reportAny]
 
-        mock_manager.get_run.return_value = None
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.get_run_output_tail("missing", 5) == []
         assert adapter.get_run_guidance("missing") == ()
 
 
 class TestListAndGetRuns:
     def test_list_runs(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
-        mock_manager.list_runs.return_value = []
+        mock_manager.list_runs.return_value = []  # pyright: ignore[reportAny]
         assert adapter.list_runs() == []
 
     def test_get_run_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         run = MagicMock(id="run-1")
-        mock_manager.get_run.return_value = run
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
         assert adapter.get_run("run-1") == run
 
     def test_get_run_not_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
-        mock_manager.get_run.return_value = None
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.get_run("missing") is None
 
     def test_is_run_alive_reports_thread_liveness(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        mock_manager.get_run.return_value = run
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
 
         run.thread = None
         assert adapter.is_run_alive("run-1") is True
 
         run.thread = MagicMock()
-        run.thread.is_alive.return_value = True
+        run.thread.is_alive.return_value = True  # pyright: ignore[reportAny]
         assert adapter.is_run_alive("run-1") is True
 
-        run.thread.is_alive.return_value = False
+        run.thread.is_alive.return_value = False  # pyright: ignore[reportAny]
         assert adapter.is_run_alive("run-1") is False
 
-        mock_manager.get_run.return_value = None
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.is_run_alive("missing") is False
 
     def test_extracts_large_stdout_tail_without_splitlines(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         class OutputWithoutSplitlines(str):
-            def splitlines(self, *args: object, **kwargs: object) -> list[str]:
+            def splitlines(self, *args: object, **kwargs: object) -> list[str]:  # pyright: ignore[reportImplicitOverride]
                 raise AssertionError("full output materialization is forbidden")
 
         run = MagicMock()
-        run.state.last_captured_stdout = OutputWithoutSplitlines(
+        run.state.last_captured_stdout = OutputWithoutSplitlines(  # pyright: ignore[reportAny]
             "\n".join(f"line {index}" for index in range(10_000))
         )
-        run.state.last_result_text = None
-        mock_manager.get_run.return_value = run
+        run.state.last_result_text = None  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
 
         assert adapter.get_run_output_tail("run-1", 3) == [
             "line 9997",
@@ -170,24 +172,26 @@ class TestListAndGetRuns:
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.state.last_captured_stdout = ""
-        run.state.last_result_text = "fallback is not used for empty captured output"
-        mock_manager.get_run.return_value = run
+        run.state.last_captured_stdout = ""  # pyright: ignore[reportAny]
+        run.state.last_result_text = "fallback is not used for empty captured output"  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
 
         assert adapter.get_run_output_tail("run-1", 30) == []
 
     def test_returns_iteration_progress_before_terminal_event(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
+        _ = mock_manager
         progress = MagicMock()
         progress.type = EventType.ITERATION_STARTED
         progress.run_id = "run-1"
         progress.data = {"iteration": 2}
-        adapter._queue.put(progress)
+        adapter._queue.put(progress)  # pyright: ignore[reportPrivateUsage]
 
         run_id, event = adapter.wait_for_next_completion({"run-1"})
 
         assert run_id == "run-1"
+        assert isinstance(event, ProgressEvent)
         assert event.run_id == "run-1"
         assert event.work == 2
         assert event.message == "iteration 2 started"
@@ -205,9 +209,9 @@ class TestWaitForNextCompletion:
         event.type = EventType.RUN_STOPPED
         event.run_id = "run-1"
         run = MagicMock()
-        run.state.status = RunStatus.COMPLETED
-        mock_manager.get_run.return_value = run
-        adapter._queue.put(event)
+        run.state.status = RunStatus.COMPLETED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -222,9 +226,9 @@ class TestWaitForNextCompletion:
 
         event = MagicMock(type=EventType.RUN_STOPPED, run_id="run-1")
         run = MagicMock()
-        run.state.status = RunStatus.STOPPED
-        mock_manager.get_run.return_value = run
-        adapter._queue.put(event)
+        run.state.status = RunStatus.STOPPED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
 
         assert adapter.wait_for_next_completion({"run-1"}) == ("run-1", "stopped")
 
@@ -239,9 +243,9 @@ class TestWaitForNextCompletion:
         event.type = EventType.RUN_STOPPED
         event.run_id = "run-1"
         run = MagicMock()
-        run.state.status = RunStatus.FAILED
-        mock_manager.get_run.return_value = run
-        adapter._queue.put(event)
+        run.state.status = RunStatus.FAILED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -262,10 +266,10 @@ class TestWaitForNextCompletion:
         stop.type = EventType.RUN_STOPPED
         stop.run_id = "run-1"
         run = MagicMock()
-        run.state.status = RunStatus.COMPLETED
-        mock_manager.get_run.return_value = run
-        adapter._queue.put(noise)
-        adapter._queue.put(stop)
+        run.state.status = RunStatus.COMPLETED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(noise)  # pyright: ignore[reportPrivateUsage]
+        adapter._queue.put(stop)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -287,11 +291,11 @@ class TestWaitForNextCompletion:
         event2.run_id = "run-1"
 
         run = MagicMock()
-        run.state.status = RunStatus.COMPLETED
-        mock_manager.get_run.return_value = run
+        run.state.status = RunStatus.COMPLETED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
 
-        adapter._queue.put(event1)
-        adapter._queue.put(event2)
+        adapter._queue.put(event1)  # pyright: ignore[reportPrivateUsage]
+        adapter._queue.put(event2)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -313,10 +317,10 @@ class TestWaitForNextCompletion:
         stopped.type = EventType.RUN_STOPPED
         stopped.run_id = "run-1"
         run = MagicMock()
-        run.state.status = RunStatus.COMPLETED
-        mock_manager.get_run.return_value = run
-        adapter._queue.put(progress)
-        adapter._queue.put(stopped)
+        run.state.status = RunStatus.COMPLETED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(progress)  # pyright: ignore[reportPrivateUsage]
+        adapter._queue.put(stopped)  # pyright: ignore[reportPrivateUsage]
 
         run_id, outcome = adapter.wait_for_next_completion({"run-1"})
 
@@ -333,8 +337,8 @@ class TestWaitForNextCompletion:
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
         event.run_id = "run-1"
-        mock_manager.get_run.return_value = None
-        adapter._queue.put(event)
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
+        adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -420,7 +424,7 @@ class TestBuildRalphContent:
             .strip()
             .endswith(
                 f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
-                "so the run can stop before the iteration budget."
+                "so the run can stop before the iteration budget."  # pyright: ignore[reportImplicitStringConcatenation]
             )
         )
 
@@ -470,7 +474,7 @@ class TestParseVerifyOutput:
 
 class TestVerifySpec:
     def test_no_agent_returns_done(self, adapter: LoopAdapter) -> None:
-        adapter._agent = ""  # type: ignore[attr-defined]
+        adapter._agent = ""  # pyright: ignore[reportPrivateUsage]
         result = adapter.verify_spec("spec text", "state")
         assert result == VerifySpecResult(outcome="done")
 
@@ -480,9 +484,9 @@ class TestVerifySpec:
         mock_manager_cls: MagicMock,
         adapter: LoopAdapter,
     ) -> None:
-        adapter._agent = "claude"  # type: ignore[attr-defined]
+        adapter._agent = "claude"  # pyright: ignore[reportPrivateUsage]
         local_q: queue.Queue[MagicMock] = queue.Queue()
-        _setup_verify_mocks(mock_manager_cls, local_q)
+        _ = _setup_verify_mocks(mock_manager_cls, local_q)
 
         _put_iteration(local_q, EventType.ITERATION_COMPLETED, "<result>done</result>")
         _put_stopped(local_q)
@@ -496,9 +500,9 @@ class TestVerifySpec:
         mock_manager_cls: MagicMock,
         adapter: LoopAdapter,
     ) -> None:
-        adapter._agent = "claude"  # type: ignore[attr-defined]
+        adapter._agent = "claude"  # pyright: ignore[reportPrivateUsage]
         local_q: queue.Queue[MagicMock] = queue.Queue()
-        _setup_verify_mocks(mock_manager_cls, local_q)
+        _ = _setup_verify_mocks(mock_manager_cls, local_q)
 
         output = "<result>gaps</result>\n<goal_delta>missing auth</goal_delta>"
         _put_iteration(local_q, EventType.ITERATION_COMPLETED, output)
@@ -513,29 +517,29 @@ class TestVerifySpec:
         mock_manager_cls: MagicMock,
         adapter: LoopAdapter,
     ) -> None:
-        adapter._agent = "claude"  # type: ignore[attr-defined]
+        adapter._agent = "claude"  # pyright: ignore[reportPrivateUsage]
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
         with patch("milknado.adapters.loop.time") as mock_time:
             # deadline = monotonic() + 120; the next reading is past it, so
             # remaining <= 0 trips before any blocking queue.get().
-            mock_time.monotonic.side_effect = [0.0, 200.0]
+            mock_time.monotonic.side_effect = [0.0, 200.0]  # pyright: ignore[reportAny]
             result = adapter.verify_spec("spec", "graph")
 
-        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)
+        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)  # pyright: ignore[reportAny]
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
     def test_queue_timeout_stops_and_joins_verifier(self) -> None:
-        from milknado.adapters.loop import _drain_verify_run
+        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
 
         manager = MagicMock()
         events = MagicMock()
-        events.get.side_effect = queue.Empty
+        events.get.side_effect = queue.Empty  # pyright: ignore[reportAny]
 
         result = _drain_verify_run(manager, "verify-empty", events)
 
-        manager.stop_and_join.assert_called_once_with("verify-empty", timeout=5.0)
+        manager.stop_and_join.assert_called_once_with("verify-empty", timeout=5.0)  # pyright: ignore[reportAny]
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
 
@@ -548,9 +552,9 @@ def _setup_verify_mocks(
     mock_emitter = MagicMock()
     mock_emitter.queue = local_q
     mock_run = MagicMock()
-    mock_run.state.run_id = "verify-1"
+    mock_run.state.run_id = "verify-1"  # pyright: ignore[reportAny]
     mock_run.emitter = mock_emitter
-    mock_manager.create_run.return_value = mock_run
+    mock_manager.create_run.return_value = mock_run  # pyright: ignore[reportAny]
     return mock_manager
 
 
@@ -580,9 +584,9 @@ class TestLoopAdapterInit:
         mock_manager_cls.return_value = MagicMock()
         mock_emitter_cls.return_value = MagicMock()
         adapter = LoopAdapter(agent="claude")
-        assert adapter._agent == "claude"
-        assert adapter._manager is mock_manager_cls.return_value
-        assert adapter._emitter is mock_emitter_cls.return_value
+        assert adapter._agent == "claude"  # pyright: ignore[reportPrivateUsage]
+        assert adapter._manager is mock_manager_cls.return_value  # pyright: ignore[reportPrivateUsage, reportAny]
+        assert adapter._emitter is mock_emitter_cls.return_value  # pyright: ignore[reportPrivateUsage, reportAny]
 
     @patch("milknado.adapters.loop.RunManager")
     @patch("milknado.adapters.loop.QueueEmitter")
@@ -592,7 +596,7 @@ class TestLoopAdapterInit:
         mock_manager_cls.return_value = MagicMock()
         mock_emitter_cls.return_value = MagicMock()
         adapter = LoopAdapter()
-        assert adapter._agent == ""
+        assert adapter._agent == ""  # pyright: ignore[reportPrivateUsage]
 
 
 class TestDrainVerifyRunExceptionHandler:
@@ -602,36 +606,36 @@ class TestDrainVerifyRunExceptionHandler:
         mock_manager_cls: MagicMock,
         adapter: LoopAdapter,
     ) -> None:
-        adapter._agent = "claude"  # type: ignore[attr-defined]
+        adapter._agent = "claude"  # pyright: ignore[reportPrivateUsage]
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = MagicMock()
         mock_manager_cls.return_value = mock_manager
         mock_emitter = MagicMock()
         mock_emitter.queue = local_q
         mock_run = MagicMock()
-        mock_run.state.run_id = "verify-1"
+        mock_run.state.run_id = "verify-1"  # pyright: ignore[reportAny]
         mock_run.emitter = mock_emitter
-        mock_manager.create_run.return_value = mock_run
+        mock_manager.create_run.return_value = mock_run  # pyright: ignore[reportAny]
         bad_event = MagicMock()
-        type(bad_event).type = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))
+        type(bad_event).type = property(lambda self: (_ for _ in ()).throw(RuntimeError("boom")))  # pyright: ignore[reportAny]
         local_q.put(bad_event)
 
         result = adapter.verify_spec("spec", "graph")
 
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification failed: boom")
-        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)
+        mock_manager.stop_and_join.assert_called_once_with("verify-1", timeout=5.0)  # pyright: ignore[reportAny]
 
     def test_stop_failure_is_logged_without_masking_drain_failure(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         import logging
 
-        from milknado.adapters.loop import _drain_verify_run
+        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
 
         manager = MagicMock()
-        manager.stop_and_join.side_effect = RuntimeError("stop boom")
+        manager.stop_and_join.side_effect = RuntimeError("stop boom")  # pyright: ignore[reportAny]
         events = MagicMock()
-        events.get.side_effect = RuntimeError("drain boom")
+        events.get.side_effect = RuntimeError("drain boom")  # pyright: ignore[reportAny]
 
         with caplog.at_level(logging.ERROR):
             result = _drain_verify_run(manager, "verify-failed", events)
@@ -664,11 +668,11 @@ class TestProgressDelivery:
         stop_ev.run_id = "run-1"
 
         run = MagicMock()
-        run.state.status = RunStatus.COMPLETED
-        mock_manager.get_run.return_value = run
+        run.state.status = RunStatus.COMPLETED  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
 
-        adapter._queue.put(progress_ev)
-        adapter._queue.put(stop_ev)
+        adapter._queue.put(progress_ev)  # pyright: ignore[reportPrivateUsage]
+        adapter._queue.put(stop_ev)  # pyright: ignore[reportPrivateUsage]
 
         run_id, event = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
@@ -680,41 +684,41 @@ class TestGetRunStdout:
     def test_returns_empty_when_run_not_found(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        mock_manager.get_run.return_value = None
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.get_run_stdout("missing-run") == []
 
     def test_returns_captured_stdout_lines(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.state.last_captured_stdout = "line 1\nline 2"
-        run.state.last_result_text = "unused result"
-        mock_manager.get_run.return_value = run
+        run.state.last_captured_stdout = "line 1\nline 2"  # pyright: ignore[reportAny]
+        run.state.last_result_text = "unused result"  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2"]
 
     def test_falls_back_to_result_text_when_stdout_was_not_captured(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.state.last_captured_stdout = None
-        run.state.last_result_text = "line 1\nline 2\nline 3"
-        mock_manager.get_run.return_value = run
+        run.state.last_captured_stdout = None  # pyright: ignore[reportAny]
+        run.state.last_result_text = "line 1\nline 2\nline 3"  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
         assert adapter.get_run_stdout("run-1") == ["line 1", "line 2", "line 3"]
 
     def test_returns_empty_when_output_is_none(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
         run = MagicMock()
-        run.state.last_captured_stdout = None
-        run.state.last_result_text = None
-        mock_manager.get_run.return_value = run
+        run.state.last_captured_stdout = None  # pyright: ignore[reportAny]
+        run.state.last_result_text = None  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
         assert adapter.get_run_stdout("run-1") == []
 
 
 class TestWaitForNextCompletionTimeout:
     def test_raises_on_timeout(self, adapter: LoopAdapter) -> None:
         with pytest.raises(CompletionTimeout) as exc_info:
-            adapter.wait_for_next_completion({"run-1"}, timeout=0.01)
+            _ = adapter.wait_for_next_completion({"run-1"}, timeout=0.01)
         assert "run-1" in exc_info.value.active_run_ids
 
     def test_raises_when_deadline_already_passed(self, adapter: LoopAdapter) -> None:
@@ -722,9 +726,9 @@ class TestWaitForNextCompletionTimeout:
 
         with patch("milknado.adapters.loop.time") as mock_time:
             # start, deadline=start+timeout, remaining<=0 check
-            mock_time.monotonic.side_effect = [0.0, 100.0, 100.0, 100.0]
+            mock_time.monotonic.side_effect = [0.0, 100.0, 100.0, 100.0]  # pyright: ignore[reportAny]
             with pytest.raises(CompletionTimeout):
-                adapter.wait_for_next_completion({"run-1"}, timeout=1.0)
+                _ = adapter.wait_for_next_completion({"run-1"}, timeout=1.0)
 
 
 class TestCreateRunWithProjectRoot:
@@ -737,11 +741,11 @@ class TestCreateRunWithProjectRoot:
         tmp_path: Path,
     ) -> None:
         mcp_file = tmp_path / ".mcp.json"
-        mcp_file.write_text("{}", encoding="utf-8")
+        _ = mcp_file.write_text("{}", encoding="utf-8")
         mock_config_cls.return_value = MagicMock()
-        mock_manager.create_run.return_value = MagicMock(id="run-1")
+        mock_manager.create_run.return_value = MagicMock(id="run-1")  # pyright: ignore[reportAny]
 
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
@@ -749,7 +753,7 @@ class TestCreateRunWithProjectRoot:
             project_root=tmp_path,
         )
 
-        call_kwargs = mock_config_cls.call_args[1]
+        call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
         assert "--mcp-config" in call_kwargs["agent"]
 
     @patch("milknado.adapters.loop.RunConfig")
@@ -760,11 +764,11 @@ class TestCreateRunWithProjectRoot:
         mock_manager: MagicMock,
         tmp_path: Path,
     ) -> None:
-        (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+        _ = (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
         mock_config_cls.return_value = MagicMock()
-        mock_manager.create_run.return_value = MagicMock(id="run-1")
+        mock_manager.create_run.return_value = MagicMock(id="run-1")  # pyright: ignore[reportAny]
 
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="omp",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
@@ -783,9 +787,9 @@ class TestCreateRunWithProjectRoot:
         tmp_path: Path,
     ) -> None:
         mock_config_cls.return_value = MagicMock()
-        mock_manager.create_run.return_value = MagicMock(id="run-1")
+        mock_manager.create_run.return_value = MagicMock(id="run-1")  # pyright: ignore[reportAny]
 
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
@@ -793,7 +797,7 @@ class TestCreateRunWithProjectRoot:
             project_root=tmp_path,  # .mcp.json does not exist
         )
 
-        call_kwargs = mock_config_cls.call_args[1]
+        call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
         assert "--mcp-config" not in call_kwargs["agent"]
 
     @patch("milknado.adapters.loop.RunConfig")
@@ -805,16 +809,16 @@ class TestCreateRunWithProjectRoot:
         tmp_path: Path,
     ) -> None:
         mock_config_cls.return_value = MagicMock()
-        mock_manager.create_run.return_value = MagicMock(id="run-1")
+        mock_manager.create_run.return_value = MagicMock(id="run-1")  # pyright: ignore[reportAny]
 
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=tmp_path / "ralph.md",
             quality_gates=(),
         )
 
-        call_kwargs = mock_config_cls.call_args[1]
+        call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
         assert call_kwargs["log_dir"] == tmp_path / ".ralph-logs"
 
 
@@ -827,7 +831,7 @@ class TestGenerateRalphMdWriteError:
         with patch("milknado.adapters.loop.Path.write_text") as mock_write:
             mock_write.side_effect = OSError("disk full")
             with pytest.raises(RalphMarkdownWriteError) as exc_info:
-                adapter.generate_ralph_md(
+                _ = adapter.generate_ralph_md(
                     brief="# Task: Task",
                     quality_gates=(),
                     output_path=bad_path,
@@ -844,15 +848,19 @@ class TestNoGatesConfiguredMessage:
 
 class TestGetRunFailureDetail:
     @staticmethod
-    def _run(stderr=None, stdout=None, result_text=None) -> MagicMock:
+    def _run(
+        stderr: str | None = None,
+        stdout: str | None = None,
+        result_text: str | None = None,
+    ) -> MagicMock:
         run = MagicMock()
-        run.state.last_captured_stderr = stderr
-        run.state.last_captured_stdout = stdout
-        run.state.last_result_text = result_text
+        run.state.last_captured_stderr = stderr  # pyright: ignore[reportAny]
+        run.state.last_captured_stdout = stdout  # pyright: ignore[reportAny]
+        run.state.last_result_text = result_text  # pyright: ignore[reportAny]
         return run
 
     def test_prefers_stderr(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
-        mock_manager.get_run.return_value = self._run(
+        mock_manager.get_run.return_value = self._run(  # pyright: ignore[reportAny]
             stderr="Error: unknown flag: --mcp-config\n", stdout="noise"
         )
 
@@ -861,25 +869,25 @@ class TestGetRunFailureDetail:
     def test_falls_back_to_stdout_then_result_text(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        mock_manager.get_run.return_value = self._run(stdout="boom on stdout")
+        mock_manager.get_run.return_value = self._run(stdout="boom on stdout")  # pyright: ignore[reportAny]
         assert adapter.get_run_failure_detail("r1") == "boom on stdout"
 
-        mock_manager.get_run.return_value = self._run(result_text="final text")
+        mock_manager.get_run.return_value = self._run(result_text="final text")  # pyright: ignore[reportAny]
         assert adapter.get_run_failure_detail("r1") == "final text"
 
     def test_none_when_run_missing_or_output_blank(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        mock_manager.get_run.return_value = None
+        mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.get_run_failure_detail("r1") is None
 
-        mock_manager.get_run.return_value = self._run(stderr="   ")
+        mock_manager.get_run.return_value = self._run(stderr="   ")  # pyright: ignore[reportAny]
         assert adapter.get_run_failure_detail("r1") is None
 
     def test_flattens_and_bounds_long_output(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        mock_manager.get_run.return_value = self._run(stderr="line1\nline2\n" + "x" * 400)
+        mock_manager.get_run.return_value = self._run(stderr="line1\nline2\n" + "x" * 400)  # pyright: ignore[reportAny]
 
         detail = adapter.get_run_failure_detail("r1")
 
@@ -891,12 +899,9 @@ class TestGetRunFailureDetail:
 class TestWorkerFailureCap:
     @patch("milknado.adapters.loop.RunConfig")
     def test_create_run_caps_consecutive_failures(
-        self,
-        mock_config_cls: MagicMock,
-        adapter: LoopAdapter,
-        mock_manager: MagicMock,
+        self, mock_config_cls: MagicMock, adapter: LoopAdapter
     ) -> None:
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="claude",
             ralph_dir=Path("/project"),
             ralph_file=Path("/project/RALPH.md"),

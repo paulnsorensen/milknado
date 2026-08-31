@@ -50,7 +50,7 @@ def _milknado_db_rel(project_root: Path) -> Path:
 
 def _write_fake_planner(project_root: Path) -> Path:
     agent = project_root / "fake_planner.py"
-    agent.write_text(
+    _ = agent.write_text(
         (
             "import json\n"
             "import sys\n"
@@ -108,9 +108,9 @@ def _start_plan_proc(project_root: Path, spec: Path) -> tuple[subprocess.Popen[b
 def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
     project_root = tmp_path
     spec = project_root / "spec.md"
-    spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
-    _write_fake_planner(project_root)
-    (project_root / "milknado.toml").write_text(
+    _ = spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
+    _ = _write_fake_planner(project_root)
+    _ = (project_root / "milknado.toml").write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n'
@@ -123,8 +123,8 @@ def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
 
     try:
         output = _wait_for_text(master_fd, "Choose next step", timeout_s=10.0)
-        os.write(master_fd, b"1\n")
-        proc.wait(timeout=10.0)
+        _ = os.write(master_fd, b"1\n")
+        _ = proc.wait(timeout=10.0)
         output += _read_available(master_fd)
     finally:
         os.close(master_fd)
@@ -139,9 +139,9 @@ def test_plan_interactive_pty_smoke(tmp_path: Path) -> None:
 def test_plan_interactive_pty_revise_then_accept(tmp_path: Path) -> None:
     project_root = tmp_path
     spec = project_root / "spec.md"
-    spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
-    _write_fake_planner(project_root)
-    (project_root / "milknado.toml").write_text(
+    _ = spec.write_text("# PTY plan goal\n\nImplement something small.\n", encoding="utf-8")
+    _ = _write_fake_planner(project_root)
+    _ = (project_root / "milknado.toml").write_text(
         (
             "[milknado]\n"
             'agent_family = "claude"\n'
@@ -153,12 +153,12 @@ def test_plan_interactive_pty_revise_then_accept(tmp_path: Path) -> None:
     proc, master_fd = _start_plan_proc(project_root, spec)
     try:
         output = _wait_for_text(master_fd, "Choose next step", timeout_s=10.0)
-        os.write(master_fd, b"2\n")
+        _ = os.write(master_fd, b"2\n")
         output += _wait_for_text(master_fd, "What should change in the plan?", timeout_s=10.0)
-        os.write(master_fd, b"Please include rollback notes.\n")
+        _ = os.write(master_fd, b"Please include rollback notes.\n")
         output += _wait_for_text(master_fd, "Plan iteration 2", timeout_s=10.0)
-        os.write(master_fd, b"1\n")
-        proc.wait(timeout=10.0)
+        _ = os.write(master_fd, b"1\n")
+        _ = proc.wait(timeout=10.0)
         output += _read_available(master_fd)
     finally:
         os.close(master_fd)
