@@ -164,8 +164,8 @@ EventData = (
 
 # Plain TypeVar (no PEP 696 default) — the Python floor is 3.11; the
 # ``default=`` arg needs 3.13+ or a runtime typing_extensions dep, which
-# would fight the pyyaml-only core. Bare ``Event`` references resolve
-# to the EventData bound.
+# would fight the pyyaml-only core. Bare ``Event`` references leave ``DataT``
+# as ``Unknown`` to basedpyright and trigger ``reportMissingTypeArgument``.
 DataT = TypeVar("DataT", bound="EventData")
 
 

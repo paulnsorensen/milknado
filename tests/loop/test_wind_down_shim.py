@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import cast
 from _pytest.capture import CaptureFixture
 
-from milknado.loop import _wind_down_shim as shim  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop import _wind_down_shim as shim
 
 
 def test_emits_claude_payload_when_threshold_reached(
