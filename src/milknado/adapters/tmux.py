@@ -38,10 +38,10 @@ def session_name_for(project_root: Path) -> str:
 
 class TmuxAdapter:
     def __init__(self, project_root: Path, socket_path: Path | None = None) -> None:
-        self._session = session_name_for(project_root)
+        self._session: str = session_name_for(project_root)
         # A private socket isolates tests from the user's real tmux server;
         # production uses the default server (socket_path=None).
-        self._socket = socket_path
+        self._socket: Path | None = socket_path
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         cmd = ["tmux"]

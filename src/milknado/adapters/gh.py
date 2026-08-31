@@ -15,7 +15,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Sequence
-from typing import Annotated, TypeVar
+from typing import Annotated, TypeVar, cast, final
 
 import msgspec
 
@@ -51,7 +51,7 @@ def _gh_bin() -> str:
     if path is None:
         raise GhTransportError(
             "the `gh` CLI is not installed or not on PATH; install GitHub CLI and run "
-            "`gh auth refresh -s project`"
+            + "`gh auth refresh -s project`"
         )
     return path
 
@@ -66,14 +66,15 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
             check=True,
         )
     except subprocess.CalledProcessError as exc:
-        raise GhTransportError(f"`gh {' '.join(args)}` failed: {exc.stderr.strip()}") from exc
+        stderr = cast(str | None, exc.stderr)
+        raise GhTransportError(f"`gh {' '.join(args)}` failed: {(stderr or '').strip()}") from exc
 
 
 def _run_json(args: list[str]) -> object:
     """Run `gh <args>` and parse its JSON response."""
     result = _run(args)
     try:
-        return json.loads(result.stdout)
+        return cast(object, json.loads(result.stdout))
     except json.JSONDecodeError as exc:
         raise GhTransportError(
             f"`gh {' '.join(args)}` returned unparseable JSON: {result.stdout.strip()[:200]!r}"
@@ -105,7 +106,7 @@ def gh_preflight() -> None:
     if result.returncode != 0:
         raise GhTransportError(
             "gh is not authenticated; run `gh auth login` then "
-            "`gh auth refresh -s project` to grant the Projects scope"
+            + "`gh auth refresh -s project` to grant the Projects scope"
         )
     if "'project'" not in combined:
         raise GhTransportError(
@@ -187,7 +188,7 @@ def gh_item_edit(
             raise ValueError(
                 "gh_item_edit requires exactly one of text or single_select_option_id"
             )
-    _run(args)
+    _ = _run(args)
 
 
 def gh_field_list(owner: str, number: int) -> list[GithubField]:
@@ -266,9 +267,10 @@ def gh_issue_create(owner: str, repo: str, title: str, body: str) -> str:
 
 def gh_issue_edit_body(issue_url: str, body: str) -> None:
     """Overwrite an Issue's body (wiki-origin body mirror, overwritten each export)."""
-    _run(["issue", "edit", issue_url, "--body", body])
+    _ = _run(["issue", "edit", issue_url, "--body", body])
 
 
+@final
 class GhProjectAdapter:
     preflight = staticmethod(gh_preflight)
     project_view = staticmethod(gh_project_view)

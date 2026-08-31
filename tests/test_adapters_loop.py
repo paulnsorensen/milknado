@@ -44,7 +44,7 @@ class TestCreateRun:
     ) -> None:
         mock_config = MagicMock()
         mock_config_cls.return_value = mock_config
-        mock_run = MagicMock(id="run-1")
+        mock_run = MagicMock()
         mock_manager.create_run.return_value = mock_run
 
         result = adapter.create_run(
@@ -70,7 +70,7 @@ class TestCreateRun:
         mock_manager.create_run.assert_called_once_with(
             mock_config, emitter=adapter._emitter, run_id=None
         )
-        assert result.id == "run-1"
+        assert result is mock_run
 
 
 class TestStartStopRun:

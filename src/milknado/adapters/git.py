@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import cast
 
 from milknado.domains.common import (
     GitOperationError,
@@ -43,7 +44,7 @@ def _try_mergiraf_resolve(worktree: Path, files: tuple[str, ...]) -> bool:
 
 class GitAdapter:
     def __init__(self, repo_root: Path) -> None:
-        self._root = repo_root
+        self._root: Path = repo_root
 
     def _run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         try:
@@ -55,13 +56,15 @@ class GitAdapter:
                 check=True,
             )
         except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            stderr = cast(str | None, exc.stderr)
+            stdout = cast(str | None, exc.stdout)
+            detail = (stderr or stdout or str(exc)).strip()
             raise GitOperationError(" ".join(args), detail) from exc
         except OSError as exc:
             raise GitOperationError(" ".join(args), str(exc)) from exc
 
     def create_worktree(self, path: Path, branch: str) -> Path:
-        self._run(["worktree", "add", "-b", branch, str(path)])
+        _ = self._run(["worktree", "add", "-b", branch, str(path)])
         return path
 
     def branch_exists(self, branch: str) -> bool:
@@ -104,7 +107,7 @@ class GitAdapter:
         blocker = self.worktree_teardown_blocker(path, target)
         if blocker is not None:
             raise UnlandedWorkError(path, blocker)
-        self._run(["worktree", "remove", str(path)])
+        _ = self._run(["worktree", "remove", str(path)])
 
     def worktree_teardown_blocker(self, path: Path, target: str = "HEAD") -> str | None:
         """Read-only probe: None when `remove_worktree` would succeed, else the reason.
@@ -152,10 +155,10 @@ class GitAdapter:
         The only `--force` teardown in the codebase — reachable solely via
         `WorktreeManager.discard`, the named destructive path.
         """
-        self._run(["worktree", "remove", "--force", str(path)])
+        _ = self._run(["worktree", "remove", "--force", str(path)])
 
     def prune_worktrees(self) -> None:
-        self._run(["worktree", "prune"])
+        _ = self._run(["worktree", "prune"])
 
     def delete_branch(self, branch: str) -> None:
         """Delete a merged local branch via `git branch -d`.
@@ -164,7 +167,7 @@ class GitAdapter:
         the non-zero exit surfaces as GitOperationError (fail closed). Callers
         that need destruction must go through WorktreeManager.discard instead.
         """
-        self._run(["branch", "-d", branch])
+        _ = self._run(["branch", "-d", branch])
 
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
         result = subprocess.run(
@@ -294,15 +297,15 @@ class GitAdapter:
                     f"update-ref {ref}",
                     "checked-out target no longer matches expected OID",
                 )
-        self._run(["update-ref", normalized_ref, new_oid, expected_oid])
+        _ = self._run(["update-ref", normalized_ref, new_oid, expected_oid])
         if not synchronize:
             return
         try:
-            self._run(["read-tree", "-u", "-m", expected_oid, new_oid])
+            _ = self._run(["read-tree", "-u", "-m", expected_oid, new_oid])
         except GitOperationError:
             try:
-                self._run(["read-tree", "-u", "-m", new_oid, expected_oid])
-                self._run(["update-ref", normalized_ref, expected_oid, new_oid])
+                _ = self._run(["read-tree", "-u", "-m", new_oid, expected_oid])
+                _ = self._run(["update-ref", normalized_ref, expected_oid, new_oid])
             except GitOperationError:
                 _logger.exception(
                     "failed to roll back ref and worktree after synchronization failure"
@@ -316,7 +319,7 @@ class GitAdapter:
         commit. The caller uses this to decide whether to fast-forward the feature
         branch — a no-commit squash has nothing to merge back.
         """
-        self._run(["add", "-A"], cwd=worktree)
+        _ = self._run(["add", "-A"], cwd=worktree)
         try:
             base_result = subprocess.run(
                 ["git", "merge-base", "HEAD", onto],
@@ -326,7 +329,7 @@ class GitAdapter:
                 check=True,
             )
             base = base_result.stdout.strip()
-            self._run(["reset", "--soft", base], cwd=worktree)
+            _ = self._run(["reset", "--soft", base], cwd=worktree)
         except subprocess.CalledProcessError:
             pass
         has_staged = (
@@ -337,7 +340,7 @@ class GitAdapter:
             != 0
         )
         if has_staged:
-            self._run(["commit", "-m", msg], cwd=worktree)
+            _ = self._run(["commit", "-m", msg], cwd=worktree)
         return has_staged
 
     def fast_forward(self, branch: str) -> None:
@@ -349,7 +352,7 @@ class GitAdapter:
         project root's tree is dirty or the feature branch has diverged — fails loud:
         `git merge --ff-only` exits non-zero and `check=True` raises.
         """
-        self._run(["merge", "--ff-only", branch])
+        _ = self._run(["merge", "--ff-only", branch])
 
     def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
         """Return untracked root paths that a worker branch would track."""

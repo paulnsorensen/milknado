@@ -50,6 +50,7 @@ from milknado.domains.common.protocols import (
     LoopPort,
     ProgressEvent,
     ReviewResult,
+    RunHandle,
     TerminalRunOutcome,
     VerifySpecResult,
 )
@@ -133,6 +134,7 @@ __all__ = [
     "MegaBatchAborted",
     "ProgressEvent",
     "ReviewResult",
+    "RunHandle",
     "TerminalRunOutcome",
     "VerifySpecResult",
 ]
