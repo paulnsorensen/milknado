@@ -6,12 +6,18 @@ from __future__ import annotations
 import sys
 import tomllib
 from pathlib import Path
+from typing import cast
 
 
 def _quality_config(root: Path) -> tuple[int, dict[str, dict[str, object]]]:
     with (root / "pyproject.toml").open("rb") as stream:
-        quality = tomllib.load(stream)["tool"]["milknado"]["quality"]
-    return quality["max_file_lines"], quality["file_exceptions"]
+        config = cast(dict[str, object], tomllib.load(stream))
+    tool = cast(dict[str, object], config["tool"])
+    milknado = cast(dict[str, object], tool["milknado"])
+    quality = cast(dict[str, object], milknado["quality"])
+    return cast(int, quality["max_file_lines"]), cast(
+        dict[str, dict[str, object]], quality["file_exceptions"]
+    )
 
 
 def _violations(
@@ -27,7 +33,7 @@ def _violations(
         relative = path.relative_to(root).as_posix()
         actual = len(path.read_text(encoding="utf-8").splitlines())
         waiver = exceptions.get(relative)
-        limit = waiver["max_lines"] if waiver else max_lines
+        limit = cast(int, waiver["max_lines"]) if waiver else max_lines
         if actual > limit:
             failures.append(f"{relative}: {actual} lines (limit {limit})")
     return failures

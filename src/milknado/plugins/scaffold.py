@@ -68,14 +68,14 @@ def scaffold_plugin(name: str, target_dir: Path) -> ScaffoldResult:
     class_name = _to_class_name(name)
     plugin_dir.mkdir(parents=True)
 
-    files = []
+    files: list[str] = []
     for filename, template in [
         ("__init__.py", INIT_TEMPLATE),
         ("plugin.py", PLUGIN_TEMPLATE),
         ("README.md", README_TEMPLATE),
     ]:
         path = plugin_dir / filename
-        path.write_text(template.format(name=name, class_name=class_name), encoding="utf-8")
+        _ = path.write_text(template.format(name=name, class_name=class_name), encoding="utf-8")
         files.append(filename)
 
     return ScaffoldResult(plugin_dir=plugin_dir, files_created=files)

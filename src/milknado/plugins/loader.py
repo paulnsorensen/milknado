@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import logging
 from types import ModuleType
-from typing import TypeGuard
+from typing import TypeGuard, cast
 
 from milknado.domains.common import PluginHook, PluginMeta
 
@@ -16,7 +16,7 @@ def _is_plugin(obj: object) -> TypeGuard[type[PluginHook]]:
 
 def _find_plugin_class(module: ModuleType) -> type[PluginHook] | None:
     for name in dir(module):
-        obj = getattr(module, name)
+        obj = cast(object, getattr(module, name))
         if _is_plugin(obj) and not name.startswith("_"):
             return obj
     return None
@@ -46,7 +46,7 @@ def discover_entry_point_plugins() -> list[PluginHook]:
     loaded: list[PluginHook] = []
     for ep in entry_points(group="milknado.plugins"):
         try:
-            cls = ep.load()
+            cls = cast(type[PluginHook], ep.load())
             instance = cls()
             meta: PluginMeta = instance.meta
             logger.info("Loaded plugin: %s v%s (entry point)", meta.name, meta.version)

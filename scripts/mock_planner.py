@@ -8,7 +8,7 @@ import sys
 def main() -> None:
     body = sys.stdin.read().lower()
     is_revision = "user revision request" in body
-    payload = {
+    payload: dict[str, object] = {
         "manifest_version": "milknado.plan.v2",
         "goal": "Mock planning goal",
         "goal_summary": "Revised plan from mock planner." if is_revision else "Initial mock plan.",
