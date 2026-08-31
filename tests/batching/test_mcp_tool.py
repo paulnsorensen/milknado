@@ -1,37 +1,55 @@
 from __future__ import annotations
 
+# The MCP tool and FastMCP client expose dynamic result payloads in these tests.
 import logging
+from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+from milknado.app.plan_batches import plan_batches as _plan_batches_impl
+from milknado.domains.batching import DUMB_ZONE_BUDGET
 from milknado.domains.planning.manifest import decode_manifest
-from milknado.mcp.server import _plan_batches_impl, milknado_plan_apply
+from milknado.mcp._core import PlanApplyResponse
+from milknado.mcp.server import milknado_plan_apply
 
 
-def _stub_crg(monkeypatch) -> None:
+def _stub_crg(monkeypatch: pytest.MonkeyPatch) -> None:
     from milknado.adapters import crg as crg_mod
 
     class _StubCrg:
-        def __init__(self, r) -> None:
+        def __init__(self, _r: object) -> None:
             pass
 
-        def ensure_graph(self, r) -> None:
+        def ensure_graph(self, _r: object) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
 
 
-def _call_tool(**kwargs):
-    """Call the milknado_plan_apply tool via its underlying Python callable."""
-    fn = getattr(milknado_plan_apply, "fn", milknado_plan_apply)
-    return fn(**kwargs)
+def _call_tool(  # noqa: PLR0913
+    *,
+    manifest: Mapping[str, object],
+    project_root: str = "",
+    parent_id: int | None = None,
+    budget: int = DUMB_ZONE_BUDGET,
+    force_single_batch: bool = False,
+) -> PlanApplyResponse:
+    """Call the typed Python implementation behind the MCP tool."""
+    return milknado_plan_apply(
+        manifest=dict(manifest),
+        project_root=project_root,
+        parent_id=parent_id,
+        budget=budget,
+        force_single_batch=force_single_batch,
+    )
 
 
-def _valid_manifest() -> dict:
+def _valid_manifest() -> dict[str, object]:
     return {
         "manifest_version": "milknado.plan.v2",
         "goal": "Refactor foo",
@@ -43,25 +61,27 @@ def _valid_manifest() -> dict:
     }
 
 
-def test_plan_batches_single_change_returns_exact_payload(tmp_path, monkeypatch) -> None:
+def test_plan_batches_single_change_returns_exact_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from milknado.adapters import crg as crg_mod
 
     class StubAdapter:
-        def __init__(self, project_root) -> None:
+        def __init__(self, _project_root: Path) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {"impacted_files": []}
 
-        def ensure_graph(self, project_root) -> None:
+        def ensure_graph(self, _project_root: Path) -> None:
             pass
 
-        def get_architecture_overview(self):
+        def get_architecture_overview(self) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
 
-    result = _plan_batches_impl(
+    result: dict[str, object] = _plan_batches_impl(
         [{"id": "1", "path": "a.py", "edit_kind": "delete", "description": "delete a"}],
         70_000,
         tmp_path,
@@ -81,22 +101,22 @@ def test_plan_batches_single_change_returns_exact_payload(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
+async def test_tool_via_fastmcp_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test milknado_plan_batches tool end-to-end via FastMCP Client."""
     from milknado.adapters import crg as crg_mod
     from milknado.mcp.server import mcp
 
     class StubAdapter:
-        def __init__(self, project_root) -> None:
+        def __init__(self, _project_root: Path) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {"impacted_files": []}
 
-        def ensure_graph(self, project_root) -> None:
+        def ensure_graph(self, _project_root: Path) -> None:
             pass
 
-        def get_architecture_overview(self):
+        def get_architecture_overview(self) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", StubAdapter)
@@ -125,15 +145,15 @@ async def test_tool_via_fastmcp_client(tmp_path, monkeypatch) -> None:
 
     assert result is not None
     # Extract data from CallToolResult
-    content = getattr(result, "content", None) or []
-    raw = content[0].text if content and hasattr(content[0], "text") else None
-    data = json.loads(raw) if isinstance(raw, str) else {}
+    content = cast(list[object], getattr(cast(object, result), "content", None) or [])
+    raw = cast(str | None, getattr(content[0], "text", None)) if content else None
+    data = cast(dict[str, object], cast(object, json.loads(raw))) if isinstance(raw, str) else {}
     assert data.get("solver_status") in ("OPTIMAL", "FEASIBLE", "INFEASIBLE", "UNKNOWN")
     assert "batches" in data
     assert isinstance(data.get("spread_report"), list)
 
 
-def _decode_change(raw: dict):
+def _decode_change(raw: Mapping[str, object]):
     manifest = decode_manifest(
         {
             "manifest_version": "milknado.plan.v2",
@@ -201,12 +221,12 @@ def test_file_change_fields_round_trip_through_strict_decoder() -> None:
         },
     ],
 )
-def test_malformed_change_uses_one_boundary_error(change: dict) -> None:
+def test_malformed_change_uses_one_boundary_error(change: dict[str, object]) -> None:
     with pytest.raises(
         ValueError,
         match=r"^manifest is not a valid milknado\.plan\.v2 object$",
     ):
-        _decode_change(change)
+        _ = _decode_change(change)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +234,7 @@ def test_malformed_change_uses_one_boundary_error(change: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
+def test_mega_batch_guard_fires(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """MCP aborts via the BatchPlan property when a batch exceeds the threshold.
 
     Also pins that the reaction passes the detected change count into the error,
@@ -224,13 +244,13 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
     from milknado.domains.common.errors import MegaBatchAborted
 
     class _StubCrg:
-        def __init__(self, r):
+        def __init__(self, _r: object) -> None:
             pass
 
-        def ensure_graph(self, r):
+        def ensure_graph(self, _r: object) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
@@ -246,18 +266,20 @@ def test_mega_batch_guard_fires(tmp_path, monkeypatch) -> None:
     assert exc_info.value.change_count == 3
 
 
-def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
+def test_mega_batch_guard_bypassed_by_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """force_single_batch=True bypasses the mega-batch guard."""
     from milknado.adapters import crg as crg_mod
 
     class _StubCrg:
-        def __init__(self, r):
+        def __init__(self, _r: object) -> None:
             pass
 
-        def ensure_graph(self, r):
+        def ensure_graph(self, _r: object) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
@@ -266,22 +288,24 @@ def test_mega_batch_guard_bypassed_by_force(tmp_path, monkeypatch) -> None:
         {"id": str(i), "path": f"f{i}.py", "edit_kind": "delete", "description": f"delete {i}"}
         for i in range(3)
     ]
-    result = _plan_batches_impl(changes, 70_000, tmp_path, force_single_batch=True)
+    result: dict[str, object] = _plan_batches_impl(
+        changes, 70_000, tmp_path, force_single_batch=True
+    )
     assert result["solver_status"] in ("OPTIMAL", "FEASIBLE")
 
 
-def test_telemetry_written_via_mcp(tmp_path, monkeypatch) -> None:
+def test_telemetry_written_via_mcp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """record_batch_snapshot must be called; calibration.jsonl appears on disk."""
     from milknado.adapters import crg as crg_mod
 
     class _StubCrg:
-        def __init__(self, r):
+        def __init__(self, _r: object) -> None:
             pass
 
-        def ensure_graph(self, r):
+        def ensure_graph(self, _r: object) -> None:
             pass
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _StubCrg)
@@ -299,23 +323,25 @@ def test_telemetry_written_via_mcp(tmp_path, monkeypatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_crg_failure_logged_not_swallowed(tmp_path, monkeypatch, caplog) -> None:
+def test_crg_failure_logged_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """When CRG raises (including with stderr), a WARNING is emitted and planning continues."""
     from milknado.adapters import crg as crg_mod
 
     class _BrokenCrg:
-        def __init__(self, r):
+        def __init__(self, _r: object) -> None:
             pass
 
-        def ensure_graph(self, r) -> None:
+        def ensure_graph(self, _r: object) -> None:
             raise RuntimeError("code-review-graph 'build' failed (exit 1): graph error details")
 
-        def get_impact_radius(self, files):
+        def get_impact_radius(self, _files: object) -> dict[str, object]:
             return {}
 
     monkeypatch.setattr(crg_mod, "CrgAdapter", _BrokenCrg)
     with caplog.at_level(logging.WARNING, logger="milknado.mcp.server"):
-        result = _plan_batches_impl(
+        result: dict[str, object] = _plan_batches_impl(
             [
                 {
                     "id": "1",
@@ -333,7 +359,7 @@ def test_crg_failure_logged_not_swallowed(tmp_path, monkeypatch, caplog) -> None
     )
 
 
-def test_crg_stderr_in_runtime_error(tmp_path) -> None:
+def test_crg_stderr_in_runtime_error(tmp_path: Path) -> None:
     """_run_crg re-raises CalledProcessError as RuntimeError including stderr."""
     import subprocess
     from unittest.mock import patch
@@ -344,7 +370,7 @@ def test_crg_stderr_in_runtime_error(tmp_path) -> None:
     err = subprocess.CalledProcessError(1, ["code-review-graph", "build"], stderr="graph panic!")
     with patch("subprocess.run", side_effect=err):
         with pytest.raises(RuntimeError, match="graph panic!"):
-            adapter._run_crg("build")
+            _ = adapter._run_crg("build")  # pyright: ignore[reportPrivateUsage]
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +378,9 @@ def test_crg_stderr_in_runtime_error(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
+def test_plan_apply_creates_goal_root_and_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """parent_id=None builds a GOAL root from goal_summary plus TASK children."""
     from milknado.domains.common import NodeKind
     from milknado.mcp.server import open_graph
@@ -364,7 +392,8 @@ def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
     assert len(created) >= 2  # goal root + at least one task batch
     assert isinstance(result["graph_summary"], dict)
     assert "nodes" in result["graph_summary"]
-    assert len(result["graph_summary"]["nodes"]) == len(created)
+    summary_nodes = result["graph_summary"]["nodes"]
+    assert len(summary_nodes) == len(created)
 
     graph, _ = open_graph(tmp_path)
     try:
@@ -380,7 +409,9 @@ def test_plan_apply_creates_goal_root_and_tasks(tmp_path, monkeypatch) -> None:
         graph.close()
 
 
-def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeypatch) -> None:
+def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A valid TASK-accepting parent_id attaches TASK children and creates no GOAL root."""
     from milknado.domains.common import NodeKind
     from milknado.mcp.server import open_graph
@@ -416,14 +447,18 @@ def test_plan_apply_with_parent_id_attaches_tasks_no_goal_root(tmp_path, monkeyp
         graph.close()
 
 
-def test_plan_apply_nonexistent_parent_id_raises(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_nonexistent_parent_id_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A parent_id with no matching node raises ValueError at apply time."""
     _stub_crg(monkeypatch)
     with pytest.raises(ValueError, match="parent"):
         _ = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path), parent_id=99999)
 
 
-def test_plan_apply_kind_invalid_parent_id_raises(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_kind_invalid_parent_id_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A parent whose kind rejects TASK children fails loud at the tool boundary.
 
     ROADMAP accepts only GOAL children, so attaching TASK batches under it must raise.
@@ -446,16 +481,18 @@ def test_plan_apply_kind_invalid_parent_id_raises(tmp_path: Path, monkeypatch) -
         )
 
 
-def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) -> None:
+def test_plan_apply_graph_summary_reflects_created_nodes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """graph_summary mirrors graph state: GOAL root + node fields round-trip faithfully."""
     from milknado.mcp.server import open_graph
 
     _stub_crg(monkeypatch)
     result = _call_tool(manifest=_valid_manifest(), project_root=str(tmp_path))
 
-    created = set(result["nodes_created"])
+    created = result["nodes_created"]
     summary_nodes = result["graph_summary"]["nodes"]
-    assert {n["id"] for n in summary_nodes} == created
+    assert {n["id"] for n in summary_nodes} == set(created)
 
     # Each summary entry matches the persisted node exactly (id, status, description).
     graph, _ = open_graph(tmp_path)
@@ -469,21 +506,28 @@ def test_plan_apply_graph_summary_reflects_created_nodes(tmp_path, monkeypatch) 
         graph.close()
 
     # The GOAL root's goal_summary surfaces in the summary, not just nodes_created.
-    root_id = result["nodes_created"][0]
+    root_id = created[0]
     root_entry = next(n for n in summary_nodes if n["id"] == root_id)
     assert root_entry["description"] == "Move foo into its own module"
     assert root_entry["status"] == "pending"
 
 
-def test_plan_apply_invalid_manifest_raises_value_error(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_invalid_manifest_raises_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """An invalid manifest dict fails loud at the tool boundary, not a silent None."""
     _stub_crg(monkeypatch)
-    bad = {"manifest_version": "wrong.version", "goal": "x", "goal_summary": "y", "changes": []}
+    bad: dict[str, object] = {
+        "manifest_version": "wrong.version",
+        "goal": "x",
+        "goal_summary": "y",
+        "changes": [],
+    }
     with pytest.raises(ValueError, match="milknado.plan.v2"):
         _ = _call_tool(manifest=bad, project_root=str(tmp_path))
 
 
-def test_plan_apply_mega_batch_aborts(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_mega_batch_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A single oversized batch over the threshold raises MegaBatchAborted unless forced."""
     from milknado.domains.common.errors import MegaBatchAborted
 
@@ -502,7 +546,9 @@ def test_plan_apply_mega_batch_aborts(tmp_path: Path, monkeypatch) -> None:
         _ = _call_tool(manifest=manifest, project_root=str(tmp_path), budget=70_000)
 
 
-def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_force_single_batch_bypasses_mega_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """force_single_batch=True lands the nodes despite exceeding the mega-batch threshold."""
     from milknado.mcp.server import open_graph
 
@@ -534,7 +580,9 @@ def test_plan_apply_force_single_batch_bypasses_mega_guard(tmp_path: Path, monke
     assert set(created) <= persisted
 
 
-def test_plan_apply_traversal_path_raises_value_error(tmp_path: Path, monkeypatch) -> None:
+def test_plan_apply_traversal_path_raises_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A manifest with a traversal path in changes[].path is rejected at the tool boundary."""
     _stub_crg(monkeypatch)
     manifest = {

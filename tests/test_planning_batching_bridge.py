@@ -27,7 +27,7 @@ from milknado.domains.planning.manifest import (
 def _change(cid: str, path: str, description: str = "", **kw: object) -> FileChange:
     kwargs: dict[str, object] = {"id": cid, "path": path, "description": description or cid}
     kwargs.update(kw)
-    return FileChange(**kwargs)  # ty: ignore[invalid-argument-type]
+    return FileChange(**kwargs)  # pyright: ignore[reportArgumentType]  # ty: ignore[invalid-argument-type]
 
 
 def _manifest(
@@ -292,7 +292,7 @@ class TestApplyBatchesToGraph:
         plan = BatchPlan(batches=(), spread_report=(), solver_status="OPTIMAL")
 
         with pytest.raises(ValueError, match="goal"):
-            apply_batches_to_graph(graph, plan, manifest)
+            _ = apply_batches_to_graph(graph, plan, manifest)
 
     def test_file_ownership_is_union_of_changes(
         self,
@@ -346,19 +346,19 @@ class TestApplyBatchesToGraph:
             "SELECT id, oversized, batch_index FROM nodes ORDER BY id",
         ).fetchall()
         # created[0] = goal root (no batch_index), created[1:] = batches
-        assert [r["id"] for r in rows] == created
+        assert [r["id"] for r in rows] == created  # pyright: ignore[reportAny]
         # goal root: oversized=0, batch_index=None
         assert rows[0]["oversized"] == 0
         assert rows[0]["batch_index"] is None
         # batch nodes
-        assert [r["oversized"] for r in rows[1:]] == [0, 1]
-        assert [r["batch_index"] for r in rows[1:]] == [0, 1]
+        assert [r["oversized"] for r in rows[1:]] == [0, 1]  # pyright: ignore[reportAny]
+        assert [r["batch_index"] for r in rows[1:]] == [0, 1]  # pyright: ignore[reportAny]
 
         plan_rows = conn.execute(
             "SELECT solver_status, batch_count, oversized_count, max_spread FROM batch_plans",
         ).fetchall()
         assert len(plan_rows) == 1
-        only = plan_rows[0]
+        only = plan_rows[0]  # pyright: ignore[reportAny]
         assert only["solver_status"] == "FEASIBLE"
         assert only["batch_count"] == 2
         assert only["oversized_count"] == 1

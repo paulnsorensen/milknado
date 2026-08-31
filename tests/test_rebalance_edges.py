@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# These tests intentionally exercise private database helpers.
 import sqlite3
 import subprocess
 from pathlib import Path
@@ -16,11 +17,11 @@ from milknado.domains.graph import _rebalance as graph_rebalance
 from tests.rebalance_helpers import (
     NOW,
     FakeGit,
-    _archived_ids,
-    _git,
-    _insert_node,
-    _project_with_db,
-    _register_run,
+    _archived_ids,  # pyright: ignore[reportPrivateUsage]
+    _git,  # pyright: ignore[reportPrivateUsage]
+    _insert_node,  # pyright: ignore[reportPrivateUsage]
+    _project_with_db,  # pyright: ignore[reportPrivateUsage]
+    _register_run,  # pyright: ignore[reportPrivateUsage]
     run_rebalance,
 )
 
@@ -52,7 +53,7 @@ class TestDryRunStructuralParity:
         real_root = tmp_path / "real"
         real_root.mkdir()
         live_chain = _seed_chain_project(dry_root)
-        _seed_chain_project(real_root)
+        _ = _seed_chain_project(real_root)
 
         dry = run_rebalance(dry_root, dry_run=True, git=FakeGit())
         real = run_rebalance(real_root, git=FakeGit())
@@ -72,7 +73,7 @@ class TestDryRunReapProbeParity:
         _git(root, "commit", "--allow-empty", "-m", "init")
         wt = root / ".worktrees" / "wt-dirty"
         _git(root, "worktree", "add", "-b", "milknado/dirty", str(wt))
-        (wt / "dirty.txt").write_text("uncommitted")
+        _ = (wt / "dirty.txt").write_text("uncommitted")
         conn = _project_with_db(root)
         node = _insert_node(
             conn,
@@ -92,7 +93,7 @@ class TestDryRunReapProbeParity:
         dry_root.mkdir()
         real_root = tmp_path / "real"
         real_root.mkdir()
-        self._dirty_worktree_project(dry_root)
+        _ = self._dirty_worktree_project(dry_root)
         real_wt = self._dirty_worktree_project(real_root)
 
         dry = run_rebalance(dry_root, dry_run=True, git=GitAdapter(dry_root))
@@ -114,7 +115,7 @@ class TestTransactionRollback:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         conn = _project_with_db(tmp_path)
-        _insert_node(conn, "done goal", "done", kind="goal")
+        _ = _insert_node(conn, "done goal", "done", kind="goal")
         conn.commit()
         conn.close()
 
@@ -123,7 +124,7 @@ class TestTransactionRollback:
 
         monkeypatch.setattr(graph_rebalance, "_group_orphans", boom)
         with pytest.raises(RuntimeError, match="simulated restructure failure"):
-            run_rebalance(tmp_path, git=FakeGit())
+            _ = run_rebalance(tmp_path, git=FakeGit())
 
         check = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
         check.row_factory = sqlite3.Row

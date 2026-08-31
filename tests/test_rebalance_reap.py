@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# These tests intentionally exercise private database helpers.
 from pathlib import Path
 
 from milknado.adapters.git import GitAdapter
@@ -11,10 +12,10 @@ from milknado.domains.graph.rebalance import (
 from tests.rebalance_helpers import (
     NOW,
     FakeGit,
-    _git,
-    _insert_node,
-    _project_with_db,
-    _register_run,
+    _git,  # pyright: ignore[reportPrivateUsage]
+    _insert_node,  # pyright: ignore[reportPrivateUsage]
+    _project_with_db,  # pyright: ignore[reportPrivateUsage]
+    _register_run,  # pyright: ignore[reportPrivateUsage]
     run_rebalance,
 )
 
@@ -34,7 +35,7 @@ class TestReap:
         )
         _register_run(conn, node)
         # No run record is still eligible; only an actively running run blocks reap.
-        _insert_node(
+        _ = _insert_node(
             conn,
             "archived stray",
             "done",
@@ -84,7 +85,7 @@ class TestReap:
     def test_archived_worktree_without_run_record_is_reaped(self, tmp_path: Path) -> None:
         """Archive state is durable teardown evidence even without run history."""
         conn = _project_with_db(tmp_path)
-        _insert_node(
+        _ = _insert_node(
             conn,
             "archived stray",
             "done",
@@ -232,9 +233,9 @@ class TestReapSkips:
             branch_name="milknado/9-rerun",
         )
         _register_run(conn, node, status="completed")
-        conn.execute(
+        _ = conn.execute(
             "INSERT INTO runs (run_id, node_id, status, log_path, started_at) "
-            "VALUES (?, ?, ?, '', ?)",
+            + "VALUES (?, ?, ?, '', ?)",
             ("run-active", node, "running", NOW),
         )
         conn.commit()
@@ -276,5 +277,5 @@ class TestReapSkips:
         conn.close()
 
         git = FakeGit()
-        run_rebalance(tmp_path, dry_run=True, sweep=False, restructure=False, git=git)
+        _ = run_rebalance(tmp_path, dry_run=True, sweep=False, restructure=False, git=git)
         assert git.pruned == 0
