@@ -8,7 +8,18 @@ from typing import Annotated
 import typer
 
 from milknado.adapters.gh import GhProjectAdapter, GhTransportError
-from milknado.cli._helpers import _ensure_db, _load_or_default, console
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    console,
+    typer_argument,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    ensure_db as _ensure_db,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 from milknado.domains.github import (
     bind_github_project,
     export_github_roadmap,
@@ -21,15 +32,17 @@ github_roadmap_app = typer.Typer(
     name="github-roadmap", help="Import/bind/export roadmaps to a GitHub Project v2"
 )
 
-_ProjectRoot = Annotated[Path, typer.Option("--project-root", help="Project root directory")]
-_Owner = Annotated[str, typer.Argument(help="Project owner login (user/org)")]
-_Number = Annotated[int, typer.Argument(help="Project number")]
+_ProjectRoot = Annotated[Path, typer_option("--project-root", help="Project root directory")]
+_Owner = Annotated[str, typer_argument(help="Project owner login (user/org)")]
+_Number = Annotated[int, typer_argument(help="Project number")]
 
 _ERRORS = (FileNotFoundError, ValueError, LookupError, GhTransportError)
 
 
 @github_roadmap_app.command("import")
-def import_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path(".")) -> None:
+def import_cmd(
+    owner: _Owner, number: _Number, project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT
+) -> None:
     """Seed milknado roadmap + goal nodes from a GitHub Project (github-origin)."""
     project_root = project_root.resolve()
     github = GhProjectAdapter()
@@ -44,14 +57,14 @@ def import_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path
         graph.close()
     console.print(
         f"Imported project {owner}/{number}: {result.created_count} created, "
-        f"{result.reused_count} reused, {len(result.goal_node_ids)} goals."
+        + f"{result.reused_count} reused, {len(result.goal_node_ids)} goals."
     )
 
 
 @github_roadmap_app.command("bind")
 def bind_cmd(
-    slug: Annotated[str, typer.Argument(help="Wiki roadmap slug to project")],
-    project_root: _ProjectRoot = Path("."),
+    slug: Annotated[str, typer_argument(help="Wiki roadmap slug to project")],
+    project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Project a wiki-origin roadmap onto a GitHub Project (one-time bind)."""
     project_root = project_root.resolve()
@@ -69,12 +82,14 @@ def bind_cmd(
         graph.close()
     console.print(
         f"Bound roadmap {slug}: {result.issues_created} issues, "
-        f"{result.items_added} items, field_created={result.field_created}."
+        + f"{result.items_added} items, field_created={result.field_created}."
     )
 
 
 @github_roadmap_app.command("export")
-def export_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path(".")) -> None:
+def export_cmd(
+    owner: _Owner, number: _Number, project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT
+) -> None:
     """Harvest milknado execution state onto the bound Project item fields."""
     project_root = project_root.resolve()
     roadmap_root = wiki_root(project_root)
@@ -93,5 +108,5 @@ def export_cmd(owner: _Owner, number: _Number, project_root: _ProjectRoot = Path
         graph.close()
     console.print(
         f"Exported project {owner}/{number}: {result.goals_exported} goals, "
-        f"{result.bodies_overwritten} bodies overwritten."
+        + f"{result.bodies_overwritten} bodies overwritten."
     )

@@ -738,7 +738,7 @@ class TestIssueHelpers:
 
         mock_run.return_value = MagicMock(returncode=0, stdout="not json", stderr="")
         with pytest.raises(typer.Exit) as exc:
-            _fetch_issue("42")
+            _ = _fetch_issue("42")
         assert exc.value.exit_code == 1
 
     def test_materialize_issue_spec_rejects_empty_refs(self, project_dir: Path) -> None:

@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 
+from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, typer_option
 from milknado.domains.common import (
     LoadedConfig,
     default_config,
@@ -22,17 +23,17 @@ config_app = typer.Typer(name="config", help="Inspect effective configuration")
 @config_app.command("show")
 def show(
     resolved: Annotated[
-        bool, typer.Option("--resolved", help="Print effective runtime config.")
+        bool, typer_option("--resolved", help="Print effective runtime config.")
     ] = False,
     explain: Annotated[
-        bool, typer.Option("--explain", help="Print values with their source layer.")
+        bool, typer_option("--explain", help="Print values with their source layer.")
     ] = False,
     flavor: Annotated[
-        str | None, typer.Option("--flavor", help="Show one resolved flavor profile.")
+        str | None, typer_option("--flavor", help="Show one resolved flavor profile.")
     ] = None,
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Print resolved configuration or source-attributed effective values."""
     if resolved == explain:

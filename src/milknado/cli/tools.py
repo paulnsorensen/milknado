@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
 
 from milknado.adapters.toolchain import SystemToolchainAdapter
+from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, typer_argument, typer_option
 from milknado.domains.common import (
     WORKER_ALLOWED_TOOLS,
     MilknadoConfig,
@@ -40,7 +41,7 @@ def _print_tool_status() -> list[tuple[str, bool]]:
     return rows
 
 
-def _install_rust_tools_or_exit() -> None:
+def install_rust_tools_or_exit() -> None:
     installed, failed = install_missing_rust_tools(SystemToolchainAdapter())
     for name in installed:
         console.print(f"[green]Installed {name}[/green]")
@@ -50,13 +51,16 @@ def _install_rust_tools_or_exit() -> None:
         raise typer.Exit(code=1)
 
 
+_install_rust_tools_or_exit = install_rust_tools_or_exit
+
+
 # ── Worker hook wiring ────────────────────────────────────────────────────────
 # `rtk hook <family>` is a self-contained stdin→stdout hook processor shipped
 # by rtk-ai/rtk. We wire it directly into each harness's project-scoped hook
 # config — no `rtk init -g` (global install) required.
 
 
-def _write_worker_hooks(project_root: Path, config: MilknadoConfig) -> None:
+def write_worker_hooks(project_root: Path, config: MilknadoConfig) -> None:
     if shutil.which("rtk") is None:
         console.print("[dim]rtk not on PATH; skipping hook wiring.[/dim]")
         return
@@ -76,15 +80,19 @@ def _write_worker_hooks(project_root: Path, config: MilknadoConfig) -> None:
         console.print(f"[dim]No hook template for family '{family}'; skipping.[/dim]")
 
 
-def _merge_json(path: Path, patch: dict) -> None:
-    existing: dict = {}
+_write_worker_hooks = write_worker_hooks
+
+
+def _merge_json(path: Path, patch: dict[str, object]) -> None:
+    existing: dict[str, object] = {}
     if path.exists():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
+            parsed = cast(object, json.loads(path.read_text(encoding="utf-8")))
+            existing = cast(dict[str, object], parsed)
         except (json.JSONDecodeError, OSError):
             existing = {}
     existing = deep_merge(existing, patch, list_mode="merge_dedup")
-    path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+    _ = path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
 def _write_claude_worker_settings(
@@ -175,7 +183,7 @@ def tools_check() -> None:
 def tools_install() -> None:
     """Install missing Rust tools used by milknado workflows."""
     _install_rust_tools_or_exit()
-    _print_tool_status()
+    _ = _print_tool_status()
 
 
 # ── plugin commands ───────────────────────────────────────────────────────────
@@ -183,10 +191,10 @@ def tools_install() -> None:
 
 @plugin_app.command("init")
 def plugin_init(
-    name: Annotated[str, typer.Argument(help="Plugin name")],
+    name: Annotated[str, typer_argument(help="Plugin name")],
     target_dir: Annotated[
-        Path, typer.Option("--target-dir", "-d", help="Directory to create plugin in")
-    ] = Path("."),
+        Path, typer_option("--target-dir", "-d", help="Directory to create plugin in")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Scaffold a new milknado plugin."""
     from milknado.plugins import scaffold_plugin

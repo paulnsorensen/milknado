@@ -13,20 +13,30 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
-from milknado.cli._helpers import _ensure_db, _load_or_default
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    typer_argument,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    ensure_db as _ensure_db,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 
 console = Console()
 
 StrictOption = Annotated[
     bool,
-    typer.Option(
+    typer_option(
         "--strict",
         help="Exit 1 if any node fails mid-run (drain in-flight, no new dispatch).",
     ),
 ]
 AllowProtectedOption = Annotated[
     bool,
-    typer.Option(
+    typer_option(
         "--allow-protected",
         help="Permit execution on a protected branch (e.g. main).",
     ),
@@ -39,14 +49,14 @@ def _print_run_result(result: RunLoopResult) -> None:
     else:
         console.print(
             f"[yellow]Loop ended: {result.dispatched_total} dispatched, "
-            f"{result.completed_total} completed, "
-            f"{result.failed_total} failed.[/yellow]"
+            + f"{result.completed_total} completed, "
+            + f"{result.failed_total} failed.[/yellow]"
         )
 
     for conflict in result.rebase_conflicts:
         console.print(
             f"\n[red bold]Rebase conflict — node {conflict.node_id}:[/red bold] "
-            f"{conflict.description}",
+            + f"{conflict.description}",
         )
         if conflict.conflicting_files:
             for f in conflict.conflicting_files:
@@ -67,10 +77,10 @@ def _tmux_attach_argv(target: str) -> list[str]:
 
 
 def attach(
-    run_id: Annotated[str, typer.Argument(help="Run id, as returned by the run-start tools")],
+    run_id: Annotated[str, typer_argument(help="Run id, as returned by the run-start tools")],
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Attach to a running tmux-dispatched run's window."""
     from milknado.app.run import resolve_run_attach_target
@@ -95,8 +105,8 @@ def _is_interactive_terminal() -> bool:
 
 def run(
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
     strict: StrictOption = False,
     allow_protected: AllowProtectedOption = False,
 ) -> None:
@@ -121,19 +131,19 @@ def run(
         if refusal.reason == "detached":
             console.print(
                 f"[red]Refusing to run on detached HEAD (branch {refusal.branch!r}); "
-                "check out a named branch first.[/red]"
+                + "check out a named branch first.[/red]"
             )
         else:
             console.print(
                 f"[red]Refusing to run on protected branch '{refusal.branch}'. "
-                "Pass --allow-protected to override.[/red]"
+                + "Pass --allow-protected to override.[/red]"
             )
         raise typer.Exit(code=2)
 
     graph = _ensure_db(config, plugins)
 
     try:
-        graph.reconcile_completed_goals()
+        _ = graph.reconcile_completed_goals()
         root_reports = validate_runnable_roots(graph)
         excluded: set[int] = set()
         has_errors = False
@@ -149,7 +159,7 @@ def run(
 
         interactive = _is_interactive_terminal()
         if not interactive:
-            reconcile_orphaned_runs(graph)
+            _ = reconcile_orphaned_runs(graph)
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
@@ -161,6 +171,7 @@ def run(
 
         console.print(f"Starting execution loop on [bold]{feature_branch}[/bold]...")
         if interactive:
+            assert controller is not None
             result = run_execution_tui(
                 controller,
                 feature_branch=feature_branch,
