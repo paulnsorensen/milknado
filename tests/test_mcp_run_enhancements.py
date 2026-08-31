@@ -8,13 +8,21 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol, TypedDict, cast
 
 import pytest
 
 from milknado.adapters import ProcessAdapter
-from milknado.domains.common import NodeKind, RunResult, WorktreeMode
-from milknado.domains.dispatch import ProcessOutcome
+from milknado.domains.common import GitPort, MilknadoConfig, NodeKind, RunResult, WorktreeMode
+from milknado.domains.dispatch import (
+    GraphSessionPort,
+    ProcessOutcome,
+    ProcessPort,
+    ProcessTerminationPort,
+)
+from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import RunDict
 from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.run import (
@@ -60,17 +68,41 @@ finally:
 """
 
 
-def _force_run_id(graph, node_id: int, run_id: str) -> None:
+class _FinalizationGraph(Protocol):
+    def finish_run(self, run_id: str, result: RunResult) -> bool: ...
+
+    def get_run(self, run_id: str) -> dict[str, object] | None: ...
+
+
+class _CallResult(TypedDict):
+    id: int
+    run_id: str
+    node_id: int
+    status: str
+    exit_code: int | None
+    timed_out: bool | None
+    error: str | None
+    detail: str | None
+    rebased: bool | None
+    pid: int | None
+    log_path: str | None
+    summary: str | None
+    result: str | None
+    worktree_preserved: str | None
+    seq: int
+
+
+def _force_run_id(graph: MikadoGraph, node_id: int, run_id: str) -> None:
     """Seed a node's run_id directly; no production API sets it in isolation."""
-    graph._conn.execute("UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id))
-    graph._conn.commit()
+    _ = graph._conn.execute("UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id))  # pyright: ignore[reportPrivateUsage]
+    _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
 
 
 def _init_git(root: Path) -> None:
     import subprocess
 
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
-    subprocess.run(
+    _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    _ = subprocess.run(
         [
             "git",
             "-c",
@@ -87,13 +119,18 @@ def _init_git(root: Path) -> None:
     )
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+def _call(tool: object, **kwargs: object) -> _CallResult:
+    fn = cast(Callable[..., _CallResult], getattr(tool, "fn", tool))
     # run_inline{,_start} now default to ISOLATE (per-dispatch worktree). These
     # legacy tests target the shared-checkout path, so pin THIS_BRANCH unless a
     # test opts into ISOLATE explicitly.
     if fn.__name__ in ("milknado_run_inline", "milknado_run_inline_start"):
-        kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+        _ = kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+    return fn(**kwargs)
+
+
+def _call_list(tool: object, **kwargs: object) -> list[RunDict]:
+    fn = cast(Callable[..., list[RunDict]], getattr(tool, "fn", tool))
     return fn(**kwargs)
 
 
@@ -117,16 +154,16 @@ def _seed_run(
 
     graph, _cfg = open_graph(root)
     try:
-        graph._conn.execute(
+        _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "INSERT OR IGNORE INTO nodes (id, description, status, created_at) "
-            "VALUES (?, ?, 'running', ?)",
+            + "VALUES (?, ?, 'running', ?)",
             (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
         )
         started_at = started_at or datetime.now(UTC).isoformat()
         log_path = log_path or str(root / ".milknado" / "runs" / f"{run_id}.log")
         graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
-            graph.finish_run(
+            _ = graph.finish_run(
                 run_id,
                 RunResult(
                     status=status,
@@ -136,20 +173,22 @@ def _seed_run(
                     error=error,
                 ),
             )
-        graph._conn.commit()
+        graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
     finally:
         graph.close()
 
 
-def _read_run(root: Path, run_id: str) -> dict | None:
+def _read_run(root: Path, run_id: str) -> RunRecord:
     graph, _cfg = open_graph(root)
     try:
-        return graph.get_run(run_id)
+        row = graph.get_run(run_id)
+        assert row is not None
+        return row
     finally:
         graph.close()
 
 
-def _node_running_runs(root: Path, node_id: int) -> list[dict]:
+def _node_running_runs(root: Path, node_id: int) -> list[RunRecord]:
     """Return this node's 'running' run rows (replaces a runs-dir glob)."""
     graph, _cfg = open_graph(root)
     try:
@@ -160,18 +199,20 @@ def _node_running_runs(root: Path, node_id: int) -> list[dict]:
 
 def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool) -> str:
     script = tmp_path / f"stub_{status}.py"
-    script.write_text(
+    _ = script.write_text(
         _STUB_RUNNER.format(status=status, rebased=rebased, exit_code=0 if status == "done" else 1)
     )
     return f"{sys.executable} {script}"
 
 
 @pytest.fixture()
-def worker_stub(tmp_path_factory, monkeypatch):
+def worker_stub(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[str], str]:
     """Same pattern as test_mcp_server.py: a `claude` shim that exec's its args."""
     bindir = tmp_path_factory.mktemp("worker-stub-bin")
     stub = bindir / "claude"
-    stub.write_text('#!/bin/sh\nexec "$@"\n')
+    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
 
@@ -181,7 +222,7 @@ def worker_stub(tmp_path_factory, monkeypatch):
     return _cmd
 
 
-def _wait_for_terminal(run_id: str, root: str, tool, timeout: float = 5.0) -> dict:
+def _wait_for_terminal(run_id: str, root: str, tool: object, timeout: float = 5.0) -> _CallResult:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -216,7 +257,9 @@ def test_cancel_sentinel_uses_touch_and_missing_ok_unlink(tmp_path: Path) -> Non
 class TestUnifiedRunSchema:
     """Every run tool must return a dict that contains all superset keys."""
 
-    def test_run_inline_start_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_start_returns_superset_schema(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-start", kind="task", project_root=root)
         result = _call(
@@ -235,7 +278,9 @@ class TestUnifiedRunSchema:
         assert result["rebased"] is None
         assert result["summary"] is None
 
-    def test_run_inline_poll_returns_superset_schema(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_poll_returns_superset_schema(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="schema-poll", kind="task", project_root=root)
         started = _call(
@@ -291,13 +336,22 @@ class TestUnifiedRunSchema:
 class TestSyncRunSchema:
     """milknado_run_inline (sync) must also return the superset schema and write a state file."""
 
-    def test_run_inline_returns_superset_schema(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_returns_superset_schema(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
         def _stub_execute(
-            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
-        ):
-            log_path.write_bytes(b"ok")
+            _project_root: Path,
+            _node_id: int,
+            log_path: Path,
+            _brief: str,
+            _argv: list[str],
+            _timeout: int,
+            _run_id: str | None = None,
+            **_kwargs: object,
+        ) -> tuple[int, bool]:
+            _ = log_path.write_bytes(b"ok")
             return 0, False
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
@@ -314,13 +368,22 @@ class TestSyncRunSchema:
         assert result["exit_code"] == 0
         assert result["timed_out"] is False
 
-    def test_run_inline_writes_run_row(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_writes_run_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
         def _stub_execute(
-            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
-        ):
-            log_path.write_bytes(b"ok")
+            _project_root: Path,
+            _node_id: int,
+            log_path: Path,
+            _brief: str,
+            _argv: list[str],
+            _timeout: int,
+            _run_id: str | None = None,
+            **_kwargs: object,
+        ) -> tuple[int, bool]:
+            _ = log_path.write_bytes(b"ok")
             return 0, False
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
@@ -335,14 +398,23 @@ class TestSyncRunSchema:
         assert state["run_id"] == result["run_id"]
         assert state["status"] == "done"
 
-    def test_run_inline_sets_run_id_on_node(self, tmp_path: Path, monkeypatch) -> None:
+    def test_run_inline_sets_run_id_on_node(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """#40: run_id must be threaded into the node after a sync run."""
         import milknado.domains.dispatch.runner as runner_mod
 
         def _stub_execute(
-            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
-        ):
-            log_path.write_bytes(b"ok")
+            _project_root: Path,
+            _node_id: int,
+            log_path: Path,
+            _brief: str,
+            _argv: list[str],
+            _timeout: int,
+            _run_id: str | None = None,
+            **_kwargs: object,
+        ) -> tuple[int, bool]:
+            _ = log_path.write_bytes(b"ok")
             return 0, False
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
@@ -371,21 +443,28 @@ class TestSyncRunOrphanRescue:
     The async path already gets this via start_headless_async."""
 
     def test_sync_run_writes_rescuable_running_state_before_worker(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import milknado.domains.dispatch.runner as runner_mod
 
-        observed: dict = {}
+        observed: dict[str, object] = {}
 
         def _stub_execute(
-            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
-        ):
+            project_root: Path,
+            node_id: int,
+            log_path: Path,
+            _brief: str,
+            _argv: list[str],
+            _timeout: int,
+            _run_id: str | None = None,
+            **_kwargs: object,
+        ) -> tuple[int, bool]:
             # Snapshot the run row WHILE the worker runs — the exact window a
             # client timeout orphans the sync call in.
             rows = _node_running_runs(Path(project_root), node_id)
             if rows:
                 observed["state"] = rows[0]
-            log_path.write_bytes(b"ok")
+            _ = log_path.write_bytes(b"ok")
             return 0, False
 
         monkeypatch.setattr(runner_mod, "_execute", _stub_execute)
@@ -394,9 +473,9 @@ class TestSyncRunOrphanRescue:
 
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
-        _call(milknado_run_inline, node_id=task["id"], project_root=root)
+        _ = _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
-        state = observed.get("state")
+        state = cast(RunRecord, observed.get("state"))
         assert state is not None, "no 'running' run row existed while the worker ran"
         assert state["status"] == "running"
         # fail_stale_running_runs keys on both fields; missing either makes an
@@ -405,7 +484,7 @@ class TestSyncRunOrphanRescue:
         assert state["timeout_seconds"] is not None
 
     def test_sync_dispatch_exception_finalizes_run_failed(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An in-process exception during sync dispatch (here a worker crash,
         simulated by _execute raising) must finalize the run and node FAILED
@@ -416,8 +495,15 @@ class TestSyncRunOrphanRescue:
         import milknado.domains.dispatch.runner as runner_mod
 
         def _crash_execute(
-            project_root, node_id, log_path, brief, argv, timeout, run_id=None, **kwargs
-        ):
+            _project_root: Path,
+            _node_id: int,
+            _log_path: Path,
+            _brief: str,
+            _argv: list[str],
+            _timeout: int,
+            _run_id: str | None = None,
+            **_kwargs: object,
+        ) -> tuple[int, bool]:
             raise RuntimeError("worker crashed mid-run before terminal write")
 
         monkeypatch.setattr(runner_mod, "_execute", _crash_execute)
@@ -427,7 +513,7 @@ class TestSyncRunOrphanRescue:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="crash", kind="task", project_root=root)
         with pytest.raises(RuntimeError):
-            _call(milknado_run_inline, node_id=task["id"], project_root=root)
+            _ = _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
         # High-1 contract: the caught exception finalizes the node and its run
         # terminal — nothing is left RUNNING for the stale sweep to clean up.
@@ -444,7 +530,7 @@ class TestSyncRunOrphanRescue:
             graph.close()
 
     def test_done_node_rerun_refused_first_run_injects_run_id(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The first (PENDING->RUNNING) run has a run row, so it MUST inject
         MILKNADO_RUN_ID — the brief's deposit step keys on it (the #122 channel).
@@ -456,17 +542,17 @@ class TestSyncRunOrphanRescue:
         envs: list[dict[str, str]] = []
 
         def _capture_run(
-            self,
-            argv,
-            cwd,
-            log_path,
-            stdin,
-            env,
-            timeout,
-            **kwargs,
-        ):
+            _self: ProcessAdapter,
+            _argv: tuple[str, ...],
+            _cwd: Path,
+            log_path: Path,
+            _stdin: bytes,
+            env: dict[str, str],
+            _timeout: float,
+            **_kwargs: object,
+        ) -> ProcessOutcome:
             envs.append(env)
-            log_path.write_text("", encoding="utf-8")
+            _ = log_path.write_text("", encoding="utf-8")
             return ProcessOutcome(exit_code=0, timed_out=False, cancelled=False)
 
         monkeypatch.setattr(ProcessAdapter, "run", _capture_run)
@@ -476,10 +562,10 @@ class TestSyncRunOrphanRescue:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="rerun-env", kind="task", project_root=root)
         # First run: PENDING -> RUNNING -> DONE (a run row exists).
-        _call(milknado_run_inline, node_id=task["id"], project_root=root)
+        _ = _call(milknado_run_inline, node_id=task["id"], project_root=root)
         # Second run sees a DONE node and is refused before any worker spawns.
         with pytest.raises(ValueError, match="already done"):
-            _call(milknado_run_inline, node_id=task["id"], project_root=root)
+            _ = _call(milknado_run_inline, node_id=task["id"], project_root=root)
 
         assert len(envs) == 1, "the refused re-dispatch must not spawn a second worker"
         assert "MILKNADO_RUN_ID" in envs[0], (
@@ -506,7 +592,7 @@ class TestDispatchLifecycleGuards:
         from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
 
         class Graph:
-            def get_node(self, node_id: int) -> object | None:
+            def get_node(self, node_id: int) -> object | None:  # pyright: ignore[reportUnusedParameter]
                 return node
 
         request = SyncDispatchRequest(
@@ -515,11 +601,11 @@ class TestDispatchLifecycleGuards:
             worker_cmd=None,
             timeout_seconds=1,
             default_cmd="claude",
-            process=object(),  # type: ignore[arg-type]
+            process=cast(ProcessPort, object()),
             worktree_mode=WorktreeMode.THIS_BRANCH,
         )
         with pytest.raises(ValueError, match=message):
-            dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+            _ = dispatch_node_sync(Graph(), cast(GitPort, object()), request)
 
     def test_sync_dispatch_detects_node_deleted_after_worker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -532,29 +618,29 @@ class TestDispatchLifecycleGuards:
 
         class Graph:
             def __init__(self) -> None:
-                self.reads = 0
+                self.reads: int = 0
 
-            def get_node(self, node_id: int) -> object | None:
+            def get_node(self, node_id: int) -> object | None:  # pyright: ignore[reportUnusedParameter]
                 self.reads += 1
                 return node if self.reads == 1 else None
 
-            def claim_node_for_dispatch(self, *args, **kwargs) -> None:
+            def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-            def start_run(self, *args, **kwargs) -> None:
+            def start_run(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-            def finish_run(self, *args, **kwargs) -> None:
+            def finish_run(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-            def mark_terminal(self, *args, **kwargs) -> None:
+            def mark_terminal(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-        monkeypatch.setattr(lifecycle, "render_brief", lambda *args, **kwargs: "")
+        monkeypatch.setattr(lifecycle, "render_brief", lambda *args, **kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         monkeypatch.setattr(
             lifecycle,
             "run_headless",
-            lambda *args, **kwargs: WorkerResult(
+            lambda *args, **kwargs: WorkerResult(  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
                 exit_code=0,
                 log_path=tmp_path / "run.log",
                 summary="",
@@ -567,11 +653,11 @@ class TestDispatchLifecycleGuards:
             worker_cmd=None,
             timeout_seconds=1,
             default_cmd="claude",
-            process=object(),  # type: ignore[arg-type]
+            process=cast(ProcessPort, object()),
             worktree_mode=WorktreeMode.THIS_BRANCH,
         )
         with pytest.raises(RuntimeError, match="not found after run completed"):
-            dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+            _ = dispatch_node_sync(Graph(), cast(GitPort, object()), request)
 
 
 def test_stale_sweep_logs_and_skips_malformed_started_at(
@@ -580,7 +666,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
     from milknado.domains.dispatch import fail_stale_running_runs
 
     class Graph:
-        def runs_for_node(self, node_id: int) -> list[dict]:
+        def runs_for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
                 {
                     "run_id": "node-4-20260101T000000Z-bad1",
@@ -597,10 +683,12 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
 
 class TestRunList:
     def test_empty_when_no_runs(self, tmp_path: Path) -> None:
-        result = _call(milknado_run_list, project_root=str(tmp_path))
+        result = _call_list(milknado_run_list, project_root=str(tmp_path))
         assert result == []
 
-    def test_lists_state_files_after_async_run(self, tmp_path: Path, worker_stub) -> None:
+    def test_lists_state_files_after_async_run(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-test", kind="task", project_root=root)
         started = _call(
@@ -609,13 +697,15 @@ class TestRunList:
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
-        runs = _call(milknado_run_list, project_root=root)
+        _ = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
+        runs = _call_list(milknado_run_list, project_root=root)
         assert len(runs) >= 1
         run_ids = [r["run_id"] for r in runs]
         assert started["run_id"] in run_ids
 
-    def test_returns_superset_keys(self, tmp_path: Path, worker_stub) -> None:
+    def test_returns_superset_keys(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="list-keys", kind="task", project_root=root)
         started = _call(
@@ -624,8 +714,8 @@ class TestRunList:
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
-        runs = _call(milknado_run_list, project_root=root)
+        _ = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
+        runs = _call_list(milknado_run_list, project_root=root)
         assert len(runs) >= 1
         missing = _SUPERSET_KEYS - runs[0].keys()
         assert not missing, f"run_list entry missing keys: {missing}"
@@ -647,7 +737,7 @@ class TestRunList:
                 ended_at=started_at,
                 exit_code=0,
             )
-        runs = _call(milknado_run_list, project_root=root)
+        runs = _call_list(milknado_run_list, project_root=root)
         assert runs[0]["run_id"] == newer_id
         assert runs[1]["run_id"] == older_id
 
@@ -665,12 +755,12 @@ class TestRunCancel:
         monkeypatch.setattr(
             cancel_module,
             "_await_cancel_finalize",
-            lambda graph, run_id: cancel_module._finalize_cancelled(graph, run_id),
+            lambda graph, run_id: cancel_module._finalize_cancelled(graph, run_id),  # pyright: ignore[reportPrivateUsage, reportUnknownArgumentType, reportUnknownLambdaType]
         )
 
     def test_cancel_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
-            _call(
+            _ = _call(
                 milknado_run_cancel,
                 run_id="node-1-20260101T000000Z-abcd",
                 project_root=str(tmp_path),
@@ -678,15 +768,15 @@ class TestRunCancel:
 
     def test_cancel_malformed_run_id_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="invalid run_id"):
-            _call(milknado_run_cancel, run_id="../etc/passwd", project_root=str(tmp_path))
+            _ = _call(milknado_run_cancel, run_id="../etc/passwd", project_root=str(tmp_path))
 
     def test_cancel_terminal_run_returns_without_kill(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
-        killed = []
-        monkeypatch.setattr(os, "killpg", lambda *a: killed.append(a))
+        killed: list[object] = []
+        monkeypatch.setattr(os, "killpg", lambda *a: killed.append(a))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         assert result["status"] == "done"
         assert killed == [], "must not kill a terminal run"
@@ -698,10 +788,10 @@ class TestRunCancel:
 
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=9999)
-        killed: list[tuple] = []
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
-        _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
+        killed: list[tuple[int, int]] = []
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        _ = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         assert killed == [(9999, sig_mod.SIGTERM)], "must send SIGTERM to process group"
 
     def test_cancel_writes_failed_state(
@@ -709,8 +799,8 @@ class TestRunCancel:
     ) -> None:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
@@ -723,8 +813,8 @@ class TestRunCancel:
     ) -> None:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         missing = _SUPERSET_KEYS - result.keys()
         assert not missing, f"run_cancel missing keys: {missing}"
@@ -742,9 +832,9 @@ class TestRunCancel:
         finally:
             graph.close()
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-        _call(milknado_run_cancel, run_id=run_id, project_root=root)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        _ = _call(milknado_run_cancel, run_id=run_id, project_root=root)
         graph2, _cfg2 = open_graph(tmp_path)
         try:
             node = graph2.get_node(node_id)
@@ -783,16 +873,14 @@ class TestRunCancel:
         monkeypatch.setattr(
             adapters.GitAdapter,
             "remove_worktree",
-            lambda self, wt, target="HEAD": removed.append(wt),
+            lambda self, wt, target="HEAD": removed.append(wt),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         )
 
-        _call(milknado_run_cancel, run_id=run_id, project_root=root)
+        _ = _call(milknado_run_cancel, run_id=run_id, project_root=root)
 
         assert removed == [orphan_wt], "orphaned worktree must be removed on cancel"
 
-    def test_sync_stuck_running_cancel_reconciles_and_clears(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_sync_stuck_running_cancel_reconciles_and_clears(self, tmp_path: Path) -> None:
         """A run stuck "running" with no pid and no live worker (crashed sync run)
         must still be cleared: cancel falls back to writing the terminal state,
         reconciles the node, and leaves no stale sentinel."""
@@ -846,7 +934,7 @@ class TestRunCancel:
             graph.close()
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
-        def boom(self, wt, target="HEAD"):
+        def boom(_self: adapters.GitAdapter, _wt: Path, _target: str = "HEAD") -> None:
             raise RuntimeError("worktree locked")
 
         monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", boom)
@@ -863,18 +951,18 @@ class TestRunCancel:
         import subprocess
 
         def git(cwd: Path, *args: str) -> None:
-            subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True)
+            _ = subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True)
 
         git(tmp_path, "init", "-q", "-b", "feature", str(tmp_path))
         git(tmp_path, "config", "user.email", "t@t")
         git(tmp_path, "config", "user.name", "t")
-        (tmp_path / "README.md").write_text("seed\n")
+        _ = (tmp_path / "README.md").write_text("seed\n")
         git(tmp_path, "add", ".")
         git(tmp_path, "commit", "-qm", "seed")
         wt = tmp_path / "milknado-cancel-wt"
         git(tmp_path, "worktree", "add", "-q", "-b", "milknado/cancel", str(wt))
         if unlanded:
-            (wt / "work.py").write_text("x = 1\n")
+            _ = (wt / "work.py").write_text("x = 1\n")
             git(wt, "add", ".")
             git(wt, "commit", "-qm", "unlanded work")
 
@@ -900,8 +988,8 @@ class TestRunCancel:
         unlanded is torn down through the fail-closed path and the node
         reconciles to failed."""
         node_id, run_id, wt = self._cancel_repo_with_worktree(tmp_path, unlanded=False)
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
@@ -927,8 +1015,8 @@ class TestRunCancel:
         preserved on disk (the only copy of that work), the node reconciles to
         terminal (failed), and the tool reports the preserved path."""
         node_id, run_id, wt = self._cancel_repo_with_worktree(tmp_path, unlanded=True)
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
@@ -955,7 +1043,7 @@ class TestAsyncCancel:
     keeps running and later clobbers the cancelled state."""
 
     def test_cancel_stops_async_worker_and_finalizes(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
     ) -> None:
         from milknado.domains.dispatch import runs_dir as _runs_dir
         from milknado.domains.dispatch._runstate import cancel_path
@@ -1008,7 +1096,7 @@ class TestAsyncCancel:
         assert not cancel_path(_runs_dir(tmp_path), run_id).exists(), "sentinel must be cleared"
 
     def test_async_worker_timeout_marks_failed_and_timed_out(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
     ) -> None:
         """The async poll loop (`execute_cancellable`) enforces the run's own
         timeout deadline — distinct from the sync `_execute` `communicate(timeout=)`
@@ -1058,14 +1146,16 @@ class TestAsyncCancel:
 
         # The worker finalizes `done` during the finalize poll window: the run row
         # flips to done and that is what `_await_cancel_finalize` returns.
-        def fake_finalize(graph, rid: str) -> dict:
-            graph.finish_run(
+        def fake_finalize(graph: _FinalizationGraph, rid: str) -> dict[str, object] | None:
+            _ = graph.finish_run(
                 rid,
                 RunResult(
                     status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
                 ),
             )
-            return graph.get_run(rid)
+            row = graph.get_run(rid)
+            assert row is not None
+            return row
 
         monkeypatch.setattr(
             "milknado.domains.dispatch.cancel._await_cancel_finalize", fake_finalize
@@ -1117,9 +1207,9 @@ class TestPidCancelReconcile:
         node_id = self._running_node_owned_by(tmp_path, run_id)
         self._write_pid_state(tmp_path, run_id, node_id)
 
-        killed: list[tuple] = []
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))
+        killed: list[tuple[int, int]] = []
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
@@ -1154,10 +1244,10 @@ class TestPidCancelReconcile:
             graph.close()
         self._write_pid_state(tmp_path, stale_run, node_id)
 
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
-        monkeypatch.setattr(os, "killpg", lambda *a: None)
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-        _call(milknado_run_cancel, run_id=stale_run, project_root=str(tmp_path))
+        _ = _call(milknado_run_cancel, run_id=stale_run, project_root=str(tmp_path))
 
         graph2, _cfg2 = open_graph(tmp_path)
         try:
@@ -1178,10 +1268,10 @@ class TestPidCancelReconcile:
         node_id = self._running_node_owned_by(tmp_path, run_id)
         self._write_pid_state(tmp_path, run_id, node_id)
 
-        def gone(*_a):
+        def gone(*_a: object) -> None:
             raise ProcessLookupError("no such process")
 
-        monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+        monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         monkeypatch.setattr(os, "killpg", gone)
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
@@ -1211,7 +1301,9 @@ class TestCancelFinalizeAndRace:
         """If the run row stays 'running' for the whole finalize window (the worker
         is wedged or dead), the bound elapses to None so the caller takes over the
         terminal write itself."""
-        from milknado.domains.dispatch.cancel import _await_cancel_finalize
+        from milknado.domains.dispatch.cancel import (
+            _await_cancel_finalize,  # pyright: ignore[reportPrivateUsage]
+        )
 
         monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
         monkeypatch.setattr("milknado.domains.dispatch.cancel._CANCEL_FINALIZE_POLL_SECS", 0.01)
@@ -1244,8 +1336,8 @@ class TestCancelFinalizeAndRace:
             graph.close()
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
-        def elapsed_after_done(graph, rid: str):
-            graph.finish_run(
+        def elapsed_after_done(graph: _FinalizationGraph, rid: str) -> None:
+            _ = graph.finish_run(
                 rid,
                 RunResult(
                     status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
@@ -1271,41 +1363,45 @@ class TestCancelFinalizeAndRace:
             graph2.close()
 
     def test_pid_cancel_preserves_state_when_process_will_not_exit(self) -> None:
-        from milknado.domains.dispatch.cancel import _cancel_pid_run
+        from milknado.domains.dispatch.cancel import (
+            _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
+        )
 
         class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:
+            def terminate_group(self, pid: int, timeout: float) -> bool:  # pyright: ignore[reportUnusedParameter]
                 return False
 
         with pytest.raises(RuntimeError, match="did not exit after termination"):
-            _cancel_pid_run(
-                object(),  # type: ignore[arg-type]
-                object(),  # type: ignore[arg-type]
+            _ = _cancel_pid_run(
+                object(),
+                cast(GitPort, object()),
                 Process(),
                 {"pid": 91, "node_id": 3},
                 "node-3-20260101T000000Z-stuk",
             )
 
     def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(self) -> None:
-        from milknado.domains.dispatch.cancel import _cancel_pid_run
+        from milknado.domains.dispatch.cancel import (
+            _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
+        )
 
         class Graph:
-            def finish_run(self, run_id, result):
+            def finish_run(self, _run_id: str, _result: object) -> bool:
                 return False
 
-            def get_run(self, run_id):
+            def get_run(self, _run_id: str) -> None:
                 return None
 
         class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:
+            def terminate_group(self, pid: int, timeout: float) -> bool:  # pyright: ignore[reportUnusedParameter]
                 return True
 
         run_id = "node-3-20260101T000000Z-gone"
         with pytest.raises(RuntimeError, match="cancellation finalization was not confirmed"):
-            _cancel_pid_run(
+            _ = _cancel_pid_run(
                 Graph(),
-                object(),  # type: ignore[arg-type]
-                Process(),
+                cast(GitPort, object()),
+                cast(ProcessTerminationPort, cast(object, Process())),
                 {"pid": 91, "node_id": 3},
                 run_id,
             )
@@ -1314,22 +1410,26 @@ class TestCancelFinalizeAndRace:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from milknado.domains.dispatch import cancel as cancel_module
+        from milknado.domains.dispatch import runs_dir as _runs_dir
 
         class Graph:
-            def get_run(self, run_id: str) -> dict:
+            def get_run(self, _run_id: str) -> dict[str, object]:
                 return {"status": "running"}
 
-        monkeypatch.setattr(cancel_module, "_await_cancel_finalize", lambda graph, run_id: None)
+        def _never_finishes(_graph: object, _run_id: str) -> None:
+            return None
+
+        monkeypatch.setattr(cancel_module, "_await_cancel_finalize", _never_finishes)
         run_id = "node-3-20260101T000000Z-stuk"
         with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
-            cancel_module._cancel_async_run(
+            _ = cancel_module._cancel_async_run(  # pyright: ignore[reportPrivateUsage]
                 Graph(),
-                object(),  # type: ignore[arg-type]
+                cast(GitPort, object()),
                 tmp_path,
                 {"node_id": 3},
                 run_id,
             )
-        assert not (cancel_module.runs_dir(tmp_path) / f"{run_id}.cancel").exists()
+        assert not (_runs_dir(tmp_path) / f"{run_id}.cancel").exists()
 
 
 class TestTerminateWorker:
@@ -1354,12 +1454,12 @@ class TestTerminateWorker:
             time.sleep(0.01)
         assert ready.exists(), "worker did not install its SIGTERM handler in time"
         try:
-            ProcessAdapter(termination_grace=0.2)._terminate(proc)
+            ProcessAdapter(termination_grace=0.2)._terminate(proc)  # pyright: ignore[reportPrivateUsage]
             rc = proc.returncode
         finally:
             if proc.poll() is None:
                 proc.kill()
-                proc.wait()
+                _ = proc.wait()
 
         assert rc == -sig_mod.SIGKILL, (
             "a worker ignoring SIGTERM must be escalated to SIGKILL after the grace window"
@@ -1374,7 +1474,7 @@ class TestTerminateWorker:
 class TestDepositResult:
     def test_deposit_rejects_malformed_run_id(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="invalid run_id"):
-            _call(
+            _ = _call(
                 milknado_deposit_result,
                 run_id="../etc/passwd",
                 payload="x",
@@ -1383,7 +1483,7 @@ class TestDepositResult:
 
     def test_deposit_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
-            _call(
+            _ = _call(
                 milknado_deposit_result,
                 run_id="node-1-20260101T000000Z-abcd",
                 payload="x",
@@ -1398,7 +1498,7 @@ class TestDepositResult:
         monkeypatch.setenv("MILKNADO_PROJECT_ROOT", str(tmp_path.resolve()))
         monkeypatch.setenv("MILKNADO_RUN_ID", "node-2-20260101T000000Z-feed")
         with pytest.raises(ValueError, match="does not match injected run"):
-            _call(
+            _ = _call(
                 milknado_deposit_result,
                 run_id=run_id,
                 payload="wrong owner",
@@ -1422,7 +1522,9 @@ class TestDepositResult:
         finally:
             graph.close()
 
-    def test_run_inline_poll_returns_deposited_result(self, tmp_path: Path, worker_stub) -> None:
+    def test_run_inline_poll_returns_deposited_result(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         """The async-run poll must surface the deposited result under `result`."""
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="deposit-poll", kind="task", project_root=root)
@@ -1432,8 +1534,8 @@ class TestDepositResult:
             worker_cmd=worker_stub("cat"),
             project_root=root,
         )
-        _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
-        _call(
+        _ = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
+        _ = _call(
             milknado_deposit_result,
             run_id=started["run_id"],
             payload="the deliverable",
@@ -1442,7 +1544,9 @@ class TestDepositResult:
         final = _call(milknado_run_inline_poll, run_id=started["run_id"], project_root=root)
         assert final["result"] == "the deliverable"
 
-    def test_poll_result_is_none_without_deposit(self, tmp_path: Path, worker_stub) -> None:
+    def test_poll_result_is_none_without_deposit(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         root = str(tmp_path)
         task = _call(milknado_todo_add, description="no-deposit", kind="task", project_root=root)
         started = _call(
@@ -1465,7 +1569,7 @@ class TestDepositResult:
             adapter_roots.append(root)
             return tmux
 
-        def reconcile(adapter: object, state: dict) -> None:
+        def reconcile(adapter: object, state: dict[str, str]) -> None:
             reconciled.append((adapter, state["run_id"], state["status"]))
 
         monkeypatch.setattr("milknado.mcp.run.TmuxAdapter", build_tmux)
@@ -1475,8 +1579,8 @@ class TestDepositResult:
         _seed_run(tmp_path, run_id=done_id, node_id=1, status="done", exit_code=0)
         _seed_run(tmp_path, run_id=failed_id, node_id=2, status="failed", exit_code=1)
 
-        _call(milknado_run_inline_poll, run_id=done_id, project_root=str(tmp_path))
-        _call(milknado_run_inline_poll, run_id=failed_id, project_root=str(tmp_path))
+        _ = _call(milknado_run_inline_poll, run_id=done_id, project_root=str(tmp_path))
+        _ = _call(milknado_run_inline_poll, run_id=failed_id, project_root=str(tmp_path))
 
         assert adapter_roots == [tmp_path]
         assert reconciled == [(tmux, done_id, "done")]
@@ -1486,18 +1590,18 @@ class TestDepositResult:
         tampered runs.log_path in the user-editable db must not cause an
         arbitrary-file read (mirrors milknado_run_loop_poll's derivation)."""
         decoy = tmp_path / "secret.txt"
-        decoy.write_text("SECRET-CONTENT", encoding="utf-8")
+        _ = decoy.write_text("SECRET-CONTENT", encoding="utf-8")
         run_id = "node-1-20260101T000000Z-feed"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
         derived = tmp_path / ".milknado" / "runs" / f"{run_id}.log"
         derived.parent.mkdir(parents=True, exist_ok=True)
-        derived.write_text("real log", encoding="utf-8")
+        _ = derived.write_text("real log", encoding="utf-8")
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph._conn.execute(
+            _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
                 "UPDATE runs SET log_path = ? WHERE run_id = ?", (str(decoy), run_id)
             )
-            graph._conn.commit()
+            graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
         finally:
             graph.close()
         final = _call(milknado_run_inline_poll, run_id=run_id, project_root=str(tmp_path))
@@ -1516,8 +1620,12 @@ class TestDepositResult:
         run_id = "node-1-20260101T000000Z-1234"
         log_dir = tmp_path / "milknado-1-task" / ".ralph-logs"
         log_dir.mkdir(parents=True)
-        (log_dir / "0001_20260101T000000Z.log").write_text("iteration 1 output", encoding="utf-8")
-        (log_dir / "0002_20260101T000100Z.log").write_text("iteration 2 output", encoding="utf-8")
+        _ = (log_dir / "0001_20260101T000000Z.log").write_text(
+            "iteration 1 output", encoding="utf-8"
+        )
+        _ = (log_dir / "0002_20260101T000100Z.log").write_text(
+            "iteration 2 output", encoding="utf-8"
+        )
         _seed_run(
             tmp_path,
             run_id=run_id,
@@ -1538,7 +1646,7 @@ class TestDepositResult:
         must not be tailed, mirroring the flat-file derivation's guard."""
         outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-ralph-logs"
         outside_dir.mkdir(exist_ok=True)
-        (outside_dir / "0001_x.log").write_text("SECRET-ITERATION-OUTPUT", encoding="utf-8")
+        _ = (outside_dir / "0001_x.log").write_text("SECRET-ITERATION-OUTPUT", encoding="utf-8")
         try:
             run_id = "node-1-20260101T000000Z-5678"
             _seed_run(
@@ -1562,10 +1670,12 @@ class TestDepositResult:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
         payload = "\n".join(f"item {i}: before X{i} -> after Y{i}" for i in range(40))
-        _call(milknado_deposit_result, run_id=run_id, payload=payload, project_root=str(tmp_path))
+        _ = _call(
+            milknado_deposit_result, run_id=run_id, payload=payload, project_root=str(tmp_path)
+        )
         graph, _cfg = open_graph(tmp_path)
         try:
-            graph.finish_run(
+            _ = graph.finish_run(
                 run_id,
                 RunResult(
                     status="done",
@@ -1574,12 +1684,14 @@ class TestDepositResult:
                     ended_at="2026-01-01T00:00:00Z",
                 ),
             )
-            graph._conn.commit()
+            graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
         finally:
             graph.close()
         final = _call(milknado_run_inline_poll, run_id=run_id, project_root=str(tmp_path))
         assert final["result"] == payload
-        assert final["result"].count("\n") == 39, "every line of the deliverable must survive"
+        result_text = final["result"]
+        assert result_text is not None
+        assert result_text.count("\n") == 39, "every line of the deliverable must survive"
 
 
 def test_finish_dispatch_rejects_lost_run_fence() -> None:
@@ -1588,11 +1700,11 @@ def test_finish_dispatch_rejects_lost_run_fence() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return False
 
     with pytest.raises(RuntimeError, match="terminal run write lost its fence"):
-        lifecycle._finish_dispatch(
+        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
             Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
         )
 
@@ -1603,16 +1715,16 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return True
 
-        def mark_terminal(self, *_args) -> bool:
+        def mark_terminal(self, *_args: object) -> bool:
             return False
 
         def get_node(self, _node_id: int) -> None:
             return None
 
-    lifecycle._finish_dispatch(
+    lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
         Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
     )
 
@@ -1629,23 +1741,23 @@ def test_sync_dispatch_reports_terminal_persistence_loss(
         def get_node(self, _node_id: int):
             return SimpleNamespace(kind=NodeKind.TASK)
 
-        def claim_node_for_dispatch(self, *_args, **_kwargs) -> None:
+        def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def start_run(self, *_args, **_kwargs) -> None:
+        def start_run(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args, **_kwargs) -> bool:
+        def finish_run(self, *_args: object, **_kwargs: object) -> bool:
             return False
 
-        def mark_terminal(self, *_args, **_kwargs) -> bool:
+        def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
             return True
 
-    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(
         lifecycle,
         "run_headless",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     request = SyncDispatchRequest(
         node_id=1,
@@ -1653,24 +1765,24 @@ def test_sync_dispatch_reports_terminal_persistence_loss(
         worker_cmd=None,
         timeout_seconds=1,
         default_cmd="claude",
-        process=object(),  # type: ignore[arg-type]
+        process=cast(ProcessPort, object()),
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
     with pytest.raises(RuntimeError, match="terminal persistence lost its fence"):
-        lifecycle.dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+        _ = lifecycle.dispatch_node_sync(Graph(), cast(GitPort, object()), request)
 
 
 def test_cancel_finalize_surfaces_late_write_loss() -> None:
     from milknado.domains.dispatch import cancel
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return False
 
-        def get_run(self, _run_id: str) -> dict:
+        def get_run(self, _run_id: str) -> dict[str, object]:
             return {"run_id": _run_id, "status": "done"}
 
-    result = cancel._finalize_cancelled(Graph(), "run-1")
+    result = cancel._finalize_cancelled(Graph(), "run-1")  # pyright: ignore[reportPrivateUsage]
     assert result["terminal_persistence"] == "late-write-lost"
 
 
@@ -1680,7 +1792,7 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
     from milknado.domains.dispatch import reconcile
 
     class Graph:
-        def runs_for_node(self, _node_id: int) -> list[dict]:
+        def runs_for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
                 {
                     "run_id": "run-stale",
@@ -1690,11 +1802,11 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
                 }
             ]
 
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return False
 
     with pytest.raises(RuntimeError, match="stale terminal write lost"):
-        reconcile.fail_stale_running_runs(Graph(), 1)
+        _ = reconcile.fail_stale_running_runs(Graph(), 1)
 
 
 def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
@@ -1717,30 +1829,33 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
     log_path.touch()
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             raise RuntimeError("database unavailable")
 
         def close(self) -> None:
             return None
 
     class Sessions:
-        def open_graph(self, _project_root: Path):
-            return Graph(), None
+        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:  # pyright: ignore[reportUnusedParameter]
+            return (
+                cast(MikadoGraph, cast(object, Graph())),
+                cast(MilknadoConfig, cast(object, None)),
+            )
 
     monkeypatch.setattr(
         async_run,
         "_run_worker_process",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     context = async_run.AsyncWorkerContext(
         request=request,
         log_path=log_path,
         argv=("claude",),
         graph_sessions=Sessions(),
-        git=object(),  # type: ignore[arg-type]
-        process=object(),  # type: ignore[arg-type]
+        git=cast(GitPort, object()),
+        process=cast(ProcessPort, object()),
     )
-    async_run._async_worker(context)
+    async_run._async_worker(context)  # pyright: ignore[reportPrivateUsage]
     sidecar = tmp_path / ".milknado" / "runs" / f"{request.run_id}.terminal-error"
     assert "terminal persistence raised" in sidecar.read_text(encoding="utf-8")
 
@@ -1752,13 +1867,13 @@ def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
     run_id = "node-1-20260101T000000Z-abcd"
     rdir = runs_dir(tmp_path)
     rdir.mkdir(parents=True, exist_ok=True)
-    (rdir / f"{run_id}.terminal-error").write_text("persistence failed", encoding="utf-8")
+    _ = (rdir / f"{run_id}.terminal-error").write_text("persistence failed", encoding="utf-8")
 
     class Graph:
-        def get_run(self, _run_id: str) -> dict:
+        def get_run(self, _run_id: str) -> dict[str, object]:
             return {"run_id": _run_id, "status": "failed", "log_path": "tampered"}
 
-    result = async_run.poll_async_run(Graph(), tmp_path, run_id)
+    result = async_run.poll_async_run(cast(MikadoGraph, cast(object, Graph())), tmp_path, run_id)
     assert result["terminal_persistence"] == "degraded"
     assert result["error"] == "persistence failed"
 
@@ -1769,17 +1884,17 @@ def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return True
 
-        def mark_terminal(self, *_args) -> bool:
+        def mark_terminal(self, *_args: object) -> bool:
             return False
 
         def get_node(self, _node_id: int):
             return SimpleNamespace(id=_node_id)
 
     with pytest.raises(RuntimeError, match="terminal node write lost its fence"):
-        lifecycle._finish_dispatch(
+        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
             Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
         )
 
@@ -1796,23 +1911,23 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         def get_node(self, _node_id: int):
             return SimpleNamespace(kind=NodeKind.TASK)
 
-        def claim_node_for_dispatch(self, *_args, **_kwargs) -> None:
+        def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def start_run(self, *_args, **_kwargs) -> None:
+        def start_run(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args, **_kwargs) -> bool:
+        def finish_run(self, *_args: object, **_kwargs: object) -> bool:
             return True
 
-        def mark_terminal(self, *_args, **_kwargs) -> bool:
+        def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
             raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(
         lifecycle,
         "run_headless",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     request = SyncDispatchRequest(
         node_id=1,
@@ -1820,11 +1935,11 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         worker_cmd=None,
         timeout_seconds=1,
         default_cmd="claude",
-        process=object(),  # type: ignore[arg-type]
+        process=cast(ProcessPort, object()),
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
     with pytest.raises(RuntimeError, match="database unavailable"):
-        lifecycle.dispatch_node_sync(Graph(), object(), request)  # type: ignore[arg-type]
+        _ = lifecycle.dispatch_node_sync(Graph(), cast(GitPort, object()), request)
 
 
 def test_async_worker_reports_cancelled_run_fence_loss(
@@ -1847,25 +1962,30 @@ def test_async_worker_reports_cancelled_run_fence_loss(
     log_path.touch()
 
     class Graph:
-        def finish_run(self, *_args) -> bool:
+        def finish_run(self, *_args: object) -> bool:
             return False
 
         def close(self) -> None:
             return None
 
     class Sessions:
-        def open_graph(self, _project_root: Path):
-            return Graph(), None
+        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:  # pyright: ignore[reportUnusedParameter]
+            return (
+                cast(MikadoGraph, cast(object, Graph())),
+                cast(MilknadoConfig, cast(object, None)),
+            )
 
     monkeypatch.setattr(
-        async_run, "_run_worker_process", lambda *_args, **_kwargs: (0, False, True)
+        async_run,
+        "_run_worker_process",
+        lambda *_args, **_kwargs: (0, False, True),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     context = async_run.AsyncWorkerContext(
         request=request,
         log_path=log_path,
         argv=("claude",),
-        graph_sessions=Sessions(),
-        git=object(),  # type: ignore[arg-type]
-        process=object(),  # type: ignore[arg-type]
+        graph_sessions=cast(GraphSessionPort, Sessions()),
+        git=cast(GitPort, object()),
+        process=cast(ProcessPort, object()),
     )
-    async_run._async_worker(context)
+    async_run._async_worker(context)  # pyright: ignore[reportPrivateUsage]

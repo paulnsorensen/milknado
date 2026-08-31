@@ -11,8 +11,42 @@ from __future__ import annotations
 import json
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import yaml
+
+JsonObject = dict[str, object]
+YamlObject = dict[object, object]
+
+
+def _read_json(path: Path) -> JsonObject:
+    return cast(JsonObject, json.loads(path.read_text()))
+
+
+def _read_toml(path: Path) -> JsonObject:
+    with path.open("rb") as file:
+        return cast(JsonObject, tomllib.load(file))
+
+
+def _read_yaml(path: Path) -> YamlObject:
+    return cast(YamlObject, yaml.safe_load(path.read_text()))
+
+
+def _mapping(value: object) -> JsonObject:
+    return cast(JsonObject, value)
+
+
+def _objects(value: object) -> list[JsonObject]:
+    return cast(list[JsonObject], value)
+
+
+def _strings(value: object) -> list[str]:
+    return cast(list[str], value)
+
+
+def _yaml_mapping(value: object) -> YamlObject:
+    return cast(YamlObject, value)
+
 
 REPO = Path(__file__).parent.parent
 
@@ -25,9 +59,9 @@ MCP_JSON = REPO / "plugins" / "milknado" / ".mcp.json"
 
 
 def _pyproject_version() -> str:
-    with open(REPO / "pyproject.toml", "rb") as f:
-        data = tomllib.load(f)
-    return data["project"]["version"]
+    data = _read_toml(REPO / "pyproject.toml")
+    project = cast(JsonObject, data["project"])
+    return cast(str, project["version"])
 
 
 def _accepted_launcher_args(version: str) -> tuple[list[str], list[str]]:
@@ -67,30 +101,30 @@ class TestManifestsExist:
 
 class TestManifestsParse:
     def test_claude_marketplace_valid_json(self) -> None:
-        data = json.loads(CLAUDE_MARKETPLACE.read_text())
+        data = _read_json(CLAUDE_MARKETPLACE)
         assert isinstance(data, dict)
 
     def test_codex_marketplace_valid_json(self) -> None:
-        data = json.loads(CODEX_MARKETPLACE.read_text())
+        data = _read_json(CODEX_MARKETPLACE)
         assert isinstance(data, dict)
 
     def test_claude_plugin_valid_json(self) -> None:
-        data = json.loads(CLAUDE_PLUGIN.read_text())
+        data = _read_json(CLAUDE_PLUGIN)
         assert isinstance(data, dict)
 
     def test_codex_plugin_valid_json(self) -> None:
-        data = json.loads(CODEX_PLUGIN.read_text())
+        data = _read_json(CODEX_PLUGIN)
         assert isinstance(data, dict)
 
     def test_mcp_json_valid_json(self) -> None:
-        data = json.loads(MCP_JSON.read_text())
+        data = _read_json(MCP_JSON)
         assert isinstance(data, dict)
 
 
 class TestVersionAgreement:
     def test_claude_plugin_version_matches_pyproject(self) -> None:
         expected = _pyproject_version()
-        data = json.loads(CLAUDE_PLUGIN.read_text())
+        data = _read_json(CLAUDE_PLUGIN)
         assert data["version"] == expected, (
             f"plugins/milknado/.claude-plugin/plugin.json version {data['version']!r} "
             f"!= pyproject.toml version {expected!r}"
@@ -98,7 +132,7 @@ class TestVersionAgreement:
 
     def test_codex_plugin_version_matches_pyproject(self) -> None:
         expected = _pyproject_version()
-        data = json.loads(CODEX_PLUGIN.read_text())
+        data = _read_json(CODEX_PLUGIN)
         assert data["version"] == expected, (
             f"plugins/milknado/.codex-plugin/plugin.json version {data['version']!r} "
             f"!= pyproject.toml version {expected!r}"
@@ -107,8 +141,8 @@ class TestVersionAgreement:
 
 class TestMarketplaceSourcePaths:
     def test_claude_marketplace_source_points_at_plugins_milknado(self) -> None:
-        data = json.loads(CLAUDE_MARKETPLACE.read_text())
-        plugins = data["plugins"]
+        data = _read_json(CLAUDE_MARKETPLACE)
+        plugins = _objects(data["plugins"])
         assert len(plugins) >= 1, "Claude marketplace must have at least one plugin entry"
         sources = [p["source"] for p in plugins]
         assert "./plugins/milknado" in sources, (
@@ -116,10 +150,10 @@ class TestMarketplaceSourcePaths:
         )
 
     def test_codex_marketplace_source_points_at_plugins_milknado(self) -> None:
-        data = json.loads(CODEX_MARKETPLACE.read_text())
-        plugins = data["plugins"]
+        data = _read_json(CODEX_MARKETPLACE)
+        plugins = _objects(data["plugins"])
         assert len(plugins) >= 1, "Codex marketplace must have at least one plugin entry"
-        paths = [p["source"]["path"] for p in plugins]
+        paths = [_mapping(p["source"])["path"] for p in plugins]
         assert "./plugins/milknado" in paths, (
             "Codex marketplace plugins[].source.path must include"
             f" './plugins/milknado'; got {paths}"
@@ -129,22 +163,22 @@ class TestMarketplaceSourcePaths:
 class TestPluginNameAgreement:
     """Plugin name must be 'milknado' in all manifests that carry a name field."""
 
-    EXPECTED_NAME = "milknado"
+    EXPECTED_NAME: str = "milknado"
 
     def test_claude_plugin_name(self) -> None:
-        data = json.loads(CLAUDE_PLUGIN.read_text())
+        data = _read_json(CLAUDE_PLUGIN)
         assert data["name"] == self.EXPECTED_NAME, (
             f"Claude plugin.json name={data['name']!r}, expected {self.EXPECTED_NAME!r}"
         )
 
     def test_codex_plugin_name(self) -> None:
-        data = json.loads(CODEX_PLUGIN.read_text())
+        data = _read_json(CODEX_PLUGIN)
         assert data["name"] == self.EXPECTED_NAME, (
             f"Codex plugin.json name={data['name']!r}, expected {self.EXPECTED_NAME!r}"
         )
 
     def test_claude_marketplace_name(self) -> None:
-        data = json.loads(CLAUDE_MARKETPLACE.read_text())
+        data = _read_json(CLAUDE_MARKETPLACE)
         assert data["name"] == self.EXPECTED_NAME, (
             f"Claude marketplace name={data['name']!r}, expected {self.EXPECTED_NAME!r}"
         )
@@ -152,20 +186,19 @@ class TestPluginNameAgreement:
 
 class TestMcpJsonShape:
     def test_mcp_json_has_milknado_server(self) -> None:
-        data = json.loads(MCP_JSON.read_text())
+        data = _read_json(MCP_JSON)
         assert "mcpServers" in data
-        assert "milknado" in data["mcpServers"], (
-            f"mcpServers must have a 'milknado' key; got {list(data['mcpServers'].keys())}"
-        )
+        servers = _mapping(data["mcpServers"])
+        assert "milknado" in servers, f"mcpServers must have a 'milknado' key; got {list(servers)}"
 
     def test_mcp_json_uses_uvx(self) -> None:
-        data = json.loads(MCP_JSON.read_text())
-        server = data["mcpServers"]["milknado"]
+        data = _read_json(MCP_JSON)
+        server = _mapping(_mapping(data["mcpServers"])["milknado"])
         assert server["command"] == "uvx", (
             f"mcpServers.milknado.command must be 'uvx'; got {server['command']!r}"
         )
         main_form, pinned_form = _accepted_launcher_args(_pyproject_version())
-        assert server["args"] in (main_form, pinned_form), (
+        assert _strings(server["args"]) in (main_form, pinned_form), (
             "mcpServers.milknado.args must launch the server from the SAME ref as the "
             f"checkout: the git-ref form {main_form} on main, or the "
             f"PyPI pin {pinned_form} on a tag / stable commit (version read from "
@@ -176,7 +209,7 @@ class TestMcpJsonShape:
 class TestSkillFilesExist:
     """Auto-discovery requires the skill files to be present in the payload."""
 
-    SKILL_DIR = REPO / "plugins" / "milknado" / "skills" / "milknado-config"
+    SKILL_DIR: Path = REPO / "plugins" / "milknado" / "skills" / "milknado-config"
 
     def test_skill_md_exists(self) -> None:
         skill_md = self.SKILL_DIR / "SKILL.md"
@@ -205,14 +238,14 @@ class TestPluginJsonNoSkillsField:
     """
 
     def test_claude_plugin_no_skills_field(self) -> None:
-        data = json.loads(CLAUDE_PLUGIN.read_text())
+        data = _read_json(CLAUDE_PLUGIN)
         assert "skills" not in data, (
             "Claude plugin.json must not have a 'skills' field; "
             "default skills/ auto-discovery is used (spec decision)"
         )
 
     def test_codex_plugin_no_skills_field(self) -> None:
-        data = json.loads(CODEX_PLUGIN.read_text())
+        data = _read_json(CODEX_PLUGIN)
         assert "skills" not in data, (
             "Codex plugin.json must not have a 'skills' field; "
             "default skills/ auto-discovery is used (spec decision)"
@@ -222,35 +255,40 @@ class TestPluginJsonNoSkillsField:
 class TestCodexMarketplaceSchema:
     """Lock the Codex-native marketplace shape: source.source, policy, interface.displayName."""
 
-    def _entry(self) -> dict:
-        data = json.loads(CODEX_MARKETPLACE.read_text())
-        return data["plugins"][0]
+    def _entry(self) -> JsonObject:
+        data = _read_json(CODEX_MARKETPLACE)
+        plugins = cast(list[JsonObject], data["plugins"])
+        return plugins[0]
 
     def test_codex_source_type_is_local(self) -> None:
         entry = self._entry()
-        assert entry["source"]["source"] == "local", (
-            f"Codex marketplace source.source must be 'local'; got {entry['source']['source']!r}"
+        source = _mapping(entry["source"])
+        assert source["source"] == "local", (
+            f"Codex marketplace source.source must be 'local'; got {source['source']!r}"
         )
 
     def test_codex_policy_installation(self) -> None:
         entry = self._entry()
-        assert entry["policy"]["installation"] == "AVAILABLE", (
+        policy = _mapping(entry["policy"])
+        assert policy["installation"] == "AVAILABLE", (
             f"Codex marketplace policy.installation must be 'AVAILABLE'; "
-            f"got {entry['policy']['installation']!r}"
+            f"got {policy['installation']!r}"
         )
 
     def test_codex_policy_authentication(self) -> None:
         entry = self._entry()
-        assert entry["policy"]["authentication"] == "ON_INSTALL", (
+        policy = _mapping(entry["policy"])
+        assert policy["authentication"] == "ON_INSTALL", (
             f"Codex marketplace policy.authentication must be 'ON_INSTALL'; "
-            f"got {entry['policy']['authentication']!r}"
+            f"got {policy['authentication']!r}"
         )
 
     def test_codex_interface_display_name(self) -> None:
-        data = json.loads(CODEX_MARKETPLACE.read_text())
-        assert data["interface"]["displayName"] == "milknado", (
+        data = _read_json(CODEX_MARKETPLACE)
+        interface = cast(JsonObject, data["interface"])
+        assert interface["displayName"] == "milknado", (
             f"Codex marketplace interface.displayName must be 'milknado'; "
-            f"got {data['interface']['displayName']!r}"
+            f"got {interface['displayName']!r}"
         )
 
 
@@ -262,10 +300,10 @@ class TestReleaseWorkflow:
     build-and-publish only (least-privilege split); the detect job runs with
     contents: read."""
 
-    RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
+    RELEASE_YML: Path = REPO / ".github" / "workflows" / "release.yml"
 
-    def _workflow(self) -> dict:
-        return yaml.safe_load(self.RELEASE_YML.read_text())
+    def _workflow(self) -> YamlObject:
+        return _read_yaml(self.RELEASE_YML)
 
     def test_release_yml_exists(self) -> None:
         assert self.RELEASE_YML.exists(), f"Missing: {self.RELEASE_YML}"
@@ -278,19 +316,21 @@ class TestReleaseWorkflow:
         """Release fires on every push to main (version-gate in detect skips non-bumps)
         plus workflow_dispatch as a manual escape hatch.  No push: tags trigger — the
         vX.Y.Z tag is an output of the job (off-main commit), not an input."""
-        wf = self._workflow()
-        # YAML-1.1 loaders (PyYAML) parse the 'on' key as boolean True;
-        # YAML-1.2 loaders keep it as the string 'on'. Accept both.
-        trigger = wf.get(True) or wf.get("on")
-        assert trigger is not None, f"release.yml has no 'on' trigger block; keys: {list(wf)}"
+        workflow = self._workflow()
+        trigger_value = workflow.get(True) or workflow.get("on")
+        assert trigger_value is not None, (
+            f"release.yml has no 'on' trigger block; keys: {list(workflow)}"
+        )
+        trigger = _yaml_mapping(trigger_value)
         assert "workflow_dispatch" in trigger, (
             f"release.yml must trigger on workflow_dispatch; got {list(trigger)}"
         )
         assert "push" in trigger, f"release.yml must trigger on push to main; got {list(trigger)}"
-        assert trigger["push"]["branches"] == ["main"], (
-            f"release.yml push trigger must be branches: [main]; got {trigger['push']}"
+        push = _yaml_mapping(trigger["push"])
+        assert _strings(push["branches"]) == ["main"], (
+            f"release.yml push trigger must be branches: [main]; got {push['branches']}"
         )
-        assert "tags" not in trigger["push"], (
+        assert "tags" not in push, (
             "release.yml must NOT trigger on push: tags — the vX.Y.Z tag is an output "
             "of the job (off-main commit), not an input trigger"
         )
@@ -301,18 +341,19 @@ class TestReleaseWorkflow:
         Locks the two-job version-gate shape so a future refactor can't silently
         publish on every push to main.
         """
-        wf = self._workflow()
-        jobs = wf["jobs"]
+        workflow = self._workflow()
+        jobs = _yaml_mapping(workflow["jobs"])
         assert "detect" in jobs, f"release.yml must have a 'detect' job; got {list(jobs)}"
-        detect_outputs = jobs["detect"].get("outputs", {})
+        detect = _yaml_mapping(jobs["detect"])
+        detect_outputs = _yaml_mapping(detect.get("outputs", {}))
         assert "release" in detect_outputs, (
             f"detect job must declare a 'release' output; got {list(detect_outputs)}"
         )
-        pub = jobs["build-and-publish"]
+        pub = _yaml_mapping(jobs["build-and-publish"])
         needs = pub.get("needs", [])
-        needs_list = [needs] if isinstance(needs, str) else needs
+        needs_list = [needs] if isinstance(needs, str) else cast(list[object], needs)
         assert "detect" in needs_list, f"build-and-publish must need 'detect'; got needs={needs!r}"
-        if_cond = pub.get("if", "")
+        if_cond = cast(str, pub.get("if", ""))
         assert "needs.detect.outputs.release == 'true'" in if_cond, (
             f"build-and-publish 'if' must gate on needs.detect.outputs.release == 'true'; "
             f"got {if_cond!r}"
@@ -325,12 +366,15 @@ class TestReleaseWorkflow:
         PyPI, so it must never hold contents:write.  Guards against a future edit
         adding write grants to detect OR deleting the top-level read floor.
         """
-        wf = self._workflow()
-        assert wf.get("permissions", {}).get("contents") == "read", (
+        workflow = self._workflow()
+        permissions = _yaml_mapping(workflow.get("permissions", {}))
+        assert permissions.get("contents") == "read", (
             "top-level permissions.contents must be 'read' so jobs inherit least privilege"
         )
-        jobs = wf["jobs"]
-        detect_contents = jobs["detect"].get("permissions", {}).get("contents")
+        jobs = _yaml_mapping(workflow["jobs"])
+        detect = _yaml_mapping(jobs["detect"])
+        detect_permissions = _yaml_mapping(detect.get("permissions", {}))
+        detect_contents = detect_permissions.get("contents")
         assert detect_contents != "write", (
             "detect must stay read-only — it only reads pyproject.toml and curls PyPI; "
             "a contents:write grant would be a silent privilege over-grant"
@@ -379,10 +423,11 @@ class TestReleaseWorkflow:
     def test_release_yml_grants_contents_write(self) -> None:
         """Pushing the tag and force-pushing stable both need contents: write."""
         wf = self._workflow()
-        job = wf["jobs"]["build-and-publish"]
-        assert job["permissions"]["contents"] == "write", (
+        job = _yaml_mapping(_yaml_mapping(wf["jobs"])["build-and-publish"])
+        permissions = _yaml_mapping(job["permissions"])
+        assert permissions["contents"] == "write", (
             "build-and-publish must grant contents: write to push the vX.Y.Z tag and "
-            f"repoint stable; got {job['permissions'].get('contents')!r}"
+            f"repoint stable; got {permissions.get('contents')!r}"
         )
 
     def test_release_yml_creates_pinned_tag_and_repoints_stable(self) -> None:
@@ -412,13 +457,13 @@ class TestReleaseWorkflow:
             )
 
     def test_release_yml_publishes_via_pypa_action_in_pypi_environment(self) -> None:
-        """Publish step uses pypa/gh-action-pypi-publish; job sets environment: pypi."""
-        wf = self._workflow()
-        job = wf["jobs"]["build-and-publish"]
+        workflow = self._workflow()
+        job = _yaml_mapping(_yaml_mapping(workflow["jobs"])["build-and-publish"])
         assert job.get("environment") == "pypi", (
             f"build-and-publish job must set 'environment: pypi'; got {job.get('environment')!r}"
         )
-        uses_values = [step["uses"] for step in job["steps"] if "uses" in step]
+        steps = _objects(job["steps"])
+        uses_values = [cast(str, step["uses"]) for step in steps if "uses" in step]
         assert any("pypa/gh-action-pypi-publish" in u for u in uses_values), (
             f"No publish step uses pypa/gh-action-pypi-publish; found: {uses_values}"
         )
@@ -435,9 +480,13 @@ class TestWheelExcludesPluginPayload:
     """
 
     def test_wheel_packages_only_src_milknado(self) -> None:
-        with open(REPO / "pyproject.toml", "rb") as f:
-            data = tomllib.load(f)
-        packages = data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+        data = _read_toml(REPO / "pyproject.toml")
+        tool = _mapping(data["tool"])
+        hatch = _mapping(tool["hatch"])
+        build = _mapping(hatch["build"])
+        targets = _mapping(build["targets"])
+        wheel = _mapping(targets["wheel"])
+        packages = _strings(wheel["packages"])
         assert packages == ["src/milknado"], (
             "Wheel must package only src/milknado so the plugin payload "
             f"(plugins/milknado/.mcp.json) never leaks into the wheel; got {packages}"
@@ -463,23 +512,24 @@ class TestLauncherFormAcceptance:
     def test_release_rewrite_yields_an_accepted_pinned_form(self) -> None:
         """Mirror the release workflow's `.mcp.json` rewrite and prove a tag / stable
         checkout is self-consistent: the rewritten launcher passes the same manifest
-        acceptance. Locks workflow-output ↔ test-acceptance against drift (e.g. a pin
         target change on one side only). Mirrors, does not exec, release.yml's jq."""
         version = _pyproject_version()
-        data = json.loads(MCP_JSON.read_text())
-        data["mcpServers"]["milknado"]["args"] = [
+        data = _read_json(MCP_JSON)
+        servers = _mapping(data["mcpServers"])
+        server = _mapping(servers["milknado"])
+        server["args"] = [
             "--from",
             f"milknado=={version}",
             "milknado-mcp",
         ]
-        assert data["mcpServers"]["milknado"]["args"] in _accepted_launcher_args(version)
+        assert _strings(server["args"]) in _accepted_launcher_args(version)
 
 
 class TestReadmeDocumentsChannels:
     """Spec acceptance: README documents the three channels + the uvx refresh caveat.
     Substring locks (version-independent) so a revert to single-channel install fails."""
 
-    README = REPO / "README.md"
+    README: Path = REPO / "README.md"
 
     def test_readme_names_all_three_channels(self) -> None:
         text = self.README.read_text()

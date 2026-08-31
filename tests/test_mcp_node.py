@@ -8,10 +8,11 @@ worktree on disk and node_verify runs real quality gates in it.
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
-from typing import cast
+from typing import NoReturn, TypedDict, cast
 
 import pytest
 
@@ -31,9 +32,35 @@ from milknado.mcp.todo_mutate import milknado_set_subtree_status, milknado_todo_
 _DEAD_PID = 2**31 - 1  # no process can hold this; os.kill(_, 0) -> ProcessLookupError
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+class _NodeResponse(TypedDict):
+    run_id: str
+    node_id: int
+    brief: str
+    flavor: str
+    model: str
+    tools: list[str]
+    worktree_path: str | None
+    agent_type: str
+    loop_mode: str
+    max_iterations: int
+    max_turns: int
+    ok: bool
+    feedback: str
+    owner: str
+    goal_id: int
+    released: bool
+    status: str
+
+
+def _call(tool: object, **kwargs: object) -> _NodeResponse:
+    fn = cast(Callable[..., _NodeResponse], getattr(tool, "fn", tool))
     return fn(**kwargs)
+
+
+def _worktree(payload: _NodeResponse) -> Path:
+    path = payload["worktree_path"]
+    assert path is not None
+    return Path(path)
 
 
 def _init_git_repo(repo: Path) -> None:
@@ -42,15 +69,15 @@ def _init_git_repo(repo: Path) -> None:
         ["git", "config", "user.email", "t@milknado.test"],
         ["git", "config", "user.name", "Milknado Test"],
     ):
-        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
-    (repo / "README.md").write_text("# t\n", encoding="utf-8")
+        _ = subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+    _ = (repo / "README.md").write_text("# t\n", encoding="utf-8")
     for cmd in (["git", "add", "-A"], ["git", "commit", "-m", "init"]):
-        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+        _ = subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
 
 
 def _write_config(repo: Path, *, gates: list[str]) -> None:
     gates_toml = ", ".join(f'"{g}"' for g in gates)
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         f'[milknado]\nagent_family = "claude"\nquality_gates = [{gates_toml}]\n',
         encoding="utf-8",
     )
@@ -95,7 +122,7 @@ def test_claim_marks_running_creates_worktree_writes_run_no_spawn(repo: Path) ->
         graph.close()
 
     # Worktree exists on disk and is a real linked worktree.
-    wt = Path(payload["worktree_path"])
+    wt = _worktree(payload)
     assert wt.is_dir()
     assert (wt / "README.md").exists()
 
@@ -130,9 +157,9 @@ def test_claim_returns_full_structured_payload(repo: Path) -> None:
 
 def test_claim_honors_global_worker_tools(repo: Path) -> None:
     """The native tools list consults GLOBAL [milknado.worker.tools], like the subprocess path."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        '\n[milknado.worker.tools]\nclaude = ["Read", "Write"]\n',
+        + '\n[milknado.worker.tools]\nclaude = ["Read", "Write"]\n',
         encoding="utf-8",
     )
     node_id = _add_task(repo)
@@ -143,9 +170,9 @@ def test_claim_honors_global_worker_tools(repo: Path) -> None:
 
 def test_claim_preserves_empty_flavor_tools_override(repo: Path) -> None:
     """A per-flavor `tools = []` is an intentional empty allowlist, not inherit."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        "\n[milknado.flavor.implement]\ntools = []\n",
+        + "\n[milknado.flavor.implement]\ntools = []\n",
         encoding="utf-8",
     )
     node_id = _add_task(repo)  # tasks default to the implement flavor
@@ -155,9 +182,9 @@ def test_claim_preserves_empty_flavor_tools_override(repo: Path) -> None:
 
 def test_claim_single_mode_includes_node_verify(repo: Path) -> None:
     """In loop_mode="single" the worker self-verifies, so node_verify must be allowlisted."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        '\n[milknado.flavor.implement]\nloop_mode = "single"\n',
+        + '\n[milknado.flavor.implement]\nloop_mode = "single"\n',
         encoding="utf-8",
     )
     node_id = _add_task(repo)
@@ -168,22 +195,22 @@ def test_claim_single_mode_includes_node_verify(repo: Path) -> None:
 
 def test_claim_honors_custom_worktree_pattern(repo: Path) -> None:
     """_create_node_worktree threads cfg.worktree_pattern instead of a hardcoded name."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        'worktree_pattern = "wt-{node_id}-{slug}"\n',
+        + 'worktree_pattern = "wt-{node_id}-{slug}"\n',
         encoding="utf-8",
     )
     node_id = _add_task(repo)
     payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
-    assert Path(payload["worktree_path"]).name.startswith(f"wt-{node_id}-")
+    assert _worktree(payload).name.startswith(f"wt-{node_id}-")
 
 
 def test_claim_is_atomic_second_claim_loses(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
-    _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     with pytest.raises(ValueError, match="already running"):
-        _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+        _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
 
 def test_claim_refuses_non_task_node(repo: Path) -> None:
@@ -194,7 +221,7 @@ def test_claim_refuses_non_task_node(repo: Path) -> None:
     finally:
         graph.close()
     with pytest.raises(ValueError, match="only task nodes"):
-        _call(milknado_todo_claim, node_id=goal_id, project_root=str(repo))
+        _ = _call(milknado_todo_claim, node_id=goal_id, project_root=str(repo))
 
 
 # ── milknado_todo_claim: per-node worktree policy (ADR-005) ─────────────────
@@ -231,12 +258,12 @@ def test_in_place_reclaim_clears_stale_isolated_metadata(repo: Path) -> None:
     try:
         assert graph.claim_node(node_id, "old-run", now=now_iso()) is True
         graph.set_worktree(node_id, "old-run", str(stale), "old-branch")
-        graph.mark_terminal(node_id, "old-run", NodeStatus.FAILED)
+        _ = graph.mark_terminal(node_id, "old-run", NodeStatus.FAILED)
     finally:
         graph.close()
 
     payload = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
-    (repo / "new-evidence.txt").write_text("current checkout\n", encoding="utf-8")
+    _ = (repo / "new-evidence.txt").write_text("current checkout\n", encoding="utf-8")
     verdict = _call(milknado_node_verify, run_id=payload["run_id"], project_root=str(repo))
     assert payload["worktree_path"] is None
     assert verdict == {"ok": True, "feedback": ""}
@@ -251,9 +278,9 @@ def test_in_place_reclaim_clears_stale_isolated_metadata(repo: Path) -> None:
 
 def test_claim_worktree_none_defaults_to_profile(repo: Path) -> None:
     """worktree=None (default) follows the resolved flavor profile's worktree knob."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        "\n[milknado.flavor.implement]\nworktree = false\n",
+        + "\n[milknado.flavor.implement]\nworktree = false\n",
         encoding="utf-8",
     )
     node_id = _add_task(repo)  # tasks default to the implement flavor
@@ -263,15 +290,15 @@ def test_claim_worktree_none_defaults_to_profile(repo: Path) -> None:
 
 def test_claim_worktree_true_override_wins_over_false_profile_default(repo: Path) -> None:
     """An explicit worktree=True override wins even when the flavor default is false."""
-    (repo / "milknado.toml").write_text(
+    _ = (repo / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        "\n[milknado.flavor.implement]\nworktree = false\n",
+        + "\n[milknado.flavor.implement]\nworktree = false\n",
         encoding="utf-8",
     )
     node_id = _add_task(repo)
     payload = _call(milknado_todo_claim, node_id=node_id, worktree=True, project_root=str(repo))
     assert payload["worktree_path"] is not None
-    assert Path(payload["worktree_path"]).is_dir()
+    assert _worktree(payload).is_dir()
 
 
 # ── milknado_node_verify ─────────────────────────────────────────────────────
@@ -282,7 +309,7 @@ def test_node_verify_passing_gates_returns_ok(repo: Path) -> None:
     node_id = _add_task(repo)
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     # Produce a stageable change so the change-rejection check passes.
-    (Path(claim["worktree_path"]) / "out.txt").write_text("work\n", encoding="utf-8")
+    _ = (_worktree(claim) / "out.txt").write_text("work\n", encoding="utf-8")
 
     verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert verdict == {"ok": True, "feedback": ""}
@@ -301,7 +328,7 @@ def test_node_verify_failing_gate_returns_not_ok_with_feedback(repo: Path) -> No
 def test_node_verify_unknown_run_raises(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     with pytest.raises(ValueError, match="not found"):
-        _call(
+        _ = _call(
             milknado_node_verify,
             run_id="node-1-20260101T000000Z-deadbeef",
             project_root=str(repo),
@@ -313,14 +340,16 @@ def test_node_verify_rejects_malformed_run_id(repo: Path) -> None:
     rejected at the boundary before any graph lookup, not treated as not-found."""
     _write_config(repo, gates=["true"])
     with pytest.raises(ValueError, match="invalid run_id format"):
-        _call(milknado_node_verify, run_id="../etc/passwd", project_root=str(repo))
+        _ = _call(milknado_node_verify, run_id="../etc/passwd", project_root=str(repo))
 
 
 def test_node_verify_unconfigured_gates_fails_closed(repo: Path) -> None:
     """When the flavor resolves quality_gates=None (unconfigured, not the
     explicit skip-gates `[]`), node_verify must fail closed with the
     actionable message rather than raising a TypeError from list(None)."""
-    (repo / "milknado.toml").write_text('[milknado]\nagent_family = "claude"\n', encoding="utf-8")
+    _ = (repo / "milknado.toml").write_text(
+        '[milknado]\nagent_family = "claude"\n', encoding="utf-8"
+    )
     node_id = _add_task(repo)
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
@@ -335,9 +364,9 @@ def test_node_verify_unconfigured_gates_fails_closed(repo: Path) -> None:
 def test_done_rejected_without_passing_verify(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
-    _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     with pytest.raises(ValueError, match="has not returned ok=True"):
-        _call(milknado_todo_set_status, node_id=node_id, status="done", project_root=str(repo))
+        _ = _call(milknado_todo_set_status, node_id=node_id, status="done", project_root=str(repo))
 
 
 def test_done_rejected_when_verify_failed(repo: Path) -> None:
@@ -347,14 +376,14 @@ def test_done_rejected_when_verify_failed(repo: Path) -> None:
     failed = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert failed["ok"] is False
     with pytest.raises(ValueError, match="has not returned ok=True"):
-        _call(milknado_todo_set_status, node_id=node_id, status="done", project_root=str(repo))
+        _ = _call(milknado_todo_set_status, node_id=node_id, status="done", project_root=str(repo))
 
 
 def test_done_accepted_after_passing_verify(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
-    (Path(claim["worktree_path"]) / "out.txt").write_text("work\n", encoding="utf-8")
+    _ = (_worktree(claim) / "out.txt").write_text("work\n", encoding="utf-8")
     ok = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert ok["ok"] is True
 
@@ -383,7 +412,7 @@ def test_done_accepted_after_failed_then_passing_reverify(repo: Path) -> None:
 
     # Worker does more work and the gate now passes.
     _write_config(repo, gates=["true"])
-    (Path(claim["worktree_path"]) / "out.txt").write_text("more work\n", encoding="utf-8")
+    _ = (_worktree(claim) / "out.txt").write_text("more work\n", encoding="utf-8")
     passed = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert passed["ok"] is True
 
@@ -402,9 +431,11 @@ def test_subtree_done_gate_blocks_unverified_native_node(repo: Path) -> None:
     finally:
         graph.close()
     _write_config(repo, gates=["true"])
-    _call(milknado_todo_claim, node_id=task_id, project_root=str(repo))
+    _ = _call(milknado_todo_claim, node_id=task_id, project_root=str(repo))
     with pytest.raises(ValueError, match="has not returned ok=True"):
-        _call(milknado_set_subtree_status, root_id=goal_id, status="done", project_root=str(repo))
+        _ = _call(
+            milknado_set_subtree_status, root_id=goal_id, status="done", project_root=str(repo)
+        )
 
 
 def test_done_gate_does_not_block_manual_unclaimed_node(repo: Path) -> None:
@@ -441,7 +472,7 @@ def test_done_gate_exempts_subprocess_run_node(repo: Path) -> None:
         # milknado_todo_claim or milknado_node_verify.
         assert graph.claim_node(node_id, run_id, now=now_iso()) is True
         graph.start_run(run_id, node_id, "log", now_iso(), None)
-        graph.deposit_run_message(run_id, "result", "subprocess deliverable", now_iso())
+        _ = graph.deposit_run_message(run_id, "result", "subprocess deliverable", now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.run_id == run_id
@@ -462,7 +493,7 @@ def test_done_gate_exempts_subprocess_run_node(repo: Path) -> None:
 def test_claim_unknown_node_raises(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     with pytest.raises(ValueError, match="not found"):
-        _call(milknado_todo_claim, node_id=999, project_root=str(repo))
+        _ = _call(milknado_todo_claim, node_id=999, project_root=str(repo))
 
 
 def test_claim_rolls_back_claim_when_worktree_creation_fails(
@@ -472,12 +503,14 @@ def test_claim_rolls_back_claim_when_worktree_creation_fails(
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
 
-    def _boom(*_a, **_k):
+    def _boom(*_a: object, **_k: object) -> NoReturn:
         raise RuntimeError("worktree boom")
 
-    monkeypatch.setattr("milknado.app.node.create_isolated_worktree", _boom)
+    from milknado.app import node as node_app
+
+    monkeypatch.setattr(node_app, "create_isolated_worktree", _boom)
     with pytest.raises(RuntimeError, match="worktree boom"):
-        _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+        _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
     graph, _cfg = open_graph(repo)
     try:
@@ -498,12 +531,12 @@ def test_node_verify_in_place_no_worktree_uses_project_root(repo: Path) -> None:
     run_id = "node-1-20260101T000000Z-deadbeef"
     graph, _cfg = open_graph(repo)
     try:
-        graph.start_run(run_id, node_id, "log", datetime.now(UTC).isoformat(), None)
+        _ = graph.start_run(run_id, node_id, "log", datetime.now(UTC).isoformat(), None)
     finally:
         graph.close()
     # An in-place node with non-empty gates keeps the stageable-change check;
     # the repo has an untracked file relative to its own HEAD -> passes.
-    (repo / "out.txt").write_text("work\n", encoding="utf-8")
+    _ = (repo / "out.txt").write_text("work\n", encoding="utf-8")
 
     verdict = _call(milknado_node_verify, run_id=run_id, project_root=str(repo))
     assert verdict["ok"] is True
@@ -518,14 +551,14 @@ def test_node_verify_in_place_artifact_evidence_pass(repo: Path) -> None:
 
     graph, _cfg = open_graph(repo)
     try:
-        graph._conn.execute(
+        _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "UPDATE nodes SET artifact_path = ? WHERE id = ?", ("docs/out.md", node_id)
         )
-        graph._conn.commit()
+        _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
     finally:
         graph.close()
     (repo / "docs").mkdir()
-    (repo / "docs" / "out.md").write_text("deliverable\n", encoding="utf-8")
+    _ = (repo / "docs" / "out.md").write_text("deliverable\n", encoding="utf-8")
 
     verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert verdict == {"ok": True, "feedback": ""}
@@ -539,10 +572,10 @@ def test_node_verify_in_place_artifact_missing_fails(repo: Path) -> None:
 
     graph, _cfg = open_graph(repo)
     try:
-        graph._conn.execute(
+        _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "UPDATE nodes SET artifact_path = ? WHERE id = ?", ("docs/out.md", node_id)
         )
-        graph._conn.commit()
+        _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
     finally:
         graph.close()
 
@@ -552,7 +585,7 @@ def test_node_verify_in_place_artifact_missing_fails(repo: Path) -> None:
 
 
 def test_resolve_model_extracts_flag_and_defaults() -> None:
-    from milknado.mcp.node import _resolve_model
+    from milknado.app.node import _resolve_model
 
     assert _resolve_model("claude --model opus -p") == "opus"
     assert _resolve_model("claude --model=sonnet -p") == "sonnet"
@@ -569,9 +602,9 @@ def test_done_transition_rejects_invalid_verdict(repo: Path, verdict: str) -> No
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     graph, _cfg = open_graph(repo)
     try:
-        graph.deposit_run_message(claim["run_id"], VERIFY_ROLE, verdict, now_iso())
+        _ = graph.deposit_run_message(claim["run_id"], VERIFY_ROLE, verdict, now_iso())
         with pytest.raises(ValueError, match="has not returned ok=True"):
-            graph.set_todo_status(node_id, NodeStatus.DONE)
+            _ = graph.set_todo_status(node_id, NodeStatus.DONE)
     finally:
         graph.close()
 
@@ -594,7 +627,9 @@ def test_goal_claim_then_release_frees_it(repo: Path) -> None:
     assert payload == {"goal_id": goal_id, "owner": "sess-1"}
     graph, _cfg = open_graph(repo)
     try:
-        assert graph.get_node(goal_id).goal_run_id == "sess-1"
+        node = graph.get_node(goal_id)
+        assert node is not None
+        assert node.goal_run_id == "sess-1"
     finally:
         graph.close()
 
@@ -604,17 +639,19 @@ def test_goal_claim_then_release_frees_it(repo: Path) -> None:
     assert released == {"goal_id": goal_id, "released": True}
     graph, _cfg = open_graph(repo)
     try:
-        assert graph.get_node(goal_id).goal_run_id is None
+        node = graph.get_node(goal_id)
+        assert node is not None
+        assert node.goal_run_id is None
     finally:
         graph.close()
 
 
 def test_goal_claim_blocks_second_live_owner(repo: Path) -> None:
     goal_id = _add_goal(repo)
-    _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
+    _ = _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
 
     with pytest.raises(ValueError, match="already claimed by owner 'sess-1'"):
-        _call(milknado_goal_claim, goal_id=goal_id, owner="sess-2", project_root=str(repo))
+        _ = _call(milknado_goal_claim, goal_id=goal_id, owner="sess-2", project_root=str(repo))
 
 
 def test_goal_claim_concurrent_public_calls_report_one_winner(repo: Path) -> None:
@@ -622,7 +659,7 @@ def test_goal_claim_concurrent_public_calls_report_one_winner(repo: Path) -> Non
     barrier = Barrier(2)
 
     def claim(owner: str) -> tuple[str, str]:
-        barrier.wait()
+        _ = barrier.wait()
         try:
             result = _call(
                 milknado_goal_claim,
@@ -655,7 +692,7 @@ def test_goal_claim_concurrent_public_calls_report_one_winner(repo: Path) -> Non
 def test_goal_release_is_fenced_on_owner(repo: Path) -> None:
     """Releasing with a non-owning token is a no-op; the claim survives."""
     goal_id = _add_goal(repo)
-    _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
+    _ = _call(milknado_goal_claim, goal_id=goal_id, owner="sess-1", project_root=str(repo))
 
     released = _call(
         milknado_goal_release, goal_id=goal_id, owner="not-the-owner", project_root=str(repo)
@@ -663,7 +700,9 @@ def test_goal_release_is_fenced_on_owner(repo: Path) -> None:
     assert released == {"goal_id": goal_id, "released": False}
     graph, _cfg = open_graph(repo)
     try:
-        assert graph.get_node(goal_id).goal_run_id == "sess-1"
+        node = graph.get_node(goal_id)
+        assert node is not None
+        assert node.goal_run_id == "sess-1"
     finally:
         graph.close()
 
@@ -689,7 +728,7 @@ def test_goal_claim_reclaims_dead_pid_owner(repo: Path) -> None:
 def test_goal_claim_requires_owner_or_env(repo: Path) -> None:
     goal_id = _add_goal(repo)
     with pytest.raises(ValueError, match="owner is required"):
-        _call(milknado_goal_claim, goal_id=goal_id, project_root=str(repo))
+        _ = _call(milknado_goal_claim, goal_id=goal_id, project_root=str(repo))
 
 
 def test_goal_claim_falls_back_to_env_owner(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -707,7 +746,7 @@ def test_goal_claim_falls_back_to_env_owner(repo: Path, monkeypatch: pytest.Monk
 def test_goal_claim_refuses_non_goal_node(repo: Path) -> None:
     task_id = _add_task(repo)
     with pytest.raises(ValueError, match="only goal nodes can be claimed"):
-        _call(milknado_goal_claim, goal_id=task_id, owner="sess-1", project_root=str(repo))
+        _ = _call(milknado_goal_claim, goal_id=task_id, owner="sess-1", project_root=str(repo))
 
 
 def test_provision_claim_run_fails_loudly_when_terminal_release_loses_fence(
@@ -718,19 +757,18 @@ def test_provision_claim_run_fails_loudly_when_terminal_release_loses_fence(
     from milknado.app import node as node_app
 
     class Graph:
-        def start_run(self, *_args) -> None:
+        def start_run(self, *_args: object) -> None:
             raise RuntimeError("startup failed")
 
-        def mark_terminal(self, *_args) -> bool:
+        def mark_terminal(self, *_args: object) -> bool:
             return False
 
-    monkeypatch.setattr(
-        node_app,
-        "resolve_flavor_profile",
-        lambda *_args: SimpleNamespace(worktree=False),
-    )
+    def _resolve_profile(*_args: object) -> SimpleNamespace:
+        return SimpleNamespace(worktree=False)
+
+    monkeypatch.setattr(node_app, "resolve_flavor_profile", _resolve_profile)
     with pytest.raises(RuntimeError, match="startup terminal node write lost its fence"):
-        node_app._provision_claim_run(
+        _ = node_app._provision_claim_run(
             cast(MikadoGraph, cast(object, Graph())),
             tmp_path,
             cast(MikadoNode, cast(object, SimpleNamespace(id=4, description="task", flavor=None))),
