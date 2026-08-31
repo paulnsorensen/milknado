@@ -10,14 +10,93 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import importlib
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, TypedDict, cast
 
-from vulture import Vulture
-from vulture.config import InputError, make_config
-from vulture.core import ExitCode, Item
+
+class _VultureConfig(TypedDict):
+    verbose: bool
+    ignore_names: list[str]
+    ignore_decorators: list[str]
+    paths: list[str]
+    exclude: list[str]
+    min_confidence: int
+    sort_by_size: bool
+
+
+class _VultureItem(Protocol):
+    filename: Path
+    first_lineno: int
+    name: str
+    typ: str
+
+    def get_report(self) -> str: ...
+
+
+class _ExitCodeValue(Protocol):
+    @property
+    def value(self) -> int: ...
+
+
+class _ExitCodes(Protocol):
+    InvalidInput: _ExitCodeValue
+    InvalidCmdlineArguments: _ExitCodeValue
+    DeadCode: _ExitCodeValue
+    NoDeadCode: _ExitCodeValue
+
+
+class _Vulture(Protocol):
+    exit_code: _ExitCodeValue
+
+    def __init__(
+        self,
+        *,
+        verbose: bool,
+        ignore_names: list[str],
+        ignore_decorators: list[str],
+    ) -> None: ...
+
+    def scavenge(self, paths: list[str], exclude: list[str] | None = None) -> None: ...
+
+    def get_unused_code(
+        self,
+        *,
+        min_confidence: int,
+        sort_by_size: bool,
+    ) -> list[_VultureItem]: ...
+
+
+class _VultureModule(Protocol):
+    Vulture: type[_Vulture]
+
+
+class _VultureConfigModule(Protocol):
+    InputError: type[Exception]
+    make_config: Callable[[list[str]], _VultureConfig]
+
+
+class _VultureCoreModule(Protocol):
+    ExitCode: _ExitCodes
+
+
+_vulture_module = cast(_VultureModule, cast(object, importlib.import_module("vulture")))
+_vulture_config = cast(
+    _VultureConfigModule,
+    cast(object, importlib.import_module("vulture.config")),
+)
+_vulture_core = cast(
+    _VultureCoreModule,
+    cast(object, importlib.import_module("vulture.core")),
+)
+
+Vulture = _vulture_module.Vulture
+InputError = _vulture_config.InputError
+make_config = _vulture_config.make_config
+ExitCode = _vulture_core.ExitCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -79,8 +158,8 @@ class _Finding:
     report: str
 
 
-def _findings(items: Sequence[Item]) -> tuple[_Finding, ...]:
-    findings = []
+def _findings(items: Sequence[_VultureItem]) -> tuple[_Finding, ...]:
+    findings: list[_Finding] = []
     for i in items:
         path = Path(i.filename)
         if path.is_absolute():
@@ -187,7 +266,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_confidence=config["min_confidence"], sort_by_size=config["sort_by_size"]
         )
     )
-    unclassified = []
+    unclassified: list[_Finding] = []
     module_cache: dict[Path, tuple[ast.Module | None, dict[str, str]]] = {}
     for finding in findings:
         if finding.path not in module_cache:
