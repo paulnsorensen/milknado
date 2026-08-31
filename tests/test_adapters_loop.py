@@ -127,6 +127,25 @@ class TestListAndGetRuns:
         mock_manager.get_run.return_value = None
         assert adapter.get_run("missing") is None
 
+    def test_is_run_alive_reports_thread_liveness(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        run = MagicMock()
+        mock_manager.get_run.return_value = run
+
+        run.thread = None
+        assert adapter.is_run_alive("run-1") is True
+
+        run.thread = MagicMock()
+        run.thread.is_alive.return_value = True
+        assert adapter.is_run_alive("run-1") is True
+
+        run.thread.is_alive.return_value = False
+        assert adapter.is_run_alive("run-1") is False
+
+        mock_manager.get_run.return_value = None
+        assert adapter.is_run_alive("missing") is False
+
     def test_extracts_large_stdout_tail_without_splitlines(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:

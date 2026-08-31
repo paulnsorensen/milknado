@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from collections import deque
+from typing import TYPE_CHECKING, Protocol
 
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
@@ -14,12 +15,37 @@ from milknado.loop import RunStatus
 if TYPE_CHECKING:
     from rich.live import Live
 
-    from milknado.domains.execution.run_loop import RunLoop
+    from milknado.domains.common.protocols import LoopPort, ProgressEvent
+    from milknado.domains.execution.executor import Executor
+    from milknado.domains.execution.run_loop.input import InputState
+    from milknado.domains.graph import MikadoGraph
+
+# The protocol intentionally exposes RunLoop's private state across this module boundary.
+# pyright: reportPrivateUsage=false
+
 _logger = logging.getLogger("milknado")
 
 
+class _CompletionLoop(Protocol):
+    _active: dict[str, int]
+    _progress_by_run: dict[str, ProgressEvent]
+    _input: InputState
+    _graph: MikadoGraph
+    _dispatched_at: dict[str, float]
+    _logs: deque[str]
+    _executor: Executor
+    _completion_durations: deque[float]
+    _ralph: LoopPort
+    _attempts: dict[int, int]
+    _strict: bool
+    _failure_triggered: bool
+    _stopped_nodes: set[int]
+    _stopped: int
+    _terminal_runs: deque[TerminalRunState]
+
+
 def handle_completion(
-    loop: RunLoop,
+    loop: _CompletionLoop,
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,
@@ -27,18 +53,26 @@ def handle_completion(
 ) -> tuple[int, int, list[RebaseConflict]]:
     completed = failed = 0
     conflicts: list[RebaseConflict] = []
+    active = loop._active
+    progress_by_run = loop._progress_by_run
+    input_state = loop._input
+    graph = loop._graph
+    dispatched_at = loop._dispatched_at
+    logs = loop._logs
 
-    node_id = loop._active.pop(run_id)
-    loop._progress_by_run.pop(run_id, None)
-    if loop._input.overlay_state == run_id:
-        loop._input.overlay_state = None
-    node = loop._graph.get_node(node_id)
+    node_id = active.pop(run_id)
+    _ = progress_by_run.pop(run_id, None)
+    if input_state.overlay_state == run_id:
+        input_state.overlay_state = None
+    node = graph.get_node(node_id)
     desc = _summarize_description(node.description) if node else str(node_id)
-    start = loop._dispatched_at.pop(run_id, time.monotonic())
+    start = dispatched_at.pop(run_id, time.monotonic())
     duration = time.monotonic() - start
 
     if outcome == "completed":
-        result = loop._executor.complete(node_id, feature_branch)
+        executor = loop._executor
+        completion_durations = loop._completion_durations
+        result = executor.complete(node_id, feature_branch)
         if result.review_notification_failed:
             # Orthogonal to the outcome below: the review ran, but its verdict could
             # not be delivered. Surface it before any early return so the operator
@@ -47,31 +81,33 @@ def handle_completion(
                 live.console.print(
                     f"[yellow]![/yellow] [{node_id}] {desc} — review notification failed"
                 )
-            loop._logs.append(f"[{ts()}] ! node {node_id} review notification failed")
+            logs.append(f"[{ts()}] ! node {node_id} review notification failed")
         if result.redispatch is not None:
             redispatch = result.redispatch
-            loop._active[redispatch.run_id] = node_id
-            loop._dispatched_at[redispatch.run_id] = time.monotonic()
+            active[redispatch.run_id] = node_id
+            dispatched_at[redispatch.run_id] = time.monotonic()
             if live is not None:
                 live.console.print(
                     f"[yellow]↻[/yellow] [{node_id}] {desc} — "
-                    "adversarial review requested another round"
+                    + "adversarial review requested another round"
                 )
             _logger.info(
                 "node_review_redispatch node_id=%d run_id=%s",
                 node_id,
                 redispatch.run_id,
             )
-            loop._logs.append(f"[{ts()}] ↻ node {node_id} review round")
+            logs.append(f"[{ts()}] ↻ node {node_id} review round")
             return completed, failed, conflicts
-        loop._completion_durations.append(duration)
+        completion_durations.append(duration)
+        attempts = loop._attempts
+        strict = loop._strict
         if result.blocked:
             if live is not None:
                 live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
             _logger.warning("node_review_blocked node_id=%d", node_id)
-            loop._logs.append(f"[{ts()}] ■ node {node_id} review blocked")
-            loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
-            if loop._strict:
+            logs.append(f"[{ts()}] ■ node {node_id} review blocked")
+            attempts[node_id] = attempts.get(node_id, 0) + 1
+            if strict:
                 loop._failure_triggered = True
             failed += 1
         elif result.rebase_conflict:
@@ -84,24 +120,30 @@ def handle_completion(
                 node_id,
                 list(result.rebase_conflict.conflicting_files),
             )
-            loop._logs.append(f"[{ts()}] ✗ node {node_id} conflict")
-            loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
-            if loop._strict:
+            logs.append(f"[{ts()}] ✗ node {node_id} conflict")
+            attempts[node_id] = attempts.get(node_id, 0) + 1
+            if strict:
                 loop._failure_triggered = True
             failed += 1
         else:
             if live is not None:
                 live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
-            loop._logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
+            logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
     elif outcome == "stopped":
-        output = tuple(loop._ralph.get_run_output_tail(run_id, 30))
-        pending_guidance = tuple(loop._ralph.get_run_guidance(run_id))
-        loop._executor.cancel(node_id)
-        loop._stopped_nodes.add(node_id)
-        loop._stopped += 1
-        loop._terminal_runs.append(
+        ralph = loop._ralph
+        executor = loop._executor
+        stopped_nodes = loop._stopped_nodes
+        stopped = loop._stopped
+        terminal_runs = loop._terminal_runs
+        output = tuple(ralph.get_run_output_tail(run_id, 30))
+        pending_guidance = tuple(ralph.get_run_guidance(run_id))
+        executor.cancel(node_id)
+        stopped_nodes.add(node_id)
+        stopped += 1
+        loop._stopped = stopped
+        terminal_runs.append(
             TerminalRunState(
                 run_id=run_id,
                 node_id=node_id,
@@ -120,19 +162,23 @@ def handle_completion(
             run_id,
             duration,
         )
-        loop._logs.append(f"[{ts()}] ■ node {node_id} stopped")
+        logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
-        detail = loop._ralph.get_run_failure_detail(run_id)
-        loop._executor.fail(node_id, detail=detail)
+        ralph = loop._ralph
+        executor = loop._executor
+        attempts = loop._attempts
+        strict = loop._strict
+        detail = ralph.get_run_failure_detail(run_id)
+        executor.fail(node_id, detail=detail)
         if live is not None:
             live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
         if detail:
             _logger.warning("node_failed node_id=%d detail=%s", node_id, detail)
         else:
             _logger.warning("node_failed node_id=%d", node_id)
-        loop._logs.append(f"[{ts()}] ✗ node {node_id} failed")
-        loop._attempts[node_id] = loop._attempts.get(node_id, 0) + 1
-        if loop._strict:
+        logs.append(f"[{ts()}] ✗ node {node_id} failed")
+        attempts[node_id] = attempts.get(node_id, 0) + 1
+        if strict:
             loop._failure_triggered = True
         failed += 1
 

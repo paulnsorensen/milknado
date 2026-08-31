@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 
 from tenacity import (
     RetryCallState,
@@ -25,7 +25,6 @@ from tenacity import (
 
 from milknado.domains.common import ReviewResult
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
-from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     GitOperationError,
     InvalidTransition,
@@ -33,6 +32,7 @@ from milknado.domains.common.errors import (
     TransientDispatchError,
     UnlandedWorkError,
 )
+from milknado.domains.common.flavor_codec import Gate
 from milknado.domains.common.paths import slugify
 from milknado.domains.common.protocols import GraphExecutionSnapshot, ReviewResult
 from milknado.domains.common.types import (
@@ -183,7 +183,7 @@ def _exclude_loop_scaffolding(worktree: Path) -> None:
         if not missing:
             return
         prefix = "" if existing == "" or existing.endswith("\n") else "\n"
-        exclude.write_text(existing + prefix + "\n".join(missing) + "\n")
+        _ = exclude.write_text(existing + prefix + "\n".join(missing) + "\n")
     except (OSError, UnicodeDecodeError) as exc:
         _logger.warning("Failed to exclude loop scaffolding under %s: %s", exclude, exc)
 
@@ -208,7 +208,7 @@ def _preserve_run_logs(worktree: Path, node_id: int) -> None:
     root = common.parent if common is not None else worktree.parent
     dest = root / ".milknado" / "logs" / str(node_id)
     try:
-        shutil.copytree(logs, dest, dirs_exist_ok=True)
+        _ = shutil.copytree(logs, dest, dirs_exist_ok=True)
         retained = sorted(
             (path for path in dest.rglob("*") if path.is_file()),
             key=lambda path: path.stat().st_mtime,
@@ -288,7 +288,7 @@ class WorktreeManager:
     """Tracks and manages worktree lifecycle: create, clean up, rebase-and-merge."""
 
     def __init__(self, git: GitPort) -> None:
-        self._git = git
+        self._git: GitPort = git
         self._worktrees: dict[int, Path] = {}
 
     def current_branch(self) -> str:
@@ -298,7 +298,7 @@ class WorktreeManager:
         return self._git.resolve_ref(ref)
 
     def create(self, node_id: int, wt_path: Path, branch: str) -> None:
-        self._git.create_worktree(wt_path, branch)
+        _ = self._git.create_worktree(wt_path, branch)
         self._worktrees[node_id] = wt_path
         _exclude_loop_scaffolding(wt_path)
 
@@ -322,7 +322,7 @@ class WorktreeManager:
             if not candidate.exists() and not self._git.branch_exists(candidate_branch):
                 _logger.warning(
                     "Worktree path %s is occupied by a preserved orphan; "
-                    "relocating dispatch to %s",
+                    + "relocating dispatch to %s",
                     wt_path,
                     candidate,
                 )
@@ -365,7 +365,7 @@ class WorktreeManager:
         worktree is still on disk — so it is logged and swallowed to keep the
         node lifecycle moving, as before.
         """
-        self._worktrees.pop(node_id, None)
+        _ = self._worktrees.pop(node_id, None)
         try:
             self._git.remove_worktree(wt_path, target)
         except UnlandedWorkError:
@@ -381,7 +381,7 @@ class WorktreeManager:
     def discard(self, node_id: int, wt_path: Path) -> None:
         """Explicitly destructive, best-effort removal — the ONLY path to
         `--force` (`force_remove_worktree`); all exceptions suppressed."""
-        self._worktrees.pop(node_id, None)
+        _ = self._worktrees.pop(node_id, None)
         with contextlib.suppress(Exception):
             self._git.force_remove_worktree(wt_path)
 
@@ -401,7 +401,7 @@ class WorktreeManager:
             raise GitOperationError(
                 "merge-back target",
                 f"dispatch target is {merge_target!r}; caller requested "
-                f"{feature_branch!r}, checkout is {current_target!r}",
+                + f"{feature_branch!r}, checkout is {current_target!r}",
             )
         if not worktree or not worktree.exists():
             return RebaseResult(success=True)
@@ -414,7 +414,7 @@ class WorktreeManager:
                 raise GitOperationError(
                     f"merge --ff-only {worker_branch or '(worker branch unavailable)'}",
                     f"untracked integration-checkout path collision: {paths}; "
-                    f"target branch={merge_target!r}, worker worktree={worktree}",
+                    + f"target branch={merge_target!r}, worker worktree={worktree}",
                 )
             msg = _build_commit_message(node_id, description)
             committed = self._git.squash_and_commit(worktree, merge_target, msg)
@@ -452,13 +452,13 @@ class Executor:
         # (no completion path owns these ids — they never enter
         # _worker_run_id_by_node).
         self._unconfirmed_stop_run_ids: set[str] = set()
-        self._git = git
+        self._git: GitPort = git
         self._target_branch_by_node: dict[int, str] = {}
         self._target_oid_by_node: dict[int, str] = {}
-        self._graph = graph
-        self._wt = WorktreeManager(git)
-        self._ralph = ralph
-        self._crg = crg
+        self._graph: MikadoGraph = graph
+        self._wt: WorktreeManager = WorktreeManager(git)
+        self._ralph: LoopPort = ralph
+        self._crg: CrgPort = crg
         self._config_by_node: dict[int, ExecutionConfig] = {}
         self._session_by_node: dict[int, NodeAgentSession] = {}
         self._review_round_by_node: dict[int, int] = {}
@@ -471,7 +471,7 @@ class Executor:
         base_oid: str | None = None,
         parent_run_id: str | None = None,
     ) -> DispatchResult:
-        self._review_enabled(config)
+        _ = self._review_enabled(config)
         target_branch = self._wt.current_branch()
         target_oid = base_oid or self._wt.resolve_ref(target_branch)
         max_retries = config.dispatch_max_retries
@@ -482,7 +482,7 @@ class Executor:
                 retry_state.attempt_number,
                 max_retries + 1,
                 node_id,
-                retry_state.outcome.exception(),
+                retry_state.outcome.exception() if retry_state.outcome is not None else None,
             )
 
         retryer = Retrying(
@@ -518,8 +518,8 @@ class Executor:
         resolved_wt = wt_path.resolve()
         if not resolved_wt.is_relative_to(resolved_root):
             raise ValueError(
-                f"worktree_pattern resolves outside project_root: "
-                f"{resolved_wt!r} is not under {resolved_root!r}"
+                "worktree_pattern resolves outside project_root: "
+                + f"{resolved_wt!r} is not under {resolved_root!r}"
             )
         return wt_path, f"milknado/{node_id}-{slug}"
 
@@ -542,7 +542,7 @@ class Executor:
         ):
             raise ValueError(
                 f"node {node_id} retains worker branch {node.branch_name!r} at "
-                f"{node.worktree_path}; resolve and retry merge-back before redispatching"
+                + f"{node.worktree_path}; resolve and retry merge-back before redispatching"
             )
 
         adopted = parent_run_id is not None
@@ -564,6 +564,7 @@ class Executor:
 
         create_attempted = False
         run_id: str | None = None
+        aborted_run_metadata: list[tuple[str, bool]] = []
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         try:
             self._wt.ensure_clean(node_id)
@@ -572,7 +573,13 @@ class Executor:
             create_attempted = True
             self._wt.create(node_id, wt_path, branch)
             dispatch_base_oid = base_oid or self._wt.resolve_ref(self._wt.current_branch())
-            run_id = self._create_ralph_run(node, config, wt_path, dispatch_base_oid)
+            run_id = self._create_ralph_run(
+                node,
+                config,
+                wt_path,
+                dispatch_base_oid,
+                aborted_run_metadata=aborted_run_metadata,
+            )
             if not adopted and not self._graph.replace_run_id(node_id, owner_run_id, run_id):
                 raise ValueError(f"dispatch fence lost for node {node_id}")
             self._graph.set_dispatched_at(node_id)
@@ -585,18 +592,17 @@ class Executor:
                 str(exc)[:200],
                 exc_info=True,
             )
+            aborted_run = aborted_run_metadata[0] if aborted_run_metadata else None
+            started_run_id = run_id or (aborted_run[0] if aborted_run else None)
+            stop_confirmed = aborted_run[1] if aborted_run else None
             self._cleanup_failed_dispatch(
                 node_id,
                 wt_path,
                 owner_run_id=owner_run_id,
                 release_claim=not adopted,
                 discard_worktree=create_attempted,
-                started_run_id=(
-                    run_id
-                    if run_id is not None
-                    else getattr(exc, "_milknado_aborted_run_id", None)
-                ),
-                stop_confirmed=getattr(exc, "_milknado_stop_confirmed", None),
+                started_run_id=started_run_id,
+                stop_confirmed=stop_confirmed,
             )
             raise
         return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
@@ -611,6 +617,7 @@ class Executor:
         session: NodeAgentSession | None = None,
         prior_findings: str = "",
         findings_round: int | None = None,
+        aborted_run_metadata: list[tuple[str, bool]] | None = None,
     ) -> str:
         brief = render_brief(
             self._graph,
@@ -674,19 +681,18 @@ class Executor:
         self._ralph.start_run(run_id)
         try:
             self._spawn_ralph_cancel_watcher(run_id, config.project_root)
-        except Exception as exc:
+        except Exception:
             # The run is live but its id never escapes _create_ralph_run, so
             # the caller's cleanup cannot see it: tear it down here with the
             # same confirmed-stop + fenced-finalize discipline as every other
-            # dispatch-abort path, and carry the outcome across the boundary
-            # on the propagating exception so _dispatch_once's cleanup honors
-            # an UNCONFIRMED stop (preserve the worktree, fail loud) instead
-            # of defaulting to discard under a possibly-live loop.
+            # dispatch-abort path. Record the outcome for _dispatch_once's
+            # cleanup so an UNCONFIRMED stop preserves the worktree and fails
+            # loud instead of defaulting to discard under a possibly-live loop.
             stop_confirmed = self._stop_aborted_run(
                 run_id, context=f"post-start setup failed for node {node.id}"
             )
-            exc._milknado_aborted_run_id = run_id
-            exc._milknado_stop_confirmed = stop_confirmed
+            if aborted_run_metadata is not None:
+                aborted_run_metadata.append((run_id, stop_confirmed))
             raise
         return run_id
 
@@ -703,10 +709,10 @@ class Executor:
         if not run_id:
             return
         try:
-            row = self._graph.get_run(run_id)
+            row = cast(dict[str, object] | None, self._graph.get_run(run_id))
             if row is None or row.get("status") != "running":
                 return
-            self._graph.finish_run(run_id, result)
+            _ = self._graph.finish_run(run_id, result)
         except Exception:
             _logger.exception("runs-row finalize failed for ralph run %s", run_id)
 
@@ -754,8 +760,7 @@ class Executor:
                 # The run record is gone; nothing left to watch.
                 self._unconfirmed_stop_run_ids.discard(run_id)
                 return
-            thread = getattr(run, "thread", None)
-            if thread is not None and not thread.is_alive():
+            if not self._ralph.is_run_alive(run_id):
                 self._finalize_dead_watched_thread(run_id)
                 return
             if not is_cancel_requested(rdir, run_id):
@@ -803,8 +808,8 @@ class Executor:
         except Exception:
             _logger.exception(
                 "force-stop raised for cancelled ralph run %s; row left "
-                "running so cancel_run fails closed; retrying while the "
-                "sentinel is set",
+                + "running so cancel_run fails closed; retrying while the "
+                + "sentinel is set",
                 run_id,
             )
             time.sleep(backoff)
@@ -812,8 +817,8 @@ class Executor:
         if not stopped:
             _logger.error(
                 "force-stop could not confirm exit for cancelled ralph "
-                "run %s; row left running so cancel_run fails closed; "
-                "retrying while the sentinel is set",
+                + "run %s; row left running so cancel_run fails closed; "
+                + "retrying while the sentinel is set",
                 run_id,
             )
             time.sleep(backoff)
@@ -886,7 +891,7 @@ class Executor:
         )
         path = config.project_root / ".milknado" / "sessions" / f"node-{node.id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
+        _ = path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
         self._session_by_node[node.id] = session
         return session
 
@@ -927,7 +932,7 @@ class Executor:
         slug = slugify(node.description, max_length=30) or str(node.id)
         path = worktree / ".cheese" / "age" / f"{slug}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
+        _ = path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
 
     def _notify_review(
         self,
@@ -955,7 +960,7 @@ class Executor:
             sort_keys=True,
         )
         try:
-            self._graph.deposit_run_message(
+            _ = self._graph.deposit_run_message(
                 worker_run_id,
                 "node_review",
                 body,
@@ -976,9 +981,12 @@ class Executor:
         worktree: Path,
         config: ExecutionConfig,
     ) -> tuple[bool, str]:
-        self._capture_session(node, config)
-        reviewer = getattr(self._ralph, "run_node_review", None)
-        if reviewer is None:
+        _ = self._capture_session(node, config)
+        reviewer = cast(
+            Callable[[str, str, Path, Path], ReviewResult] | None,
+            getattr(self._ralph, "run_node_review", None),
+        )
+        if reviewer is None or config.review_agent is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
         result: ReviewResult = reviewer(
             config.review_agent,
@@ -1040,14 +1048,14 @@ class Executor:
         )
         if owner_fence is None:
             if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
-                self._stop_aborted_run(
+                _ = self._stop_aborted_run(
                     run_id, context=f"review redispatch fence lost for node {node.id}"
                 )
                 raise ValueError(f"review redispatch fence lost for node {node.id}")
         else:
             current = self._graph.get_node(node.id)
             if current is None or current.run_id != owner_fence:
-                self._stop_aborted_run(
+                _ = self._stop_aborted_run(
                     run_id, context=f"adopted owner fence lost for node {node.id}"
                 )
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
@@ -1096,7 +1104,7 @@ class Executor:
             # _dispatch_once attempt then hits claim_node failing and raises
             # ValueError, which the retry loop does not retry.
             if release_claim and stop_confirmed:
-                self._graph.release(node_id, owner_run_id)
+                _ = self._graph.release(node_id, owner_run_id)
         except Exception:
             _logger.exception(
                 "state reset failed during cleanup node_id=%d worktree=%s",
@@ -1110,7 +1118,7 @@ class Executor:
                 else:
                     _logger.error(
                         "worktree %s preserved: ralph run %s was not confirmed "
-                        "stopped during failed-dispatch cleanup for node %d",
+                        + "stopped during failed-dispatch cleanup for node %d",
                         wt_path,
                         started_run_id,
                         node_id,
@@ -1158,7 +1166,7 @@ class Executor:
         if not stopped:
             _logger.error(
                 "force-stop could not confirm exit for aborted ralph run %s (%s); "
-                "row left running",
+                + "row left running",
                 run_id,
                 context,
             )
@@ -1197,7 +1205,7 @@ class Executor:
             raise GitOperationError(
                 "dispatch-time merge target",
                 f"dispatch captured {target_branch!r} at {target_oid}; "
-                f"caller requested {feature_branch!r}, checkout is {current_branch!r}",
+                + f"caller requested {feature_branch!r}, checkout is {current_branch!r}",
             )
 
     def _rebase_or_fail(
@@ -1246,7 +1254,7 @@ class Executor:
                 duration = (completed_now - node.dispatched_at).total_seconds()
                 self._graph.record_completion_duration(node_id, duration)
         else:
-            self._mark_terminal(node, NodeStatus.FAILED, preserve_recovery=True)
+            _ = self._mark_terminal(node, NodeStatus.FAILED, preserve_recovery=True)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(
                     node_id=node_id,
@@ -1472,6 +1480,6 @@ class Executor:
                         exc,
                     )
         if node.run_id:
-            self._graph.release(node_id, node.run_id)
+            _ = self._graph.release(node_id, node.run_id)
         else:
             self._graph.mark_pending(node_id)

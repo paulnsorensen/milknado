@@ -198,6 +198,10 @@ class FakeRalph:
     def get_run(self, run_id: str) -> Any | None:
         return self.runs.get(run_id)
 
+    def is_run_alive(self, run_id: str) -> bool:
+        run = self.runs.get(run_id)
+        return run is not None and run.thread.is_alive()
+
     def get_run_stdout(self, run_id: str) -> list[str]:
         return []
 
