@@ -33,7 +33,7 @@ from milknado.domains.common.errors import (
     UnlandedWorkError,
 )
 from milknado.domains.common.paths import slugify
-from milknado.domains.common.protocols import GraphExecutionSnapshot
+from milknado.domains.common.protocols import GraphExecutionSnapshot, ReviewResult
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoNode,
@@ -979,14 +979,14 @@ class Executor:
         reviewer = getattr(self._ralph, "run_node_review", None)
         if reviewer is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
-        result = reviewer(
+        result: ReviewResult = reviewer(
             config.review_agent,
             self._review_prompt(node, worktree, config),
             worktree,
             config.project_root,
         )
-        approved = bool(getattr(result, "approved", False))
-        findings = str(getattr(result, "findings_md", "")).strip()
+        approved = result.approved
+        findings = result.findings_md.strip()
         self._persist_review_findings(node, worktree, findings or "reviewer returned no findings")
         return approved, findings
 

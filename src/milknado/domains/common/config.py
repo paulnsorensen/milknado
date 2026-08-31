@@ -5,7 +5,7 @@ import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TypeVar, cast
 
 import msgspec
 import tomli_w
@@ -106,10 +106,16 @@ class PromptsTable(msgspec.Struct, frozen=True, kw_only=True):
 
     def prepend(self, slot: str, project_root: Path) -> str | None:
         """Return the inline text for one slot, or load it from its ``_path`` file."""
-        inline = getattr(self, slot)
+        if slot == "planning_prepend":
+            inline = self.planning_prepend
+            path_value = self.planning_prepend_path
+        elif slot == "worker_brief_prepend":
+            inline = self.worker_brief_prepend
+            path_value = self.worker_brief_prepend_path
+        else:
+            raise ValueError(f"unknown prompt slot: {slot}")
         if inline:
             return inline.strip() or None
-        path_value = getattr(self, f"{slot}_path")
         if not path_value:
             return None
         resolved = resolve_project_path(
@@ -167,20 +173,26 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
     flavor: dict[str, FlavorTable] = msgspec.field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        validate_positive_int(self.plan_review_max_rounds, "[milknado] plan_review_max_rounds")
-        validate_positive_int(self.max_iterations, "[milknado] max_iterations")
-        validate_positive_int(self.max_turns, "[milknado] max_turns")
-        validate_loop_mode(self.loop_mode)
+        _ = validate_positive_int(self.plan_review_max_rounds, "[milknado] plan_review_max_rounds")
+        _ = validate_positive_int(self.max_iterations, "[milknado] max_iterations")
+        _ = validate_positive_int(self.max_turns, "[milknado] max_turns")
+        _ = validate_loop_mode(self.loop_mode)
 
 
 T = TypeVar("T")
 
 
-def _typed_convert(value: Any, model: type[T]) -> T:
+def _as_table(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return cast(dict[str, object], value)
+
+
+def _typed_convert(value: object, model: type[T]) -> T:
     return msgspec.convert(value, type=model, strict=True)
 
 
-def _validate_section_scalars(section: dict[str, Any]) -> None:
+def _validate_section_scalars(section: dict[str, object]) -> None:
     if "worktree" in section and not isinstance(section["worktree"], bool):
         raise msgspec.ValidationError("[milknado] worktree must be a boolean")
     for key in ("commit_footer", "plan_reviewer_agent"):
@@ -191,16 +203,17 @@ def _validate_section_scalars(section: dict[str, Any]) -> None:
         if key in section and not isinstance(section[key], str):
             raise msgspec.ValidationError(f"[milknado] {key} must be a string")
     if "loop_mode" in section:
-        validate_loop_mode(section["loop_mode"])
+        _ = validate_loop_mode(section["loop_mode"])
     for key in ("plan_review_max_rounds", "max_iterations", "max_turns"):
         if key in section:
-            validate_positive_int(section[key], f"[milknado] {key}")
+            _ = validate_positive_int(section[key], f"[milknado] {key}")
 
 
-def _normalize_section(raw: Any) -> Any:
-    if not isinstance(raw, dict):
+def _normalize_section(raw: object) -> object:
+    normalized = _as_table(raw)
+    if normalized is None:
         return raw
-    normalized = dict(raw)
+    normalized = dict(normalized)
     family = str(normalized.get("agent_family", "claude")).strip().lower()
     if family not in DEFAULT_PLANNING_AGENT_BY_FAMILY:
         allowed = ", ".join(sorted(DEFAULT_PLANNING_AGENT_BY_FAMILY))
@@ -209,7 +222,7 @@ def _normalize_section(raw: Any) -> Any:
     _validate_section_scalars(normalized)
     for key in ("prompts", "worker", "flavor"):
         value = normalized.get(key)
-        if value is not None and not isinstance(value, dict):
+        if value is not None and _as_table(value) is None:
             raise msgspec.ValidationError(f"[milknado.{key}] must be a table")
     hook = normalized.get("planning_validation_hook")
     normalized["planning_validation_hook"] = str(hook).strip() if hook else None
@@ -220,38 +233,38 @@ def _normalize_section(raw: Any) -> Any:
         normalized["quality_gates"] = normalize_gates(
             normalized["quality_gates"], "[milknado] quality_gates"
         )
-    prompts = normalized.get("prompts")
-    if isinstance(prompts, dict):
+    prompts = _as_table(normalized.get("prompts"))
+    if prompts is not None:
         for key, value in prompts.items():
             if value is not None and not isinstance(value, str):
                 raise msgspec.ValidationError(f"[milknado.prompts] {key} must be a string")
-    worker = normalized.get("worker")
-    if isinstance(worker, dict) and "tools" in worker:
+    worker = _as_table(normalized.get("worker"))
+    if worker is not None and "tools" in worker:
         worker = dict(worker)
-        tools = worker["tools"]
-        if not isinstance(tools, dict):
+        tools = _as_table(worker["tools"])
+        if tools is None:
             raise msgspec.ValidationError("[milknado.worker.tools] must be a table")
         worker["tools"] = {
             family: coerce_tool_list(value, f"[milknado.worker.tools.{family}]")
             for family, value in tools.items()
         }
         normalized["worker"] = worker
-    flavors = normalized.get("flavor")
-    if isinstance(flavors, dict):
-        for name, entry in flavors.items():
+    flavors = _as_table(normalized.get("flavor"))
+    if flavors is not None:
+        normalized_flavors: dict[str, object] = {}
+        for name, entry in cast(dict[object, object], flavors).items():
             if not isinstance(name, str) or not name:
                 raise msgspec.ValidationError(
                     "[milknado.flavor] flavor keys must be non-empty strings"
                 )
-            if not isinstance(entry, dict):
+            if _as_table(entry) is None:
                 raise msgspec.ValidationError(f"[milknado.flavor.{name}] must be a table")
-        normalized["flavor"] = {
-            name: normalize_flavor_table(entry) for name, entry in flavors.items()
-        }
+            normalized_flavors[name] = normalize_flavor_table(entry)
+        normalized["flavor"] = normalized_flavors
     return normalized
 
 
-def decode_milknado_section(raw: Any) -> MilknadoSection:
+def decode_milknado_section(raw: object) -> MilknadoSection:
     """Validate an already-parsed TOML section through its typed boundary."""
     try:
         return _typed_convert(_normalize_section(raw), MilknadoSection)
@@ -286,7 +299,7 @@ class LoadedConfig:
     """Effective runtime config with source attribution captured during layering."""
 
     config: MilknadoConfig
-    raw: dict[str, Any]
+    raw: dict[str, object]
     origins: OriginMap
 
 
@@ -299,17 +312,17 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
     """Load config and preserve each supplied key's layer of origin."""
     local_raw = _read_milknado_section(path)
     inherit_global, replaced_flavors = _extract_inheritance(local_raw, local=True)
-    raw: dict[str, Any] = {}
+    raw: dict[str, object] = {}
     origins: OriginMap = {}
 
     if include_global and inherit_global:
         global_path = global_config_path()
         if global_path.exists():
             global_raw = _read_milknado_section(global_path)
-            _extract_inheritance(global_raw, local=False)
+            _ = _extract_inheritance(global_raw, local=False)
             _warn_local_only_keys(global_raw, global_path)
             for key in _LOCAL_ONLY_KEYS:
-                global_raw.pop(key, None)
+                _ = global_raw.pop(key, None)
             _absolutize_global_prompt_paths(global_raw, global_path.parent)
             absolutize_global_flavor_paths(global_raw, global_path.parent)
             _clear_prompts_alternate_keys(global_raw, local_raw)
@@ -317,36 +330,40 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
             record_origins(origins, global_raw, f"global:{global_path}")
 
     for flavor in replaced_flavors:
-        raw.get("flavor", {}).pop(flavor, None)
+        flavors = raw.get("flavor")
+        if isinstance(flavors, dict):
+            _ = cast(dict[str, object], flavors).pop(flavor, None)
         remove_origin_prefix(origins, ("flavor", flavor))
     raw = _merge(raw, local_raw)
     record_origins(origins, local_raw, f"local:{path}")
     return LoadedConfig(_build_config(raw, project_root=path.parent), raw, origins)
 
 
-def _decode_inheritance_controls(raw: dict[str, Any]) -> _MilknadoInheritanceControls:
+def _decode_inheritance_controls(raw: dict[str, object]) -> _MilknadoInheritanceControls:
     if "inherit_global" in raw and not isinstance(raw["inherit_global"], bool):
         raise msgspec.ValidationError("[milknado] inherit_global must be a boolean")
     return _typed_convert(raw, _MilknadoInheritanceControls)
 
 
-def _decode_flavor_inheritance_controls(raw: dict[str, Any]) -> _FlavorInheritanceControls:
+def _decode_flavor_inheritance_controls(raw: dict[str, object]) -> _FlavorInheritanceControls:
     if "inherit" in raw and not isinstance(raw["inherit"], bool):
         raise msgspec.ValidationError("inherit must be a boolean")
     return _typed_convert(raw, _FlavorInheritanceControls)
 
 
-def _extract_inheritance(raw: dict[str, Any], *, local: bool) -> tuple[bool, tuple[str, ...]]:
+def _extract_inheritance(raw: dict[str, object], *, local: bool) -> tuple[bool, tuple[str, ...]]:
     """Validate and remove layer-control metadata before normal merging."""
     controls = _decode_inheritance_controls(raw)
-    raw.pop("inherit_global", None)
+    _ = raw.pop("inherit_global", None)
     replaced: list[str] = []
     flavors = raw.get("flavor")
     if isinstance(flavors, dict):
+        flavors = cast(dict[str, object], flavors)
         for name, flavor in flavors.items():
             if isinstance(flavor, dict) and "inherit" in flavor:
+                flavor = cast(dict[str, object], flavor)
                 flavor_controls = _decode_flavor_inheritance_controls(flavor)
-                flavor.pop("inherit")
+                _ = flavor.pop("inherit")
                 if local and not flavor_controls.inherit:
                     replaced.append(name)
     return controls.inherit_global, tuple(replaced)
@@ -367,7 +384,7 @@ def save_config(config: MilknadoConfig, path: Path) -> None:
     if flavor_tables:
         milknado["flavor"] = flavor_tables
 
-    path.write_bytes(tomli_w.dumps({"milknado": milknado}).encode())
+    _ = path.write_bytes(tomli_w.dumps({"milknado": milknado}).encode())
 
 
 def _should_suppress_execution_agent(config: MilknadoConfig) -> bool:
@@ -390,8 +407,8 @@ def _should_suppress_execution_agent(config: MilknadoConfig) -> bool:
     return config.execution_agent == derived_execution_agent
 
 
-def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, Any]:
-    milknado: dict[str, Any] = {
+def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, object]:
+    milknado: dict[str, object] = {
         "agent_family": config.agent_family,
         "planning_agent": config.planning_agent,
         "planning_validation_hook": config.planning_validation_hook or "",
@@ -475,21 +492,21 @@ def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
     return None
 
 
-def _read_milknado_section(path: Path) -> dict[str, Any]:
+def _read_milknado_section(path: Path) -> dict[str, object]:
     with open(path, "rb") as f:
-        data = tomllib.load(f)
+        data = cast(dict[str, object], tomllib.load(f))
     section = data.get("milknado", data)
     if not isinstance(section, dict):
         raise ValueError(f"{path}: [milknado] is not a table")
-    return dict(section)
+    return cast(dict[str, object], section)
 
 
-def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+def _merge(base: dict[str, object], override: dict[str, object]) -> dict[str, object]:
     """Deep-merge ``override`` over ``base``. Scalars and lists replace; tables merge."""
     return deep_merge(base, override, list_mode="replace")
 
 
-def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) -> None:
+def _absolutize_global_prompt_paths(global_raw: dict[str, object], base_dir: Path) -> None:
     """Resolve relative prompt ``_path`` values in the GLOBAL config against the
     global config directory.
 
@@ -503,6 +520,7 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
     prompts = global_raw.get("prompts")
     if not isinstance(prompts, dict):
         return
+    prompts = cast(dict[str, object], prompts)
     for slot in _PROMPT_PREPEND_SLOTS:
         key = f"{slot}_path"
         value = prompts.get(key)
@@ -510,7 +528,9 @@ def _absolutize_global_prompt_paths(global_raw: dict[str, Any], base_dir: Path) 
             prompts[key] = trust_global_path(value, base_dir)
 
 
-def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[str, Any]) -> None:
+def _clear_prompts_alternate_keys(
+    global_raw: dict[str, object], local_raw: dict[str, object]
+) -> None:
     """Treat `<key>` and `<key>_path` as one logical slot during layered merge.
 
     If the local layer sets either form of a prompt-prepend slot, drop both
@@ -521,14 +541,16 @@ def _clear_prompts_alternate_keys(global_raw: dict[str, Any], local_raw: dict[st
     l_prompts = local_raw.get("prompts")
     if not isinstance(g_prompts, dict) or not isinstance(l_prompts, dict):
         return
+    g_prompts = cast(dict[str, object], g_prompts)
+    l_prompts = cast(dict[str, object], l_prompts)
     for slot in _PROMPT_PREPEND_SLOTS:
         local_has = slot in l_prompts or f"{slot}_path" in l_prompts
         if local_has:
-            g_prompts.pop(slot, None)
-            g_prompts.pop(f"{slot}_path", None)
+            _ = g_prompts.pop(slot, None)
+            _ = g_prompts.pop(f"{slot}_path", None)
 
 
-def _warn_local_only_keys(global_raw: dict[str, Any], path: Path) -> None:
+def _warn_local_only_keys(global_raw: dict[str, object], path: Path) -> None:
     leaked = [k for k in _LOCAL_ONLY_KEYS if k in global_raw]
     if leaked:
         _logger.warning(
@@ -567,7 +589,7 @@ def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
     return planning_agent, execution_agent
 
 
-def _build_config(raw: dict[str, Any], *, project_root: Path) -> MilknadoConfig:
+def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConfig:
     section = decode_milknado_section(raw)
     family = section.agent_family
     flavors = {

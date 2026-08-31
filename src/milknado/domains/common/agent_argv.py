@@ -8,7 +8,9 @@ import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Final, cast
+
+from milknado.domains.common.subprocess_options import PlanningSubprocessOptions
 
 PLANNING_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     "claude": ("Read", "Glob", "Grep"),
@@ -99,7 +101,7 @@ def validate_worker_argv(argv: Sequence[str]) -> None:
         shown = Path(executable).name if executable else ""
         raise ValueError(
             "worker_cmd must start with one of "
-            f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {shown!r}"
+            + f"{sorted(ALLOWED_WORKER_EXECUTABLES)!r}; got {shown!r}"
         )
 
 
@@ -147,8 +149,7 @@ def _default_execution_command(family: str, tools: Sequence[str]) -> str:
     if family == "claude":
         return f"claude --model sonnet -p --allowedTools '{csv}'"
     if family == "gemini":
-        # --allowed-tools replaces --yolo for execution; workers get
-        # deny-by-default, not trust-all.
+        # --allowed-tools replaces --yolo; workers remain deny-by-default.
         return f"gemini --model gemini-2.5-flash -p --allowed-tools '{csv}'"
     if family == "cursor":
         return "cursor-agent --model sonnet -p"
@@ -223,10 +224,8 @@ def _allowlist_omp_planning_options(parts: list[str]) -> list[str]:
 
 def _sandbox_planning_argv(parts: list[str]) -> list[str]:
     executable = parts[0] if parts else ""
-    # Bare non-allowlisted tokens get a planning-specific message before the
-    # shared validator runs; the distinct wording is intentional and pinned by
-    # test_custom_agent_command. validate_worker_argv below is the authority for
-    # path-bearing/prefix-spoofed tokens.
+    # Non-allowlisted bare tokens receive this planning-specific error before the
+    # shared validator; wording is pinned by test_custom_agent_command.
     if (
         executable not in ALLOWED_WORKER_EXECUTABLES
         and "/" not in executable
@@ -277,7 +276,7 @@ def build_planning_subprocess(
     *,
     allow_external_mcp: bool = False,
     project_root: Path | None = None,
-) -> tuple[list[str], dict[str, Any]]:
+) -> tuple[list[str], PlanningSubprocessOptions]:
     """Build a read-only argv and minimal environment for one-shot planning."""
     body = context_path.read_text(encoding="utf-8")
     parts = shlex.split(planning_agent_command, posix=True)
@@ -290,7 +289,7 @@ def build_planning_subprocess(
         parts.extend(["--mcp-config", str(mcp_config)])
     if parts[0] != "omp":
         parts.append("-")
-    extra: dict[str, Any] = {
+    extra: PlanningSubprocessOptions = {
         "env": build_minimal_mcp_env(executable=parts[0]),
         "input": body,
         "text": True,
@@ -320,27 +319,27 @@ class NodeAgentSession:
 def capture_session_id(family: str, first_turn_json: str) -> str:
     """Extract a resumable session id from one adapter's first-turn JSON."""
     try:
-        payload: Any = json.loads(first_turn_json)
+        payload = cast(object, json.loads(first_turn_json))
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{family}: could not parse first-turn JSON output for session id"
         ) from exc
-    candidates: list[Any] = []
+    candidates: list[object] = []
     keys = ("session_id", "sessionId") if family == "omp" else ("session_id",)
     if isinstance(payload, dict):
-        candidates.extend(payload.get(key) for key in keys)
+        candidates.extend(cast(dict[str, object], payload).get(key) for key in keys)
         if family == "codex":
-            for key in ("msg", "event", "data"):
-                nested = payload.get(key)
-                if isinstance(nested, dict):
-                    candidates.append(nested.get("session_id"))
+            candidates.extend(
+                cast(dict[str, object], nested).get("session_id")
+                for key in ("msg", "event", "data")
+                if isinstance((nested := cast(dict[str, object], payload).get(key)), dict)
+            )
     elif isinstance(payload, list):
-        candidates.extend(
-            item.get(key) for item in payload if isinstance(item, dict) for key in keys
-        )
+        for item in cast(list[object], payload):
+            if isinstance(item, dict):
+                candidates.extend(cast(dict[str, object], item).get(key) for key in keys)
     session_id = next(
-        (value for value in candidates if isinstance(value, str) and value.strip()),
-        None,
+        (value for value in candidates if isinstance(value, str) and value.strip()), None
     )
     if session_id is None:
         raise ValueError(f"{family}: first-turn JSON output carried no session_id; cannot resume")

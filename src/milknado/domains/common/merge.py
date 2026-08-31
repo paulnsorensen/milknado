@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal
+from typing import Literal, cast
 
 ListMode = Literal["replace", "merge_dedup"]
 
 
 def deep_merge(
-    base: dict[str, Any], override: dict[str, Any], *, list_mode: ListMode = "replace"
-) -> dict[str, Any]:
+    base: dict[str, object], override: dict[str, object], *, list_mode: ListMode = "replace"
+) -> dict[str, object]:
     """Deep-merge ``override`` over ``base``, returning a new dict.
 
     Dicts recurse-merge. Lists replace (``list_mode="replace"``, the default)
@@ -21,11 +21,17 @@ def deep_merge(
     for key, val in override.items():
         existing = out.get(key)
         if isinstance(val, dict) and isinstance(existing, dict):
-            out[key] = deep_merge(existing, val, list_mode=list_mode)
+            out[key] = deep_merge(
+                cast(dict[str, object], existing),
+                cast(dict[str, object], val),
+                list_mode=list_mode,
+            )
         elif list_mode == "merge_dedup" and isinstance(val, list) and isinstance(existing, list):
-            seen = {json.dumps(item, sort_keys=True) for item in existing}
-            out[key] = existing + [
-                item for item in val if json.dumps(item, sort_keys=True) not in seen
+            existing_items = cast(list[object], existing)
+            override_items = cast(list[object], val)
+            seen = {json.dumps(item, sort_keys=True) for item in existing_items}
+            out[key] = existing_items + [
+                item for item in override_items if json.dumps(item, sort_keys=True) not in seen
             ]
         else:
             out[key] = val
