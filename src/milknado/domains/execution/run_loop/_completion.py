@@ -28,12 +28,12 @@ def handle_completion(
 ) -> tuple[int, int, list[RebaseConflict]]:
     completed = failed = 0
     conflicts: list[RebaseConflict] = []
-    active = loop._active
-    progress_by_run = loop._progress_by_run
-    input_state = loop._input
-    graph = loop._graph
-    dispatched_at = loop._dispatched_at
-    logs = loop._logs
+    active = loop._active  # pyright: ignore[reportPrivateUsage]
+    progress_by_run = loop._progress_by_run  # pyright: ignore[reportPrivateUsage]
+    input_state = loop._input  # pyright: ignore[reportPrivateUsage]
+    graph = loop._graph  # pyright: ignore[reportPrivateUsage]
+    dispatched_at = loop._dispatched_at  # pyright: ignore[reportPrivateUsage]
+    logs = loop._logs  # pyright: ignore[reportPrivateUsage]
 
     node_id = active.pop(run_id)
     _ = progress_by_run.pop(run_id, None)
@@ -45,8 +45,8 @@ def handle_completion(
     duration = time.monotonic() - start
 
     if outcome == "completed":
-        executor = loop._executor
-        completion_durations = loop._completion_durations
+        executor = loop._executor  # pyright: ignore[reportPrivateUsage]
+        completion_durations = loop._completion_durations  # pyright: ignore[reportPrivateUsage]
         result = executor.complete(node_id, feature_branch)
         if result.review_notification_failed:
             # Orthogonal to the outcome below: the review ran, but its verdict could
@@ -74,8 +74,8 @@ def handle_completion(
             logs.append(f"[{ts()}] ↻ node {node_id} review round")
             return completed, failed, conflicts
         completion_durations.append(duration)
-        attempts = loop._attempts
-        strict = loop._strict
+        attempts = loop._attempts  # pyright: ignore[reportPrivateUsage]
+        strict = loop._strict  # pyright: ignore[reportPrivateUsage]
         if result.blocked:
             if live is not None:
                 live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
@@ -83,7 +83,7 @@ def handle_completion(
             logs.append(f"[{ts()}] ■ node {node_id} review blocked")
             attempts[node_id] = attempts.get(node_id, 0) + 1
             if strict:
-                loop._failure_triggered = True
+                loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
             failed += 1
         elif result.rebase_conflict:
             conflicts.append(result.rebase_conflict)
@@ -98,7 +98,7 @@ def handle_completion(
             logs.append(f"[{ts()}] ✗ node {node_id} conflict")
             attempts[node_id] = attempts.get(node_id, 0) + 1
             if strict:
-                loop._failure_triggered = True
+                loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
             failed += 1
         else:
             if live is not None:
@@ -107,17 +107,17 @@ def handle_completion(
             logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
     elif outcome == "stopped":
-        ralph = loop._ralph
-        executor = loop._executor
-        stopped_nodes = loop._stopped_nodes
-        stopped = loop._stopped
-        terminal_runs = loop._terminal_runs
+        ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
+        executor = loop._executor  # pyright: ignore[reportPrivateUsage]
+        stopped_nodes = loop._stopped_nodes  # pyright: ignore[reportPrivateUsage]
+        stopped = loop._stopped  # pyright: ignore[reportPrivateUsage]
+        terminal_runs = loop._terminal_runs  # pyright: ignore[reportPrivateUsage]
         output = tuple(ralph.get_run_output_tail(run_id, 30))
         pending_guidance = tuple(ralph.get_run_guidance(run_id))
         executor.cancel(node_id)
         stopped_nodes.add(node_id)
         stopped += 1
-        loop._stopped = stopped
+        loop._stopped = stopped  # pyright: ignore[reportPrivateUsage]
         terminal_runs.append(
             TerminalRunState(
                 run_id=run_id,
@@ -139,10 +139,10 @@ def handle_completion(
         )
         logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
-        ralph = loop._ralph
-        executor = loop._executor
-        attempts = loop._attempts
-        strict = loop._strict
+        ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
+        executor = loop._executor  # pyright: ignore[reportPrivateUsage]
+        attempts = loop._attempts  # pyright: ignore[reportPrivateUsage]
+        strict = loop._strict  # pyright: ignore[reportPrivateUsage]
         detail = ralph.get_run_failure_detail(run_id)
         executor.fail(node_id, detail=detail)
         if live is not None:
@@ -154,7 +154,7 @@ def handle_completion(
         logs.append(f"[{ts()}] ✗ node {node_id} failed")
         attempts[node_id] = attempts.get(node_id, 0) + 1
         if strict:
-            loop._failure_triggered = True
+            loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
         failed += 1
 
     return completed, failed, conflicts
