@@ -5,10 +5,12 @@ Focus: --spec validation, solver-status exit codes, binary files, empty files, u
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from typing import TypedDict, Unpack
+from unittest.mock import patch
 
+from click.testing import Result
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -17,18 +19,58 @@ from milknado.domains.planning.planner import PlanResult
 runner = CliRunner()
 
 
-def _make_plan_result(**kwargs: Any) -> PlanResult:
-    defaults = {
-        "success": True,
-        "exit_code": 0,
-        "change_count": 3,
-        "batch_count": 2,
-        "oversized_count": 0,
-        "solver_status": "OPTIMAL",
-        "nodes_created": 3,
-    }
-    defaults.update(kwargs)
-    return PlanResult(**defaults)  # ty: ignore[invalid-argument-type]
+class _PlanResultOverrides(TypedDict, total=False):
+    success: bool
+    exit_code: int
+    context_path: Path | None
+    nodes_created: int
+    batch_count: int
+    oversized_count: int
+    solver_status: str
+    change_count: int
+    mega_batch_change_count: int | None
+
+
+class _FakeGraph:
+    def close(self) -> None:
+        pass
+
+
+class _FakePlanner:
+    def __init__(self, result: PlanResult) -> None:
+        self.result: PlanResult = result
+        self.launch_calls: list[tuple[str, Path, Path | None]] = []
+
+    def launch(
+        self, goal: str, project_root: Path, *, spec_path: Path | None = None
+    ) -> PlanResult:
+        self.launch_calls.append((goal, project_root, spec_path))
+        return self.result
+
+
+def _make_plan_result(**kwargs: Unpack[_PlanResultOverrides]) -> PlanResult:
+    return PlanResult(
+        success=kwargs.get("success", True),
+        exit_code=kwargs.get("exit_code", 0),
+        context_path=kwargs.get("context_path"),
+        nodes_created=kwargs.get("nodes_created", 3),
+        batch_count=kwargs.get("batch_count", 2),
+        oversized_count=kwargs.get("oversized_count", 0),
+        solver_status=kwargs.get("solver_status", "OPTIMAL"),
+        change_count=kwargs.get("change_count", 3),
+        mega_batch_change_count=kwargs.get("mega_batch_change_count"),
+    )
+
+
+def _fake_ensure_db(*_args: object, **_kwargs: object) -> _FakeGraph:
+    return _FakeGraph()
+
+
+def _planner_factory(fake_planner: _FakePlanner) -> Callable[..., _FakePlanner]:
+    def factory(*_args: object, **_kwargs: object) -> _FakePlanner:
+        return fake_planner
+
+    return factory
 
 
 class TestSpecFlagValidation:
@@ -45,7 +87,7 @@ class TestSpecFlagValidation:
 
     def test_non_md_file_exits_nonzero(self, tmp_path: Path) -> None:
         spec = tmp_path / "spec.txt"
-        spec.write_text("# Goal\nsome spec", encoding="utf-8")
+        _ = spec.write_text("# Goal\nsome spec", encoding="utf-8")
         result = runner.invoke(
             app,
             ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
@@ -55,15 +97,16 @@ class TestSpecFlagValidation:
     def test_binary_file_renamed_md_exit_nonzero(self, tmp_path: Path) -> None:
         """Binary file with .md extension — _derive_goal reads it as UTF-8 and rejects it."""
         spec = tmp_path / "binary.md"
-        spec.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd")
+        _ = spec.write_bytes(b"\x00\x01\x02\x03\xff\xfe\xfd")
+        fake_planner = _FakePlanner(_make_plan_result())
         with (
-            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch(
+                "milknado.domains.planning.Planner",
+                new=_planner_factory(fake_planner),
+            ),
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli.plan._ensure_db"),
+            patch("milknado.cli.plan._ensure_db", new=_fake_ensure_db),
         ):
-            mock_planner = MagicMock()
-            mock_planner_cls.return_value = mock_planner
-            mock_planner.launch.return_value = _make_plan_result()
             result = runner.invoke(
                 app,
                 ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
@@ -76,41 +119,39 @@ class TestSpecFlagValidation:
     def test_empty_spec_file_does_not_crash(self, tmp_path: Path) -> None:
         """0-byte spec.md — _derive_goal returns stem, planner is launched."""
         spec = tmp_path / "spec.md"
-        spec.write_bytes(b"")  # 0 bytes
+        _ = spec.write_bytes(b"")  # 0 bytes
+        fake_planner = _FakePlanner(_make_plan_result())
         with (
-            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch(
+                "milknado.domains.planning.Planner",
+                new=_planner_factory(fake_planner),
+            ),
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli.plan._ensure_db") as mock_ensure_db,
+            patch("milknado.cli.plan._ensure_db", new=_fake_ensure_db),
         ):
-            mock_graph = MagicMock()
-            mock_ensure_db.return_value = mock_graph
-            mock_planner = MagicMock()
-            mock_planner_cls.return_value = mock_planner
-            mock_planner.launch.return_value = _make_plan_result()
-            runner.invoke(
+            _ = runner.invoke(
                 app,
                 ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
             )
             # Empty spec → _derive_goal should return stem ("spec") not crash
-            mock_planner.launch.assert_called_once()
-            goal_arg = mock_planner.launch.call_args[0][0]
+            assert len(fake_planner.launch_calls) == 1
+            goal_arg = fake_planner.launch_calls[0][0]
             assert goal_arg == "spec"
 
 
 class TestSolverStatusExitCodes:
-    def _invoke_plan_with_result(self, tmp_path: Path, plan_result: PlanResult) -> Any:
+    def _invoke_plan_with_result(self, tmp_path: Path, plan_result: PlanResult) -> Result:
         spec = tmp_path / "spec.md"
-        spec.write_text("# My Goal\nsome spec", encoding="utf-8")
+        _ = spec.write_text("# My Goal\nsome spec", encoding="utf-8")
+        fake_planner = _FakePlanner(plan_result)
         with (
-            patch("milknado.domains.planning.Planner") as mock_planner_cls,
+            patch(
+                "milknado.domains.planning.Planner",
+                new=_planner_factory(fake_planner),
+            ),
             patch("milknado.adapters.crg.CrgAdapter"),
-            patch("milknado.cli.plan._ensure_db") as mock_ensure_db,
+            patch("milknado.cli.plan._ensure_db", new=_fake_ensure_db),
         ):
-            mock_graph = MagicMock()
-            mock_ensure_db.return_value = mock_graph
-            mock_planner = MagicMock()
-            mock_planner_cls.return_value = mock_planner
-            mock_planner.launch.return_value = plan_result
             result = runner.invoke(
                 app,
                 ["plan", "--spec", str(spec), "--project-root", str(tmp_path)],
@@ -175,7 +216,7 @@ class TestSolverStatusExitCodes:
         result = self._invoke_plan_with_result(
             tmp_path,
             _make_plan_result(
-                solver_status="TIMEOUT",  # type: ignore[arg-type]
+                solver_status="TIMEOUT",
                 success=False,
                 exit_code=1,
                 batch_count=0,
@@ -222,28 +263,28 @@ class TestDeriveGoal:
         from milknado.cli import _derive_goal
 
         spec = tmp_path / "spec.md"
-        spec.write_text("# My Feature Goal\nsome content", encoding="utf-8")
+        _ = spec.write_text("# My Feature Goal\nsome spec", encoding="utf-8")
         assert _derive_goal(spec) == "My Feature Goal"
 
     def test_no_heading_returns_stem(self, tmp_path: Path) -> None:
         from milknado.cli import _derive_goal
 
         spec = tmp_path / "my-spec.md"
-        spec.write_text("No heading here, just prose.", encoding="utf-8")
+        _ = spec.write_text("No heading here\n", encoding="utf-8")
         assert _derive_goal(spec) == "my-spec"
 
     def test_heading_with_extra_whitespace_stripped(self, tmp_path: Path) -> None:
         from milknado.cli import _derive_goal
 
         spec = tmp_path / "spec.md"
-        spec.write_text("#   Lots of spaces   \nsome content", encoding="utf-8")
+        _ = spec.write_text("#   Lots of spaces   \nsome content", encoding="utf-8")
         assert _derive_goal(spec) == "Lots of spaces"
 
     def test_heading_level_two_not_extracted(self, tmp_path: Path) -> None:
         from milknado.cli import _derive_goal
 
         spec = tmp_path / "spec.md"
-        spec.write_text("## Not a top heading\n# Real heading\n", encoding="utf-8")
+        _ = spec.write_text("## Not a top heading\n# Real heading\n", encoding="utf-8")
         # ## is not matched by `line.startswith("# ")` check... but "## " starts with "#"
         # Let's verify the actual behavior: "## Not..." starts with "# " is False,
         # because "## " != "# " prefix. Actually "## ".startswith("# ") is False.

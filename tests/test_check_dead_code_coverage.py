@@ -30,7 +30,7 @@ def _write_fixture(tmp_path: Path, files: dict[str, str]) -> Path:
     for relpath, content in files.items():
         path = tmp_path / relpath
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        _ = path.write_text(content)
     return tmp_path
 
 
@@ -346,7 +346,7 @@ def test_relative_filename_resolves_under_absolute_sources_dir(tmp_path: Path) -
         ("def dead_fn():", 1),
         ("    return 1", 0),
     ]
-    (pkg_dir / "mod.py").write_text(_source(lines))
+    _ = (pkg_dir / "mod.py").write_text(_source(lines))
     coverage_xml = f"""<?xml version="1.0" ?>
 <coverage>
   <sources>

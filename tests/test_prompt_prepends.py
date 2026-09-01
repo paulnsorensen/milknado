@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
-from milknado.adapters.loop import _build_ralph_content
+from milknado.adapters.loop import _build_ralph_content  # pyright: ignore[reportPrivateUsage]
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.dispatch import render_brief
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 
 
-def test_build_planning_context_prepends_when_set(tmp_path: Path, mock_crg) -> None:
+def test_build_planning_context_prepends_when_set(tmp_path: Path, mock_crg: MagicMock) -> None:
     graph = MikadoGraph(tmp_path / "g.db")
     try:
         ctx = build_planning_context(
@@ -27,7 +28,9 @@ def test_build_planning_context_prepends_when_set(tmp_path: Path, mock_crg) -> N
     assert ctx.index("**TEAM NOTE:**") < ctx.index("# Goal")
 
 
-def test_build_planning_context_omits_prepend_when_none(tmp_path: Path, mock_crg) -> None:
+def test_build_planning_context_omits_prepend_when_none(
+    tmp_path: Path, mock_crg: MagicMock
+) -> None:
     graph = MikadoGraph(tmp_path / "g.db")
     try:
         ctx = build_planning_context("ship it", mock_crg, graph)

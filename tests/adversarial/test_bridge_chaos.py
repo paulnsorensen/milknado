@@ -10,7 +10,7 @@ import pytest
 from milknado.domains.batching.change import Batch, BatchPlan, FileChange
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.batching_bridge import (
-    _batch_description,
+    _batch_description,  # pyright: ignore[reportPrivateUsage]
     apply_batches_to_graph,
 )
 from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
@@ -52,13 +52,13 @@ class TestGoalRootNode:
         manifest = _make_manifest(goal="", goal_summary="summary")
         plan = _make_plan()
         with pytest.raises(ValueError, match="goal"):
-            apply_batches_to_graph(graph, plan, manifest, parent_id=None)
+            _ = apply_batches_to_graph(graph, plan, manifest, parent_id=None)
 
     def test_empty_goal_summary_raises_when_parent_none(self, graph: MikadoGraph) -> None:
         manifest = _make_manifest(goal="goal", goal_summary="")
         plan = _make_plan()
         with pytest.raises(ValueError, match="goal"):
-            apply_batches_to_graph(graph, plan, manifest, parent_id=None)
+            _ = apply_batches_to_graph(graph, plan, manifest, parent_id=None)
 
     def test_empty_manifest_creates_only_root(self, graph: MikadoGraph) -> None:
         manifest = _make_manifest()
@@ -86,7 +86,7 @@ class TestGoalRootNode:
         batch = Batch(index=0, change_ids=("c1",), depends_on=())
         plan = _make_plan(batches=(batch,))
         with pytest.raises(ValueError, match="parent_id 99999 not found"):
-            apply_batches_to_graph(graph, plan, manifest, parent_id=99999)
+            _ = apply_batches_to_graph(graph, plan, manifest, parent_id=99999)
 
 
 class TestBatchDescriptionStacking:

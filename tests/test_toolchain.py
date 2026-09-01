@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
+from milknado.domains.common.protocols import CommandResult
 from milknado.domains.common.toolchain import (
     REQUIRED_RUST_TOOLS,
     get_required_tool_status,
     install_missing_rust_tools,
 )
+
+
+@dataclass(frozen=True)
+class _CommandResult(CommandResult):
+    returncode: int
+    stdout: str
+    stderr: str
 
 
 class FakeToolchain:
@@ -16,20 +24,21 @@ class FakeToolchain:
         executables: dict[str, str] | None = None,
         *,
         cargo_home: Path | None = None,
-        home: Path = Path("/home/test"),
+        home: Path | None = None,
         materialize_installs: bool = True,
     ) -> None:
-        self.executables = executables or {}
+        self.executables: dict[str, str] = executables or {}
         self.commands: list[list[str]] = []
         self.returncodes: dict[tuple[str, ...], int] = {}
-        self.cargo_home = cargo_home
-        self._home = home
-        self.materialize_installs = materialize_installs
+        self.cargo_home: Path | None = cargo_home
+        self._home: Path = home or Path("/home/test")
+        self.materialize_installs: bool = materialize_installs
 
     def find_executable(self, command: str) -> str | None:
         return self.executables.get(command)
 
-    def run(self, argv: list[str], *, check: bool = False):
+    def run(self, argv: list[str], *, check: bool = False) -> _CommandResult:
+        del check
         self.commands.append(argv)
         returncode = self.returncodes.get(tuple(argv), 0)
         if (
@@ -39,7 +48,7 @@ class FakeToolchain:
             and "--help" not in argv
         ):
             self.executables[argv[-1]] = f"/home/test/.cargo/bin/{argv[-1]}"
-        return SimpleNamespace(returncode=returncode, stdout="", stderr="")
+        return _CommandResult(returncode=returncode, stdout="", stderr="")
 
     def system(self) -> str:
         return "Linux"

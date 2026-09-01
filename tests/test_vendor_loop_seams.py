@@ -188,9 +188,9 @@ class TestRalphifyNotImportable:
         installed wheel instead of the vendored copy."""
         # Guard: if already imported in this session, remove from sys.modules
         # so we get a fresh import attempt.
-        sys.modules.pop("ralphify", None)
+        _ = sys.modules.pop("ralphify", None)
         with pytest.raises(ImportError):
-            importlib.import_module("ralphify")
+            _ = importlib.import_module("ralphify")
 
     def test_ralphify_not_in_installed_packages(self) -> None:
         """WHY: the pyproject.toml dep was removed; this test verifies the lock
@@ -199,7 +199,7 @@ class TestRalphifyNotImportable:
         from importlib.metadata import version as pkg_version
 
         with pytest.raises(PackageNotFoundError):
-            pkg_version("ralphify")
+            _ = pkg_version("ralphify")
 
 
 # ---------------------------------------------------------------------------

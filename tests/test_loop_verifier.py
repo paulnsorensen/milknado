@@ -23,14 +23,14 @@ import pytest
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common.config import Gate
 from milknado.domains.execution.completion import (
-    _GATE_TIMEOUT_SECONDS,
-    _GIT_QUERY_TIMEOUT_SECONDS,
-    _UNRESOLVABLE_BASE_FEEDBACK,
+    _GATE_TIMEOUT_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    _GIT_QUERY_TIMEOUT_SECONDS,  # pyright: ignore[reportPrivateUsage]
+    _UNRESOLVABLE_BASE_FEEDBACK,  # pyright: ignore[reportPrivateUsage]
     NO_GATES_CONFIGURED_MESSAGE,
-    _GitProbeFailure,
-    _has_committed_change,
-    _has_working_tree_change,
-    _run_quality_gates,
+    _GitProbeFailure,  # pyright: ignore[reportPrivateUsage]
+    _has_committed_change,  # pyright: ignore[reportPrivateUsage]
+    _has_working_tree_change,  # pyright: ignore[reportPrivateUsage]
+    _run_quality_gates,  # pyright: ignore[reportPrivateUsage]
     build_completion_verifier,
 )
 from milknado.loop import CompletionVerdict
@@ -38,7 +38,7 @@ from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
 
 def _git(*args: str, cwd: Path) -> None:
-    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+    _ = subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
 _BASE_OIDS: dict[Path, str] = {}
@@ -68,7 +68,7 @@ def feature_repo(tmp_path: Path) -> Path:
     _git("init", "-b", "feature", cwd=repo)
     _git("config", "user.email", "t@t.t", cwd=repo)
     _git("config", "user.name", "t", cwd=repo)
-    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    _ = (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
     _git("add", "-A", cwd=repo)
     _git("commit", "-m", "seed", cwd=repo)
     return repo
@@ -90,7 +90,7 @@ def worktree(feature_repo: Path, tmp_path: Path) -> Path:
 
 
 def _commit_change(wt: Path) -> None:
-    (wt / "work.txt").write_text("work\n", encoding="utf-8")
+    _ = (wt / "work.txt").write_text("work\n", encoding="utf-8")
     _git("add", "-A", cwd=wt)
     _git("commit", "-m", "work", cwd=wt)
 
@@ -111,7 +111,7 @@ class TestGateEnvHermeticity:
         # Fails (exit 1) if either injected var is visible to the gate command;
         # uses shell builtins only so the check does not itself depend on PATH.
         probe = Gate(command='test -z "$MILKNADO_RUN_ID" && test -z "$MILKNADO_NODE_ID"')
-        assert _run_quality_gates(worktree, [probe]) is None
+        assert _run_quality_gates(worktree, (probe,)) is None
 
     def test_gate_env_preserves_non_milknado_vars(
         self, worktree: Path, monkeypatch: pytest.MonkeyPatch
@@ -119,7 +119,7 @@ class TestGateEnvHermeticity:
         # Stripping MILKNADO_* must not nuke the rest of the env: PATH must survive
         # so an external command still resolves (guards against passing env={}).
         monkeypatch.setenv("MILKNADO_RUN_ID", "leak-run-123")
-        assert _run_quality_gates(worktree, [Gate(command="env >/dev/null")]) is None
+        assert _run_quality_gates(worktree, (Gate(command="env >/dev/null"),)) is None
 
 
 class TestFailingGate:
@@ -182,7 +182,7 @@ class TestFailingGate:
         verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'exit 2'"),))
 
         with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
-            verifier()
+            _ = verifier()
 
         assert any(
             r.levelname == "WARNING" and "quality gate" in r.message and "failed" in r.message
@@ -201,7 +201,7 @@ class TestFailingGate:
         verifier = _build_completion_verifier(worktree, (Gate(command="sh -c 'sleep 5'"),))
 
         with caplog.at_level("WARNING", logger="milknado.domains.execution.completion"):
-            verifier()
+            _ = verifier()
 
         assert any(r.levelname == "WARNING" and "timed out" in r.message for r in caplog.records)
 
@@ -250,7 +250,7 @@ class TestAllGreen:
 
     def test_passing_gates_and_uncommitted_change_ok(self, worktree: Path) -> None:
         """A stageable-but-uncommitted change counts as produced work."""
-        (worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+        _ = (worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
         verifier = _build_completion_verifier(worktree, (Gate(command="true"),))
 
         assert verifier().ok is True
@@ -271,7 +271,7 @@ class TestArtifactEvidenceMode:
 
     def test_present_non_empty_artifact_ok_with_no_change(self, worktree: Path) -> None:
         """No git change at all, but the artifact exists and is non-empty: pass."""
-        (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
+        _ = (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="NOTES.md"
         )
@@ -287,7 +287,7 @@ class TestArtifactEvidenceMode:
         """Absolute artifact paths must be rejected before Path.exists() can
         be tricked by a file outside the worktree."""
         outside = tmp_path / "absolute-artifact.md"
-        outside.write_text("done\n", encoding="utf-8")
+        _ = outside.write_text("done\n", encoding="utf-8")
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path=str(outside)
         )
@@ -302,7 +302,7 @@ class TestArtifactEvidenceMode:
         """Traversal artifact paths must be rejected before they can escape
         the worktree and satisfy the artifact check."""
         escaped = worktree.parent / "traversal-artifact.md"
-        escaped.write_text("done\n", encoding="utf-8")
+        _ = escaped.write_text("done\n", encoding="utf-8")
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="../traversal-artifact.md"
         )
@@ -324,7 +324,7 @@ class TestArtifactEvidenceMode:
         assert "NOTES.md" in verdict.feedback
 
     def test_empty_artifact_rejected(self, worktree: Path) -> None:
-        (worktree / "NOTES.md").write_text("", encoding="utf-8")
+        _ = (worktree / "NOTES.md").write_text("", encoding="utf-8")
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="NOTES.md"
         )
@@ -340,7 +340,7 @@ class TestArtifactEvidenceMode:
         NOTES.md is committed to the fork point itself (pre-existing, not new
         work), so it exists and is non-empty in the worktree while the worktree
         itself carries no new committed or stageable change."""
-        (feature_repo / "NOTES.md").write_text("done\n", encoding="utf-8")
+        _ = (feature_repo / "NOTES.md").write_text("done\n", encoding="utf-8")
         _git("add", "-A", cwd=feature_repo)
         _git("commit", "-m", "add notes", cwd=feature_repo)
         wt = tmp_path / "wt-ignores-artifact"
@@ -378,7 +378,7 @@ class TestArtifactEvidenceMode:
 
     def test_none_gates_still_fail_closed_with_artifact_path(self, worktree: Path) -> None:
         """None gates fail closed regardless of in_place/artifact_path."""
-        (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
+        _ = (worktree / "NOTES.md").write_text("done\n", encoding="utf-8")
         verifier = _build_completion_verifier(
             worktree, None, in_place=True, artifact_path="NOTES.md"
         )
@@ -393,7 +393,6 @@ class TestArtifactEvidenceMode:
     ) -> None:
         """A stat error while checking the artifact must reject, not raise or
         silently pass."""
-        import milknado.domains.execution.completion as completion_mod
 
         real_is_file = Path.is_file
 
@@ -402,7 +401,7 @@ class TestArtifactEvidenceMode:
                 raise OSError("simulated stat failure")
             return real_is_file(self)
 
-        monkeypatch.setattr(completion_mod.Path, "is_file", fake_is_file)
+        monkeypatch.setattr("milknado.domains.execution.completion.Path.is_file", fake_is_file)
         verifier = _build_completion_verifier(
             worktree, (), in_place=True, artifact_path="NOTES.md"
         )
@@ -455,7 +454,7 @@ class TestNoneGatesFailClosed:
         verifier = _build_completion_verifier(worktree, ())
 
         with caplog.at_level(logging.INFO, logger="milknado.domains.execution.completion"):
-            verifier()
+            _ = verifier()
 
         assert any("explicitly skipped" in r.message for r in caplog.records)
 
@@ -533,11 +532,11 @@ class TestGitFailureFailsClosed:
 
     def test_working_tree_check_on_non_git_dir_raises_probe_failure(self, tmp_path: Path) -> None:
         with pytest.raises(_GitProbeFailure, match="git status failed"):
-            _has_working_tree_change(tmp_path)
+            _ = _has_working_tree_change(tmp_path)
 
     def test_committed_check_on_non_git_dir_raises_probe_failure(self, tmp_path: Path) -> None:
         with pytest.raises(_GitProbeFailure):
-            _has_committed_change(tmp_path, "feature")
+            _ = _has_committed_change(tmp_path, "feature")
 
     def test_committed_check_raises_on_diff_error(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -548,19 +547,18 @@ class TestGitFailureFailsClosed:
         nothing slip through completion. It must not read as 'no committed
         change' either: git never answered, so the verifier reports its own
         failure instead of attributing one to the worker."""
-        import milknado.domains.execution.completion as completion_mod
 
-        def fake_run(cmd: list[str], *args: object, **kwargs: object) -> object:
+        def fake_run(cmd: list[str], *_args: object, **_kwargs: object) -> object:
             if "merge-base" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, stdout="base\n", stderr="")
             if "diff" in cmd:
                 return subprocess.CompletedProcess(cmd, 128, stdout="", stderr="fatal: bad object")
             raise AssertionError(f"unexpected git call: {cmd}")
 
-        monkeypatch.setattr(completion_mod.subprocess, "run", fake_run)
+        monkeypatch.setattr("milknado.domains.execution.completion.subprocess.run", fake_run)
 
         with pytest.raises(_GitProbeFailure, match="exited 128"):
-            _has_committed_change(tmp_path, "feature")
+            _ = _has_committed_change(tmp_path, "feature")
 
     def test_verifier_converts_probe_failure_into_a_non_blaming_rejection(
         self, tmp_path: Path

@@ -31,7 +31,7 @@ def test_clean_tree_exits_zero() -> None:
 
 def test_unclassified_dead_function_fails_the_gate(tmp_path: Path) -> None:
     probe = tmp_path / "probe.py"
-    probe.write_text("def unused_probe():\n    return 1\n", encoding="utf-8")
+    _ = probe.write_text("def unused_probe():\n    return 1\n", encoding="utf-8")
     result = _run_gate(str(tmp_path))
     output = result.stdout + result.stderr
     assert result.returncode == 3
@@ -40,7 +40,7 @@ def test_unclassified_dead_function_fails_the_gate(tmp_path: Path) -> None:
 
 def test_textual_lifecycle_override_is_classified_accepted(tmp_path: Path) -> None:
     probe = tmp_path / "probe.py"
-    probe.write_text(
+    _ = probe.write_text(
         textwrap.dedent(
             """\
             from textual.app import App, ComposeResult
@@ -67,7 +67,7 @@ def test_textual_lifecycle_override_is_classified_accepted(tmp_path: Path) -> No
 
 def test_same_named_method_without_textual_base_is_not_classified(tmp_path: Path) -> None:
     probe = tmp_path / "probe.py"
-    probe.write_text(
+    _ = probe.write_text(
         textwrap.dedent(
             """\
             class NotTextual:
@@ -94,7 +94,7 @@ def test_vendored_loop_findings_resolve_to_real_symbols() -> None:
             for target in node.targets
         )
     )
-    findings: set[tuple[str, str]] = ast.literal_eval(assignment.value)
+    findings: set[tuple[str, str]] = ast.literal_eval(assignment.value)  # pyright: ignore[reportAny]
     assert findings
     for relpath, name in findings:
         source = REPO_ROOT / relpath

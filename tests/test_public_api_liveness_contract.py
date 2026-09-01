@@ -26,11 +26,14 @@ def _literal_exports(path: Path) -> tuple[str, ...]:
         if isinstance(statement, ast.Assign) and any(
             isinstance(target, ast.Name) and target.id == "__all__" for target in statement.targets
         ):
-            exports = ast.literal_eval(statement.value)
-            if not isinstance(exports, (list, tuple)) or not all(
-                isinstance(name, str) for name in exports
-            ):
+            exports_raw: object = ast.literal_eval(statement.value)  # pyright: ignore[reportAny]
+            if not isinstance(exports_raw, (list, tuple)):
                 raise AssertionError(f"{path}: __all__ must contain only literal strings")
+            exports: list[str] = []
+            for item in exports_raw:  # pyright: ignore[reportUnknownVariableType]
+                if not isinstance(item, str):
+                    raise AssertionError(f"{path}: __all__ must contain only literal strings")
+                exports.append(item)
             return tuple(exports)
     return ()
 
@@ -79,8 +82,9 @@ def _imports(root: Path, path: Path) -> dict[str, tuple[Path, str]]:
 
 
 def _resolve(
-    root: Path, path: Path, name: str, seen: frozenset[tuple[Path, str]] = frozenset()
+    root: Path, path: Path, name: str, seen: frozenset[tuple[Path, str]] | None = None
 ) -> _Export:
+    seen = seen or frozenset()
     identity = (path, name)
     if identity in seen:
         raise AssertionError(f"cyclic export resolution for {path}:{name}")
@@ -95,18 +99,23 @@ def _annotation_nodes(export: _Export) -> list[ast.AST]:
     node = export.node
     annotations: list[ast.AST] = []
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        annotations.extend(arg.annotation for arg in (*node.args.posonlyargs, *node.args.args))
-        annotations.extend(arg.annotation for arg in node.args.kwonlyargs)
-        if node.args.vararg:
+        for arg in (*node.args.posonlyargs, *node.args.args):
+            if arg.annotation is not None:
+                annotations.append(arg.annotation)
+        for arg in node.args.kwonlyargs:
+            if arg.annotation is not None:
+                annotations.append(arg.annotation)
+        if node.args.vararg and node.args.vararg.annotation is not None:
             annotations.append(node.args.vararg.annotation)
-        if node.args.kwarg:
+        if node.args.kwarg and node.args.kwarg.annotation is not None:
             annotations.append(node.args.kwarg.annotation)
-        annotations.append(node.returns)
+        if node.returns is not None:
+            annotations.append(node.returns)
     elif isinstance(node, ast.ClassDef):
         annotations.extend(
             statement.annotation for statement in node.body if isinstance(statement, ast.AnnAssign)
         )
-    return [annotation for annotation in annotations if annotation is not None]
+    return annotations
 
 
 def _loaded_names(node: ast.AST) -> set[str]:
@@ -218,7 +227,7 @@ def _package(tmp_path: Path, files: dict[str, str]) -> Path:
     for relative, source in files.items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(source, encoding="utf-8")
+        _ = path.write_text(source, encoding="utf-8")
     return root
 
 
@@ -236,7 +245,7 @@ def test_test_only_consumer_does_not_keep_export_live(tmp_path: Path) -> None:
     )
     tests = tmp_path / "tests"
     tests.mkdir()
-    (tests / "test_consumer.py").write_text(
+    _ = (tests / "test_consumer.py").write_text(
         "from pkg import TestOnly\nassert TestOnly\n", encoding="utf-8"
     )
     assert _dead_exports(root) == {"TestOnly"}
