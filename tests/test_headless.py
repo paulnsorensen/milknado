@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal
 
-import milknado.domains.execution.headless as headless
-from milknado.domains.common import ProgressEvent
+import pytest
+from typing_extensions import override
+
+from milknado.domains.common import ProgressEvent, TerminalRunOutcome
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.execution import HeadlessOutcome, run_node_to_completion
 from milknado.domains.execution.executor import (
@@ -23,6 +27,8 @@ _EXEC_CONFIG = ExecutionConfig(
 
 
 class _FakeExecutor:
+    _completion: CompletionResult | None
+
     def __init__(self, completion: CompletionResult | None = None) -> None:
         self._completion = completion
         self.dispatched: list[int] = []
@@ -37,17 +43,21 @@ class _FakeExecutor:
         config: ExecutionConfig,
         *,
         base_oid: str | None = None,
+        parent_run_id: str | None = None,
     ) -> DispatchResult:
+        _ = (base_oid, parent_run_id)
         assert isinstance(config, ExecutionConfig)
         self.dispatched.append(node_id)
         return DispatchResult(node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}")
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
+        _ = feature_branch
         self.completed.append(node_id)
         assert self._completion is not None
         return self._completion
 
-    def fail(self, node_id: int) -> None:
+    def fail(self, node_id: int, detail: str | None = None) -> None:
+        _ = detail
         self.failed.append(node_id)
 
     def cancel(self, node_id: int) -> None:
@@ -58,6 +68,10 @@ class _FakeExecutor:
 
 
 class _FakeRalph:
+    _outcome: Literal["completed", "stopped", "failed"]
+    _timeout: bool
+    stop_result: bool
+
     def __init__(
         self,
         *,
@@ -66,19 +80,25 @@ class _FakeRalph:
     ) -> None:
         self._outcome = outcome
         self._timeout = timeout
+        self.stop_result = True
         self.stopped: list[str] = []
 
-    def wait_for_next_completion(self, active_run_ids, timeout=None):
+    def wait_for_next_completion(
+        self, active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         if self._timeout:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
         return next(iter(active_run_ids)), self._outcome
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = timeout
         self.stopped.append(run_id)
-        return True
+        return self.stop_result
 
 
 class _ProgressThenTerminalRalph(_FakeRalph):
+    _outcomes: Iterator[ProgressEvent | TerminalRunOutcome]
+
     def __init__(self) -> None:
         super().__init__()
         self._outcomes = iter(
@@ -87,10 +107,13 @@ class _ProgressThenTerminalRalph(_FakeRalph):
                 "completed",
             )
         )
-        self.waits = 0
+        self.waits: int = 0
         self.timeouts: list[float | None] = []
 
-    def wait_for_next_completion(self, active_run_ids, timeout=None):
+    @override
+    def wait_for_next_completion(
+        self, active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         self.timeouts.append(timeout)
         self.waits += 1
         return next(iter(active_run_ids)), next(self._outcomes)
@@ -211,12 +234,12 @@ def test_progress_event_waits_for_terminal_outcome_before_merging() -> None:
 
 
 def test_progress_event_uses_remaining_completion_deadline(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ex = _FakeExecutor(completion=_ok_completion(13))
     ralph = _ProgressThenTerminalRalph()
     monotonic = iter((100.0, 101.0, 106.0))
-    monkeypatch.setattr(headless.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(time, "monotonic", lambda: next(monotonic))
 
     outcome = run_node_to_completion(ex, ralph, 13, _EXEC_CONFIG, "main", 30.0)
 
@@ -231,7 +254,7 @@ def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
     would never be finalized once the wedged loop later self-exits."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(timeout=True)
-    ralph.stop_run = lambda run_id, timeout=None: False
+    ralph.stop_result = False
 
     result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
 
@@ -246,7 +269,7 @@ def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
     above — the non-completed-run unconfirmed-stop path had the same gap."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(outcome="failed")
-    ralph.stop_run = lambda run_id, timeout=None: False
+    ralph.stop_result = False
 
     result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
 

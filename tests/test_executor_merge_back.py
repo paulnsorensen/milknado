@@ -20,20 +20,44 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
+from typing import cast
 
 import pytest
 
+import milknado.domains.execution.executor as _executor_module
 from milknado.adapters.git import GitAdapter
 from milknado.domains.common.errors import GitOperationError
-from milknado.domains.execution.executor import (
-    ExecutionConfig,
-    Executor,
-    WorktreeManager,
-    _exclude_loop_scaffolding,
-    _preserve_run_logs,
-)
+from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
+from milknado.domains.common.types import RebaseResult
+from milknado.domains.execution.executor import ExecutionConfig, Executor, WorktreeManager
 from milknado.domains.graph import MikadoGraph
+
+_EXCLUDE_LOOP_SCAFFOLDING = cast(
+    Callable[[Path], None], attrgetter("_exclude_loop_scaffolding")(_executor_module)
+)
+_PRESERVE_RUN_LOGS = cast(
+    Callable[[Path, int], None], attrgetter("_preserve_run_logs")(_executor_module)
+)
+
+
+def _git_port(value: object) -> GitPort:
+    return cast(GitPort, value)
+
+
+def _loop_port(value: object) -> LoopPort:
+    return cast(LoopPort, value)
+
+
+def _crg_port(value: object) -> CrgPort:
+    return cast(CrgPort, value)
+
+
+def _worker_run_ids(executor: Executor) -> dict[int, str]:
+    return cast(dict[int, str], attrgetter("_worker_run_id_by_node")(executor))
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -48,25 +72,25 @@ def _git(cwd: Path, *args: str) -> str:
 
 def _init_project(root: Path) -> None:
     """A git repo at `root` with one commit on a `feature` branch checked out."""
-    _git(root, "init", "-q", "-b", "feature", str(root))
-    _git(root, "config", "user.email", "test@test.com")
-    _git(root, "config", "user.name", "Test")
-    (root / "README.md").write_text("seed\n")
-    _git(root, "add", ".")
-    _git(root, "commit", "-qm", "seed")
+    _ = _git(root, "init", "-q", "-b", "feature", str(root))
+    _ = _git(root, "config", "user.email", "test@test.com")
+    _ = _git(root, "config", "user.name", "Test")
+    _ = (root / "README.md").write_text("seed\n")
+    _ = _git(root, "add", ".")
+    _ = _git(root, "commit", "-qm", "seed")
 
 
 def _worker_did_work(worktree: Path) -> None:
     """Simulate a ralph run inside `worktree`: a real source change committed on the
     worker branch, plus the loop's own scaffolding left lying around uncommitted."""
-    (worktree / "feature.py").write_text("def added():\n    return 1\n")
-    _git(worktree, "add", "feature.py")
-    _git(worktree, "commit", "-qm", "wip: worker change")
+    _ = (worktree / "feature.py").write_text("def added():\n    return 1\n")
+    _ = _git(worktree, "add", "feature.py")
+    _ = _git(worktree, "commit", "-qm", "wip: worker change")
     # Loop scaffolding the worker must NOT carry into the squashed commit.
-    (worktree / "RALPH.md").write_text("# loop scaffolding\n")
+    _ = (worktree / "RALPH.md").write_text("# loop scaffolding\n")
     logs = worktree / ".ralph-logs"
     logs.mkdir()
-    (logs / "run.log").write_text("iteration 1 log line\n")
+    _ = (logs / "run.log").write_text("iteration 1 log line\n")
 
 
 @pytest.fixture()
@@ -78,7 +102,7 @@ def project(tmp_path: Path) -> Path:
 
 
 def _running_node(graph: MikadoGraph, worktree: Path, branch: str) -> int:
-    graph.add_node("Add the added() helper")
+    _ = graph.add_node("Add the added() helper")
     graph.mark_running(1, worktree_path=str(worktree), branch_name=branch)
     return 1
 
@@ -90,14 +114,16 @@ class TestMergeBackIntegration:
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
-        git.create_worktree(wt, branch)
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            _running_node(graph, wt, branch)
-            ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
+            _ = _running_node(graph, wt, branch)
+            ex = Executor(
+                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+            )
             result = ex.complete(1, "feature")
         finally:
             graph.close()
@@ -115,19 +141,21 @@ class TestMergeBackIntegration:
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
-        git.create_worktree(wt, branch)
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            _running_node(graph, wt, branch)
-            ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
-            ex.complete(1, "feature")
+            _ = _running_node(graph, wt, branch)
+            ex = Executor(
+                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+            )
+            _ = ex.complete(1, "feature")
         finally:
             graph.close()
 
-        tracked = _git(project, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+        tracked = _ = _git(project, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
         assert "RALPH.md" not in tracked
         assert not any(p.startswith(".ralph-logs") for p in tracked)
         assert "feature.py" in tracked
@@ -137,15 +165,17 @@ class TestMergeBackIntegration:
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
-        git.create_worktree(wt, branch)
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            _running_node(graph, wt, branch)
-            ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
-            ex.complete(1, "feature")
+            _ = _running_node(graph, wt, branch)
+            ex = Executor(
+                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+            )
+            _ = ex.complete(1, "feature")
         finally:
             graph.close()
 
@@ -160,21 +190,23 @@ class TestMergeBackIntegration:
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
-        git.create_worktree(wt, branch)
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
         _worker_did_work(wt)
         (wt / "addons").symlink_to("worker-addons")
-        _git(wt, "add", "addons")
-        _git(wt, "commit", "-qm", "add addons symlink")
+        _ = _git(wt, "add", "addons")
+        _ = _git(wt, "commit", "-qm", "add addons symlink")
         (project / "addons").symlink_to("local-addons")
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            graph.add_node("Add the added() helper")
+            _ = graph.add_node("Add the added() helper")
             graph.mark_running(1, worktree_path=str(wt), branch_name=branch, run_id="run-1")
             graph.start_run("run-1", 1, "run.log", "2026-01-01T00:00:00+00:00", 300)
-            ex = Executor(graph=graph, git=git, ralph=_NoRalph(), crg=_NoCrg())
-            ex._worker_run_id_by_node[1] = "run-1"
+            ex = Executor(
+                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+            )
+            _worker_run_ids(ex)[1] = "run-1"
 
             result = ex.complete(1, "feature")
             row = graph.get_run("run-1")
@@ -194,7 +226,7 @@ class TestMergeBackIntegration:
             assert node.branch_name == branch
 
             with pytest.raises(ValueError, match="retry merge-back before redispatching"):
-                ex.dispatch(
+                _ = ex.dispatch(
                     1,
                     ExecutionConfig(
                         execution_agent="claude",
@@ -210,7 +242,7 @@ class TestMergeBackIntegration:
         assert _git(wt, "rev-parse", "--abbrev-ref", "HEAD").strip() == branch
 
         (project / "addons").unlink()
-        retry = WorktreeManager(git).rebase_and_merge(
+        retry = WorktreeManager(_git_port(git)).rebase_and_merge(
             wt, "feature", 1, "Add the added() helper", branch
         )
         assert retry.success is True
@@ -225,27 +257,27 @@ class TestGitAdapterContract:
         git = GitAdapter(project)
         branch = "milknado/1-x"
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, branch)
-        (wt / "f.py").write_text("x = 1\n")
-        _git(wt, "add", "f.py")
-        _git(wt, "commit", "-qm", "wip")
+        _ = git.create_worktree(wt, branch)
+        _ = (wt / "f.py").write_text("x = 1\n")
+        _ = _git(wt, "add", "f.py")
+        _ = _git(wt, "commit", "-qm", "wip")
         assert git.squash_and_commit(wt, "feature", "feat: squashed") is True
 
     def test_squash_and_commit_returns_false_when_nothing_to_commit(self, project: Path) -> None:
         git = GitAdapter(project)
         branch = "milknado/1-x"
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, branch)  # worktree identical to feature — no work
+        _ = git.create_worktree(wt, branch)  # worktree identical to feature — no work
         assert git.squash_and_commit(wt, "feature", "feat: squashed") is False
 
     def test_fast_forward_advances_feature_branch(self, project: Path) -> None:
         git = GitAdapter(project)
         branch = "milknado/1-x"
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, branch)
-        (wt / "f.py").write_text("x = 1\n")
-        _git(wt, "add", "f.py")
-        _git(wt, "commit", "-qm", "worker commit")
+        _ = git.create_worktree(wt, branch)
+        _ = (wt / "f.py").write_text("x = 1\n")
+        _ = _git(wt, "add", "f.py")
+        _ = _git(wt, "commit", "-qm", "worker commit")
         before = _git(project, "rev-parse", "HEAD").strip()
         git.fast_forward(branch)
         after = _git(project, "rev-parse", "HEAD").strip()
@@ -256,14 +288,14 @@ class TestGitAdapterContract:
         git = GitAdapter(project)
         branch = "milknado/1-x"
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, branch)
-        (wt / "f.py").write_text("x = 1\n")
-        _git(wt, "add", "f.py")
-        _git(wt, "commit", "-qm", "worker commit")
+        _ = git.create_worktree(wt, branch)
+        _ = (wt / "f.py").write_text("x = 1\n")
+        _ = _git(wt, "add", "f.py")
+        _ = _git(wt, "commit", "-qm", "worker commit")
         # A divergent commit on feature makes the worker branch non-fast-forwardable.
-        (project / "g.py").write_text("y = 2\n")
-        _git(project, "add", "g.py")
-        _git(project, "commit", "-qm", "feature moves on")
+        _ = (project / "g.py").write_text("y = 2\n")
+        _ = _git(project, "add", "g.py")
+        _ = _git(project, "commit", "-qm", "feature moves on")
         with pytest.raises(GitOperationError, match="merge --ff-only"):
             git.fast_forward(branch)
 
@@ -272,8 +304,8 @@ class TestExcludeLoopScaffolding:
     def test_appends_patterns_to_common_dir_exclude(self, project: Path) -> None:
         git = GitAdapter(project)
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, "milknado/1-x")
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, "milknado/1-x")
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
 
         common = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -289,9 +321,9 @@ class TestExcludeLoopScaffolding:
     def test_idempotent_no_duplicate_lines(self, project: Path) -> None:
         git = GitAdapter(project)
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, "milknado/1-x")
-        _exclude_loop_scaffolding(wt)
-        _exclude_loop_scaffolding(wt)
+        _ = git.create_worktree(wt, "milknado/1-x")
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)
 
         common = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -308,7 +340,7 @@ class TestExcludeLoopScaffolding:
         """A test double's bare path is not a git checkout — must not raise."""
         bogus = tmp_path / "not-a-worktree"
         bogus.mkdir()
-        _exclude_loop_scaffolding(bogus)  # no exception
+        _EXCLUDE_LOOP_SCAFFOLDING(bogus)  # no exception
 
     def test_exclude_file_io_error_is_logged_not_raised(self, project: Path) -> None:
         """A real git checkout whose `info/exclude` cannot be written (here: it is a
@@ -316,7 +348,7 @@ class TestExcludeLoopScaffolding:
         abort dispatch — the function's documented best-effort contract."""
         git = GitAdapter(project)
         wt = project / "milknado-1-x"
-        git.create_worktree(wt, "milknado/1-x")
+        _ = git.create_worktree(wt, "milknado/1-x")
         common = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
             cwd=str(wt),
@@ -328,22 +360,22 @@ class TestExcludeLoopScaffolding:
         if exclude.exists():
             exclude.unlink()
         exclude.mkdir()  # now read_text/write_text on a dir path raise OSError
-        _exclude_loop_scaffolding(wt)  # must not raise
+        _EXCLUDE_LOOP_SCAFFOLDING(wt)  # must not raise
 
 
 class TestPreserveRunLogs:
     def test_no_logs_is_noop(self, tmp_path: Path) -> None:
         wt = tmp_path / "proj" / "wt"
         wt.mkdir(parents=True)
-        _preserve_run_logs(wt, 7)
+        _PRESERVE_RUN_LOGS(wt, 7)
         assert not (tmp_path / "proj" / ".milknado").exists()
 
     def test_copies_logs_tree(self, tmp_path: Path) -> None:
         wt = tmp_path / "proj" / "wt"
         (wt / ".ralph-logs" / "sub").mkdir(parents=True)
-        (wt / ".ralph-logs" / "a.log").write_text("a\n")
-        (wt / ".ralph-logs" / "sub" / "b.log").write_text("b\n")
-        _preserve_run_logs(wt, 7)
+        _ = (wt / ".ralph-logs" / "a.log").write_text("a\n")
+        _ = (wt / ".ralph-logs" / "sub" / "b.log").write_text("b\n")
+        _PRESERVE_RUN_LOGS(wt, 7)
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert (dest / "a.log").read_text() == "a\n"
         assert (dest / "sub" / "b.log").read_text() == "b\n"
@@ -354,10 +386,10 @@ class TestPreserveRunLogs:
         logs.mkdir(parents=True)
         for index in range(22):
             path = logs / f"{index:02}.log"
-            path.write_text(f"{index}\n")
+            _ = path.write_text(f"{index}\n")
             os.utime(path, (index, index))
 
-        _preserve_run_logs(wt, 7)
+        _PRESERVE_RUN_LOGS(wt, 7)
 
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert {path.name for path in dest.iterdir()} == {
@@ -373,10 +405,10 @@ class TestPreserveRunLogs:
         sub = project / "sub"
         sub.mkdir()
         wt = sub / "wt-1"
-        git.create_worktree(wt, "milknado/1-x")
+        _ = git.create_worktree(wt, "milknado/1-x")
         (wt / ".ralph-logs").mkdir()
-        (wt / ".ralph-logs" / "run.log").write_text("nested log\n")
-        _preserve_run_logs(wt, 1)
+        _ = (wt / ".ralph-logs" / "run.log").write_text("nested log\n")
+        _PRESERVE_RUN_LOGS(wt, 1)
         # Correct: under the main checkout root.
         preserved = project / ".milknado" / "logs" / "1" / "run.log"
         assert preserved.read_text() == "nested log\n"
@@ -391,7 +423,7 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=False)
-        wm = WorktreeManager(git)
+        wm = WorktreeManager(_git_port(git))
         result = wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert result.success is True
         assert git.fast_forwarded == []  # ff skipped: no commit produced
@@ -400,18 +432,17 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=True)
-        wm = WorktreeManager(git)
-        wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
+        wm = WorktreeManager(_git_port(git))
+        _ = wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.fast_forwarded == ["milknado/1-x"]
 
     def test_missing_worker_branch_skips_fast_forward(self, tmp_path: Path) -> None:
-        """A node with no branch_name (legacy/in-process path) has no branch to merge
-        — ff is skipped rather than called with None."""
+        """A node with no branch_name skips fast-forward instead of using None."""
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=True)
-        wm = WorktreeManager(git)
-        wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch=None)
+        wm = WorktreeManager(_git_port(git))
+        _ = wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch=None)
         assert git.fast_forwarded == []
 
     def test_worktree_kept_when_fast_forward_raises(self, tmp_path: Path) -> None:
@@ -420,20 +451,19 @@ class TestRebaseAndMergeSkipsFastForwardWithoutCommit:
         git = _RecordingGit(
             committed=True, ff_error=GitOperationError("merge --ff-only", "diverged")
         )
-        wm = WorktreeManager(git)
+        wm = WorktreeManager(_git_port(git))
         with pytest.raises(GitOperationError, match="merge --ff-only"):
-            wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
+            _ = wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.removed == [], "unlanded work must not be torn down"
         assert wt.exists()
 
     def test_success_path_removes_with_feature_branch_target(self, tmp_path: Path) -> None:
-        """On a landed merge-back the removal's landed check must target the
-        feature branch the work just fast-forwarded onto."""
+        """Removal checks the feature branch that received the landed work."""
         wt = tmp_path / "wt"
         wt.mkdir()
         git = _RecordingGit(committed=True)
-        wm = WorktreeManager(git)
-        wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
+        wm = WorktreeManager(_git_port(git))
+        _ = wm.rebase_and_merge(wt, "feature", 1, "desc", worker_branch="milknado/1-x")
         assert git.removed == [wt]
         assert git.remove_targets == ["feature"]
 
@@ -450,15 +480,19 @@ class TestDispatchRelocationIntegration:
         from milknado.domains.execution.executor import ExecutionConfig
 
         git = GitAdapter(project)
-        # The refused orphan: canonical path, canonical branch checked out, dirty.
         orphan = project / "milknado-1-add-the-added-helper"
-        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
-        (orphan / "wip.py").write_text("at-risk work\n")
+        _ = git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        _ = (orphan / "wip.py").write_text("at-risk work\n")
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            graph.add_node("Add the added() helper")
-            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            _ = graph.add_node("Add the added() helper")
+            ex = Executor(
+                graph=graph,
+                git=git,
+                ralph=_loop_port(_DispatchRalph()),
+                crg=_crg_port(_NoCrg()),
+            )
             config = ExecutionConfig(
                 execution_agent="claude",
                 quality_gates=(Gate(command="true"),),
@@ -478,26 +512,25 @@ class TestDispatchRelocationIntegration:
     def test_relocation_skips_slot_whose_branch_survives(
         self, project: Path, tmp_path: Path
     ) -> None:
-        """`git worktree remove` never deletes the branch, so a relocation slot
-        whose PATH was cleaned off disk can still own a live branch. Advancing on
-        the path alone would return that taken branch and make `git worktree add
-        -b` fail; both path and branch must be free, so -2 (branch alive) is
-        skipped for -3."""
+        """Skip a relocation slot when its branch remains checked out."""
         from milknado.domains.common.config import Gate
         from milknado.domains.execution.executor import ExecutionConfig
 
         git = GitAdapter(project)
-        # The refused orphan holds the canonical path + branch.
         orphan = project / "milknado-1-add-the-added-helper"
-        git.create_worktree(orphan, "milknado/1-add-the-added-helper")
-        (orphan / "wip.py").write_text("at-risk work\n")
-        # Slot -2's PATH is free, but its BRANCH survives a prior worktree removal.
-        _git(project, "branch", "milknado/1-add-the-added-helper-2")
+        _ = git.create_worktree(orphan, "milknado/1-add-the-added-helper")
+        _ = (orphan / "wip.py").write_text("at-risk work\n")
+        _ = _git(project, "branch", "milknado/1-add-the-added-helper-2")
 
         graph = MikadoGraph(tmp_path / "g.db")
         try:
-            graph.add_node("Add the added() helper")
-            ex = Executor(graph=graph, git=git, ralph=_DispatchRalph(), crg=_NoCrg())
+            _ = graph.add_node("Add the added() helper")
+            ex = Executor(
+                graph=graph,
+                git=git,
+                ralph=_loop_port(_DispatchRalph()),
+                crg=_crg_port(_NoCrg()),
+            )
             config = ExecutionConfig(
                 execution_agent="claude",
                 quality_gates=(Gate(command="true"),),
@@ -517,38 +550,77 @@ class TestDispatchRelocationIntegration:
 # --- minimal duck-typed doubles (the integration tests use a real GitAdapter) ---
 
 
+@dataclass(frozen=True)
+class _RunState:
+    run_id: str
+
+
+@dataclass(frozen=True)
+class _Run:
+    state: _RunState
+
+
 class _DispatchRalph:
     """Just enough LoopPort for Executor.dispatch to run against real git."""
 
     def generate_ralph_md(
         self,
-        brief,
-        quality_gates,
-        output_path,
-        prior_findings="",
-        findings_round=None,
-    ):
-        output_path.write_text("# ralph\n")
+        brief: str,
+        quality_gates: tuple[object, ...] | None,
+        output_path: Path,
+        prior_findings: str = "",
+        findings_round: int | None = None,
+    ) -> Path:
+        _ = (brief, quality_gates, prior_findings, findings_round)
+        _ = output_path.write_text("# ralph\n")
         return output_path
 
-    def create_run(self, **_kw):
-        resolved_run_id = _kw.get("run_id") or "run-1"
-
-        class _Run:
-            class state:
-                run_id = resolved_run_id
-
-        return _Run()
+    def create_run(
+        self,
+        agent: str,
+        ralph_dir: Path,
+        ralph_file: Path,
+        quality_gates: tuple[object, ...] | None,
+        project_root: Path | None = None,
+        commit_footer: str | None = None,
+        base_oid: str | None = None,
+        runtime_policy: object | None = None,
+        run_id: str | None = None,
+        completion_probe: Callable[[], bool] | None = None,
+    ) -> _Run:
+        _ = (
+            agent,
+            ralph_dir,
+            ralph_file,
+            quality_gates,
+            project_root,
+            commit_footer,
+            base_oid,
+            runtime_policy,
+            completion_probe,
+        )
+        return _Run(_RunState(run_id or "run-1"))
 
     def start_run(self, run_id: str) -> None:
-        pass
+        _ = run_id
+
+    def get_run(self, run_id: str) -> _Run | None:
+        _ = run_id
+        return None
+
+    def is_run_alive(self, run_id: str) -> bool:
+        _ = run_id
+        return False
 
 
 class _RecordingGit:
+    _committed: bool
+    _ff_error: BaseException | None
+
     def __init__(
         self,
         committed: bool,
-        ff_error: subprocess.CalledProcessError | None = None,
+        ff_error: BaseException | None = None,
     ) -> None:
         self._committed = committed
         self._ff_error = ff_error
@@ -560,19 +632,21 @@ class _RecordingGit:
         return "feature"
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
+        _ = (worktree, onto, msg)
         return self._committed
 
-    def rebase(self, worktree: Path, onto: str):
-        from milknado.domains.common.types import RebaseResult
-
+    def rebase(self, worktree: Path, onto: str) -> RebaseResult:
+        _ = (worktree, onto)
         return RebaseResult(success=True)
 
     def fast_forward(self, branch: str) -> None:
+        _ = branch
         if self._ff_error is not None:
             raise self._ff_error
         self.fast_forwarded.append(branch)
 
     def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
+        _ = worktree
         return ()
 
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:

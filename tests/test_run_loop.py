@@ -1,39 +1,182 @@
 import collections
 import io
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from operator import attrgetter
 from pathlib import Path
-from typing import Any
+from typing import Protocol, TypeVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from rich.console import Console
+from rich.console import Console, RenderableType
+from rich.panel import Panel
+from rich.table import Table
+from typing_extensions import override
 
-from milknado.domains.common import ProgressEvent
+import milknado.domains.execution.run_loop.display as _display
+from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpecResult
 from milknado.domains.common.config import Gate, MilknadoConfig
-from milknado.domains.common.types import (
-    NodeSpec,
-    NodeStatus,
-    RebaseResult,
-)
-from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
-from milknado.domains.execution.run_loop.display import (
-    TuiState,
-    _build_log_panel,
-    _build_title,
-    _build_worker_table,
-    _render_overlay,
-    _render_progress_bar,
-)
-from milknado.domains.execution.run_loop.state import RunLoopState
+from milknado.domains.common.protocols import LoopPort
+from milknado.domains.common.types import NodeSpec, NodeStatus, RebaseResult
+from milknado.domains.execution import DispatchResult, ExecutionConfig, Executor, RunLoop
+from milknado.domains.execution.executor import RebaseConflict, WorktreeManager
+from milknado.domains.execution.run_loop.display import TuiState
+from milknado.domains.execution.run_loop.input import InputState
+from milknado.domains.execution.run_loop.state import RunLoopState, TerminalRunState
 from milknado.domains.graph import MikadoGraph
 from milknado.loop import RunStatus
+
+T = TypeVar("T")
+
+_BUILD_LOG_PANEL = cast(Callable[[Sequence[str]], Panel], attrgetter("_build_log_panel")(_display))
+_BUILD_TITLE = cast(
+    Callable[[dict[str, int], MikadoGraph], str], attrgetter("_build_title")(_display)
+)
+_BUILD_WORKER_TABLE = cast(
+    Callable[[TuiState, MikadoGraph], Table], attrgetter("_build_worker_table")(_display)
+)
+_RENDER_OVERLAY = cast(
+    Callable[[str, TuiState, MikadoGraph, LoopPort], Panel],
+    attrgetter("_render_overlay")(_display),
+)
+_RENDER_PROGRESS_BAR_IMPL = cast(
+    Callable[[str, float, float | None, float], str], attrgetter("_render_progress_bar")(_display)
+)
+
+
+def _RENDER_PROGRESS_BAR(
+    frame: str, *, elapsed: float, pct: float | None, stall_threshold: float
+) -> str:
+    return _RENDER_PROGRESS_BAR_IMPL(frame, elapsed, pct, stall_threshold)
+
+
+_ETA_STR = cast(Callable[[float | None, float], str], attrgetter("_eta_str")(_display))
+
+
+def _active(loop: RunLoop) -> dict[str, int]:
+    return cast(dict[str, int], attrgetter("_active")(loop))
+
+
+def _progress_by_run(loop: RunLoop) -> dict[str, ProgressEvent]:
+    return cast(dict[str, ProgressEvent], attrgetter("_progress_by_run")(loop))
+
+
+def _dispatched_at(loop: RunLoop) -> dict[str, float]:
+    return cast(dict[str, float], attrgetter("_dispatched_at")(loop))
+
+
+def _completion_durations(loop: RunLoop) -> collections.deque[float]:
+    return cast(collections.deque[float], attrgetter("_completion_durations")(loop))
+
+
+def _attempts(loop: RunLoop) -> dict[int, int]:
+    return cast(dict[int, int], attrgetter("_attempts")(loop))
+
+
+def _stopped_nodes(loop: RunLoop) -> set[int]:
+    return cast(set[int], attrgetter("_stopped_nodes")(loop))
+
+
+def _terminal_runs(loop: RunLoop) -> collections.deque[TerminalRunState]:
+    return cast(collections.deque[TerminalRunState], attrgetter("_terminal_runs")(loop))
+
+
+def _success(ralph: object) -> dict[str, bool]:
+    return cast(dict[str, bool], attrgetter("_success")(ralph))
+
+
+def _runs(ralph: object) -> dict[str, "FakeRun"]:
+    return cast(dict[str, "FakeRun"], attrgetter("_runs")(ralph))
+
+
+def _ordinal_to_run_id(ralph: object) -> dict[str, str]:
+    return cast(dict[str, str], attrgetter("_ordinal_to_run_id")(ralph))
+
+
+def _mock_attr(value: object, name: str) -> MagicMock:
+    return cast(MagicMock, getattr(value, name))
+
+
+def _set_attr(target: object, name: str, value: object) -> None:
+    setattr(target, name, value)
+
+
+def _call_kwargs(mock: MagicMock) -> dict[str, object]:
+    call = cast(object | None, attrgetter("call_args")(mock))
+    if call is None:
+        return {}
+    return cast(dict[str, object], attrgetter("kwargs")(call))
+
+
+def _mock(loop: RunLoop, name: str) -> MagicMock:
+    return cast(MagicMock, getattr(loop, name))
+
+
+def _worktree_manager(executor: Executor) -> WorktreeManager:
+    return cast(WorktreeManager, attrgetter("_wt")(executor))
+
+
+def _managed_worktrees(executor: Executor) -> dict[int, Path]:
+    return cast(dict[int, Path], attrgetter("_worktrees")(_worktree_manager(executor)))
+
+
+def _input_state(loop: RunLoop) -> InputState:
+    return cast(InputState, attrgetter("_input")(loop))
+
+
+def _execute_run(
+    loop: RunLoop,
+    config: ExecutionConfig,
+    feature_branch: str,
+    concurrency_limit: int,
+    timeout: float | None,
+    interactive: bool,
+) -> tuple[int, int, int, list[RebaseConflict], bool]:
+    method = cast(
+        Callable[
+            [ExecutionConfig, str, int, float | None, bool],
+            tuple[int, int, int, list[RebaseConflict], bool],
+        ],
+        attrgetter("_execute_run")(loop),
+    )
+    return method(config, feature_branch, concurrency_limit, timeout, interactive)
+
+
+def _dispatch_batch(
+    loop: RunLoop, config: ExecutionConfig, concurrency_limit: int, live: object
+) -> tuple[int, int]:
+    method = cast(
+        Callable[[ExecutionConfig, int, object], tuple[int, int]],
+        attrgetter("_dispatch_batch")(loop),
+    )
+    return method(config, concurrency_limit, live)
+
+
+def _handle_completion_timeout(loop: RunLoop, timeout: object) -> int:
+    method = cast(Callable[[object], int], attrgetter("_handle_completion_timeout")(loop))
+    return method(timeout)
+
+
+def _publish_state(loop: RunLoop) -> None:
+    method = cast(Callable[[], None], attrgetter("_publish_state")(loop))
+    method()
+
+
+def _render_live_frame(loop: RunLoop, live: object) -> None:
+    method = cast(Callable[[object], None], attrgetter("_render_live_frame")(loop))
+    method(live)
+
+
+def _progress_before_completion(ralph: object) -> list[ProgressEvent]:
+    return cast(list[ProgressEvent], attrgetter("_progress_before_completion")(ralph))
 
 
 @dataclass
 class FakeRunState:
     run_id: str = "run-1"
     status: RunStatus = RunStatus.RUNNING
+    total: int = 0
     stop_requested: bool = False
     force_stop_requested: bool = False
 
@@ -43,6 +186,12 @@ class FakeRun:
     state: FakeRunState = field(default_factory=FakeRunState)
 
 
+@dataclass(frozen=True)
+class _FakeReview:
+    approved: bool = True
+    findings_md: str = ""
+
+
 class FakeGit:
     def __init__(self) -> None:
         self.created: list[tuple[Path, str]] = []
@@ -50,6 +199,7 @@ class FakeGit:
         self.rebase_result: RebaseResult = RebaseResult(success=True)
 
     def branch_exists(self, branch: str) -> bool:
+        _ = branch
         return False
 
     def create_worktree(self, path: Path, branch: str) -> Path:
@@ -59,11 +209,23 @@ class FakeGit:
 
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         self.removed.append(path)
+        _ = target
+
+    def worktree_teardown_blocker(self, path: Path, target: str = "HEAD") -> str | None:
+        _ = (path, target)
+        return None
 
     def force_remove_worktree(self, path: Path) -> None:
         self.removed.append(path)
 
+    def delete_branch(self, branch: str) -> None:
+        _ = branch
+
+    def prune_worktrees(self) -> None:
+        pass
+
     def rebase(self, worktree: Path, onto: str) -> RebaseResult:
+        _ = (worktree, onto)
         return self.rebase_result
 
     def current_branch(self) -> str:
@@ -72,56 +234,68 @@ class FakeGit:
     def resolve_ref(self, ref: str) -> str:
         return f"{ref}-oid"
 
-    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> None:
-        pass
+    def diff_for_review(self, worktree: Path, base_oid: str) -> str:
+        _ = (worktree, base_oid)
+        return ""
+
+    def compare_and_swap_ref(self, ref: str, expected_oid: str, new_oid: str) -> None:
+        _ = (ref, expected_oid, new_oid)
+
+    def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
+        _ = (worktree, onto, msg)
+        return True
+
+    def fast_forward(self, branch: str) -> None:
+        _ = branch
+
+    def untracked_merge_collisions(self, worktree: Path) -> tuple[str, ...]:
+        _ = worktree
+        return ()
 
 
 class FakeCrg:
     def ensure_graph(self, project_root: Path) -> None:
-        pass
+        _ = project_root
 
-    def get_impact_radius(self, files: list[str]) -> dict[str, Any]:
+    def get_impact_radius(self, files: list[str]) -> dict[str, object]:
         return {"files": files}
 
-    def get_architecture_overview(self) -> dict[str, Any]:
+    def get_architecture_overview(self) -> dict[str, object]:
         return {"modules": []}
 
     def list_communities(
-        self,
-        sort_by: str = "size",
-        min_size: int = 0,
-    ) -> list[dict[str, Any]]:
+        self, sort_by: str = "size", min_size: int = 0
+    ) -> list[dict[str, object]]:
+        _ = (sort_by, min_size)
         return []
 
-    def list_flows(
-        self,
-        sort_by: str = "criticality",
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
+    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, object]]:
+        _ = (sort_by, limit)
         return []
 
-    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        _ = top_n
         return []
 
-    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        _ = top_n
         return []
 
 
 class FakeRalph:
+    _run_counter: int
+
     def __init__(self) -> None:
         self._run_counter = 0
         self._success: dict[str, bool] = {}
-        self._outcomes: dict[str, str] = {}
-        self._pending_completions: list[tuple[str, str]] = []
+        self._outcomes: dict[str, TerminalRunOutcome] = {}
+        self._pending_completions: list[tuple[str, TerminalRunOutcome]] = []
         self._runs: dict[str, FakeRun] = {}
         self.output: dict[str, list[str]] = {}
         self.guidance: dict[str, tuple[str, ...]] = {}
         self._progress_before_completion: list[ProgressEvent] = []
         self.requested_stops: list[str] = []
         self.force_stops: list[tuple[str, float | None]] = []
-        # Maps the ordinal placeholder id ("run-1", "run-2", ...) a test
-        # pre-seeds before dispatch to the real (Executor-supplied,
-        # node-format) run id assigned at create_run time, and back.
         self._ordinal_to_run_id: dict[str, str] = {}
         self._run_id_to_ordinal: dict[str, str] = {}
 
@@ -134,28 +308,38 @@ class FakeRalph:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
-        runtime_policy: Any | None = None,
+        runtime_policy: object | None = None,
         run_id: str | None = None,
+        completion_probe: Callable[[], bool] | None = None,
     ) -> FakeRun:
+        _ = (
+            agent,
+            ralph_dir,
+            ralph_file,
+            quality_gates,
+            project_root,
+            commit_footer,
+            base_oid,
+            runtime_policy,
+            completion_probe,
+        )
         self._run_counter += 1
         ordinal_id = f"run-{self._run_counter}"
-        run_id = run_id or ordinal_id
-        self._ordinal_to_run_id[ordinal_id] = run_id
-        self._run_id_to_ordinal[run_id] = ordinal_id
-        # Tests pre-seed outcomes/success by ordinal ("run-1", "run-2", ...)
-        # before the real (Executor-supplied, node-format) run id is known;
-        # fall back to the ordinal key so that pre-configuration still works.
-        success = self._success.get(run_id, self._success.get(ordinal_id, True))
+        resolved_run_id = run_id or ordinal_id
+        self._ordinal_to_run_id[ordinal_id] = resolved_run_id
+        self._run_id_to_ordinal[resolved_run_id] = ordinal_id
+        success = self._success.get(resolved_run_id, self._success.get(ordinal_id, True))
         outcome = self._outcomes.get(
-            run_id, self._outcomes.get(ordinal_id, "completed" if success else "failed")
+            resolved_run_id,
+            self._outcomes.get(ordinal_id, "completed" if success else "failed"),
         )
-        self._pending_completions.append((run_id, outcome))
-        run = FakeRun(state=FakeRunState(run_id=run_id))
-        self._runs[run_id] = run
+        self._pending_completions.append((resolved_run_id, outcome))
+        run = FakeRun(state=FakeRunState(run_id=resolved_run_id))
+        self._runs[resolved_run_id] = run
         return run
 
     def start_run(self, run_id: str) -> None:
-        pass
+        _ = run_id
 
     def request_stop_run(self, run_id: str) -> None:
         self.requested_stops.append(run_id)
@@ -167,18 +351,20 @@ class FakeRalph:
         return True
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = (run_id, timeout)
         return True
 
-    def list_runs(self) -> list[Any]:
-        return []
+    def list_runs(self) -> list[FakeRun]:
+        return list(self._runs.values())
 
-    def get_run(self, run_id: str) -> Any | None:
+    def get_run(self, run_id: str) -> FakeRun | None:
         return self._runs.get(run_id)
 
-    def _seeded(self, mapping: dict[str, Any], run_id: str, default: Any) -> Any:
-        """Look up a test-pre-seeded value by the real run id, falling back
-        to the ordinal placeholder ("run-1", ...) the test seeded it under
-        before the real run id was known."""
+    def is_run_alive(self, run_id: str) -> bool:
+        _ = run_id
+        return False
+
+    def _seeded(self, mapping: dict[str, T], run_id: str, default: T) -> T:
         if run_id in mapping:
             return mapping[run_id]
         ordinal = self._run_id_to_ordinal.get(run_id)
@@ -188,6 +374,10 @@ class FakeRalph:
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         return self._seeded(self.output, run_id, [])
+
+    def get_run_failure_detail(self, run_id: str) -> str | None:
+        _ = run_id
+        return None
 
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         return self._seeded(self.output, run_id, [])[-max_lines:]
@@ -199,32 +389,36 @@ class FakeRalph:
         self.guidance[run_id] = (*self.guidance.get(run_id, ()), text)
         return True
 
-    def get_run_failure_detail(self, run_id: str) -> str | None:
-        return None
-
     def wait_for_next_completion(
         self,
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
+        _ = timeout
         if self._progress_before_completion:
             event = self._progress_before_completion.pop(0)
-            # Tests pre-seed this event by ordinal ("run-1") before dispatch
-            # assigns the real run id; resolve through the ordinal map.
             resolved_run_id = self._ordinal_to_run_id.get(event.run_id, event.run_id)
             if resolved_run_id in active_run_ids:
                 if resolved_run_id != event.run_id:
                     event = replace(event, run_id=resolved_run_id)
                 return resolved_run_id, event
-        for i, (run_id, outcome) in enumerate(self._pending_completions):
+        for index, (run_id, outcome) in enumerate(self._pending_completions):
             if run_id in active_run_ids:
-                self._pending_completions.pop(i)
+                _ = self._pending_completions.pop(index)
                 return run_id, outcome
         raise RuntimeError("No pending completions for active runs")
 
-    def verify_spec(self, spec_text: str, graph_state: str) -> Any:
-        from milknado.domains.common.protocols import VerifySpecResult
+    def poll_progress_events(self) -> list[ProgressEvent]:
+        return []
 
+    def run_node_review(
+        self, agent: str, prompt: str, worktree: Path, project_root: Path
+    ) -> _FakeReview:
+        _ = (agent, prompt, worktree, project_root)
+        return _FakeReview()
+
+    def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
+        _ = (spec_text, graph_state)
         return VerifySpecResult(outcome="done")
 
     def generate_ralph_md(
@@ -235,6 +429,7 @@ class FakeRalph:
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> Path:
+        _ = (brief, quality_gates, prior_findings, findings_round)
         return output_path
 
     def set_run_fails(self, run_id: str) -> None:
@@ -289,16 +484,18 @@ def test_state_is_bounded_and_published(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    fake_ralph._runs["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
+    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
     fake_ralph.output["run-1"] = [f"line {index}" for index in range(35)]
     fake_ralph.guidance["run-1"] = ("use domain barrels",)
-    run_loop._active["run-1"] = leaf.id
-    run_loop._progress_by_run["run-1"] = ProgressEvent(
+    _active(run_loop)["run-1"] = leaf.id
+    _progress_by_run(run_loop)["run-1"] = ProgressEvent(
         run_id="run-1", work=1, total=2, message="building"
     )
     received: list[RunLoopState] = []
     run_loop.set_state_listener(received.append)
-    run_loop._publish_state()
+    _publish_state(
+        run_loop,
+    )
 
     state = received[0]
     active = state.active_runs[0]
@@ -322,14 +519,14 @@ class TestActiveStateProjectedFields:
         root = graph.add_node("ship controller")
         leaf = graph.add_node("build snapshots", parent_id=root.id)
         graph.mark_running(leaf.id)
-        run_loop._active["run-1"] = leaf.id
+        _active(run_loop)["run-1"] = leaf.id
         return leaf.id, "run-1"
 
     def test_elapsed_seconds_from_known_dispatch_time(
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._dispatched_at[run_id] = 100.0
+        _dispatched_at(run_loop)[run_id] = 100.0
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=150.0):
             state = run_loop.state()
@@ -339,7 +536,7 @@ class TestActiveStateProjectedFields:
     def test_elapsed_seconds_defaults_to_zero_without_dispatch_time(
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
-        self._seed_active(run_loop, graph)
+        _ = self._seed_active(run_loop, graph)
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=200.0):
             state = run_loop.state()
@@ -348,7 +545,7 @@ class TestActiveStateProjectedFields:
 
     def test_progress_pct_from_work_and_total(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._progress_by_run[run_id] = ProgressEvent(
+        _progress_by_run(run_loop)[run_id] = ProgressEvent(
             run_id=run_id, work=3, total=4, message="x"
         )
 
@@ -360,7 +557,7 @@ class TestActiveStateProjectedFields:
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._progress_by_run[run_id] = ProgressEvent(
+        _progress_by_run(run_loop)[run_id] = ProgressEvent(
             run_id=run_id, work=0, total=0, message="x"
         )
 
@@ -371,8 +568,8 @@ class TestActiveStateProjectedFields:
     def test_eta_seconds_is_none_with_fewer_than_three_samples(
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
-        self._seed_active(run_loop, graph)
-        run_loop._completion_durations.extend([10.0, 20.0])
+        _ = self._seed_active(run_loop, graph)
+        _completion_durations(run_loop).extend([10.0, 20.0])
 
         state = run_loop.state()
 
@@ -382,8 +579,8 @@ class TestActiveStateProjectedFields:
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._completion_durations.extend([10.0, 20.0, 30.0])
-        run_loop._dispatched_at[run_id] = 100.0
+        _completion_durations(run_loop).extend([10.0, 20.0, 30.0])
+        _dispatched_at(run_loop)[run_id] = 100.0
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=105.0):
             state = run_loop.state()
@@ -392,8 +589,8 @@ class TestActiveStateProjectedFields:
 
     def test_eta_seconds_floors_at_zero(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._completion_durations.extend([1.0, 2.0, 3.0])
-        run_loop._dispatched_at[run_id] = 100.0
+        _completion_durations(run_loop).extend([1.0, 2.0, 3.0])
+        _dispatched_at(run_loop)[run_id] = 100.0
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=200.0):
             state = run_loop.state()
@@ -401,7 +598,7 @@ class TestActiveStateProjectedFields:
         assert state.active_runs[0].eta_seconds == 0.0
 
     def test_attempt_is_one_on_first_try(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
-        self._seed_active(run_loop, graph)
+        _ = self._seed_active(run_loop, graph)
 
         state = run_loop.state()
 
@@ -411,7 +608,7 @@ class TestActiveStateProjectedFields:
         self, run_loop: RunLoop, graph: MikadoGraph
     ) -> None:
         node_id, _ = self._seed_active(run_loop, graph)
-        run_loop._attempts[node_id] = 1
+        _attempts(run_loop)[node_id] = 1
 
         state = run_loop.state()
 
@@ -426,7 +623,7 @@ class TestActiveStateProjectedFields:
             ralph=fake_ralph,
             config=MilknadoConfig(dispatch_max_retries=4),
         )
-        self._seed_active(run_loop, graph)
+        _ = self._seed_active(run_loop, graph)
 
         state = run_loop.state()
 
@@ -442,7 +639,7 @@ class TestActiveStateProjectedFields:
             config=MilknadoConfig(stall_threshold_seconds=300),
         )
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._dispatched_at[run_id] = 0.0
+        _dispatched_at(run_loop)[run_id] = 0.0
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=299.0):
             state = run_loop.state()
@@ -459,7 +656,7 @@ class TestActiveStateProjectedFields:
             config=MilknadoConfig(stall_threshold_seconds=300),
         )
         _, run_id = self._seed_active(run_loop, graph)
-        run_loop._dispatched_at[run_id] = 0.0
+        _dispatched_at(run_loop)[run_id] = 0.0
 
         with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=300.0):
             state = run_loop.state()
@@ -475,17 +672,17 @@ def test_terminal_run_duration_seconds_from_stopped_completion(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    run_loop._active["run-1"] = leaf.id
-    run_loop._dispatched_at["run-1"] = 100.0
-    fake_ralph._runs["run-1"] = FakeRun(state=FakeRunState(run_id="run-1"))
+    _active(run_loop)["run-1"] = leaf.id
+    _dispatched_at(run_loop)["run-1"] = 100.0
+    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1"))
 
     with patch(
         "milknado.domains.execution.run_loop._completion.time.monotonic",
         return_value=142.0,
     ):
-        handle_completion(run_loop, "run-1", "stopped", "main", None)
+        _ = handle_completion(run_loop, "run-1", "stopped", "main", None)
 
-    assert run_loop._terminal_runs[-1].duration_seconds == 42.0
+    assert _terminal_runs(run_loop)[-1].duration_seconds == 42.0
 
 
 @pytest.mark.parametrize(
@@ -504,8 +701,8 @@ def test_terminal_active_run_disables_all_controls(
 ) -> None:
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
-    fake_ralph._runs["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
-    run_loop._active["run-1"] = leaf.id
+    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
+    _active(run_loop)["run-1"] = leaf.id
 
     active = run_loop.state().active_runs[0]
 
@@ -522,8 +719,8 @@ def test_control_queue_applies_cancel_and_force_stop(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("stop worker", parent_id=root.id)
     graph.mark_running(leaf.id)
-    fake_ralph._runs["run-1"] = FakeRun()
-    run_loop._active["run-1"] = leaf.id
+    _runs(fake_ralph)["run-1"] = FakeRun()
+    _active(run_loop)["run-1"] = leaf.id
 
     run_loop.cancel("run-1")
     assert fake_ralph.requested_stops == ["run-1"]
@@ -544,14 +741,13 @@ def test_progress_snapshot_is_published_before_terminal_completion(
     fake_ralph: FakeRalph,
 ) -> None:
     root = graph.add_node("ship controller")
-    graph.add_node("build snapshots", parent_id=root.id)
-    fake_ralph._progress_before_completion.append(
+    _ = graph.add_node("build snapshots", parent_id=root.id)
+    _progress_before_completion(fake_ralph).append(
         ProgressEvent(run_id="run-1", work=1, total=2, message="building")
     )
     received: list[RunLoopState] = []
     run_loop.set_state_listener(received.append)
-
-    run_loop.run(config, "main")
+    _ = run_loop.run(config, "main")
 
     assert any(
         snapshot.active_runs and snapshot.active_runs[0].progress == "building"
@@ -586,10 +782,10 @@ def test_initial_dispatch_respects_a_preexisting_scheduling_stop(
     config: ExecutionConfig,
 ) -> None:
     dispatch = MagicMock()
-    run_loop._dispatch_batch = dispatch
+    _set_attr(run_loop, "_dispatch_batch", dispatch)
     run_loop.admit_stop_scheduling()
 
-    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
+    _ = _execute_run(run_loop, config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
 
     dispatch.assert_not_called()
 
@@ -599,11 +795,11 @@ def test_initial_dispatch_drains_pending_controls_before_scheduling(
     config: ExecutionConfig,
 ) -> None:
     dispatch = MagicMock()
-    run_loop._dispatch_batch = dispatch
+    _set_attr(run_loop, "_dispatch_batch", dispatch)
     dispatch.return_value = (0, 0)
-    run_loop._process_controls = run_loop.stop_scheduling
+    _set_attr(run_loop, "_process_controls", run_loop.stop_scheduling)
 
-    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
+    _ = _execute_run(run_loop, config, "main", concurrency_limit=1, timeout=1.0, interactive=False)
 
     dispatch.assert_not_called()
 
@@ -618,30 +814,31 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
 
     node = graph.add_node("active")
     graph.mark_running(node.id)
-    run_loop._active["run-1"] = node.id
-    run_loop._dispatch_if_scheduling_open = MagicMock(return_value=(0, 0))
-    run_loop._handle_completion_timeout = MagicMock(return_value=1)
+    _active(run_loop)["run-1"] = node.id
+    _set_attr(run_loop, "_dispatch_if_scheduling_open", MagicMock(return_value=(0, 0)))
+    _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
     control_calls = 0
 
     def process_controls() -> None:
         nonlocal control_calls
         control_calls += 1
         if control_calls == 3:
-            run_loop._active.clear()
+            _active(run_loop).clear()
 
     def short_poll_timeout(
         active_run_ids: set[str], timeout: float | None = None
-    ) -> tuple[str, str]:
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
 
-    fake_ralph.wait_for_next_completion = short_poll_timeout  # type: ignore[method-assign]
-    run_loop._process_controls = process_controls
+    _set_attr(fake_ralph, "wait_for_next_completion", short_poll_timeout)
+    _set_attr(run_loop, "_process_controls", process_controls)
 
     with patch(
         "milknado.domains.execution.run_loop.time.monotonic",
         side_effect=(100.0, 100.01),
     ):
-        run_loop._execute_run(
+        _ = _execute_run(
+            run_loop,
             config,
             "main",
             concurrency_limit=1,
@@ -649,7 +846,7 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
             interactive=False,
         )
 
-    run_loop._handle_completion_timeout.assert_not_called()
+    _mock(run_loop, "_handle_completion_timeout").assert_not_called()
 
 
 def test_unset_completion_timeout_polls_controls_without_timing_out(
@@ -662,9 +859,9 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
 
     node = graph.add_node("active")
     graph.mark_running(node.id)
-    run_loop._active["run-1"] = node.id
-    run_loop._dispatch_if_scheduling_open = MagicMock(return_value=(0, 0))
-    run_loop._handle_completion_timeout = MagicMock(return_value=1)
+    _active(run_loop)["run-1"] = node.id
+    _set_attr(run_loop, "_dispatch_if_scheduling_open", MagicMock(return_value=(0, 0)))
+    _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
     observed_timeouts: list[float | None] = []
     control_calls = 0
 
@@ -672,20 +869,22 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
         nonlocal control_calls
         control_calls += 1
         if control_calls >= 4:
-            run_loop._active.clear()
+            _active(run_loop).clear()
 
     def short_poll_timeout(
         active_run_ids: set[str], timeout: float | None = None
-    ) -> tuple[str, str]:
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         observed_timeouts.append(timeout)
         raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
 
-    fake_ralph.wait_for_next_completion = short_poll_timeout  # type: ignore[method-assign]
-    run_loop._process_controls = process_controls
+    _set_attr(fake_ralph, "wait_for_next_completion", short_poll_timeout)
+    _set_attr(run_loop, "_process_controls", process_controls)
 
-    run_loop._execute_run(config, "main", concurrency_limit=1, timeout=None, interactive=False)
+    _ = _execute_run(
+        run_loop, config, "main", concurrency_limit=1, timeout=None, interactive=False
+    )
 
-    run_loop._handle_completion_timeout.assert_not_called()
+    _mock(run_loop, "_handle_completion_timeout").assert_not_called()
     assert observed_timeouts
     assert all(polled == 0.1 for polled in observed_timeouts)
 
@@ -701,7 +900,9 @@ def test_stop_latched_before_run_skips_terminal_spec_verification(
     result = run_loop.run(config, "main", spec_text="spec: do the thing")
 
     assert result.verify_outcome is None
-    assert graph.get_node(root.id).status == NodeStatus.PENDING
+    root_node = graph.get_node(root.id)
+    assert root_node is not None
+    assert root_node.status == NodeStatus.PENDING
 
 
 class TestRunLoopSingleNode:
@@ -713,7 +914,7 @@ class TestRunLoopSingleNode:
     ) -> None:
         # Root is never dispatched as a work node; it's completed via verify_spec.
         # Without spec_text, root stays PENDING and root_done is False.
-        graph.add_node("root goal")
+        _ = graph.add_node("root goal")
         result = run_loop.run(config, "main")
 
         assert result.dispatched_total == 0
@@ -728,8 +929,8 @@ class TestRunLoopSingleNode:
         config: ExecutionConfig,
     ) -> None:
         root = graph.add_node("root goal")
-        graph.add_node("leaf", parent_id=root.id)
-        run_loop.run(config, "main")
+        _ = graph.add_node("leaf", parent_id=root.id)
+        _ = run_loop.run(config, "main")
 
         root_node = graph.get_node(root.id)
         assert root_node is not None
@@ -765,9 +966,9 @@ class TestRunLoopParentChild:
         config: ExecutionConfig,
     ) -> None:
         root = graph.add_node("root")
-        graph.add_node("leaf", parent_id=root.id)
+        _ = graph.add_node("leaf", parent_id=root.id)
 
-        run_loop.run(config, "main")
+        _ = run_loop.run(config, "main")
 
         root_node = graph.get_node(root.id)
         assert root_node is not None
@@ -798,14 +999,14 @@ class TestRunLoopStoppedOutcome:
         assert node is not None
         assert node.status is NodeStatus.PENDING
         assert (result.dispatched_total, result.completed_total, result.failed_total) == (1, 0, 0)
-        assert loop._stopped_nodes == {leaf.id}
-        assert loop._active == {}
+        assert _stopped_nodes(loop) == {leaf.id}
+        assert _active(loop) == {}
         state = loop.state()
         assert state.stopped == 1
         assert state.available == 0
         assert len(state.terminal_runs) == 1
         terminal = state.terminal_runs[0]
-        real_run_id = ralph._ordinal_to_run_id["run-1"]
+        real_run_id = _ordinal_to_run_id(ralph)["run-1"]
         assert terminal.run_id == real_run_id
         assert terminal.status is RunStatus.STOPPED
         assert terminal.output == ("last worker output",)
@@ -834,15 +1035,14 @@ class TestRunLoopStoppedOutcome:
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         root = graph.add_node("root")
         for index in range(21):
-            graph.add_node(f"leaf-{index}", parent_id=root.id)
-
-        loop.run(config, "main", interactive=False)
+            _ = graph.add_node(f"leaf-{index}", parent_id=root.id)
+        _ = loop.run(config, "main", interactive=False)
 
         state = loop.state()
         assert state.stopped == 21
         assert len(state.terminal_runs) == 20
         assert tuple(run.run_id for run in state.terminal_runs) == tuple(
-            ralph._ordinal_to_run_id[f"run-{index}"] for index in range(2, 22)
+            _ordinal_to_run_id(ralph)[f"run-{index}"] for index in range(2, 22)
         )
 
 
@@ -854,8 +1054,8 @@ class TestRunLoopParallelLeaves:
         config: ExecutionConfig,
     ) -> None:
         root = graph.add_node("root")
-        graph.add_node("leaf-a", parent_id=root.id)
-        graph.add_node("leaf-b", parent_id=root.id)
+        _ = graph.add_node("leaf-a", parent_id=root.id)
+        _ = graph.add_node("leaf-b", parent_id=root.id)
 
         result = run_loop.run(config, "main")
 
@@ -873,9 +1073,9 @@ class TestRunLoopConcurrencyLimit:
         config: ExecutionConfig,
     ) -> None:
         root = graph.add_node("root")
-        graph.add_node("a", parent_id=root.id)
-        graph.add_node("b", parent_id=root.id)
-        graph.add_node("c", parent_id=root.id)
+        _ = graph.add_node("a", parent_id=root.id)
+        _ = graph.add_node("b", parent_id=root.id)
+        _ = graph.add_node("c", parent_id=root.id)
 
         result = run_loop.run(config, "main", concurrency_limit=2)
 
@@ -895,7 +1095,7 @@ class TestRunLoopFailure:
     ) -> None:
         # Root is not dispatched; only the leaf is. Set the leaf's run to fail.
         ralph = FakeRalph()
-        ralph._success["run-1"] = False
+        _success(ralph)["run-1"] = False
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
@@ -918,13 +1118,13 @@ class TestRunLoopFailure:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph._success["run-1"] = False
+        _success(ralph)["run-1"] = False
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("leaf", parent_id=root.id)
+        _ = graph.add_node("leaf", parent_id=root.id)
         result = loop.run(config, "main")
 
         assert result.failed_total == 1
@@ -938,7 +1138,6 @@ class TestRunLoopResult:
     def test_empty_graph_returns_immediately(
         self,
         run_loop: RunLoop,
-        graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
         result = run_loop.run(config, "main")
@@ -957,9 +1156,11 @@ class TestRunLoopDispatchFailure:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph.generate_ralph_md = lambda *_a, **_kw: (_ for _ in ()).throw(  # type: ignore
-            RuntimeError("ralph exploded"),
-        )
+
+        def fail_generate(*_args: object, **_kwargs: object) -> Path:
+            raise RuntimeError("ralph exploded")
+
+        ralph.generate_ralph_md = fail_generate
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
@@ -984,20 +1185,28 @@ class TestRunLoopDispatchFailure:
         call_count = 0
         original_generate = ralph.generate_ralph_md
 
-        def fail_first_only(*args: Any, **kwargs: Any) -> Path:
+        def fail_first_only(
+            brief: str,
+            quality_gates: tuple[Gate, ...] | None,
+            output_path: Path,
+            prior_findings: str = "",
+            findings_round: int | None = None,
+        ) -> Path:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("ralph exploded")
-            return original_generate(*args, **kwargs)
+            return original_generate(
+                brief, quality_gates, output_path, prior_findings, findings_round
+            )
 
         ralph.generate_ralph_md = fail_first_only  # type: ignore
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("doomed-leaf", parent_id=root.id)
-        graph.add_node("good-leaf", parent_id=root.id)
+        _ = graph.add_node("doomed-leaf", parent_id=root.id)
+        _ = graph.add_node("good-leaf", parent_id=root.id)
 
         result = loop.run(config, "main")
 
@@ -1042,7 +1251,7 @@ class TestRunLoopRebaseConflicts:
         config: ExecutionConfig,
     ) -> None:
         root = graph.add_node("root")
-        graph.add_node("clean node", parent_id=root.id)
+        _ = graph.add_node("clean node", parent_id=root.id)
         result = run_loop.run(config, "main")
 
         assert result.rebase_conflicts == ()
@@ -1097,14 +1306,14 @@ def _make_tui_state(node_id: int) -> TuiState:
     )
 
 
-def _render_to_text(renderable: Any) -> str:
+def _render_to_text(renderable: RenderableType) -> str:
     buf = io.StringIO()
     console = Console(file=buf, force_terminal=False, no_color=True, width=200)
     console.print(renderable)
     return buf.getvalue()
 
 
-def _snapshot(renderable: Any) -> str:
+def _snapshot(renderable: RenderableType) -> str:
     console = Console(record=True, width=200)
     console.print(renderable)
     return console.export_text()
@@ -1114,7 +1323,7 @@ class TestWorkerTableDescriptionSanitization:
     def test_description_cell_is_summarized(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
-        rendered = _render_to_text(_build_worker_table(state, graph))
+        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
 
         assert "split bundling" in rendered
         assert "##" not in rendered
@@ -1123,7 +1332,7 @@ class TestWorkerTableDescriptionSanitization:
     def test_description_cell_has_no_raw_newlines(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
-        rendered = _render_to_text(_build_worker_table(state, graph))
+        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
 
         assert "\n\n" not in rendered
 
@@ -1135,7 +1344,7 @@ class TestRenderOverlayPreservesRawDescription:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
-        panel = _render_overlay("run-1", state, graph, ralph)
+        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
 
         assert "\n" not in (panel.title or "")
         assert "split bundling" in (panel.title or "")
@@ -1143,7 +1352,7 @@ class TestRenderOverlayPreservesRawDescription:
     def test_overlay_sanitization_is_nondestructive(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
-        _build_worker_table(state, graph)
+        _ = _BUILD_WORKER_TABLE(state, graph)
 
         fresh = graph.get_node(node.id)
         assert fresh is not None
@@ -1163,7 +1372,7 @@ class TestBuildTitle:
         graph.mark_running(n.id)
         graph.mark_done(n.id)
 
-        text = _snapshot(_build_title({}, graph))
+        text = _snapshot(_BUILD_TITLE({}, graph))
 
         assert "1 done" in text
 
@@ -1171,7 +1380,7 @@ class TestBuildTitle:
         n = graph.add_node("fail-node")
         graph.mark_failed(n.id)
 
-        text = _snapshot(_build_title({}, graph))
+        text = _snapshot(_BUILD_TITLE({}, graph))
 
         assert "1 failed" in text
 
@@ -1179,7 +1388,7 @@ class TestBuildTitle:
         n = graph.add_node("blocked-node")
         graph.mark_blocked(n.id)
 
-        text = _snapshot(_build_title({}, graph))
+        text = _snapshot(_BUILD_TITLE({}, graph))
 
         assert "1 blocked" in text
 
@@ -1194,7 +1403,7 @@ class TestBuildTitle:
         blocked_n = graph.add_node("blocked")
         graph.mark_blocked(blocked_n.id)
 
-        text = _snapshot(_build_title({}, graph))
+        text = _snapshot(_BUILD_TITLE({}, graph))
 
         assert "1 done" in text
         assert "1 failed" in text
@@ -1203,43 +1412,43 @@ class TestBuildTitle:
 
 class TestRenderProgressBar:
     def test_normal_returns_spinner_frame(self) -> None:
-        result = _render_progress_bar("◜", elapsed=0.0, pct=None, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=0.0, pct=None, stall_threshold=300.0)
 
         assert "◜" in result
         assert "⚠" not in result
 
     def test_stalled_includes_warning_glyph(self) -> None:
-        result = _render_progress_bar("◜", elapsed=400.0, pct=None, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=400.0, pct=None, stall_threshold=300.0)
 
         assert "⚠" in result
 
     def test_with_pct_shows_bar_and_percentage(self) -> None:
-        result = _render_progress_bar("◜", elapsed=10.0, pct=70.0, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=70.0, stall_threshold=300.0)
 
         assert "70%" in result
         assert "█" in result
 
     def test_completed_full_bar(self) -> None:
-        result = _render_progress_bar("◜", elapsed=30.0, pct=100.0, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=30.0, pct=100.0, stall_threshold=300.0)
 
         assert "100%" in result
         assert "░" not in result
 
     def test_pct_over_100_clamped_to_100(self) -> None:
-        result = _render_progress_bar("◜", elapsed=10.0, pct=150.0, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=150.0, stall_threshold=300.0)
         # Bar chars should be exactly 10 total, percentage clamped to 100
         bar_chars = result.count("█") + result.count("░")
         assert bar_chars == 10
         assert "100%" in result
 
     def test_pct_negative_clamped_to_0(self) -> None:
-        result = _render_progress_bar("◜", elapsed=10.0, pct=-5.0, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=-5.0, stall_threshold=300.0)
         bar_chars = result.count("█") + result.count("░")
         assert bar_chars == 10
         assert "0%" in result
 
     def test_pct_50_sanity_check(self) -> None:
-        result = _render_progress_bar("◜", elapsed=10.0, pct=50.0, stall_threshold=300.0)
+        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=50.0, stall_threshold=300.0)
         bar_chars = result.count("█") + result.count("░")
         assert bar_chars == 10
         assert "50%" in result
@@ -1249,14 +1458,14 @@ class TestBuildWorkerTableColumns:
     def test_elapsed_column_present(self, graph: MikadoGraph) -> None:
         node = graph.add_node("simple task")
         state = _make_tui_state(node.id)
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         assert "Elapsed" in text
 
     def test_eta_column_shows_unknown_when_no_history(self, graph: MikadoGraph) -> None:
         node = graph.add_node("simple task")
         state = _make_tui_state(node.id)
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         assert "~?" in text
 
@@ -1264,14 +1473,14 @@ class TestBuildWorkerTableColumns:
         node = graph.add_node("task with files")
         graph.set_file_ownership(node.id, ["src/foo.py"])
         state = _make_tui_state(node.id)
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         assert "src/foo.py" in text
 
     def test_attempt_column_empty_on_first_attempt(self, graph: MikadoGraph) -> None:
         node = graph.add_node("fresh task")
         state = _make_tui_state(node.id)
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         assert "1/" not in text
 
@@ -1289,27 +1498,31 @@ class TestBuildWorkerTableColumns:
             max_retries=2,
             exec_agent="claude",
         )
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         assert "2/3" in text
 
     def test_description_is_single_line(self, graph: MikadoGraph) -> None:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
-        text = _snapshot(_build_worker_table(state, graph))
+        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 
         lines_with_desc = [ln for ln in text.splitlines() if "split bundling" in ln]
         assert len(lines_with_desc) == 1
 
 
 class _RalphWithStdout(FakeRalph):
+    _lines: list[str]
+
     def __init__(self, lines: list[str]) -> None:
         super().__init__()
         self._lines = lines
 
+    @override
     def get_run_stdout(self, run_id: str) -> list[str]:
         return self._lines
 
+    @override
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         return self._lines[-max_lines:]
 
@@ -1319,7 +1532,7 @@ class TestRenderOverlayLogLines:
         node = graph.add_node("node-with-output")
         state = _make_tui_state(node.id)
         ralph = _RalphWithStdout(["line alpha", "line beta", "line gamma"])
-        panel = _render_overlay("run-1", state, graph, ralph)
+        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
         text = _snapshot(panel)
 
         assert "line alpha" in text
@@ -1329,7 +1542,7 @@ class TestRenderOverlayLogLines:
         node = graph.add_node("many-lines")
         state = _make_tui_state(node.id)
         ralph = _RalphWithStdout([f"log-line-{i}" for i in range(150)])
-        panel = _render_overlay("run-1", state, graph, ralph)
+        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
         text = _snapshot(panel)
 
         assert "log-line-149" in text
@@ -1339,7 +1552,7 @@ class TestRenderOverlayLogLines:
         node = graph.add_node(_RICH_DESC)
         state = _make_tui_state(node.id)
         ralph = FakeRalph()
-        panel = _render_overlay("run-1", state, graph, ralph)
+        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
 
         assert "US-204" not in (panel.title or "")
         assert "\n" not in (panel.title or "")
@@ -1359,14 +1572,14 @@ class TestStrictDrain:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph._success["run-1"] = False  # leaf-a fails, leaf-b (run-2) succeeds
+        _success(ralph)["run-1"] = False  # leaf-a fails, leaf-b (run-2) succeeds
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("leaf-a", parent_id=root.id)
-        graph.add_node("leaf-b", parent_id=root.id)
+        _ = graph.add_node("leaf-a", parent_id=root.id)
+        _ = graph.add_node("leaf-b", parent_id=root.id)
 
         result = loop.run(config, "main", strict=True)
 
@@ -1398,8 +1611,8 @@ class TestStrictDrain:
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("leaf-a", parent_id=root.id)
-        graph.add_node("leaf-b", parent_id=root.id)
+        _ = graph.add_node("leaf-a", parent_id=root.id)
+        _ = graph.add_node("leaf-b", parent_id=root.id)
 
         result = loop.run(none_gates_config, "main", strict=True)
 
@@ -1496,7 +1709,7 @@ class TestStalledWorkerGlyph:
             max_retries=2,
             exec_agent="claude",
         )
-        rendered = _render_to_text(_build_worker_table(state, graph))
+        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
 
         assert "⚠" in rendered
 
@@ -1516,12 +1729,20 @@ class TestOrphanCleanupTransientRetries:
         call_count = 0
         original_generate = ralph.generate_ralph_md
 
-        def fail_thrice(*args: Any, **kwargs: Any) -> Path:
+        def fail_thrice(
+            brief: str,
+            quality_gates: tuple[Gate, ...] | None,
+            output_path: Path,
+            prior_findings: str = "",
+            findings_round: int | None = None,
+        ) -> Path:
             nonlocal call_count
             call_count += 1
             if call_count <= 3:
                 raise TransientDispatchError("rate limited")
-            return original_generate(*args, **kwargs)
+            return original_generate(
+                brief, quality_gates, output_path, prior_findings, findings_round
+            )
 
         ralph.generate_ralph_md = fail_thrice  # type: ignore
 
@@ -1529,33 +1750,33 @@ class TestOrphanCleanupTransientRetries:
 
         clean_calls: list[int] = []
         worktree_sizes: list[int] = []
-        original_ensure = executor._wt.ensure_clean
+        original_ensure = _worktree_manager(executor).ensure_clean
 
         def tracked_ensure(node_id: int) -> None:
-            worktree_sizes.append(len(executor._wt._worktrees))
+            worktree_sizes.append(len(_managed_worktrees(executor)))
             clean_calls.append(node_id)
             return original_ensure(node_id)
 
-        executor._wt.ensure_clean = tracked_ensure  # type: ignore
+        _worktree_manager(executor).ensure_clean = tracked_ensure
 
         retry_config = ExecutionConfig(
             execution_agent="claude",
-            quality_gates=("uv run pytest",),
+            quality_gates=(Gate(command="uv run pytest"),),
             worktree_pattern="milknado-{node_id}-{slug}",
             project_root=tmp_path,
             dispatch_max_retries=3,
             dispatch_backoff_seconds=0.0,
         )
+        _ = graph.add_node("transient node")
 
-        graph.add_node("transient node")
-        executor.dispatch(1, retry_config)
+        _ = executor.dispatch(1, retry_config)
 
         # Called once at the start of each _dispatch_once attempt (3 fail + 1 success = 4)
         assert len(clean_calls) == 4
         # At no point when ensure_clean fires are there stale entries
         assert all(sz == 0 for sz in worktree_sizes)
         # Final state: successful dispatch recorded, not cleared
-        assert 1 in executor._wt._worktrees
+        assert 1 in _managed_worktrees(executor)
 
 
 class TestBuildLogPanel:
@@ -1563,7 +1784,7 @@ class TestBuildLogPanel:
         logs: collections.deque[str] = collections.deque(maxlen=30)
         for i in range(40):
             logs.append(f"entry-{i}")
-        text = _snapshot(_build_log_panel(logs))
+        text = _snapshot(_BUILD_LOG_PANEL(logs))
 
         assert "entry-39" in text
         assert "entry-9" not in text
@@ -1572,7 +1793,7 @@ class TestBuildLogPanel:
         logs: collections.deque[str] = collections.deque(maxlen=30)
         for i in range(20):
             logs.append(f"item-{i}")
-        text = _snapshot(_build_log_panel(logs))
+        text = _snapshot(_BUILD_LOG_PANEL(logs))
 
         assert "item-0" in text
         assert "item-19" in text
@@ -1581,12 +1802,12 @@ class TestBuildLogPanel:
         complete_entry = "start:end"
         logs: collections.deque[str] = collections.deque(maxlen=30)
         logs.append(complete_entry)
-        text = _snapshot(_build_log_panel(logs))
+        text = _snapshot(_BUILD_LOG_PANEL(logs))
 
         assert "start:end" in text
 
     def test_empty_logs_shows_placeholder(self) -> None:
-        text = _snapshot(_build_log_panel([]))
+        text = _snapshot(_BUILD_LOG_PANEL([]))
 
         assert "No events yet" in text
 
@@ -1633,17 +1854,16 @@ class TestRootCompletionViaVerifySpec:
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         original_dispatch = executor.dispatch
 
-        def tracking_dispatch(node_id: int, cfg: Any) -> Any:
+        def tracking_dispatch(node_id: int, cfg: ExecutionConfig) -> DispatchResult:
             dispatched_ids.append(node_id)
             return original_dispatch(node_id, cfg)
 
-        executor.dispatch = tracking_dispatch  # type: ignore
+        _set_attr(executor, "dispatch", tracking_dispatch)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root goal")
-        graph.add_node("leaf", parent_id=root.id)
-
-        loop.run(config, "main", spec_text="spec: do the thing")
+        _ = graph.add_node("leaf", parent_id=root.id)
+        _ = loop.run(config, "main", spec_text="spec: do the thing")
 
         assert root.id not in dispatched_ids
 
@@ -1655,13 +1875,13 @@ class TestRootCompletionViaVerifySpec:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph._success["run-1"] = False
+        _success(ralph)["run-1"] = False
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root goal")
-        graph.add_node("leaf", parent_id=root.id)
+        _ = graph.add_node("leaf", parent_id=root.id)
 
         result = loop.run(config, "main", spec_text="spec: do the thing")
 
@@ -1676,37 +1896,41 @@ class TestRootCompletionViaVerifySpec:
 # ---------------------------------------------------------------------------
 
 
+class _RunConfig(Protocol):
+    log_dir: Path
+
+
 class TestLoopAdapterLogDir:
     def test_create_run_passes_log_dir_under_worktree(
         self,
         tmp_path: Path,
     ) -> None:
-        from unittest.mock import MagicMock
-
         ralph_dir = tmp_path / "wt-node-1"
         ralph_dir.mkdir()
         ralph_file = ralph_dir / "ralph.md"
-        ralph_file.write_text("# task", encoding="utf-8")
+        _ = ralph_file.write_text("# task", encoding="utf-8")
 
-        captured_configs: list[Any] = []
+        captured_configs: list[_RunConfig] = []
 
-        def fake_create_run(config: Any, *, emitter: Any, run_id: str | None = None) -> Any:
-            assert emitter is adapter._emitter
+        def fake_create_run(
+            config: _RunConfig, *, emitter: object, run_id: str | None = None
+        ) -> FakeRun:
+            assert emitter is attrgetter("_emitter")(adapter)
             captured_configs.append(config)
-            fake_run = MagicMock()
-            fake_run.state.run_id = run_id or "run-test"
-            return fake_run
+            return FakeRun(state=FakeRunState(run_id=run_id or "run-test"))
 
         from milknado.adapters.loop import LoopAdapter
 
         adapter = LoopAdapter(agent="claude")
 
-        with patch.object(adapter._manager, "create_run", side_effect=fake_create_run):
-            adapter.create_run(
+        with patch.object(
+            attrgetter("_manager")(adapter), "create_run", side_effect=fake_create_run
+        ):
+            _ = adapter.create_run(
                 agent="claude",
                 ralph_dir=ralph_dir,
                 ralph_file=ralph_file,
-                quality_gates=[],
+                quality_gates=(),
                 project_root=None,
             )
 
@@ -1722,21 +1946,18 @@ class TestLoopAdapterLogDir:
 
 class TestEtaStr:
     def test_shows_unknown_when_no_history(self) -> None:
-        from milknado.domains.execution.run_loop.display import _eta_str
 
-        assert _eta_str(None, 0.0) == "~?"
+        assert _ETA_STR(None, 0.0) == "~?"
 
     def test_shows_estimate_when_avg_provided(self) -> None:
-        from milknado.domains.execution.run_loop.display import _eta_str
 
-        result = _eta_str(120.0, 30.0)
+        result = _ETA_STR(120.0, 30.0)
         assert result.startswith("~")
         assert "01:30" in result or "00:" in result  # remaining ≈ 90s
 
     def test_clamps_to_zero_when_elapsed_exceeds_avg(self) -> None:
-        from milknado.domains.execution.run_loop.display import _eta_str
 
-        result = _eta_str(60.0, 200.0)
+        result = _ETA_STR(60.0, 200.0)
         assert "00:00" in result
 
 
@@ -1760,8 +1981,6 @@ class TestBuildWorkerTableMissingNode:
     def test_row_skipped_when_node_missing_from_graph(self, graph: MikadoGraph) -> None:
         import time as _time
 
-        from milknado.domains.execution.run_loop.display import TuiState, _build_worker_table
-
         # active has node_id 999 which doesn't exist in graph
         state = TuiState(
             tick=0,
@@ -1775,14 +1994,13 @@ class TestBuildWorkerTableMissingNode:
             max_retries=2,
             exec_agent="claude",
         )
-        table = _build_worker_table(state, graph)
+        table = _BUILD_WORKER_TABLE(state, graph)
         # Should not crash; row count is 0 (skipped)
         assert table.row_count == 0
 
 
 class TestRenderOverlayMissingRunId:
     def test_returns_not_found_panel(self, graph: MikadoGraph) -> None:
-        from milknado.domains.execution.run_loop.display import TuiState, _render_overlay
 
         state = TuiState(
             tick=0,
@@ -1797,7 +2015,7 @@ class TestRenderOverlayMissingRunId:
             exec_agent="claude",
         )
         ralph = FakeRalph()
-        panel = _render_overlay("unknown-run", state, graph, ralph)
+        panel = _RENDER_OVERLAY("unknown-run", state, graph, ralph)
         text = _snapshot(panel)
         assert "worker not found" in text or "Overlay" in text
 
@@ -1816,16 +2034,18 @@ class TestHandleCompletionTimeout:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        ralph.wait_for_next_completion = MagicMock(wraps=ralph.wait_for_next_completion)
+        _set_attr(
+            ralph, "wait_for_next_completion", MagicMock(wraps=ralph.wait_for_next_completion)
+        )
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         root = graph.add_node("root")
-        graph.add_node("slow-leaf", parent_id=root.id)
+        _ = graph.add_node("slow-leaf", parent_id=root.id)
 
         result = loop.run(config, "main")
 
         assert result.completed_total == 1
-        assert ralph.wait_for_next_completion.call_args.kwargs["timeout"] is None
+        assert _call_kwargs(_mock_attr(ralph, "wait_for_next_completion"))["timeout"] is None
 
     def test_configured_wait_keeps_explicit_timeout(
         self,
@@ -1851,8 +2071,7 @@ class TestHandleCompletionTimeout:
             "_execute_run",
             return_value=(0, 0, 0, [], False),
         ) as execute_run:
-            loop.run(config, "main")
-
+            _ = loop.run(config, "main")
         execute_run.assert_called_once_with(config, "main", 4, 60.0, True)
 
     def test_timeout_marks_active_nodes_failed(
@@ -1867,16 +2086,19 @@ class TestHandleCompletionTimeout:
         ralph = FakeRalph()
 
         # Make wait_for_next_completion raise CompletionTimeout
-        def raise_timeout(active_run_ids: set[str], timeout: float | None = None) -> tuple:
+        def raise_timeout(
+            active_run_ids: set[str], timeout: float | None = None
+        ) -> tuple[str, object]:
+            _ = timeout
             raise CompletionTimeout(waited_seconds=60.0, active_run_ids=active_run_ids)
 
-        ralph.wait_for_next_completion = raise_timeout  # type: ignore
+        _set_attr(ralph, "wait_for_next_completion", raise_timeout)
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("slow-leaf", parent_id=root.id)
+        _ = graph.add_node("slow-leaf", parent_id=root.id)
 
         result = loop.run(config, "main")
 
@@ -1895,19 +2117,22 @@ class TestHandleCompletionTimeout:
         ralph = FakeRalph()
         first_call = [True]
 
-        def raise_timeout(active_run_ids: set[str], timeout: float | None = None) -> tuple:
+        def raise_timeout(
+            active_run_ids: set[str], timeout: float | None = None
+        ) -> tuple[str, object]:
+            _ = timeout
             if first_call[0]:
                 first_call[0] = False
                 raise CompletionTimeout(waited_seconds=60.0, active_run_ids=active_run_ids)
             return next(iter(active_run_ids)), True
 
-        ralph.wait_for_next_completion = raise_timeout  # type: ignore
+        _set_attr(ralph, "wait_for_next_completion", raise_timeout)
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("slow-leaf", parent_id=root.id)
+        _ = graph.add_node("slow-leaf", parent_id=root.id)
 
         result = loop.run(config, "main", strict=True)
 
@@ -1923,16 +2148,16 @@ class TestHandleCompletionTimeout:
         ralph = FakeRalph()
         ralph.stop_run = MagicMock(return_value=False)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
-        loop._active = {"run-1": 7}
+        _set_attr(loop, "_active", {"run-1": 7})
 
-        failed = loop._handle_completion_timeout(
-            CompletionTimeout(waited_seconds=60.0, active_run_ids={"run-1"})
+        failed = _handle_completion_timeout(
+            loop, CompletionTimeout(waited_seconds=60.0, active_run_ids={"run-1"})
         )
 
         assert failed == 0
-        assert loop._active == {"run-1": 7}
-        executor.fail.assert_not_called()
-        ralph.stop_run.assert_called_once_with("run-1", timeout=10.0)
+        assert _active(loop) == {"run-1": 7}
+        _mock_attr(executor, "fail").assert_not_called()
+        _mock_attr(ralph, "stop_run").assert_called_once_with("run-1", timeout=10.0)
 
 
 class TestVerifySpecGapsPath:
@@ -1946,9 +2171,12 @@ class TestVerifySpecGapsPath:
         from milknado.domains.common.protocols import VerifySpecResult
 
         ralph = FakeRalph()
-        ralph.verify_spec = lambda spec, graph_str: VerifySpecResult(  # type: ignore
-            outcome="gaps", goal_delta="add feature X"
-        )
+
+        def gaps_verify(spec_text: str, graph_state: str) -> VerifySpecResult:
+            _ = (spec_text, graph_state)
+            return VerifySpecResult(outcome="gaps", goal_delta="add feature X")
+
+        ralph.verify_spec = gaps_verify
 
         from milknado.domains.planning.planner import Planner
 
@@ -1957,11 +2185,10 @@ class TestVerifySpecGapsPath:
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph, planner=planner)
 
         root = graph.add_node("root")
-        graph.add_node("leaf", parent_id=root.id)
+        _ = graph.add_node("leaf", parent_id=root.id)
+        _ = loop.run(config, "main", spec_text="spec text")
 
-        loop.run(config, "main", spec_text="spec text")
-
-        planner.replan_with_delta.assert_called_once()
+        _mock_attr(planner, "replan_with_delta").assert_called_once()
 
     def test_root_already_done_skips_verify(
         self,
@@ -1971,13 +2198,13 @@ class TestVerifySpecGapsPath:
         fake_crg: FakeCrg,
     ) -> None:
         ralph = FakeRalph()
-        verify_calls: list = []
-        ralph.verify_spec = lambda *a: (  # ty: ignore[invalid-assignment]
-            verify_calls.append(a)
-            or __import__(
-                "milknado.domains.common.protocols", fromlist=["VerifySpecResult"]
-            ).VerifySpecResult(outcome="done")
-        )
+        verify_calls: list[tuple[object, ...]] = []
+
+        def done_verify(spec_text: str, graph_state: str) -> VerifySpecResult:
+            verify_calls.append((spec_text, graph_state))
+            return VerifySpecResult(outcome="done")
+
+        ralph.verify_spec = done_verify
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
@@ -1985,8 +2212,7 @@ class TestVerifySpecGapsPath:
         root = graph.add_node("root")
         graph.mark_running(root.id)
         graph.mark_done(root.id)
-
-        loop.run(config, "main", spec_text="spec text")
+        _ = loop.run(config, "main", spec_text="spec text")
 
         assert len(verify_calls) == 0
 
@@ -2004,8 +2230,8 @@ class TestDispatchBatchConcurrencyFull:
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("leaf-a", parent_id=root.id)
-        graph.add_node("leaf-b", parent_id=root.id)
+        _ = graph.add_node("leaf-a", parent_id=root.id)
+        _ = graph.add_node("leaf-b", parent_id=root.id)
 
         # Limit=1, two leaves pending — only first dispatched; second on next iteration
         result = loop.run(config, "main", concurrency_limit=1)
@@ -2024,19 +2250,23 @@ class TestKeyboardInterrupt:
     ) -> None:
         ralph = FakeRalph()
 
-        def raise_interrupt(active_run_ids: set[str], timeout: float | None = None) -> tuple:
+        def raise_interrupt(
+            active_run_ids: set[str], timeout: float | None = None
+        ) -> tuple[str, object]:
+            _ = timeout
+            _ = active_run_ids
             raise KeyboardInterrupt
 
-        ralph.wait_for_next_completion = raise_interrupt  # type: ignore
+        _set_attr(ralph, "wait_for_next_completion", raise_interrupt)
 
         executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
 
         root = graph.add_node("root")
-        graph.add_node("leaf", parent_id=root.id)
+        _ = graph.add_node("leaf", parent_id=root.id)
 
         with pytest.raises(KeyboardInterrupt):
-            loop.run(config, "main")
+            _ = loop.run(config, "main")
 
 
 class TestDispatchBatchDirectGuards:
@@ -2050,11 +2280,11 @@ class TestDispatchBatchDirectGuards:
         from unittest.mock import MagicMock
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
-        loop._strict = True
-        loop._failure_triggered = True
+        _set_attr(loop, "_strict", True)
+        _set_attr(loop, "_failure_triggered", True)
 
         live = MagicMock()
-        result = loop._dispatch_batch(config, 4, live)
+        result = _dispatch_batch(loop, config, 4, live)
 
         assert result == (0, 0)
 
@@ -2069,10 +2299,10 @@ class TestDispatchBatchDirectGuards:
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         # Fill active to the limit
-        loop._active = {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4}
+        _set_attr(loop, "_active", {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4})
 
         live = MagicMock()
-        result = loop._dispatch_batch(config, 4, live)
+        result = _dispatch_batch(loop, config, 4, live)
 
         assert result == (0, 0)
 
@@ -2085,13 +2315,13 @@ class TestDispatchBatchDirectGuards:
         from unittest.mock import MagicMock
 
         executor = MagicMock()
-        executor.dispatch.side_effect = RuntimeError("boom")
+        _mock_attr(executor, "dispatch").side_effect = RuntimeError("boom")
         root = graph.add_node("root")
-        graph.add_node("failing-leaf", parent_id=root.id)
+        _ = graph.add_node("failing-leaf", parent_id=root.id)
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         live = MagicMock()
-        dispatched, failed = loop._dispatch_batch(config, 4, live)
+        dispatched, failed = _dispatch_batch(loop, config, 4, live)
 
         assert dispatched == 0
         assert failed == 1
@@ -2105,18 +2335,18 @@ class TestDispatchBatchDirectGuards:
         from unittest.mock import MagicMock
 
         executor = MagicMock()
-        executor.dispatch.side_effect = RuntimeError("boom")
+        _mock_attr(executor, "dispatch").side_effect = RuntimeError("boom")
         root = graph.add_node("root")
-        graph.add_node("leaf-a", parent_id=root.id)
-        graph.add_node("leaf-b", parent_id=root.id)
+        _ = graph.add_node("leaf-a", parent_id=root.id)
+        _ = graph.add_node("leaf-b", parent_id=root.id)
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
-        loop._strict = True
+        _set_attr(loop, "_strict", True)
         live = MagicMock()
-        loop._dispatch_batch(config, 4, live)
+        _ = _dispatch_batch(loop, config, 4, live)
 
-        assert executor.dispatch.call_count == 1
-        assert loop._failure_triggered is True
+        assert _mock_attr(executor, "dispatch").call_count == 1
+        assert cast(bool, attrgetter("_failure_triggered")(loop)) is True
 
 
 class TestRenderLiveFrameOverlayBranch:
@@ -2131,13 +2361,13 @@ class TestRenderLiveFrameOverlayBranch:
         from milknado.domains.execution.run_loop import RunLoop
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
-        loop._input.overlay_state = "run-xyz"
+        _input_state(loop).overlay_state = "run-xyz"
 
         live_mock = MagicMock()
         # Should call _render_overlay (not _build_layout); won't crash even with no such run_id
-        loop._render_live_frame(live_mock)
+        _render_live_frame(loop, live_mock)
 
-        live_mock.update.assert_called_once()
+        _mock_attr(live_mock, "update").assert_called_once()
 
 
 class TestDispatchBatchFlavoredGates:
@@ -2165,22 +2395,26 @@ class TestDispatchBatchFlavoredGates:
         )
 
         root = graph.add_node("root")
-        graph.add_node(
+        _ = graph.add_node(
             "research leaf",
             parent_id=root.id,
             spec=NodeSpec(flavor="research"),
         )
 
-        captured: list = []
+        captured: list[ExecutionConfig] = []
 
         executor = MagicMock()
-        executor.dispatch.side_effect = lambda node_id, cfg: (
-            captured.append(cfg) or MagicMock(run_id="r1")
-        )
+
+        def dispatch(node_id: int, cfg: ExecutionConfig) -> MagicMock:
+            _ = node_id
+            captured.append(cfg)
+            return MagicMock(run_id="r1")
+
+        _mock_attr(executor, "dispatch").side_effect = dispatch
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
         live = MagicMock()
-        loop._dispatch_batch(config, 4, live)
+        _ = _dispatch_batch(loop, config, 4, live)
 
         assert len(captured) == 1, "expected exactly one dispatch call"
         assert captured[0].quality_gates == (), (
