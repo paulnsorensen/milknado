@@ -1,7 +1,8 @@
 import inspect
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 from importlib.metadata import metadata
-from typing import Literal, get_type_hints
+from typing import Literal, cast, get_type_hints
 
 import pytest
 from textual.app import App
@@ -19,7 +20,7 @@ from milknado.domains.common import LoopPort, ProgressEvent, TerminalRunOutcome
 
 def test_textual_is_available_as_runtime_dependency() -> None:
     assert App.__name__ == "App"
-    requirements = metadata("milknado").get_all("Requires-Dist") or ()
+    requirements = cast(tuple[str, ...], metadata("milknado").get_all("Requires-Dist") or ())
     assert any(requirement.startswith("textual") for requirement in requirements)
 
 
@@ -45,7 +46,7 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
         "run_id",
         "completion_probe",
     ]
-    assert create_signature.parameters["base_oid"].default is None
+    assert cast(object, create_signature.parameters["base_oid"].default) is None
     assert get_type_hints(LoopPort.create_run)["base_oid"] == (str | None)
     assert list(inspect.signature(LoopPort.queue_guidance).parameters) == [
         "self",
@@ -57,12 +58,12 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
         "run_id",
     ]
     for method_name in ("stop_run", "force_stop_run"):
-        signature = inspect.signature(getattr(LoopPort, method_name))
+        signature = inspect.signature(cast(Callable[..., object], getattr(LoopPort, method_name)))
         assert list(signature.parameters) == ["self", "run_id", "timeout"]
-        assert signature.parameters["timeout"].default is None
+        assert cast(object, signature.parameters["timeout"].default) is None
     completion_signature = inspect.signature(LoopPort.wait_for_next_completion)
     assert list(completion_signature.parameters) == ["self", "active_run_ids", "timeout"]
-    assert completion_signature.parameters["timeout"].default is None
+    assert cast(object, completion_signature.parameters["timeout"].default) is None
     assert get_type_hints(LoopPort.queue_guidance)["return"] is bool
     assert get_type_hints(LoopPort.request_stop_run)["return"] is type(None)
     assert get_type_hints(LoopPort.stop_run)["return"] is bool
@@ -167,6 +168,6 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
     assert isinstance(active.output, tuple)
     assert isinstance(active.pending_guidance, tuple)
     with pytest.raises(FrozenInstanceError):
-        active.stop_requested = True
+        active.stop_requested = True  # pyright: ignore[reportAttributeAccessIssue]
     with pytest.raises(FrozenInstanceError):
-        snapshot.event_lines = ("completed",)
+        snapshot.event_lines = ("completed",)  # pyright: ignore[reportAttributeAccessIssue]
