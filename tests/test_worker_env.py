@@ -10,7 +10,7 @@ import pytest
 from milknado.adapters import ProcessAdapter
 from milknado.domains.dispatch import run_headless
 from milknado.domains.dispatch.runner import (
-    _WORKER_ENV_ALLOWLIST,
+    _WORKER_ENV_ALLOWLIST,  # pyright: ignore[reportPrivateUsage]
     build_worker_env,
 )
 
@@ -44,7 +44,7 @@ def test_secrets_are_not_passed_to_workers(monkeypatch: pytest.MonkeyPatch) -> N
     assert "GITHUB_TOKEN" not in env
 
 
-def test_extra_vars_are_merged(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extra_vars_are_merged() -> None:
     env = build_worker_env({"MILKNADO_NODE_ID": "42"})
     assert env["MILKNADO_NODE_ID"] == "42"
 
@@ -82,7 +82,7 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     bindir.mkdir()
     stub = bindir / "claude"
     # Passthrough agent stub: dumps the worker-visible environment to stdout (→ log).
-    stub.write_text("#!/bin/sh\nexec env\n")
+    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
@@ -117,7 +117,7 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
     bindir.mkdir()
     stub = bindir / "claude"
     # Stub echoes stdin to stdout (log), ignores flags.
-    stub.write_text("#!/bin/sh\ncat\n")
+    _ = stub.write_text("#!/bin/sh\ncat\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
 
@@ -144,7 +144,7 @@ def test_run_headless_delivers_omp_brief_as_positional_argument(
     bindir = tmp_path / "bin"
     bindir.mkdir()
     stub = bindir / "omp"
-    stub.write_text(
+    _ = stub.write_text(
         '#!/bin/sh\nprintf "argv=<%s>\\n" "$*"\nprintf "stdin=<%s>\\n" "$(cat)"\n',
         encoding="utf-8",
     )
@@ -175,7 +175,7 @@ def test_run_headless_forwards_openrouter_key_to_omp_worker(
     bindir = tmp_path / "bin"
     bindir.mkdir()
     stub = bindir / "omp"
-    stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
+    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")
@@ -202,7 +202,7 @@ def test_run_headless_does_not_forward_openrouter_key_to_non_omp_worker(
     bindir = tmp_path / "bin"
     bindir.mkdir()
     stub = bindir / "claude"
-    stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
+    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
     stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")

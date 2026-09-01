@@ -11,7 +11,10 @@ from __future__ import annotations
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.reporting import build_harvest_summary
-from milknado.domains.reporting.harvest import _bounded_results, _truncate_result
+from milknado.domains.reporting.harvest import (
+    _bounded_results,  # pyright: ignore[reportPrivateUsage]
+    _truncate_result,  # pyright: ignore[reportPrivateUsage]
+)
 
 NOW = "2026-06-08T12:00:00Z"
 
@@ -35,7 +38,7 @@ def test_counts_done_and_failed_tasks(graph: MikadoGraph) -> None:
     goal_id = _goal(graph)
     t1 = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
     t2 = graph.add_node("t2", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
-    graph.add_node("t3", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
+    _ = graph.add_node("t3", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
     graph.mark_running(t1.id)
     graph.mark_done(t1.id)
     graph.mark_failed(t2.id)
@@ -63,8 +66,10 @@ def test_result_summaries_collected_from_terminal_runs(graph: MikadoGraph) -> No
     goal_id = _goal(graph)
     task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
     graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
-    graph.finish_run("run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW))
-    graph.deposit_run_message("run-1", "result", "shipped the thing", NOW)
+    _ = graph.finish_run(
+        "run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW)
+    )
+    _ = graph.deposit_run_message("run-1", "result", "shipped the thing", NOW)
     goal = graph.get_node(goal_id)
     assert goal is not None
     assert build_harvest_summary(graph, goal).result_summaries == ["shipped the thing"]
@@ -74,11 +79,11 @@ def test_result_summaries_are_bounded(graph: MikadoGraph) -> None:
     goal_id = _goal(graph)
     task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
     graph.start_run("run-large", task.id, "/tmp/log", NOW, None)
-    graph.finish_run(
+    _ = graph.finish_run(
         "run-large",
         RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW),
     )
-    graph.deposit_run_message("run-large", "result", "x" * 10_000, NOW)
+    _ = graph.deposit_run_message("run-large", "result", "x" * 10_000, NOW)
     goal = graph.get_node(goal_id)
     assert goal is not None
 

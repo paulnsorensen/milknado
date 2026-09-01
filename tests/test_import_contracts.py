@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -37,10 +36,13 @@ _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
 }
 
 
-def _contracts() -> dict[str, dict[str, Any]]:
+def _contracts() -> dict[str, dict[str, object]]:
     with _PYPROJECT.open("rb") as config_file:
         raw = tomllib.load(config_file)
-    return {contract["name"]: contract for contract in raw["tool"]["importlinter"]["contracts"]}
+    return {
+        contract["name"]: contract
+        for contract in raw["tool"]["importlinter"]["contracts"]  # pyright: ignore[reportAny]
+    }
 
 
 def test_layering_contracts_are_declared() -> None:

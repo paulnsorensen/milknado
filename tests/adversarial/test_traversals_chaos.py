@@ -37,7 +37,7 @@ class TestCycleHandling:
 
         # Force parent_id = self via raw SQL, bypassing the graph API
         with sqlite3.connect(db_path) as conn:
-            conn.execute(
+            _ = conn.execute(
                 "UPDATE nodes SET parent_id = ? WHERE id = ?",
                 (node_id, node_id),
             )
@@ -61,7 +61,7 @@ class TestCycleHandling:
 
         # Make A point back to B (cycle: A→B→A)
         with sqlite3.connect(db_path) as conn:
-            conn.execute(
+            _ = conn.execute(
                 "UPDATE nodes SET parent_id = ? WHERE id = ?",
                 (b.id, a.id),
             )
@@ -109,16 +109,16 @@ class TestDeepChain:
 class TestMissingNode:
     def test_nonexistent_node_raises_value_error(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="9999"):
-            walk_ancestors(graph, 9999)
+            _ = walk_ancestors(graph, 9999)
 
     def test_negative_node_id_raises_value_error(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError):
-            walk_ancestors(graph, -1)
+            _ = walk_ancestors(graph, -1)
 
     def test_zero_node_id_raises_value_error(self, graph: MikadoGraph) -> None:
         # Node IDs start at 1 in SQLite autoincrement; 0 should not exist.
         with pytest.raises(ValueError):
-            walk_ancestors(graph, 0)
+            _ = walk_ancestors(graph, 0)
 
 
 class TestDanglingParentRef:
@@ -132,7 +132,7 @@ class TestDanglingParentRef:
 
         # Delete node A via raw SQL, leaving B with a dangling parent_id
         with sqlite3.connect(db_path) as conn:
-            conn.execute("DELETE FROM nodes WHERE id = ?", (a.id,))
+            _ = conn.execute("DELETE FROM nodes WHERE id = ?", (a.id,))
             conn.commit()
 
         g2 = MikadoGraph(db_path)

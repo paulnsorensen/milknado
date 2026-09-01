@@ -25,6 +25,7 @@ from milknado.domains.common.flavor_profile import (
     resolve_flavor_profile,
 )
 from milknado.domains.common.types import BUILTIN_FLAVORS
+from milknado.domains.dispatch import validate_worker_argv
 
 # ── AC2: single-list grammar + sentinel ─────────────────────────────────────
 
@@ -526,10 +527,8 @@ def test_runner_no_milknado_worker_cmd_env_fallback() -> None:
 
 
 def test_validate_worker_argv_still_rejects_unknown_executable() -> None:
-    import milknado.domains.dispatch.runner as runner
-
     with pytest.raises(ValueError, match="worker_cmd must start with"):
-        runner.validate_worker_argv(["evil-bin", "--flag"])  # pyright: ignore[reportPrivateImportUsage]
+        validate_worker_argv(["evil-bin", "--flag"])
 
 
 # ── AC7: brief semantics ─────────────────────────────────────────────────────

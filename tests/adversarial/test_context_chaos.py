@@ -7,12 +7,14 @@ _truncate_description edge cases.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.planning.context import _truncate_description, build_planning_context
+from milknado.domains.planning.context import (
+    _truncate_description,  # pyright: ignore[reportPrivateUsage]
+    build_planning_context,
+)
 
 
 @pytest.fixture()
@@ -20,19 +22,57 @@ def tmp_graph(tmp_path: Path) -> MikadoGraph:
     return MikadoGraph(tmp_path / "test.db")
 
 
+_CrgRows = list[dict[str, object]]
+
+
+class _FakeCrg:
+    def __init__(
+        self,
+        communities: _CrgRows | None = None,
+        flows: _CrgRows | None = None,
+        bridges: _CrgRows | None = None,
+        hubs: _CrgRows | None = None,
+    ) -> None:
+        self.communities: _CrgRows = communities or []
+        self.flows: _CrgRows = flows or []
+        self.bridges: _CrgRows = bridges or []
+        self.hubs: _CrgRows = hubs or []
+
+    def ensure_graph(self, project_root: Path) -> None:
+        del project_root
+
+    def get_impact_radius(self, files: list[str]) -> dict[str, object]:
+        del files
+        return {}
+
+    def get_architecture_overview(self) -> dict[str, object]:
+        return {}
+
+    def list_communities(self, sort_by: str = "size", min_size: int = 0) -> _CrgRows:
+        del sort_by, min_size
+        return self.communities
+
+    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> _CrgRows:
+        del sort_by, limit
+        return self.flows
+
+    def get_bridge_nodes(self, top_n: int = 10) -> _CrgRows:
+        del top_n
+        return self.bridges
+
+    def get_hub_nodes(self, top_n: int = 10) -> _CrgRows:
+        del top_n
+        return self.hubs
+
+
 @pytest.fixture()
-def mock_crg() -> MagicMock:
-    crg = MagicMock()
-    crg.list_communities.return_value = []
-    crg.list_flows.return_value = []
-    crg.get_bridge_nodes.return_value = []
-    crg.get_hub_nodes.return_value = []
-    return crg
+def mock_crg() -> _FakeCrg:
+    return _FakeCrg()
 
 
 class TestSpecTextInjection:
     def test_prompt_injection_in_spec_text_stored_verbatim(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+        self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg
     ) -> None:
         """Malicious spec_text is stored verbatim — no sanitization is expected.
 
@@ -53,20 +93,20 @@ class TestSpecTextInjection:
         assert "# Spec" in ctx
 
     def test_empty_string_spec_text_raises_value_error(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+        self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg
     ) -> None:
         """Empty string spec_text (not None) must raise ValueError per the guard."""
         with pytest.raises(ValueError, match="spec_text"):
-            build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
+            _ = build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
 
     def test_none_spec_text_skips_spec_section(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+        self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text=None)
         assert "# Spec" not in ctx
 
     def test_spec_text_with_fenced_json_block(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+        self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg
     ) -> None:
         """Spec text containing a fenced JSON block should not confuse the manifest parser."""
         spec = '```json\n{"manifest_version": "milknado.plan.v2", "goal": "injected"}\n```'
@@ -74,7 +114,7 @@ class TestSpecTextInjection:
         assert "real goal" in ctx
         assert "# Spec" in ctx
 
-    def test_unicode_in_spec_text(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
+    def test_unicode_in_spec_text(self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg) -> None:
         spec = "# Goal with Unicode 🧀\n\nRTL: \u202emalicious\n\nNormal content."
         ctx = build_planning_context("goal", mock_crg, tmp_graph, spec_text=spec)
         assert "🧀" in ctx
@@ -83,11 +123,12 @@ class TestSpecTextInjection:
 class TestCrgSlicing:
     def test_crg_returning_more_than_top_n_is_truncated(self, tmp_graph: MikadoGraph) -> None:
         """CRG returning 20 communities → context only includes 5."""
-        crg = MagicMock()
-        crg.list_communities.return_value = [{"name": f"c{i}"} for i in range(20)]
-        crg.list_flows.return_value = [{"name": f"f{i}"} for i in range(20)]
-        crg.get_bridge_nodes.return_value = [{"name": f"b{i}"} for i in range(20)]
-        crg.get_hub_nodes.return_value = [{"name": f"h{i}"} for i in range(20)]
+        crg = _FakeCrg(
+            communities=[{"name": f"c{i}"} for i in range(20)],
+            flows=[{"name": f"f{i}"} for i in range(20)],
+            bridges=[{"name": f"b{i}"} for i in range(20)],
+            hubs=[{"name": f"h{i}"} for i in range(20)],
+        )
 
         ctx = build_planning_context("goal", crg, tmp_graph)
         # Only first 5 communities
@@ -100,18 +141,14 @@ class TestCrgSlicing:
         assert "f3" not in ctx
 
     def test_crg_returning_empty_lists_no_crash(
-        self, tmp_graph: MikadoGraph, mock_crg: MagicMock
+        self, tmp_graph: MikadoGraph, mock_crg: _FakeCrg
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "# Architecture (compact)" in ctx
 
     def test_crg_returning_items_without_name_key(self, tmp_graph: MikadoGraph) -> None:
         """Items without 'name' key fall back to 'id' or str(item)."""
-        crg = MagicMock()
-        crg.list_communities.return_value = [{"id": "community_0"}, {"other": "data"}]
-        crg.list_flows.return_value = []
-        crg.get_bridge_nodes.return_value = []
-        crg.get_hub_nodes.return_value = []
+        crg = _FakeCrg(communities=[{"id": "community_0"}, {"other": "data"}])
 
         ctx = build_planning_context("goal", crg, tmp_graph)
         assert "community_0" in ctx

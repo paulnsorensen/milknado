@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import TextIO, cast
 
 from milknado.process_logging import configure_stderr_logging
 
@@ -14,8 +15,10 @@ def test_configure_stderr_logging_is_idempotent() -> None:
         second = configure_stderr_logging()
 
         assert second is first
-        assert first.stream is sys.stderr
-        assert first.formatter is not None
-        assert first.formatter._fmt == "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        assert isinstance(first, logging.StreamHandler)
+        stream_handler = cast("logging.StreamHandler[TextIO]", first)
+        assert stream_handler.stream is sys.stderr
+        assert stream_handler.formatter is not None
+        assert stream_handler.formatter._fmt == "%(asctime)s %(levelname)s %(name)s: %(message)s"
     finally:
         logger.handlers[:] = before

@@ -6,8 +6,8 @@ from milknado.domains.common.merge import deep_merge
 
 
 def test_replace_mode_merges_dicts_and_replaces_lists() -> None:
-    base = {"a": {"x": 1, "y": 2}, "tags": ["a", "b"], "scalar": 1}
-    override = {"a": {"y": 3, "z": 4}, "tags": ["c"], "scalar": 2}
+    base: dict[str, object] = {"a": {"x": 1, "y": 2}, "tags": ["a", "b"], "scalar": 1}
+    override: dict[str, object] = {"a": {"y": 3, "z": 4}, "tags": ["c"], "scalar": 2}
 
     result = deep_merge(base, override, list_mode="replace")
 
@@ -15,18 +15,18 @@ def test_replace_mode_merges_dicts_and_replaces_lists() -> None:
 
 
 def test_replace_mode_does_not_mutate_inputs() -> None:
-    base = {"a": {"x": 1}}
-    override = {"a": {"y": 2}}
+    base: dict[str, object] = {"a": {"x": 1}}
+    override: dict[str, object] = {"a": {"y": 2}}
 
-    deep_merge(base, override, list_mode="replace")
+    _ = deep_merge(base, override, list_mode="replace")
 
     assert base == {"a": {"x": 1}}
     assert override == {"a": {"y": 2}}
 
 
 def test_merge_dedup_mode_extends_lists_and_dedups_by_json_value() -> None:
-    base = {"tools": ["Bash", "Read"]}
-    override = {"tools": ["Read", "Write"]}
+    base: dict[str, object] = {"tools": ["Bash", "Read"]}
+    override: dict[str, object] = {"tools": ["Read", "Write"]}
 
     result = deep_merge(base, override, list_mode="merge_dedup")
 
@@ -34,8 +34,8 @@ def test_merge_dedup_mode_extends_lists_and_dedups_by_json_value() -> None:
 
 
 def test_merge_dedup_mode_still_recurse_merges_dicts() -> None:
-    base = {"hooks": {"PreToolUse": ["a"]}, "other": 1}
-    override = {"hooks": {"PreToolUse": ["a", "b"]}, "other": 2}
+    base: dict[str, object] = {"hooks": {"PreToolUse": ["a"]}, "other": 1}
+    override: dict[str, object] = {"hooks": {"PreToolUse": ["a", "b"]}, "other": 2}
 
     result = deep_merge(base, override, list_mode="merge_dedup")
 
@@ -43,8 +43,8 @@ def test_merge_dedup_mode_still_recurse_merges_dicts() -> None:
 
 
 def test_new_key_with_list_value_is_taken_as_is_in_both_modes() -> None:
-    base: dict = {}
-    override = {"tags": ["a", "a"]}
+    base: dict[str, object] = {}
+    override: dict[str, object] = {"tags": ["a", "a"]}
 
     replace_result = deep_merge(base, override, list_mode="replace")
     dedup_result = deep_merge(base, override, list_mode="merge_dedup")

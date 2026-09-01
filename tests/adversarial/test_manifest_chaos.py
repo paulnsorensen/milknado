@@ -13,7 +13,7 @@ from milknado.domains.planning.manifest import (
 )
 
 
-def _wrap(payload: dict) -> str:
+def _wrap(payload: dict[str, object]) -> str:
     """Wrap a dict in a fenced JSON block as the planner would emit it."""
     return f"```json\n{json.dumps(payload)}\n```"
 
@@ -22,7 +22,7 @@ def _minimal_change(
     cid: str = "c1",
     path: str = "src/foo.py",
     description: str = "Add feature",
-) -> dict:
+) -> dict[str, object]:
     return {
         "id": cid,
         "path": path,
@@ -33,8 +33,8 @@ def _minimal_change(
     }
 
 
-def _minimal_manifest(**overrides) -> dict:
-    base = {
+def _minimal_manifest(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,
         "goal": "some goal",
         "goal_summary": "some summary",
@@ -128,7 +128,7 @@ class TestUnicodeInFields:
 class TestMassiveManifest:
     def test_1000_changes_linear_deps(self) -> None:
         # 1000 changes in a linear chain — O(n^2) dep lookup would be slow.
-        changes = []
+        changes: list[dict[str, object]] = []
         for i in range(1000):
             dep = [f"c{i - 1}"] if i > 0 else []
             changes.append(
@@ -265,7 +265,7 @@ class TestMalformedJson:
         assert result is None
 
     def test_description_missing_entirely_rejected(self) -> None:
-        change = {
+        change: dict[str, object] = {
             "id": "c1",
             "path": "src/foo.py",
             "edit_kind": "modify",

@@ -46,12 +46,12 @@ def test_delivery_packages_exist() -> None:
 def test_console_script_targets_resolve(target: str, attr: str) -> None:
     module = import_module(target)
 
-    assert callable(getattr(module, attr)), f"{target}:{attr} is not callable"
+    assert callable(module.__dict__.get(attr)), f"{target}:{attr} is not callable"
 
 
 def test_pyproject_declares_packaged_script_targets() -> None:
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    scripts = data["project"]["scripts"]
+    scripts = data["project"]["scripts"]  # pyright: ignore[reportAny]
 
     assert scripts["milknado"] == "milknado.cli:app"
     assert scripts["milknado-mcp"] == "milknado.mcp.server:main"

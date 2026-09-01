@@ -18,8 +18,8 @@ def _node(node_id: int = 1) -> MikadoNode:
 
 class _RecordingMiddleware:
     def __init__(self, name: str, log: list[str]) -> None:
-        self._meta = PluginMeta(name=name, version="0.1.0", description="")
-        self._log = log
+        self._meta: PluginMeta = PluginMeta(name=name, version="0.1.0", description="")
+        self._log: list[str] = log
 
     @property
     def meta(self) -> PluginMeta:
@@ -28,18 +28,20 @@ class _RecordingMiddleware:
     def before_status_change(
         self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
     ) -> None:
+        del node, old, new
         self._log.append(f"{self._meta.name}:before")
 
     def after_status_change(
         self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
     ) -> None:
+        del node, old, new
         self._log.append(f"{self._meta.name}:after")
 
 
 class _RaisingMiddleware:
     def __init__(self, name: str, log: list[str]) -> None:
-        self._meta = PluginMeta(name=name, version="0.1.0", description="")
-        self._log = log
+        self._meta: PluginMeta = PluginMeta(name=name, version="0.1.0", description="")
+        self._log: list[str] = log
 
     @property
     def meta(self) -> PluginMeta:
@@ -48,12 +50,14 @@ class _RaisingMiddleware:
     def before_status_change(
         self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
     ) -> None:
+        del node, old, new
         self._log.append(f"{self._meta.name}:before")
         raise RuntimeError("boom in before hook")
 
     def after_status_change(
         self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus
     ) -> None:
+        del node, old, new
         self._log.append(f"{self._meta.name}:after")
         raise RuntimeError("boom in after hook")
 
