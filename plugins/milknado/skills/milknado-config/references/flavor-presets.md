@@ -171,7 +171,7 @@ concurrency_limit = 4
 worktree = true                 # fallback; flavors may override it
 protected_branches = ["main", "master"]
 # Required — absent = fail-closed. Use `milknado init` to auto-detect.
-quality_gates = ["uv run pytest", "uv run ruff check", "uv run ty check"]
+quality_gates = ["uv run pytest", "uv run ruff check", "uv run basedpyright"]
 
 # Every worker also gets the project's just recipes.
 [milknado.worker.tools]
