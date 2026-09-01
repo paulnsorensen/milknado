@@ -12,22 +12,29 @@ from archive-mutation behavior.
 
 from __future__ import annotations
 
+import sqlite3
+
+# Direct database seeding is intentional in these projection tests.
 from datetime import UTC, datetime
 
+import pytest
+
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
-from milknado.domains.graph import _reads, render_tree
+from milknado.domains.graph import MikadoGraph, _reads, render_tree
 from milknado.domains.graph.display import format_node, summarize
 from milknado.domains.reporting.harvest import build_harvest_summary
+from tests.graph_helpers import graph_conn
 
 
-def _archive(graph, *node_ids: int) -> None:
+def _archive(graph: MikadoGraph, *node_ids: int) -> None:
     now = datetime.now(UTC).isoformat()
     for node_id in node_ids:
-        graph._conn.execute("UPDATE nodes SET archived_at = ? WHERE id = ?", (now, node_id))
-    graph._conn.commit()
+        conn = graph_conn(graph)
+        _ = conn.execute("UPDATE nodes SET archived_at = ? WHERE id = ?", (now, node_id))
+    graph_conn(graph).commit()
 
 
-def _done_graph(graph):
+def _done_graph(graph: MikadoGraph):
     """Root goal with two done tasks; returns (root, task1, task2)."""
     root = graph.add_node("Root goal", spec=NodeSpec(kind=NodeKind.GOAL))
     t1 = graph.add_node("Task 1", parent_id=root.id)
@@ -41,34 +48,36 @@ def _done_graph(graph):
 class TestDefaultReadsExcludeArchived:
     """Acceptance #8: without include_archived, archived nodes vanish."""
 
-    def test_get_all_nodes_hides_archived(self, graph):
+    def test_get_all_nodes_hides_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         assert graph.get_all_nodes() == []
 
-    def test_get_roots_hides_archived_root(self, graph):
+    def test_get_roots_hides_archived_root(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         live = graph.add_node("Live root")
         _archive(graph, root.id, t1.id, t2.id)
         assert [n.id for n in graph.get_roots()] == [live.id]
 
-    def test_get_root_skips_archived_first_root(self, graph):
+    def test_get_root_skips_archived_first_root(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         live = graph.add_node("Live root")
         _archive(graph, root.id, t1.id, t2.id)
-        assert graph.get_root().id == live.id
+        node = graph.get_root()
+        assert node is not None
+        assert node.id == live.id
 
-    def test_get_children_hides_archived_children(self, graph):
+    def test_get_children_hides_archived_children(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id, t2.id)
         assert graph.get_children(root.id) == []
 
-    def test_children_map_hides_archived_subtree(self, graph):
+    def test_children_map_hides_archived_subtree(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         assert graph.get_children_map() == {}
 
-    def test_children_map_prunes_descendants_of_archived_node(self, graph):
+    def test_children_map_prunes_descendants_of_archived_node(self, graph: MikadoGraph):
         # Defensive: even if the archive cascade were violated and a child
         # stayed un-archived, an archived parent must hide its whole subtree.
         root = graph.add_node("Root")
@@ -80,12 +89,12 @@ class TestDefaultReadsExcludeArchived:
         assert mid.id not in children_map
         assert all(n.id != leaf.id for kids in children_map.values() for n in kids)
 
-    def test_get_leaves_hides_archived(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_get_leaves_hides_archived(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id)
         assert [n.id for n in graph.get_leaves()] == [t2.id]
 
-    def test_ready_nodes_never_return_archived(self, graph):
+    def test_ready_nodes_never_return_archived(self, graph: MikadoGraph):
         # todo_next backing read: an archived node must never come back,
         # even in the (invariant-violating) case of an archived PENDING node.
         root = graph.add_node("Root")
@@ -94,24 +103,24 @@ class TestDefaultReadsExcludeArchived:
         _archive(graph, shelved.id)
         assert [n.id for n in graph.get_ready_nodes()] == [live.id]
 
-    def test_node_summaries_hide_archived(self, graph):
+    def test_node_summaries_hide_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         assert graph.get_node_summaries() == []
 
-    def test_get_node_point_lookup_still_returns_archived(self, graph):
+    def test_get_node_point_lookup_still_returns_archived(self, graph: MikadoGraph):
         # Spec 5.1: get_node is a point lookup, not a forest projection —
         # callers addressing a node by id get the real row by default.
-        root, t1, _ = _done_graph(graph)
+        _, t1, _ = _done_graph(graph)
         _archive(graph, t1.id)
         node = graph.get_node(t1.id)
         assert node is not None
         assert node.archived_at is not None
-        direct = _reads.get_node(graph._conn, t1.id)
+        direct = _reads.get_node(graph_conn(graph), t1.id)
         assert direct is not None and direct.archived_at is not None
 
-    def test_render_tree_hides_archived_by_default(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_render_tree_hides_archived_by_default(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id, t2.id)
         output = render_tree(graph)
         assert "Root goal" in output
@@ -119,7 +128,7 @@ class TestDefaultReadsExcludeArchived:
         assert "Task 2" not in output
         assert "0/1" in output
 
-    def test_summarize_excludes_archived_by_default(self, graph):
+    def test_summarize_excludes_archived_by_default(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         s = summarize(graph)
@@ -130,50 +139,52 @@ class TestDefaultReadsExcludeArchived:
 class TestIncludeArchivedRestores:
     """Acceptance #9: include_archived=True restores the full projection."""
 
-    def test_get_all_nodes_includes_archived(self, graph):
+    def test_get_all_nodes_includes_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
-        nodes = _reads.get_all_nodes(graph._conn, include_archived=True)
+        nodes = _reads.get_all_nodes(graph_conn(graph), include_archived=True)
         assert {n.id for n in nodes} == {root.id, t1.id, t2.id}
 
-    def test_get_roots_includes_archived(self, graph):
+    def test_get_roots_includes_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
-        roots = _reads.get_roots(graph._conn, include_archived=True)
+        roots = _reads.get_roots(graph_conn(graph), include_archived=True)
         assert [n.id for n in roots] == [root.id]
 
-    def test_get_children_includes_archived(self, graph):
+    def test_get_children_includes_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id, t2.id)
-        children = _reads.get_children(graph._conn, root.id, include_archived=True)
+        children = _reads.get_children(graph_conn(graph), root.id, include_archived=True)
         assert {n.id for n in children} == {t1.id, t2.id}
 
-    def test_children_map_includes_archived(self, graph):
+    def test_children_map_includes_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
-        children_map = _reads.get_children_map(graph._conn, include_archived=True)
+        children_map = _reads.get_children_map(graph_conn(graph), include_archived=True)
         assert {n.id for n in children_map[root.id]} == {t1.id, t2.id}
 
-    def test_get_leaves_includes_archived(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_get_leaves_includes_archived(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id)
         leaves = graph.get_leaves(include_archived=True)
         assert {n.id for n in leaves} == {t1.id, t2.id}
 
-    def test_node_summaries_include_archived(self, graph):
+    def test_node_summaries_include_archived(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
-        summaries = _reads.get_node_summaries(graph._conn, include_archived=True)
+        summaries = _reads.get_node_summaries(graph_conn(graph), include_archived=True)
         assert {s["id"] for s in summaries} == {root.id, t1.id, t2.id}
 
-    def test_harvest_sees_archived_done_subtree(self, graph):
+    def test_harvest_sees_archived_done_subtree(self, graph: MikadoGraph):
         # Acceptance: harvest walks include archived DONE goals (wiki/github
         # exporters must not regress when a finished goal is shelved).
         root, t1, t2 = _done_graph(graph)
         graph.mark_running(root.id)
         graph.mark_done(root.id)
         _archive(graph, root.id, t1.id, t2.id)
-        summary = build_harvest_summary(graph, graph.get_node(root.id))
+        goal = graph.get_node(root.id)
+        assert goal is not None
+        summary = build_harvest_summary(graph, goal)
         assert summary.status == "done"
         assert summary.tasks_done == 2
         assert summary.tasks_failed == 0
@@ -182,18 +193,21 @@ class TestIncludeArchivedRestores:
 class TestArchivedDisplayMarker:
     """Acceptance #10: include_archived=True renders archived nodes marked."""
 
-    def test_format_node_marks_archived(self, graph):
-        root, t1, _ = _done_graph(graph)
+    def test_format_node_marks_archived(self, graph: MikadoGraph):
+        _, t1, _ = _done_graph(graph)
         _archive(graph, t1.id)
-        node = _reads.get_node(graph._conn, t1.id)
+        node = _reads.get_node(graph_conn(graph), t1.id)
+        assert node is not None
         assert "[archived]" in format_node(node)
 
-    def test_format_node_unmarked_when_active(self, graph):
-        root, t1, _ = _done_graph(graph)
-        assert "[archived]" not in format_node(graph.get_node(t1.id))
+    def test_format_node_unmarked_when_active(self, graph: MikadoGraph):
+        _, t1, _ = _done_graph(graph)
+        node = graph.get_node(t1.id)
+        assert node is not None
+        assert "[archived]" not in format_node(node)
 
-    def test_render_tree_marks_archived_children(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_render_tree_marks_archived_children(self, graph: MikadoGraph):
+        _, t1, _ = _done_graph(graph)
         _archive(graph, t1.id)
         output = render_tree(graph, include_archived=True)
         assert "Task 1" in output
@@ -204,7 +218,7 @@ class TestArchivedDisplayMarker:
         assert any("Task 1" in line for line in marked)
         assert all("Task 2" not in line for line in marked)
 
-    def test_render_tree_marks_archived_root(self, graph):
+    def test_render_tree_marks_archived_root(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         output = render_tree(graph, include_archived=True)
@@ -212,7 +226,7 @@ class TestArchivedDisplayMarker:
         assert "[archived]" in output
         assert "2/3" in output
 
-    def test_summarize_counts_archived_when_included(self, graph):
+    def test_summarize_counts_archived_when_included(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
         _archive(graph, root.id, t1.id, t2.id)
         s = summarize(graph, include_archived=True)
@@ -224,7 +238,7 @@ class TestNextRunnableSkipsArchived:
     """todo_next backing read: an archived candidate that would otherwise
     be next (lowest id) must be passed over."""
 
-    def test_next_runnable_skips_lower_id_archived_candidate(self, graph):
+    def test_next_runnable_skips_lower_id_archived_candidate(self, graph: MikadoGraph):
         root = graph.add_node("Root")
         shelved = graph.add_node("Shelved first", parent_id=root.id)
         live = graph.add_node("Live second", parent_id=root.id)
@@ -234,7 +248,7 @@ class TestNextRunnableSkipsArchived:
         assert ready
         assert ready[0].id == live.id
 
-    def test_next_runnable_none_when_only_candidate_archived(self, graph):
+    def test_next_runnable_none_when_only_candidate_archived(self, graph: MikadoGraph):
         root = graph.add_node("Root")
         shelved = graph.add_node("Shelved only", parent_id=root.id)
         _archive(graph, shelved.id)
@@ -245,47 +259,48 @@ class TestSummariesCombinedFilters:
     """graph_summary backing read: archived filter composes with the
     status/kind/flavor filters instead of replacing them."""
 
-    def test_archived_excluded_under_status_filter(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_archived_excluded_under_status_filter(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id)
         done = graph.get_node_summaries(status=NodeStatus.DONE)
         assert [s["id"] for s in done] == [t2.id]
 
-    def test_include_archived_restores_under_status_filter(self, graph):
-        root, t1, t2 = _done_graph(graph)
+    def test_include_archived_restores_under_status_filter(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
         _archive(graph, t1.id)
         done = _reads.get_node_summaries(
-            graph._conn, status=NodeStatus.DONE, include_archived=True
+            graph_conn(graph), status=NodeStatus.DONE, include_archived=True
         )
         assert {s["id"] for s in done} == {t1.id, t2.id}
 
-    def test_archived_excluded_under_kind_and_flavor_filters(self, graph):
-        root, t1, t2 = _done_graph(graph)
-        graph._conn.execute("UPDATE nodes SET flavor = 'spec' WHERE id = ?", (t1.id,))
-        graph._conn.execute("UPDATE nodes SET flavor = 'implement' WHERE id = ?", (t2.id,))
-        graph._conn.commit()
+    def test_archived_excluded_under_kind_and_flavor_filters(self, graph: MikadoGraph):
+        _, t1, t2 = _done_graph(graph)
+        _ = graph_conn(graph).execute("UPDATE nodes SET flavor = 'spec' WHERE id = ?", (t1.id,))
+        conn = graph_conn(graph)
+        _ = conn.execute("UPDATE nodes SET flavor = 'implement' WHERE id = ?", (t2.id,))
+        graph_conn(graph).commit()
         _archive(graph, t1.id)
         rows = graph.get_node_summaries(kind=NodeKind.TASK, flavor="spec")
         assert rows == []
         restored = _reads.get_node_summaries(
-            graph._conn, kind=NodeKind.TASK, flavor="spec", include_archived=True
+            graph_conn(graph), kind=NodeKind.TASK, flavor="spec", include_archived=True
         )
         assert [s["id"] for s in restored] == [t1.id]
 
-    def test_status_filter_still_excludes_mismatched_archived(self, graph):
+    def test_status_filter_still_excludes_mismatched_archived(self, graph: MikadoGraph):
         # include_archived=True widens only the archive axis; a PENDING
         # archived node must not leak into a DONE-filtered summary.
         root = graph.add_node("Root")
         pending = graph.add_node("Pending shelved", parent_id=root.id)
         _archive(graph, pending.id)
         done = _reads.get_node_summaries(
-            graph._conn, status=NodeStatus.DONE, include_archived=True
+            graph_conn(graph), status=NodeStatus.DONE, include_archived=True
         )
         assert done == []
 
-    def test_summarize_uses_entire_forest(self, graph):
+    def test_summarize_uses_entire_forest(self, graph: MikadoGraph):
         done = graph.add_node("Done root")
-        graph.add_node("Pending root")
+        _ = graph.add_node("Pending root")
         graph.mark_running(done.id)
         graph.mark_done(done.id)
 
@@ -297,24 +312,24 @@ class TestEmptyAndNoArchiveRegressions:
     """include_archived on an empty DB or a DB with no archived rows must
     behave exactly like the default projection."""
 
-    def test_empty_db_all_projections_empty(self, graph):
-        assert _reads.get_all_nodes(graph._conn, include_archived=True) == []
-        assert _reads.get_roots(graph._conn, include_archived=True) == []
-        assert _reads.get_root(graph._conn, include_archived=True) is None
-        assert _reads.get_leaves(graph._conn, include_archived=True) == []
-        assert _reads.get_ready_nodes(graph._conn, include_archived=True) == []
-        assert _reads.get_node_summaries(graph._conn, include_archived=True) == []
-        assert _reads.get_children_map(graph._conn, include_archived=True) == {}
+    def test_empty_db_all_projections_empty(self, graph: MikadoGraph):
+        assert _reads.get_all_nodes(graph_conn(graph), include_archived=True) == []
+        assert _reads.get_roots(graph_conn(graph), include_archived=True) == []
+        assert _reads.get_root(graph_conn(graph), include_archived=True) is None
+        assert _reads.get_leaves(graph_conn(graph), include_archived=True) == []
+        assert _reads.get_ready_nodes(graph_conn(graph), include_archived=True) == []
+        assert _reads.get_node_summaries(graph_conn(graph), include_archived=True) == []
+        assert _reads.get_children_map(graph_conn(graph), include_archived=True) == {}
         s = summarize(graph, include_archived=True)
         assert s.total == 0 and s.done == 0
 
-    def test_no_archived_rows_include_archived_matches_default(self, graph):
-        _done_graph(graph)
+    def test_no_archived_rows_include_archived_matches_default(self, graph: MikadoGraph):
+        _ = _done_graph(graph)
         default = graph.get_all_nodes()
-        included = _reads.get_all_nodes(graph._conn, include_archived=True)
+        included = _reads.get_all_nodes(graph_conn(graph), include_archived=True)
         assert [n.id for n in included] == [n.id for n in default]
         default_map = graph.get_children_map()
-        included_map = _reads.get_children_map(graph._conn, include_archived=True)
+        included_map = _reads.get_children_map(graph_conn(graph), include_archived=True)
         assert {p: [n.id for n in kids] for p, kids in included_map.items()} == {
             p: [n.id for n in kids] for p, kids in default_map.items()
         }
@@ -328,20 +343,24 @@ class TestEmptyAndNoArchiveRegressions:
 class TestMarkerExactFormat:
     """Pin the literal marker format (acceptance #10): rich-escaped suffix."""
 
-    def test_format_node_marker_exact_suffix(self, graph):
-        root, t1, _ = _done_graph(graph)
+    def test_format_node_marker_exact_suffix(self, graph: MikadoGraph):
+        _, t1, _ = _done_graph(graph)
         _archive(graph, t1.id)
         node = graph.get_node(t1.id)
+        assert node is not None
         assert format_node(node).endswith(" [dim]\\[archived][/dim]")
 
-    def test_format_node_running_worktree_marker_after_path(self, graph):
+    def test_format_node_running_worktree_marker_after_path(self, graph: MikadoGraph):
         # Marker composes with the worktree suffix instead of clobbering it.
-        root, t1, _ = _done_graph(graph)
-        graph._conn.execute("UPDATE nodes SET worktree_path = '/tmp/wt' WHERE id = ?", (t1.id,))
-        graph._conn.execute("UPDATE nodes SET status = 'running' WHERE id = ?", (t1.id,))
-        graph._conn.commit()
+        _, t1, _ = _done_graph(graph)
+        _ = graph_conn(graph).execute(
+            "UPDATE nodes SET worktree_path = '/tmp/wt' WHERE id = ?", (t1.id,)
+        )
+        _ = graph_conn(graph).execute("UPDATE nodes SET status = 'running' WHERE id = ?", (t1.id,))
+        graph_conn(graph).commit()
         _archive(graph, t1.id)
         node = graph.get_node(t1.id)
+        assert node is not None
         label = format_node(node)
         assert "(/tmp/wt)" in label
         assert label.endswith(" [dim]\\[archived][/dim]")
@@ -351,17 +370,21 @@ class TestHarvestFlipsIncludeArchived:
     """The harvest forest walk must pass include_archived=True at the call
     seam (asserted on the seam, not by re-implementing the walk)."""
 
-    def test_harvest_walk_passes_include_archived_true(self, graph, monkeypatch):
-        root, t1, t2 = _done_graph(graph)
+    def test_harvest_walk_passes_include_archived_true(
+        self, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ):
+        root, _, _ = _done_graph(graph)
         calls: list[bool] = []
         real_get_all_nodes = _reads.get_all_nodes
 
-        def spy(conn, *, include_archived=False):
+        def spy(conn: sqlite3.Connection, *, include_archived: bool = False):
             calls.append(include_archived)
             return real_get_all_nodes(conn, include_archived=include_archived)
 
         monkeypatch.setattr(_reads, "get_all_nodes", spy)
-        build_harvest_summary(graph, graph.get_node(root.id))
+        goal = graph.get_node(root.id)
+        assert goal is not None
+        _ = build_harvest_summary(graph, goal)
         assert calls, "harvest never walked the forest"
         assert all(flag is True for flag in calls)
 
@@ -370,16 +393,16 @@ class TestClaimedAndArchivedMixing:
     """_reads has no claim filter; claims only enrich get_node with
     goal_run_id. An archived claimed goal stays a faithful point lookup."""
 
-    def test_get_node_on_archived_claimed_goal_keeps_claim(self, graph):
+    def test_get_node_on_archived_claimed_goal_keeps_claim(self, graph: MikadoGraph):
         root, t1, t2 = _done_graph(graph)
-        graph._conn.execute(
+        _ = graph_conn(graph).execute(
             "UPDATE nodes SET kind = 'goal', flavor = NULL WHERE id = ?", (root.id,)
         )
-        graph._conn.execute(
+        _ = graph_conn(graph).execute(
             "INSERT INTO goal_claims (goal_id, run_id, pid, claimed_at) VALUES (?, ?, ?, ?)",
             (root.id, "run-123", 9999, "2026-01-01T00:00:00+00:00"),
         )
-        graph._conn.commit()
+        graph_conn(graph).commit()
         _archive(graph, root.id, t1.id, t2.id)
         node = graph.get_node(root.id)
         assert node is not None

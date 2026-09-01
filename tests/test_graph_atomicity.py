@@ -2,22 +2,45 @@ from __future__ import annotations
 
 import os
 import sqlite3
+
+# These tests intentionally exercise protected graph internals.
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
+from typing import NoReturn, Protocol, cast
 
 import pytest
 
-from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.common import (
+    GraphExecutionSnapshot,
+    GraphReadPort,
+    MikadoNode,
+    NodeKind,
+    NodeSpec,
+)
 from milknado.domains.execution import get_execution_overview
 from milknado.domains.graph import MikadoGraph
+from tests.graph_helpers import graph_conn, graph_lock
 
 
-def _run_pair(operation):
+def _raise_probe_failure(_pid: int) -> NoReturn:
+    raise RuntimeError("probe failed")
+
+
+class _OwnableLock(Protocol):
+    def _is_owned(self) -> bool: ...
+
+
+def _lock_owned(lock: object) -> bool:
+    return cast(_OwnableLock, lock)._is_owned()  # pyright: ignore[reportPrivateUsage]
+
+
+def _run_pair(operation: Callable[[str], None]) -> list[tuple[type[Exception] | None, str]]:
     barrier = Barrier(2)
 
-    def run(value: str):
-        barrier.wait()
+    def run(value: str) -> tuple[type[Exception] | None, str]:
+        _ = barrier.wait()
         try:
             operation(value)
         except Exception as exc:  # returned for exact losing-writer assertions
@@ -38,7 +61,7 @@ def test_concurrent_add_node_loser_leaves_no_partial_node_or_edges(tmp_path: Pat
     def add(label: str) -> None:
         graph = MikadoGraph(db_path)
         try:
-            graph.add_node(
+            _ = graph.add_node(
                 f"candidate-{label}",
                 parent_id=goal.id,
                 spec=NodeSpec(wiki_ref="unique-ref", prereqs=(prerequisite.id,)),
@@ -54,11 +77,17 @@ def test_concurrent_add_node_loser_leaves_no_partial_node_or_edges(tmp_path: Pat
     candidates = [node for node in graph.get_all_nodes() if node.wiki_ref == "unique-ref"]
     assert len(candidates) == 1
     candidate = candidates[0]
-    edges = graph._conn.execute(
-        "SELECT parent_id, child_id FROM edges "
-        "WHERE parent_id = ? OR child_id = ? ORDER BY parent_id, child_id",
-        (candidate.id, candidate.id),
-    ).fetchall()
+    edges = cast(
+        list[tuple[int, int]],
+        graph_conn(graph)
+        .execute(
+            """SELECT parent_id, child_id FROM edges
+            WHERE parent_id = ? OR child_id = ?
+            ORDER BY parent_id, child_id""",
+            (candidate.id, candidate.id),
+        )
+        .fetchall(),
+    )
     assert {tuple(edge) for edge in edges} == {
         (goal.id, candidate.id),
         (candidate.id, prerequisite.id),
@@ -77,7 +106,7 @@ def test_concurrent_opposite_edges_cannot_commit_cycle(tmp_path: Path) -> None:
         graph = MikadoGraph(db_path)
         try:
             edge = (left.id, right.id) if label == "left" else (right.id, left.id)
-            graph.add_edge(*edge)
+            _ = graph.add_edge(*edge)
         finally:
             graph.close()
 
@@ -85,7 +114,7 @@ def test_concurrent_opposite_edges_cannot_commit_cycle(tmp_path: Path) -> None:
     assert sorted(result[1] == "ok" for result in results) == [False, True]
     assert {result[0] for result in results if result[0] is not None} == {ValueError}
     graph = MikadoGraph(db_path)
-    assert len(graph._conn.execute("SELECT 1 FROM edges").fetchall()) == 1
+    assert len(graph_conn(graph).execute("SELECT 1 FROM edges").fetchall()) == 1
     graph.close()
 
 
@@ -110,9 +139,12 @@ def test_concurrent_goal_claim_has_exactly_one_winner(tmp_path: Path) -> None:
     claimed = graph.get_node(goal.id)
     assert claimed is not None
     assert claimed.goal_run_id in {"left", "right"}
-    claim_pid = graph._conn.execute(
-        "SELECT pid FROM goal_claims WHERE goal_id = ?", (goal.id,)
-    ).fetchone()[0]
+    claim_pid = cast(
+        int,
+        graph_conn(graph)
+        .execute("SELECT pid FROM goal_claims WHERE goal_id = ?", (goal.id,))
+        .fetchone()[0],
+    )
     assert claim_pid == os.getpid()
     graph.close()
 
@@ -121,7 +153,7 @@ def test_missing_goal_claim_rolls_back_before_next_claim(tmp_path: Path) -> None
     graph = MikadoGraph(tmp_path / "graph.db")
 
     with pytest.raises(ValueError, match=r"node 999 not found"):
-        graph.claim_or_reclaim_goal(999, "owner", os.getpid(), now="missing")
+        _ = graph.claim_or_reclaim_goal(999, "owner", os.getpid(), now="missing")
 
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     assert graph.claim_or_reclaim_goal(goal.id, "owner", os.getpid(), now="claimed")
@@ -131,7 +163,7 @@ def test_missing_goal_claim_rolls_back_before_next_claim(tmp_path: Path) -> None
     graph.close()
 
 
-def test_goal_claim_atomic_reclaim_requires_dead_pid(graph: MikadoGraph, monkeypatch) -> None:
+def test_goal_claim_atomic_reclaim_requires_dead_pid(graph: MikadoGraph) -> None:
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     now = "2026-01-01T00:00:00+00:00"
     assert graph.claim_or_reclaim_goal(goal.id, "run-a", 2**31 - 1, now=now)
@@ -139,7 +171,7 @@ def test_goal_claim_atomic_reclaim_requires_dead_pid(graph: MikadoGraph, monkeyp
     assert graph.claim_or_reclaim_goal(goal.id, "run-b", now=now, pid=2**31 - 1)
     from milknado.domains.graph import _goal_claims
 
-    claim = _goal_claims.get_goal_claim(graph._conn, goal.id)
+    claim = _goal_claims.get_goal_claim(graph_conn(graph), goal.id)
     assert claim is not None
     assert claim["run_id"] == "run-b"
 
@@ -153,15 +185,17 @@ def test_goal_claim_keeps_null_pid_claim_blocking(graph: MikadoGraph) -> None:
     )
 
 
-def test_goal_claim_reclaim_surfaces_pid_liveness_failure(graph: MikadoGraph, monkeypatch) -> None:
+def test_goal_claim_reclaim_surfaces_pid_liveness_failure(
+    graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     assert graph.claim_or_reclaim_goal(goal.id, "run-a", 42, now="2026-01-01T00:00:00+00:00")
     monkeypatch.setattr(
         "milknado.domains.graph._goal_claims.pid_alive",
-        lambda _pid: (_ for _ in ()).throw(RuntimeError("probe failed")),
+        _raise_probe_failure,
     )
     with pytest.raises(RuntimeError, match="probe failed"):
-        graph.claim_or_reclaim_goal(goal.id, "run-b", now="2026-01-01T00:00:00+00:00", pid=123)
+        _ = graph.claim_or_reclaim_goal(goal.id, "run-b", now="2026-01-01T00:00:00+00:00", pid=123)
 
 
 def test_goal_claim_row_handles_missing_row_and_dead_owner(graph: MikadoGraph) -> None:
@@ -172,13 +206,13 @@ def test_goal_claim_row_handles_missing_row_and_dead_owner(graph: MikadoGraph) -
     assert graph.claim_or_reclaim_goal(goal.id, "new", 2**31 - 1, now="now")
 
     class Cursor:
-        rowcount = 0
+        rowcount: int = 0
 
-        def fetchone(self):
+        def fetchone(self) -> None:
             return None
 
     class Connection:
-        def execute(self, sql, _params=()):
+        def execute(self, _sql: str, _params: tuple[object, ...] = ()) -> Cursor:
             return Cursor()
 
         def commit(self) -> None:
@@ -193,21 +227,22 @@ def test_goal_claim_row_handles_missing_row_and_dead_owner(graph: MikadoGraph) -
 def test_goal_claim_or_reclaim_handles_invalid_and_missing_claims(graph: MikadoGraph) -> None:
     from milknado.domains.graph import _goal_claims
 
-    assert _goal_claims.claim_or_reclaim_goal(graph._conn, 1, "run", None, now="now") is False
+    unclaimed = _goal_claims.claim_or_reclaim_goal(graph_conn(graph), 1, "run", None, now="now")
+    assert unclaimed is False
     task = graph.add_node("task")
     with pytest.raises(ValueError, match="only goal nodes"):
-        _goal_claims.claim_or_reclaim_goal(graph._conn, task.id, "run", 123, now="now")
+        _ = _goal_claims.claim_or_reclaim_goal(graph_conn(graph), task.id, "run", 123, now="now")
 
     class Cursor:
-        def __init__(self, rowcount=0, row=None) -> None:
-            self.rowcount = rowcount
-            self._row = row
+        def __init__(self, rowcount: int = 0, row: dict[str, str] | None = None) -> None:
+            self.rowcount: int = rowcount
+            self._row: dict[str, str] | None = row
 
-        def fetchone(self):
+        def fetchone(self) -> dict[str, str] | None:
             return self._row
 
     class Connection:
-        def execute(self, sql, _params=()):
+        def execute(self, sql: str, _params: tuple[object, ...] = ()) -> Cursor:
             if sql.startswith("SELECT kind"):
                 return Cursor(row={"kind": "goal"})
             if sql.startswith("SELECT run_id"):
@@ -224,18 +259,16 @@ def test_goal_claim_or_reclaim_handles_invalid_and_missing_claims(graph: MikadoG
 
 
 def test_goal_claim_or_reclaim_same_owner_and_try_reclaim_error(
-    graph: MikadoGraph, monkeypatch
+    graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.domains.graph import _goal_claims
 
     goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
     assert graph.claim_or_reclaim_goal(goal.id, "run", 123, now="now")
     assert graph.claim_or_reclaim_goal(goal.id, "run", 123, now="now") is False
-    monkeypatch.setattr(
-        _goal_claims, "pid_alive", lambda _pid: (_ for _ in ()).throw(RuntimeError("probe failed"))
-    )
+    monkeypatch.setattr(_goal_claims, "pid_alive", _raise_probe_failure)
     with pytest.raises(RuntimeError, match="probe failed"):
-        graph.try_reclaim_goal(goal.id, now="now")
+        _ = graph.try_reclaim_goal(goal.id, now="now")
 
 
 def test_ancestor_claim_refuses_foreign_pid(graph: MikadoGraph) -> None:
@@ -245,7 +278,7 @@ def test_ancestor_claim_refuses_foreign_pid(graph: MikadoGraph) -> None:
     task = graph.add_node("task", parent_id=goal.id)
     assert graph.claim_or_reclaim_goal(goal.id, "run-a", os.getpid(), now="now")
     with pytest.raises(ValueError, match="ancestor goal"):
-        graph.claim_ancestor_goal(task.id, "run-b", 456, now="now")
+        _ = graph.claim_ancestor_goal(task.id, "run-b", 456, now="now")
 
 
 def test_execution_overview_returns_one_public_atomic_projection(graph: MikadoGraph) -> None:
@@ -272,15 +305,29 @@ def test_execution_overview_accepts_graph_read_port(graph: MikadoGraph) -> None:
     snapshot = graph.get_execution_snapshot([node.id])
 
     class ReadPort:
-        def get_execution_snapshot(self, node_ids: list[int]):
+        def get_node(self, node_id: int) -> MikadoNode | None:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+        def get_children(self, node_id: int) -> list[MikadoNode]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+        def get_file_ownership(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+        def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:
             assert node_ids == [node.id]
             return snapshot
 
-    assert get_execution_overview(ReadPort(), [node.id]) == ("goal", {node.id: "task"}, 1)
+    read_port: GraphReadPort = ReadPort()
+    assert get_execution_overview(read_port, [node.id]) == (
+        "goal",
+        {node.id: "task"},
+        1,
+    )
 
 
 def test_execution_overview_reads_one_lock_held_graph_snapshot(
-    graph: MikadoGraph, monkeypatch
+    graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.domains.graph import _reads
 
@@ -288,14 +335,14 @@ def test_execution_overview_reads_one_lock_held_graph_snapshot(
     task = graph.add_node("task", parent_id=goal.id)
     original_get_root = _reads.get_root
     original_get_nodes = _reads.get_nodes
-    observed = []
+    observed: list[tuple[str, bool]] = []
 
-    def locked_get_root(conn):
-        observed.append(("root", graph._lock._is_owned()))
+    def locked_get_root(conn: sqlite3.Connection) -> MikadoNode | None:
+        observed.append(("root", _lock_owned(graph_lock(graph))))
         return original_get_root(conn)
 
-    def locked_get_nodes(conn, node_ids):
-        observed.append(("nodes", graph._lock._is_owned()))
+    def locked_get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoNode]:
+        observed.append(("nodes", _lock_owned(graph_lock(graph))))
         return original_get_nodes(conn, node_ids)
 
     monkeypatch.setattr(_reads, "get_root", locked_get_root)
@@ -310,7 +357,7 @@ def test_execution_overview_reads_one_lock_held_graph_snapshot(
 
 
 def test_execution_overview_uses_one_cross_connection_snapshot(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.domains.graph import _reads
 
@@ -322,9 +369,11 @@ def test_execution_overview_uses_one_cross_connection_snapshot(
         task = reader.add_node("task", parent_id=goal.id)
         original_get_nodes = _reads.get_nodes
 
-        def update_between_reads(conn, node_ids):
+        def update_between_reads(
+            conn: sqlite3.Connection, node_ids: Iterable[int]
+        ) -> list[MikadoNode]:
             writer.update_node(goal.id, description="after")
-            writer.add_node("new task", parent_id=goal.id)
+            _ = writer.add_node("new task", parent_id=goal.id)
             return original_get_nodes(conn, node_ids)
 
         monkeypatch.setattr(_reads, "get_nodes", update_between_reads)
@@ -334,17 +383,21 @@ def test_execution_overview_uses_one_cross_connection_snapshot(
             {goal.id: "before", task.id: "task"},
             1,
         )
-        assert writer.get_root().description == "after"
+        updated_root = writer.get_root()
+        assert updated_root is not None
+        assert updated_root.description == "after"
     finally:
         reader.close()
         writer.close()
 
 
-def test_inherited_analytics_operations_hold_graph_lock(graph: MikadoGraph, monkeypatch) -> None:
+def test_inherited_analytics_operations_hold_graph_lock(
+    graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from milknado.domains.graph import _analytics_facade
 
-    def locked_get_spec_hash(_conn):
-        assert graph._lock._is_owned()
+    def locked_get_spec_hash(_conn: sqlite3.Connection) -> str:
+        assert _lock_owned(graph_lock(graph))
         return "locked"
 
     monkeypatch.setattr(_analytics_facade, "get_spec_hash", locked_get_spec_hash)
