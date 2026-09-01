@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+# These tests intentionally exercise protected graph state and internals.
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -13,6 +15,7 @@ from milknado.domains.batching import (
 )
 from milknado.domains.common import InvalidTransition, NodeKind, NodeSpec, NodeStatus
 from milknado.domains.graph import MikadoGraph, _transitions
+from tests.graph_helpers import graph_conn
 
 
 class TestAddNode:
@@ -44,7 +47,7 @@ class TestAddNode:
         # The node row commits before the edge, so a missing parent must be
         # rejected up front rather than leaving a committed stray node.
         with pytest.raises(ValueError, match="parent_id 999 not found"):
-            graph.add_node("orphan", parent_id=999)
+            _ = graph.add_node("orphan", parent_id=999)
         assert graph.get_all_nodes() == []
 
 
@@ -57,14 +60,14 @@ class TestDeleteNode:
     def test_delete_leaf_removes_file_ownership(self, graph: MikadoGraph) -> None:
         node = graph.add_node("leaf")
         graph.set_file_ownership(node.id, ["src/a.py"])
-        graph.delete_node(node.id)
+        _ = graph.delete_node(node.id)
         assert graph.get_file_ownership(node.id) == []
 
     def test_delete_node_with_children_without_cascade_raises(self, graph: MikadoGraph) -> None:
         parent = graph.add_node("parent")
-        graph.add_node("child", parent_id=parent.id)
+        _ = graph.add_node("child", parent_id=parent.id)
         with pytest.raises(ValueError, match="cascade"):
-            graph.delete_node(parent.id)
+            _ = graph.delete_node(parent.id)
         assert graph.get_node(parent.id) is not None
 
     def test_delete_cascade_removes_whole_subtree(self, graph: MikadoGraph) -> None:
@@ -86,7 +89,7 @@ class TestDeleteNode:
         left = graph.add_node("left", parent_id=root.id)
         right = graph.add_node("right", parent_id=root.id)
         shared = graph.add_node("shared", parent_id=left.id)
-        graph.add_edge(right.id, shared.id)
+        _ = graph.add_edge(right.id, shared.id)
 
         assert graph.delete_node(root.id, cascade=True) == 4
         for node in (root, left, right, shared):
@@ -94,7 +97,7 @@ class TestDeleteNode:
 
     def test_delete_unknown_node_raises(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="not found"):
-            graph.delete_node(999)
+            _ = graph.delete_node(999)
 
     def test_delete_nulls_dangling_parent_id_of_non_edge_child(self, graph: MikadoGraph) -> None:
         # set_parent_id points parent_id at a node WITHOUT creating an edge
@@ -103,7 +106,7 @@ class TestDeleteNode:
         parent = graph.add_node("parent")
         orphan = graph.add_node("orphan")
         graph.set_parent_id(orphan.id, parent.id)
-        graph.delete_node(parent.id)
+        _ = graph.delete_node(parent.id)
         refreshed = graph.get_node(orphan.id)
         assert refreshed is not None
         assert refreshed.parent_id is None
@@ -198,7 +201,7 @@ class TestMoveNode:
         left = graph.add_node("left", parent_id=top.id)
         right = graph.add_node("right", parent_id=top.id)
         mid = graph.add_node("mid", parent_id=left.id)
-        graph.add_edge(right.id, mid.id)
+        _ = graph.add_edge(right.id, mid.id)
         loose = graph.add_node("loose")
 
         # Re-parenting loose under mid walks mid's ancestors: top is reachable via
@@ -220,30 +223,30 @@ class TestAddEdge:
     def test_cycle_detection_direct(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")
         n2 = graph.add_node("b")
-        graph.add_edge(n1.id, n2.id)
+        _ = graph.add_edge(n1.id, n2.id)
         with pytest.raises(ValueError, match="cycle"):
-            graph.add_edge(n2.id, n1.id)
+            _ = graph.add_edge(n2.id, n1.id)
 
     def test_cycle_detection_transitive(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")
         n2 = graph.add_node("b")
         n3 = graph.add_node("c")
-        graph.add_edge(n1.id, n2.id)
-        graph.add_edge(n2.id, n3.id)
+        _ = graph.add_edge(n1.id, n2.id)
+        _ = graph.add_edge(n2.id, n3.id)
         with pytest.raises(ValueError, match="cycle"):
-            graph.add_edge(n3.id, n1.id)
+            _ = graph.add_edge(n3.id, n1.id)
 
     def test_self_loop_detected(self, graph: MikadoGraph) -> None:
         n = graph.add_node("self")
         with pytest.raises(ValueError, match="cycle"):
-            graph.add_edge(n.id, n.id)
+            _ = graph.add_edge(n.id, n.id)
 
 
 class TestRemoveEdge:
     def test_removes_only_existing_edge(self, graph: MikadoGraph) -> None:
         parent = graph.add_node("parent")
         child = graph.add_node("child")
-        graph.add_edge(parent.id, child.id)
+        _ = graph.add_edge(parent.id, child.id)
 
         assert graph.remove_edge(parent.id, child.id) is True
         assert graph.remove_edge(parent.id, child.id) is False
@@ -266,9 +269,9 @@ class TestGetAllNodes:
         assert graph.get_all_nodes() == []
 
     def test_returns_all(self, graph: MikadoGraph) -> None:
-        graph.add_node("a")
-        graph.add_node("b")
-        graph.add_node("c")
+        _ = graph.add_node("a")
+        _ = graph.add_node("b")
+        _ = graph.add_node("c")
         assert len(graph.get_all_nodes()) == 3
 
 
@@ -299,7 +302,7 @@ class TestGetRoot:
 
     def test_root_with_children(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
-        graph.add_node("child", parent_id=root.id)
+        _ = graph.add_node("child", parent_id=root.id)
         found = graph.get_root()
         assert found is not None
         assert found.id == root.id
@@ -378,12 +381,12 @@ class TestGetReadyNodes:
         g = MikadoGraph(tmp_path / "qcount.db")
         root = g.add_node("root")
         for i in range(20):
-            g.add_node(f"child {i}", parent_id=root.id)
+            _ = g.add_node(f"child {i}", parent_id=root.id)
 
         queries: list[str] = []
-        g._conn.set_trace_callback(queries.append)
+        graph_conn(g).set_trace_callback(queries.append)
         result = g.get_ready_nodes()
-        g._conn.set_trace_callback(None)
+        graph_conn(g).set_trace_callback(None)
         g.close()
 
         queries = [q for q in queries if q != "SELECT 1"]  # self-heal probes (#297)
@@ -395,7 +398,7 @@ class TestGetReadyNodes:
     def test_get_ready_nodes_default_is_bounded(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         for i in range(101):
-            graph.add_node(f"child {i}", parent_id=root.id)
+            _ = graph.add_node(f"child {i}", parent_id=root.id)
         ready = graph.get_ready_nodes()
         assert [node.description for node in ready] == [f"child {i}" for i in range(100)]
 
@@ -514,8 +517,8 @@ class TestStatusTransitions:
             # graph_a, unaware of graph_b's write, applies a CAS UPDATE still
             # gated on the stale belief that status is RUNNING.
             with pytest.raises(InvalidTransition) as exc_info:
-                _transitions._apply_transition(
-                    graph_a._conn,
+                _transitions._apply_transition(  # pyright: ignore[reportPrivateUsage]
+                    graph_conn(graph_a),
                     node.id,
                     NodeStatus.FAILED,
                     "UPDATE nodes SET status = ?, completed_at = NULL WHERE id = ? AND status = ?",
@@ -578,9 +581,9 @@ class TestParallelSafety:
         graph.set_file_ownership(n2.id, ["shared.py"])
         graph.set_file_ownership(n3.id, ["shared.py"])
         queries: list[str] = []
-        graph._conn.set_trace_callback(queries.append)
+        graph_conn(graph).set_trace_callback(queries.append)
         conflicts = graph.check_parallel_safety([n1.id, n2.id, n3.id])
-        graph._conn.set_trace_callback(None)
+        graph_conn(graph).set_trace_callback(None)
         queries = [q for q in queries if q != "SELECT 1"]  # self-heal probes (#297)
         assert conflicts == [
             (n1.id, n2.id, ["shared.py"]),
@@ -596,7 +599,7 @@ class TestClose:
         """#297: a closed connection reopens on next access (loud warning logged
         with the close stack), and previously-committed data survives."""
         g = MikadoGraph(tmp_path / "test.db")
-        g.add_node("before close")
+        _ = g.add_node("before close")
         g.close()
         healed = g.add_node("after close")
         assert [node.description for node in g.get_all_nodes()] == [
@@ -609,10 +612,11 @@ class TestClose:
     def test_inflight_statement_on_closed_handle_fails_loud(self, tmp_path: Path) -> None:
         """#297: no transparent retry — a statement on the dead handle raises."""
         g = MikadoGraph(tmp_path / "test.db")
-        raw = g._raw_conn
+        raw = g._raw_conn  # pyright: ignore[reportPrivateUsage]
+        assert raw is not None
         g.close()
         with pytest.raises(sqlite3.ProgrammingError, match="closed"):
-            raw.execute("SELECT 1")
+            _ = raw.execute("SELECT 1")
 
 
 class TestBatchMetadata:
@@ -689,7 +693,7 @@ class TestBatchPlans:
             spread_report=spread,
             solver_status="OPTIMAL",
         )
-        graph.record_batch_plan(plan)
+        _ = graph.record_batch_plan(plan)
         latest = graph.get_latest_batch_plan()
         assert latest is not None
         assert latest["batch_count"] == 2
@@ -713,7 +717,7 @@ class TestBatchPlans:
             spread_report=(),
             solver_status="FEASIBLE",
         )
-        graph.record_batch_plan(plan)
+        _ = graph.record_batch_plan(plan)
         latest = graph.get_latest_batch_plan()
         assert latest is not None
         assert latest["solver_status"] == "FEASIBLE"
@@ -728,7 +732,7 @@ class TestBatchPlans:
         assert graph.get_latest_batch_plan() is None
 
     def test_get_latest_returns_most_recent(self, graph: MikadoGraph) -> None:
-        graph.record_batch_plan(
+        _ = graph.record_batch_plan(
             BatchPlan(batches=(), spread_report=(), solver_status="OPTIMAL"),
         )
         second = graph.record_batch_plan(
@@ -744,7 +748,7 @@ class TestObsoleteSchema:
     def test_existing_obsolete_db_fails_clearly(self, tmp_path: Path) -> None:
         db_path = tmp_path / "legacy.db"
         conn = sqlite3.connect(str(db_path))
-        conn.executescript("""
+        _ = conn.executescript("""
             CREATE TABLE nodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 description TEXT NOT NULL,
@@ -766,7 +770,7 @@ class TestObsoleteSchema:
                 PRIMARY KEY (node_id, file_path)
             );
         """)
-        conn.execute(
+        _ = conn.execute(
             "INSERT INTO nodes (description, status, created_at) VALUES (?, ?, ?)",
             ("legacy node", "pending", "2026-01-01T00:00:00+00:00"),
         )
@@ -777,12 +781,14 @@ class TestObsoleteSchema:
             RuntimeError,
             match=r"obsolete milknado database schema.*missing nodes columns",
         ):
-            MikadoGraph(db_path)
+            _ = MikadoGraph(db_path)
 
 
 class TestDeleteSubtreePostOrder:
     def test_collect_post_order_children_before_parent(self) -> None:
-        from milknado.domains.graph._mutations import _collect_subtree_post_order
+        from milknado.domains.graph._mutations import (
+            _collect_subtree_post_order,  # pyright: ignore[reportPrivateUsage]
+        )
 
         children_map = {1: [2, 4], 2: [3]}
         result = _collect_subtree_post_order(children_map, 1)
@@ -792,7 +798,9 @@ class TestDeleteSubtreePostOrder:
         assert set(result) == {1, 2, 3, 4}
 
     def test_collect_post_order_diamond_visits_each_once(self) -> None:
-        from milknado.domains.graph._mutations import _collect_subtree_post_order
+        from milknado.domains.graph._mutations import (
+            _collect_subtree_post_order,  # pyright: ignore[reportPrivateUsage]
+        )
 
         children_map = {1: [2, 3], 2: [4], 3: [4]}
         result = _collect_subtree_post_order(children_map, 1)
@@ -803,7 +811,9 @@ class TestDeleteSubtreePostOrder:
         assert result.index(3) < result.index(1)
 
     def test_collect_post_order_handles_deep_chains(self) -> None:
-        from milknado.domains.graph._mutations import _collect_subtree_post_order
+        from milknado.domains.graph._mutations import (
+            _collect_subtree_post_order,  # pyright: ignore[reportPrivateUsage]
+        )
 
         children_map = {node: [node + 1] for node in range(1, 1_500)}
         result = _collect_subtree_post_order(children_map, 1)
@@ -813,7 +823,7 @@ class TestDeleteSubtreePostOrder:
     def test_delete_subtree_removes_all_nodes_atomically(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
-        graph.add_node("grandchild", parent_id=child.id)
+        _ = graph.add_node("grandchild", parent_id=child.id)
         count = graph.delete_node(root.id, cascade=True)
         assert count == 3
         assert graph.get_all_nodes() == []
@@ -821,24 +831,26 @@ class TestDeleteSubtreePostOrder:
     def test_delete_subtree_leaves_no_stale_edges(self, graph: MikadoGraph) -> None:
         root = graph.add_node("root")
         child = graph.add_node("child", parent_id=root.id)
-        graph.add_node("grandchild", parent_id=child.id)
-        graph.delete_node(root.id, cascade=True)
-        rows = graph._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        _ = graph.add_node("grandchild", parent_id=child.id)
+        _ = graph.delete_node(root.id, cascade=True)
+        rows = cast(int, graph_conn(graph).execute("SELECT COUNT(*) FROM edges").fetchone()[0])
         assert rows == 0
 
     def test_delete_subtree_rolls_back_on_error(self, graph: MikadoGraph) -> None:
         """If a cascade delete fails mid-way, the whole subtree survives."""
         from unittest.mock import patch
 
-        from milknado.domains.graph._mutations import _delete_one as real_delete_one
+        from milknado.domains.graph._mutations import (
+            _delete_one as real_delete_one,  # pyright: ignore[reportPrivateUsage]
+        )
 
         root = graph.add_node("root")
-        graph.add_node("child1", parent_id=root.id)
-        graph.add_node("child2", parent_id=root.id)
+        _ = graph.add_node("child1", parent_id=root.id)
+        _ = graph.add_node("child2", parent_id=root.id)
 
         call_count = {"n": 0}
 
-        def fail_on_second(conn, nid: int) -> None:
+        def fail_on_second(conn: sqlite3.Connection, nid: int) -> None:
             call_count["n"] += 1
             if call_count["n"] == 2:
                 raise RuntimeError("injected failure")
@@ -846,7 +858,7 @@ class TestDeleteSubtreePostOrder:
 
         with patch("milknado.domains.graph._mutations._delete_one", side_effect=fail_on_second):
             with pytest.raises(RuntimeError, match="injected failure"):
-                graph.delete_node(root.id, cascade=True)
+                _ = graph.delete_node(root.id, cascade=True)
 
         assert len(graph.get_all_nodes()) == 3
 
@@ -858,7 +870,7 @@ class TestFlavorRegistry:
 
     def test_add_node_rejects_flavor_outside_default_registry(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="unknown flavor"):
-            graph.add_node("t", spec=NodeSpec(flavor="brainstorm"))
+            _ = graph.add_node("t", spec=NodeSpec(flavor="brainstorm"))
 
     def test_add_node_accepts_custom_flavor_via_registry_param(self, graph: MikadoGraph) -> None:
         node = graph.add_node(
@@ -871,13 +883,13 @@ class TestFlavorRegistry:
 
     def test_add_node_rejects_flavor_not_in_custom_registry(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="unknown flavor"):
-            graph.add_node(
+            _ = graph.add_node(
                 "t", spec=NodeSpec(flavor="spike", flavor_registry=frozenset({"implement"}))
             )
 
     def test_unknown_flavor_error_names_flavor_and_valid_set(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match=r"'brainstorm'.*'implement'"):
-            graph.add_node(
+            _ = graph.add_node(
                 "t", spec=NodeSpec(flavor="brainstorm", flavor_registry=frozenset({"implement"}))
             )
 
@@ -907,14 +919,17 @@ class TestPrereqEdges:
         goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
         p1 = graph.add_node("prereq-1", parent_id=goal.id)
         p2 = graph.add_node("prereq-2", parent_id=goal.id)
-        node = graph.add_node("t", parent_id=goal.id, spec=NodeSpec(prereqs=[p1.id, p2.id]))
-        prerequisites = {
-            row[0]
-            for row in graph._conn.execute(
+        node = graph.add_node("t", parent_id=goal.id, spec=NodeSpec(prereqs=(p1.id, p2.id)))
+        rows = cast(
+            list[tuple[int]],
+            graph_conn(graph)
+            .execute(
                 "SELECT child_id FROM edges WHERE parent_id = ? AND child_id != ?",
                 (node.id, goal.id),
-            ).fetchall()
-        }
+            )
+            .fetchall(),
+        )
+        prerequisites = {row[0] for row in rows}
         assert prerequisites == {p1.id, p2.id}
 
     def test_add_node_prereq_duplicating_containment_edge_raises(self, graph: MikadoGraph) -> None:
@@ -922,22 +937,24 @@ class TestPrereqEdges:
         root = graph.add_node("root")
         before = len(graph.get_all_nodes())
         with pytest.raises(ValueError, match="duplicates parent_id"):
-            graph.add_node("t", parent_id=root.id, spec=NodeSpec(prereqs=[root.id]))
+            _ = graph.add_node("t", parent_id=root.id, spec=NodeSpec(prereqs=(root.id,)))
         assert len(graph.get_all_nodes()) == before
 
     def test_duplicate_prereq_ids_leave_no_node_or_edges(self, graph: MikadoGraph) -> None:
         prerequisite = graph.add_node("prerequisite")
         before_nodes = graph.get_all_nodes()
-        before_edges = graph._conn.execute(
-            "SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id"
-        ).fetchall()
+        before_edges = (
+            graph_conn(graph)
+            .execute("SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id")
+            .fetchall()
+        )
         with pytest.raises(ValueError, match="duplicate node ids"):
-            graph.add_node("t", spec=NodeSpec(prereqs=[prerequisite.id, prerequisite.id]))
+            _ = graph.add_node("t", spec=NodeSpec(prereqs=(prerequisite.id, prerequisite.id)))
         assert graph.get_all_nodes() == before_nodes
         assert (
-            graph._conn.execute(
-                "SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id"
-            ).fetchall()
+            graph_conn(graph)
+            .execute("SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id")
+            .fetchall()
             == before_edges
         )
 
@@ -947,28 +964,30 @@ class TestPrereqEdges:
         roadmap = graph.add_node("roadmap", spec=NodeSpec(kind=NodeKind.ROADMAP))
         goal = graph.add_node("goal", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL))
         before_nodes = graph.get_all_nodes()
-        before_edges = graph._conn.execute(
-            "SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id"
-        ).fetchall()
+        before_edges = (
+            graph_conn(graph)
+            .execute("SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id")
+            .fetchall()
+        )
 
         with pytest.raises(ValueError) as error:
-            graph.add_node(
+            _ = graph.add_node(
                 "task",
                 parent_id=goal.id,
-                spec=NodeSpec(prereqs=[roadmap.id]),
+                spec=NodeSpec(prereqs=(roadmap.id,)),
             )
 
         assert str(error.value) == f"Edge {goal.id + 1}->{roadmap.id} would create a cycle"
         assert graph.get_all_nodes() == before_nodes
         assert (
-            graph._conn.execute(
-                "SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id"
-            ).fetchall()
+            graph_conn(graph)
+            .execute("SELECT parent_id, child_id FROM edges ORDER BY parent_id, child_id")
+            .fetchall()
             == before_edges
         )
 
     def test_add_node_prereq_missing_node_raises(self, graph: MikadoGraph) -> None:
         before = len(graph.get_all_nodes())
         with pytest.raises(ValueError):
-            graph.add_node("t", spec=NodeSpec(prereqs=[999]))
+            _ = graph.add_node("t", spec=NodeSpec(prereqs=(999,)))
         assert len(graph.get_all_nodes()) == before

@@ -53,10 +53,14 @@ def test_bulk_preflight_leaves_every_node_unchanged(graph: MikadoGraph) -> None:
     graph.mark_done(done.id)
 
     with pytest.raises(InvalidTransition):
-        graph.set_subtree_status(root.id, NodeStatus.PENDING)
+        _ = graph.set_subtree_status(root.id, NodeStatus.PENDING)
 
-    assert graph.get_node(root.id).status is NodeStatus.PENDING
-    assert graph.get_node(done.id).status is NodeStatus.DONE
+    root_node = graph.get_node(root.id)
+    done_node = graph.get_node(done.id)
+    assert root_node is not None
+    assert done_node is not None
+    assert root_node.status is NodeStatus.PENDING
+    assert done_node.status is NodeStatus.DONE
 
 
 def test_post_order_deduplicates_cycles_and_deep_graph(graph: MikadoGraph) -> None:
@@ -78,8 +82,12 @@ def test_reconcile_completed_goals_recurses_upward(graph: MikadoGraph) -> None:
     graph.mark_done(task.id)
 
     assert graph.reconcile_completed_goals() == 2
-    assert graph.get_node(inner.id).status is NodeStatus.DONE
-    assert graph.get_node(outer.id).status is NodeStatus.DONE
+    inner_node = graph.get_node(inner.id)
+    outer_node = graph.get_node(outer.id)
+    assert inner_node is not None
+    assert outer_node is not None
+    assert inner_node.status is NodeStatus.DONE
+    assert outer_node.status is NodeStatus.DONE
 
 
 def test_run_startup_reconciles_completed_goal_through_cli(
@@ -103,4 +111,6 @@ def test_run_startup_reconciles_completed_goal_through_cli(
     ):
         run(project_root=tmp_path)
 
-    assert graph.get_node(goal.id).status is NodeStatus.DONE
+    goal_node = graph.get_node(goal.id)
+    assert goal_node is not None
+    assert goal_node.status is NodeStatus.DONE

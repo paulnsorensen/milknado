@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 
+import pytest
+
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import MikadoGraph
@@ -64,8 +66,8 @@ class TestClaimNode:
 
     def test_refuses_a_done_node(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
-        graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)
         assert graph.claim_node(node_id, "run-B", now=now_iso()) is False
 
     def test_reclaim_after_failed_retry_does_not_release_fresh_claim(
@@ -77,9 +79,9 @@ class TestClaimNode:
         read the dead stale pid and release the brand-new legitimate claim, letting
         a second worker in. This guards the exactly-one-worker guarantee on retry."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", _DEAD_PID)  # run-A records its pid, then dies
-        graph.mark_terminal(node_id, "run-A", NodeStatus.FAILED)  # leaves pid stale
+        _ = graph.mark_terminal(node_id, "run-A", NodeStatus.FAILED)  # leaves pid stale
 
         assert graph.claim_node(node_id, "run-B", now=now_iso()) is True
         node_b = graph.get_node(node_id)
@@ -88,7 +90,7 @@ class TestClaimNode:
 
         # The window before run-B's set_pid: a concurrent dispatch tries to reclaim.
         # pid is NULL (pid-unknown), so the fresh claim must be left intact.
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.RUNNING, "fresh claim not released by stale-pid reclaim"
@@ -98,7 +100,7 @@ class TestClaimNode:
 class TestSetPid:
     def test_records_pid_on_the_fence_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", 4321)
         node = graph.get_node(node_id)
         assert node is not None
@@ -106,7 +108,7 @@ class TestSetPid:
 
     def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-stale", 4321)  # CAS on the fence: wrong owner
         node = graph.get_node(node_id)
         assert node is not None
@@ -116,9 +118,9 @@ class TestSetPid:
 class TestTryReclaim:
     def test_releases_a_dead_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", _DEAD_PID)
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.PENDING, "a dead pid frees the node immediately"
@@ -127,54 +129,58 @@ class TestTryReclaim:
 
     def test_leaves_a_live_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", os.getpid())  # this very process: alive
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.RUNNING
 
     def test_leaves_a_pid_unknown_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())  # no set_pid -> pid is None
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())  # no set_pid -> pid is None
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.RUNNING
 
-    def test_leaves_an_other_user_owner(self, graph: MikadoGraph, monkeypatch) -> None:
+    def test_leaves_an_other_user_owner(
+        self, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A runner owned by another user is alive: os.kill(pid, 0) raises
         PermissionError (process exists, signalling refused). The daemon spawns
         detached runners, so a cross-uid live owner is real — it must NOT be
         reclaimed, or two workers run the node at once (the race the claim prevents)."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", 31337)
 
         def _refuse(_pid: int, _sig: int) -> None:
             raise PermissionError
 
         monkeypatch.setattr("milknado.domains.common.process.os.kill", _refuse)
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.RUNNING, (
             "a live cross-uid owner is protected from reclaim"
         )
 
-    def test_releases_on_unexpected_oserror(self, graph: MikadoGraph, monkeypatch) -> None:
+    def test_releases_on_unexpected_oserror(
+        self, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """An unexpected OSError from os.kill (errno other than ESRCH/EPERM) is
         treated as 'process gone', per the documented contract, so the node is
         released and re-dispatchable rather than wedged RUNNING forever."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", 31337)
 
         def _other_oserror(_pid: int, _sig: int) -> None:
             raise OSError(22, "EINVAL")
 
         monkeypatch.setattr("milknado.domains.common.process.os.kill", _other_oserror)
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.PENDING, (
@@ -183,7 +189,7 @@ class TestTryReclaim:
 
     def test_ignores_a_non_running_node(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.try_reclaim(node_id, now=now_iso())  # still pending
+        _ = graph.try_reclaim(node_id, now=now_iso())  # still pending
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.PENDING
@@ -194,10 +200,10 @@ class TestTryReclaim:
         that dead pid, judge the owner dead, and walk the completed node back to
         PENDING — re-running work that already finished. The guard refuses it."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-A", _DEAD_PID)
-        graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)  # completes; keeps run_id + pid
-        graph.try_reclaim(node_id, now=now_iso())
+        _ = graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)  # completes; keeps run_id + pid
+        _ = graph.try_reclaim(node_id, now=now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.status == NodeStatus.DONE, (
@@ -208,7 +214,7 @@ class TestTryReclaim:
 class TestRelease:
     def test_releases_a_running_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_worktree(node_id, "run-A", "/tmp/wt", "milknado/1-x")
         assert graph.release(node_id, "run-A") is True
         node = graph.get_node(node_id)
@@ -219,7 +225,7 @@ class TestRelease:
 
     def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         assert graph.release(node_id, "run-stale") is False
         node = graph.get_node(node_id)
         assert node is not None
@@ -229,8 +235,8 @@ class TestRelease:
         """DONE keeps its run_id, so a same-run_id release would match the fence —
         the status='running' guard is what stops it walking DONE back to PENDING."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
-        graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.mark_terminal(node_id, "run-A", NodeStatus.DONE)
         assert graph.release(node_id, "run-A") is False
         node = graph.get_node(node_id)
         assert node is not None
@@ -240,7 +246,7 @@ class TestRelease:
 class TestMarkTerminal:
     def test_marks_done_for_the_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         assert graph.mark_terminal(node_id, "run-A", NodeStatus.DONE) is True
         node = graph.get_node(node_id)
         assert node is not None
@@ -249,7 +255,7 @@ class TestMarkTerminal:
 
     def test_marks_failed_and_clears_metadata(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_worktree(node_id, "run-A", "/tmp/wt", "milknado/1-x")
         assert graph.mark_terminal(node_id, "run-A", NodeStatus.FAILED) is True
         node = graph.get_node(node_id)
@@ -263,10 +269,10 @@ class TestMarkTerminal:
         """The core fence: once the node is reclaimed under a new run_id, the old
         owner's terminal write hits zero rows and is rejected."""
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
-        graph.set_pid(node_id, "run-A", _DEAD_PID)
-        graph.try_reclaim(node_id, now=now_iso())  # dead owner released
-        graph.claim_node(node_id, "run-B", now=now_iso())  # fresh owner
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.set_pid(node_id, "run-A", _DEAD_PID)
+        _ = graph.try_reclaim(node_id, now=now_iso())  # dead owner released
+        _ = graph.claim_node(node_id, "run-B", now=now_iso())  # fresh owner
 
         assert graph.mark_terminal(node_id, "run-A", NodeStatus.DONE) is False
         node_running = graph.get_node(node_id)
@@ -281,7 +287,7 @@ class TestMarkTerminal:
 class TestSetWorktree:
     def test_attaches_worktree_to_the_owner(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_worktree(node_id, "run-A", "/tmp/wt", "milknado/1-x")
         node = graph.get_node(node_id)
         assert node is not None
@@ -291,7 +297,7 @@ class TestSetWorktree:
 
     def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
         node_id = _add_pending(graph)
-        graph.claim_node(node_id, "run-A", now=now_iso())
+        _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_worktree(node_id, "run-stale", "/tmp/wt", "milknado/1-x")
         node = graph.get_node(node_id)
         assert node is not None

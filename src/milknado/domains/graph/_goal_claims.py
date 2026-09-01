@@ -7,7 +7,7 @@ ceiling; see _analytics_facade.py for the sibling split-off-for-size precedent.
 from __future__ import annotations
 
 import sqlite3
-from typing import TypedDict, cast
+from typing import Protocol, TypedDict, cast
 
 from milknado.domains.common import NodeKind, pid_alive
 from milknado.domains.graph._sqlite_rows import fetchone
@@ -18,6 +18,19 @@ GoalClaim = TypedDict(  # noqa: UP013
 )
 
 
+class _ClaimCursor(Protocol):
+    @property
+    def rowcount(self) -> int: ...
+
+
+class _ClaimConn(Protocol):
+    """The minimal connection surface the claim writers actually use."""
+
+    def execute(self, sql: str, params: tuple[object, ...] = (), /) -> _ClaimCursor: ...
+    def commit(self) -> None: ...
+    def rollback(self) -> None: ...
+
+
 def _field(row: object, name: str) -> object:
     if isinstance(row, sqlite3.Row):
         return cast(object, row[name])
@@ -25,7 +38,7 @@ def _field(row: object, name: str) -> object:
 
 
 def claim_goal_row(
-    conn: sqlite3.Connection, goal_id: int, run_id: str, now: str, *, pid: int | None
+    conn: _ClaimConn, goal_id: int, run_id: str, now: str, *, pid: int | None
 ) -> bool:
     """Acquire a goal claim with a non-null PID in one conditional write.
 
@@ -46,7 +59,11 @@ def claim_goal_row(
         if inserted == 1:
             conn.commit()
             return True
-        claim = fetchone(conn, "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,))
+        claim = fetchone(
+            cast(sqlite3.Connection, conn),
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?",
+            (goal_id,),
+        )
         if claim is None:
             conn.rollback()
             return False
@@ -154,14 +171,16 @@ def release_goal_claim_on_terminal(conn: sqlite3.Connection, node_id: int) -> No
 
 
 def claim_or_reclaim_goal(
-    conn: sqlite3.Connection, goal_id: int, owner: str, pid: int | None, *, now: str
+    conn: _ClaimConn, goal_id: int, owner: str, pid: int | None, *, now: str
 ) -> bool:
     """Acquire a goal claim, replacing only a specifically observed dead owner."""
     if pid is None:
         return False
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        row = fetchone(conn, "SELECT kind FROM nodes WHERE id = ?", (goal_id,))
+        row = fetchone(
+            cast(sqlite3.Connection, conn), "SELECT kind FROM nodes WHERE id = ?", (goal_id,)
+        )
         if row is None:
             raise ValueError(f"node {goal_id} not found")
         kind = cast(str, _field(row, "kind"))
@@ -175,7 +194,11 @@ def claim_or_reclaim_goal(
         if inserted == 1:
             conn.commit()
             return True
-        claim = fetchone(conn, "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,))
+        claim = fetchone(
+            cast(sqlite3.Connection, conn),
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?",
+            (goal_id,),
+        )
         if claim is None:
             conn.rollback()
             return False

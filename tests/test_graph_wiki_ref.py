@@ -8,31 +8,43 @@ importer/exporter need: writing a wiki_ref on create and finding a node by it.
 
 from __future__ import annotations
 
+# These tests intentionally inspect private graph persistence state.
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.graph import MikadoGraph
+from tests.graph_helpers import graph_conn
 
 
 class TestWikiRefColumn:
     def test_fresh_db_has_wiki_ref_column_and_index(self, graph: MikadoGraph) -> None:
-        conn = graph._conn
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+        conn = graph_conn(graph)
+        cols = {
+            row[1]
+            for row in cast(
+                list[tuple[object, ...]], conn.execute("PRAGMA table_info(nodes)").fetchall()
+            )
+        }
         assert "wiki_ref" in cols
-        idx = {row[1] for row in conn.execute("PRAGMA index_list(nodes)").fetchall()}
+        idx = {
+            row[1]
+            for row in cast(
+                list[tuple[object, ...]], conn.execute("PRAGMA index_list(nodes)").fetchall()
+            )
+        }
         assert "idx_nodes_wiki_ref" in idx
 
     def test_obsolete_schema_without_wiki_ref_is_rejected(self, tmp_path: Path) -> None:
         db_path = tmp_path / "sparse.db"
         c = sqlite3.connect(str(db_path))
-        c.execute(
-            "CREATE TABLE nodes ("
-            "id INTEGER PRIMARY KEY, description TEXT NOT NULL, status TEXT NOT NULL, "
-            "parent_id INTEGER, worktree_path TEXT, branch_name TEXT, "
-            "created_at TEXT NOT NULL, completed_at TEXT)"
+        _ = c.execute(
+            """CREATE TABLE nodes (id INTEGER PRIMARY KEY, description TEXT NOT NULL,
+            status TEXT NOT NULL, parent_id INTEGER, worktree_path TEXT, branch_name TEXT,
+            created_at TEXT NOT NULL, completed_at TEXT)"""
         )
         c.commit()
         c.close()
@@ -41,7 +53,7 @@ class TestWikiRefColumn:
             RuntimeError,
             match=r"obsolete milknado database schema.*wiki_ref",
         ):
-            MikadoGraph(db_path)
+            _ = MikadoGraph(db_path)
 
 
 class TestWikiRefGraphApi:
@@ -62,18 +74,18 @@ class TestWikiRefGraphApi:
         assert found.id == created.id
 
     def test_find_node_by_wiki_ref_missing_returns_none(self, graph: MikadoGraph) -> None:
-        graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="ref-present"))
+        _ = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="ref-present"))
         assert graph.find_node_by_wiki_ref("ref-absent") is None
 
     def test_unique_index_rejects_duplicate_wiki_ref(self, graph: MikadoGraph) -> None:
-        graph.add_node("first", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="dup"))
+        _ = graph.add_node("first", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="dup"))
         with pytest.raises(sqlite3.IntegrityError):
-            graph.add_node("second", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="dup"))
+            _ = graph.add_node("second", spec=NodeSpec(kind=NodeKind.GOAL, wiki_ref="dup"))
 
     def test_multiple_null_wiki_refs_allowed(self, graph: MikadoGraph) -> None:
         # Partial index must not treat NULL as a colliding value.
-        graph.add_node("a")
-        graph.add_node("b")
+        _ = graph.add_node("a")
+        _ = graph.add_node("b")
         assert len([n for n in graph.get_all_nodes() if n.wiki_ref is None]) == 2
 
     def test_set_wiki_ref_attaches_key(self, graph: MikadoGraph) -> None:
