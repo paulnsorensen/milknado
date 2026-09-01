@@ -86,15 +86,14 @@ dead-code-coverage:
     uv run python scripts/check_dead_code_coverage.py
 
 # Type-check all Python (basedpyright recommended tier; fails on warnings too).
-# Not yet part of check-llm/build-ci — joins the gates when the burn-down
-# campaign reaches zero diagnostics.
 typecheck:
     uv run basedpyright
-# Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage (for CI validation)
-build-ci: lint file-size dead-code coverage-check dead-code-coverage
+
+# Full build no autofix: lint → file-size → dead-code → typecheck → coverage check → dead-code-coverage (for CI validation)
+build-ci: lint file-size dead-code typecheck coverage-check dead-code-coverage
     @echo "✅ CI build passed"
 
-# Agent gate: lint + format + dead code + tests + project coverage + diff coverage.
+# Agent gate: lint + format + dead code + typecheck + tests + project coverage + diff coverage.
 # Quiet on success (one line), full output only on the failing step. Non-mutating.
 # diff-coverage mirrors codecov/patch: it fails if the lines THIS branch changes
 # (vs origin/main, including staged/uncommitted edits) aren't covered to threshold.
@@ -113,6 +112,7 @@ check-llm:
         ("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"]),
         ("import-contracts", ["uv", "run", "lint-imports"]),
         ("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"]),
+        ("typecheck", ["just", "typecheck"]),
         ("lint+format", ["just", "lint"]),
         (
             "tests+coverage",
@@ -147,8 +147,8 @@ check-llm:
             sys.exit(result.returncode)
 
     print(
-        f"✅ check:llm PASS — lint+format clean, no dead code, tests green, "
-        f"project+diff coverage ≥{threshold}%"
+        f"✅ check:llm PASS — lint+format clean, no dead code, typecheck clean, "
+        f"tests green, project+diff coverage ≥{threshold}%"
     )
 
 # Run the CLI for manual testing

@@ -1246,7 +1246,7 @@ class TestPlanChangeManifest:
             new_relationships=(),
         )
         with pytest.raises(Exception):  # frozen dataclass
-            manifest.changes = ()  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[invalid-assignment]
+            manifest.changes = ()  # pyright: ignore[reportAttributeAccessIssue]
 
     def test_v2_parse_with_descriptions(self) -> None:
         output = _wrap(

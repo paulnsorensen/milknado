@@ -176,7 +176,7 @@ class TestDiskError:
         def bad_open(self: Path, *args: object, **kwargs: object) -> object:
             if "calibration.jsonl" in str(self):
                 raise OSError("disk full")
-            return original_open(self, *args, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]  # ty: ignore[no-matching-overload]
+            return original_open(self, *args, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue, reportUnknownVariableType]
 
         monkeypatch.setattr(Path, "open", bad_open)
 
