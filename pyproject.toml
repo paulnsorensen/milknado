@@ -171,109 +171,6 @@ max-statements = 40
 "src/milknado/domains/graph/_persistence.py" = ["PLR0913"]
 "src/milknado/domains/graph/_pipeline.py" = ["BLE001", "PLR0913"]
 "src/milknado/domains/graph/_reads.py" = ["PLR0913"]
-"src/milknado/domains/graph/_status.py" = ["ARG001", "PLR0913"]
-"src/milknado/domains/graph/graph.py" = ["PLR0913", "SIM105"]
-"src/milknado/domains/planning/context.py" = ["BLE001", "PLR0913"]
-"src/milknado/domains/planning/planner.py" = ["BLE001", "PLR0913"]
-"src/milknado/domains/wiki/_locate.py" = ["PTH100", "PTH208", "SIM105"]
-"src/milknado/loop/_agent.py" = ["ANN401", "B009", "BLE001", "PLR0913", "PLR0915", "PTH105", "SIM102", "SIM105"]
-"src/milknado/loop/_run_types.py" = ["PTH201"]
-"src/milknado/loop/adapters/_generic.py" = ["ARG002"]
-"src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
-"src/milknado/mcp/_ralph_node_runner.py" = ["ANN001", "BLE001"]
-"src/milknado/mcp/run.py" = ["PLR0913"]
-"src/milknado/mcp/server.py" = ["PLR0913"]
-"src/milknado/mcp/todo_mutate.py" = ["ANN001", "PLR0913"]
-
-# Explicit baseline waivers for existing complexity findings; the PLR rules remain selected.
-"src/milknado/adapters/crg.py" = ["SIM110"]
-"src/milknado/adapters/git.py" = ["SIM102"]
-"src/milknado/domains/common/doctor.py" = ["BLE001"]
-"src/milknado/domains/graph/display.py" = ["ANN401"]
-"src/milknado/mcp/todo.py" = ["ANN001"]
-"src/milknado/adapters/gh.py" = ["PLR0913"]
-"src/milknado/adapters/process.py" = ["ANN001", "PLR0913"]
-"src/milknado/app/ralph.py" = ["ANN001", "PLR0913"]
-"src/milknado/domains/batching/_model.py" = ["PLR0913"]
-"src/milknado/domains/batching/_tarjan.py" = ["PLR0913"]
-"src/milknado/domains/batching/graph_build.py" = ["PLR0913"]
-"src/milknado/domains/dispatch/brief.py" = ["PLR0913"]
-"src/milknado/domains/dispatch/cancel.py" = ["ANN001", "PLR0913"]
-"src/milknado/domains/dispatch/tmux_run.py" = ["ANN001", "PLR0913"]
-"src/milknado/domains/execution/completion.py" = ["PLR0913"]
-"src/milknado/domains/execution/run_loop/display.py" = ["PLR0913"]
-"src/milknado/domains/execution/run_loop/_completion.py" = ["PLR0913", "PLR0915"]
-"src/milknado/domains/github/ports.py" = ["PLR0913"]
-"src/milknado/domains/graph/_creation.py" = ["PLR0913"]
-"src/milknado/domains/graph/_goal_claims.py" = ["ARG001", "PLR0913"]
-"src/milknado/domains/graph/_transitions.py" = ["PLR0913"]
-"src/milknado/domains/planning/batching_bridge.py" = ["PLR0913"]
-"src/milknado/domains/wiki/exporter.py" = ["PLR0913"]
-"src/milknado/domains/wiki/importer.py" = ["PLR0913"]
-"src/milknado/mcp/ralph.py" = ["PLR0913"]
-"src/milknado/mcp/rebalance.py" = ["PLR0913"]
-"src/milknado/loop/adapters/__init__.py" = ["F401"]
-"tests/loop/helpers.py" = ["PLR0913"]
-"tests/rebalance_helpers.py" = ["PLR0913"]
-"tests/test_adapters_tmux.py" = ["PLR0915"]
-"tests/test_adversarial_review_runtime.py" = ["PLR0913"]
-"tests/test_execution.py" = ["PLR0913"]
-"tests/test_executor_duration.py" = ["PLR0913"]
-"tests/test_executor_merge_back.py" = ["PLR0913", "PLR0915"]
-"tests/test_github_bind.py" = ["PLR0913"]
-"tests/test_github_exporter.py" = ["PLR0913"]
-"tests/test_mcp_deposit_review.py" = ["PLR0913"]
-"tests/test_mcp_ralph.py" = ["PLR0913"]
-"tests/test_mcp_run_enhancements.py" = ["PLR0913"]
-"tests/test_mcp_server.py" = ["PLR0913"]
-"tests/test_planning.py" = ["E402", "PLR0913"]
-"tests/test_run_loop.py" = ["PLR0913"]
-[tool.ruff.lint.per-file-ignores]
-# Tests exercise dynamic fixtures, subprocess doubles, and platform paths rather than
-# production annotation and portability policy.
-"tests/**" = ["ANN", "ARG", "BLE", "B008", "B017", "PTH", "SIM"]
-
-# These production exceptions are the measured baseline for issue #331. Each rule
-# remains selected globally; remove an entry when its owning module is simplified.
-"src/milknado/adapters/loop.py" = ["ANN401", "ARG002", "PLR0913"]
-"src/milknado/app/node.py" = ["ANN001", "B904", "PLR0913"]
-"src/milknado/app/plan.py" = ["PLR0913", "UP022"]
-"src/milknado/app/plan_batches.py" = ["BLE001", "PLR0913"]
-"src/milknado/app/project.py" = ["ANN201", "PTH117"]
-"src/milknado/app/rebalance.py" = ["B008", "BLE001"]
-"src/milknado/app/run.py" = ["B904", "BLE001", "PLR0913"]
-"src/milknado/app/run_panels.py" = ["ARG002"]
-"src/milknado/app/run_tui.py" = ["ANN001", "ARG002", "PLR0913"]
-"src/milknado/cli/__init__.py" = ["BLE001", "PLR0913", "PTH201"]
-"src/milknado/cli/agents.py" = ["PTH201"]
-"src/milknado/cli/config.py" = ["PTH201"]
-"src/milknado/cli/github_roadmap.py" = ["PTH201"]
-"src/milknado/cli/graph.py" = ["PTH201"]
-"src/milknado/cli/plan.py" = ["ANN202", "PLR0913", "PTH201"]
-"src/milknado/cli/roadmap.py" = ["PTH201"]
-"src/milknado/cli/run.py" = ["PLR0915", "PTH201"]
-"src/milknado/cli/tools.py" = ["PTH201"]
-"src/milknado/domains/batching/solver.py" = ["PLR0913"]
-"src/milknado/domains/common/config.py" = ["ANN401", "PTH123", "PTH201"]
-"src/milknado/domains/common/config_view.py" = ["ANN401", "PLR0913"]
-"src/milknado/domains/common/errors.py" = ["ANN401"]
-"src/milknado/domains/common/flavor_codec.py" = ["ANN401"]
-"src/milknado/domains/common/protocols.py" = ["ANN401", "PLR0913"]
-"src/milknado/domains/dispatch/async_run.py" = ["BLE001", "PLR0913", "PLR0915"]
-"src/milknado/domains/dispatch/isolate.py" = ["ANN001", "ANN202", "PLR0913"]
-"src/milknado/domains/dispatch/lifecycle.py" = ["ANN001", "BLE001", "PLR0913"]
-"src/milknado/domains/dispatch/ports.py" = ["PLR0913"]
-"src/milknado/domains/dispatch/reconcile.py" = ["ANN001"]
-"src/milknado/domains/dispatch/runner.py" = ["PLR0913", "SIM108"]
-"src/milknado/domains/execution/executor.py" = ["BLE001", "PLR0913", "SIM102", "SIM103"]
-"src/milknado/domains/execution/headless.py" = ["PLR0913"]
-"src/milknado/domains/execution/run_loop/__init__.py" = ["PLR0913", "PLR0915"]
-"src/milknado/domains/github/bind.py" = ["PLR0913", "PLR0915"]
-"src/milknado/domains/github/exporter.py" = ["PLR0913"]
-"src/milknado/domains/graph/_mutations.py" = ["PLR0913"]
-"src/milknado/domains/graph/_persistence.py" = ["PLR0913"]
-"src/milknado/domains/graph/_pipeline.py" = ["BLE001", "PLR0913"]
-"src/milknado/domains/graph/_reads.py" = ["PLR0913"]
 "src/milknado/domains/graph/_run_persistence.py" = ["PLR0913"]
 "src/milknado/domains/graph/_status.py" = ["ARG001", "PLR0913"]
 "src/milknado/domains/graph/graph.py" = ["PLR0913", "SIM105"]
@@ -284,7 +181,6 @@ max-statements = 40
 "src/milknado/loop/_run_types.py" = ["PTH201"]
 "src/milknado/loop/adapters/_generic.py" = ["ARG002"]
 "src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
-"src/milknado/loop/hooks.py" = ["ANN401", "BLE001"]
 "src/milknado/mcp/_ralph_node_runner.py" = ["ANN001", "BLE001"]
 "src/milknado/mcp/run.py" = ["PLR0913"]
 "src/milknado/mcp/server.py" = ["PLR0913"]
@@ -418,85 +314,6 @@ allow = [
     # Windows job-object helpers execute only on Windows.
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",
-]
-[dependency-groups]
-dev = [
-    "diff-cover>=9.0.0",
-    "pytest>=9.0.3",
-    "pytest-cov>=7.1.0",
-    "pytest-asyncio>=1.3.0",
-    "ruff>=0.15.13",
-    "import-linter>=2.13",
-    "ty>=0.0.38",
-    "watchfiles>=1.2.0",
-    "pytest-xdist>=3.8.0",
-    "vulture>=2.16",
-]
-[tool.vulture]
-# src/ only, deliberately: code reachable solely from tests is dead code in a
-# shipped package, not live code. Adding tests/ here would hide exactly that.
-paths = ["src", "vulture-whitelist-loop.py"]
-min_confidence = 60
-# Entry points a framework registers by decorator and never calls by name:
-# typer commands, fastmcp tools, and Textual's @on / @work handlers.
-ignore_decorators = ["@*.command", "@mcp.tool", "@on", "@work"]
-# Names a framework or C library owns, so milknado never reads them itself.
-ignore_names = [
-    # Textual App/Widget lifecycle, styling, and key-binding actions.
-    "compose",
-    "on_*",
-    "action_*",
-    "CSS",
-    "DEFAULT_CSS",
-    "BINDINGS",
-    "disabled",
-    "border_title",  # Textual Widget border caption, set and rendered by the framework
-    "sub_title",     # Textual App header subtitle, set and rendered by the framework
-    "row_factory",          # sqlite3.Connection knob
-    "max_time_in_seconds",  # ortools CpSolver parameter
-    "LimitFlags",           # Windows ctypes JOBOBJECT field
-    "__getattr__",          # PEP 562 module-level lazy-attribute hook, called by the interpreter
-]
-[tool.milknado.dead-code]
-allow = [
-    "milknado.adapters.crg:CrgAdapter.build_graph",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.find_executable",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.run",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.system",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.machine",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.environment",
-    "milknado.adapters.toolchain:SystemToolchainAdapter.home",
-    "milknado.domains.batching.weights:_configure_tiktoken_cache",
-    "milknado.domains.batching.weights:_get_encoder",
-    "milknado.domains.execution.executor:Executor.note_unconfirmed_stop",
-    "milknado.domains.graph._analytics_facade:_AnalyticsFacade._conn",
-    "milknado.domains.graph._edge_facade:_EdgeFacade._conn",
-    "milknado.domains.graph._pipeline:StatusMiddleware.meta",
-    "milknado.domains.graph._pipeline:StatusMiddleware.before_status_change",
-    "milknado.domains.graph._pipeline:StatusMiddleware.after_status_change",
-    # Confirmed dead reference cycle, grandfathered on adoption; triage in #365
-    # (delete confirmed-dead, test untested-live).
-    "milknado.domains.graph._status:complete_root",
-    "milknado.domains.graph.graph:MikadoGraph.complete_root",
-    "milknado.domains.planning.planner:Planner.replan_with_delta",
-    "milknado.loop._agent:_load_kernel32",
-    "milknado.loop._agent:_resume_windows_process",
-    "milknado.loop._events:EventEmitter.wants_agent_output_lines",
-    # Vendored ralph-loop engine hook surface (src/milknado/loop/ is vendored
-    # wholesale from ralphify; matches the classifier's _VENDORED_LOOP_FINDINGS
-    # philosophy: exact symbols, never a subtree glob). Formerly exempt via the
-    # "on_*" ignore_names glob removed when the classifier took ownership.
-    "milknado.loop.hooks:NoOpAgentHook.on_commands_completed",
-    "milknado.loop.hooks:NoOpAgentHook.on_tool_use",
-    "milknado.loop.hooks:NoOpAgentHook.on_turn_approaching_limit",
-    "milknado.loop.hooks:NoOpAgentHook.on_turn_capped",
-    "milknado.loop.hooks:NoOpAgentHook.on_completion_signal",
-    "milknado.loop.hooks:CombinedAgentHook.on_commands_completed",
-    "milknado.loop.hooks:CombinedAgentHook.on_turn_approaching_limit",
-    "milknado.loop.hooks:CombinedAgentHook.on_completion_signal",
-    "milknado.loop.engine:_build_tool_use_bridge._on_tool_use",
-    "milknado.loop.adapters._generic:GenericAdapter.matches",
-    "milknado.loop.adapters._generic:GenericAdapter.install_wind_down_hook",
 ]
 
 [tool.milknado.quality]

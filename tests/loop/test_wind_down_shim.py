@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import cast
+
 from _pytest.capture import CaptureFixture
 
 from milknado.loop import _wind_down_shim as shim

@@ -34,7 +34,7 @@ from milknado.domains.common.errors import (
 )
 from milknado.domains.common.flavor_codec import Gate
 from milknado.domains.common.paths import slugify
-from milknado.domains.common.protocols import GraphExecutionSnapshot, ReviewResult
+from milknado.domains.common.protocols import GraphExecutionSnapshot
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoNode,

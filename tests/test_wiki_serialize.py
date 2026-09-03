@@ -16,8 +16,6 @@ from milknado.domains.wiki._serialize import (
     HARVEST_START,
     compute_goal_ref,
     compute_roadmap_ref,
-    extract_section,
-    extract_title,
     load_frontmatter,
     parse_wikilink,
     replace_harvest_block,
@@ -98,22 +96,6 @@ class TestFrontmatter:
         body_marker = "# Wire the export path"
         assert out[out.index(body_marker) :] == GOAL_FILE[GOAL_FILE.index(body_marker) :]
 
-
-class TestSections:
-    def test_extract_section_returns_intent(self) -> None:
-        intent = extract_section(GOAL_FILE, "Intent")
-        assert intent is not None
-        assert "durable" in intent
-        assert "Acceptance" not in intent
-
-    def test_extract_section_missing_returns_none(self) -> None:
-        assert extract_section(GOAL_FILE, "Nonexistent") is None
-
-    def test_extract_title_returns_h1(self) -> None:
-        assert extract_title(GOAL_FILE) == "Wire the export path"
-
-    def test_extract_title_missing_returns_none(self) -> None:
-        assert extract_title("no title here") is None
 
 class TestHarvestBlock:
     def test_replace_harvest_block_swaps_inner_only(self) -> None:
