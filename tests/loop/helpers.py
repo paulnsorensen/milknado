@@ -13,16 +13,15 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import yaml
+
 from milknado.loop._events import (
     Event,
     EventData,
     EventType,
     QueueEmitter,
 )
-from milknado.loop._frontmatter import (
-    RALPH_MARKER,
-    serialize_frontmatter,
-)
+from milknado.loop._frontmatter import RALPH_MARKER
 from milknado.loop._run_types import (
     DEFAULT_COMPLETION_SIGNAL,
     Command,
@@ -31,7 +30,6 @@ from milknado.loop._run_types import (
     RunState,
 )
 from milknado.loop._runner import RunResult
-from milknado.loop.hooks import AgentHook
 
 # ── Patch targets ─────────────────────────────────────────────────────
 
@@ -63,8 +61,7 @@ def make_ralph(
 ) -> Path:
     """Create a ralph directory with a proper RALPH.md for CLI-level tests.
 
-    Returns the ralph directory path.  Uses :func:`serialize_frontmatter`
-    to build the file, so the YAML is always well-formed.
+    Returns the ralph directory path with valid YAML frontmatter.
     """
     ralph_dir = tmp_path / "my-ralph"
     ralph_dir.mkdir(exist_ok=True)
@@ -73,7 +70,7 @@ def make_ralph(
         frontmatter["commands"] = commands
     if args:
         frontmatter["args"] = args
-    content = serialize_frontmatter(frontmatter, prompt)
+    content = f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n{prompt}"
     _ = (ralph_dir / RALPH_MARKER).write_text(content)
     return ralph_dir
 
@@ -95,7 +92,6 @@ def make_config(
     completion_signal: str = DEFAULT_COMPLETION_SIGNAL,
     stop_on_completion_signal: bool = False,
     max_turns: int | None = None,
-    hooks: list[AgentHook] | None = None,
     completion_verifier: Callable[[], CompletionVerdict] | None = None,
     completion_probe: Callable[[], bool] | None = None,
 ) -> RunConfig:
@@ -127,7 +123,6 @@ def make_config(
         completion_signal=completion_signal,
         stop_on_completion_signal=stop_on_completion_signal,
         max_turns=max_turns,
-        hooks=hooks or [],
         completion_verifier=completion_verifier,
         completion_probe=completion_probe,
     )

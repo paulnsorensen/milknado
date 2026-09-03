@@ -9,19 +9,13 @@ from __future__ import annotations
 
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from milknado.loop.hooks import AgentHook
-
 
 DEFAULT_COMMAND_TIMEOUT: float = 60
 """Default timeout in seconds for commands defined in RALPH.md frontmatter."""
@@ -42,13 +36,11 @@ class RunStatus(Enum):
     """Lifecycle status of a run.
 
     Transitions follow a simple path: ``PENDING`` → ``RUNNING`` →
-    terminal (``COMPLETED``, ``STOPPED``, or ``FAILED``).  A running loop
-    may also be ``PAUSED`` and later resumed back to ``RUNNING``.
+    terminal (``COMPLETED``, ``STOPPED``, or ``FAILED``).
     """
 
     PENDING = "pending"
     RUNNING = "running"
-    PAUSED = "paused"
     STOPPED = "stopped"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -133,8 +125,6 @@ class RunConfig:
     max_turns: int | None = None
     # Soft wind-down fires at ``max_turns - max_turns_grace``.
     max_turns_grace: int = 2
-    # User-supplied lifecycle hooks from ``RALPH.md`` frontmatter.
-    hooks: list[AgentHook] = field(default_factory=list)
     # Tier-2 completion check consulted when exit-0 + promise would
     # complete the run; ``None`` accepts on the promise alone.
     completion_verifier: Callable[[], CompletionVerdict] | None = None
@@ -152,9 +142,8 @@ class RunConfig:
 class RunState:
     """Observable state for a run.
 
-    Control methods (:meth:`request_stop`, :meth:`request_pause`,
-    :meth:`request_resume`) use :class:`threading.Event` so the run loop
-    can react at iteration boundaries without busy-waiting.
+    Stop methods use :class:`threading.Event` so the run loop can react
+    without busy-waiting.
 
     **Counter invariant**: ``timed_out_count`` is a *subset* of ``failed``,
     not an independent category.  A timed-out iteration increments both
@@ -179,9 +168,6 @@ class RunState:
     promise_completed: bool = False
 
     _stop_event: threading.Event = field(
-        default_factory=threading.Event, init=False, repr=False, compare=False
-    )
-    _resume_event: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
     _force_stop_event: threading.Event = field(
@@ -260,7 +246,6 @@ class RunState:
             self._guidance_open = False
             self._force_stop_event.set()
             self._stop_event.set()
-            self._resume_event.set()
 
     @property
     def force_stop_event(self) -> threading.Event:
@@ -271,22 +256,10 @@ class RunState:
         """Total iterations run (``completed + failed``)."""
         return self.completed + self.failed
 
-    def __post_init__(self) -> None:
-        self._resume_event.set()
-
     def request_stop(self) -> None:
         with self._guidance_lock:
             self._guidance_open = False
             self._stop_event.set()
-            self._resume_event.set()
-
-    def request_pause(self) -> None:
-        self.status = RunStatus.PAUSED
-        self._resume_event.clear()
-
-    def request_resume(self) -> None:
-        self.status = RunStatus.RUNNING
-        self._resume_event.set()
 
     @property
     def stop_requested(self) -> bool:
@@ -295,14 +268,6 @@ class RunState:
     def wait_for_stop(self, timeout: float | None = None) -> bool:
         """Block until a stop is requested or timeout. Returns True if stopped."""
         return self._stop_event.wait(timeout=timeout)
-
-    @property
-    def paused(self) -> bool:
-        return not self._resume_event.is_set()
-
-    def wait_for_unpause(self, timeout: float | None = None) -> bool:
-        """Block until unpaused or timeout. Returns True if unpaused."""
-        return self._resume_event.wait(timeout=timeout)
 
     def mark_completed(self) -> None:
         self.completed += 1
@@ -316,20 +281,3 @@ class RunState:
         """Record a timed-out iteration (also counts as failed)."""
         self.timed_out_count += 1
         self.mark_failed()
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    """Immutable snapshot of a run's outcome — status plus iteration counts.
-
-    Built by :meth:`RunManager.get_result` from a :class:`RunState`.  The
-    ``timed_out_count`` is a subset of ``failed`` (see :class:`RunState`'s
-    counter invariant), and ``total == completed + failed``.
-    """
-
-    run_id: str
-    status: RunStatus
-    total: int
-    completed: int
-    failed: int
-    timed_out_count: int

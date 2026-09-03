@@ -18,12 +18,29 @@ milknado's toolchain is Astral end-to-end (`ruff`, `uv`, `ty>=0.0.38` as a dev d
 - **Decision:** Run the whole-symbol coverage check immediately after coverage generation in both `check-llm` and `build-ci`; keep the vulture step in both paths.
 - **Consequence:** A green local PR gate and CI evaluate the same dead-code contracts against the same generated report. Invalid, missing, unreadable, or structurally empty coverage XML fails with its path and parser or filesystem cause.
 
-### ADR-dead-code-coverage-gate-002: owner-qualified Textual exemptions plus an exact vendored-loop compatibility allowlist  [status: accepted]
+### ADR-dead-code-coverage-gate-002: owner-qualified exemptions and owned loop code  [status: accepted]
 
-- **Context:** Vulture's global `ignore_names` accepts every same-named symbol regardless of owner. Textual lifecycle methods and class attributes can be identified from an imported `textual.*` base, but `src/milknado/loop/` is vendored wholesale from ralphify (PR #137, `49ac978`) at upstream `ec494875d0309c273c03f5f52a2cc3fabc96fa16`. Milknado intentionally consumes only the six-name public boundary in `loop/__init__.py`.
-- **Decision:** Replace owner-identifiable Textual wildcards with AST ownership checks. Preserve the 33 reviewed vendored findings as exact `(path, name)` pairs in `_VENDORED_LOOP_FINDINGS`, and validate every pair still resolves. This is an explicit compatibility allowlist, not a structural exemption and not a whitelist-free design.
-- **Rationale:** The vendored event fields are written payload schema; frontmatter constants and serialization belong to upstream's schema; adapter flags form its protocol; manager methods retain upstream lifecycle surface. Trimming manager methods cascades into `FanoutEmitter`, `RunResult`, reaping, pause/resume state, and `RunStatus.PAUSED`. Diverging would create a local fork of code the project chose to vendor wholesale.
-- **Consequence:** Only the enumerated upstream surface is exempt, so new dead code under `loop/` still fails. Milknado-owned findings must be connected or deleted. Re-audit or remove the list if the engine is re-vendored or intentionally trimmed.
+- **Context:** Vulture's global `ignore_names` accepts every same-named symbol regardless of owner. Textual framework members still need owner-qualified checks. The loop package entered the repository from ralphify, but Milknado now owns its maintenance.
+- **Decision:** Remove unused loop APIs instead of preserving a compatibility surface. Keep one exact Vulture exception for `IterationEndedData.echo_stdout`, because `LoopAdapter` reads that field through a string key.[^5] Keep the two Windows whole-symbol coverage exceptions because the Windows job path calls them on that platform.[^6]
+- **Turn cap:** Preserve `RunConfig.max_turns`, hard-cap enforcement, turn counting, cap events, and Claude/Codex soft wind-down. No current Milknado production constructor supplies `max_turns`, but the user retained this cost-control capability explicitly.[^7]
+- **Removed surface:** Delete lifecycle hooks, pause and resume state, unused manager operations, frontmatter serialization, presentation-only events and fields, and unused adapter flags. Model soft wind-down by the structural `SoftWindDownAdapter` protocol instead of false capability fields and unsupported stubs.[^8]
+- **Consequence:** The loop has no broad compatibility allowlist. New dead loop code fails the gate. The exact false-positive set contains only `echo_stdout`.[^9]
+
+#### 2026-09-02 liveness audit outcome
+
+The audit found no Milknado-owned activation for lifecycle hooks or manager convenience operations. Those features were removed.
+
+The audit also found that `echo_stdout` is live. Review runs use it when structured result text is unavailable.[^5]
+
+The retained turn cap is an explicit product decision, not an inference from current callers. This decision supersedes the prior verbatim-compatibility policy.
+
+[^5]: `src/milknado/adapters/loop.py:341-383`; `src/milknado/loop/_events.py:111-118`
+[^6]: `src/milknado/loop/_agent.py:160-219`; `pyproject.toml:312-315`
+[^7]: `src/milknado/loop/_run_types.py:125`; `src/milknado/loop/engine.py:246-252`; `tests/loop/test_turn_cap.py`
+[^8]: `src/milknado/loop/adapters/_protocol.py:135-151`; `src/milknado/loop/manager.py`
+[^9]: `scripts/check_dead_code.py:103-108`
+
+_Source: user decision and PR #405 loop liveness cleanup · Updated: 2026-09-02 · Supersedes: the 33-item vendored-loop compatibility allowlist · 2026-09-02_
 
 ### ADR-dead-code-coverage-gate-003: production-only barrel liveness follows public contracts  [status: accepted]
 

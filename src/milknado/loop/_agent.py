@@ -44,6 +44,7 @@ from milknado.loop._output import (
 )
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
+from milknado.loop.adapters._protocol import SoftWindDownAdapter
 
 _log = logging.getLogger(__name__)
 if IS_WINDOWS:  # pragma: no cover
@@ -535,10 +536,9 @@ class AgentResult(ProcessResult):
 class _WindDownContext:
     """Per-iteration tempdir and counter state for soft wind-down hooks.
 
-    Built by :func:`_setup_wind_down` for adapters whose
-    ``supports_soft_wind_down`` is True and a ``max_turns`` cap is
-    configured.  Carries the env-var overrides the spawned agent needs,
-    plus the cleanup hook called from the streaming path's ``finally``.
+    Built by :func:`_setup_wind_down` for adapters that implement
+    :class:`SoftWindDownAdapter` when a ``max_turns`` cap is configured.
+    Carries the agent environment and the streaming cleanup hook.
     """
 
     tempdir: Path
@@ -1263,9 +1263,8 @@ def _setup_wind_down(
 
     - *max_turns* is unset (no cap = nothing to wind down toward).
     - *max_turns_grace* is ``0`` (user opted out of the warning window).
-    - The adapter's ``supports_soft_wind_down`` flag is ``False``.
-    - The adapter's ``install_wind_down_hook`` raises
-      ``NotImplementedError`` (e.g. Copilot has no hook system today).
+    - The adapter does not implement :class:`SoftWindDownAdapter`.
+    - The adapter's hook installation raises ``NotImplementedError``.
 
     The tempdir is created with a ``milknado-loop-`` prefix so stale dirs are
     easy to spot in ``$TMPDIR`` after a crash.  The counter file lives in
@@ -1275,7 +1274,7 @@ def _setup_wind_down(
     """
     if max_turns is None or max_turns_grace <= 0:
         return None
-    if not adapter.supports_soft_wind_down:
+    if not isinstance(adapter, SoftWindDownAdapter):
         return None
     # Clamp the grace below the cap.  A grace >= max_turns is reachable via
     # the library API (RunConfig does not validate it the way the CLI does);

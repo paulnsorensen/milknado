@@ -82,32 +82,8 @@ def warn(message: str) -> None:
     print(f"milknado.loop: warning: {message}", file=sys.stderr)
 
 
-_COUNT_THOUSANDS = 1_000
-_COUNT_MILLIONS = 1_000_000
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
-
-
-def format_count(n: int) -> str:
-    """Format *n* as a compact human-readable count string.
-
-    Returns ``"500"`` for sub-thousand, ``"1.5k"`` for sub-million,
-    and ``"1.5M"`` for larger values.  Used in console rendering for
-    token counts and similar metrics.
-
-    Handles the boundary where rounding ``k`` crosses into ``M`` —
-    e.g. 999_950 → ``"1.0M"`` instead of ``"1000.0k"`` (same guard
-    as :func:`format_duration`'s 59.95 → ``"1m 0s"``).
-    """
-    if n >= _COUNT_MILLIONS:
-        return f"{n / _COUNT_MILLIONS:.1f}M"
-    if n >= _COUNT_THOUSANDS:
-        # Use rounded value to avoid "1000.0k" when rounding crosses
-        # into the next unit (same guard as format_duration's 59.95→1m).
-        if round(n / _COUNT_THOUSANDS, 1) >= _COUNT_THOUSANDS:
-            return f"{n / _COUNT_MILLIONS:.1f}M"
-        return f"{n / _COUNT_THOUSANDS:.1f}k"
-    return str(n)
 
 
 def format_duration(seconds: float) -> str:

@@ -12,7 +12,6 @@ from milknado.loop._run_types import (
     Command,
     CompletionVerdict,
     RunConfig,
-    RunResult,
     RunState,
     RunStatus,
     generate_run_id,
@@ -116,36 +115,6 @@ class TestCompletionVerdict:
         assert config.completion_verifier is None
 
 
-class TestRunResult:
-    def test_holds_status_and_counts(self):
-        result = RunResult(
-            run_id="r1",
-            status=RunStatus.COMPLETED,
-            total=3,
-            completed=2,
-            failed=1,
-            timed_out_count=0,
-        )
-        assert result.run_id == "r1"
-        assert result.status == RunStatus.COMPLETED
-        assert result.total == 3
-        assert result.completed == 2
-        assert result.failed == 1
-        assert result.timed_out_count == 0
-
-    def test_is_frozen(self):
-        result = RunResult(
-            run_id="r1",
-            status=RunStatus.COMPLETED,
-            total=1,
-            completed=1,
-            failed=0,
-            timed_out_count=0,
-        )
-        with pytest.raises(AttributeError):
-            result.completed = 5  # pyright: ignore[reportAttributeAccessIssue]
-
-
 class TestRunState:
     def test_initial_state(self):
         state = RunState(run_id="r1")
@@ -169,63 +138,6 @@ class TestRunState:
         assert state.timed_out_count == 1
         assert state.failed == 1
         assert state.completed == 0
-
-    def test_not_paused_initially(self):
-        state = RunState(run_id="r1")
-        assert not state.paused
-
-    def test_not_stop_requested_initially(self):
-        state = RunState(run_id="r1")
-        assert not state.stop_requested
-
-    def test_request_pause_and_resume(self):
-        state = RunState(run_id="r1")
-        state.status = RunStatus.RUNNING
-
-        state.request_pause()
-        assert state.paused
-        assert state.status == RunStatus.PAUSED
-
-        state.request_resume()
-        assert not state.paused
-        assert state.status == RunStatus.RUNNING
-
-    def test_request_stop_unblocks_pause(self):
-        state = RunState(run_id="r1")
-        state.request_pause()
-        assert state.paused
-
-        state.request_stop()
-        assert state.stop_requested
-        # Stop sets the resume event so wait_for_unpause unblocks
-        assert not state.paused
-
-    def test_wait_for_unpause_returns_immediately_when_not_paused(self):
-        state = RunState(run_id="r1")
-        assert state.wait_for_unpause(timeout=0.01) is True
-
-    def test_wait_for_unpause_blocks_until_resumed(self):
-        state = RunState(run_id="r1")
-        state.request_pause()
-
-        resumed = threading.Event()
-
-        def resume_later():
-            state.request_resume()
-            resumed.set()
-
-        timer = threading.Timer(0.05, resume_later)
-        timer.start()
-
-        result = state.wait_for_unpause(timeout=1.0)
-        assert result is True
-        _ = resumed.wait(timeout=1.0)
-
-    def test_wait_for_unpause_times_out(self):
-        state = RunState(run_id="r1")
-        state.request_pause()
-        result = state.wait_for_unpause(timeout=0.01)
-        assert result is False
 
     def test_wait_for_stop_returns_immediately_when_stopped(self):
         state = RunState(run_id="r1")
@@ -304,7 +216,6 @@ class TestRunStatus:
         [
             (RunStatus.PENDING, "pending"),
             (RunStatus.RUNNING, "running"),
-            (RunStatus.PAUSED, "paused"),
             (RunStatus.STOPPED, "stopped"),
             (RunStatus.COMPLETED, "completed"),
             (RunStatus.FAILED, "failed"),
@@ -324,7 +235,7 @@ class TestRunStatus:
     def test_reason_for_terminal_statuses(self, status: RunStatus, expected_reason: str):
         assert status.reason == expected_reason
 
-    @pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING, RunStatus.PAUSED])
+    @pytest.mark.parametrize("status", [RunStatus.PENDING, RunStatus.RUNNING])
     def test_reason_raises_for_non_terminal_statuses(self, status: RunStatus):
         with pytest.raises(ValueError, match="not a terminal status"):
             _ = status.reason

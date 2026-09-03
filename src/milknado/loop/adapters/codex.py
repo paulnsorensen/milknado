@@ -67,12 +67,6 @@ class CodexAdapter:
     name: str = "codex"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
-    # Codex emits structured JSON that the streaming execution path parses
-    # for activity callbacks, but the console peek panel only understands
-    # Claude's stream-json schema today. Keep peek in raw-line mode until
-    # the emitter can render Codex events directly.
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = True
     # Codex's terminal text lives inside ``TaskComplete`` / ``TurnCompleted``
     # events, which the streaming reader does not extract into
     # ``agent.result_text``.  The full stdout buffer is currently the only

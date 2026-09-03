@@ -376,7 +376,6 @@ class TestPromiseCompletionSignals:
         )
         state = make_state()
         emitter = QueueEmitter()
-        emitter.wants_agent_output_lines = lambda: True
         mock_execute_agent.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
@@ -868,55 +867,6 @@ class TestRunStateControls:
         stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
         assert stop_event.data["reason"] == "user_requested"  # pyright: ignore[reportUnknownMemberType]
 
-    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_pause_and_resume(self, mock_run: MagicMock, tmp_path: Path):
-        config = make_config(tmp_path, max_iterations=3)
-        state = make_state()
-
-        call_count = 0
-
-        def track_calls(*_args: object, **_kwargs: object):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                state.request_pause()
-
-                def resume_later():
-                    time.sleep(0.1)
-                    state.request_resume()
-
-                threading.Thread(target=resume_later, daemon=True).start()
-            return ok_proc()
-
-        mock_run.side_effect = track_calls
-
-        run_loop(config, state, NullEmitter())
-
-        assert state.completed == 3
-        assert state.status == RunStatus.COMPLETED
-
-    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
-    def test_stop_while_paused(self, mock_run: MagicMock, tmp_path: Path):
-        config = make_config(tmp_path, max_iterations=100)
-        state = make_state()
-
-        def pause_then_stop(*_args: object, **_kwargs: object):
-            state.request_pause()
-
-            def stop_later():
-                time.sleep(0.1)
-                state.request_stop()
-
-            threading.Thread(target=stop_later, daemon=True).start()
-            return ok_proc()
-
-        mock_run.side_effect = pause_then_stop
-
-        run_loop(config, state, NullEmitter())
-
-        assert state.status == RunStatus.STOPPED
-        assert mock_run.call_count == 1
-
 
 class TestRalphArgs:
     @patch(MOCK_SUBPROCESS)
@@ -1314,10 +1264,8 @@ class TestHandleControlSignals:
 
     def test_returns_true_when_no_signals(self):
         state = make_state()
-        q = QueueEmitter()
-        emit = BoundEmitter(q, state.run_id)
 
-        result = _handle_control_signals(state, emit)
+        result = _handle_control_signals(state)
 
         assert result is True
         assert state.status == RunStatus.PENDING
@@ -1325,75 +1273,8 @@ class TestHandleControlSignals:
     def test_returns_false_when_stop_requested(self):
         state = make_state()
         state.request_stop()
-        q = QueueEmitter()
-        emit = BoundEmitter(q, state.run_id)
 
-        result = _handle_control_signals(state, emit)
-
-        assert result is False
-        assert state.status == RunStatus.STOPPED
-
-    def test_paused_then_resumed_returns_true(self):
-        state = make_state()
-        state.request_pause()
-        q = QueueEmitter()
-        emit = BoundEmitter(q, state.run_id)
-
-        def resume_soon():
-            time.sleep(0.05)
-            state.request_resume()
-
-        threading.Thread(target=resume_soon, daemon=True).start()
-
-        result = _handle_control_signals(state, emit)
-
-        assert result is True
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        types = event_types(events)
-        assert EventType.RUN_PAUSED in types
-        assert EventType.RUN_RESUMED in types
-
-    def test_paused_then_stop_returns_false(self):
-        state = make_state()
-        state.request_pause()
-        q = QueueEmitter()
-        emit = BoundEmitter(q, state.run_id)
-
-        def stop_soon():
-            time.sleep(0.05)
-            state.request_stop()
-
-        threading.Thread(target=stop_soon, daemon=True).start()
-
-        result = _handle_control_signals(state, emit)
-
-        assert result is False
-        assert state.status == RunStatus.STOPPED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        types = event_types(events)
-        assert EventType.RUN_PAUSED in types
-        assert EventType.RUN_RESUMED not in types
-
-    def test_stop_detected_during_pause_poll_interval(self):
-        """Stop flag set without resume event exercises the polling-loop guard.
-
-        Normally request_stop() sets both the flag and the resume event, so
-        wait_for_unpause unblocks immediately.  This test sets only the flag
-        to cover the guard inside the polling loop (engine.py _wait_for_resume)
-        that checks stop_requested after each poll timeout.
-        """
-        state = make_state()
-        state.request_pause()
-        q = QueueEmitter()
-        emit = BoundEmitter(q, state.run_id)
-
-        def set_stop_flag():
-            time.sleep(0.01)
-            state._stop_event.set()  # pyright: ignore[reportPrivateUsage]
-
-        threading.Thread(target=set_stop_flag, daemon=True).start()
-
-        result = _handle_control_signals(state, emit)
+        result = _handle_control_signals(state)
 
         assert result is False
         assert state.status == RunStatus.STOPPED
@@ -1823,26 +1704,6 @@ class TestCommitFooterInLoop:
         assert "Co-authored-by" not in prompt_arg
 
 
-class TestAgentOutputLineFiltering:
-    """Tests for AGENT_OUTPUT_LINE event filtering (medium-01)."""
-
-    @patch(MOCK_SUBPROCESS)
-    def test_agent_output_line_not_emitted_when_peek_off(
-        self, mock_run: MagicMock, tmp_path: Path
-    ):
-        """When peek is off, no AGENT_OUTPUT_LINE events are emitted."""
-        mock_run.return_value = ok_proc(stdout_text="line1\nline2\nline3\n")
-        q = QueueEmitter()
-        config = make_config(tmp_path, max_iterations=1)
-        state = make_state()
-
-        run_loop(config, state, q)
-
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        output_events = events_of_type(events, EventType.AGENT_OUTPUT_LINE)  # pyright: ignore[reportUnknownVariableType]
-        assert output_events == []
-
-
 def _write_opencode_stub(tmp_path: Path) -> Path:
     """Write an executable ``opencode`` stub emitting opencode-shaped JSON.
 
@@ -1871,7 +1732,7 @@ class TestOpenCodeEndToEnd:
     ):
         # The autouse _disable_streaming fixture forces blocking mode on every
         # adapter; re-enable streaming on the registered opencode instance so
-        # this test exercises the real JSON-parsing activity path.
+        # this test exercises the real JSON parsing path.
         opencode_adapter = select_adapter(["opencode", "run"])
         monkeypatch.setattr(opencode_adapter, "supports_streaming", True)
 
@@ -1896,10 +1757,5 @@ class TestOpenCodeEndToEnd:
         assert state.status == RunStatus.COMPLETED
 
         events = drain_events(emitter)  # pyright: ignore[reportUnknownVariableType]
-        activity = events_of_type(events, EventType.AGENT_ACTIVITY)  # pyright: ignore[reportUnknownVariableType]
-        kinds = [e.data["raw"].get("type") for e in activity]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-        assert "tool_use" in kinds
-        assert "step_finish" in kinds
-
         stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
         assert stop_event.data["reason"] == "completed"  # pyright: ignore[reportUnknownMemberType]

@@ -1,13 +1,11 @@
 """Fallback adapter for CLIs with no dedicated implementation.
 
 Returned by :func:`milknado.loop.adapters.select_adapter` when no specific
-adapter's ``matches`` returns True.  All capability flags are False, so
-the core loop treats sessions as blocking, untyped, and uncappable.
+adapter's ``matches`` returns True. The core loop treats these sessions as
+blocking and untyped.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from milknado.loop.adapters._protocol import (
     AdapterEvent,
@@ -24,14 +22,9 @@ class GenericAdapter:
     name: str = "generic"
     counts_what: CountsWhat = "none"
     supports_streaming: bool = False
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = False
     # Untyped agents have no streaming result event; the engine must keep
     # the full stdout buffer if it wants promise detection.
     requires_full_stdout_for_completion: bool = True
-
-    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportUnusedParameter]
-        return False
 
     def build_command(self, cmd: list[str]) -> list[str]:
         return list(cmd)
@@ -64,14 +57,3 @@ class GenericAdapter:
         """
         del result_text
         return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
-
-    def install_wind_down_hook(
-        self,
-        tempdir: Path,  # pyright: ignore[reportUnusedParameter]
-        counter_path: Path,  # pyright: ignore[reportUnusedParameter]
-        cap: int,  # pyright: ignore[reportUnusedParameter]
-        grace: int,  # pyright: ignore[reportUnusedParameter]
-    ) -> dict[str, str]:
-        raise NotImplementedError(
-            "GenericAdapter does not support soft wind-down; max_turns will hard-kill."
-        )

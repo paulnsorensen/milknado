@@ -19,10 +19,7 @@ Capability matrix:
   there are no tool-use or turn events to count against ``max_turns``.
 - ``supports_streaming = False`` — no parseable event stream; the adapter
   runs on the blocking path and never parses per-line events.
-- ``renders_structured_peek = False`` — peek panel stays in raw-line mode.
-- ``supports_soft_wind_down = False`` — crush has no hook system, so
-  ``install_wind_down_hook`` raises :class:`NotImplementedError` (the
-  engine downgrades this to hard-cap-only).
+- Crush has no hook system, so the turn cap cannot send a wind-down warning.
 - ``requires_full_stdout_for_completion = True`` — with no streaming
   result event, promise detection scans the full stdout buffer.
 
@@ -57,8 +54,6 @@ class CrushAdapter:
     name: str = "crush"
     counts_what: CountsWhat = "none"
     supports_streaming: bool = False
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = False
     # crush emits no streaming result event; the full stdout buffer is the
     # only source for promise-tag scanning.
     requires_full_stdout_for_completion: bool = True
@@ -110,19 +105,6 @@ class CrushAdapter:
         """
         del result_text
         return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
-
-    def install_wind_down_hook(
-        self,
-        tempdir: Path,
-        counter_path: Path,
-        cap: int,
-        grace: int,
-    ) -> dict[str, str]:
-        del tempdir, counter_path, cap, grace
-        raise NotImplementedError(
-            "crush has no hook system; soft wind-down is unavailable and "
-            + "max_turns will hard-kill without a wind-down signal."
-        )
 
 
 ADAPTERS.append(CrushAdapter())

@@ -189,8 +189,6 @@ def test_capability_flags() -> None:
     assert adapter.name == "claude"
     assert adapter.counts_what == "tool_use"
     assert adapter.supports_streaming is True
-    assert adapter.renders_structured_peek is True
-    assert adapter.supports_soft_wind_down is True
     assert adapter.requires_full_stdout_for_completion is False
 
 

@@ -45,10 +45,8 @@ def test_capabilities_match_json_event_output() -> None:
         adapter.name,
         adapter.counts_what,
         adapter.supports_streaming,
-        adapter.renders_structured_peek,
-        adapter.supports_soft_wind_down,
         adapter.requires_full_stdout_for_completion,
-    ) == ("omp", "tool_use", True, False, False, True)
+    ) == ("omp", "tool_use", True, True)
 
 
 def test_parses_omp_tool_events_for_turn_counting() -> None:

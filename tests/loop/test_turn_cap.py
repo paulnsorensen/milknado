@@ -6,9 +6,8 @@ Covers the behaviours that distinguish how each adapter participates in
 - Streaming adapters that count tool uses (claude / codex / opencode / omp) are
   preempted at the cap.
 - Adapters that count nothing (crush) treat ``max_turns`` as a no-op.
-- Adapters with no hook system (copilot / crush / opencode / generic)
-  downgrade soft wind-down to hard-cap-only via ``NotImplementedError``.
-- The engine emits ``ITERATION_TURN_CAPPED`` and fans the signal to hooks.
+- Adapters without soft wind-down support use only the hard cap.
+- The engine emits ``ITERATION_TURN_CAPPED``.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 from _pytest.logging import LogCaptureFixture
-from typing_extensions import override
 
 import milknado.loop._agent as agent_mod
 from milknado.loop._agent import (
@@ -56,30 +54,12 @@ from milknado.loop.adapters.opencode import (
     OpenCodeAdapter,
 )
 from milknado.loop.engine import run_loop
-from milknado.loop.hooks import NoOpAgentHook
 from tests.loop.helpers import (
     drain_events,  # pyright: ignore[reportUnknownVariableType]
     event_types,  # pyright: ignore[reportUnknownVariableType]
     make_config,
     make_state,
 )
-
-
-class _RecordingHook(NoOpAgentHook):
-    """Hook that records the turn-cap callbacks it receives."""
-
-    def __init__(self) -> None:
-        self.capped: list[int] = []
-        self.tool_uses: list[tuple[str, int]] = []
-
-    @override
-    def on_turn_capped(self, *, iteration: int, count: int) -> None:
-        self.capped.append(count)
-
-    @override
-    def on_tool_use(self, *, iteration: int, tool_name: str, count: int) -> None:
-        self.tool_uses.append((tool_name, count))
-
 
 # ── opencode: counts_what == "tool_use" feeds the cap ──────────────────
 
@@ -225,13 +205,12 @@ def test_wind_down_skipped_when_grace_zero() -> None:
     assert ctx is None
 
 
-# ── engine surfaces the cap as an event + hook callback ────────────────
+# ── engine surfaces the cap as an event ────────────────────────────────
 
 
-def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path: Path) -> None:
-    """A capped iteration emits ITERATION_TURN_CAPPED and notifies the hook."""
-    hook = _RecordingHook()
-    config = make_config(tmp_path, max_turns=3, max_iterations=1, hooks=[hook])
+def test_engine_emits_turn_capped_event(tmp_path: Path) -> None:
+    """A capped iteration emits ITERATION_TURN_CAPPED."""
+    config = make_config(tmp_path, max_turns=3, max_iterations=1)
     state = make_state()
     emitter = QueueEmitter()
 
@@ -248,7 +227,6 @@ def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path: Path) -> None
 
     types = event_types(drain_events(emitter))
     assert EventType.ITERATION_TURN_CAPPED in types
-    assert hook.capped == [3]
     # A capped iteration counts as completed, not failed.
     assert state.completed == 1
     assert state.failed == 0
@@ -428,19 +406,13 @@ class _RaisingHookAdapter:
     """Minimal adapter that claims wind-down support but raises on install.
 
     Exercises the defensive ``NotImplementedError`` branch of
-    ``_setup_wind_down`` — no shipped adapter currently reaches it, since
-    non-supporting adapters bail at the capability-flag check first.
+    ``_setup_wind_down``. No shipped adapter currently raises here.
     """
 
     name: str = "raiser"
     counts_what: CountsWhat = "none"
     supports_streaming: bool = False
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = True
     requires_full_stdout_for_completion: bool = False
-
-    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportUnusedParameter]
-        return False
 
     def build_command(self, cmd: list[str]) -> list[str]:
         return cmd

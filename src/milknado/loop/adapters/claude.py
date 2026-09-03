@@ -1,8 +1,8 @@
 """Claude Code adapter.
 
 Claude is the only CLI shipping a stable ``--output-format stream-json``
-protocol today; its structured events drive the peek panel and power
-per-event tool-use counting.  Every Claude iteration emits:
+protocol today; its structured events power per-event tool-use counting.
+Every Claude iteration emits:
 
 1. A ``system`` init event with the model name.
 2. Zero or more ``assistant`` messages whose ``content`` list may include
@@ -55,8 +55,6 @@ class ClaudeAdapter:
     name: str = "claude"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
-    renders_structured_peek: bool = True
-    supports_soft_wind_down: bool = True
     # Claude's final assistant text already arrives as ``agent.result_text``
     # via the stream-json ``result`` event, so the engine does not need to
     # buffer the full stdout to scan for the promise tag.

@@ -24,26 +24,6 @@ FIELD_AGENT = "agent"
 FIELD_COMMANDS = "commands"
 FIELD_ARGS = "args"
 FIELD_RALPH = "ralph"
-# Promise config keeps the legacy key names. ``completion_signal`` stores the
-# inner promise text, not the surrounding ``<promise>...</promise>`` markup.
-FIELD_COMPLETION_SIGNAL = "completion_signal"
-FIELD_STOP_ON_COMPLETION_SIGNAL = "stop_on_completion_signal"
-
-# Per-iteration turn-cap configuration — see docs/specs/cli-adapter-layer.md.
-FIELD_MAX_TURNS = "max_turns"
-FIELD_MAX_TURNS_GRACE = "max_turns_grace"
-
-# User-subscribable lifecycle hooks (list of {event, run} mappings).
-FIELD_HOOKS = "hooks"
-
-# Sub-field names within each command mapping.
-CMD_FIELD_NAME = "name"
-CMD_FIELD_RUN = "run"
-CMD_FIELD_TIMEOUT = "timeout"
-
-# Sub-field names within each hook mapping.
-HOOK_FIELD_EVENT = "event"
-HOOK_FIELD_RUN = "run"
 
 # YAML frontmatter delimiter line.
 _FRONTMATTER_DELIMITER = "---"
@@ -53,8 +33,6 @@ _FRONTMATTER_DELIMITER = "---"
 # _resolver.py (placeholders).
 NAME_RE = re.compile(r"[a-zA-Z0-9_-]+")
 
-# Human-readable description of allowed name characters, paired with NAME_RE.
-VALID_NAME_CHARS_MSG = "Names may only contain letters, digits, hyphens, and underscores."
 
 # UTF-8 BOM character — files saved on Windows may start with this.
 _UTF8_BOM = "\ufeff"
@@ -138,29 +116,3 @@ def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
         frontmatter = {}
     body = _strip_html_comments(body).strip()
     return frontmatter, body
-
-
-def serialize_frontmatter(frontmatter: dict[str, object], body: str) -> str:
-    """Serialize frontmatter and body back to a markdown string.
-
-    This is the inverse of :func:`parse_frontmatter`.  If *frontmatter*
-    is empty **and** the body cannot be mistaken for a frontmatter block,
-    the body is returned as-is (no ``---`` delimiters).  When the body
-    starts with ``---`` (after stripping whitespace), empty delimiters are
-    emitted to prevent :func:`parse_frontmatter` from consuming the body
-    as frontmatter on a subsequent round-trip.
-    """
-    parts: list[str] = []
-    # Emit delimiters when there is frontmatter content OR when the body
-    # starts with the delimiter string (which would be mis-parsed as
-    # frontmatter without the protective empty block).
-    needs_delimiters = bool(frontmatter) or body.lstrip().startswith(_FRONTMATTER_DELIMITER)
-    if needs_delimiters:
-        parts.append(_FRONTMATTER_DELIMITER)
-        if frontmatter:
-            fm_text = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
-            parts.append(fm_text)
-        parts.append(_FRONTMATTER_DELIMITER)
-        parts.append("")
-    parts.append(body)
-    return "\n".join(parts)

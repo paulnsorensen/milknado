@@ -2,7 +2,7 @@
 
 Wraps Vulture 2.16's scan and accepts findings only in narrow, owner-qualified
 categories; everything else is reported and fails the gate. Textual exemptions
-are structural. The vendored loop boundary uses an exact compatibility allowlist;
+are structural. One exact loop payload exemption covers a string-key read;
 see .hallouminate/wiki/history/dead-code-coverage-gate-decision.md.
 """
 
@@ -100,44 +100,10 @@ ExitCode = _vulture_core.ExitCode
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# src/milknado/loop/ is vendored wholesale from ralphify (PR #137, 49ac978); see
-# loop/__init__.py. These exact (relative path, name) pairs are the vendored engine's
-# own unused-by-milknado surface (formerly vulture-whitelist-loop.py) -- only these
-# enumerated findings are exempt, so genuinely new dead code in the engine still fails.
-_VENDORED_LOOP_FINDINGS = {
-    ("src/milknado/loop/_events.py", "ralph_name"),
-    ("src/milknado/loop/_events.py", "duration_formatted"),
+# ``echo_stdout`` is read through a string key in LoopAdapter, which Vulture
+# cannot connect to this TypedDict field declaration.
+_FALSE_POSITIVE_FINDINGS = {
     ("src/milknado/loop/_events.py", "echo_stdout"),
-    ("src/milknado/loop/_events.py", "echo_stderr"),
-    ("src/milknado/loop/_events.py", "prompt_length"),
-    ("src/milknado/loop/_events.py", "to_dict"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_COMPLETION_SIGNAL"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_STOP_ON_COMPLETION_SIGNAL"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_MAX_TURNS"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_MAX_TURNS_GRACE"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_HOOKS"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_NAME"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_RUN"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_TIMEOUT"),
-    ("src/milknado/loop/_frontmatter.py", "HOOK_FIELD_EVENT"),
-    ("src/milknado/loop/_frontmatter.py", "HOOK_FIELD_RUN"),
-    ("src/milknado/loop/_frontmatter.py", "VALID_NAME_CHARS_MSG"),
-    ("src/milknado/loop/_frontmatter.py", "serialize_frontmatter"),
-    ("src/milknado/loop/_output.py", "format_count"),
-    ("src/milknado/loop/adapters/_generic.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/_protocol.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/claude.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/codex.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/copilot.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/crush.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/opencode.py", "renders_structured_peek"),
-    ("src/milknado/loop/manager.py", "add_listener"),
-    ("src/milknado/loop/manager.py", "pause_run"),
-    ("src/milknado/loop/manager.py", "resume_run"),
-    ("src/milknado/loop/manager.py", "wait_for_any"),
-    ("src/milknado/loop/manager.py", "wait_for_all"),
-    ("src/milknado/loop/manager.py", "get_result"),
-    ("src/milknado/loop/manager.py", "shutdown"),
 }
 
 # Textual App/Widget/Screen lifecycle method names this classifier owner-qualifies:
@@ -205,8 +171,8 @@ def _method_start_line(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
 
 def _accepted_reason(finding: _Finding, module: ast.Module, imports: dict[str, str]) -> str | None:
     key = (finding.path.as_posix(), finding.name)
-    if key in _VENDORED_LOOP_FINDINGS:
-        return "vendored ralph-loop engine"
+    if key in _FALSE_POSITIVE_FINDINGS:
+        return "runtime payload field read by string key"
 
     for node in ast.walk(module):
         if not isinstance(node, ast.ClassDef):

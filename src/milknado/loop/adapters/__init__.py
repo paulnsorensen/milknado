@@ -6,11 +6,8 @@ engine dispatches on :func:`select_adapter` at run time, so adding a new
 CLI means writing one file and registering it in :data:`ADAPTERS` — no
 edits to the engine, emitter, or subprocess machinery.
 
-Adapters translate the CLI's native output format to a common
-:class:`AdapterEvent` stream and advertise capability flags so the core
-loop can gracefully degrade when a CLI lacks structured output or hook
-injection.  Process lifecycle (spawn, SIGTERM at cap, reap) stays in
-``_agent.py``; adapters only observe.
+Adapters translate each CLI output format to a common :class:`AdapterEvent`
+stream. Process lifecycle and turn-cap enforcement stay in ``_agent.py``.
 
 The Protocol, :class:`AdapterEvent`, and :data:`ADAPTERS` live in
 :mod:`_protocol` so concrete adapter modules can depend on them

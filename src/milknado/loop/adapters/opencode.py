@@ -17,8 +17,7 @@ Event mapping:
 - ``step_finish`` -> ``AdapterEvent(kind="result", ...)`` (carries token /
   cost data in ``part`` that this adapter does not surface).
 - ``step_start`` / ``text`` / ``reasoning`` / ``error`` ->
-  ``AdapterEvent(kind="message")`` so callers can render them without
-  counting against the turn cap.
+  ``AdapterEvent(kind="message")`` without counting against the turn cap.
 - unknown / malformed -> ``None`` (MUST NOT raise, for parity with the
   other adapters).
 
@@ -49,9 +48,8 @@ _FORMAT_FLAGS: tuple[str, ...] = ("--format", "json")
 
 _TOOL_USE_EVENT = "tool_use"
 _RESULT_EVENT = "step_finish"
-# opencode v1.15.x emits these informational events (verified against the
-# run.ts emit() call sites): they render in the peek panel without counting
-# against the turn cap. There is no ``tool_result`` event — tool output rides
+# opencode v1.15.x emits these informational events without counting them
+# against the turn cap. There is no ``tool_result`` event; tool output rides
 # on the ``tool_use`` event once the tool part reaches completed/error status.
 _MESSAGE_EVENTS: frozenset[str] = frozenset({"step_start", "text", "reasoning", "error"})
 
@@ -62,11 +60,6 @@ class OpenCodeAdapter:
     name: str = "opencode"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
-    # The console peek panel only understands Claude's stream-json schema
-    # today, so keep opencode in raw-line peek mode (as with codex).
-    renders_structured_peek: bool = False
-    # opencode has no hook system; soft wind-down is a Phase-3 stub anyway.
-    supports_soft_wind_down: bool = False
     # opencode emits no terminal ``{"type":"result"}`` line that the
     # streaming reader extracts into ``result_text``; the full stdout
     # buffer is the only source for promise-tag scanning.
@@ -149,19 +142,6 @@ class OpenCodeAdapter:
         """
         del result_text
         return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
-
-    def install_wind_down_hook(
-        self,
-        tempdir: Path,
-        counter_path: Path,
-        cap: int,
-        grace: int,
-    ) -> dict[str, str]:
-        del tempdir, counter_path, cap, grace
-        raise NotImplementedError(
-            "opencode has no hook system; soft wind-down is scheduled for "
-            + "Phase 3 of the CLI adapter layer spec."
-        )
 
 
 def _tool_name(parsed: dict[str, object]) -> str | None:

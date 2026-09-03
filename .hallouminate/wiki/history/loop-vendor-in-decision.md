@@ -32,3 +32,17 @@ The five symbols are **not separable from the engine**: `RunManager → engine �
 ## Decision
 
 Vendor the used closure (~3,400 LOC, 17 modules) into `src/milknado/loop/`; drop the CLI/TUI modules; delete the `git+` dep; archive the fork (manual post-merge step). Vendored internals land **verbatim** — byte-identical fork behaviour, formatting-only divergence allowed — so the vendor-in is auditable against fork SHA `ec494875`.
+
+
+### 2026-09-02 ownership transition
+
+The verbatim rule applied to the initial import only. Milknado now treats `src/milknado/loop/` as owned source and trims unused internal surface.
+
+PR #405 preserves turn counting, hard turn caps, Claude/Codex soft wind-down, subprocess containment, and the small public loop crust. It removes unused lifecycle hooks, pause state, manager convenience operations, serialization helpers, presentation-only events, and compatibility exemptions.[^5]
+
+This transition keeps the original provenance while rejecting indefinite behavioral parity with the archived fork.
+
+[^5]: `src/milknado/loop/__init__.py`; `src/milknado/loop/manager.py`; `src/milknado/loop/engine.py`; `scripts/check_dead_code.py`; PR #405
+
+_Source: user decision and PR #405 loop liveness cleanup · Updated: 2026-09-02 · Supersedes: verbatim behavior after the initial vendor import · 2026-09-02_
+

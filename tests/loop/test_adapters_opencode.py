@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -166,19 +165,11 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_raises_not_implemented(tmp_path: Path) -> None:
-    adapter = OpenCodeAdapter()
-    with pytest.raises(NotImplementedError):
-        _ = adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
-
-
 def test_capability_flags() -> None:
     adapter = OpenCodeAdapter()
     assert adapter.name == "opencode"
     assert adapter.counts_what == "tool_use"
     assert adapter.supports_streaming is True
-    assert adapter.renders_structured_peek is False
-    assert adapter.supports_soft_wind_down is False
     assert adapter.requires_full_stdout_for_completion is True
 
 
