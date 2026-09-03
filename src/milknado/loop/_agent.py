@@ -343,7 +343,7 @@ def _extract_result_text_from_line(line: str) -> str | None:
     except json.JSONDecodeError:
         return None
     if not isinstance(parsed, dict):
-        return None  # pragma: no cover
+        return None
     parsed = cast(dict[str, object], parsed)
     if parsed.get("type") != _RESULT_EVENT_TYPE:
         return None
@@ -478,11 +478,9 @@ def _close_pipes(proc: subprocess.Popen[str]) -> None:
 def _finalize_pipes(proc: subprocess.Popen[str]) -> None:
     """Mark parent-side pipe file objects as closed at the Python level.
 
-    Called AFTER :func:`_close_pipes` and :func:`_drain_readers` to set
-    the ``closed`` flag on the Python file objects.  This prevents
-    "Bad file descriptor" warnings when the garbage collector finalizes
-    the objects whose underlying fd was already closed by
-    :func:`_close_pipes`.
+    Called after :func:`_drain_readers` and any forced raw-descriptor
+    close. This prevents "Bad file descriptor" warnings when the garbage
+    collector finalizes objects whose underlying fd was already closed.
 
     Must be called after reader threads have exited — the pipe's
     internal lock is held during ``readline()``, so ``close()`` would
@@ -952,19 +950,19 @@ def _start_pump_thread(
     return thread
 
 
-def _drain_readers(
-    *threads: threading.Thread | None,
-    timeout: float = _THREAD_JOIN_TIMEOUT,
-) -> None:
-    """Join reader threads and warn if any cannot drain within the bound."""
+def _drain_readers(*threads: threading.Thread | None) -> bool:
+    """Join reader threads within the bound and report whether all drained."""
+    drained = True
     for thread in threads:
         if thread is not None:
-            thread.join(timeout=timeout)
+            thread.join(timeout=_THREAD_JOIN_TIMEOUT)
             if thread.is_alive():
+                drained = False
                 warn(
                     f"reader thread {thread.name!r} did not exit within"
-                    + f" {timeout}s — log output may be incomplete"
+                    + f" {_THREAD_JOIN_TIMEOUT}s — log output may be incomplete"
                 )
+    return drained
 
 
 def _terminate_lingering_group(proc: subprocess.Popen[str]) -> None:
@@ -1000,8 +998,9 @@ def _cleanup_agent(
         windows_job.close()
     if proc.poll() is not None:
         _terminate_lingering_group(proc)
-    _close_pipes(proc)
-    _drain_readers(*threads)
+    if not _drain_readers(*threads):
+        _close_pipes(proc)
+        _ = _drain_readers(*threads)
     _finalize_pipes(proc)
 
 

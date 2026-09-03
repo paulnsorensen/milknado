@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 from typing import cast
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.claude import ClaudeAdapter
 
 
 def _assistant_event(*blocks: dict[str, object]) -> str:

@@ -81,51 +81,51 @@ class NoOpAgentHook:
     events — override the methods you need, inherit the rest.
     """
 
-    def on_iteration_started(self, *, iteration: int) -> None:  # pyright: ignore[reportUnusedParameter]
-        pass
+    def on_iteration_started(self, *, iteration: int) -> None:
+        del iteration
 
     def on_commands_completed(
         self,
         *,
-        iteration: int,  # pyright: ignore[reportUnusedParameter]
-        outputs: dict[str, str],  # pyright: ignore[reportUnusedParameter]
+        iteration: int,
+        outputs: dict[str, str],
     ) -> None:
-        pass
+        del iteration, outputs
 
-    def on_prompt_assembled(self, *, iteration: int, prompt: str) -> None:  # pyright: ignore[reportUnusedParameter]
-        pass
+    def on_prompt_assembled(self, *, iteration: int, prompt: str) -> None:
+        del iteration, prompt
 
     def on_tool_use(
         self,
         *,
-        iteration: int,  # pyright: ignore[reportUnusedParameter]
-        tool_name: str,  # pyright: ignore[reportUnusedParameter]
-        count: int,  # pyright: ignore[reportUnusedParameter]
+        iteration: int,
+        tool_name: str,
+        count: int,
     ) -> None:
-        pass
+        del iteration, tool_name, count
 
     def on_turn_approaching_limit(
         self,
         *,
-        iteration: int,  # pyright: ignore[reportUnusedParameter]
-        count: int,  # pyright: ignore[reportUnusedParameter]
-        max_turns: int,  # pyright: ignore[reportUnusedParameter]
+        iteration: int,
+        count: int,
+        max_turns: int,
     ) -> None:
-        pass
+        del iteration, count, max_turns
 
-    def on_turn_capped(self, *, iteration: int, count: int) -> None:  # pyright: ignore[reportUnusedParameter]
-        pass
+    def on_turn_capped(self, *, iteration: int, count: int) -> None:
+        del iteration, count
 
     def on_iteration_completed(
         self,
         *,
-        iteration: int,  # pyright: ignore[reportUnusedParameter]
-        result: dict[str, object],  # pyright: ignore[reportUnusedParameter]
+        iteration: int,
+        result: dict[str, object],
     ) -> None:
-        pass
+        del iteration, result
 
-    def on_completion_signal(self, *, iteration: int, signal: str) -> None:  # pyright: ignore[reportUnusedParameter]
-        pass
+    def on_completion_signal(self, *, iteration: int, signal: str) -> None:
+        del iteration, signal
 
 
 class CombinedAgentHook:

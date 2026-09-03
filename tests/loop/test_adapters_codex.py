@@ -6,11 +6,11 @@ import json
 from pathlib import Path
 from typing import cast
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.codex import CodexAdapter
 
 
 def test_matches_codex_binary_stem() -> None:

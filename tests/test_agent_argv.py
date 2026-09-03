@@ -5,11 +5,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.domains.common import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.domains.common import (
     MilknadoConfig,
     default_config,
 )
-from milknado.domains.common.agent_argv import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.domains.common.agent_argv import (
     WORKER_ALLOWED_TOOLS,
     build_minimal_mcp_env,
     build_planning_subprocess,
@@ -18,11 +18,11 @@ from milknado.domains.common.agent_argv import (  # pyright: ignore[reportMissin
     resolve_worker_tools,
     validate_worker_argv,
 )
-from milknado.domains.common.config import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.domains.common.config import (
     load_config,
     save_config,
 )
-from milknado.domains.dispatch.runner import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.domains.dispatch.runner import (
     run_headless,
 )
 

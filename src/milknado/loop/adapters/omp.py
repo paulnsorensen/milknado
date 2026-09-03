@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import cast
 
+from typing_extensions import override
+
 from milknado.loop.adapters._generic import GenericAdapter
 from milknado.loop.adapters._protocol import ADAPTERS, AdapterEvent, CountsWhat, Invocation
 
@@ -17,10 +19,12 @@ class OmpAdapter(GenericAdapter):
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
 
-    def matches(self, cmd: list[str]) -> bool:  # pyright: ignore[reportImplicitOverride]
+    @override
+    def matches(self, cmd: list[str]) -> bool:
         return bool(cmd) and Path(cmd[0]).stem == "omp"
 
-    def build_command(self, cmd: list[str]) -> list[str]:  # pyright: ignore[reportImplicitOverride]
+    @override
+    def build_command(self, cmd: list[str]) -> list[str]:
         """Replace any configured output mode with Oh My Pi's JSON event stream."""
         command: list[str] = []
         emitted_mode = False
@@ -42,10 +46,12 @@ class OmpAdapter(GenericAdapter):
             command.extend(("--mode", "json"))
         return command
 
-    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:  # pyright: ignore[reportImplicitOverride]
+    @override
+    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:
         return Invocation([*cmd, prompt], None)
 
-    def parse_event(self, line: str) -> AdapterEvent | None:  # pyright: ignore[reportImplicitOverride]
+    @override
+    def parse_event(self, line: str) -> AdapterEvent | None:
         try:
             raw = cast(object, json.loads(line))
         except json.JSONDecodeError:

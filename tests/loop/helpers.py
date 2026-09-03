@@ -13,24 +13,25 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import (
     Event,
+    EventData,
     EventType,
     QueueEmitter,
 )
-from milknado.loop._frontmatter import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._frontmatter import (
     RALPH_MARKER,
     serialize_frontmatter,
 )
-from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._run_types import (
     DEFAULT_COMPLETION_SIGNAL,
     Command,
     CompletionVerdict,
     RunConfig,
     RunState,
 )
-from milknado.loop._runner import RunResult  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.hooks import AgentHook  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._runner import RunResult
+from milknado.loop.hooks import AgentHook
 
 # ── Patch targets ─────────────────────────────────────────────────────
 
@@ -270,19 +271,21 @@ def make_mock_popen(
     )
 
 
-def drain_events(emitter: QueueEmitter) -> list[Event]:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+def drain_events(emitter: QueueEmitter) -> list[Event[EventData]]:
     """Drain all events from a QueueEmitter and return them as a list."""
-    events = []
+    events: list[Event[EventData]] = []
     while not emitter.queue.empty():
-        events.append(emitter.queue.get())  # pyright: ignore[reportUnknownMemberType]
-    return events  # pyright: ignore[reportUnknownVariableType]
+        events.append(emitter.queue.get())
+    return events
 
 
-def events_of_type(events: list[Event], event_type: EventType) -> list[Event]:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+def events_of_type(
+    events: list[Event[EventData]], event_type: EventType
+) -> list[Event[EventData]]:
     """Filter a list of events to only those matching *event_type*."""
-    return [e for e in events if e.type == event_type]  # pyright: ignore[reportUnknownVariableType]
+    return [event for event in events if event.type == event_type]
 
 
-def event_types(events: list[Event]) -> list[EventType]:  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+def event_types(events: list[Event[EventData]]) -> list[EventType]:
     """Extract the ordered list of event types from a list of events."""
-    return [e.type for e in events]  # pyright: ignore[reportUnknownVariableType]
+    return [event.type for event in events]

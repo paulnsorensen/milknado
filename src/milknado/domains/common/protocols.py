@@ -121,7 +121,8 @@ class ReviewResult(Protocol):
 class RunHandle(Protocol):
     """Handle returned by a loop port for run inspection."""
 
-    state: RunStateView
+    @property
+    def state(self) -> RunStateView: ...
 
 
 class LoopPort(Protocol):

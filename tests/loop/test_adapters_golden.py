@@ -12,14 +12,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-from milknado.loop.adapters import CLIAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import CLIAdapter
+from milknado.loop.adapters.claude import ClaudeAdapter
+from milknado.loop.adapters.codex import CodexAdapter
+from milknado.loop.adapters.copilot import (
     CopilotAdapter,
 )
-from milknado.loop.adapters.crush import CrushAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.crush import CrushAdapter
+from milknado.loop.adapters.opencode import (
     OpenCodeAdapter,
 )
 
@@ -152,13 +152,11 @@ def _last_result_text(text: str) -> str | None:
         if not stripped:
             continue
         try:
-            # json.loads is typed Any in the stdlib stubs; object is the honest widening.
-            raw: object = json.loads(stripped)  # pyright: ignore[reportAny]
+            raw = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             continue
         if not isinstance(raw, dict):
             continue
-        # Truthful post-guard cast: isinstance proved dict, and JSON object keys are str.
         parsed = cast(dict[str, object], raw)
         result = parsed.get("result")
         if parsed.get("type") == "result" and isinstance(result, str):

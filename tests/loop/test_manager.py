@@ -11,12 +11,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.loop._events import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import (
     EventType,
     FanoutEmitter,
     QueueEmitter,
 )
-from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._run_types import (
     RUN_ID_LENGTH,
     CompletionVerdict,
     RunConfig,
@@ -24,7 +24,7 @@ from milknado.loop._run_types import (  # pyright: ignore[reportMissingTypeStubs
     RunState,
     RunStatus,
 )
-from milknado.loop.manager import ManagedRun, RunManager  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.manager import ManagedRun, RunManager
 from tests.loop.helpers import (
     MOCK_SUBPROCESS,
     drain_events,  # pyright: ignore[reportUnknownVariableType]

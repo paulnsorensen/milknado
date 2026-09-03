@@ -2,23 +2,23 @@
 
 from __future__ import annotations
 
-from milknado.loop.adapters import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters import (
     ADAPTERS,
     CLIAdapter,
     Invocation,
     select_adapter,
 )
-from milknado.loop.adapters._generic import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters._generic import (
     GenericAdapter,
 )
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.codex import CodexAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.copilot import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.claude import ClaudeAdapter
+from milknado.loop.adapters.codex import CodexAdapter
+from milknado.loop.adapters.copilot import (
     CopilotAdapter,
 )
-from milknado.loop.adapters.crush import CrushAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.omp import OmpAdapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.opencode import (  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop.adapters.crush import CrushAdapter
+from milknado.loop.adapters.omp import OmpAdapter
+from milknado.loop.adapters.opencode import (
     OpenCodeAdapter,
 )
 

@@ -18,14 +18,15 @@ from _pytest.logging import LogCaptureFixture
 from _pytest.monkeypatch import MonkeyPatch
 from typing_extensions import override
 
-import milknado.loop._agent as agent_module  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
+import milknado.loop._agent as agent_module
+from milknado.loop._agent import (
     _OUTPUT_TAIL_CHARS,  # pyright: ignore[reportPrivateUsage]
     _STREAM_QUEUE_MAX_LINES,  # pyright: ignore[reportPrivateUsage]
     AgentResult,
     AgentRunSpec,
     OutputLineCallback,
     _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
+    _extract_result_text_from_line,  # pyright: ignore[reportPrivateUsage]
     _kill_process_group,  # pyright: ignore[reportPrivateUsage]
     _pump_stream,  # pyright: ignore[reportPrivateUsage]
     _read_agent_stream,  # pyright: ignore[reportPrivateUsage]
@@ -35,9 +36,9 @@ from milknado.loop._agent import (  # pyright: ignore[reportMissingTypeStubs]
     _terminate_lingering_group,  # pyright: ignore[reportPrivateUsage]
     execute_agent,
 )
-from milknado.loop._events import OutputStream  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters import select_adapter  # pyright: ignore[reportMissingTypeStubs]
-from milknado.loop.adapters.claude import ClaudeAdapter  # pyright: ignore[reportMissingTypeStubs]
+from milknado.loop._events import OutputStream
+from milknado.loop.adapters import select_adapter
+from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
 
 
@@ -77,6 +78,10 @@ class TestReadAgentStream:
         result = _read_agent_stream(stream, deadline=None, on_activity=None)
 
         assert result.result_text == "All done"
+
+    @pytest.mark.parametrize("line", ["42", '["result"]'], ids=["scalar", "list"])
+    def test_result_text_extraction_ignores_non_object_json(self, line: str) -> None:
+        assert _extract_result_text_from_line(line) is None
 
     def test_ignores_non_json_lines(self):
         activities = []
@@ -1829,28 +1834,25 @@ class TestBoundedReaderThreadJoins:
     hang the CLI, and that joins always happen in the finally block.
     """
 
-    def test_grandchild_inheriting_stdout_does_not_hang(self, tmp_path: Path):
-        """Spawn an agent that forks a grandchild inheriting stdout.
-
-        The grandchild sleeps for 30s holding the pipe open.  The parent
-        agent exits after 0.1s.  Without parent-side pipe closing and
-        bounded joins, _run_agent_blocking would hang forever waiting for
-        the grandchild's readline to return EOF.
-
-        The fix (close parent-side pipes → bounded join) must let
-        _run_agent_blocking return well within the 5s join timeout.
-        """
-        # The agent spawns a grandchild that inherits stdout and sleeps,
-        # then the agent itself exits quickly.
+    def test_grandchild_inheriting_stdout_does_not_hang(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        """Close pipes when a detached grandchild keeps inherited descriptors open."""
         script = (
             "import subprocess, sys, time\n"
             "subprocess.Popen(\n"
-            "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+            "    [sys.executable, '-c', 'import time; time.sleep(2)'],\n"
+            "    start_new_session=True,\n"
             ")\n"
             "print('parent-output')\n"
             "sys.stdout.flush()\n"
             "time.sleep(0.1)\n"
         )
+        close_pipes = MagicMock(
+            wraps=agent_module._close_pipes  # pyright: ignore[reportPrivateUsage]
+        )
+        monkeypatch.setattr(agent_module, "_THREAD_JOIN_TIMEOUT", 0.05)
+        monkeypatch.setattr(agent_module, "_close_pipes", close_pipes)
 
         start = time.monotonic()
         result = _run_agent_blocking(
@@ -1866,15 +1868,12 @@ class TestBoundedReaderThreadJoins:
 
         assert result.returncode == 0
         assert result.timed_out is False
-        # Must complete well within the grandchild's 30-second sleep.
-        # The parent-side pipe close forces EOF; 5s join timeout is the
-        # upper bound.  Allow generous headroom for CI.
-        assert elapsed < 12.0, (
+        assert elapsed < 1.0, (
             f"_run_agent_blocking took {elapsed:.1f}s — likely hung on"
             " grandchild holding stdout pipe"
         )
+        close_pipes.assert_called_once()
 
-        # The parent's output should still be captured.
         assert result.log_file is not None
         log_text = result.log_file.read_text()
         assert "parent-output" in log_text

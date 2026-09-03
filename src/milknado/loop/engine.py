@@ -385,7 +385,7 @@ def _notify_iteration_hooks(
     state: RunState,
     agent: AgentResult,
     promise_completed: bool,
-    completion_signal: str | None,
+    completion_signal: str,
 ) -> None:
     if hooks is None:
         return
@@ -401,7 +401,7 @@ def _notify_iteration_hooks(
         },
     )
     if promise_completed:
-        hooks.on_completion_signal(iteration=state.iteration, signal=cast(str, completion_signal))
+        hooks.on_completion_signal(iteration=state.iteration, signal=completion_signal)
 
 
 def _run_agent_phase(

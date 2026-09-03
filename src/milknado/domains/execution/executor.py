@@ -23,6 +23,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from milknado.domains.common import ReviewResult
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
@@ -33,7 +34,7 @@ from milknado.domains.common.errors import (
     UnlandedWorkError,
 )
 from milknado.domains.common.paths import slugify
-from milknado.domains.common.protocols import GraphExecutionSnapshot, ReviewResult
+from milknado.domains.common.protocols import GraphExecutionSnapshot
 from milknado.domains.common.types import (
     VALID_TRANSITIONS,
     MikadoNode,
