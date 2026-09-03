@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import importlib
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypedDict, cast
+
+from vulture import Vulture as _RawVulture  # pyright: ignore[reportMissingTypeStubs]
+from vulture.config import InputError as _RawInputError  # pyright: ignore[reportMissingTypeStubs]
+from vulture.config import (  # pyright: ignore[reportMissingTypeStubs]
+    make_config as _raw_make_config,  # pyright: ignore[reportUnknownVariableType]
+)
+from vulture.core import ExitCode as _RawExitCode  # pyright: ignore[reportMissingTypeStubs]
 
 
 class _VultureConfig(TypedDict):
@@ -29,7 +35,7 @@ class _VultureConfig(TypedDict):
 
 
 class _VultureItem(Protocol):
-    filename: Path
+    filename: str | Path
     first_lineno: int
     name: str
     typ: str
@@ -70,33 +76,10 @@ class _Vulture(Protocol):
     ) -> list[_VultureItem]: ...
 
 
-class _VultureModule(Protocol):
-    Vulture: type[_Vulture]
-
-
-class _VultureConfigModule(Protocol):
-    InputError: type[Exception]
-    make_config: Callable[[list[str]], _VultureConfig]
-
-
-class _VultureCoreModule(Protocol):
-    ExitCode: _ExitCodes
-
-
-_vulture_module = cast(_VultureModule, cast(object, importlib.import_module("vulture")))
-_vulture_config = cast(
-    _VultureConfigModule,
-    cast(object, importlib.import_module("vulture.config")),
-)
-_vulture_core = cast(
-    _VultureCoreModule,
-    cast(object, importlib.import_module("vulture.core")),
-)
-
-Vulture = _vulture_module.Vulture
-InputError = _vulture_config.InputError
-make_config = _vulture_config.make_config
-ExitCode = _vulture_core.ExitCode
+Vulture = cast(type[_Vulture], _RawVulture)
+InputError = cast(type[Exception], _RawInputError)
+make_config = cast(Callable[[list[str]], _VultureConfig], _raw_make_config)
+ExitCode = cast(_ExitCodes, cast(object, _RawExitCode))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

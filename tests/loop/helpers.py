@@ -71,7 +71,7 @@ def make_ralph(
     if args:
         frontmatter["args"] = args
     content = f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n{prompt}"
-    _ = (ralph_dir / RALPH_MARKER).write_text(content)
+    _ = (ralph_dir / RALPH_MARKER).write_text(content, encoding="utf-8")
     return ralph_dir
 
 
@@ -104,7 +104,7 @@ def make_config(
     ralph_dir = tmp_path / "my-ralph"
     ralph_dir.mkdir(exist_ok=True)
     ralph_file = ralph_dir / RALPH_MARKER
-    _ = ralph_file.write_text(ralph_content)
+    _ = ralph_file.write_text(ralph_content, encoding="utf-8")
 
     return RunConfig(
         agent=agent,

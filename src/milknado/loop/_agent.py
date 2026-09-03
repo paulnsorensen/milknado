@@ -108,8 +108,8 @@ _LOG_ITERATION_PAD_WIDTH = 3
 _SIGTERM_GRACE_PERIOD = 3
 
 # Seconds to wait for reader threads to drain during cleanup.
-# Generous bound: after parent-side pipe close, EOF propagates within
-# milliseconds — 5s is headroom for slow kernels / loaded CI boxes.
+# A descendant can inherit a pipe, so cleanup remains bounded while its daemon reader
+# retains ownership until EOF.
 _THREAD_JOIN_TIMEOUT = 5.0
 
 # Seconds to wait for the agent process to exit after a kill signal.
@@ -450,36 +450,11 @@ def _wait_for_process(
     return proc.returncode, False, False
 
 
-def _close_pipes(proc: subprocess.Popen[str]) -> None:
-    """Close parent-side stdout/stderr pipe file descriptors.
-
-    Invalidates the parent descriptors without taking the file object's
-    internal lock. Reader wake-up behavior depends on the operating system,
-    so cleanup must not finalize a file object while its reader remains alive.
-
-    Uses ``os.close()`` on the raw fd rather than ``pipe.close()``
-    because Python's ``TextIOWrapper`` / ``BufferedReader`` hold an
-    internal lock during ``readline()``.  Calling ``pipe.close()``
-    from the main thread would block waiting for that lock — exactly
-    the hang we're trying to break.  ``os.close()`` bypasses the
-    Python lock and directly invalidates the fd at the OS level.
-
-    Safe to call multiple times or on already-closed pipes.
-    """
-    for pipe in (proc.stdout, proc.stderr):
-        if pipe is not None:
-            try:
-                os.close(pipe.fileno())
-            except Exception:
-                pass
-
-
 def _finalize_pipes(proc: subprocess.Popen[str]) -> None:
     """Mark parent-side pipe file objects as closed at the Python level.
 
-    Called after :func:`_drain_readers` and any forced raw-descriptor
-    close. This prevents "Bad file descriptor" warnings when the garbage
-    collector finalizes objects whose underlying fd was already closed.
+    Called only after :func:`_drain_readers` confirms that no reader owns
+    the streams. A live reader keeps its stream open until it reaches EOF.
 
     Must be called after reader threads have exited — the pipe's
     internal lock is held during ``readline()``, so ``close()`` would
@@ -487,10 +462,8 @@ def _finalize_pipes(proc: subprocess.Popen[str]) -> None:
     """
     for pipe in (proc.stdout, proc.stderr):
         if pipe is not None:
-            try:
+            with suppress(ValueError, OSError):
                 pipe.close()
-            except Exception:
-                pass
 
 
 def _deliver_prompt(proc: subprocess.Popen[str], prompt: str) -> None:
@@ -921,6 +894,9 @@ def _pump_stream(
             )
     except (ValueError, OSError):
         pass
+    finally:
+        with suppress(ValueError, OSError):
+            stream.close()
 
 
 def _start_writer_thread(
@@ -996,11 +972,7 @@ def _cleanup_agent(
         windows_job.close()
     if proc.poll() is not None:
         _terminate_lingering_group(proc)
-    readers_drained = _drain_readers(*threads)
-    if not readers_drained:
-        _close_pipes(proc)
-        readers_drained = _drain_readers(*threads)
-    if readers_drained:
+    if _drain_readers(*threads):
         _finalize_pipes(proc)
 
 

@@ -1782,53 +1782,58 @@ class TestPumpStreamExceptionHandling:
         assert not thread.is_alive(), "_pump_stream thread did not exit after pipe closed"
         assert buffer == ["hello\n"]
 
-        read_file.close()
+        assert read_file.closed
 
     def test_exits_cleanly_on_valueerror(self):
         """A stream whose readline raises ValueError (e.g. closed file)
         must not crash the thread — it should exit cleanly."""
         import threading
 
-        class ClosedStream:
-            """Fake stream that raises ValueError on readline, simulating
-            a concurrent close of the underlying file descriptor."""
+        class ClosedStream(io.StringIO):
+            """Fake stream that raises ValueError on readline."""
 
-            def readline(self):
+            @override
+            def readline(self, *_args: object, **_kwargs: object) -> str:
                 raise ValueError("I/O operation on closed file")
 
+        stream = ClosedStream()
         buffer: list[str] = []
         thread = threading.Thread(
             target=_pump_stream,
-            args=(ClosedStream(), buffer, "stdout", None),
+            args=(stream, buffer, "stdout", None),
             daemon=True,
         )
         thread.start()
         thread.join(timeout=5)
         assert not thread.is_alive(), "_pump_stream thread did not exit after ValueError"
         assert buffer == []
+        assert stream.closed
 
     def test_exits_cleanly_on_oserror(self):
         """A stream whose readline raises OSError must not crash the thread."""
         import threading
 
-        class BrokenStream:
-            def readline(self):
+        class BrokenStream(io.StringIO):
+            @override
+            def readline(self, *_args: object, **_kwargs: object) -> str:
                 raise OSError("stream error")
 
+        stream = BrokenStream()
         buffer: list[str] = []
         thread = threading.Thread(
             target=_pump_stream,
-            args=(BrokenStream(), buffer, "stdout", None),
+            args=(stream, buffer, "stdout", None),
             daemon=True,
         )
         thread.start()
         thread.join(timeout=5)
         assert not thread.is_alive(), "_pump_stream thread did not exit after OSError"
         assert buffer == []
+        assert stream.closed
 
 
 class TestBoundedReaderThreadJoins:
-    """Tests for bounded reader-thread joins and pipe-closing in finally blocks.
+    """Tests for bounded reader-thread joins and stream ownership.
 
     Validates that grandchild processes holding stdout/stderr pipes cannot
     hang the CLI, and that joins always happen in the finally block.
@@ -1837,7 +1842,7 @@ class TestBoundedReaderThreadJoins:
     def test_grandchild_inheriting_stdout_does_not_hang(
         self, tmp_path: Path, monkeypatch: MonkeyPatch
     ) -> None:
-        """Close pipes when a detached grandchild keeps inherited descriptors open."""
+        """Keep reader-owned pipes open when a detached grandchild holds them."""
         script = (
             "import subprocess, sys, time\n"
             "subprocess.Popen(\n"
@@ -1848,11 +1853,11 @@ class TestBoundedReaderThreadJoins:
             "sys.stdout.flush()\n"
             "time.sleep(0.1)\n"
         )
-        close_pipes = MagicMock(
-            wraps=agent_module._close_pipes  # pyright: ignore[reportPrivateUsage]
+        finalize_pipes = MagicMock(
+            wraps=agent_module._finalize_pipes  # pyright: ignore[reportPrivateUsage]
         )
         monkeypatch.setattr(agent_module, "_THREAD_JOIN_TIMEOUT", 0.05)
-        monkeypatch.setattr(agent_module, "_close_pipes", close_pipes)
+        monkeypatch.setattr(agent_module, "_finalize_pipes", finalize_pipes)
 
         start = time.monotonic()
         result = _run_agent_blocking(
@@ -1872,7 +1877,7 @@ class TestBoundedReaderThreadJoins:
             f"_run_agent_blocking took {elapsed:.1f}s — likely hung on"
             " grandchild holding stdout pipe"
         )
-        close_pipes.assert_called_once()
+        finalize_pipes.assert_not_called()
 
         assert result.log_file is not None
         log_text = result.log_file.read_text()
@@ -1947,8 +1952,7 @@ class TestBoundedReaderThreadJoins:
                         )
                     )
 
-        # After the exception propagated, the finally block must have
-        # joined (and the pipe close must have unblocked) both threads.
+        # After the exception propagated, the finally block must have joined both readers.
         for ref, name in [(stdout_thread_ref, "stdout"), (stderr_thread_ref, "stderr")]:
             assert len(ref) == 1, f"expected 1 {name} thread, got {len(ref)}"
             thread = ref[0]
