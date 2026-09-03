@@ -8,8 +8,6 @@ from milknado.domains.common.agent_argv import (
     resolve_worker_tools,
 )
 from milknado.domains.common.config import (
-    FlavorOverride,
-    Gate,
     LoadedConfig,
     MilknadoConfig,
     default_config,
@@ -31,6 +29,7 @@ from milknado.domains.common.errors import (
     RebaseAbortError,
     UnlandedWorkError,
 )
+from milknado.domains.common.flavor_codec import FlavorOverride, Gate
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.common.merge import deep_merge
 from milknado.domains.common.paths import (
@@ -50,9 +49,11 @@ from milknado.domains.common.protocols import (
     GraphReadPort,
     LoopPort,
     ProgressEvent,
+    ReviewResult,
     TerminalRunOutcome,
     VerifySpecResult,
 )
+from milknado.domains.common.subprocess_options import PlanningSubprocessOptions
 from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
 from milknado.domains.common.types import (
     BUILTIN_FLAVORS,
@@ -95,6 +96,7 @@ __all__ = [
     "PluginHook",
     "PluginMeta",
     "LoopPort",
+    "PlanningSubprocessOptions",
     "TerminalRunOutcome",
     "VALID_CHILD_KINDS",
     "VALID_TRANSITIONS",
@@ -130,6 +132,7 @@ __all__ = [
     "UnlandedWorkError",
     "MegaBatchAborted",
     "ProgressEvent",
+    "ReviewResult",
     "TerminalRunOutcome",
     "VerifySpecResult",
 ]

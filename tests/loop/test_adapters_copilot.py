@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from milknado.loop.adapters import Invocation, select_adapter
-from milknado.loop.adapters.copilot import CopilotAdapter
+from milknado.loop.adapters import (
+    Invocation,
+    select_adapter,
+)
+from milknado.loop.adapters.copilot import (
+    CopilotAdapter,
+)
 
 
 def test_matches_copilot_binary_stem() -> None:
@@ -114,19 +117,11 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_raises_not_implemented(tmp_path) -> None:
-    adapter = CopilotAdapter()
-    with pytest.raises(NotImplementedError, match="no hook system"):
-        adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
-
-
 def test_capability_flags() -> None:
     adapter = CopilotAdapter()
     assert adapter.name == "copilot"
     assert adapter.counts_what == "tool_use"
     assert adapter.supports_streaming is False
-    assert adapter.renders_structured_peek is False
-    assert adapter.supports_soft_wind_down is False
     assert adapter.requires_full_stdout_for_completion is True
 
 

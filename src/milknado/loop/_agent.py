@@ -32,7 +32,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, cast
 
 from milknado.loop._events import OutputStream
 from milknado.loop._output import (
@@ -44,14 +44,14 @@ from milknado.loop._output import (
 )
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
+from milknado.loop.adapters._protocol import SoftWindDownAdapter
 
 _log = logging.getLogger(__name__)
-if IS_WINDOWS:
-    SESSION_KWARGS = {
-        **SESSION_KWARGS,
-        "creationflags": SESSION_KWARGS.get("creationflags", 0)
-        | getattr(subprocess, "CREATE_SUSPENDED", 0x00000004),
-    }
+if IS_WINDOWS:  # pragma: no cover
+    SESSION_KWARGS = SESSION_KWARGS.copy()  # pyright: ignore[reportConstantRedefinition]
+    SESSION_KWARGS["creationflags"] = cast(int, SESSION_KWARGS.get("creationflags", 0)) | cast(
+        int, getattr(subprocess, "CREATE_SUSPENDED", 0x00000004)
+    )
 
 
 _counter_write_failure_logged = False
@@ -61,7 +61,7 @@ _counter_write_failure_logged = False
 # Used across the streaming and blocking execution paths for callbacks
 # that observe live agent output.
 
-ActivityCallback = Callable[[dict[str, Any]], None]
+ActivityCallback = Callable[[dict[str, object]], None]
 """Receives parsed JSON activity dicts from the agent's stream."""
 
 OutputLineCallback = Callable[[str, OutputStream], None]
@@ -75,14 +75,14 @@ exceptions are swallowed so a buggy subscriber cannot kill the agent loop.
 
 
 def _call_safely(
-    callback: Callable[..., Any] | None,
-    *args: Any,
+    callback: Callable[..., object] | None,
+    *args: object,
     correlation: str = "unknown",
 ) -> None:
     if callback is None:
         return
     try:
-        callback(*args)
+        _ = callback(*args)
     except Exception:
         _log.exception(
             "agent observer callback failed callback=%s correlation=%s",
@@ -108,8 +108,8 @@ _LOG_ITERATION_PAD_WIDTH = 3
 _SIGTERM_GRACE_PERIOD = 3
 
 # Seconds to wait for reader threads to drain during cleanup.
-# Generous bound: after parent-side pipe close, EOF propagates within
-# milliseconds — 5s is headroom for slow kernels / loaded CI boxes.
+# A descendant can inherit a pipe, so cleanup remains bounded while its daemon reader
+# retains ownership until EOF.
 _THREAD_JOIN_TIMEOUT = 5.0
 
 # Seconds to wait for the agent process to exit after a kill signal.
@@ -122,7 +122,7 @@ _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 
 
 class _JobObjectBasicLimitInformation(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # pyright: ignore[reportUnannotatedClassAttribute]
         ("PerProcessUserTimeLimit", ctypes.c_int64),
         ("PerJobUserTimeLimit", ctypes.c_int64),
         ("LimitFlags", ctypes.c_uint32),
@@ -136,7 +136,7 @@ class _JobObjectBasicLimitInformation(ctypes.Structure):
 
 
 class _IoCounters(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # pyright: ignore[reportUnannotatedClassAttribute]
         ("ReadOperationCount", ctypes.c_uint64),
         ("WriteOperationCount", ctypes.c_uint64),
         ("OtherOperationCount", ctypes.c_uint64),
@@ -147,7 +147,7 @@ class _IoCounters(ctypes.Structure):
 
 
 class _JobObjectExtendedLimitInformation(ctypes.Structure):
-    _fields_ = [
+    _fields_ = [  # pyright: ignore[reportUnannotatedClassAttribute]
         ("BasicLimitInformation", _JobObjectBasicLimitInformation),
         ("IoInfo", _IoCounters),
         ("ProcessMemoryLimit", ctypes.c_size_t),
@@ -157,7 +157,7 @@ class _JobObjectExtendedLimitInformation(ctypes.Structure):
     ]
 
 
-def _load_kernel32() -> Any:
+def _load_kernel32() -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
     kernel32.CreateJobObjectW.restype = ctypes.c_void_p
@@ -177,11 +177,11 @@ def _load_kernel32() -> Any:
     return kernel32
 
 
-def _resume_windows_process(proc: subprocess.Popen[Any]) -> None:
+def _resume_windows_process(proc: subprocess.Popen[str]) -> None:
     ntdll = ctypes.WinDLL("ntdll")
     ntdll.NtResumeProcess.argtypes = [ctypes.c_void_p]
     ntdll.NtResumeProcess.restype = ctypes.c_long
-    status = ntdll.NtResumeProcess(getattr(proc, "_handle"))
+    status = cast(int, ntdll.NtResumeProcess(getattr(proc, "_handle")))  # pragma: no cover
     if status < 0:
         raise OSError(f"NtResumeProcess failed with status {status:#x}")
 
@@ -190,22 +190,22 @@ def _resume_windows_process(proc: subprocess.Popen[Any]) -> None:
 class _WindowsJob:
     """Kill-on-close Job Object containing one Windows agent process tree."""
 
-    handle: Any
-    kernel32: Any
+    handle: object
+    kernel32: Any  # pyright: ignore[reportExplicitAny]
     closed: bool = False
 
     @classmethod
-    def assign(cls, proc: subprocess.Popen[Any]) -> _WindowsJob | None:
+    def assign(cls, proc: subprocess.Popen[str]) -> _WindowsJob | None:
         if not IS_WINDOWS:
             return None
-        kernel32 = _load_kernel32()
-        handle = kernel32.CreateJobObjectW(None, None)
+        kernel32 = _load_kernel32()  # pyright: ignore[reportAny]
+        handle: object = kernel32.CreateJobObjectW(None, None)  # pyright: ignore[reportAny]
         if not handle:
             raise OSError("CreateJobObjectW failed")
         job = cls(handle=handle, kernel32=kernel32)
         info = _JobObjectExtendedLimitInformation()
-        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        if not kernel32.SetInformationJobObject(
+        info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE  # pyright: ignore[reportAny]
+        if not kernel32.SetInformationJobObject(  # pyright: ignore[reportAny]
             handle,
             _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
             ctypes.byref(info),
@@ -213,7 +213,7 @@ class _WindowsJob:
         ):
             job.close()
             raise OSError("SetInformationJobObject failed")
-        if not kernel32.AssignProcessToJobObject(handle, getattr(proc, "_handle")):
+        if not kernel32.AssignProcessToJobObject(handle, cast(object, getattr(proc, "_handle"))):  # pyright: ignore[reportAny]
             job.close()
             raise OSError("AssignProcessToJobObject failed")
         try:
@@ -225,12 +225,12 @@ class _WindowsJob:
 
     def terminate(self) -> None:
         if not self.closed:
-            self.kernel32.TerminateJobObject(self.handle, 1)
+            _ = self.kernel32.TerminateJobObject(self.handle, 1)  # pyright: ignore[reportAny]
             self.close()
 
     def close(self) -> None:
         if not self.closed:
-            self.kernel32.CloseHandle(self.handle)
+            _ = self.kernel32.CloseHandle(self.handle)  # pyright: ignore[reportAny]
             self.closed = True
 
 
@@ -264,7 +264,7 @@ class _FileSink:
     path: Path | None = None
 
     def write(self, line: str) -> None:
-        self.handle.write(line)
+        _ = self.handle.write(line)
         self.handle.flush()
 
     def close(self) -> None:
@@ -295,7 +295,7 @@ class _OutputCapture:
         if self.sink is None:
             return ()
         self.sink.handle.flush()
-        self.sink.handle.seek(0)
+        _ = self.sink.handle.seek(0)
         return iter(self.sink.handle.readline, "")
 
     def close(self) -> None:
@@ -340,19 +340,19 @@ def _extract_result_text_from_lines(lines: Iterable[str] | None) -> str | None:
 def _extract_result_text_from_line(line: str) -> str | None:
     """Return the string payload from a single JSON ``result`` event line."""
     try:
-        parsed = json.loads(line.strip())
+        parsed = cast(object, json.loads(line.strip()))
     except json.JSONDecodeError:
         return None
-    if (
-        isinstance(parsed, dict)
-        and parsed.get("type") == _RESULT_EVENT_TYPE
-        and isinstance(parsed.get(_RESULT_FIELD), str)
-    ):
-        return parsed[_RESULT_FIELD]
-    return None
+    if not isinstance(parsed, dict):
+        return None
+    parsed = cast(dict[str, object], parsed)
+    if parsed.get("type") != _RESULT_EVENT_TYPE:
+        return None
+    result = parsed.get(_RESULT_FIELD)
+    return result if isinstance(result, str) else None
 
 
-def _try_graceful_group_kill(proc: subprocess.Popen[Any]) -> bool:
+def _try_graceful_group_kill(proc: subprocess.Popen[str]) -> bool:
     """Attempt to kill the process via its POSIX process group.
 
     Sends SIGTERM, waits briefly, then escalates to SIGKILL if needed.
@@ -376,7 +376,7 @@ def _try_graceful_group_kill(proc: subprocess.Popen[Any]) -> bool:
         return False
 
     try:
-        proc.wait(timeout=_SIGTERM_GRACE_PERIOD)
+        _ = proc.wait(timeout=_SIGTERM_GRACE_PERIOD)
         return True
     except subprocess.TimeoutExpired:
         pass
@@ -389,11 +389,11 @@ def _try_graceful_group_kill(proc: subprocess.Popen[Any]) -> bool:
 
 
 def _kill_process_group(
-    proc: subprocess.Popen[Any],
+    proc: subprocess.Popen[str],
     windows_job: _WindowsJob | None = None,
 ) -> None:
     """Kill the agent process and its entire contained process tree."""
-    if proc.pid is None or proc.pid <= 0:
+    if (pid := cast(int | None, cast(object, proc.pid))) is None or pid <= 0:
         return
     if windows_job is not None:
         windows_job.terminate()
@@ -405,20 +405,20 @@ def _kill_process_group(
 
 
 def _ensure_process_dead(
-    proc: subprocess.Popen[Any],
+    proc: subprocess.Popen[str],
     windows_job: _WindowsJob | None = None,
 ) -> None:
     """Kill the contained process tree if needed, then reap the worker."""
     if proc.poll() is None:
         _kill_process_group(proc, windows_job)
     try:
-        proc.wait(timeout=_PROCESS_WAIT_TIMEOUT)
+        _ = proc.wait(timeout=_PROCESS_WAIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         warn(f"agent process did not exit within {_PROCESS_WAIT_TIMEOUT}s after kill")
 
 
 def _wait_for_process(
-    proc: subprocess.Popen[Any],
+    proc: subprocess.Popen[str],
     *,
     deadline: float | None,
     force_stop_event: threading.Event | None,
@@ -450,40 +450,11 @@ def _wait_for_process(
     return proc.returncode, False, False
 
 
-def _close_pipes(proc: subprocess.Popen[Any]) -> None:
-    """Close parent-side stdout/stderr pipe file descriptors.
-
-    Forces EOF to propagate to reader threads even when grandchild
-    processes have inherited the write end of the pipe.  The pump
-    thread's ``readline()`` wakes with ``OSError`` (EBADF), which
-    ``_pump_stream`` catches, so the thread exits and ``join()``
-    returns promptly.
-
-    Uses ``os.close()`` on the raw fd rather than ``pipe.close()``
-    because Python's ``TextIOWrapper`` / ``BufferedReader`` hold an
-    internal lock during ``readline()``.  Calling ``pipe.close()``
-    from the main thread would block waiting for that lock — exactly
-    the hang we're trying to break.  ``os.close()`` bypasses the
-    Python lock and directly invalidates the fd at the OS level.
-
-    Safe to call multiple times or on already-closed pipes.
-    """
-    for pipe in (proc.stdout, proc.stderr):
-        if pipe is not None:
-            try:
-                os.close(pipe.fileno())
-            except Exception:
-                pass
-
-
-def _finalize_pipes(proc: subprocess.Popen[Any]) -> None:
+def _finalize_pipes(proc: subprocess.Popen[str]) -> None:
     """Mark parent-side pipe file objects as closed at the Python level.
 
-    Called AFTER :func:`_close_pipes` and :func:`_drain_readers` to set
-    the ``closed`` flag on the Python file objects.  This prevents
-    "Bad file descriptor" warnings when the garbage collector finalizes
-    the objects whose underlying fd was already closed by
-    :func:`_close_pipes`.
+    Called only after :func:`_drain_readers` confirms that no reader owns
+    the streams. A live reader keeps its stream open until it reaches EOF.
 
     Must be called after reader threads have exited — the pipe's
     internal lock is held during ``readline()``, so ``close()`` would
@@ -491,13 +462,11 @@ def _finalize_pipes(proc: subprocess.Popen[Any]) -> None:
     """
     for pipe in (proc.stdout, proc.stderr):
         if pipe is not None:
-            try:
+            with suppress(ValueError, OSError):
                 pipe.close()
-            except Exception:
-                pass
 
 
-def _deliver_prompt(proc: subprocess.Popen[Any], prompt: str) -> None:
+def _deliver_prompt(proc: subprocess.Popen[str], prompt: str) -> None:
     """Write *prompt* to the agent's stdin and close the pipe.
 
     Silently handles ``BrokenPipeError`` — the agent may exit before
@@ -507,7 +476,7 @@ def _deliver_prompt(proc: subprocess.Popen[Any], prompt: str) -> None:
     if proc.stdin is None:
         raise RuntimeError("subprocess.Popen did not provide stdin for prompt delivery")
     try:
-        proc.stdin.write(prompt)
+        _ = proc.stdin.write(prompt)
     except BrokenPipeError:
         pass
     finally:
@@ -540,10 +509,9 @@ class AgentResult(ProcessResult):
 class _WindDownContext:
     """Per-iteration tempdir and counter state for soft wind-down hooks.
 
-    Built by :func:`_setup_wind_down` for adapters whose
-    ``supports_soft_wind_down`` is True and a ``max_turns`` cap is
-    configured.  Carries the env-var overrides the spawned agent needs,
-    plus the cleanup hook called from the streaming path's ``finally``.
+    Built by :func:`_setup_wind_down` for adapters that implement
+    :class:`SoftWindDownAdapter` when a ``max_turns`` cap is configured.
+    Carries the agent environment and the streaming cleanup hook.
     """
 
     tempdir: Path
@@ -767,15 +735,15 @@ def _read_agent_stream(
         stripped = line.strip()
         if stripped:
             try:
-                parsed = json.loads(stripped)
+                parsed = cast(object, json.loads(stripped))
             except json.JSONDecodeError:
                 pass
             else:
                 if isinstance(parsed, dict):
-                    if parsed.get("type") == _RESULT_EVENT_TYPE and isinstance(
-                        parsed.get(_RESULT_FIELD), str
-                    ):
-                        state.result_text = parsed[_RESULT_FIELD]
+                    parsed = cast(dict[str, object], parsed)
+                    result_text = parsed.get(_RESULT_FIELD)
+                    if parsed.get("type") == _RESULT_EVENT_TYPE and isinstance(result_text, str):
+                        state.result_text = result_text
                     _call_safely(on_activity, parsed, correlation=correlation)
             if count_tool_use and adapter is not None:
                 if _update_tool_use(state, adapter, on_tool_use, max_turns, stripped, correlation):
@@ -810,14 +778,14 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     )
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
             run.cmd,
             stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE if pipe_stderr else None,
             env=_build_spawn_env(run.env),
             cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,
+            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
             **SESSION_KWARGS,
         )
         try:
@@ -926,10 +894,13 @@ def _pump_stream(
             )
     except (ValueError, OSError):
         pass
+    finally:
+        with suppress(ValueError, OSError):
+            stream.close()
 
 
 def _start_writer_thread(
-    proc: subprocess.Popen[Any],
+    proc: subprocess.Popen[str],
     prompt: str,
 ) -> threading.Thread:
     thread = threading.Thread(target=_deliver_prompt, args=(proc, prompt), daemon=True)
@@ -953,23 +924,23 @@ def _start_pump_thread(
     return thread
 
 
-def _drain_readers(
-    *threads: threading.Thread | None,
-    timeout: float = _THREAD_JOIN_TIMEOUT,
-) -> None:
-    """Join reader threads and warn if any cannot drain within the bound."""
+def _drain_readers(*threads: threading.Thread | None) -> bool:
+    """Join reader threads within the bound and report whether all drained."""
+    drained = True
     for thread in threads:
         if thread is not None:
-            thread.join(timeout=timeout)
+            thread.join(timeout=_THREAD_JOIN_TIMEOUT)
             if thread.is_alive():
+                drained = False
                 warn(
                     f"reader thread {thread.name!r} did not exit within"
-                    f" {timeout}s — log output may be incomplete"
+                    + f" {_THREAD_JOIN_TIMEOUT}s — log output may be incomplete"
                 )
+    return drained
 
 
-def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
-    if IS_WINDOWS or proc.pid is None or proc.pid <= 0:
+def _terminate_lingering_group(proc: subprocess.Popen[str]) -> None:
+    if IS_WINDOWS or (pid := cast(int | None, cast(object, proc.pid))) is None or pid <= 0:
         return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -991,7 +962,7 @@ def _terminate_lingering_group(proc: subprocess.Popen[Any]) -> None:
 
 
 def _cleanup_agent(
-    proc: subprocess.Popen[Any],
+    proc: subprocess.Popen[str],
     *threads: threading.Thread | None,
     windows_job: _WindowsJob | None = None,
 ) -> None:
@@ -1001,9 +972,8 @@ def _cleanup_agent(
         windows_job.close()
     if proc.poll() is not None:
         _terminate_lingering_group(proc)
-    _close_pipes(proc)
-    _drain_readers(*threads)
-    _finalize_pipes(proc)
+    if _drain_readers(*threads):
+        _finalize_pipes(proc)
 
 
 def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
@@ -1057,14 +1027,14 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
         )
 
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
             run.cmd,
             stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
             stdout=subprocess.PIPE if pipe_stdout else None,
             stderr=subprocess.PIPE if pipe_stderr else None,
             env=_build_spawn_env(run.env),
             cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,
+            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
             **SESSION_KWARGS,
         )
         try:
@@ -1265,9 +1235,8 @@ def _setup_wind_down(
 
     - *max_turns* is unset (no cap = nothing to wind down toward).
     - *max_turns_grace* is ``0`` (user opted out of the warning window).
-    - The adapter's ``supports_soft_wind_down`` flag is ``False``.
-    - The adapter's ``install_wind_down_hook`` raises
-      ``NotImplementedError`` (e.g. Copilot has no hook system today).
+    - The adapter does not implement :class:`SoftWindDownAdapter`.
+    - The adapter's hook installation raises ``NotImplementedError``.
 
     The tempdir is created with a ``milknado-loop-`` prefix so stale dirs are
     easy to spot in ``$TMPDIR`` after a crash.  The counter file lives in
@@ -1277,7 +1246,7 @@ def _setup_wind_down(
     """
     if max_turns is None or max_turns_grace <= 0:
         return None
-    if not adapter.supports_soft_wind_down:
+    if not isinstance(adapter, SoftWindDownAdapter):
         return None
     # Clamp the grace below the cap.  A grace >= max_turns is reachable via
     # the library API (RunConfig does not validate it the way the CLI does);
@@ -1332,7 +1301,7 @@ def _atomic_write_counter(counter_path: Path, value: int) -> None:
     global _counter_write_failure_logged
     try:
         tmp_path = counter_path.with_name(counter_path.name + ".tmp")
-        tmp_path.write_text(str(value), encoding="utf-8")
+        _ = tmp_path.write_text(str(value), encoding="utf-8")
         os.replace(tmp_path, counter_path)
     except OSError as exc:
         if not _counter_write_failure_logged:

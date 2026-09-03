@@ -11,7 +11,7 @@ leaf module makes the import graph acyclic.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, Protocol, runtime_checkable
+from typing import Literal, NamedTuple, Protocol, runtime_checkable
 
 from milknado.loop._promise import has_promise_completion
 
@@ -32,7 +32,7 @@ class AdapterEvent(NamedTuple):
 
     kind: AdapterEventKind
     name: str | None = None
-    raw: dict[str, Any] | None = None
+    raw: dict[str, object] | None = None
 
 
 class Invocation(NamedTuple):
@@ -82,13 +82,7 @@ class CLIAdapter(Protocol):
     name: str
     counts_what: CountsWhat
     supports_streaming: bool
-    renders_structured_peek: bool
-    supports_soft_wind_down: bool
     requires_full_stdout_for_completion: bool
-
-    def matches(self, cmd: list[str]) -> bool:
-        """Return True if this adapter handles the given agent command."""
-        ...
 
     def build_command(self, cmd: list[str]) -> list[str]:
         """Return the command with any adapter-required flags appended.
@@ -137,23 +131,27 @@ class CLIAdapter(Protocol):
         """
         ...
 
+
+class RegisteredAdapter(CLIAdapter, Protocol):
+    """A named adapter that can select itself from an agent command."""
+
+    def matches(self, cmd: list[str]) -> bool: ...
+
+
+@runtime_checkable
+class SoftWindDownAdapter(Protocol):
+    """An adapter that can install a warning hook before the hard turn cap."""
+
     def install_wind_down_hook(
         self,
         tempdir: Path,
         counter_path: Path,
         cap: int,
         grace: int,
-    ) -> dict[str, str]:
-        """Write hook config files into *tempdir* and return env-var overrides.
-
-        Only called when ``supports_soft_wind_down`` is True.  Adapters that
-        set the flag False may leave this unimplemented (a ``NotImplementedError``
-        is acceptable and is treated as a runtime downgrade to hard-cap-only).
-        """
-        ...
+    ) -> dict[str, str]: ...
 
 
-ADAPTERS: list[CLIAdapter] = []
+ADAPTERS: list[RegisteredAdapter] = []
 """Adapter registry, populated at import time by concrete adapter modules.
 
 Ordering matters: :func:`milknado.loop.adapters.select_adapter` returns the

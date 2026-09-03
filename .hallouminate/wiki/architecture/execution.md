@@ -247,6 +247,20 @@ starts. `_async_worker`'s except branch guarantees a terminal "failed" write on
 any spawn/write failure — otherwise the run row sticks on "running" and locks
 the node out forever.
 
+
+
+### Ralph-loop pipe ownership
+
+A reader thread owns each `Popen` stdout or stderr stream until EOF.[^pipe-ownership]
+Cleanup must not call `os.close(stream.fileno())` while the Python stream remains open.
+A detached descendant can inherit a pipe and keep its reader alive after the direct child exits.
+Cleanup therefore bounds the join and leaves each live reader with its stream.
+The reader closes the stream after EOF or a terminal read error.
+Raw descriptor closure leaves a stale `TextIOWrapper`.
+Later finalization can close an unrelated descriptor after the operating system reuses the descriptor number.
+
+[^pipe-ownership]: `src/milknado/loop/_agent.py:878-899,927-976`; `tests/loop/test_agent.py:1835-1884`
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives

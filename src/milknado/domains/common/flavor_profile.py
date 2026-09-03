@@ -153,7 +153,7 @@ def _validate_session_mode_family(
     if family == "cursor-agent" or family == "cursor":
         raise ValueError(
             "session_mode 'resume' is not supported for the cursor-agent family "
-            "(headless resume mechanics are unverified — see "
-            "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
-            "different agent"
+            + "(headless resume mechanics are unverified — see "
+            + "adversarial-review-loops-F001); use session_mode = 'fresh' or a "
+            + "different agent"
         )

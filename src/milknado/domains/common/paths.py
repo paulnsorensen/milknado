@@ -29,7 +29,7 @@ def validate_hint_path(
     normalized = path.strip()
     if not normalized:
         raise ValueError(f"{label} {path!r} is empty")
-    resolve_project_path(normalized, project_root, label=label)
+    _ = resolve_project_path(normalized, project_root, label=label)
 
 
 class TrustedGlobalPath(str):

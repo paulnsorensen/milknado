@@ -90,6 +90,13 @@ class TestLoadConfig:
 
         assert "topsecret" not in str(exc_info.value).lower()
 
+    def test_decoder_does_not_mutate_raw_worker_tools(self) -> None:
+        raw: dict[str, object] = {"worker": {"tools": {"claude": ["Read"]}}}
+
+        decode_milknado_section(raw)
+
+        assert raw == {"worker": {"tools": {"claude": ["Read"]}}}
+
     def test_loads_custom_planning_agent(self, tmp_path: Path) -> None:
         toml = '[milknado]\nagent_family = "claude"\nplanning_agent = "claude --model opus"\n'
         path = self._write_toml(tmp_path, toml)

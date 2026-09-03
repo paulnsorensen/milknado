@@ -83,14 +83,14 @@ def test_same_named_method_without_textual_base_is_not_classified(tmp_path: Path
     assert "compose" in output
 
 
-def test_vendored_loop_findings_resolve_to_real_symbols() -> None:
+def test_exact_false_positive_findings_resolve_to_real_symbols() -> None:
     tree = ast.parse(GATE_SCRIPT.read_text(encoding="utf-8"), filename=str(GATE_SCRIPT))
     assignment = next(
         node
         for node in tree.body
         if isinstance(node, ast.Assign)
         and any(
-            isinstance(target, ast.Name) and target.id == "_VENDORED_LOOP_FINDINGS"
+            isinstance(target, ast.Name) and target.id == "_FALSE_POSITIVE_FINDINGS"
             for target in node.targets
         )
     )

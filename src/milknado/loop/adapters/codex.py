@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters._protocol import (
@@ -67,12 +67,6 @@ class CodexAdapter:
     name: str = "codex"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
-    # Codex emits structured JSON that the streaming execution path parses
-    # for activity callbacks, but the console peek panel only understands
-    # Claude's stream-json schema today. Keep peek in raw-line mode until
-    # the emitter can render Codex events directly.
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = True
     # Codex's terminal text lives inside ``TaskComplete`` / ``TurnCompleted``
     # events, which the streaming reader does not extract into
     # ``agent.result_text``.  The full stdout buffer is currently the only
@@ -106,11 +100,12 @@ class CodexAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = _event_type(parsed)
         if event_type in _TOOL_CALL_EVENTS:
@@ -154,10 +149,13 @@ class CodexAdapter:
             if not stripped:
                 continue
             try:
-                parsed = json.loads(stripped)
+                parsed = cast(object, json.loads(stripped))
             except json.JSONDecodeError:
                 continue
-            if isinstance(parsed, dict) and _event_type(parsed) in _RESULT_EVENTS:
+            if not isinstance(parsed, dict):
+                continue
+            parsed = cast(dict[str, object], parsed)
+            if _event_type(parsed) in _RESULT_EVENTS:
                 text = _event_text_payload(parsed)
                 if text and has_promise_completion(text, user_signal):
                     return True
@@ -178,11 +176,11 @@ class CodexAdapter:
         user's real ``~/.codex`` config stays untouched.
         """
         command = _build_shim_command(counter_path, cap, grace)
-        (tempdir / _HOOKS_FILENAME).write_text(
+        _ = (tempdir / _HOOKS_FILENAME).write_text(
             json.dumps(_build_hooks_payload(command), indent=2),
             encoding="utf-8",
         )
-        (tempdir / _CONFIG_FILENAME).write_text(_FEATURE_FLAG_TOML, encoding="utf-8")
+        _ = (tempdir / _CONFIG_FILENAME).write_text(_FEATURE_FLAG_TOML, encoding="utf-8")
         return {"CODEX_HOME": str(tempdir)}
 
 
@@ -191,7 +189,7 @@ def _build_shim_command(counter_path: Path, cap: int, grace: int) -> str:
     return f"{sys.executable} -m milknado.loop._wind_down_shim {counter_path} {cap} {grace} codex"
 
 
-def _build_hooks_payload(command: str) -> dict[str, Any]:
+def _build_hooks_payload(command: str) -> dict[str, object]:
     """Return the JSON dict written to ``hooks.json``."""
     return {
         _HOOK_EVENT: [
@@ -205,20 +203,21 @@ def _build_hooks_payload(command: str) -> dict[str, Any]:
     }
 
 
-def _event_type(parsed: dict[str, Any]) -> str | None:
+def _event_type(parsed: dict[str, object]) -> str | None:
     """Return the Codex event type, whether top-level or nested under ``type``."""
     event_type = parsed.get("type") or parsed.get("kind")
     if isinstance(event_type, str):
         return event_type
     msg = parsed.get("msg")
     if isinstance(msg, dict):
+        msg = cast(dict[str, object], msg)
         nested = msg.get("type") or msg.get("kind")
         if isinstance(nested, str):
             return nested
     return None
 
 
-def _tool_name(parsed: dict[str, Any], event_type: str | None) -> str | None:
+def _tool_name(parsed: dict[str, object], event_type: str | None) -> str | None:
     """Best-effort extraction of the tool name from a tool-call event.
 
     Codex event shapes vary by tool type — ``CommandExecution`` carries a
@@ -231,6 +230,7 @@ def _tool_name(parsed: dict[str, Any], event_type: str | None) -> str | None:
             return value
     msg = parsed.get("msg")
     if isinstance(msg, dict):
+        msg = cast(dict[str, object], msg)
         for key in ("name", "tool", "tool_name", "command"):
             value = msg.get(key)
             if isinstance(value, str):
@@ -238,7 +238,7 @@ def _tool_name(parsed: dict[str, Any], event_type: str | None) -> str | None:
     return event_type
 
 
-def _event_text_payload(parsed: dict[str, Any]) -> str | None:
+def _event_text_payload(parsed: dict[str, object]) -> str | None:
     """Extract any final-assistant text from a Codex result event."""
     for key in ("result", "text", "content", "output"):
         value = parsed.get(key)
@@ -246,6 +246,7 @@ def _event_text_payload(parsed: dict[str, Any]) -> str | None:
             return value
     msg = parsed.get("msg")
     if isinstance(msg, dict):
+        msg = cast(dict[str, object], msg)
         for key in ("result", "text", "content", "output"):
             value = msg.get(key)
             if isinstance(value, str):

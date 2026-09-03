@@ -6,9 +6,8 @@ Covers the behaviours that distinguish how each adapter participates in
 - Streaming adapters that count tool uses (claude / codex / opencode / omp) are
   preempted at the cap.
 - Adapters that count nothing (crush) treat ``max_turns`` as a no-op.
-- Adapters with no hook system (copilot / crush / opencode / generic)
-  downgrade soft wind-down to hard-cap-only via ``NotImplementedError``.
-- The engine emits ``ITERATION_TURN_CAPPED`` and fans the signal to hooks.
+- Adapters without soft wind-down support use only the hard cap.
+- The engine emits ``ITERATION_TURN_CAPPED``.
 """
 
 from __future__ import annotations
@@ -16,46 +15,51 @@ from __future__ import annotations
 import io
 import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
+
+from _pytest.logging import LogCaptureFixture
 
 import milknado.loop._agent as agent_mod
 from milknado.loop._agent import (
     AgentResult,
-    _atomic_write_counter,
-    _count_tool_uses_post_hoc,
-    _read_agent_stream,
-    _ResolvedAgentRun,
-    _run_agent_blocking,
-    _setup_wind_down,
-    _wrap_tool_use_with_counter,
+    _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
+    _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
+    _count_tool_uses_post_hoc,  # pyright: ignore[reportPrivateUsage]
+    _read_agent_stream,  # pyright: ignore[reportPrivateUsage]
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _setup_wind_down,  # pyright: ignore[reportPrivateUsage]
+    _wrap_tool_use_with_counter,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.loop._events import EventType, QueueEmitter
+from milknado.loop._events import (
+    EventType,
+    QueueEmitter,
+)
 from milknado.loop._run_types import RunStatus
-from milknado.loop.adapters import select_adapter
+from milknado.loop.adapters import (
+    AdapterEvent,
+    CountsWhat,
+    Invocation,
+    select_adapter,
+)
 from milknado.loop.adapters.claude import ClaudeAdapter
 from milknado.loop.adapters.codex import CodexAdapter
-from milknado.loop.adapters.copilot import CopilotAdapter
+from milknado.loop.adapters.copilot import (
+    CopilotAdapter,
+)
 from milknado.loop.adapters.crush import CrushAdapter
 from milknado.loop.adapters.omp import OmpAdapter
-from milknado.loop.adapters.opencode import OpenCodeAdapter
+from milknado.loop.adapters.opencode import (
+    OpenCodeAdapter,
+)
 from milknado.loop.engine import run_loop
-from milknado.loop.hooks import NoOpAgentHook
-from tests.loop.helpers import drain_events, event_types, make_config, make_state
-
-
-class _RecordingHook(NoOpAgentHook):
-    """Hook that records the turn-cap callbacks it receives."""
-
-    def __init__(self) -> None:
-        self.capped: list[int] = []
-        self.tool_uses: list[tuple[str, int]] = []
-
-    def on_turn_capped(self, *, iteration: int, count: int) -> None:
-        self.capped.append(count)
-
-    def on_tool_use(self, *, iteration: int, tool_name: str, count: int) -> None:
-        self.tool_uses.append((tool_name, count))
-
+from tests.loop.helpers import (
+    drain_events,  # pyright: ignore[reportUnknownVariableType]
+    event_types,  # pyright: ignore[reportUnknownVariableType]
+    make_config,
+    make_state,
+)
 
 # ── opencode: counts_what == "tool_use" feeds the cap ──────────────────
 
@@ -64,7 +68,7 @@ def test_opencode_tool_use_events_count_toward_cap() -> None:
     """opencode tool_use events are counted and preempt at the cap."""
     adapter = OpenCodeAdapter()
     stream = io.StringIO(
-        '{"type":"tool_use","name":"read"}\n'
+        '{"type":"tool_use","name":"read"}\n'  # pyright: ignore[reportImplicitStringConcatenation]
         '{"type":"text","part":{"text":"thinking"}}\n'
         '{"type":"tool_use","name":"edit"}\n'
         '{"type":"tool_use","name":"bash"}\n'
@@ -90,7 +94,7 @@ def test_omp_tool_execution_start_events_count_toward_cap() -> None:
     """OMP camelCase tool events are counted and preempt at the cap."""
     adapter = OmpAdapter()
     stream = io.StringIO(
-        '{"type":"tool_execution_start","toolName":"read","args":{}}\n'
+        '{"type":"tool_execution_start","toolName":"read","args":{}}\n'  # pyright: ignore[reportImplicitStringConcatenation]
         '{"type":"message_update","assistantMessageEvent":{"type":"text_delta"}}\n'
         '{"type":"tool_execution_start","toolName":"edit","args":{}}\n'
         '{"type":"tool_execution_start","toolName":"bash","args":{}}\n'
@@ -115,7 +119,7 @@ def test_opencode_counts_without_cap_do_not_trip() -> None:
     """With no cap, opencode counts every tool use and never caps."""
     adapter = OpenCodeAdapter()
     stream = io.StringIO(
-        '{"type":"tool_use","name":"read"}\n'
+        '{"type":"tool_use","name":"read"}\n'  # pyright: ignore[reportImplicitStringConcatenation]
         '{"type":"tool_use","name":"edit"}\n'
         '{"type":"tool_use","name":"bash"}\n'
     )
@@ -134,10 +138,9 @@ def test_opencode_counts_without_cap_do_not_trip() -> None:
 def test_crush_max_turns_is_graceful_noop() -> None:
     """crush emits no countable events, so the cap can never fire."""
     adapter = CrushAdapter()
-    stdout_lines = [
-        "Did some work.\n",
-        "<promise>COMPLETE</promise>\n",
-    ]
+    stdout_lines = _BoundedOutput()
+    for line in ("Did some work.\n", "<promise>COMPLETE</promise>\n"):
+        stdout_lines.append(line)
 
     count, capped = _count_tool_uses_post_hoc(
         adapter=adapter,
@@ -153,7 +156,7 @@ def test_crush_max_turns_is_graceful_noop() -> None:
 # ── soft wind-down downgrade to hard-cap-only ──────────────────────────
 
 
-def test_wind_down_downgrades_for_adapters_without_hooks(tmp_path) -> None:
+def test_wind_down_downgrades_for_adapters_without_hooks(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """copilot / crush / opencode / generic have no hook system → no setup."""
     for adapter in (
         CopilotAdapter(),
@@ -202,13 +205,12 @@ def test_wind_down_skipped_when_grace_zero() -> None:
     assert ctx is None
 
 
-# ── engine surfaces the cap as an event + hook callback ────────────────
+# ── engine surfaces the cap as an event ────────────────────────────────
 
 
-def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path) -> None:
-    """A capped iteration emits ITERATION_TURN_CAPPED and notifies the hook."""
-    hook = _RecordingHook()
-    config = make_config(tmp_path, max_turns=3, max_iterations=1, hooks=[hook])
+def test_engine_emits_turn_capped_event(tmp_path: Path) -> None:
+    """A capped iteration emits ITERATION_TURN_CAPPED."""
+    config = make_config(tmp_path, max_turns=3, max_iterations=1)
     state = make_state()
     emitter = QueueEmitter()
 
@@ -225,13 +227,12 @@ def test_engine_emits_turn_capped_event_and_fans_to_hook(tmp_path) -> None:
 
     types = event_types(drain_events(emitter))
     assert EventType.ITERATION_TURN_CAPPED in types
-    assert hook.capped == [3]
     # A capped iteration counts as completed, not failed.
     assert state.completed == 1
     assert state.failed == 0
 
 
-def test_turn_cap_does_not_trip_stop_on_error(tmp_path) -> None:
+def test_turn_cap_does_not_trip_stop_on_error(tmp_path: Path) -> None:
     """max_turns + stop_on_error: a capped iteration must not mark the run FAILED.
 
     A streaming cap SIGKILLs the child (returncode < 0), so ``agent.success``
@@ -256,7 +257,7 @@ def test_turn_cap_does_not_trip_stop_on_error(tmp_path) -> None:
     assert state.failed == 0
 
 
-def test_timeout_with_turn_cap_still_trips_stop_on_error(tmp_path) -> None:
+def test_timeout_with_turn_cap_still_trips_stop_on_error(tmp_path: Path) -> None:
     """A real timeout must trip stop_on_error even when the turn cap also fired.
 
     The blocking path counts tool uses post-hoc *after* the child exits, so a
@@ -288,7 +289,7 @@ def test_timeout_with_turn_cap_still_trips_stop_on_error(tmp_path) -> None:
 # ── blocking path forces buffering so the post-hoc cap can count ───────
 
 
-def test_blocking_path_forces_buffering_for_post_hoc_cap(tmp_path) -> None:
+def test_blocking_path_forces_buffering_for_post_hoc_cap(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """A blocking adapter with max_turns must buffer stdout to count tool uses.
 
     Regression: post-hoc counting re-scans ``stdout_lines``, which is
@@ -322,7 +323,7 @@ def test_blocking_path_forces_buffering_for_post_hoc_cap(tmp_path) -> None:
     assert result.turn_capped is True
 
 
-def test_blocking_path_no_buffering_without_cap(tmp_path) -> None:
+def test_blocking_path_no_buffering_without_cap(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedParameter]
     """Without a cap, the blocking path stays unbuffered and counts nothing."""
     script = 'print(\'{"type":"tool_use","name":"read"}\')'
 
@@ -346,7 +347,7 @@ def test_blocking_path_no_buffering_without_cap(tmp_path) -> None:
 # ── counter callback isolates a raising subscriber ─────────────────────
 
 
-def test_wrap_counter_swallows_subscriber_exception(tmp_path) -> None:
+def test_wrap_counter_swallows_subscriber_exception(tmp_path: Path) -> None:
     """A raising on_tool_use subscriber must not crash the wrapped callback.
 
     Regression: the wrapped counter callback invoked the downstream
@@ -355,7 +356,7 @@ def test_wrap_counter_swallows_subscriber_exception(tmp_path) -> None:
     """
     counter_path = tmp_path / "counter"
 
-    def boom(name: str, count: int) -> None:
+    def boom(name: str, count: int) -> None:  # pyright: ignore[reportUnusedParameter]
         raise RuntimeError("subscriber blew up")
 
     wrapped = _wrap_tool_use_with_counter(boom, counter_path)
@@ -386,12 +387,12 @@ def test_wind_down_grace_clamped_below_cap() -> None:
     )
     assert ctx is not None
     try:
-        settings = json.loads((ctx.tempdir / "settings.json").read_text(encoding="utf-8"))
-        command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        settings = json.loads((ctx.tempdir / "settings.json").read_text(encoding="utf-8"))  # pyright: ignore[reportAny]
+        command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]  # pyright: ignore[reportAny]
         # Tail of the shim command is "... <cap> <grace> claude".
-        parts = command.split()
+        parts = command.split()  # pyright: ignore[reportAny]
         assert parts[-1] == "claude"
-        cap_arg, grace_arg = int(parts[-3]), int(parts[-2])
+        cap_arg, grace_arg = int(parts[-3]), int(parts[-2])  # pyright: ignore[reportAny]
         assert cap_arg == 3
         assert grace_arg == 2  # clamped from 10 to max(cap - 1, 0)
     finally:
@@ -405,18 +406,43 @@ class _RaisingHookAdapter:
     """Minimal adapter that claims wind-down support but raises on install.
 
     Exercises the defensive ``NotImplementedError`` branch of
-    ``_setup_wind_down`` — no shipped adapter currently reaches it, since
-    non-supporting adapters bail at the capability-flag check first.
+    ``_setup_wind_down``. No shipped adapter currently raises here.
     """
 
-    name = "raiser"
-    supports_soft_wind_down = True
+    name: str = "raiser"
+    counts_what: CountsWhat = "none"
+    supports_streaming: bool = False
+    requires_full_stdout_for_completion: bool = False
 
-    def install_wind_down_hook(self, *, tempdir, counter_path, cap, grace):
+    def build_command(self, cmd: list[str]) -> list[str]:
+        return cmd
+
+    def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:  # pyright: ignore[reportUnusedParameter]
+        return Invocation(cmd, None)
+
+    def parse_event(self, line: str) -> AdapterEvent | None:  # pyright: ignore[reportUnusedParameter]
+        return None
+
+    def extract_completion_signal(
+        self,
+        *,
+        result_text: str | None,  # pyright: ignore[reportUnusedParameter]
+        stdout: str | None,  # pyright: ignore[reportUnusedParameter]
+        user_signal: str,  # pyright: ignore[reportUnusedParameter]
+    ) -> bool:
+        return False
+
+    def install_wind_down_hook(
+        self,
+        tempdir: Path,  # pyright: ignore[reportUnusedParameter]
+        counter_path: Path,  # pyright: ignore[reportUnusedParameter]
+        cap: int,  # pyright: ignore[reportUnusedParameter]
+        grace: int,  # pyright: ignore[reportUnusedParameter]
+    ) -> dict[str, str]:
         raise NotImplementedError
 
 
-def test_counter_removed_when_install_raises(tmp_path) -> None:
+def test_counter_removed_when_install_raises(tmp_path: Path) -> None:
     """The log_dir counter file must not be orphaned if install raises.
 
     Regression: the NotImplementedError branch removed only the tempdir,
@@ -441,15 +467,15 @@ def test_counter_removed_when_install_raises(tmp_path) -> None:
 # ── counter-write failure is logged once, not silently swallowed ───────
 
 
-def test_counter_write_failure_logs_once(tmp_path, caplog) -> None:
+def test_counter_write_failure_logs_once(tmp_path: Path, caplog: LogCaptureFixture) -> None:
     """A failing counter write logs one WARNING; repeats stay quiet.
 
     Regression: _atomic_write_counter swallowed all OSError silently, so a
     persistently-broken wind-down left no operator signal.
     """
     bad_path = tmp_path / "missing-dir" / "counter"  # parent does not exist
-    original_latch = agent_mod._counter_write_failure_logged
-    agent_mod._counter_write_failure_logged = False
+    original_latch = agent_mod._counter_write_failure_logged  # pyright: ignore[reportPrivateUsage]
+    agent_mod._counter_write_failure_logged = False  # pyright: ignore[reportPrivateUsage]
     try:
         with caplog.at_level("WARNING", logger="milknado.loop._agent"):
             _atomic_write_counter(bad_path, 1)
@@ -458,4 +484,4 @@ def test_counter_write_failure_logs_once(tmp_path, caplog) -> None:
         assert len(warnings) == 1
         assert "wind-down" in warnings[0].getMessage().lower()
     finally:
-        agent_mod._counter_write_failure_logged = original_latch
+        agent_mod._counter_write_failure_logged = original_latch  # pyright: ignore[reportPrivateUsage]

@@ -13,19 +13,15 @@ import shlex
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import cast
 
 from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.loop._agent import (
-    ActivityCallback,
     AgentResult,
     AgentRunSpec,
-    OutputLineCallback,
-    ToolUseCallback,
     execute_agent,
 )
 from milknado.loop._events import (
-    AgentActivityData,
     BoundEmitter,
     CommandsCompletedData,
     CommandsStartedData,
@@ -34,12 +30,9 @@ from milknado.loop._events import (
     IterationEndedData,
     IterationStartedData,
     NullEmitter,
-    OutputStream,
     PromptAssembledData,
     RunStartedData,
     RunStoppedData,
-    ToolUseData,
-    TurnApproachingLimitData,
     TurnCappedData,
 )
 from milknado.loop._frontmatter import (
@@ -58,9 +51,7 @@ from milknado.loop._run_types import (
 )
 from milknado.loop._runner import run_command
 from milknado.loop.adapters import CLIAdapter, select_adapter
-from milknado.loop.hooks import CombinedAgentHook
 
-_PAUSE_POLL_INTERVAL = 0.25  # seconds between pause/resume checks
 _RELATIVE_CMD_PREFIX = "./"  # commands starting with this run from the ralph directory
 
 
@@ -84,28 +75,12 @@ _VERIFIER_FEEDBACK_HEADER = (
 _GUIDANCE_HEADER = "\n\n## Operator guidance\n\n"
 
 
-def _wait_for_resume(state: RunState, emit: BoundEmitter) -> bool:
-    """Block until the run is resumed or a stop is requested."""
-    emit(EventType.RUN_PAUSED)
-    while not state.wait_for_unpause(timeout=_PAUSE_POLL_INTERVAL):
-        if state.stop_requested:
-            break
-    if state.stop_requested:
-        state.status = RunStatus.STOPPED
-        return False
-    emit(EventType.RUN_RESUMED)
-    return True
-
-
-def _handle_control_signals(state: RunState, emit: BoundEmitter) -> bool:
-    """Handle stop and pause requests at the top of each iteration."""
-    if state.stop_requested:
-        state.status = RunStatus.STOPPED
-        return False
-    if state.paused:
-        if not _wait_for_resume(state, emit):
-            return False
-    return True
+def _handle_control_signals(state: RunState) -> bool:
+    """Stop the loop at an iteration boundary when requested."""
+    if not state.stop_requested:
+        return True
+    state.status = RunStatus.STOPPED
+    return False
 
 
 def _run_commands(
@@ -136,12 +111,12 @@ def _run_commands(
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 f"Command '{cmd.name}' binary not found: {run_str!r}. "
-                f"{_field_hint(FIELD_COMMANDS)}"
+                + f"{_field_hint(FIELD_COMMANDS)}"
             ) from exc
         except ValueError as exc:
             raise ValueError(
                 f"Command '{cmd.name}' has invalid syntax: {run_str!r}. "
-                f"{_field_hint(FIELD_COMMANDS)}"
+                + f"{_field_hint(FIELD_COMMANDS)}"
             ) from exc
         output = result.output
         if result.timed_out:
@@ -198,12 +173,6 @@ def _assemble_prompt(
     return prompt
 
 
-class _AgentCallbacks(NamedTuple):
-    on_output_line: OutputLineCallback | None
-    on_tool_use: ToolUseCallback | None
-    on_activity: ActivityCallback | None
-
-
 def _resolve_agent_command(config: RunConfig) -> tuple[list[str], CLIAdapter]:
     """Parse and validate the worker command before selecting its adapter."""
     try:
@@ -216,43 +185,12 @@ def _resolve_agent_command(config: RunConfig) -> tuple[list[str], CLIAdapter]:
     return cmd, select_adapter(cmd)
 
 
-def _build_agent_callbacks(
-    config: RunConfig,
-    state: RunState,
-    emit: BoundEmitter,
-    hooks: CombinedAgentHook | None,
-) -> _AgentCallbacks:
-    """Build the on_output_line, on_tool_use, and on_activity callbacks for one iteration."""
-
-    def _on_output_line(line: str, stream: OutputStream) -> None:
-        if emit.wants_agent_output_lines():
-            emit.agent_output_line(line, stream, state.iteration)
-
-    on_output_line = (
-        _on_output_line if emit.wants_agent_output_lines() or config.log_dir is not None else None
-    )
-
-    on_tool_use = _build_tool_use_bridge(
-        state=state,
-        emit=emit,
-        hooks=hooks,
-        max_turns=config.max_turns,
-        max_turns_grace=config.max_turns_grace,
-    )
-
-    def on_activity(data: dict[str, Any]) -> None:
-        emit(EventType.AGENT_ACTIVITY, AgentActivityData(raw=data, iteration=state.iteration))
-
-    return _AgentCallbacks(on_output_line, on_tool_use, on_activity)
-
-
 def _launch_agent(
     cmd: list[str],
     adapter: CLIAdapter,
     prompt: str,
     config: RunConfig,
     state: RunState,
-    callbacks: _AgentCallbacks,
 ) -> AgentResult:
     # Capture full stdout only when somebody downstream actually needs the
     # bytes — log writing, or promise detection for adapters that cannot
@@ -273,8 +211,6 @@ def _launch_agent(
                 log_dir=config.log_dir,
                 iteration=state.iteration,
                 adapter=adapter,
-                on_activity=callbacks.on_activity,
-                on_output_line=callbacks.on_output_line,
                 capture_result_text=True,
                 capture_stdout=capture_stdout,
                 completion_signal=(
@@ -282,7 +218,6 @@ def _launch_agent(
                 ),
                 max_turns=config.max_turns,
                 max_turns_grace=config.max_turns_grace,
-                on_tool_use=callbacks.on_tool_use,
                 force_stop_event=state.force_stop_event,
                 cwd=config.project_root,
             )
@@ -308,17 +243,13 @@ def _promise_completed(agent: AgentResult, adapter: CLIAdapter, config: RunConfi
     )
 
 
-def _emit_turn_capped(
-    agent: AgentResult, state: RunState, emit: BoundEmitter, hooks: CombinedAgentHook | None
-) -> None:
+def _emit_turn_capped(agent: AgentResult, state: RunState, emit: BoundEmitter) -> None:
     if not agent.turn_capped:
         return
     emit(
         EventType.ITERATION_TURN_CAPPED,
         TurnCappedData(iteration=state.iteration, count=agent.tool_use_count),
     )
-    if hooks is not None:
-        hooks.on_turn_capped(iteration=state.iteration, count=agent.tool_use_count)
 
 
 def _classify_iteration_outcome(
@@ -353,55 +284,23 @@ def _build_ended_data(
     agent: AgentResult,
     state: RunState,
     config: RunConfig,
-    duration: str,
     state_detail: str,
-    emit: BoundEmitter,
 ) -> IterationEndedData:
-    """Build the IterationEndedData, echoing raw output when peek is off."""
+    """Build the iteration event data needed by Milknado consumers."""
     ended_data = IterationEndedData(
         iteration=state.iteration,
         returncode=agent.returncode,
         duration=agent.elapsed,
-        duration_formatted=duration,
         detail=state_detail,
         log_file=str(agent.log_file) if agent.log_file else None,
         result_text=agent.result_text,
     )
-    if not emit.wants_agent_output_lines():
-        # When peek was off, echo any captured raw output after the spinner
-        # stops so blocking agents do not appear silent. Structured agents
-        # already surface their parsed result_text, so avoid echoing raw JSON
-        # unless we explicitly captured logs.
-        if config.log_dir is not None:
-            ended_data["echo_stdout"] = agent.captured_stdout
-            ended_data["echo_stderr"] = agent.captured_stderr
-        elif agent.result_text is None and agent.captured_stdout is not None:
-            ended_data["echo_stdout"] = agent.captured_stdout
-    return ended_data
-
-
-def _notify_iteration_hooks(
-    hooks: CombinedAgentHook | None,
-    state: RunState,
-    agent: AgentResult,
-    promise_completed: bool,
-    completion_signal: str | None,
-) -> None:
-    if hooks is None:
-        return
-    hooks.on_iteration_completed(
-        iteration=state.iteration,
-        result={
-            "returncode": agent.returncode,
-            "timed_out": agent.timed_out,
-            "turn_capped": agent.turn_capped,
-            "tool_use_count": agent.tool_use_count,
-            "duration": agent.elapsed,
-            "result_text": agent.result_text,
-        },
+    needs_echo = config.log_dir is not None or (
+        agent.result_text is None and agent.captured_stdout is not None
     )
-    if promise_completed:
-        hooks.on_completion_signal(iteration=state.iteration, signal=completion_signal)
+    if needs_echo:
+        ended_data["echo_stdout"] = agent.captured_stdout
+    return ended_data
 
 
 def _run_agent_phase(
@@ -409,15 +308,13 @@ def _run_agent_phase(
     config: RunConfig,
     state: RunState,
     emit: BoundEmitter,
-    hooks: CombinedAgentHook | None,
 ) -> tuple[bool, bool]:
     """Run the agent subprocess, update state counters, and emit the result event.
 
     Returns ``(agent_succeeded, stop_for_completion_signal)``.
     """
     cmd, adapter = _resolve_agent_command(config)
-    callbacks = _build_agent_callbacks(config, state, emit, hooks)
-    agent = _launch_agent(cmd, adapter, prompt, config, state, callbacks)
+    agent = _launch_agent(cmd, adapter, prompt, config, state)
     state.last_result_text = agent.result_text
     state.last_captured_stdout = agent.captured_stdout
     state.last_captured_stderr = agent.captured_stderr
@@ -434,14 +331,13 @@ def _run_agent_phase(
     if completion_detected:
         state.promise_completed = True
 
-    _emit_turn_capped(agent, state, emit, hooks)
+    _emit_turn_capped(agent, state, emit)
 
     event_type, state_detail = _classify_iteration_outcome(
         agent, state, completion_detected, config.completion_signal, duration
     )
-    ended_data = _build_ended_data(agent, state, config, duration, state_detail, emit)
+    ended_data = _build_ended_data(agent, state, config, state_detail)
     emit(event_type, ended_data)
-    _notify_iteration_hooks(hooks, state, agent, completion_detected, config.completion_signal)
 
     # Derive the stop_on_error signal from the authoritative classification so
     # it always agrees with _classify_iteration_outcome: only ITERATION_COMPLETED
@@ -454,82 +350,10 @@ def _run_agent_phase(
     return iteration_succeeded, completion_detected and config.stop_on_completion_signal
 
 
-def _build_tool_use_bridge(
-    *,
-    state: RunState,
-    emit: BoundEmitter,
-    hooks: CombinedAgentHook | None,
-    max_turns: int | None,
-    max_turns_grace: int,
-) -> ToolUseCallback | None:
-    """Return a ``ToolUseCallback`` that emits ``TOOL_USE`` and approaching-limit events.
-
-    Collapses the per-tool-use notification shape expected by ``_agent``
-    (``(tool_name, count)``) into structured events plus the hook
-    notifications. Returns ``None`` when no subscriber cares — the
-    streaming path then skips all per-line overhead.
-    """
-    if max_turns is None and hooks is None:
-        return None
-
-    # Clamp the grace below the cap.  ``RunConfig`` does not reject a grace
-    # >= max_turns the way the CLI does, so an unclamped value would make
-    # the threshold <= 0 and fire ITERATION_TURN_APPROACHING_LIMIT on the
-    # first tool use.  Mirrors the wind-down shim's clamp.
-    approaching_threshold = (
-        (max_turns - min(max_turns_grace, max(max_turns - 1, 0)))
-        if max_turns is not None and max_turns_grace > 0
-        else None
-    )
-    approaching_fired = False
-
-    def _on_tool_use(tool_name: str, count: int) -> None:
-        nonlocal approaching_fired
-        emit(
-            EventType.TOOL_USE,
-            ToolUseData(
-                iteration=state.iteration,
-                tool_name=tool_name,
-                count=count,
-            ),
-        )
-        if hooks is not None:
-            hooks.on_tool_use(
-                iteration=state.iteration,
-                tool_name=tool_name,
-                count=count,
-            )
-        if (
-            not approaching_fired
-            and approaching_threshold is not None
-            and max_turns is not None
-            and count >= approaching_threshold
-            and count < max_turns
-        ):
-            approaching_fired = True
-            emit(
-                EventType.ITERATION_TURN_APPROACHING_LIMIT,
-                TurnApproachingLimitData(
-                    iteration=state.iteration,
-                    count=count,
-                    max_turns=max_turns,
-                ),
-            )
-            if hooks is not None:
-                hooks.on_turn_approaching_limit(
-                    iteration=state.iteration,
-                    count=count,
-                    max_turns=max_turns,
-                )
-
-    return _on_tool_use
-
-
 def _run_iteration(
     config: RunConfig,
     state: RunState,
     emit: BoundEmitter,
-    hooks: CombinedAgentHook | None,
     verifier_feedback: str | None = None,
 ) -> tuple[bool, bool]:
     """Execute one iteration of the agent loop.
@@ -542,8 +366,6 @@ def _run_iteration(
     iteration = state.iteration
 
     emit(EventType.ITERATION_STARTED, IterationStartedData(iteration=iteration))
-    if hooks is not None:
-        hooks.on_iteration_started(iteration=iteration)
 
     command_outputs: dict[str, str] = {}
     if config.commands:
@@ -564,20 +386,16 @@ def _run_iteration(
                 count=len(command_outputs),
             ),
         )
-        if hooks is not None:
-            hooks.on_commands_completed(iteration=iteration, outputs=command_outputs)
 
     prompt = _assemble_prompt(
         config, state, command_outputs, verifier_feedback, state.take_guidance()
     )
     emit(
         EventType.PROMPT_ASSEMBLED,
-        PromptAssembledData(iteration=iteration, prompt_length=len(prompt)),
+        PromptAssembledData(iteration=iteration),
     )
-    if hooks is not None:
-        hooks.on_prompt_assembled(iteration=iteration, prompt=prompt)
 
-    agent_succeeded, promise_would_complete = _run_agent_phase(prompt, config, state, emit, hooks)
+    agent_succeeded, promise_would_complete = _run_agent_phase(prompt, config, state, emit)
     if state.status is RunStatus.STOPPED:
         return False, promise_would_complete
 
@@ -591,7 +409,7 @@ def _run_iteration(
         state.status = RunStatus.FAILED
         emit.log_error(
             f"Stopping after {state.consecutive_failures} consecutive failed iterations "
-            "(max_consecutive_failures); the agent command may be unable to start."
+            + "(max_consecutive_failures); the agent command may be unable to start."
         )
         return False, promise_would_complete
     return True, promise_would_complete
@@ -607,7 +425,7 @@ def _delay_if_needed(config: RunConfig, state: RunState, emit: BoundEmitter) -> 
         config.max_iterations is None or state.iteration < config.max_iterations
     ):
         emit.log_info(f"Waiting {format_duration(config.delay)}...")
-        state.wait_for_stop(timeout=config.delay)
+        _ = state.wait_for_stop(timeout=config.delay)
 
 
 def run_loop(
@@ -626,15 +444,12 @@ def run_loop(
     state.status = RunStatus.RUNNING
     state.started_at = datetime.now(UTC)
 
-    hooks = CombinedAgentHook(list(config.hooks)) if config.hooks else None
-
     if config.log_dir:
         config.log_dir.mkdir(parents=True, exist_ok=True)
 
     emit(
         EventType.RUN_STARTED,
         RunStartedData(
-            ralph_name=config.ralph_dir.name,
             agent=config.agent,
             commands=len(config.commands),
             max_iterations=config.max_iterations,
@@ -648,7 +463,7 @@ def run_loop(
 
     try:
         while True:
-            if not _handle_control_signals(state, emit):
+            if not _handle_control_signals(state):
                 break
 
             if config.max_iterations is not None and state.iteration >= config.max_iterations:
@@ -656,13 +471,13 @@ def run_loop(
                 if verifier_rejected and state.try_commit_failure():
                     emit.log_error(
                         "Completion verifier never accepted within the "
-                        f"{config.max_iterations}-iteration budget."
+                        + f"{config.max_iterations}-iteration budget."
                     )
                 break
             state.iteration += 1
 
             should_continue, promise_would_complete = _run_iteration(
-                config, state, emit, hooks, pending_feedback
+                config, state, emit, pending_feedback
             )
             pending_feedback = None
             if state.stop_requested:
@@ -672,7 +487,7 @@ def run_loop(
                 verdict = config.completion_verifier() if config.completion_verifier else None
                 if (verdict is None or verdict.ok) and state.try_commit_soft_completion():
                     break
-                if state.status is RunStatus.STOPPED:
+                if cast(RunStatus, cast(object, state.status)) is RunStatus.STOPPED:
                     break
                 if verdict is not None and not verdict.ok:
                     verifier_rejected = True
@@ -691,7 +506,7 @@ def run_loop(
             emit.log_error(f"Run crashed: {exc}", traceback=tb)
 
     if state.status == RunStatus.RUNNING:
-        state.try_commit_completion()
+        _ = state.try_commit_completion()
     state.close_guidance()
 
     emit(

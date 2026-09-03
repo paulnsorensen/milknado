@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import cast
 
-from milknado.loop.adapters import Invocation, select_adapter
+from milknado.loop.adapters import (
+    Invocation,
+    select_adapter,
+)
 from milknado.loop.adapters.claude import ClaudeAdapter
 
 
-def _assistant_event(*blocks: dict) -> str:
+def _assistant_event(*blocks: dict[str, object]) -> str:
     """Build one JSON line matching Claude's assistant message schema."""
     return json.dumps(
         {
@@ -158,15 +163,20 @@ def test_extract_completion_signal_handles_missing_result_text() -> None:
     )
 
 
-def test_install_wind_down_hook_writes_settings(tmp_path) -> None:
+def test_install_wind_down_hook_writes_settings(tmp_path: Path) -> None:
     adapter = ClaudeAdapter()
     counter = tmp_path / "counter"
     env = adapter.install_wind_down_hook(tmp_path, counter, 10, 2)
     assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path)
-    settings = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
-    hooks = settings["hooks"]["PreToolUse"]
-    assert hooks[0]["matcher"] == "*"
-    command = hooks[0]["hooks"][0]["command"]
+    settings = cast(
+        dict[str, object],
+        cast(object, json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))),
+    )
+    hooks = cast(dict[str, object], settings["hooks"])
+    pretool_use = cast(list[dict[str, object]], hooks["PreToolUse"])
+    assert pretool_use[0]["matcher"] == "*"
+    hook = cast(list[dict[str, object]], pretool_use[0]["hooks"])
+    command = cast(str, hook[0]["command"])
     assert "milknado.loop._wind_down_shim" in command
     assert str(counter) in command
     assert " 10 " in command
@@ -179,8 +189,6 @@ def test_capability_flags() -> None:
     assert adapter.name == "claude"
     assert adapter.counts_what == "tool_use"
     assert adapter.supports_streaming is True
-    assert adapter.renders_structured_peek is True
-    assert adapter.supports_soft_wind_down is True
     assert adapter.requires_full_stdout_for_completion is False
 
 

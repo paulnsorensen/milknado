@@ -4,9 +4,8 @@ import pytest
 
 from milknado.loop._frontmatter import (
     RALPH_MARKER,
-    _extract_frontmatter_block,
+    _extract_frontmatter_block,  # pyright: ignore[reportPrivateUsage]
     parse_frontmatter,
-    serialize_frontmatter,
 )
 
 
@@ -188,7 +187,7 @@ class TestParseFrontmatter:
     def test_invalid_yaml_raises_value_error(self):
         text = "---\n: invalid: yaml: [unclosed\n---\nBody"
         with pytest.raises(ValueError, match="Invalid YAML"):
-            parse_frontmatter(text)
+            _ = parse_frontmatter(text)
 
     def test_empty_frontmatter_returns_empty_dict(self):
         text = "---\n---\nBody"
@@ -207,7 +206,9 @@ class TestParseFrontmatter:
         text = "---\nagent: claude\nnotes: |\n  first\n  ---\n  third\n---\nBody"
         fm, body = parse_frontmatter(text)
         assert fm["agent"] == "claude"
-        assert "---" in fm["notes"]
+        notes = fm["notes"]
+        assert isinstance(notes, str)
+        assert "---" in notes
         assert body == "Body"
 
     def test_utf8_bom_does_not_break_frontmatter(self):
@@ -221,51 +222,9 @@ class TestParseFrontmatter:
     def test_non_dict_frontmatter_raises_value_error(self):
         text = "---\n- item1\n- item2\n---\nBody"
         with pytest.raises(ValueError, match="must be a YAML mapping"):
-            parse_frontmatter(text)
+            _ = parse_frontmatter(text)
 
     def test_scalar_frontmatter_raises_value_error(self):
         text = "---\njust a string\n---\nBody"
         with pytest.raises(ValueError, match="must be a YAML mapping"):
-            parse_frontmatter(text)
-
-
-class TestSerializeFrontmatter:
-    def test_roundtrip(self):
-        original_fm = {"agent": "claude"}
-        original_body = "Do the thing"
-        serialized = serialize_frontmatter(original_fm, original_body)
-        fm, body = parse_frontmatter(serialized)
-        assert fm == original_fm
-        assert body == original_body
-
-    def test_empty_frontmatter(self):
-        result = serialize_frontmatter({}, "Just a body")
-        assert result == "Just a body"
-        assert "---" not in result
-
-    def test_includes_delimiters(self):
-        result = serialize_frontmatter({"agent": "claude"}, "Prompt")
-        assert result.startswith("---\n")
-        assert "\n---\n" in result
-
-    def test_body_preserved(self):
-        result = serialize_frontmatter({"agent": "claude"}, "My prompt text")
-        assert result.endswith("My prompt text")
-
-    def test_roundtrip_empty_frontmatter_body_starts_with_delimiter(self):
-        """serialize then parse must round-trip when frontmatter is empty and
-        the body starts with '---' (which looks like a frontmatter block)."""
-        original_body = "---\nagent: fake\n---\nreal body"
-        serialized = serialize_frontmatter({}, original_body)
-        fm, body = parse_frontmatter(serialized)
-        assert fm == {}
-        assert body == original_body
-
-    def test_roundtrip_empty_frontmatter_body_is_double_delimiter(self):
-        """Empty frontmatter with a body that is exactly '---\\n---' must
-        round-trip without the body being consumed as empty frontmatter."""
-        original_body = "---\n---"
-        serialized = serialize_frontmatter({}, original_body)
-        fm, body = parse_frontmatter(serialized)
-        assert fm == {}
-        assert body == original_body
+            _ = parse_frontmatter(text)

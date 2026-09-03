@@ -2,7 +2,7 @@
 
 Wraps Vulture 2.16's scan and accepts findings only in narrow, owner-qualified
 categories; everything else is reported and fails the gate. Textual exemptions
-are structural. The vendored loop boundary uses an exact compatibility allowlist;
+are structural. One exact loop payload exemption covers a string-key read;
 see .hallouminate/wiki/history/dead-code-coverage-gate-decision.md.
 """
 
@@ -11,54 +11,82 @@ from __future__ import annotations
 import ast
 import contextlib
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, TypedDict, cast
 
-from vulture import Vulture
-from vulture.config import InputError, make_config
-from vulture.core import ExitCode, Item
+from vulture import Vulture as _RawVulture  # pyright: ignore[reportMissingTypeStubs]
+from vulture.config import InputError as _RawInputError  # pyright: ignore[reportMissingTypeStubs]
+from vulture.config import (  # pyright: ignore[reportMissingTypeStubs]
+    make_config as _raw_make_config,  # pyright: ignore[reportUnknownVariableType]
+)
+from vulture.core import ExitCode as _RawExitCode  # pyright: ignore[reportMissingTypeStubs]
+
+
+class _VultureConfig(TypedDict):
+    verbose: bool
+    ignore_names: list[str]
+    ignore_decorators: list[str]
+    paths: list[str]
+    exclude: list[str]
+    min_confidence: int
+    sort_by_size: bool
+
+
+class _VultureItem(Protocol):
+    filename: str | Path
+    first_lineno: int
+    name: str
+    typ: str
+
+    def get_report(self) -> str: ...
+
+
+class _ExitCodeValue(Protocol):
+    @property
+    def value(self) -> int: ...
+
+
+class _ExitCodes(Protocol):
+    InvalidInput: _ExitCodeValue
+    InvalidCmdlineArguments: _ExitCodeValue
+    DeadCode: _ExitCodeValue
+    NoDeadCode: _ExitCodeValue
+
+
+class _Vulture(Protocol):
+    exit_code: _ExitCodeValue
+
+    def __init__(
+        self,
+        *,
+        verbose: bool,
+        ignore_names: list[str],
+        ignore_decorators: list[str],
+    ) -> None: ...
+
+    def scavenge(self, paths: list[str], exclude: list[str] | None = None) -> None: ...
+
+    def get_unused_code(
+        self,
+        *,
+        min_confidence: int,
+        sort_by_size: bool,
+    ) -> list[_VultureItem]: ...
+
+
+Vulture = cast(type[_Vulture], _RawVulture)
+InputError = cast(type[Exception], _RawInputError)
+make_config = cast(Callable[[list[str]], _VultureConfig], _raw_make_config)
+ExitCode = cast(_ExitCodes, cast(object, _RawExitCode))
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# src/milknado/loop/ is vendored wholesale from ralphify (PR #137, 49ac978); see
-# loop/__init__.py. These exact (relative path, name) pairs are the vendored engine's
-# own unused-by-milknado surface (formerly vulture-whitelist-loop.py) -- only these
-# enumerated findings are exempt, so genuinely new dead code in the engine still fails.
-_VENDORED_LOOP_FINDINGS = {
-    ("src/milknado/loop/_events.py", "ralph_name"),
-    ("src/milknado/loop/_events.py", "duration_formatted"),
+# ``echo_stdout`` is read through a string key in LoopAdapter, which Vulture
+# cannot connect to this TypedDict field declaration.
+_FALSE_POSITIVE_FINDINGS = {
     ("src/milknado/loop/_events.py", "echo_stdout"),
-    ("src/milknado/loop/_events.py", "echo_stderr"),
-    ("src/milknado/loop/_events.py", "prompt_length"),
-    ("src/milknado/loop/_events.py", "to_dict"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_COMPLETION_SIGNAL"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_STOP_ON_COMPLETION_SIGNAL"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_MAX_TURNS"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_MAX_TURNS_GRACE"),
-    ("src/milknado/loop/_frontmatter.py", "FIELD_HOOKS"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_NAME"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_RUN"),
-    ("src/milknado/loop/_frontmatter.py", "CMD_FIELD_TIMEOUT"),
-    ("src/milknado/loop/_frontmatter.py", "HOOK_FIELD_EVENT"),
-    ("src/milknado/loop/_frontmatter.py", "HOOK_FIELD_RUN"),
-    ("src/milknado/loop/_frontmatter.py", "VALID_NAME_CHARS_MSG"),
-    ("src/milknado/loop/_frontmatter.py", "serialize_frontmatter"),
-    ("src/milknado/loop/_output.py", "format_count"),
-    ("src/milknado/loop/adapters/_generic.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/_protocol.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/claude.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/codex.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/copilot.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/crush.py", "renders_structured_peek"),
-    ("src/milknado/loop/adapters/opencode.py", "renders_structured_peek"),
-    ("src/milknado/loop/manager.py", "add_listener"),
-    ("src/milknado/loop/manager.py", "pause_run"),
-    ("src/milknado/loop/manager.py", "resume_run"),
-    ("src/milknado/loop/manager.py", "wait_for_any"),
-    ("src/milknado/loop/manager.py", "wait_for_all"),
-    ("src/milknado/loop/manager.py", "get_result"),
-    ("src/milknado/loop/manager.py", "shutdown"),
 }
 
 # Textual App/Widget/Screen lifecycle method names this classifier owner-qualifies:
@@ -79,8 +107,8 @@ class _Finding:
     report: str
 
 
-def _findings(items: Sequence[Item]) -> tuple[_Finding, ...]:
-    findings = []
+def _findings(items: Sequence[_VultureItem]) -> tuple[_Finding, ...]:
+    findings: list[_Finding] = []
     for i in items:
         path = Path(i.filename)
         if path.is_absolute():
@@ -126,8 +154,8 @@ def _method_start_line(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
 
 def _accepted_reason(finding: _Finding, module: ast.Module, imports: dict[str, str]) -> str | None:
     key = (finding.path.as_posix(), finding.name)
-    if key in _VENDORED_LOOP_FINDINGS:
-        return "vendored ralph-loop engine"
+    if key in _FALSE_POSITIVE_FINDINGS:
+        return "runtime payload field read by string key"
 
     for node in ast.walk(module):
         if not isinstance(node, ast.ClassDef):
@@ -187,7 +215,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_confidence=config["min_confidence"], sort_by_size=config["sort_by_size"]
         )
     )
-    unclassified = []
+    unclassified: list[_Finding] = []
     module_cache: dict[Path, tuple[ast.Module | None, dict[str, str]]] = {}
     for finding in findings:
         if finding.path not in module_cache:

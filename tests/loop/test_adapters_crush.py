@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
-from milknado.loop.adapters import Invocation, select_adapter
+from milknado.loop.adapters import (
+    Invocation,
+    select_adapter,
+)
 from milknado.loop.adapters.crush import CrushAdapter
 
 
@@ -95,19 +96,11 @@ def test_extract_completion_signal_returns_false_when_stdout_missing() -> None:
     )
 
 
-def test_install_wind_down_hook_raises_not_implemented(tmp_path) -> None:
-    adapter = CrushAdapter()
-    with pytest.raises(NotImplementedError, match="no hook system"):
-        adapter.install_wind_down_hook(tmp_path, tmp_path / "counter", 10, 2)
-
-
 def test_capability_flags() -> None:
     adapter = CrushAdapter()
     assert adapter.name == "crush"
     assert adapter.counts_what == "none"
     assert adapter.supports_streaming is False
-    assert adapter.renders_structured_peek is False
-    assert adapter.supports_soft_wind_down is False
     assert adapter.requires_full_stdout_for_completion is True
 
 

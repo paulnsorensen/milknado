@@ -25,7 +25,24 @@ The five symbols are **not separable from the engine**: `RunManager → engine �
 - **Zero new dependencies** — ralphify's deps (`pyyaml`, `rich`, `typer`) were already direct milknado deps.
 - **The largest hidden cost was tests**: the engine shipped no test suite in the wheel, and milknado's 95% diff-coverage gate would demand coverage. Resolved by vendoring the fork's 529-test closure suite alongside the code.
 - The fork's own commit log showed ongoing per-CLI adapter churn (opencode schema fix, Crush adapter, max_turns) — maintenance that happens regardless of where the code lives; vendoring moves it in-repo rather than creating it.
+- **Drain process output before closing pipes.** Cleanup first gives reader threads a bounded drain window, which preserves final buffered output. If a detached descendant holds a pipe open, cleanup closes parent descriptors and drains again. Raw descriptor closure does not wake a blocked reader on every operating system. Cleanup must skip Python-level pipe finalization while any reader remains alive. The regression test must detach the descendant; otherwise process-group termination hides the forced-close fallback.[^4]
+
+[^4]: `src/milknado/loop/_agent.py:990-1004`; `tests/loop/test_agent.py:1837-1885`; PR #405 commit `f539b21`.
 
 ## Decision
 
 Vendor the used closure (~3,400 LOC, 17 modules) into `src/milknado/loop/`; drop the CLI/TUI modules; delete the `git+` dep; archive the fork (manual post-merge step). Vendored internals land **verbatim** — byte-identical fork behaviour, formatting-only divergence allowed — so the vendor-in is auditable against fork SHA `ec494875`.
+
+
+### 2026-09-02 ownership transition
+
+The verbatim rule applied to the initial import only. Milknado now treats `src/milknado/loop/` as owned source and trims unused internal surface.
+
+PR #405 preserves turn counting, hard turn caps, Claude/Codex soft wind-down, subprocess containment, and the small public loop crust. It removes unused lifecycle hooks, pause state, manager convenience operations, serialization helpers, presentation-only events, and compatibility exemptions.[^5]
+
+This transition keeps the original provenance while rejecting indefinite behavioral parity with the archived fork.
+
+[^5]: `src/milknado/loop/__init__.py`; `src/milknado/loop/manager.py`; `src/milknado/loop/engine.py`; `scripts/check_dead_code.py`; PR #405
+
+_Source: user decision and PR #405 loop liveness cleanup · Updated: 2026-09-02 · Supersedes: verbatim behavior after the initial vendor import · 2026-09-02_
+

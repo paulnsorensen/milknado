@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 import msgspec
 
 from milknado.domains.common.config import LoadedConfig
 from milknado.domains.common.config_layers import origin_for
+from milknado.domains.common.flavor_codec import FlavorOverride
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 
-def resolved_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
+def resolved_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, object]:
     """Return the runtime configuration that dispatch code actually consumes."""
     value = resolve_flavor_profile(details.config, flavor) if flavor else details.config
-    return _json_value(msgspec.to_builtins(value, enc_hook=_encode_builtin))
+    builtins = cast(object, msgspec.to_builtins(value, enc_hook=_encode_builtin))
+    return cast(dict[str, object], _json_value(builtins))
 
 
-def explain_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, Any]:
+def explain_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, object]:
     """Return resolved values annotated with origins captured during layering."""
     if flavor:
         return _explain_flavor(details, flavor)
@@ -28,7 +30,7 @@ def explain_view(details: LoadedConfig, flavor: str | None = None) -> dict[str, 
     }
 
 
-def _explain_flavor(details: LoadedConfig, flavor: str) -> dict[str, Any]:
+def _explain_flavor(details: LoadedConfig, flavor: str) -> dict[str, object]:
     profile = resolved_view(details, flavor)
     override = details.config.flavors.get(flavor)
     root_paths = {
@@ -63,7 +65,7 @@ def _explain_flavor(details: LoadedConfig, flavor: str) -> dict[str, Any]:
 
 
 def _flavor_path(
-    override: Any,
+    override: FlavorOverride | None,
     flavor: str,
     key: str,
     root_paths: dict[str, tuple[str, ...]],
@@ -98,32 +100,38 @@ def _prompt_path(details: LoadedConfig, key: str) -> tuple[str, ...]:
 
 
 def _annotate(
-    value: Any,
+    value: object,
     path: tuple[str, ...],
     origins: dict[tuple[str, ...], str],
     flavor: str | None = None,
-) -> Any:
+) -> object:
     if isinstance(value, dict):
-        return {key: _annotate(item, (*path, key), origins, flavor) for key, item in value.items()}
+        values = cast(dict[str, object], value)
+        return {
+            key: _annotate(item, (*path, key), origins, flavor) for key, item in values.items()
+        }
     source = origin_for(origins, path)
     if flavor and source != "default":
         source = f"{source} (flavor:{flavor})"
     return {"value": value, "source": source}
 
 
-def _encode_builtin(value: Any) -> Any:
+def _encode_builtin(value: object) -> object:
     if isinstance(value, Path):
         return str(value)
     raise TypeError(f"Unsupported type: {type(value).__name__}")
 
 
-def _json_value(value: Any) -> Any:
+def _json_value(value: object) -> object:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
+        values = cast(dict[object, object], value)
+        return {str(key): _json_value(item) for key, item in values.items()}
     if isinstance(value, (frozenset, set)):
-        return [_json_value(item) for item in sorted(value)]
+        values = cast(frozenset[object] | set[object], value)
+        return [_json_value(item) for item in sorted(values, key=str)]
     if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
+        values = cast(list[object] | tuple[object, ...], value)
+        return [_json_value(item) for item in values]
     return value

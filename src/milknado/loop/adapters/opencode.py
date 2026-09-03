@@ -17,8 +17,7 @@ Event mapping:
 - ``step_finish`` -> ``AdapterEvent(kind="result", ...)`` (carries token /
   cost data in ``part`` that this adapter does not surface).
 - ``step_start`` / ``text`` / ``reasoning`` / ``error`` ->
-  ``AdapterEvent(kind="message")`` so callers can render them without
-  counting against the turn cap.
+  ``AdapterEvent(kind="message")`` without counting against the turn cap.
 - unknown / malformed -> ``None`` (MUST NOT raise, for parity with the
   other adapters).
 
@@ -32,7 +31,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
@@ -49,9 +48,8 @@ _FORMAT_FLAGS: tuple[str, ...] = ("--format", "json")
 
 _TOOL_USE_EVENT = "tool_use"
 _RESULT_EVENT = "step_finish"
-# opencode v1.15.x emits these informational events (verified against the
-# run.ts emit() call sites): they render in the peek panel without counting
-# against the turn cap. There is no ``tool_result`` event — tool output rides
+# opencode v1.15.x emits these informational events without counting them
+# against the turn cap. There is no ``tool_result`` event; tool output rides
 # on the ``tool_use`` event once the tool part reaches completed/error status.
 _MESSAGE_EVENTS: frozenset[str] = frozenset({"step_start", "text", "reasoning", "error"})
 
@@ -62,11 +60,6 @@ class OpenCodeAdapter:
     name: str = "opencode"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = True
-    # The console peek panel only understands Claude's stream-json schema
-    # today, so keep opencode in raw-line peek mode (as with codex).
-    renders_structured_peek: bool = False
-    # opencode has no hook system; soft wind-down is a Phase-3 stub anyway.
-    supports_soft_wind_down: bool = False
     # opencode emits no terminal ``{"type":"result"}`` line that the
     # streaming reader extracts into ``result_text``; the full stdout
     # buffer is the only source for promise-tag scanning.
@@ -113,11 +106,12 @@ class OpenCodeAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = parsed.get("type")
         if event_type == _TOOL_USE_EVENT:
@@ -149,20 +143,8 @@ class OpenCodeAdapter:
         del result_text
         return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
 
-    def install_wind_down_hook(
-        self,
-        tempdir: Path,
-        counter_path: Path,
-        cap: int,
-        grace: int,
-    ) -> dict[str, str]:
-        raise NotImplementedError(
-            "opencode has no hook system; soft wind-down is scheduled for "
-            "Phase 3 of the CLI adapter layer spec."
-        )
 
-
-def _tool_name(parsed: dict[str, Any]) -> str | None:
+def _tool_name(parsed: dict[str, object]) -> str | None:
     """Best-effort extraction of the tool name from a ``tool_use`` event.
 
     opencode nests event data under ``part``; the tool name may live there
@@ -175,6 +157,7 @@ def _tool_name(parsed: dict[str, Any]) -> str | None:
             return value
     part = parsed.get("part")
     if isinstance(part, dict):
+        part = cast(dict[str, object], part)
         for key in ("name", "tool", "tool_name"):
             value = part.get(key)
             if isinstance(value, str):

@@ -9,13 +9,26 @@ from __future__ import annotations
 import io
 import itertools
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
-from milknado.loop._events import Event, EventType, QueueEmitter
-from milknado.loop._frontmatter import RALPH_MARKER, serialize_frontmatter
-from milknado.loop._run_types import RunConfig, RunState
+import yaml
+
+from milknado.loop._events import (
+    Event,
+    EventData,
+    EventType,
+    QueueEmitter,
+)
+from milknado.loop._frontmatter import RALPH_MARKER
+from milknado.loop._run_types import (
+    DEFAULT_COMPLETION_SIGNAL,
+    Command,
+    CompletionVerdict,
+    RunConfig,
+    RunState,
+)
 from milknado.loop._runner import RunResult
 
 # ── Patch targets ─────────────────────────────────────────────────────
@@ -43,27 +56,45 @@ def make_ralph(
     tmp_path: Path,
     prompt: str = "go",
     agent: str = "claude -p --dangerously-skip-permissions",
-    commands: list[dict[str, Any]] | None = None,
+    commands: list[dict[str, object]] | None = None,
     args: list[str] | None = None,
 ) -> Path:
     """Create a ralph directory with a proper RALPH.md for CLI-level tests.
 
-    Returns the ralph directory path.  Uses :func:`serialize_frontmatter`
-    to build the file, so the YAML is always well-formed.
+    Returns the ralph directory path with valid YAML frontmatter.
     """
     ralph_dir = tmp_path / "my-ralph"
     ralph_dir.mkdir(exist_ok=True)
-    frontmatter: dict[str, Any] = {"agent": agent}
+    frontmatter: dict[str, object] = {"agent": agent}
     if commands:
         frontmatter["commands"] = commands
     if args:
         frontmatter["args"] = args
-    content = serialize_frontmatter(frontmatter, prompt)
-    (ralph_dir / RALPH_MARKER).write_text(content)
+    content = f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n{prompt}"
+    _ = (ralph_dir / RALPH_MARKER).write_text(content, encoding="utf-8")
     return ralph_dir
 
 
-def make_config(tmp_path: Path, ralph_content: str = "test prompt", **overrides) -> RunConfig:
+def make_config(
+    tmp_path: Path,
+    ralph_content: str = "test prompt",
+    *,
+    agent: str = "omp",
+    commands: list[Command] | None = None,
+    args: dict[str, str] | None = None,
+    max_iterations: int | None = 1,
+    delay: float = 0,
+    timeout: float | None = None,
+    stop_on_error: bool = False,
+    max_consecutive_failures: int | None = None,
+    log_dir: Path | None = None,
+    commit_footer: str | None = None,
+    completion_signal: str = DEFAULT_COMPLETION_SIGNAL,
+    stop_on_completion_signal: bool = False,
+    max_turns: int | None = None,
+    completion_verifier: Callable[[], CompletionVerdict] | None = None,
+    completion_probe: Callable[[], bool] | None = None,
+) -> RunConfig:
     """Create a RunConfig pointing at a temp ralph directory.
 
     *ralph_content* is written to the ``RALPH.md`` file every time, so
@@ -73,17 +104,28 @@ def make_config(tmp_path: Path, ralph_content: str = "test prompt", **overrides)
     ralph_dir = tmp_path / "my-ralph"
     ralph_dir.mkdir(exist_ok=True)
     ralph_file = ralph_dir / RALPH_MARKER
-    ralph_file.write_text(ralph_content)
+    _ = ralph_file.write_text(ralph_content, encoding="utf-8")
 
-    defaults = dict(
-        agent="omp",
+    return RunConfig(
+        agent=agent,
         ralph_dir=ralph_dir,
         ralph_file=ralph_file,
-        max_iterations=1,
+        commands=commands or [],
+        args=args or {},
+        max_iterations=max_iterations,
+        delay=delay,
+        timeout=timeout,
+        stop_on_error=stop_on_error,
+        max_consecutive_failures=max_consecutive_failures,
+        log_dir=log_dir,
         project_root=tmp_path,
+        commit_footer=commit_footer,
+        completion_signal=completion_signal,
+        stop_on_completion_signal=stop_on_completion_signal,
+        max_turns=max_turns,
+        completion_verifier=completion_verifier,
+        completion_probe=completion_probe,
     )
-    defaults.update(overrides)
-    return RunConfig(**defaults)
 
 
 def make_state() -> RunState:
@@ -103,10 +145,10 @@ def _make_completed_process(
 
 
 def ok_result(
-    *_args: Any,
+    *_args: object,
     stdout: str = "",
     stderr: str = "",
-    **_kwargs: Any,
+    **_kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     """Subprocess result with exit code 0.
 
@@ -118,10 +160,10 @@ def ok_result(
 
 
 def fail_result(
-    *_args: Any,
+    *_args: object,
     stdout: str = "",
     stderr: str = "",
-    **_kwargs: Any,
+    **_kwargs: object,
 ) -> subprocess.CompletedProcess[str]:
     """Subprocess result with exit code 1.
 
@@ -145,14 +187,14 @@ def _make_mock_proc(
     proc.stdin = MagicMock()
     proc.stdout = io.StringIO(stdout_text)
     proc.stderr = io.StringIO(stderr_text)
-    proc.wait.return_value = returncode
-    proc.poll.return_value = returncode
+    proc.wait.return_value = returncode  # pyright: ignore[reportAny]
+    proc.poll.return_value = returncode  # pyright: ignore[reportAny]
     proc.pid = 0  # sentinel: skip real process-group manipulation in _kill_process_group
     return proc
 
 
 def ok_proc(
-    *_args: Any, stdout_text: str = "", stderr_text: str = "", **_kwargs: Any
+    *_args: object, stdout_text: str = "", stderr_text: str = "", **_kwargs: object
 ) -> MagicMock:
     """Popen mock with exit code 0.  Works as a factory and ``side_effect``.
 
@@ -163,18 +205,18 @@ def ok_proc(
 
 
 def fail_proc(
-    *_args: Any, stdout_text: str = "", stderr_text: str = "", **_kwargs: Any
+    *_args: object, stdout_text: str = "", stderr_text: str = "", **_kwargs: object
 ) -> MagicMock:
     """Popen mock with exit code 1."""
     return _make_mock_proc(returncode=1, stdout_text=stdout_text, stderr_text=stderr_text)
 
 
 def timeout_proc(
-    *_args: Any,
+    *_args: object,
     timeout: float = 5,
     stdout_text: str = "",
     stderr_text: str = "",
-    **_kwargs: Any,
+    **_kwargs: object,
 ) -> MagicMock:
     """Popen mock whose wait() raises TimeoutExpired.
 
@@ -188,14 +230,14 @@ def timeout_proc(
     # First wait() raises TimeoutExpired; all subsequent calls return 0.
     # Uses itertools.chain so the exact number of wait() calls made by
     # cleanup paths is allowed to drift as the code is refactored.
-    proc.wait.side_effect = itertools.chain(
+    proc.wait.side_effect = itertools.chain(  # pyright: ignore[reportAny]
         [subprocess.TimeoutExpired(cmd="agent", timeout=timeout)],
         itertools.repeat(0),
     )
     # First poll() (inside _kill_process_group during the except branch)
     # sees a live process; every later poll() sees it as already reaped,
     # so we don't try to kill/wait a second time in the cleanup paths.
-    proc.poll.side_effect = itertools.chain([None], itertools.repeat(0))
+    proc.poll.side_effect = itertools.chain([None], itertools.repeat(0))  # pyright: ignore[reportAny]
     return proc
 
 
@@ -224,19 +266,21 @@ def make_mock_popen(
     )
 
 
-def drain_events(emitter: QueueEmitter) -> list[Event]:
+def drain_events(emitter: QueueEmitter) -> list[Event[EventData]]:
     """Drain all events from a QueueEmitter and return them as a list."""
-    events = []
+    events: list[Event[EventData]] = []
     while not emitter.queue.empty():
         events.append(emitter.queue.get())
     return events
 
 
-def events_of_type(events: list[Event], event_type: EventType) -> list[Event]:
+def events_of_type(
+    events: list[Event[EventData]], event_type: EventType
+) -> list[Event[EventData]]:
     """Filter a list of events to only those matching *event_type*."""
-    return [e for e in events if e.type == event_type]
+    return [event for event in events if event.type == event_type]
 
 
-def event_types(events: list[Event]) -> list[EventType]:
+def event_types(events: list[Event[EventData]]) -> list[EventType]:
     """Extract the ordered list of event types from a list of events."""
-    return [e.type for e in events]
+    return [event.type for event in events]

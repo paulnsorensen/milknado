@@ -12,16 +12,14 @@ Capability matrix:
   depends on ongoing schema discovery (see :file:`docs/agents.md`).
 - ``supports_streaming = False`` — event schema is unverified, so the
   adapter falls through the blocking path and avoids per-line parsing.
-- ``renders_structured_peek = False`` — peek panel stays in raw-line mode.
-- ``supports_soft_wind_down = False`` — Copilot has no hook system as of
-  2026-04, so ``install_wind_down_hook`` raises :class:`NotImplementedError`
-  (which the engine downgrades to hard-cap-only).
+- Copilot has no hook system, so the turn cap cannot send a wind-down warning.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from milknado.loop.adapters._protocol import (
     ADAPTERS,
@@ -54,8 +52,6 @@ class CopilotAdapter:
     name: str = "copilot"
     counts_what: CountsWhat = "tool_use"
     supports_streaming: bool = False
-    renders_structured_peek: bool = False
-    supports_soft_wind_down: bool = False
     # Copilot runs on the blocking path with no stream parsing today; the
     # promise tag must be located somewhere in the captured stdout.
     requires_full_stdout_for_completion: bool = True
@@ -102,11 +98,12 @@ class CopilotAdapter:
         if not stripped:
             return None
         try:
-            parsed = json.loads(stripped)
+            parsed = cast(object, json.loads(stripped))
         except json.JSONDecodeError:
             return None
         if not isinstance(parsed, dict):
             return None
+        parsed = cast(dict[str, object], parsed)
 
         event_type = parsed.get("type") or parsed.get("event") or parsed.get("kind")
         if not isinstance(event_type, str):
@@ -139,18 +136,6 @@ class CopilotAdapter:
         """
         del result_text
         return stdout_only_completion_signal(stdout=stdout, user_signal=user_signal)
-
-    def install_wind_down_hook(
-        self,
-        tempdir: Path,
-        counter_path: Path,
-        cap: int,
-        grace: int,
-    ) -> dict[str, str]:
-        raise NotImplementedError(
-            "Copilot CLI has no hook system as of 2026-04; max_turns "
-            "will hard-kill without soft wind-down signal."
-        )
 
 
 ADAPTERS.append(CopilotAdapter())

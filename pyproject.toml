@@ -177,7 +177,6 @@ max-statements = 40
 "src/milknado/loop/_run_types.py" = ["PTH201"]
 "src/milknado/loop/adapters/_generic.py" = ["ARG002"]
 "src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
-"src/milknado/loop/hooks.py" = ["ANN401", "BLE001"]
 "src/milknado/mcp/_ralph_node_runner.py" = ["ANN001", "BLE001"]
 "src/milknado/mcp/run.py" = ["PLR0913"]
 "src/milknado/mcp/server.py" = ["PLR0913"]
@@ -309,24 +308,9 @@ allow = [
     "milknado.domains.graph._status:complete_root",
     "milknado.domains.graph.graph:MikadoGraph.complete_root",
     "milknado.domains.planning.planner:Planner.replan_with_delta",
+    # Windows job-object helpers execute only on Windows.
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",
-    "milknado.loop._events:EventEmitter.wants_agent_output_lines",
-    # Vendored ralph-loop engine hook surface (src/milknado/loop/ is vendored
-    # wholesale from ralphify; matches the classifier's _VENDORED_LOOP_FINDINGS
-    # philosophy: exact symbols, never a subtree glob). Formerly exempt via the
-    # "on_*" ignore_names glob removed when the classifier took ownership.
-    "milknado.loop.hooks:NoOpAgentHook.on_commands_completed",
-    "milknado.loop.hooks:NoOpAgentHook.on_tool_use",
-    "milknado.loop.hooks:NoOpAgentHook.on_turn_approaching_limit",
-    "milknado.loop.hooks:NoOpAgentHook.on_turn_capped",
-    "milknado.loop.hooks:NoOpAgentHook.on_completion_signal",
-    "milknado.loop.hooks:CombinedAgentHook.on_commands_completed",
-    "milknado.loop.hooks:CombinedAgentHook.on_turn_approaching_limit",
-    "milknado.loop.hooks:CombinedAgentHook.on_completion_signal",
-    "milknado.loop.engine:_build_tool_use_bridge._on_tool_use",
-    "milknado.loop.adapters._generic:GenericAdapter.matches",
-    "milknado.loop.adapters._generic:GenericAdapter.install_wind_down_hook",
 ]
 
 [tool.milknado.quality]
@@ -335,7 +319,6 @@ max_file_lines = 300
 [tool.milknado.quality.file_exceptions]
 "src/milknado/adapters/loop.py" = { max_lines = 455, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
-"src/milknado/loop/manager.py" = { max_lines = 304, reason = "Pre-existing loop manager; keep its measured ceiling until manager phases are split." }
 "src/milknado/app/run.py" = { max_lines = 599, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 584 for the elapsed/attempt/ETA/progress fields added to the run read model." }
 "src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
 "src/milknado/domains/common/agent_argv.py" = { max_lines = 365, reason = "Pre-existing agent command boundary; keep its measured ceiling until command builders are split." }
@@ -349,7 +332,5 @@ max_file_lines = 300
 "src/milknado/domains/graph/graph.py" = { max_lines = 751, reason = "Pre-existing graph facade; keep its measured ceiling until the facade is split." }
 "src/milknado/domains/planning/manifest.py" = { max_lines = 349, reason = "Pre-existing planning manifest boundary; keep its measured ceiling until decoding is split." }
 "src/milknado/loop/_agent.py" = { max_lines = 1390, reason = "Pre-existing agent runner; keep its measured ceiling until process phases are split." }
-"src/milknado/loop/_events.py" = { max_lines = 336, reason = "Pre-existing event boundary; keep its measured ceiling until event types are split." }
-"src/milknado/loop/_run_types.py" = { max_lines = 335, reason = "Pre-existing run-type boundary; keep its measured ceiling until types are split." }
 "src/milknado/loop/engine.py" = { max_lines = 706, reason = "Pre-existing loop engine; keep its measured ceiling until phases are split." }
 "src/milknado/mcp/todo_mutate.py" = { max_lines = 336, reason = "Pre-existing MCP mutation boundary; keep its measured ceiling until tool groups are split." }

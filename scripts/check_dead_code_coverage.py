@@ -21,6 +21,9 @@ import tomllib
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
+
+from typing_extensions import override
 
 COVERAGE_XML = Path("coverage.xml")
 PYPROJECT_TOML = Path("pyproject.toml")
@@ -58,13 +61,20 @@ class _FunctionCollector(ast.NodeVisitor):
     """Walks a module tree, tracking class nesting to build dotted qualnames."""
 
     def __init__(self) -> None:
-        self.functions: list[tuple[str, ast.AST, list[str]]] = []
+        self.functions: list[
+            tuple[
+                str,
+                ast.FunctionDef | ast.AsyncFunctionDef,
+                list[str],
+            ]
+        ] = []
         self._stack: list[str] = []
 
+    @override
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         self._stack.append(node.name)
         self.generic_visit(node)
-        self._stack.pop()
+        _ = self._stack.pop()
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         qualname = ".".join([*self._stack, node.name])
@@ -72,22 +82,30 @@ class _FunctionCollector(ast.NodeVisitor):
         self.functions.append((qualname, node, decorators))
         self._stack.append(node.name)
         self.generic_visit(node)
-        self._stack.pop()
+        _ = self._stack.pop()
 
-    visit_FunctionDef = _visit_function
-    visit_AsyncFunctionDef = _visit_function
+    @override
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    @override
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
 
 
 def _load_exemptions(pyproject: Path) -> Exemptions:
     with pyproject.open("rb") as stream:
-        config = tomllib.load(stream)
-    vulture = config.get("tool", {}).get("vulture", {})
-    scripts = config.get("project", {}).get("scripts", {})
-    dead_code = config.get("tool", {}).get("milknado", {}).get("dead-code", {})
+        config = cast(dict[str, object], tomllib.load(stream))
+    tool = cast(dict[str, object], config.get("tool", {}))
+    vulture = cast(dict[str, object], tool.get("vulture", {}))
+    project = cast(dict[str, object], config.get("project", {}))
+    scripts = cast(dict[str, str], project.get("scripts", {}))
+    milknado = cast(dict[str, object], tool.get("milknado", {}))
+    dead_code = cast(dict[str, object], milknado.get("dead-code", {}))
     return Exemptions(
-        ignore_decorators=tuple(vulture.get("ignore_decorators", [])),
+        ignore_decorators=tuple(cast(list[str], vulture.get("ignore_decorators", []))),
         script_targets=tuple(scripts.values()),
-        allowlist=tuple(dead_code.get("allow", [])),
+        allowlist=tuple(cast(list[str], dead_code.get("allow", []))),
     )
 
 
@@ -110,10 +128,11 @@ def _parse_coverage_xml(coverage_xml: Path, cwd: Path) -> dict[Path, dict[int, i
         if not filename:
             continue
         resolved = _resolve_source_path(filename, sources, cwd)
-        line_hits = {
-            int(line.get("number")): int(line.get("hits", "0"))
-            for line in class_elem.findall("./lines/line")
-        }
+        line_hits: dict[int, int] = {}
+        for line in class_elem.findall("./lines/line"):
+            number = line.get("number")
+            if number is not None:
+                line_hits[int(number)] = int(line.get("hits", "0"))
         line_hits_by_file.setdefault(resolved, {}).update(line_hits)
     if not line_hits_by_file:
         raise ValueError("contains no usable class filenames")
@@ -139,10 +158,13 @@ def find_whole_dead_symbols(coverage_xml: Path, cwd: Path, exempt: Exemptions) -
         collector.visit(tree)
         for qualname, node, decorators in collector.functions:
             body_start = node.body[0].lineno
+            end_line = node.end_lineno
+            if end_line is None:
+                continue
             measured = {
                 lineno: hits
                 for lineno, hits in line_hits.items()
-                if body_start <= lineno <= node.end_lineno
+                if body_start <= lineno <= end_line
             }
             if not measured or any(hits > 0 for hits in measured.values()):
                 continue
@@ -159,19 +181,20 @@ def main() -> int:
     try:
         dead_symbols = find_whole_dead_symbols(cwd / COVERAGE_XML, cwd, exempt)
     except (ET.ParseError, OSError, ValueError) as exc:
-        print(
-            f"{cwd / COVERAGE_XML}: cannot analyze coverage ({exc}) — "
-            "run the tests+coverage step first",
-            file=sys.stderr,
-        )
+        error_message = f"{cwd / COVERAGE_XML}: cannot analyze coverage ({exc}) — "
+        error_message += "run the tests+coverage step first"
+        print(error_message, file=sys.stderr)
         return 1
     if dead_symbols:
         for symbol in dead_symbols:
-            print(
+            symbol_message = (
                 f"{symbol.module}:{symbol.qualname} (line {symbol.lineno}) is whole-symbol "
-                "dead code (zero coverage hits, unexempt). Test it, delete it, mark it "
-                "'# pragma: no cover', or add it to [tool.milknado.dead-code].allow."
             )
+            symbol_message += "dead code (zero coverage hits, unexempt). Test it, delete it, "
+            symbol_message += (
+                "mark it '# pragma: no cover', or add it to [tool.milknado.dead-code].allow."
+            )
+            print(symbol_message)
         return 1
     print("dead-code-coverage: no whole-symbol zero-hit code found")
     return 0

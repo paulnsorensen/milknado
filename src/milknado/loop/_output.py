@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from typing import Any
 
 # Platform flag used by _agent.py and cli.py to guard Windows-specific code
 # paths (process-group handling, console encoding).  Centralised here next to
@@ -14,7 +13,7 @@ IS_WINDOWS = sys.platform == "win32"
 # Shared subprocess kwargs for text-mode execution with UTF-8 decoding.
 # Every subprocess.run / subprocess.Popen call that reads text output should
 # unpack these to ensure consistent encoding behavior across the codebase.
-SUBPROCESS_TEXT_KWARGS: dict[str, Any] = {
+SUBPROCESS_TEXT_KWARGS: dict[str, object] = {
     "text": True,
     "encoding": "utf-8",
     "errors": "replace",
@@ -23,10 +22,7 @@ SUBPROCESS_TEXT_KWARGS: dict[str, Any] = {
     # streaming path where peek must flow line-at-a-time.
 }
 
-# Subprocess kwargs that isolate child processes in their own session/group.
-# On POSIX this uses start_new_session so the child and all its descendants
-# form a separate process group that can be killed together.
-SESSION_KWARGS: dict[str, Any] = {} if IS_WINDOWS else {"start_new_session": True}
+SESSION_KWARGS: dict[str, object] = {} if IS_WINDOWS else {"start_new_session": True}
 
 
 @dataclass(slots=True)
@@ -86,32 +82,8 @@ def warn(message: str) -> None:
     print(f"milknado.loop: warning: {message}", file=sys.stderr)
 
 
-_COUNT_THOUSANDS = 1_000
-_COUNT_MILLIONS = 1_000_000
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
-
-
-def format_count(n: int) -> str:
-    """Format *n* as a compact human-readable count string.
-
-    Returns ``"500"`` for sub-thousand, ``"1.5k"`` for sub-million,
-    and ``"1.5M"`` for larger values.  Used in console rendering for
-    token counts and similar metrics.
-
-    Handles the boundary where rounding ``k`` crosses into ``M`` —
-    e.g. 999_950 → ``"1.0M"`` instead of ``"1000.0k"`` (same guard
-    as :func:`format_duration`'s 59.95 → ``"1m 0s"``).
-    """
-    if n >= _COUNT_MILLIONS:
-        return f"{n / _COUNT_MILLIONS:.1f}M"
-    if n >= _COUNT_THOUSANDS:
-        # Use rounded value to avoid "1000.0k" when rounding crosses
-        # into the next unit (same guard as format_duration's 59.95→1m).
-        if round(n / _COUNT_THOUSANDS, 1) >= _COUNT_THOUSANDS:
-            return f"{n / _COUNT_MILLIONS:.1f}M"
-        return f"{n / _COUNT_THOUSANDS:.1f}k"
-    return str(n)
 
 
 def format_duration(seconds: float) -> str:

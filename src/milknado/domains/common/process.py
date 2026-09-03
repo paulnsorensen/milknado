@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 
 
-def pid_alive(pid: int) -> bool:
+def pid_alive(pid: object) -> bool:
     """True if a process with this pid exists on the local machine.
 
     `pid` is read from on-disk run state (an external boundary), so a malformed
