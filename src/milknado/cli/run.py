@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -91,6 +92,27 @@ def attach(
 
 def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def watch(
+    project_root: Annotated[
+        Path, typer.Option("--project-root", help="Project root directory")
+    ] = Path("."),
+) -> None:
+    """Observe durable run state in a live, read-only TUI."""
+    if not _is_interactive_terminal():
+        console.print("[red]milknado watch requires an interactive terminal.[/red]")
+        raise typer.Exit(code=2)
+
+    project_root = project_root.resolve()
+    config, _plugins = _load_or_default(project_root)
+    from milknado.app.watch_tui import run_watch_tui
+
+    try:
+        run_watch_tui(project_root, config.db_path)
+    except (OSError, sqlite3.Error) as exc:
+        console.print(f"[red]Cannot watch {project_root}: {exc}[/red]")
+        raise typer.Exit(code=1) from None
 
 
 def run(
