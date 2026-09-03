@@ -452,11 +452,9 @@ def _wait_for_process(
 def _close_pipes(proc: subprocess.Popen[str]) -> None:
     """Close parent-side stdout/stderr pipe file descriptors.
 
-    Forces EOF to propagate to reader threads even when grandchild
-    processes have inherited the write end of the pipe.  The pump
-    thread's ``readline()`` wakes with ``OSError`` (EBADF), which
-    ``_pump_stream`` catches, so the thread exits and ``join()``
-    returns promptly.
+    Invalidates the parent descriptors without taking the file object's
+    internal lock. Reader wake-up behavior depends on the operating system,
+    so cleanup must not finalize a file object while its reader remains alive.
 
     Uses ``os.close()`` on the raw fd rather than ``pipe.close()``
     because Python's ``TextIOWrapper`` / ``BufferedReader`` hold an
@@ -998,10 +996,12 @@ def _cleanup_agent(
         windows_job.close()
     if proc.poll() is not None:
         _terminate_lingering_group(proc)
-    if not _drain_readers(*threads):
+    readers_drained = _drain_readers(*threads)
+    if not readers_drained:
         _close_pipes(proc)
-        _ = _drain_readers(*threads)
-    _finalize_pipes(proc)
+        readers_drained = _drain_readers(*threads)
+    if readers_drained:
+        _finalize_pipes(proc)
 
 
 def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:

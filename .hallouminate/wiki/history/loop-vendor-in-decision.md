@@ -25,7 +25,7 @@ The five symbols are **not separable from the engine**: `RunManager → engine �
 - **Zero new dependencies** — ralphify's deps (`pyyaml`, `rich`, `typer`) were already direct milknado deps.
 - **The largest hidden cost was tests**: the engine shipped no test suite in the wheel, and milknado's 95% diff-coverage gate would demand coverage. Resolved by vendoring the fork's 529-test closure suite alongside the code.
 - The fork's own commit log showed ongoing per-CLI adapter churn (opencode schema fix, Crush adapter, max_turns) — maintenance that happens regardless of where the code lives; vendoring moves it in-repo rather than creating it.
-- **Drain process output before closing pipes.** Cleanup first gives reader threads a bounded drain window, which preserves final buffered output. If a detached descendant holds a pipe open, cleanup closes parent descriptors and drains again. The regression test must detach the descendant; otherwise process-group termination hides the forced-close fallback.[^4]
+- **Drain process output before closing pipes.** Cleanup first gives reader threads a bounded drain window, which preserves final buffered output. If a detached descendant holds a pipe open, cleanup closes parent descriptors and drains again. Raw descriptor closure does not wake a blocked reader on every operating system. Cleanup must skip Python-level pipe finalization while any reader remains alive. The regression test must detach the descendant; otherwise process-group termination hides the forced-close fallback.[^4]
 
 [^4]: `src/milknado/loop/_agent.py:990-1004`; `tests/loop/test_agent.py:1837-1885`; PR #405 commit `f539b21`.
 
