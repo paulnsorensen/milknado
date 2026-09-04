@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+import stat
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
-
-import msgspec
+from typing import BinaryIO
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -16,9 +16,7 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.domains.dispatch import tail, tail_latest_iteration_log
-from milknado.domains.execution import get_execution_overview
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import DurableRun, read_observer_snapshot
 
 _OBSERVER_ACTIONS = RunActionAvailability(
     cancel_reason="Observer mode is read-only.",
@@ -27,63 +25,45 @@ _OBSERVER_ACTIONS = RunActionAvailability(
 )
 
 
-class DurableRun(msgspec.Struct, frozen=True):
-    """Validated runs-table record used by the observer projection."""
-
-    run_id: str
-    node_id: int
-    status: Literal["running", "done", "failed"]
-    pid: int | None
-    log_path: str
-    started_at: str
-    ended_at: str | None
-    timed_out: bool
-    exit_code: int | None
-    error: str | None
-    timeout_seconds: int | None
-    detail: str | None
-    rebased: bool | None
+_LOG_TAIL_BYTES = 2000
 
 
-@dataclass(frozen=True, slots=True)
+def _tail_open_file(log_file: BinaryIO, size: int) -> str:
+    log_file.seek(max(0, size - _LOG_TAIL_BYTES))
+    data = log_file.read(_LOG_TAIL_BYTES)
+    return data.decode("utf-8", errors="replace")
+
+
+@dataclass(slots=True)
 class WatchSnapshotSource:
     """Build bounded presentation snapshots without opening a writer connection."""
 
     project_root: Path
     db_path: Path
     limit: int = 50
+    _tail_cache: dict[Path, tuple[tuple[int, int, int], tuple[str, ...]]] = field(
+        default_factory=dict, init=False
+    )
 
     def snapshot(self) -> ExecutionSnapshot:
-        graph = MikadoGraph.open_snapshot(self.db_path)
-        try:
-            runs = tuple(
-                msgspec.convert(row, type=DurableRun, strict=True)
-                for row in graph.recent_runs(self.limit)
-            )
-            goal, descriptions, available = get_execution_overview(
-                graph,
-                [run.node_id for run in runs],
-            )
-        finally:
-            graph.close()
+        observed = read_observer_snapshot(self.db_path, self.limit)
+        runs = observed.runs
         active = tuple(
-            self._active_snapshot(run, descriptions.get(run.node_id, str(run.node_id)))
-            for run in runs
-            if run.status == "running"
+            self._active_snapshot(run, run.description) for run in runs if run.status == "running"
         )
         terminal = tuple(
-            self._terminal_snapshot(run, descriptions.get(run.node_id, str(run.node_id)))
+            self._terminal_snapshot(run, run.description)
             for run in reversed(runs)
             if run.status != "running"
         )
         return ExecutionSnapshot(
-            goal=goal or str(self.project_root),
+            goal=observed.goal or str(self.project_root),
             active_runs=active,
             terminal_runs=terminal,
             completed=sum(run.status == "done" for run in runs),
             failed=sum(run.status == "failed" for run in runs),
             stopped=0,
-            available=available,
+            available=observed.available,
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
         )
 
@@ -97,12 +77,12 @@ class WatchSnapshotSource:
             stop_requested=False,
             actions=_OBSERVER_ACTIONS,
             output=self._output(run),
-            pending_guidance=(),
+            pending_guidance=None,
             elapsed_seconds=self._duration(run.started_at, None),
             progress_pct=None,
             eta_seconds=None,
-            attempt=1,
-            max_attempts=1,
+            attempt=None,
+            max_attempts=None,
             stalled=False,
         )
 
@@ -116,16 +96,54 @@ class WatchSnapshotSource:
             description=description,
             status=status,
             output=self._output(run),
-            pending_guidance=(),
+            pending_guidance=None,
             duration_seconds=self._duration(run.started_at, run.ended_at),
         )
 
     def _output(self, run: DurableRun) -> tuple[str, ...]:
-        candidate = Path(run.log_path).resolve()
-        if not candidate.is_relative_to(self.project_root.resolve()):
+        candidate = self._log_file(run.log_path)
+        if candidate is None:
             return ()
-        text = tail_latest_iteration_log(candidate) if candidate.is_dir() else tail(candidate)
-        return tuple(text.splitlines())
+        descriptor = -1
+        try:
+            selected = os.lstat(candidate)
+            if not stat.S_ISREG(selected.st_mode):
+                return ()
+            descriptor = os.open(candidate, os.O_RDONLY)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or not os.path.samestat(selected, metadata):
+                return ()
+            signature = (metadata.st_ino, metadata.st_size, metadata.st_mtime_ns)
+            cached = self._tail_cache.get(candidate)
+            if cached is not None and cached[0] == signature:
+                return cached[1]
+            with os.fdopen(descriptor, "rb") as log_file:
+                descriptor = -1
+                output = tuple(_tail_open_file(log_file, metadata.st_size).splitlines())
+        except OSError:
+            return ()
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        if len(self._tail_cache) >= self.limit and candidate not in self._tail_cache:
+            self._tail_cache.pop(next(iter(self._tail_cache)))
+        self._tail_cache[candidate] = (signature, output)
+        return output
+
+    def _log_file(self, log_path: str) -> Path | None:
+        root = self.project_root.resolve()
+        candidate = Path(log_path).resolve()
+        if not candidate.is_relative_to(root):
+            return None
+        if candidate.is_file():
+            return candidate
+        if not candidate.is_dir():
+            return None
+        for child in reversed(sorted(candidate.glob("*.log"))):
+            resolved = child.resolve()
+            if resolved.is_file() and resolved.is_relative_to(root):
+                return resolved
+        return None
 
     @staticmethod
     def _duration(started_at: str, ended_at: str | None) -> float:

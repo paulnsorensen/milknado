@@ -47,7 +47,9 @@ def format_progress(pct: float | None, stalled: bool) -> str:
     return "—"
 
 
-def format_attempt(attempt: int, max_attempts: int) -> str:
+def format_attempt(attempt: int | None, max_attempts: int | None) -> str:
+    if attempt is None or max_attempts is None:
+        return ""
     return "" if attempt == 1 else f"{attempt}/{max_attempts}"
 
 
@@ -67,13 +69,22 @@ def summary_text(run: RunSnapshot | None) -> str:
     """Describe the selected run; the header already carries goal and totals."""
     if run is None:
         return "No runs."
-    guidance = ", ".join(run.pending_guidance) or "none"
+    guidance = (
+        "unavailable"
+        if run.pending_guidance is None
+        else ", ".join(run.pending_guidance) or "none"
+    )
     if isinstance(run, ActiveRunSnapshot):
         stopping = " (stopping)" if run.stop_requested else ""
+        attempt = (
+            "unavailable"
+            if run.attempt is None or run.max_attempts is None
+            else f"{run.attempt}/{run.max_attempts}"
+        )
         status = (
             f"{run.status.value}{stopping} · {run.progress or 'progress unavailable'} · "
             f"elapsed {format_duration(run.elapsed_seconds)} · "
-            f"eta {format_eta(run.eta_seconds)} · attempt {run.attempt}/{run.max_attempts}"
+            f"eta {format_eta(run.eta_seconds)} · attempt {attempt}"
         )
         guidance_label = "Pending guidance"
     else:

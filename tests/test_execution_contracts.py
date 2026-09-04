@@ -129,12 +129,12 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         "stop_requested": bool,
         "actions": RunActionAvailability,
         "output": tuple[str, ...],
-        "pending_guidance": tuple[str, ...],
+        "pending_guidance": tuple[str, ...] | None,
         "elapsed_seconds": float,
         "progress_pct": float | None,
         "eta_seconds": float | None,
-        "attempt": int,
-        "max_attempts": int,
+        "attempt": int | None,
+        "max_attempts": int | None,
         "stalled": bool,
     }
     assert get_type_hints(TerminalRunSnapshot) == {
@@ -143,7 +143,7 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         "description": str,
         "status": ExecutionRunStatus,
         "output": tuple[str, ...],
-        "pending_guidance": tuple[str, ...],
+        "pending_guidance": tuple[str, ...] | None,
         "duration_seconds": float,
     }
     assert get_type_hints(ExecutionSnapshot) == {

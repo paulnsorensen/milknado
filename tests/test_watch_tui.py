@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
+from typing import get_type_hints
 from unittest.mock import patch
 
 import pytest
 
-from milknado.app.run import ExecutionSnapshot
-from milknado.app.watch_tui import WatchApp, run_watch_tui
+import milknado.app.watch_tui as watch_tui
+from milknado.app.run import ExecutionController, ExecutionSnapshot
+from milknado.app.run_source import ExecutionSnapshotSource
+from milknado.app.run_tui import ExecutionApp
+from milknado.app.run_view_app import ExecutionSnapshotApp
 
 
 class FakeSource:
     def __init__(self, snapshot: ExecutionSnapshot) -> None:
         self.current = snapshot
-        self.calls = 0
 
     def snapshot(self) -> ExecutionSnapshot:
-        self.calls += 1
         return self.current
 
 
@@ -35,7 +38,7 @@ def snapshot(goal: str = "Initial goal") -> ExecutionSnapshot:
 @pytest.mark.asyncio
 async def test_watch_app_refreshes_from_source_without_control_bindings() -> None:
     source = FakeSource(snapshot())
-    app = WatchApp(source, poll_interval=60.0)
+    app = watch_tui.WatchApp(source, poll_interval=60.0)
 
     async with app.run_test(size=(120, 36)):
         assert app.title == "Initial goal"
@@ -43,19 +46,22 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         app.poll()
         assert app.title == "Refreshed goal"
         assert app.sub_title.endswith("2 available")
-        assert {binding[0] for binding in app.BINDINGS} == {
-            "up",
-            "down",
-            "enter",
-            "escape",
-            "r",
-            "h",
-            "q",
-        }
+        assert [tuple(binding[:3]) for binding in app.BINDINGS] == [
+            ("up", "previous_run", "Previous run"),
+            ("down", "next_run", "Next run"),
+            ("enter", "open_detail", "Open selected run"),
+            ("escape", "back", "Back"),
+            ("r", "resume_output", "Resume output"),
+            ("h", "help", "Help"),
+            ("q", "quit_all", "Quit"),
+        ]
+        assert {binding[1] for binding in app.BINDINGS}.isdisjoint(
+            {"focus_guidance", "cancel", "force"}
+        )
 
 
 def test_watch_quit_exits_without_controlling_the_observed_run() -> None:
-    app = WatchApp(FakeSource(snapshot()))
+    app = watch_tui.WatchApp(FakeSource(snapshot()))
 
     with patch.object(app, "exit") as exit_app:
         app.action_quit_all()
@@ -63,7 +69,7 @@ def test_watch_quit_exits_without_controlling_the_observed_run() -> None:
     exit_app.assert_called_once_with()
 
 
-def test_watch_tui_entry_builds_source_and_runs_app(monkeypatch, tmp_path) -> None:
+def test_watch_tui_entry_builds_source_and_discards_app_result(monkeypatch, tmp_path) -> None:
     expected = object()
 
     class FakeApp:
@@ -74,8 +80,14 @@ def test_watch_tui_entry_builds_source_and_runs_app(monkeypatch, tmp_path) -> No
         def run(self) -> object:
             return expected
 
-    import milknado.app.watch_tui as watch_tui
-
     monkeypatch.setattr(watch_tui, "WatchApp", FakeApp)
 
-    assert run_watch_tui(tmp_path, tmp_path / "milknado.db") is expected
+    assert watch_tui.run_watch_tui(tmp_path, tmp_path / "milknado.db") is None
+
+
+def test_snapshot_view_has_no_execution_controller_contract() -> None:
+    assert issubclass(watch_tui.WatchApp, ExecutionSnapshotApp)
+    assert not issubclass(watch_tui.WatchApp, ExecutionApp)
+    assert get_type_hints(ExecutionSnapshotApp.__init__)["source"] is ExecutionSnapshotSource
+    assert get_type_hints(ExecutionApp.__init__)["controller"] is ExecutionController
+    assert list(inspect.signature(watch_tui._WatchController.subscribe).parameters) == ["listener"]
