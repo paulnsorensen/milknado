@@ -119,7 +119,7 @@ class _RalphResponse(TypedDict):
     log_path: str | None
     summary: str | None
     result: str | None
-    worktree_preserved: bool | None
+    worktree_preserved: str | None
     error: str | None
     detail: str | None
 

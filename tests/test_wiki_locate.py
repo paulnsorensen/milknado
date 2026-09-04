@@ -127,7 +127,7 @@ class TestConfinedFilesystem:
         _ = target.write_text("old")
         target.chmod(0o600)
 
-        _ = write_text_atomic(root, target, "new")
+        write_text_atomic(root, target, "new")
 
         assert target.read_text() == "new"
         assert stat.S_IMODE(target.stat().st_mode) == 0o600
@@ -138,7 +138,7 @@ class TestConfinedFilesystem:
         root.mkdir()
         target = root / "goal.md"
 
-        _ = write_text_atomic(root, target, "new")
+        write_text_atomic(root, target, "new")
 
         assert target.read_text() == "new"
         assert target.is_file()
@@ -151,7 +151,7 @@ class TestConfinedFilesystem:
         target.mkdir()
 
         with pytest.raises(RoadmapPathError, match="not a regular file"):
-            _ = write_text_atomic(root, target, "new")
+            write_text_atomic(root, target, "new")
 
         assert target.is_dir()
 
@@ -164,7 +164,7 @@ class TestConfinedFilesystem:
         target.symlink_to(outside)
 
         with pytest.raises(RoadmapPathError, match="symlinked roadmap path"):
-            _ = write_text_atomic(root, target, "new")
+            write_text_atomic(root, target, "new")
 
         assert outside.read_text() == "outside"
 

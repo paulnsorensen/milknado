@@ -605,7 +605,9 @@ class TestDispatchLifecycleGuards:
             worktree_mode=WorktreeMode.THIS_BRANCH,
         )
         with pytest.raises(ValueError, match=message):
-            _ = dispatch_node_sync(Graph(), cast(GitPort, object()), request)
+            _ = dispatch_node_sync(
+                cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+            )
 
     def test_sync_dispatch_detects_node_deleted_after_worker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -657,7 +659,9 @@ class TestDispatchLifecycleGuards:
             worktree_mode=WorktreeMode.THIS_BRANCH,
         )
         with pytest.raises(RuntimeError, match="not found after run completed"):
-            _ = dispatch_node_sync(Graph(), cast(GitPort, object()), request)
+            _ = dispatch_node_sync(
+                cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+            )
 
 
 def test_stale_sweep_logs_and_skips_malformed_started_at(
@@ -675,6 +679,9 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
                     "timeout_seconds": 1,
                 }
             ]
+
+        def finish_run(self, _run_id: str, _result: RunResult) -> bool:
+            return False
 
     with caplog.at_level(logging.WARNING):
         assert fail_stale_running_runs(Graph(), 4) == []
@@ -1769,7 +1776,9 @@ def test_sync_dispatch_reports_terminal_persistence_loss(
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
     with pytest.raises(RuntimeError, match="terminal persistence lost its fence"):
-        _ = lifecycle.dispatch_node_sync(Graph(), cast(GitPort, object()), request)
+        _ = lifecycle.dispatch_node_sync(
+            cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+        )
 
 
 def test_cancel_finalize_surfaces_late_write_loss() -> None:
@@ -1939,7 +1948,9 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
     with pytest.raises(RuntimeError, match="database unavailable"):
-        _ = lifecycle.dispatch_node_sync(Graph(), cast(GitPort, object()), request)
+        _ = lifecycle.dispatch_node_sync(
+            cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+        )
 
 
 def test_async_worker_reports_cancelled_run_fence_loss(

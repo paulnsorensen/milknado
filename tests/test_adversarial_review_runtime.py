@@ -41,13 +41,11 @@ from milknado.domains.execution import (
     ExecutionConfig,
     Executor,
     RebaseConflict,
+    RunLoop,
     run_node_to_completion,
 )
 from milknado.domains.execution.executor import RuntimePolicy
-from milknado.domains.execution.run_loop._completion import (
-    _CompletionLoop,  # pyright: ignore[reportPrivateUsage]
-    handle_completion,
-)
+from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._events import (
     Event,
@@ -71,7 +69,6 @@ def _iteration_payload(
         iteration=1,
         returncode=0,
         duration=0.0,
-        duration_formatted="0s",
         detail="",
         log_file=None,
         result_text=result_text,
@@ -121,7 +118,7 @@ class _Console:
         self.print_calls.append(args)
 
 
-def _handler_loop(result: CompletionResult) -> _CompletionLoop:
+def _handler_loop(result: CompletionResult) -> RunLoop:
     def _get_node(node_id: int) -> MikadoNode:
         return MikadoNode(node_id, "handler node")
 
@@ -145,12 +142,8 @@ def _handler_loop(result: CompletionResult) -> _CompletionLoop:
         _terminal_runs=deque(),
         _ralph=SimpleNamespace(),
     )
-    # _CompletionLoop's Protocol fields (_executor: Executor, _graph: MikadoGraph)
-    # are concrete-typed, so a SimpleNamespace double can't satisfy them
-    # structurally; a single cast is the narrowest honest representation.
-    return cast(  # pyright: ignore[reportInvalidCast]
-        _CompletionLoop, loop
-    )
+    # The test double implements only the fields used by the completion handler.
+    return cast(RunLoop, cast(object, loop))
 
 
 def _handler_live() -> tuple[Live, _Console]:

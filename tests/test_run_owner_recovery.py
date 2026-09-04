@@ -28,7 +28,7 @@ class _RecoveryGraph:
             "run_id": "run-1",
             "node_id": 1,
             "status": "running",
-            "pid": pid,
+            "pid": None,
             "log_path": "",
             "started_at": "2026-01-01T00:00:00+00:00",
             "ended_at": None,

@@ -10,6 +10,7 @@ import pytest
 
 from milknado.domains.common.protocols import LoopPort, ProgressEvent
 from milknado.domains.common.types import MikadoNode, NodeStatus
+from milknado.domains.execution import RunLoop
 from milknado.domains.execution.executor import (
     CompletionResult,
     Executor,
@@ -106,8 +107,8 @@ class _FakeLoop:
         self._terminal_runs = deque()
 
 
-def _make_loop(node_id: int, run_id: str, executor: _FakeExecutor) -> _FakeLoop:
-    return _FakeLoop(node_id, run_id, executor)
+def _make_loop(node_id: int, run_id: str, executor: _FakeExecutor) -> RunLoop:
+    return cast(RunLoop, cast(object, _FakeLoop(node_id, run_id, executor)))
 
 
 class TestHandleCompletionSuccess:
