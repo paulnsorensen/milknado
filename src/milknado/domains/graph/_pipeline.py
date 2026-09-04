@@ -47,7 +47,8 @@ class _PluginAsMiddleware:
 
     def before_status_change(
         self, _node: MikadoNode, _old: NodeStatus | None, _new: NodeStatus
-    ) -> None: ...
+    ) -> None:
+        return None
 
     def after_status_change(
         self, node: MikadoNode, old: NodeStatus | None, new: NodeStatus

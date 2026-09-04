@@ -40,9 +40,6 @@ from milknado.domains.graph._pipeline import (
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
-    from milknado.domains.graph._goal_claims import GoalClaim
-    from milknado.domains.graph._persistence import GithubBindAttempt
-    from milknado.domains.graph._run_persistence import NodeReviewRecord, RunRecord
     from milknado.domains.graph.rebalance import ReapOutcome, ReapTarget, RebalanceState
 _logger = logging.getLogger(__name__)
 
@@ -590,19 +587,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         _run_persistence.set_run_pid(self._conn, run_id, pid)
 
     @synchronized
-    def get_run(self, run_id: str) -> RunRecord | None:
+    def get_run(self, run_id: str) -> _run_persistence.RunRecord | None:
         return _run_persistence.get_run(self._conn, run_id)
 
     @synchronized
     def runs_for_node(
         self, node_id: int, *, terminal_only: bool = False, run_id: str | None = None
-    ) -> list[RunRecord]:
+    ) -> list[_run_persistence.RunRecord]:
         return _run_persistence.runs_for_node(
             self._conn, node_id, terminal_only=terminal_only, run_id=run_id
         )
 
     @synchronized
-    def recent_runs(self, limit: int) -> list[RunRecord]:
+    def recent_runs(self, limit: int) -> list[_run_persistence.RunRecord]:
         return _run_persistence.recent_runs(self._conn, limit)
 
     @synchronized
@@ -635,7 +632,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         )
 
     @synchronized
-    def node_reviews_for_node(self, node_id: int) -> list[NodeReviewRecord]:
+    def node_reviews_for_node(self, node_id: int) -> list[_run_persistence.NodeReviewRecord]:
         return _run_persistence.node_reviews_for_node(self._conn, node_id)
 
     # ── File ownership ───────────────────────────────────────────────────────
@@ -655,7 +652,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _persistence.get_file_ownership_map(self._conn, node_ids)
 
     @synchronized
-    def get_github_bind_attempt(self, goal_id: int) -> GithubBindAttempt | None:
+    def get_github_bind_attempt(self, goal_id: int) -> _persistence.GithubBindAttempt | None:
         return _persistence.get_github_bind_attempt(self._conn, goal_id)
 
     @synchronized
@@ -710,7 +707,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def ancestor_goal_claimed_by_other(
         self, node_id: int, *, caller_run_id: str | None = None
-    ) -> GoalClaim | None:
+    ) -> _goal_claims.GoalClaim | None:
         return _goal_claims.ancestor_goal_claimed_by_other(
             self._conn, node_id, caller_run_id=caller_run_id
         )
