@@ -1,5 +1,6 @@
 from milknado.domains.graph.display import render_tree
 from milknado.domains.graph.graph import MikadoGraph
+from milknado.domains.graph.observer import DurableRun, ObserverSnapshot, read_observer_snapshot
 from milknado.domains.graph.rebalance import (
     INBOX_DESCRIPTION,
     ReapFailure,
@@ -23,7 +24,9 @@ from milknado.domains.graph.traversals import walk_ancestors
 __all__ = [
     "CLAIM_ROLE",
     "INBOX_DESCRIPTION",
+    "DurableRun",
     "MikadoGraph",
+    "ObserverSnapshot",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",
@@ -32,6 +35,7 @@ __all__ = [
     "StructureReport",
     "render_dot",
     "render_report",
+    "read_observer_snapshot",
     "render_tree",
     "subtree_post_order",
     "invalid_subtree_node_ids",

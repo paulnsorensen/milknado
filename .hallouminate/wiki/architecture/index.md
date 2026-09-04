@@ -19,4 +19,5 @@
 - [roadmap-graph-schema](./roadmap-graph-schema.md) — Roadmap graph schema
 - [run-inline-isolation](./run-inline-isolation.md) — run_inline isolates per dispatch — ISOLATE by default, merge-back on success
 - [run-owner-recovery](./run-owner-recovery.md) — Run owner recovery
+- [watch-observer](./watch-observer.md) — Durable run observer
 <!-- HALLOUMINATE:INDEX-END -->

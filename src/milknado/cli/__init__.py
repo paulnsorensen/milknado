@@ -22,7 +22,7 @@ from milknado.cli.graph import edge_app, graph_app
 from milknado.cli.plan import _derive_goal as _derive_goal  # re-export
 from milknado.cli.plan import plan
 from milknado.cli.roadmap import roadmap_app
-from milknado.cli.run import attach, run
+from milknado.cli.run import attach, run, watch
 from milknado.cli.tools import (
     _install_rust_tools_or_exit,
     _write_worker_hooks,
@@ -58,9 +58,8 @@ app.add_typer(plugin_app)
 app.add_typer(tools_app)
 app.add_typer(roadmap_app)
 app.add_typer(github_roadmap_app)
-app.command()(plan)
-app.command()(run)
-app.command()(attach)
+for command in (plan, run, attach, watch):
+    app.command()(command)
 
 
 @app.command()

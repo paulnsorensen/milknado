@@ -76,12 +76,12 @@ class ActiveRunSnapshot:
     stop_requested: bool
     actions: RunActionAvailability
     output: tuple[str, ...]
-    pending_guidance: tuple[str, ...]
+    pending_guidance: tuple[str, ...] | None
     elapsed_seconds: float
     progress_pct: float | None
     eta_seconds: float | None
-    attempt: int
-    max_attempts: int
+    attempt: int | None
+    max_attempts: int | None
     stalled: bool
 
 
@@ -94,7 +94,7 @@ class TerminalRunSnapshot:
     description: str
     status: ExecutionRunStatus
     output: tuple[str, ...]
-    pending_guidance: tuple[str, ...]
+    pending_guidance: tuple[str, ...] | None
     duration_seconds: float
 
 
