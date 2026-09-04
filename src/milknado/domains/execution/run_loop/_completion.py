@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import deque
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
@@ -15,37 +14,13 @@ from milknado.loop import RunStatus
 if TYPE_CHECKING:
     from rich.live import Live
 
-    from milknado.domains.common.protocols import LoopPort, ProgressEvent
-    from milknado.domains.execution.executor import Executor
-    from milknado.domains.execution.run_loop.input import InputState
-    from milknado.domains.graph import MikadoGraph
-
-# The protocol intentionally exposes RunLoop's private state across this module boundary.
-# pyright: reportPrivateUsage=false
+    from milknado.domains.execution.run_loop import RunLoop
 
 _logger = logging.getLogger("milknado")
 
 
-class _CompletionLoop(Protocol):
-    _active: dict[str, int]
-    _progress_by_run: dict[str, ProgressEvent]
-    _input: InputState
-    _graph: MikadoGraph
-    _dispatched_at: dict[str, float]
-    _logs: deque[str]
-    _executor: Executor
-    _completion_durations: deque[float]
-    _ralph: LoopPort
-    _attempts: dict[int, int]
-    _strict: bool
-    _failure_triggered: bool
-    _stopped_nodes: set[int]
-    _stopped: int
-    _terminal_runs: deque[TerminalRunState]
-
-
 def handle_completion(
-    loop: _CompletionLoop,
+    loop: RunLoop,
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,

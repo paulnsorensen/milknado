@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from milknado.domains.common import RunHandle
-from milknado.loop._events import EventData
-from milknado.loop._run_types import RunConfig
+from milknado.loop import RunConfig
+
+if TYPE_CHECKING:
+    from milknado.loop._events import EventData
 
 
 class RunHandleView(RunHandle, Protocol):

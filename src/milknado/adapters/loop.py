@@ -7,7 +7,7 @@ import shlex
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Final, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters._loop_types import RunHandleView as _RunHandle
@@ -25,9 +25,10 @@ from milknado.domains.common import (
     build_resume_command,
 )
 from milknado.domains.execution import build_completion_verifier
-from milknado.loop._events import Event, EventData, EventType, QueueEmitter
-from milknado.loop._run_types import RunConfig, RunStatus
-from milknado.loop.manager import RunManager
+from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+
+if TYPE_CHECKING:
+    from milknado.loop._events import Event, EventData
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
