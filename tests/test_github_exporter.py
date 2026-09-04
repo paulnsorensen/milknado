@@ -8,7 +8,9 @@ touched. gh transport is monkeypatched at the exporter module's own `gh_*` names
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TypedDict, final
 
 import msgspec
 import pytest
@@ -74,27 +76,51 @@ def _status_field(*, with_options: bool = True) -> GithubField:
 HARVEST_FIELD = GithubField(id="F_harvest", name="Milknado Harvest")
 
 
+class ItemEdit(TypedDict):
+    item_id: str
+    field_id: str
+    text: str | None
+    option: str | None
+
+
+@final
 class FakeExport:
-    def __init__(self, fields: list[GithubField], items: list[dict]) -> None:
+    def __init__(self, fields: list[GithubField], items: list[dict[str, object]]) -> None:
         self.fields = fields
         self.items = [msgspec.convert(item, type=GithubItem, strict=True) for item in items]
-        self.item_edits: list[dict] = []
+        self.item_edits: list[ItemEdit] = []
         self.body_edits: list[tuple[str, str]] = []
         self.project_id = "PVT_1"
 
     def preflight(self) -> None:
         pass
 
-    def project_view(self, _owner: str, _number: int) -> GithubProject:
+    def project_view(self, owner: str, number: int) -> GithubProject:
+        _ = (owner, number)
         return GithubProject(id=self.project_id, title="Demo")
 
-    def field_list(self, _o: str, _n: int) -> list[GithubField]:
+    def field_list(self, owner: str, number: int) -> list[GithubField]:
+        _ = (owner, number)
         return self.fields
 
-    def item_list(self, _o: str, _n: int) -> list[GithubItem]:
+    def item_list(self, owner: str, number: int) -> list[GithubItem]:
+        _ = (owner, number)
         return self.items
 
-    def item_edit(self, project_id, item_id, field_id, *, text=None, single_select_option_id=None):
+    def item_add(self, owner: str, number: int, issue_url: str) -> str:
+        _ = (owner, number, issue_url)
+        raise AssertionError("item_add is not used by exporter tests")
+
+    def item_edit(
+        self,
+        project_id: str,
+        item_id: str,
+        field_id: str,
+        *,
+        single_select_option_id: str | None = None,
+        text: str | None = None,
+    ) -> None:
+        _ = project_id
         self.item_edits.append(
             {
                 "item_id": item_id,
@@ -104,8 +130,20 @@ class FakeExport:
             }
         )
 
-    def issue_edit_body(self, url: str, body: str) -> None:
-        self.body_edits.append((url, body))
+    def field_create(self, number: int, owner: str, name: str, options: Sequence[str]) -> str:
+        _ = (number, owner, name, options)
+        raise AssertionError("field_create is not used by exporter tests")
+
+    def field_create_text(self, number: int, owner: str, name: str) -> str:
+        _ = (number, owner, name)
+        raise AssertionError("field_create_text is not used by exporter tests")
+
+    def issue_create(self, owner: str, repo: str, title: str, body: str) -> str:
+        _ = (owner, repo, title, body)
+        raise AssertionError("issue_create is not used by exporter tests")
+
+    def issue_edit_body(self, issue_url: str, body: str) -> None:
+        self.body_edits.append((issue_url, body))
 
 
 def _seed(tmp_path: Path, graph: MikadoGraph) -> tuple[int, int, int, Path]:
@@ -114,9 +152,9 @@ def _seed(tmp_path: Path, graph: MikadoGraph) -> tuple[int, int, int, Path]:
     Returns (roadmap_id, wiki_goal_id, github_goal_id, wiki_root).
     """
     d = tmp_path / ".hallouminate" / "wiki" / "roadmaps" / SLUG
-    d.mkdir(parents=True)
-    (d / "index.md").write_text(INDEX_MD)
-    (d / "wire-export.md").write_text(GOAL_MD)
+    _ = d.mkdir(parents=True)
+    _ = (d / "index.md").write_text(INDEX_MD)
+    _ = (d / "wire-export.md").write_text(GOAL_MD)
     wiki_root = tmp_path / ".hallouminate" / "wiki"
     result = import_roadmap(wiki_root, SLUG, graph)
     rid = result.roadmap_node_id
@@ -140,7 +178,7 @@ def _full_fake() -> FakeExport:
 
 
 def test_wiki_origin_overwrites_body_github_origin_does_not(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, graph: MikadoGraph
 ) -> None:
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
     graph.mark_running(wiki_goal_id)
@@ -155,26 +193,22 @@ def test_wiki_origin_overwrites_body_github_origin_does_not(
     assert "Export without clobbering" in fake.body_edits[0][1]
 
 
-def test_status_option_mapping_written(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_status_option_mapping_written(tmp_path: Path, graph: MikadoGraph) -> None:
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
     graph.mark_running(wiki_goal_id)
     graph.mark_done(wiki_goal_id)
     fake = _full_fake()
 
-    export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
+    _ = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
     option_edits = [e for e in fake.item_edits if e["item_id"] == "PVTI_wiki" and e["option"]]
     assert option_edits[0]["option"] == "opt-done"
 
 
-def test_harvest_text_written_per_goal(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_harvest_text_written_per_goal(tmp_path: Path, graph: MikadoGraph) -> None:
     rid, _wg, _gh, wiki_root = _seed(tmp_path, graph)
     fake = _full_fake()
 
-    export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
+    _ = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
     text_edits = [e for e in fake.item_edits if e["field_id"] == "F_harvest"]
     assert {e["item_id"] for e in text_edits} == {"PVTI_wiki", "PVTI_gh"}
     assert all(e["text"] is not None for e in text_edits)
@@ -186,7 +220,7 @@ def test_archived_goal_still_exports_status_and_harvest(
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
     graph.mark_running(wiki_goal_id)
     graph.mark_done(wiki_goal_id)
-    graph.archive_subtree(wiki_goal_id)
+    _ = graph.archive_subtree(wiki_goal_id)
     fake = _full_fake()
 
     result = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
@@ -203,16 +237,14 @@ def test_archived_goal_still_exports_status_and_harvest(
 def test_blocked_status_writes_blocked_option_and_harvest(
     tmp_path: Path,
     graph: MikadoGraph,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     rid, _wg, gh_goal_id, wiki_root = _seed(tmp_path, graph)
-    graph._conn.execute("UPDATE nodes SET status = 'blocked' WHERE id = ?", (gh_goal_id,))
-    graph._conn.commit()
+    graph.mark_blocked(gh_goal_id)
     fake = _full_fake()
 
     with caplog.at_level("WARNING", logger="milknado.domains.github.exporter"):
-        export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
+        _ = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
     gh_option_edits = [
         e for e in fake.item_edits if e["item_id"] == "PVTI_gh" and e["option"] is not None
     ]
@@ -227,7 +259,6 @@ def test_blocked_status_writes_blocked_option_and_harvest(
 def test_missing_option_id_skips_status_write(
     tmp_path: Path,
     graph: MikadoGraph,
-    monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
@@ -239,7 +270,7 @@ def test_missing_option_id_skips_status_write(
     )
 
     with caplog.at_level("WARNING", logger="milknado.domains.github.exporter"):
-        export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
+        _ = export_github_roadmap(graph, rid, wiki_root, fake, owner="acme", number=7)
     assert [e for e in fake.item_edits if e["option"] is not None] == []
     # harvest text still written for both goals
     assert len([e for e in fake.item_edits if e["text"] is not None]) == 2
@@ -250,9 +281,8 @@ def test_missing_option_id_skips_status_write(
 
 
 def test_wiki_origin_body_skipped_when_item_absent_from_project(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, graph: MikadoGraph
 ) -> None:
-    # Acceptance 4 guard: a wiki-origin goal whose item was removed from the
     # Project (no url in item-list) still gets Status + harvest written by id,
     # but the body mirror is skipped — never a body edit against a missing url.
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
@@ -271,10 +301,7 @@ def test_wiki_origin_body_skipped_when_item_absent_from_project(
     assert any(e["text"] is not None for e in wiki_edits)
 
 
-def test_malformed_item_without_id_is_skipped(
-    tmp_path: Path, graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # gh item-list may return a draft/malformed entry with no `id`; building the
+def test_malformed_item_without_id_is_skipped(tmp_path: Path, graph: MikadoGraph) -> None:
     # url map must skip it deterministically rather than KeyError the whole export.
     rid, wiki_goal_id, _gh, wiki_root = _seed(tmp_path, graph)
     graph.mark_running(wiki_goal_id)
@@ -297,19 +324,23 @@ class TestExportGuards:
     def test_non_roadmap_node_raises(self, graph: MikadoGraph, tmp_path: Path) -> None:
         node = graph.add_node("plain")
         with pytest.raises(ValueError, match="roadmap"):
-            export_github_roadmap(graph, node.id, tmp_path, _full_fake(), owner="a", number=1)
+            _ = export_github_roadmap(
+                graph, node.id, tmp_path, _full_fake(), owner="acme", number=7
+            )
 
     def test_roadmap_without_github_ref_raises(self, graph: MikadoGraph, tmp_path: Path) -> None:
         node = graph.add_node("rm", spec=NodeSpec(kind=NodeKind.ROADMAP))
         with pytest.raises(ValueError, match="github_ref"):
-            export_github_roadmap(graph, node.id, tmp_path, _full_fake(), owner="a", number=1)
+            _ = export_github_roadmap(
+                graph, node.id, tmp_path, _full_fake(), owner="acme", number=7
+            )
 
     def test_missing_fields_raises(self, tmp_path: Path, graph: MikadoGraph) -> None:
         rid, _wg, _gh, wiki_root = _seed(tmp_path, graph)
         github = FakeExport(fields=[], items=[])
 
         with pytest.raises(ValueError, match="missing"):
-            export_github_roadmap(graph, rid, wiki_root, github, owner="acme", number=7)
+            _ = export_github_roadmap(graph, rid, wiki_root, github, owner="acme", number=7)
 
 
 class TestResolveNode:
@@ -324,4 +355,4 @@ class TestResolveNode:
         github = _full_fake()
         github.project_id = "PVT_absent"
         with pytest.raises(LookupError, match="not bound"):
-            resolve_github_roadmap_node(graph, "acme", 9, github)
+            _ = resolve_github_roadmap_node(graph, "acme", 9, github)

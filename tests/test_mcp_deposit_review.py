@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import RunResult
 from milknado.loop._agent import AgentResult
+from milknado.mcp._core import Response
 from milknado.mcp.run import milknado_deposit_review
 from milknado.mcp.server import open_graph
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+def _call(tool: object, **kwargs: object) -> Response:
+    fn = cast(Callable[..., Response], getattr(tool, "fn", tool))
     return fn(**kwargs)
 
 
@@ -29,16 +32,16 @@ def _seed_run(
 ) -> None:
     graph, _cfg = open_graph(root)
     try:
-        graph._conn.execute(
+        _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "INSERT OR IGNORE INTO nodes (id, description, status, flavor, created_at) "
-            "VALUES (?, ?, 'running', ?, ?)",
+            + "VALUES (?, ?, 'running', ?, ?)",
             (node_id, f"seeded-{node_id}", flavor, datetime.now(UTC).isoformat()),
         )
         started_at = datetime.now(UTC).isoformat()
         log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
-        graph.start_run(run_id, node_id, log_path, started_at, 10, None)
+        _ = graph.start_run(run_id, node_id, log_path, started_at, 10, None)
         if status != "running":
-            graph.finish_run(
+            _ = graph.finish_run(
                 run_id,
                 RunResult(
                     status=status,
@@ -65,7 +68,7 @@ def _has_terminal_marker(root: Path, run_id: str) -> bool:
 class TestDepositReview:
     def test_deposit_rejects_malformed_run_id(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="invalid run_id"):
-            _call(
+            _ = _call(
                 milknado_deposit_review,
                 run_id="../etc/passwd",
                 verdict="approve",
@@ -77,7 +80,7 @@ class TestDepositReview:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, flavor="review")
         with pytest.raises(ValueError, match="invalid verdict"):
-            _call(
+            _ = _call(
                 milknado_deposit_review,
                 run_id=run_id,
                 verdict="maybe",
@@ -92,7 +95,7 @@ class TestDepositReview:
 
     def test_deposit_unknown_run_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="not found"):
-            _call(
+            _ = _call(
                 milknado_deposit_review,
                 run_id="node-1-20260101T000000Z-abcd",
                 verdict="approve",
@@ -144,7 +147,7 @@ class TestDepositReview:
     def test_unrelated_deposit_does_not_create_terminal_marker(self, tmp_path: Path) -> None:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1)
-        _call(
+        _ = _call(
             milknado_deposit_review,
             run_id=run_id,
             verdict="approve",
@@ -163,8 +166,8 @@ class TestDepositReview:
         run_id = "node-1-20260101T000000Z-abcd"
         _seed_run(tmp_path, run_id=run_id, node_id=1, flavor="review")
 
-        def deposit_then_succeed(*_args, **_kwargs) -> AgentResult:
-            _call(
+        def deposit_then_succeed(*_args: object, **_kwargs: object) -> AgentResult:
+            _ = _call(
                 milknado_deposit_review,
                 run_id=run_id,
                 verdict="approve",
@@ -173,11 +176,14 @@ class TestDepositReview:
             )
             return AgentResult(returncode=0)
 
-        monkeypatch.setattr("milknado.loop.engine.execute_agent", deposit_then_succeed)
+        monkeypatch.setattr(
+            "milknado.loop.engine.execute_agent",
+            cast(Callable[..., AgentResult], deposit_then_succeed),
+        )
         ralph_file = tmp_path / "RALPH.md"
-        ralph_file.write_text("review", encoding="utf-8")
+        _ = ralph_file.write_text("review", encoding="utf-8")
         adapter = LoopAdapter()
-        adapter.create_run(
+        _ = adapter.create_run(
             agent="claude",
             ralph_dir=tmp_path,
             ralph_file=ralph_file,
@@ -186,7 +192,7 @@ class TestDepositReview:
             run_id=run_id,
             completion_probe=lambda: _has_terminal_marker(tmp_path, run_id),
         )
-        adapter.start_run(run_id)
+        _ = adapter.start_run(run_id)
 
         completed_run_id, outcome = adapter.wait_for_next_completion({run_id}, timeout=5)
         if not isinstance(outcome, str):
@@ -194,4 +200,6 @@ class TestDepositReview:
 
         assert completed_run_id == run_id
         assert outcome == "completed"
-        assert adapter.get_run(run_id).state.total == 1
+        handle = adapter.get_run(run_id)
+        assert handle is not None
+        assert handle.state.total == 1

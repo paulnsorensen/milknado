@@ -20,7 +20,6 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -60,24 +59,31 @@ pytestmark = [
 
 class _StubCrg:
     def ensure_graph(self, project_root: Path) -> None:
-        pass
+        _ = project_root
 
-    def get_impact_radius(self, files: list[str]) -> dict[str, Any]:
+    def get_impact_radius(self, files: list[str]) -> dict[str, object]:
+        _ = files
         return {}
 
-    def get_architecture_overview(self) -> dict[str, Any]:
+    def get_architecture_overview(self) -> dict[str, object]:
         return {}
 
-    def list_communities(self, sort_by: str = "size", min_size: int = 0) -> list[dict[str, Any]]:
+    def list_communities(
+        self, sort_by: str = "size", min_size: int = 0
+    ) -> list[dict[str, object]]:
+        _ = (sort_by, min_size)
         return []
 
-    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, Any]]:
+    def list_flows(self, sort_by: str = "criticality", limit: int = 50) -> list[dict[str, object]]:
+        _ = (sort_by, limit)
         return []
 
-    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+    def get_bridge_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        _ = top_n
         return []
 
-    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, Any]]:
+    def get_hub_nodes(self, top_n: int = 10) -> list[dict[str, object]]:
+        _ = top_n
         return []
 
 
@@ -93,14 +99,14 @@ def _init_git_repo(repo: Path) -> str:
         ["git", "config", "user.email", "test@milknado.test"],
         ["git", "config", "user.name", "Milknado Test"],
     ]:
-        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
-    (repo / "README.md").write_text("# e2e\n", encoding="utf-8")
+        _ = subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+    _ = (repo / "README.md").write_text("# e2e\n", encoding="utf-8")
     for cmd in [
         ["git", "add", "README.md"],
         ["git", "commit", "-m", "init"],
         ["git", "checkout", "-b", "feature/e2e"],
     ]:
-        subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
+        _ = subprocess.run(cmd, cwd=repo, check=True, capture_output=True)
     return "feature/e2e"
 
 

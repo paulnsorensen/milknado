@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
+from collections.abc import Callable
 
 import pytest
 
@@ -18,6 +20,81 @@ from milknado.domains.execution.run_loop.input import (
 @pytest.fixture()
 def state() -> InputState:
     return InputState()
+
+
+class _FakeStdin:
+    def __init__(
+        self,
+        reads: list[str] | None = None,
+        on_read: Callable[[], None] | None = None,
+        fd: int = 0,
+    ) -> None:
+        self._reads: deque[str] = deque(reads or [])
+        self._on_read: Callable[[], None] | None = on_read
+        self._fd: int = fd
+
+    def isatty(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        return self._fd
+
+    def read(self, _n: int) -> str:
+        if self._on_read is not None:
+            self._on_read()
+        return self._reads.popleft() if self._reads else ""
+
+
+class _FakeTermios:
+    error: type[OSError] = OSError
+    TCSADRAIN: int = 0
+
+    def __init__(
+        self,
+        get_error: Exception | None = None,
+        set_error: Exception | None = None,
+    ) -> None:
+        self._get_error: Exception | None = get_error
+        self._set_error: Exception | None = set_error
+
+    def tcgetattr(self, _fd: int) -> list[object]:
+        if self._get_error is not None:
+            raise self._get_error
+        return []
+
+    def tcsetattr(self, _fd: int, _when: int, _settings: list[object]) -> None:
+        if self._set_error is not None:
+            raise self._set_error
+
+
+class _FakeTTY:
+    def setcbreak(self, _fd: int) -> None:
+        return None
+
+
+class _FakeSelect:
+    def __init__(
+        self,
+        stdin: _FakeStdin,
+        *,
+        readable: bool = False,
+        stop_event: threading.Event | None = None,
+    ) -> None:
+        self._stdin: _FakeStdin = stdin
+        self._readable: bool = readable
+        self._stop_event: threading.Event | None = stop_event
+
+    def select(
+        self,
+        _read: list[_FakeStdin],
+        _write: list[object],
+        _error: list[object],
+        _timeout: float,
+    ) -> tuple[list[_FakeStdin], list[object], list[object]]:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        readable = [self._stdin] if self._readable else []
+        return readable, [], []
 
 
 class TestHandleKeyEscape:
@@ -143,18 +220,12 @@ class TestStartInputThreadNonTTY:
 class TestStartInputThreadTermiosError:
     def test_termios_error_returns_cleanly(self, state: InputState) -> None:
         import sys
-        import termios
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        fake_stdin = MagicMock()
-        fake_stdin.isatty.return_value = True
-        fake_stdin.fileno.return_value = 0
-
-        fake_termios = MagicMock()
-        fake_termios.error = termios.error
-        fake_termios.tcgetattr.side_effect = termios.error(25, "Inappropriate ioctl")
-        fake_tty = MagicMock()
-        fake_select = MagicMock()
+        fake_stdin = _FakeStdin()
+        fake_termios = _FakeTermios(get_error=OSError("Inappropriate ioctl"))
+        fake_tty = _FakeTTY()
+        fake_select = _FakeSelect(fake_stdin)
 
         with (
             patch.object(sys, "stdin", fake_stdin),
@@ -171,19 +242,12 @@ class TestStartInputThreadTermiosError:
 class TestStartInputThreadTTY:
     def test_thread_started_when_tty(self, state: InputState) -> None:
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        fake_stdin = MagicMock()
-        fake_stdin.isatty.return_value = True
-        fake_stdin.fileno.return_value = 0
-        fake_stdin.read.return_value = ""
-
-        fake_termios = MagicMock()
-        fake_termios.tcgetattr.return_value = []
-        fake_tty = MagicMock()
-        fake_select = MagicMock()
-        # select returns empty so read loop terminates after first pass via stop event
-        fake_select.select.return_value = ([], [], [])
+        fake_stdin = _FakeStdin()
+        fake_termios = _FakeTermios()
+        fake_tty = _FakeTTY()
+        fake_select = _FakeSelect(fake_stdin)
 
         with (
             patch.object(sys, "stdin", fake_stdin),
@@ -202,29 +266,12 @@ class TestStartInputThreadTTY:
 
     def test_thread_reads_key_when_readable(self, state: InputState) -> None:
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        fake_stdin = MagicMock()
-        fake_stdin.isatty.return_value = True
-        fake_stdin.fileno.return_value = 0
-
-        # First select returns readable (delivers 'x'), then stop
-        read_calls = [0]
-
-        def fake_read(n: int) -> str:
-            read_calls[0] += 1
-            if read_calls[0] == 1:
-                state.input_stop.set()
-                return "x"
-            return ""
-
-        fake_stdin.read.side_effect = fake_read
-
-        fake_termios = MagicMock()
-        fake_termios.tcgetattr.return_value = []
-        fake_tty = MagicMock()
-        fake_select_module = MagicMock()
-        fake_select_module.select.return_value = ([fake_stdin], [], [])
+        fake_stdin = _FakeStdin(reads=["x"], on_read=state.input_stop.set)
+        fake_termios = _FakeTermios()
+        fake_tty = _FakeTTY()
+        fake_select = _FakeSelect(fake_stdin, readable=True)
 
         with (
             patch.object(sys, "stdin", fake_stdin),
@@ -233,7 +280,7 @@ class TestStartInputThreadTTY:
                 {
                     "termios": fake_termios,
                     "tty": fake_tty,
-                    "select": fake_select_module,
+                    "select": fake_select,
                 },
             ),
         ):
@@ -247,21 +294,11 @@ class TestStartInputThreadTTY:
         self, state: InputState, caplog: pytest.LogCaptureFixture
     ) -> None:
         import sys
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        fake_stdin = MagicMock()
-        fake_stdin.isatty.return_value = True
-        fake_stdin.fileno.return_value = 9
-        fake_termios = MagicMock()
-        fake_termios.tcgetattr.return_value = ["saved"]
-        fake_termios.tcsetattr.side_effect = OSError("reset failed")
-        fake_select = MagicMock()
-
-        def stop_select(*args):
-            state.input_stop.set()
-            return ([], [], [])
-
-        fake_select.select.side_effect = stop_select
+        fake_stdin = _FakeStdin(fd=9)
+        fake_termios = _FakeTermios(set_error=OSError("reset failed"))
+        fake_select = _FakeSelect(fake_stdin, stop_event=state.input_stop)
         with (
             caplog.at_level("ERROR"),
             patch.object(sys, "stdin", fake_stdin),
@@ -269,7 +306,7 @@ class TestStartInputThreadTTY:
                 "sys.modules",
                 {
                     "termios": fake_termios,
-                    "tty": MagicMock(),
+                    "tty": _FakeTTY(),
                     "select": fake_select,
                 },
             ),

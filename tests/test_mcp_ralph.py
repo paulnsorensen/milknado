@@ -3,12 +3,15 @@ from __future__ import annotations
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, TypedDict, cast
 
 import pytest
 
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.common import RunResult
+from milknado.domains.graph import MikadoGraph, RunRecord
+from milknado.mcp._core import NodeSummary
 from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo import milknado_todo_tree
@@ -16,9 +19,9 @@ from milknado.mcp.todo_mutate import milknado_todo_add
 
 
 @pytest.fixture(autouse=True)
-def _initialize_git_repository(tmp_path: Path) -> None:
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
-    subprocess.run(
+def _initialize_git_repository(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedFunction]
+    _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    _ = subprocess.run(
         [
             "git",
             "-c",
@@ -102,20 +105,46 @@ finally:
 """
 
 
-def _call(tool, **kwargs):
-    fn = getattr(tool, "fn", tool)
+class _RalphResponse(TypedDict):
+    id: int
+    kind: str
+    status: str
+    description: str
+    run_id: str
+    node_id: int
+    pid: int | None
+    exit_code: int | None
+    timed_out: bool | None
+    rebased: bool | None
+    log_path: str | None
+    summary: str | None
+    result: str | None
+    worktree_preserved: str | None
+    error: str | None
+    detail: str | None
+
+
+def _call(tool: object, **kwargs: object) -> _RalphResponse:
+    fn = cast(Callable[..., _RalphResponse], getattr(tool, "fn", tool))
     return fn(**kwargs)
 
 
-def _read_run(root: Path, run_id: str) -> dict | None:
+def _call_tree(tool: object, **kwargs: object) -> list[NodeSummary]:
+    fn = cast(Callable[..., list[NodeSummary]], getattr(tool, "fn", tool))
+    return fn(**kwargs)
+
+
+def _read_run(root: Path, run_id: str) -> RunRecord:
     graph, _cfg = open_graph(root)
     try:
-        return graph.get_run(run_id)
+        row = graph.get_run(run_id)
+        assert row is not None
+        return row
     finally:
         graph.close()
 
 
-def _node_runs(root: Path, node_id: int) -> list[dict]:
+def _node_runs(root: Path, node_id: int) -> list[RunRecord]:
     graph, _cfg = open_graph(root)
     try:
         return graph.runs_for_node(node_id)
@@ -142,16 +171,16 @@ def _seed_run(
 
     graph, _cfg = open_graph(root)
     try:
-        graph._conn.execute(
+        _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
             "INSERT OR IGNORE INTO nodes (id, description, status, created_at) "
-            "VALUES (?, ?, 'running', ?)",
+            + "VALUES (?, ?, 'running', ?)",
             (node_id, f"seeded-{node_id}", datetime.now(UTC).isoformat()),
         )
         started_at = started_at or datetime.now(UTC).isoformat()
         log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
         graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
-            graph.finish_run(
+            _ = graph.finish_run(
                 run_id,
                 RunResult(
                     status=status,
@@ -160,14 +189,14 @@ def _seed_run(
                     ended_at=ended_at or datetime.now(UTC).isoformat(),
                 ),
             )
-        graph._conn.commit()
+        _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
     finally:
         graph.close()
 
 
 def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool, detail: str = "None") -> str:
     script = tmp_path / f"stub_runner_{status}.py"
-    script.write_text(
+    _ = script.write_text(
         _STUB_RUNNER.format(
             status=status,
             rebased=rebased,
@@ -178,7 +207,7 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool, detail: str 
     return f"{sys.executable} {script}"
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> dict:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> _RalphResponse:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -232,7 +261,7 @@ def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="env-node-id", kind="task", project_root=root)
     script = tmp_path / "env_capture_runner.py"
-    script.write_text(_ENV_CAPTURE_RUNNER)
+    _ = script.write_text(_ENV_CAPTURE_RUNNER)
     started = _call(
         milknado_run_loop_start,
         node_id=task["id"],
@@ -282,7 +311,7 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
     finally:
         graph.close()
     with pytest.raises(ValueError, match="already running"):
-        _call(
+        _ = _call(
             milknado_run_loop_start,
             node_id=task["id"],
             runner_cmd=f"{sys.executable} -c pass",
@@ -292,12 +321,12 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
 
 def test_start_unknown_node_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not found"):
-        _call(milknado_run_loop_start, node_id=99, project_root=str(tmp_path))
+        _ = _call(milknado_run_loop_start, node_id=99, project_root=str(tmp_path))
 
 
 def test_poll_unknown_run_id_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not found"):
-        _call(
+        _ = _call(
             milknado_run_loop_poll,
             run_id="node-1-20260101T000000Z-abcd",
             project_root=str(tmp_path),
@@ -306,7 +335,7 @@ def test_poll_unknown_run_id_raises(tmp_path: Path) -> None:
 
 def test_poll_rejects_malformed_run_id(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="invalid run_id"):
-        _call(milknado_run_loop_poll, run_id="../etc/passwd", project_root=str(tmp_path))
+        _ = _call(milknado_run_loop_poll, run_id="../etc/passwd", project_root=str(tmp_path))
 
 
 def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
@@ -322,7 +351,7 @@ def test_start_claims_node_running_before_spawn(tmp_path: Path) -> None:
         runner_cmd=f"{sys.executable} -c pass",
         project_root=root,
     )
-    tree = _call(milknado_todo_tree, project_root=root)
+    tree = _call_tree(milknado_todo_tree, project_root=root)
     assert tree[0]["status"] == "running"
     # the node carries the claim run_id as its fence (matches the run-state file name)
     graph, _cfg = open_graph(tmp_path)
@@ -343,7 +372,7 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     task = _call(milknado_todo_add, description="badspawn", kind="task", project_root=root)
     bad_cmd = str(tmp_path / "no-such-runner-binary")
     with pytest.raises(OSError):
-        _call(
+        _ = _call(
             milknado_run_loop_start,
             node_id=task["id"],
             runner_cmd=bad_cmd,
@@ -354,8 +383,9 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     state = runs[0]
     assert state["status"] == "failed"
     assert state["rebased"] is False
-    assert "spawn failed" in state["detail"]
     assert state["ended_at"] is not None
+    assert state["detail"] is not None
+    assert "spawn failed" in state["detail"]
     # The node is claimed RUNNING in the parent BEFORE the spawn attempt, so the
     # spawn-failure path must release that claim (fenced mark_terminal FAILED) —
     # otherwise the node is stranded RUNNING forever and no retry can re-claim it.
@@ -376,13 +406,14 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
 ) -> None:
     import logging
 
+    from milknado.adapters import GitAdapter
     from milknado.mcp.ralph import RalphClaim, _remove_reclaimed_worktree
 
     worktree = tmp_path / "orphan"
     worktree.mkdir()
 
     class Git:
-        def remove_worktree(self, path: Path) -> None:
+        def remove_worktree(self, _path: Path) -> None:
             raise RuntimeError("adapter unavailable")
 
     claim = RalphClaim(
@@ -393,7 +424,7 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
         stale_worktree=worktree,
     )
     with caplog.at_level(logging.ERROR):
-        _remove_reclaimed_worktree(Git(), claim)  # type: ignore[arg-type]
+        _remove_reclaimed_worktree(cast(GitAdapter, cast(object, Git())), claim)
     assert "Failed to remove reclaimed worktree" in caplog.text
     assert worktree.exists()
 
@@ -409,7 +440,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         def __init__(self) -> None:
             self.terminal: tuple[int, str, NodeStatus] | None = None
 
-        def finish_run(self, run_id: str, result: object) -> None:
+        def finish_run(self, _run_id: str, _result: object) -> None:
             raise RuntimeError("database unavailable")
 
         def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
@@ -467,10 +498,16 @@ def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
     assert state["summary"] == ""  # derived log file absent -> empty tail, never KeyError
 
 
-def test_terminal_poll_does_not_invoke_tmux_subprocess(tmp_path: Path, monkeypatch) -> None:
+def test_terminal_poll_does_not_invoke_tmux_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     run_id = "node-1-20260101T000000Z-cafe"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="done", exit_code=0)
-    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: pytest.fail("tmux called"))
+
+    def _fail_tmux(*_args: object, **_kwargs: object) -> NoReturn:
+        pytest.fail("tmux called")
+
+    monkeypatch.setattr(subprocess, "run", _fail_tmux)
 
     state = _call(milknado_run_loop_poll, run_id=run_id, project_root=str(tmp_path))
 
@@ -485,13 +522,13 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     import milknado.adapters as adapters
     from milknado.mcp import _ralph_node_runner
 
-    def _boom(*_args: object, **_kwargs: object) -> object:
+    def _boom(*_args: object, **_kwargs: object) -> NoReturn:
         raise RuntimeError("boom")
 
     # GitAdapter is the first adapter the runner builds; raising there exercises
     # the runner's terminal failed-write path after open_graph succeeded.
     # Write quality_gates so the preflight passes and GitAdapter is reached.
-    (tmp_path / "milknado.toml").write_text(
+    _ = (tmp_path / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n',
         encoding="utf-8",
     )
@@ -565,36 +602,36 @@ def test_runner_writes_done_on_successful_outcome(
     from milknado.mcp import _ralph_node_runner
 
     class _Cfg:
-        execution_agent = "claude"
-        quality_gates = ()
-        worktree_pattern = "wt-{node}"
-        flavors: dict = {}
-        worker_brief_prepend = None
-        agent_family = "claude"
-        worker_agent_type = "milknado:milknado-worker"
-        loop_mode = "redispatch"
-        max_iterations = 8
-        max_turns = 60
-        commit_footer = None
+        execution_agent: str = "claude"
+        quality_gates: tuple[str, ...] = ()
+        worktree_pattern: str = "wt-{node}"
+        flavors: dict[str, object] = {}
+        worker_brief_prepend: str | None = None
+        agent_family: str = "claude"
+        worker_agent_type: str = "milknado:milknado-worker"
+        loop_mode: str = "redispatch"
+        max_iterations: int = 8
+        max_turns: int = 60
+        commit_footer: str | None = None
 
     class _Graph:
         def __init__(self) -> None:
-            self.closed = False
-            self.finished: dict | None = None
+            self.closed: bool = False
+            self.finished: dict[str, object] | None = None
 
-        def get_node(self, node_id: int) -> None:
+        def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result) -> None:
+        def finish_run(self, run_id: str, result: RunResult) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
 
-        def set_run_pid(self, *_args) -> None:
+        def set_run_pid(self, *_args: object) -> None:
             pass
 
-        def set_pid(self, *_args) -> None:
+        def set_pid(self, *_args: object) -> None:
             pass
 
-        def deposit_run_message(self, *a, **k) -> int:
+        def deposit_run_message(self, *_args: object, **_kwargs: object) -> int:
             return 1
 
         def close(self) -> None:
@@ -607,21 +644,21 @@ def test_runner_writes_done_on_successful_outcome(
             return "main"
 
     graph = _Graph()
-    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
     class _StubRalph:
-        def poll_progress_events(self) -> list:
+        def poll_progress_events(self) -> list[object]:
             return []
 
-    monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: _StubRalph())
-    monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
-    monkeypatch.setattr(execution, "Executor", lambda **k: object())
-    monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
+    monkeypatch.setattr(adapters, "LoopAdapter", lambda *_args, **_kwargs: _StubRalph())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(adapters, "CrgAdapter", lambda *_args, **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(execution, "Executor", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(execution, "ExecutionConfig", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(
         execution,
         "run_node_to_completion",
-        lambda *a, **k: HeadlessOutcome(node_id=1, success=True, detail=None),
+        lambda *_args, **_kwargs: HeadlessOutcome(node_id=1, success=True, detail=None),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
 
     run_id = "node-1-20260101T000000Z-abcd"
@@ -662,36 +699,36 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     from milknado.mcp import _ralph_node_runner
 
     class _Cfg:
-        execution_agent = "claude"
-        quality_gates = ()
-        worktree_pattern = "wt-{node}"
-        flavors: dict = {}
-        worker_brief_prepend = None
-        agent_family = "claude"
-        worker_agent_type = "milknado:milknado-worker"
-        loop_mode = "redispatch"
-        max_iterations = 8
-        max_turns = 60
-        commit_footer = None
+        execution_agent: str = "claude"
+        quality_gates: tuple[str, ...] = ()
+        worktree_pattern: str = "wt-{node}"
+        flavors: dict[str, object] = {}
+        worker_brief_prepend: str | None = None
+        agent_family: str = "claude"
+        worker_agent_type: str = "milknado:milknado-worker"
+        loop_mode: str = "redispatch"
+        max_iterations: int = 8
+        max_turns: int = 60
+        commit_footer: str | None = None
 
     class _Graph:
         def __init__(self) -> None:
-            self.closed = False
-            self.finished: dict | None = None
+            self.closed: bool = False
+            self.finished: dict[str, object] | None = None
 
-        def get_node(self, node_id: int) -> None:
+        def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result) -> None:
+        def finish_run(self, run_id: str, result: RunResult) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
 
-        def set_run_pid(self, *_args) -> None:
+        def set_run_pid(self, *_args: object) -> None:
             pass
 
-        def set_pid(self, *_args) -> None:
+        def set_pid(self, *_args: object) -> None:
             pass
 
-        def deposit_run_message(self, *a, **k) -> int:
+        def deposit_run_message(self, *_args: object, **_kwargs: object) -> int:
             return 1
 
         def close(self) -> None:
@@ -707,35 +744,42 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def __init__(self) -> None:
             self.stopped: list[str] = []
 
-        def wait_for_next_completion(self, active_run_ids, timeout=None):
+        def wait_for_next_completion(
+            self, active_run_ids: set[str], timeout: float | None = None
+        ) -> NoReturn:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
 
-        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:  # pyright: ignore[reportUnusedParameter]
             self.stopped.append(run_id)
             return True
 
-        def poll_progress_events(self) -> list:
+        def poll_progress_events(self) -> list[object]:
             return []
 
     class _StubExecutor:
         def dispatch(
-            self, node_id: int, config, *, base_oid=None, parent_run_id=None
+            self,
+            node_id: int,
+            _config: object,
+            *,
+            base_oid: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            parent_run_id: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> DispatchResult:
             return DispatchResult(
                 node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
             )
 
-        def fail(self, node_id: int) -> None:
+        def fail(self, _node_id: int) -> None:
             pass
 
     stub_ralph = _StubRalph()
     graph = _Graph()
-    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))
+    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
-    monkeypatch.setattr(adapters, "LoopAdapter", lambda *a, **k: stub_ralph)
-    monkeypatch.setattr(adapters, "CrgAdapter", lambda *a, **k: object())
-    monkeypatch.setattr(execution, "Executor", lambda **k: _StubExecutor())
-    monkeypatch.setattr(execution, "ExecutionConfig", lambda **k: object())
+    monkeypatch.setattr(adapters, "LoopAdapter", lambda *_args, **_kwargs: stub_ralph)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(adapters, "CrgAdapter", lambda *_args, **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(execution, "Executor", lambda **_kwargs: _StubExecutor())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(execution, "ExecutionConfig", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
@@ -758,7 +802,9 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     assert stub_ralph.stopped == ["run-1"], "timeout must call stop_run on the ralph adapter"
     assert graph.finished is not None
     assert graph.finished["status"] == "failed"
-    assert "timeout" in (graph.finished.get("detail") or "")
+    detail = graph.finished.get("detail")
+    assert isinstance(detail, str)
+    assert "timeout" in detail
 
 
 def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
@@ -832,12 +878,12 @@ def test_start_refuses_when_node_running_with_live_pid(tmp_path: Path) -> None:
     node_id = task["id"]
     graph, _cfg = open_graph(tmp_path)
     try:
-        graph.claim_node(node_id, "node-1-20260101T000000Z-live", now=now_iso())
+        _ = graph.claim_node(node_id, "node-1-20260101T000000Z-live", now=now_iso())
         graph.set_pid(node_id, "node-1-20260101T000000Z-live", os.getpid())
     finally:
         graph.close()
     with pytest.raises(ValueError, match="already running"):
-        _call(
+        _ = _call(
             milknado_run_loop_start,
             node_id=node_id,
             runner_cmd=f"{sys.executable} -c pass",
@@ -861,7 +907,7 @@ def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
         # Simulate a runner that claimed, recorded its pid, then died without
         # writing a terminal state — node stuck RUNNING, well within the 1800s
         # timeout (so only pid-liveness, not the stale sweep, can free it).
-        graph.claim_node(node_id, dead_run_id, now=now_iso())
+        _ = graph.claim_node(node_id, dead_run_id, now=now_iso())
         graph.set_pid(node_id, dead_run_id, dead_pid)
     finally:
         graph.close()
@@ -891,17 +937,16 @@ def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) ->
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="concurrent-ralph", kind="task", project_root=root)
     node_id = task["id"]
-    # A no-op runner that never reaches terminal, so a leaked second claim would
     # leave the node RUNNING under two run_ids and we'd see two successes.
     noop = f"{sys.executable} -c pass"
 
-    results: list[dict] = []
+    results: list[_RalphResponse] = []
     errors: list[str] = []
     result_lock = threading.Lock()
     barrier = threading.Barrier(2)
 
     def _start() -> None:
-        barrier.wait()
+        _ = barrier.wait()
         try:
             r = _call(
                 milknado_run_loop_start,
@@ -935,7 +980,7 @@ def test_orphan_worktree_removed_before_retry(
 
     removed: list[Path] = []
 
-    def _stub_remove(self: object, wt: Path, target: str = "HEAD") -> None:
+    def _stub_remove(_self: object, wt: Path, _target: str = "HEAD") -> None:
         removed.append(wt)
 
     monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _stub_remove)
@@ -991,8 +1036,8 @@ def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
     import milknado.adapters as adapters
     from milknado.domains.common.errors import UnlandedWorkError
 
-    def _refuse(self: object, wt: Path, target: str = "HEAD") -> None:
-        raise UnlandedWorkError(wt, "dirty files:\n M src/app.py")
+    def _refuse(_self: object, path: Path, _target: str = "HEAD") -> NoReturn:
+        raise UnlandedWorkError(path, "dirty files:\n M src/app.py")
 
     monkeypatch.setattr(adapters.GitAdapter, "remove_worktree", _refuse)
 
@@ -1002,7 +1047,7 @@ def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
 
     orphan_wt = tmp_path / "milknado-dirty-orphan"
     orphan_wt.mkdir()
-    (orphan_wt / "wip.py").write_text("at-risk work\n")
+    _ = (orphan_wt / "wip.py").write_text("at-risk work\n")
 
     graph, _cfg = open_graph(tmp_path)
     try:

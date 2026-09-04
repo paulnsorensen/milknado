@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from rich.text import Text
 
@@ -30,54 +32,57 @@ from milknado.app.run_view import (
 
 
 def active_run(**overrides: object) -> ActiveRunSnapshot:
-    defaults: dict[str, object] = dict(
-        run_id="run-1",
-        node_id=3,
-        description="Build feature",
-        status=ExecutionRunStatus.RUNNING,
-        progress="iteration 2",
-        stop_requested=False,
-        actions=RunActionAvailability(),
-        output=(),
-        pending_guidance=(),
-        elapsed_seconds=125.0,
-        progress_pct=55.0,
-        eta_seconds=40.0,
-        attempt=1,
-        max_attempts=3,
-        stalled=False,
+    return replace(
+        ActiveRunSnapshot(
+            run_id="run-1",
+            node_id=3,
+            description="Build feature",
+            status=ExecutionRunStatus.RUNNING,
+            progress="iteration 2",
+            stop_requested=False,
+            actions=RunActionAvailability(),
+            output=(),
+            pending_guidance=(),
+            elapsed_seconds=125.0,
+            progress_pct=55.0,
+            eta_seconds=40.0,
+            attempt=1,
+            max_attempts=3,
+            stalled=False,
+        ),
+        **overrides,
     )
-    defaults.update(overrides)
-    return ActiveRunSnapshot(**defaults)
 
 
 def terminal_run(**overrides: object) -> TerminalRunSnapshot:
-    defaults: dict[str, object] = dict(
-        run_id="run-2",
-        node_id=4,
-        description="Ship docs",
-        status=ExecutionRunStatus.COMPLETED,
-        output=(),
-        pending_guidance=(),
-        duration_seconds=64.0,
+    return replace(
+        TerminalRunSnapshot(
+            run_id="run-2",
+            node_id=4,
+            description="Ship docs",
+            status=ExecutionRunStatus.COMPLETED,
+            output=(),
+            pending_guidance=(),
+            duration_seconds=64.0,
+        ),
+        **overrides,
     )
-    defaults.update(overrides)
-    return TerminalRunSnapshot(**defaults)
 
 
 def execution_snapshot(**overrides: object) -> ExecutionSnapshot:
-    defaults: dict[str, object] = dict(
-        goal="Ship the release",
-        active_runs=(),
-        terminal_runs=(),
-        completed=3,
-        failed=1,
-        stopped=2,
-        available=5,
-        event_lines=(),
+    return replace(
+        ExecutionSnapshot(
+            goal="Ship the release",
+            active_runs=(),
+            terminal_runs=(),
+            completed=3,
+            failed=1,
+            stopped=2,
+            available=5,
+            event_lines=(),
+        ),
+        **overrides,
     )
-    defaults.update(overrides)
-    return ExecutionSnapshot(**defaults)
 
 
 @pytest.mark.parametrize(

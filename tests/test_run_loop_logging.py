@@ -6,12 +6,13 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import TextIO, cast
 
 import pytest
 
 import milknado.domains.execution.run_loop._logging as run_logging
 from milknado.domains.execution.run_loop._logging import (
-    _logger,
+    _logger,  # pyright: ignore[reportPrivateUsage]
     configure_run_logging,
     ts,
 )
@@ -76,11 +77,13 @@ class TestConfigureRunLoggingFileCreation:
         log_dir = tmp_path / ".milknado"
         log_dir.mkdir()
         active = log_dir / "run-active.log"
-        active.write_bytes(b"x" * 20)
+        _ = active.write_bytes(b"x" * 20)
         for index in range(3):
-            (log_dir / f"run-finished-{index}.log").write_bytes(b"x" * 10)
+            _ = (log_dir / f"run-finished-{index}.log").write_bytes(b"x" * 10)
         monkeypatch.setattr(run_logging, "_MAX_LOG_BYTES", 20)
-        run_logging._prune_old_logs(log_dir, "run-*.log", keep=2, active_run_ids=("active",))
+        run_logging._prune_old_logs(  # pyright: ignore[reportPrivateUsage]
+            log_dir, "run-*.log", keep=2, active_run_ids=("active",)
+        )
 
         assert active.exists()
         finished_bytes = sum(
@@ -150,8 +153,9 @@ class TestConfigureStderrLogging:
 
         assert second is first
         stderr_handlers = [
-            h
-            for h in _logger.handlers
-            if isinstance(h, logging.StreamHandler) and h.stream is sys.stderr
+            cast(logging.StreamHandler[TextIO], handler)
+            for handler in _logger.handlers
+            if isinstance(handler, logging.StreamHandler)
+            and cast(logging.StreamHandler[TextIO], handler).stream is sys.stderr
         ]
         assert len(stderr_handlers) == 1
