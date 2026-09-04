@@ -113,7 +113,7 @@ class LoopAdapter:
 
     def is_run_alive(self, run_id: str) -> bool:
         run = self._manager.get_run(run_id)
-        return run is not None and (run.thread is None or run.thread.is_alive())
+        return run is not None and run.thread is not None and run.thread.is_alive()
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         run = self._manager.get_run(run_id)

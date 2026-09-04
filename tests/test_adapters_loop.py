@@ -134,7 +134,7 @@ class TestListAndGetRuns:
         mock_manager.get_run.return_value = run
 
         run.thread = None
-        assert adapter.is_run_alive("run-1") is True
+        assert adapter.is_run_alive("run-1") is False
 
         run.thread = MagicMock()
         run.thread.is_alive.return_value = True
