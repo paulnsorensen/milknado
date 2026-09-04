@@ -72,11 +72,11 @@ class RunLoop:
         config: MilknadoConfig | None = None,
         planner: Planner | None = None,
     ) -> None:
-        self._executor = executor
-        self._graph = graph
-        self._ralph = ralph
-        self._milknado_config = config
-        self._planner = planner
+        self._executor: Executor = executor
+        self._graph: MikadoGraph = graph
+        self._ralph: LoopPort = ralph
+        self._milknado_config: MilknadoConfig | None = config
+        self._planner: Planner | None = planner
         self._active: dict[str, int] = {}
         self._logs: deque[str] = deque(maxlen=30)
         self._dispatched_at: dict[str, float] = {}
@@ -91,14 +91,14 @@ class RunLoop:
         self._exec_config: ExecutionConfig | None = None
         self._stopped_nodes: set[int] = set()
         self._terminal_runs: deque[TerminalRunState] = deque(maxlen=20)
-        self._completed = 0
-        self._failed = 0
-        self._stopped = 0
+        self._completed: int = 0
+        self._failed: int = 0
+        self._stopped: int = 0
         self._state_listener: Callable[[RunLoopState], None] | None = None
         self._process_controls: Callable[[], None] | None = None
-        self._completion_wait_started = 0.0
-        self._scheduling_stopped = False
-        self._scheduling_lock = Lock()
+        self._completion_wait_started: float = 0.0
+        self._scheduling_stopped: bool = False
+        self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
@@ -321,7 +321,7 @@ class RunLoop:
                     timed_out_id,
                 )
                 continue
-            self._active.pop(timed_out_id)
+            _ = self._active.pop(timed_out_id)
             self._executor.fail(nid)
             self._logs.append(f"[{ts()}] ⏱ node {nid} timeout")
             newly_failed += 1
@@ -477,7 +477,7 @@ class RunLoop:
             self._graph.mark_running(root.id)
             self._graph.mark_done(root.id)
         elif result.outcome == "gaps" and self._planner and result.goal_delta:
-            self._planner.replan_with_delta(result.goal_delta, config.project_root, spec_path)
+            _ = self._planner.replan_with_delta(result.goal_delta, config.project_root, spec_path)
         return outcome
 
     def _dispatch_batch(

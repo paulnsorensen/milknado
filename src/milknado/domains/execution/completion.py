@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
-from milknado.domains.common.config import Gate
+from milknado.domains.common.flavor_codec import Gate
 from milknado.loop import CompletionVerdict
 
 _GATE_TIMEOUT_SECONDS: Final[float] = 1800.0
@@ -80,7 +80,7 @@ def _artifact_rejection(worktree: Path, artifact_path: str) -> str | None:
     try:
         resolved_root = worktree.resolve()
         resolved_artifact = (resolved_root / artifact).resolve()
-        resolved_artifact.relative_to(resolved_root)
+        _ = resolved_artifact.relative_to(resolved_root)
     except (OSError, ValueError):
         return f"completion artifact path escapes worktree: {artifact_path}"
     try:
@@ -181,6 +181,6 @@ def _has_committed_change(worktree: Path, base_oid: str) -> bool:
     if diff.returncode != 0:
         raise _GitProbeFailure(
             f"git diff against dispatch base {base_oid} in {worktree} "
-            f"exited {diff.returncode}: {diff.stderr.strip()}"
+            + f"exited {diff.returncode}: {diff.stderr.strip()}"
         )
     return False

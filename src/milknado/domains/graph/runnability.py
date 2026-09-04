@@ -29,7 +29,7 @@ def validate_goal_runnable(graph: MikadoGraph, goal_id: int) -> RunnabilityRepor
     if node.kind != NodeKind.GOAL:
         report.errors.append(
             f"node {goal_id} is not a goal (kind={node.kind.value}); "
-            "only goal nodes can be validated for runnability"
+            + "only goal nodes can be validated for runnability"
         )
         return report
     children_map = graph.get_children_map()
@@ -40,19 +40,19 @@ def validate_goal_runnable(graph: MikadoGraph, goal_id: int) -> RunnabilityRepor
         if current.kind == NodeKind.GOAL and current.status == NodeStatus.PENDING:
             report.errors.append(
                 f"leaf goal {current.id} has zero children (undecomposed stub); "
-                "decompose into task nodes first"
+                + "decompose into task nodes first"
             )
         elif current.kind == NodeKind.GOAL and current.status != NodeStatus.PENDING:
             continue
         elif current.kind != NodeKind.TASK:
             report.errors.append(
                 f"leaf node {current.id} (kind={current.kind.value}) is not a task; "
-                "all leaf descendants must be tasks"
+                + "all leaf descendants must be tasks"
             )
         elif current.flavor == DEFAULT_FLAVOR and not graph.get_file_ownership(current.id):
             report.warnings.append(
                 f"task {current.id} has no file hints (implement-flavored tasks "
-                "should declare which files they touch)"
+                + "should declare which files they touch)"
             )
     return report
 

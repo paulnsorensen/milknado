@@ -61,7 +61,7 @@ TIKTOKEN_CACHE_KEY = hashlib.sha1(TIKTOKEN_BLOB_URL.encode(), usedforsecurity=Fa
 def _configure_tiktoken_cache() -> None:
     cache_dir = Path(__file__).resolve().parents[2] / "_vendor" / "tiktoken-cache"
     if (cache_dir / TIKTOKEN_CACHE_KEY).is_file():
-        os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_dir))
+        _ = os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(cache_dir))
 
 
 @functools.lru_cache(maxsize=1)

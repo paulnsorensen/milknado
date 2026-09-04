@@ -603,7 +603,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
         Event(
             EventType.ITERATION_COMPLETED,
             "r",
-            {"result_text": "<verdict>approve</verdict>"},
+            {"result_text": "", "echo_stdout": "<verdict>approve</verdict>"},
         )
     )
     events.put(Event(EventType.RUN_STOPPED, "r", {}))

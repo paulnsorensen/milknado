@@ -54,7 +54,7 @@ def apply_batches_to_graph(
     Raises ``ValueError`` if ``parent_id`` is None and ``manifest.goal`` or
     ``manifest.goal_summary`` is empty.
     """
-    graph.record_batch_plan(plan)
+    _ = graph.record_batch_plan(plan)
 
     attach_to: int | None
     created: list[int] = []
@@ -74,7 +74,7 @@ def apply_batches_to_graph(
         if NodeKind.TASK not in VALID_CHILD_KINDS.get(parent_node.kind, set()):
             raise ValueError(
                 f"parent_id {parent_id} has kind={parent_node.kind.value}; "
-                f"TASK is not a valid child of {parent_node.kind.value}"
+                + f"TASK is not a valid child of {parent_node.kind.value}"
             )
         attach_to = parent_id
 
@@ -97,7 +97,7 @@ def apply_batches_to_graph(
             sorted_deps = sorted(batch.depends_on)
             primary_parent = node_id_by_batch[sorted_deps[0]]
             for dep_index in batch.depends_on:
-                graph.add_edge(node.id, node_id_by_batch[dep_index])
+                _ = graph.add_edge(node.id, node_id_by_batch[dep_index])
         else:
             primary_parent = attach_to
         graph.set_parent_id(node.id, primary_parent)
@@ -108,7 +108,7 @@ def apply_batches_to_graph(
 
     for batch in plan.batches:
         if batch.index not in depended_on:
-            graph.add_edge(attach_to, node_id_by_batch[batch.index])
+            _ = graph.add_edge(attach_to, node_id_by_batch[batch.index])
 
     return created
 
@@ -134,7 +134,7 @@ def _batch_description(
     batch: Batch,
     desc_by_change: dict[str, str],
 ) -> str:
-    lines = []
+    lines: list[str] = []
     for i, cid in enumerate(batch.change_ids, start=1):
         text = desc_by_change.get(cid) or cid
         lines.append(f"{i}. {text}")

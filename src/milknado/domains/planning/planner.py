@@ -50,12 +50,14 @@ class Planner:
         *,
         prompt_prepend: str | None = None,
     ) -> None:
-        self._graph = graph
-        self._crg = crg
-        self._ports = ports
-        self._planning_agent = planning_agent
-        self._planning_validation_hook = (planning_validation_hook or "").strip() or None
-        self._prompt_prepend = prompt_prepend
+        self._graph: MikadoGraph = graph
+        self._crg: CrgPort = crg
+        self._ports: PlanningPorts = ports
+        self._planning_agent: str = planning_agent
+        self._planning_validation_hook: str | None = (
+            planning_validation_hook or ""
+        ).strip() or None
+        self._prompt_prepend: str | None = prompt_prepend
 
     def launch(
         self,
@@ -128,7 +130,7 @@ class Planner:
         )
         context_path = project_root / ".milknado" / "planning-context.md"
         context_path.parent.mkdir(parents=True, exist_ok=True)
-        context_path.write_text(context, encoding="utf-8")
+        _ = context_path.write_text(context, encoding="utf-8")
         return context_path
 
     def _apply_manifest(

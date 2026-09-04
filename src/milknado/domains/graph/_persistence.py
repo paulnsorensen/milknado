@@ -9,14 +9,81 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict, cast
 
-from milknado.domains.common import MikadoNode, NodeKind, NodeStatus, RunResult
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.graph._run_persistence import (
+    deposit_review_verdict,
+    finish_run,
+    get_run,
+    insert_node_review,
+    latest_run_message,
+    node_reviews_for_node,
+    recent_runs,
+    runs_for_node,
+    set_run_pid,
+    start_run,
+)
+from milknado.domains.graph._sqlite_rows import as_tuple as _as_tuple
+from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+
+__all__ = [
+    "deposit_review_verdict",
+    "finish_run",
+    "get_run",
+    "insert_node_review",
+    "latest_run_message",
+    "node_reviews_for_node",
+    "recent_runs",
+    "runs_for_node",
+    "set_run_pid",
+    "start_run",
+]
 
 if TYPE_CHECKING:
     from milknado.domains.batching import BatchPlan
 
 _logger = logging.getLogger(__name__)
+
+
+class _NodeRow(TypedDict):
+    id: int
+    description: str
+    status: str
+    parent_id: int | None
+    worktree_path: str | None
+    branch_name: str | None
+    run_id: str | None
+    pid: int | None
+    created_at: str
+    completed_at: str | None
+    dispatched_at: str | None
+    completion_duration_seconds: float | None  # noqa: V107 - TypedDict key, read via node[...] at row_to_node
+    oversized: int
+    batch_index: int | None
+    kind: str
+    flavor: str | None
+    wiki_ref: str | None
+    github_ref: str | None
+    artifact_path: str | None
+    archived_at: str | None
+
+
+class GithubBindAttempt(TypedDict):
+    goal_id: int
+    marker: str
+    issue_url: str | None
+    created_at: str
+
+
+class BatchPlanRecord(TypedDict):
+    id: int
+    created_at: str
+    solver_status: str
+    batch_count: int
+    oversized_count: int
+    max_spread: int
+    spread_report: list[dict[str, int | str]]
 
 
 _REQUIRED_NODE_COLUMNS = frozenset(
@@ -53,12 +120,12 @@ MIGRATIONS: list[tuple[int, str]] = [
     (
         2,
         "CREATE TABLE IF NOT EXISTS node_reviews ("
-        "node_id INTEGER NOT NULL REFERENCES nodes(id), "
-        "round INTEGER NOT NULL, "
-        "verdict TEXT NOT NULL, "
-        "findings TEXT NOT NULL, "
-        "created_at TEXT NOT NULL, "
-        "PRIMARY KEY (node_id, round))",
+        + "node_id INTEGER NOT NULL REFERENCES nodes(id), "
+        + "round INTEGER NOT NULL, "
+        + "verdict TEXT NOT NULL, "
+        + "findings TEXT NOT NULL, "
+        + "created_at TEXT NOT NULL, "
+        + "PRIMARY KEY (node_id, round))",
     ),
     (3, "ALTER TABLE nodes ADD COLUMN archived_at TEXT"),
 ]
@@ -73,7 +140,10 @@ _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE
 
 
 def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+    return any(
+        cast(str, _as_tuple(row)[1]) == column
+        for row in fetchall(conn, f"PRAGMA table_info({table})")
+    )
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -82,17 +152,20 @@ def migrate(conn: sqlite3.Connection) -> None:
     Stamps PRAGMA user_version after each version. Any failure rolls the whole
     batch back and re-raises — a half-migrated database must never be stamped.
     """
-    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    current_row = fetchone(conn, "PRAGMA user_version")
+    if current_row is None:
+        raise RuntimeError("PRAGMA user_version returned no row")
+    current = cast(int, _as_tuple(current_row)[0])
     pending = [(v, sql) for v, sql in MIGRATIONS if v > current]
     if not pending:
         return
     try:
-        conn.execute("BEGIN")
+        _ = conn.execute("BEGIN")
         for version, sql in pending:
             add_column = _ADD_COLUMN_RE.match(sql.strip())
             if add_column is None or not _has_column(conn, *add_column.groups()):
-                conn.execute(sql)
-            conn.execute(f"PRAGMA user_version = {version}")
+                _ = conn.execute(sql)
+            _ = conn.execute(f"PRAGMA user_version = {version}")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -106,17 +179,17 @@ def migrate(conn: sqlite3.Connection) -> None:
 
 
 def _validate_schema(conn: sqlite3.Connection) -> None:
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(nodes)").fetchall()}
+    columns = {cast(str, _as_tuple(row)[1]) for row in fetchall(conn, "PRAGMA table_info(nodes)")}
     missing = sorted(_REQUIRED_NODE_COLUMNS - columns)
     if missing:
         raise RuntimeError(
             "obsolete milknado database schema; recreate the database "
-            f"(missing nodes columns: {', '.join(missing)})"
+            + f"(missing nodes columns: {', '.join(missing)})"
         )
 
 
 def _ensure_indexes(conn: sqlite3.Connection) -> None:
-    conn.executescript(
+    _ = conn.executescript(
         """
         CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_wiki_ref
             ON nodes(wiki_ref) WHERE wiki_ref IS NOT NULL;
@@ -146,9 +219,7 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
 
 def create_tables(conn: sqlite3.Connection) -> None:
     """Create the current schema or validate an existing database."""
-    exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nodes'"
-    ).fetchone()
+    exists = fetchone(conn, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nodes'")
     if exists is not None:
         # Migrate BEFORE validating: a migration may add a nodes column that
         # _REQUIRED_NODE_COLUMNS already demands, so validating first would
@@ -157,7 +228,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
         _validate_schema(conn)
         _ensure_indexes(conn)
         return
-    conn.executescript("""
+    _ = conn.executescript("""
         CREATE TABLE IF NOT EXISTS nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             description TEXT NOT NULL,
@@ -263,51 +334,54 @@ def create_tables(conn: sqlite3.Connection) -> None:
 
 
 def row_to_node(row: sqlite3.Row) -> MikadoNode:
-    kind = NodeKind(row["kind"])
-    flavor = row["flavor"]
+    node = cast(_NodeRow, cast(object, row))
+    kind = NodeKind(node["kind"])
+    flavor = node["flavor"]
     if kind != NodeKind.TASK and flavor is not None:
         raise ValueError(
-            f"node {row['id']} has kind={kind.value} but a non-NULL flavor={flavor!r}; "
-            "only task nodes may carry a flavor"
+            f"node {node['id']} has kind={kind.value} but a non-NULL flavor={flavor!r}; "
+            + "only task nodes may carry a flavor"
         )
-    completed_at = row["completed_at"]
-    dispatched_at = row["dispatched_at"]
-    archived_at = row["archived_at"]
+    completed_at = node["completed_at"]
+    dispatched_at = node["dispatched_at"]
+    archived_at = node["archived_at"]
     return MikadoNode(
-        id=row["id"],
-        description=row["description"],
-        status=NodeStatus(row["status"]),
-        parent_id=row["parent_id"],
-        worktree_path=row["worktree_path"],
-        branch_name=row["branch_name"],
-        run_id=row["run_id"],
-        pid=row["pid"],
-        created_at=datetime.fromisoformat(row["created_at"]),
+        id=node["id"],
+        description=node["description"],
+        status=NodeStatus(node["status"]),
+        parent_id=node["parent_id"],
+        worktree_path=node["worktree_path"],
+        branch_name=node["branch_name"],
+        run_id=node["run_id"],
+        pid=node["pid"],
+        created_at=datetime.fromisoformat(node["created_at"]),
         completed_at=datetime.fromisoformat(completed_at) if completed_at else None,
         dispatched_at=datetime.fromisoformat(dispatched_at) if dispatched_at else None,
         archived_at=datetime.fromisoformat(archived_at) if archived_at else None,
-        oversized=bool(row["oversized"]),
-        batch_index=row["batch_index"],
-        completion_duration_seconds=row["completion_duration_seconds"],
+        oversized=bool(node["oversized"]),
+        batch_index=node["batch_index"],
+        completion_duration_seconds=node["completion_duration_seconds"],
         kind=kind,
         flavor=flavor if kind == NodeKind.TASK else None,
-        wiki_ref=row["wiki_ref"],
-        github_ref=row["github_ref"],
-        artifact_path=row["artifact_path"],
+        wiki_ref=node["wiki_ref"],
+        github_ref=node["github_ref"],
+        artifact_path=node["artifact_path"],
     )
 
 
 def children_id_map(conn: sqlite3.Connection) -> dict[int, list[int]]:
     """parent_id -> child_ids from a single edges scan (avoids per-node queries)."""
     mapping: dict[int, list[int]] = {}
-    for parent_id, child_id in conn.execute("SELECT parent_id, child_id FROM edges").fetchall():
+    for row in fetchall(conn, "SELECT parent_id, child_id FROM edges"):
+        parent_id = cast(int, _as_tuple(row)[0])
+        child_id = cast(int, _as_tuple(row)[1])
         mapping.setdefault(parent_id, []).append(child_id)
     return mapping
 
 
 def set_file_ownership(conn: sqlite3.Connection, node_id: int, files: list[str]) -> None:
-    conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
-    conn.executemany(
+    _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
+    _ = conn.executemany(
         "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
         [(node_id, f) for f in files],
     )
@@ -315,10 +389,8 @@ def set_file_ownership(conn: sqlite3.Connection, node_id: int, files: list[str])
 
 
 def get_file_ownership(conn: sqlite3.Connection, node_id: int) -> list[str]:
-    rows = conn.execute(
-        "SELECT file_path FROM file_ownership WHERE node_id = ?", (node_id,)
-    ).fetchall()
-    return [r[0] for r in rows]
+    rows = fetchall(conn, "SELECT file_path FROM file_ownership WHERE node_id = ?", (node_id,))
+    return [cast(str, _as_tuple(row)[0]) for row in rows]
 
 
 def get_file_ownership_map(
@@ -326,32 +398,45 @@ def get_file_ownership_map(
 ) -> dict[int, list[str]]:
     """Return owned paths for the requested nodes from one candidate-set scan."""
     if node_ids is None:
-        rows = conn.execute(
-            "SELECT node_id, file_path FROM file_ownership ORDER BY node_id, file_path"
-        ).fetchall()
+        rows = fetchall(
+            conn, "SELECT node_id, file_path FROM file_ownership ORDER BY node_id, file_path"
+        )
     else:
         ids = list(dict.fromkeys(node_ids))
         if not ids:
             return {}
         placeholders = ",".join("?" for _ in ids)
-        rows = conn.execute(
-            f"SELECT node_id, file_path FROM file_ownership "
-            f"WHERE node_id IN ({placeholders}) ORDER BY node_id, file_path",
+        rows = fetchall(
+            conn,
+            "SELECT node_id, file_path FROM file_ownership "
+            + f"WHERE node_id IN ({placeholders}) ORDER BY node_id, file_path",
             ids,
-        ).fetchall()
+        )
     mapping: dict[int, list[str]] = {}
-    for node_id, file_path in rows:
+    for row in rows:
+        values = _as_tuple(row)
+        node_id = cast(int, values[0])
+        file_path = cast(str, values[1])
         mapping.setdefault(node_id, []).append(file_path)
     return mapping
 
 
-def get_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> dict | None:
-    row = conn.execute(
+def get_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> GithubBindAttempt | None:
+    row = fetchone(
+        conn,
         "SELECT goal_id, marker, issue_url, created_at "
-        "FROM github_bind_attempts WHERE goal_id = ?",
+        + "FROM github_bind_attempts WHERE goal_id = ?",
         (goal_id,),
-    ).fetchone()
-    return dict(row) if row is not None else None
+    )
+    if row is None:
+        return None
+    values = _as_tuple(row)
+    return {
+        "goal_id": cast(int, values[0]),
+        "marker": cast(str, values[1]),
+        "issue_url": cast(str | None, values[2]),
+        "created_at": cast(str, values[3]),
+    }
 
 
 def set_github_bind_attempt(
@@ -361,18 +446,18 @@ def set_github_bind_attempt(
     issue_url: str | None,
     created_at: str,
 ) -> None:
-    conn.execute(
+    _ = conn.execute(
         "INSERT INTO github_bind_attempts (goal_id, marker, issue_url, created_at) "
-        "VALUES (?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET "
-        "marker = excluded.marker, issue_url = excluded.issue_url, "
-        "created_at = excluded.created_at",
+        + "VALUES (?, ?, ?, ?) ON CONFLICT(goal_id) DO UPDATE SET "
+        + "marker = excluded.marker, issue_url = excluded.issue_url, "
+        + "created_at = excluded.created_at",
         (goal_id, marker, issue_url, created_at),
     )
     conn.commit()
 
 
 def clear_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> None:
-    conn.execute("DELETE FROM github_bind_attempts WHERE goal_id = ?", (goal_id,))
+    _ = conn.execute("DELETE FROM github_bind_attempts WHERE goal_id = ?", (goal_id,))
     conn.commit()
 
 
@@ -382,14 +467,18 @@ def check_parallel_safety(
     if not node_ids:
         return []
     placeholders = ",".join("?" for _ in node_ids)
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         f"SELECT node_id, file_path FROM file_ownership WHERE node_id IN ({placeholders})",
         node_ids,
-    ).fetchall()
-    ownership = {node_id: set() for node_id in node_ids}
-    for node_id, file_path in rows:
+    )
+    ownership = {node_id: set[str]() for node_id in node_ids}
+    for row in rows:
+        values = _as_tuple(row)
+        node_id = cast(int, values[0])
+        file_path = cast(str, values[1])
         ownership[node_id].add(file_path)
-    conflicts = []
+    conflicts: list[tuple[int, int, list[str]]] = []
     for left_id, right_id in itertools.combinations(node_ids, 2):
         overlap = ownership[left_id] & ownership[right_id]
         if overlap:
@@ -407,8 +496,8 @@ def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
     now = datetime.now(UTC).isoformat()
     cur = conn.execute(
         "INSERT INTO batch_plans "
-        "(created_at, solver_status, batch_count, oversized_count, max_spread, spread_json) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
+        + "(created_at, solver_status, batch_count, oversized_count, max_spread, spread_json) "
+        + "VALUES (?, ?, ?, ?, ?, ?)",
         (
             now,
             plan.solver_status,
@@ -425,70 +514,79 @@ def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
     return plan_id
 
 
-def get_latest_batch_plan(conn: sqlite3.Connection) -> dict | None:
-    row = conn.execute(
+def get_latest_batch_plan(conn: sqlite3.Connection) -> BatchPlanRecord | None:
+    row = fetchone(
+        conn,
         "SELECT id, created_at, solver_status, batch_count, oversized_count, "
-        "max_spread, spread_json FROM batch_plans ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+        + "max_spread, spread_json FROM batch_plans ORDER BY id DESC LIMIT 1",
+    )
     if row is None:
         return None
+    values = _as_tuple(row)
     return {
-        "id": row["id"],
-        "created_at": row["created_at"],
-        "solver_status": row["solver_status"],
-        "batch_count": row["batch_count"],
-        "oversized_count": row["oversized_count"],
-        "max_spread": row["max_spread"],
-        "spread_report": json.loads(row["spread_json"]),
+        "id": cast(int, values[0]),
+        "created_at": cast(str, values[1]),
+        "solver_status": cast(str, values[2]),
+        "batch_count": cast(int, values[3]),
+        "oversized_count": cast(int, values[4]),
+        "max_spread": cast(int, values[5]),
+        "spread_report": cast(list[dict[str, int | str]], json.loads(cast(str, values[6]))),
     }
 
 
 def set_spec_hash(conn: sqlite3.Connection, spec_hash: str) -> None:
     now = datetime.now(UTC).isoformat()
-    conn.execute(
+    _ = conn.execute(
         "INSERT INTO plan_state (id, spec_hash, recorded_at) VALUES (1, ?, ?)"
-        " ON CONFLICT(id) DO UPDATE SET spec_hash = excluded.spec_hash,"
-        " recorded_at = excluded.recorded_at",
+        + " ON CONFLICT(id) DO UPDATE SET spec_hash = excluded.spec_hash,"
+        + " recorded_at = excluded.recorded_at",
         (spec_hash, now),
     )
     conn.commit()
 
 
 def get_spec_hash(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute("SELECT spec_hash FROM plan_state WHERE id = 1").fetchone()
-    return row["spec_hash"] if row else None
+    row = fetchone(conn, "SELECT spec_hash FROM plan_state WHERE id = 1")
+    return cast(str, _as_tuple(row)[0]) if row else None
 
 
 def drop_all(conn: sqlite3.Connection) -> int:
-    count = conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
-    conn.execute("DELETE FROM run_messages")
-    conn.execute("DELETE FROM runs")
-    conn.execute("DELETE FROM file_ownership")
-    conn.execute("DELETE FROM edges")
-    conn.execute("DELETE FROM goal_claims")
-    conn.execute("DELETE FROM node_reviews")
-    conn.execute("DELETE FROM nodes")
-    conn.execute("DELETE FROM plan_state")
-    conn.execute("DELETE FROM batch_plans")
+    count_row = fetchone(conn, "SELECT COUNT(*) FROM nodes")
+    if count_row is None:
+        raise RuntimeError("node count query returned no row")
+    count = cast(int, _as_tuple(count_row)[0])
+    for statement in (
+        "DELETE FROM run_messages",
+        "DELETE FROM runs",
+        "DELETE FROM file_ownership",
+        "DELETE FROM edges",
+        "DELETE FROM goal_claims",
+        "DELETE FROM node_reviews",
+        "DELETE FROM nodes",
+        "DELETE FROM plan_state",
+        "DELETE FROM batch_plans",
+    ):
+        _ = conn.execute(statement)
     conn.commit()
     return count
 
 
 def record_completion_duration(conn: sqlite3.Connection, node_id: int, duration: float) -> None:
-    conn.execute(
+    _ = conn.execute(
         "UPDATE nodes SET completion_duration_seconds = ? WHERE id = ?", (duration, node_id)
     )
     conn.commit()
 
 
 def recent_completion_durations(conn: sqlite3.Connection, limit: int) -> list[float]:
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         "SELECT completion_duration_seconds FROM nodes "
-        "WHERE completion_duration_seconds IS NOT NULL "
-        "ORDER BY id DESC LIMIT ?",
+        + "WHERE completion_duration_seconds IS NOT NULL "
+        + "ORDER BY id DESC LIMIT ?",
         (limit,),
-    ).fetchall()
-    return [r[0] for r in rows]
+    )
+    return [cast(float, _as_tuple(row)[0]) for row in rows]
 
 
 def set_dispatched_at(conn: sqlite3.Connection, node_id: int) -> None:
@@ -508,7 +606,7 @@ def set_pid(conn: sqlite3.Connection, node_id: int, run_id: str, pid: int) -> No
     run_id, the write hits zero rows and is silently dropped — the pid belongs to
     a run that no longer owns the node, so recording it would be wrong.
     """
-    conn.execute(
+    _ = conn.execute(
         "UPDATE nodes SET pid = ? WHERE id = ? AND run_id = ?",
         (pid, node_id, run_id),
     )
@@ -524,236 +622,8 @@ def set_worktree(
     RUNNING -> RUNNING transition, so only the worktree metadata is written, and
     only if this run still owns the node.
     """
-    conn.execute(
+    _ = conn.execute(
         "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ? AND run_id = ?",
         (worktree_path, branch_name, node_id, run_id),
     )
     conn.commit()
-
-
-_MAX_RETAINED_RUN_MESSAGES = 1000
-_MAX_RUN_MESSAGE_BYTES = 64 * 1024
-_RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
-_RUN_STATUS_RUNNING = "running"  # sole owner: runs.status compares case-sensitively
-
-_RUN_COLUMNS = (
-    "run_id",
-    "node_id",
-    "status",
-    "pid",
-    "log_path",
-    "started_at",
-    "ended_at",
-    "timed_out",
-    "exit_code",
-    "error",
-    "timeout_seconds",
-    "detail",
-    "rebased",
-)
-
-
-def _run_row_to_dict(row: sqlite3.Row) -> dict:
-    """Serialize a runs row to the sidecar-shaped dict callers consumed before.
-
-    `timed_out` / `rebased` are stored as INTEGER and re-hydrated to bool/None so
-    a poll payload reads the same as the old JSON sidecar (which carried bools).
-    """
-    d = {col: row[col] for col in _RUN_COLUMNS}
-    d["timed_out"] = bool(d["timed_out"]) if d["timed_out"] is not None else False
-    if d["rebased"] is not None:
-        d["rebased"] = bool(d["rebased"])
-    return d
-
-
-def start_run(
-    conn: sqlite3.Connection,
-    run_id: str,
-    node_id: int,
-    log_path: str,
-    started_at: str,
-    timeout_seconds: int | None,
-    pid: int | None = None,
-) -> None:
-    """INSERT a status='running' run row (replaces the initial sidecar write)."""
-    conn.execute(
-        "INSERT INTO runs "
-        "(run_id, node_id, status, pid, log_path, started_at, timeout_seconds, timed_out) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-        (run_id, node_id, _RUN_STATUS_RUNNING, pid, log_path, started_at, timeout_seconds),
-    )
-    conn.commit()
-
-
-def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool:
-    """Write one terminal result; return whether this fenced write won."""
-    cur = conn.execute(
-        "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
-        "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = ?",
-        (
-            result.status,
-            result.exit_code,
-            1 if result.timed_out else 0,
-            result.ended_at,
-            result.error,
-            result.detail,
-            None if result.rebased is None else (1 if result.rebased else 0),
-            run_id,
-            _RUN_STATUS_RUNNING,
-        ),
-    )
-    conn.commit()
-    won = cur.rowcount == 1
-    if not won:
-        _logger.warning(
-            "finish_run dropped late terminal write for run %s (status=%s)",
-            run_id,
-            result.status,
-        )
-    return won
-
-
-def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
-    """Record the detached runner's pid on a still-running run.
-
-    Gated on status='running' so a runner that already wrote its terminal state
-    is never clobbered back toward running (mirrors the old read-then-write
-    guard the sidecar path used).
-    """
-    conn.execute(
-        "UPDATE runs SET pid = ? WHERE run_id = ? AND status = ?",
-        (pid, run_id, _RUN_STATUS_RUNNING),
-    )
-    conn.commit()
-
-
-def get_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
-    """SELECT one run row as a dict (replaces read_state for poll)."""
-    row = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-    return _run_row_to_dict(row) if row else None
-
-
-def runs_for_node(
-    conn: sqlite3.Connection,
-    node_id: int,
-    *,
-    terminal_only: bool = False,
-    run_id: str | None = None,
-) -> list[dict]:
-    """Return this node's runs as dicts (replaces find_terminal_runs_for_node).
-
-    Callers still apply fence-before-latest: pass run_id to filter to the fence
-    BEFORE calling latest_terminal_run, so a stale run with a later ended_at
-    cannot mask the owner.
-    """
-    sql = "SELECT * FROM runs WHERE node_id = ?"
-    params: list[object] = [node_id]
-    if terminal_only:
-        sql += " AND status IN ('done', 'failed')"
-    if run_id is not None:
-        sql += " AND run_id = ?"
-        params.append(run_id)
-    rows = conn.execute(sql, params).fetchall()
-    return [_run_row_to_dict(r) for r in rows]
-
-
-def recent_runs(conn: sqlite3.Connection, limit: int) -> list[dict]:
-    """Return the most-recently-started runs as dicts (replaces the run-list scan)."""
-    rows = conn.execute(
-        "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (max(limit, 0),)
-    ).fetchall()
-    return [_run_row_to_dict(r) for r in rows]
-
-
-def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:
-    cutoff = datetime.fromisoformat(created_at).timestamp() - _RUN_MESSAGE_MAX_AGE_SECONDS
-    cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
-    terminal = "SELECT run_id FROM runs WHERE status != ?"
-    conn.execute(
-        f"DELETE FROM run_messages WHERE run_id IN ({terminal}) AND created_at < ?",
-        (_RUN_STATUS_RUNNING, cutoff_at),
-    )
-    conn.execute(
-        "DELETE FROM run_messages WHERE (run_id, seq) IN ("
-        f"SELECT run_id, seq FROM run_messages WHERE run_id IN ({terminal}) "
-        "ORDER BY created_at DESC, seq DESC LIMIT -1 OFFSET ?)",
-        (_RUN_STATUS_RUNNING, _MAX_RETAINED_RUN_MESSAGES),
-    )
-
-
-def deposit_run_message(
-    conn: sqlite3.Connection, run_id: str, role: str, body: str, created_at: str
-) -> int:
-    """Append a bounded run message and prune terminal history."""
-    body = body.encode()[:_MAX_RUN_MESSAGE_BYTES].decode(errors="ignore")
-    _prune_run_messages(conn, created_at)
-    row = conn.execute(
-        "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
-        "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages WHERE run_id = ? "
-        "RETURNING seq",
-        (run_id, role, body, created_at, run_id),
-    ).fetchone()
-    conn.commit()
-    return row[0]
-
-
-def deposit_review_verdict(
-    conn: sqlite3.Connection, run_id: str, verdict: str, findings: str, created_at: str
-) -> int:
-    """Persist a verdict and atomically mark it terminal only for an active review run."""
-    with conn:
-        row = conn.execute(
-            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
-            "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review', ?, ? "
-            "FROM run_messages WHERE run_id = ? RETURNING seq",
-            (run_id, f"{verdict}\n{findings}", created_at, run_id),
-        ).fetchone()
-        terminal = conn.execute(
-            "SELECT 1 FROM runs JOIN nodes ON nodes.id = runs.node_id "
-            "WHERE runs.run_id = ? AND runs.status = ? AND nodes.flavor = 'review'",
-            (run_id, _RUN_STATUS_RUNNING),
-        ).fetchone()
-        if terminal is not None:
-            conn.execute(
-                "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
-                "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review_terminal', ?, ? "
-                "FROM run_messages WHERE run_id = ?",
-                (run_id, verdict, created_at, run_id),
-            )
-    return row[0]
-
-
-def insert_node_review(
-    conn: sqlite3.Connection,
-    node_id: int,
-    round_number: int,
-    verdict: str,
-    findings: str,
-    created_at: str,
-) -> None:
-    """Persist one review verdict keyed by (node_id, round); no dependency on runs."""
-    conn.execute(
-        "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (node_id, round_number, verdict, findings, created_at),
-    )
-    conn.commit()
-
-
-def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[dict]:
-    """Return all recorded review verdicts for a node, round order."""
-    rows = conn.execute(
-        "SELECT node_id, round, verdict, findings, created_at FROM node_reviews "
-        "WHERE node_id = ? ORDER BY round",
-        (node_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
-def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:
-    """Return the body of the latest message for this run+role, or None."""
-    row = conn.execute(
-        "SELECT body FROM run_messages WHERE run_id = ? AND role = ? ORDER BY seq DESC LIMIT 1",
-        (run_id, role),
-    ).fetchone()
-    return row[0] if row else None

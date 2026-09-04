@@ -9,15 +9,21 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import replace
+from typing import cast
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import children_id_map, row_to_node
+from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+
+
+def _values(row: sqlite3.Row) -> tuple[object, ...]:
+    return cast(tuple[object, ...], cast(object, row))
 
 
 def node_status(conn: sqlite3.Connection, node_id: int) -> NodeStatus | None:
-    row = conn.execute("SELECT status FROM nodes WHERE id = ?", (node_id,)).fetchone()
-    return NodeStatus(row[0]) if row else None
+    row = fetchone(conn, "SELECT status FROM nodes WHERE id = ?", (node_id,))
+    return NodeStatus(cast(str, _values(row)[0])) if row else None
 
 
 def get_node(conn: sqlite3.Connection, node_id: int) -> MikadoNode | None:
@@ -28,7 +34,7 @@ def get_node(conn: sqlite3.Connection, node_id: int) -> MikadoNode | None:
     forest walks below there is deliberately no ``include_archived`` flag —
     a point lookup never filters.
     """
-    row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+    row = fetchone(conn, "SELECT * FROM nodes WHERE id = ?", (node_id,))
     if row is None:
         return None
     node = row_to_node(row)
@@ -45,25 +51,24 @@ def get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoN
     if not ids:
         return []
     unique_ids = list(dict.fromkeys(ids))
-    rows = []
+    rows: list[sqlite3.Row] = []
     for start in range(0, len(unique_ids), 500):
         chunk = unique_ids[start : start + 500]
         placeholders = ",".join("?" for _ in chunk)
-        rows.extend(
-            conn.execute(
-                f"SELECT * FROM nodes WHERE id IN ({placeholders})",
-                chunk,
-            ).fetchall()
-        )
-    nodes = {row["id"]: row_to_node(row) for row in rows}
+        rows.extend(fetchall(conn, f"SELECT * FROM nodes WHERE id IN ({placeholders})", chunk))
+    nodes = {cast(int, _values(row)[0]): row_to_node(row) for row in rows}
     goal_ids = [node_id for node_id, node in nodes.items() if node.kind == NodeKind.GOAL]
     if goal_ids:
         placeholders = ",".join("?" for _ in goal_ids)
-        claims = conn.execute(
+        claims = fetchall(
+            conn,
             f"SELECT goal_id, run_id FROM goal_claims WHERE goal_id IN ({placeholders})",
             goal_ids,
-        ).fetchall()
-        for goal_id, run_id in claims:
+        )
+        for claim in claims:
+            values = _values(claim)
+            goal_id = cast(int, values[0])
+            run_id = cast(str, values[1])
             nodes[goal_id] = replace(nodes[goal_id], goal_run_id=run_id)
     return [nodes[node_id] for node_id in ids if node_id in nodes]
 
@@ -75,21 +80,25 @@ def latest_results_for_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) 
     for start in range(0, len(ids), 500):
         chunk = ids[start : start + 500]
         placeholders = ",".join("?" for _ in chunk)
-        rows = conn.execute(
+        rows = fetchall(
+            conn,
             "SELECT r.node_id, m.body "
-            "FROM runs r CROSS JOIN run_messages m "
-            "WHERE m.run_id = r.run_id AND m.role = 'result' "
-            f"AND r.node_id IN ({placeholders}) "
-            "AND NOT EXISTS ("
-            "SELECT 1 FROM runs newer_r CROSS JOIN run_messages newer_m "
-            "WHERE newer_r.node_id = r.node_id "
-            "AND newer_m.run_id = newer_r.run_id AND newer_m.role = 'result' "
-            "AND (newer_m.created_at > m.created_at OR ("
-            "newer_m.created_at = m.created_at AND newer_m.seq > m.seq))"
-            ")",
+            + "FROM runs r CROSS JOIN run_messages m "
+            + "WHERE m.run_id = r.run_id AND m.role = 'result' "
+            + f"AND r.node_id IN ({placeholders}) "
+            + "AND NOT EXISTS ("
+            + "SELECT 1 FROM runs newer_r CROSS JOIN run_messages newer_m "
+            + "WHERE newer_r.node_id = r.node_id "
+            + "AND newer_m.run_id = newer_r.run_id AND newer_m.role = 'result' "
+            + "AND (newer_m.created_at > m.created_at OR ("
+            + "newer_m.created_at = m.created_at AND newer_m.seq > m.seq))"
+            + ")",
             chunk,
-        ).fetchall()
-        results.update((row["node_id"], row["body"]) for row in rows)
+        )
+        results.update(
+            (cast(int, values[0]), cast(str, values[1]))
+            for values in (_values(row) for row in rows)
+        )
     return results
 
 
@@ -100,7 +109,7 @@ def find_node_by_wiki_ref(conn: sqlite3.Connection, wiki_ref: str) -> MikadoNode
     from git-resident frontmatter, identical across dbs, so it is the stable
     join between a wiki goal file and its milknado node.
     """
-    row = conn.execute("SELECT * FROM nodes WHERE wiki_ref = ?", (wiki_ref,)).fetchone()
+    row = fetchone(conn, "SELECT * FROM nodes WHERE wiki_ref = ?", (wiki_ref,))
     return row_to_node(row) if row else None
 
 
@@ -111,7 +120,7 @@ def find_node_by_github_ref(conn: sqlite3.Connection, github_ref: str) -> Mikado
     github_ref is the opaque PVT/PVTI id, identical across dbs, so it is the
     idempotency key the github importer/binder round-trip on.
     """
-    row = conn.execute("SELECT * FROM nodes WHERE github_ref = ?", (github_ref,)).fetchone()
+    row = fetchone(conn, "SELECT * FROM nodes WHERE github_ref = ?", (github_ref,))
     return row_to_node(row) if row else None
 
 
@@ -119,7 +128,7 @@ def get_all_nodes(conn: sqlite3.Connection, *, include_archived: bool = False) -
     sql = "SELECT * FROM nodes"
     if not include_archived:
         sql += " WHERE archived_at IS NULL"
-    return [row_to_node(r) for r in conn.execute(sql).fetchall()]
+    return [row_to_node(row) for row in fetchall(conn, sql)]
 
 
 def get_children(
@@ -128,7 +137,7 @@ def get_children(
     sql = "SELECT n.* FROM nodes n JOIN edges e ON n.id = e.child_id WHERE e.parent_id = ?"
     if not include_archived:
         sql += " AND n.archived_at IS NULL"
-    rows = conn.execute(sql, (node_id,)).fetchall()
+    rows = fetchall(conn, sql, (node_id,))
     return [row_to_node(r) for r in rows]
 
 
@@ -138,17 +147,18 @@ def get_children_map(
     """Map parent ids to child nodes with archive filtering performed in SQL."""
     mapping: dict[int, list[MikadoNode]] = {}
     if not include_archived:
-        rows = conn.execute(
+        rows = fetchall(
+            conn,
             """
             SELECT e.parent_id AS edge_parent_id, n.*
             FROM edges e
             JOIN nodes p ON p.id = e.parent_id
             JOIN nodes n ON n.id = e.child_id
             WHERE p.archived_at IS NULL AND n.archived_at IS NULL
-            """
-        ).fetchall()
+            """,
+        )
         for row in rows:
-            mapping.setdefault(row["edge_parent_id"], []).append(row_to_node(row))
+            mapping.setdefault(cast(int, _values(row)[0]), []).append(row_to_node(row))
         return mapping
     nodes = {node.id: node for node in get_all_nodes(conn, include_archived=True)}
     for parent_id, child_ids in children_id_map(conn).items():
@@ -162,7 +172,7 @@ def get_leaves(conn: sqlite3.Connection, *, include_archived: bool = False) -> l
     sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT parent_id FROM edges)"
     if not include_archived:
         sql += " AND archived_at IS NULL"
-    rows = conn.execute(sql).fetchall()
+    rows = fetchall(conn, sql)
     return [row_to_node(r) for r in rows]
 
 
@@ -190,13 +200,14 @@ def get_ready_nodes(
         filters.append("n.flavor = ?")
         params.append(flavor)
     params.append(limit)
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         "SELECT n.* FROM nodes n WHERE "
         + " AND ".join(filters)
         + " AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "
-        "WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id LIMIT ?",
+        + "WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id LIMIT ?",
         params,
-    ).fetchall()
+    )
     return [row_to_node(row) for row in rows]
 
 
@@ -214,7 +225,8 @@ def get_node_summaries(
         raise ValueError("limit must be between 1 and 100")
     if offset < 0:
         raise ValueError("offset must be non-negative")
-    filters, params = [], []
+    filters: list[str] = []
+    params: list[object] = []
     if not include_archived:
         filters.append("archived_at IS NULL")
     for column, value in (
@@ -227,18 +239,26 @@ def get_node_summaries(
             params.append(value)
     where = f" WHERE {' AND '.join(filters)}" if filters else ""
     params.extend((limit, offset))
-    rows = conn.execute(
+    rows = fetchall(
+        conn,
         f"SELECT id, status, description FROM nodes{where} ORDER BY id LIMIT ? OFFSET ?",
         params,
-    ).fetchall()
-    return [dict(row) for row in rows]
+    )
+    return [
+        {
+            "id": cast(int, _values(row)[0]),
+            "status": cast(str, _values(row)[1]),
+            "description": cast(str, _values(row)[2]),
+        }
+        for row in rows
+    ]
 
 
 def get_root(conn: sqlite3.Connection, *, include_archived: bool = False) -> MikadoNode | None:
     sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
     if not include_archived:
         sql += " AND archived_at IS NULL"
-    row = conn.execute(sql + " ORDER BY id LIMIT 1").fetchone()
+    row = fetchone(conn, sql + " ORDER BY id LIMIT 1")
     return row_to_node(row) if row else None
 
 
@@ -246,5 +266,5 @@ def get_roots(conn: sqlite3.Connection, *, include_archived: bool = False) -> li
     sql = "SELECT * FROM nodes WHERE id NOT IN (SELECT DISTINCT child_id FROM edges)"
     if not include_archived:
         sql += " AND archived_at IS NULL"
-    rows = conn.execute(sql).fetchall()
+    rows = fetchall(conn, sql)
     return [row_to_node(r) for r in rows]

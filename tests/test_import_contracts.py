@@ -74,8 +74,11 @@ def test_layering_contracts_are_declared() -> None:
         "milknado.domains.graph._persistence",
         "milknado.domains.graph._pipeline",
         "milknado.domains.graph._reads",
+        "milknado.domains.graph._run_persistence",
+        "milknado.domains.graph._sqlite_rows",
         "milknado.domains.graph._status",
         "milknado.domains.graph._transitions",
+        "milknado.domains.graph._verification",
         "milknado.domains.wiki._locate",
         "milknado.domains.wiki._serialize",
     ]

@@ -75,10 +75,11 @@ def export_github_roadmap(
     for goal in graph.get_children(roadmap_node_id, include_archived=True):
         if goal.kind != NodeKind.GOAL or goal.github_ref is None:
             continue
-        _write_status(github, goal, fields)
-        _write_harvest(github, graph, goal, fields)
+        github_ref = goal.github_ref
+        _write_status(github, goal, fields, github_ref)
+        _write_harvest(github, graph, goal, fields, github_ref)
         goals_exported += 1
-        if goal.wiki_ref is not None and (url := url_by_item.get(goal.github_ref)):
+        if goal.wiki_ref is not None and (url := url_by_item.get(github_ref)):
             github.issue_edit_body(url, goal_intent(goal, file_map, wiki_root))
             bodies_overwritten += 1
     return GithubExportResult(goals_exported=goals_exported, bodies_overwritten=bodies_overwritten)
@@ -105,12 +106,14 @@ def _resolve_fields(
     if status_field is None or harvest_field is None:
         raise ValueError(
             f"project is missing the {STATUS_FIELD_NAME!r}/{HARVEST_FIELD_NAME!r} "
-            "fields; run bind first"
+            + "fields; run bind first"
         )
     return status_field, harvest_field
 
 
-def _write_status(github: GithubProjectPort, goal: MikadoNode, fields: _ProjectFields) -> None:
+def _write_status(
+    github: GithubProjectPort, goal: MikadoNode, fields: _ProjectFields, github_ref: str
+) -> None:
     option = status_option_name(goal.status.value)
     if option is None:
         return
@@ -125,7 +128,7 @@ def _write_status(github: GithubProjectPort, goal: MikadoNode, fields: _ProjectF
         return
     github.item_edit(
         fields.project_id,
-        goal.github_ref,
+        github_ref,
         fields.status.id,
         single_select_option_id=option_id,
     )
@@ -136,6 +139,7 @@ def _write_harvest(
     graph: MikadoGraph,
     goal: MikadoNode,
     fields: _ProjectFields,
+    github_ref: str,
 ) -> None:
     text = format_harvest_text(build_harvest_summary(graph, goal))
-    github.item_edit(fields.project_id, goal.github_ref, fields.harvest.id, text=text)
+    github.item_edit(fields.project_id, github_ref, fields.harvest.id, text=text)

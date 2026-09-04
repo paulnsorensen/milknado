@@ -54,7 +54,7 @@ def _write_materialized(project_root: Path, name: str, content: str) -> Path:
     directory = project_root / ".milknado" / "issues"
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
-    path.write_text(content, encoding="utf-8")
+    _ = path.write_text(content, encoding="utf-8")
     return path
 
 

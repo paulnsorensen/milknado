@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
+from typing import BinaryIO
 
 from milknado.domains.common import pid_alive
 from milknado.domains.dispatch import ProcessOutcome
@@ -15,8 +16,8 @@ from milknado.domains.dispatch import ProcessOutcome
 
 class ProcessAdapter:
     def __init__(self, *, termination_grace: float = 5.0, poll_interval: float = 0.1) -> None:
-        self._termination_grace = termination_grace
-        self._poll_interval = poll_interval
+        self._termination_grace: float = termination_grace
+        self._poll_interval: float = poll_interval
 
     def run(
         self,
@@ -45,10 +46,10 @@ class ProcessAdapter:
                 on_started(proc.pid)
             if cancel_requested is None:
                 try:
-                    proc.communicate(input=stdin, timeout=timeout)
+                    _ = proc.communicate(input=stdin, timeout=timeout)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-                    proc.wait()
+                    _ = proc.wait()
                     timed_out = True
             else:
                 if proc.stdin is not None:
@@ -107,17 +108,17 @@ class ProcessAdapter:
         return not pid_alive(pid)
 
     @staticmethod
-    def _write_stdin(stdin, payload: bytes) -> None:
+    def _write_stdin(stdin: BinaryIO, payload: bytes) -> None:
         try:
-            stdin.write(payload)
+            _ = stdin.write(payload)
             stdin.close()
         except (BrokenPipeError, OSError):
             pass
 
-    def _terminate(self, proc: subprocess.Popen) -> None:
+    def _terminate(self, proc: subprocess.Popen[bytes]) -> None:
         proc.terminate()
         try:
-            proc.wait(timeout=self._termination_grace)
+            _ = proc.wait(timeout=self._termination_grace)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
+            _ = proc.wait()

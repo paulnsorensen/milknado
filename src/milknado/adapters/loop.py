@@ -5,14 +5,20 @@ import queue
 import re
 import shlex
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Final, cast
 
+from milknado.adapters._loop_types import ReviewVerdict
+from milknado.adapters._loop_types import RunHandleView as _RunHandle
+from milknado.adapters._loop_types import (
+    build_verify_prompt as _build_verify_prompt_impl,
+)
+from milknado.adapters._loop_types import event_text as _event_text
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
+    NodeAgentSession,
     ProgressEvent,
     TerminalRunOutcome,
     VerifySpecResult,
@@ -21,12 +27,12 @@ from milknado.domains.common import (
 from milknado.domains.execution import build_completion_verifier
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 
+if TYPE_CHECKING:
+    from milknado.loop._events import Event, EventData
+
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
-# A worker that self-heals across iterations may fail a few times, but a
-# command that cannot start (e.g. an unknown CLI flag) fails identically
-# every ~1s forever. Three failures in a row ends the run loudly instead.
-MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3
+MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3  # Stop after three launch failures.
 
 
 _logger = logging.getLogger(__name__)
@@ -34,10 +40,10 @@ _logger = logging.getLogger(__name__)
 
 class LoopAdapter:
     def __init__(self, agent: str = "") -> None:
-        self._manager = RunManager()
-        self._queue: queue.Queue[Any] = queue.Queue()
-        self._emitter = QueueEmitter(self._queue)
-        self._agent = agent
+        self._manager: RunManager = RunManager()
+        self._queue: queue.Queue[Event[EventData]] = queue.Queue()
+        self._emitter: QueueEmitter = QueueEmitter(self._queue)
+        self._agent: str = agent
 
     def create_run(
         self,
@@ -48,35 +54,36 @@ class LoopAdapter:
         project_root: Path | None = None,
         commit_footer: str | None = None,
         base_oid: str | None = None,
-        runtime_policy: Any | None = None,
+        runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
-    ) -> Any:
+    ) -> _RunHandle:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
-        session = getattr(runtime_policy, "session", None)
+        session = cast(
+            NodeAgentSession | None,
+            getattr(runtime_policy, "session", None),
+        )
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
-        # Only the claude CLI understands --mcp-config; omp/codex/gemini reject
-        # the flag at launch and the worker crash-loops without ever starting.
+        # Only Claude supports --mcp-config; other CLIs reject it at launch.
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
-        config_kwargs: dict[str, Any] = {
-            "agent": agent_cmd,
-            "ralph_dir": ralph_dir,
-            "ralph_file": ralph_file,
-            "project_root": project_root or ralph_dir,
-            "completion_signal": MILKNADO_COMPLETION_SIGNAL,
-            "stop_on_completion_signal": True,
-            "stop_on_error": True,
-            "log_dir": ralph_dir / ".ralph-logs",
-            "commit_footer": commit_footer,
-            "max_consecutive_failures": MAX_CONSECUTIVE_AGENT_FAILURES,
-        }
+        config = RunConfig(
+            agent=agent_cmd,
+            ralph_dir=ralph_dir,
+            ralph_file=ralph_file,
+            project_root=project_root or ralph_dir,
+            completion_signal=MILKNADO_COMPLETION_SIGNAL,
+            stop_on_completion_signal=True,
+            stop_on_error=True,
+            log_dir=ralph_dir / ".ralph-logs",
+            commit_footer=commit_footer,
+            max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
+        )
         if completion_probe is not None:
-            config_kwargs["completion_probe"] = completion_probe
-        config = RunConfig(**config_kwargs)
+            config.completion_probe = completion_probe
         if completion_probe is None:
             config.completion_verifier = build_completion_verifier(
                 ralph_dir, quality_gates, base_oid=base_oid
@@ -98,11 +105,15 @@ class LoopAdapter:
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.stop_and_join(run_id, timeout)
 
-    def list_runs(self) -> list[Any]:
+    def list_runs(self) -> Sequence[_RunHandle]:
         return self._manager.list_runs()
 
-    def get_run(self, run_id: str) -> Any | None:
+    def get_run(self, run_id: str) -> _RunHandle | None:
         return self._manager.get_run(run_id)
+
+    def is_run_alive(self, run_id: str) -> bool:
+        run = self._manager.get_run(run_id)
+        return run is not None and run.thread is not None and run.thread.is_alive()
 
     def get_run_stdout(self, run_id: str) -> list[str]:
         run = self._manager.get_run(run_id)
@@ -173,8 +184,8 @@ class LoopAdapter:
             if event.run_id not in active_run_ids:
                 continue
             if event.type == EventType.ITERATION_STARTED:
-                data = event.data
-                iteration = data.get("iteration", 0) if isinstance(data, dict) else 0
+                iteration_value = cast(Mapping[str, object], event.data).get("iteration", 0)
+                iteration = iteration_value if isinstance(iteration_value, int) else 0
                 return event.run_id, ProgressEvent(
                     run_id=event.run_id,
                     work=iteration,
@@ -202,7 +213,7 @@ class LoopAdapter:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
             ralph_file = tmp_path / "ralph.md"
-            ralph_file.write_text(
+            _ = ralph_file.write_text(
                 _build_verify_prompt(spec_text, graph_state),
                 encoding="utf-8",
             )
@@ -218,7 +229,10 @@ class LoopAdapter:
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id
-            ev_queue = local_run.emitter.queue
+            ev_queue = cast(
+                QueueEmitter,
+                cast(object, local_run.emitter),
+            ).queue
             local_manager.start_run(run_id)
             return _drain_verify_run(local_manager, run_id, ev_queue)
 
@@ -230,15 +244,16 @@ class LoopAdapter:
         project_root: Path,
     ) -> ReviewVerdict:
         """Run one bounded, read-only reviewer turn in the pinned worktree."""
+        del project_root
         import tempfile
 
         with tempfile.TemporaryDirectory(prefix="milknado-review-") as tmpdir:
             temp_root = Path(tmpdir)
             ralph_file = temp_root / "review.md"
             local_manager = RunManager()
-            local_queue: queue.Queue[Any] = queue.Queue()
+            local_queue: queue.Queue[Event[EventData]] = queue.Queue()
             local_emitter = QueueEmitter(local_queue)
-            ralph_file.write_text(prompt, encoding="utf-8")
+            _ = ralph_file.write_text(prompt, encoding="utf-8")
             config = RunConfig(
                 agent=agent,
                 ralph_dir=temp_root,
@@ -270,7 +285,7 @@ class LoopAdapter:
                 prior_findings=prior_findings,
                 findings_round=findings_round,
             )
-            output_path.write_text(content, encoding="utf-8")
+            _ = output_path.write_text(content, encoding="utf-8")
         except OSError as exc:
             from milknado.domains.common import RalphMarkdownWriteError
 
@@ -278,30 +293,14 @@ class LoopAdapter:
         return output_path
 
 
-def _build_verify_prompt(spec_text: str, graph_state: Any) -> str:
-    graph_summary = str(graph_state) if graph_state is not None else "(no graph state)"
-    return (
-        "# Spec Verification\n\n"
-        "Review whether the following spec has been fully implemented.\n\n"
-        f"## Spec\n\n{spec_text}\n\n"
-        f"## Graph State\n\n{graph_summary}\n\n"
-        "## Instructions\n\n"
-        "If the spec is fully satisfied, emit:\n"
-        "<result>done</result>\n\n"
-        "If there are unmet requirements, emit:\n"
-        "<result>gaps</result>\n"
-        "<goal_delta>\n"
-        "Description of what is still missing\n"
-        "</goal_delta>\n\n"
-        "Then emit the completion signal to stop this run:\n"
-        f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>\n"
-    )
+def _build_verify_prompt(spec_text: str, graph_state: object | None) -> str:
+    return _build_verify_prompt_impl(spec_text, graph_state, MILKNADO_COMPLETION_SIGNAL)
 
 
 def _drain_verify_run(
     local_manager: RunManager,
     run_id: str,
-    ev_queue: queue.Queue[Any],
+    ev_queue: queue.Queue[Event[EventData]],
 ) -> VerifySpecResult:
     _ITERATION_EVENTS = frozenset(
         {
@@ -315,15 +314,15 @@ def _drain_verify_run(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                local_manager.stop_and_join(run_id, timeout=5.0)
+                _ = local_manager.stop_and_join(run_id, timeout=5.0)
                 return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
             try:
                 event = ev_queue.get(timeout=remaining)
             except queue.Empty:
-                local_manager.stop_and_join(run_id, timeout=5.0)
+                _ = local_manager.stop_and_join(run_id, timeout=5.0)
                 return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
             if event.type in _ITERATION_EVENTS:
-                text = event.data.get("result_text") or ""
+                text = _event_text(event.data, "result_text")
                 if text:
                     output_parts.append(text)
             elif event.type == EventType.RUN_STOPPED:
@@ -331,7 +330,7 @@ def _drain_verify_run(
     except Exception as exc:
         _logger.exception("verify_spec drain failed for run_id=%s", run_id)
         try:
-            local_manager.stop_and_join(run_id, timeout=5.0)
+            _ = local_manager.stop_and_join(run_id, timeout=5.0)
         except Exception:
             _logger.exception("verify_spec stop failed for run_id=%s", run_id)
         return VerifySpecResult(outcome="gaps", goal_delta=f"verification failed: {exc}")
@@ -341,7 +340,7 @@ def _drain_verify_run(
 def _drain_review_run(
     local_manager: RunManager,
     run_id: str,
-    ev_queue: queue.Queue[Any],
+    ev_queue: queue.Queue[Event[EventData]],
 ) -> ReviewVerdict:
     """Drain one reviewer run and convert its final output into a verdict."""
     output_parts: list[str] = []
@@ -350,7 +349,7 @@ def _drain_review_run(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                local_manager.stop_and_join(run_id, timeout=5.0)
+                _ = local_manager.stop_and_join(run_id, timeout=5.0)
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
@@ -358,7 +357,7 @@ def _drain_review_run(
             try:
                 event = ev_queue.get(timeout=remaining)
             except queue.Empty:
-                local_manager.stop_and_join(run_id, timeout=5.0)
+                _ = local_manager.stop_and_join(run_id, timeout=5.0)
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
@@ -367,15 +366,15 @@ def _drain_review_run(
                 EventType.ITERATION_COMPLETED,
                 EventType.ITERATION_FAILED,
             }:
-                text = event.data.get("result_text") or event.data.get("echo_stdout") or ""
+                text = _event_text(event.data, "result_text", "echo_stdout")
                 if text:
-                    output_parts.append(str(text))
+                    output_parts.append(text)
             elif event.type == EventType.RUN_STOPPED:
                 break
     except Exception as exc:
         _logger.exception("node review drain failed for run_id=%s", run_id)
         try:
-            local_manager.stop_and_join(run_id, timeout=5.0)
+            _ = local_manager.stop_and_join(run_id, timeout=5.0)
         except Exception:
             _logger.exception("node review stop failed for run_id=%s", run_id)
         return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}")
@@ -436,12 +435,6 @@ def _build_ralph_content(
         f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
         "so the run can stop before the iteration budget.\n"
     )
-
-
-@dataclass(frozen=True)
-class ReviewVerdict:
-    approved: bool
-    findings_md: str
 
 
 def _parse_review_output(output: str) -> tuple[bool, str]:

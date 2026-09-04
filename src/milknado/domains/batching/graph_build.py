@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 from milknado.domains.batching._tarjan import compute_sccs
 from milknado.domains.batching.change import ChangeGraph, FileChange, NewRelationship, SymbolRef
@@ -135,8 +135,9 @@ def _edge_endpoints(edge: object) -> tuple[str, str] | None:
     ``source``/``target`` keys. Returns ``None`` if the shape is unrecognised.
     """
     if isinstance(edge, Mapping):
-        src = edge.get("src") or edge.get("source")
-        dst = edge.get("dst") or edge.get("target")
+        mapping = cast(Mapping[str, object], edge)
+        src = mapping.get("src") or mapping.get("source")
+        dst = mapping.get("dst") or mapping.get("target")
     else:
         src = getattr(edge, "source_qualified", None)
         dst = getattr(edge, "target_qualified", None)

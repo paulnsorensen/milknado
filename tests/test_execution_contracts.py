@@ -24,9 +24,13 @@ def test_textual_is_available_as_runtime_dependency() -> None:
 
 
 def test_loop_port_exposes_typed_operator_control_contract() -> None:
-    assert {"queue_guidance", "request_stop_run", "stop_run", "force_stop_run"} <= set(
-        LoopPort.__dict__
-    )
+    assert {
+        "queue_guidance",
+        "request_stop_run",
+        "stop_run",
+        "force_stop_run",
+        "is_run_alive",
+    } <= set(LoopPort.__dict__)
     create_signature = inspect.signature(LoopPort.create_run)
     assert list(create_signature.parameters) == [
         "self",
@@ -63,6 +67,7 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
     assert get_type_hints(LoopPort.request_stop_run)["return"] is type(None)
     assert get_type_hints(LoopPort.stop_run)["return"] is bool
     assert get_type_hints(LoopPort.force_stop_run)["return"] is bool
+    assert get_type_hints(LoopPort.is_run_alive)["return"] is bool
     assert (
         get_type_hints(LoopPort.wait_for_next_completion)["return"]
         == tuple[str, TerminalRunOutcome | ProgressEvent]

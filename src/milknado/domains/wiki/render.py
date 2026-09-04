@@ -73,7 +73,7 @@ def _classes(goal: object) -> list[str]:
 
 
 def _class_definitions() -> list[str]:
-    lines = []
+    lines: list[str] = []
     for status, (fill, stroke, text) in _STATUS_STYLES.items():
         lines.append(f"    classDef status-{status} fill:{fill},stroke:{stroke},color:{text}")
     lines.append(
@@ -87,11 +87,11 @@ def _svg(model: RoadmapModel) -> str:
     width, row_height = 520, 80
     height = max(120, 40 + row_height * len(goals))
     positions = {slug: (40, 40 + row_height * index) for index, slug in enumerate(goals)}
-    lines = [f'<svg viewBox="0 0 {width} {height}" role="img">', "<defs>"]
+    lines: list[str] = [f'<svg viewBox="0 0 {width} {height}" role="img">', "<defs>"]
     lines.append(
         '<marker id="arrow" markerWidth="8" markerHeight="8" '
-        'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z"/>'
-        "</marker>"
+        + 'refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z"/>'
+        + "</marker>"
     )
     lines.append("</defs>")
     for slug in goals:
@@ -101,7 +101,7 @@ def _svg(model: RoadmapModel) -> str:
                 target_x, target_y = positions[slug]
                 lines.append(
                     f'<path d="M {source_x + 360} {source_y} L {target_x} {target_y}" '
-                    'fill="none" stroke="#64748b" marker-end="url(#arrow)"/>'
+                    + 'fill="none" stroke="#64748b" marker-end="url(#arrow)"/>'
                 )
     for slug in goals:
         goal = model.goals[slug]
@@ -114,7 +114,7 @@ def _svg(model: RoadmapModel) -> str:
         x, y = positions[slug]
         lines.append(
             f'<rect x="{x}" y="{y - 24}" width="360" height="48" rx="8" '
-            f'fill="{fill}" stroke="{stroke}"{dash}/>'
+            + f'fill="{fill}" stroke="{stroke}"{dash}/>'
         )
         lines.append(
             f'<text x="{x + 16}" y="{y + 5}" fill="{text}">{html.escape(goal.title)}</text>'

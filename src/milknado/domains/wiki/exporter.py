@@ -24,7 +24,7 @@ from milknado.domains.wiki._serialize import (
     replace_harvest_block,
     set_frontmatter_field,
 )
-from milknado.domains.wiki.importer import _load_model
+from milknado.domains.wiki.importer import load_model
 from milknado.domains.wiki.ports import WikiIndexerPort, WikiIndexResult
 
 
@@ -65,7 +65,7 @@ def export_roadmap(
         )
     roadmap_dir, roadmap_slug = locate_roadmap_dir(wiki_root, roadmap.wiki_ref)
     context = _ExportContext(wiki_root, roadmap_dir, roadmap_slug, now or _now_iso())
-    model = _load_model(roadmap_dir, roadmap_slug)
+    model = load_model(roadmap_dir, roadmap_slug)
     files = {
         compute_goal_ref(roadmap_slug, slug, goal.created): roadmap_dir / f"{slug}.md"
         for slug, goal in model.goals.items()
@@ -144,7 +144,7 @@ def _available_slug(wiki_root: Path, roadmap_dir: Path, base: str) -> str:
 
 def _confined_file_exists(wiki_root: Path, path: Path) -> bool:
     try:
-        read_text(wiki_root, path)
+        _ = read_text(wiki_root, path)
     except FileNotFoundError:
         return False
     return True

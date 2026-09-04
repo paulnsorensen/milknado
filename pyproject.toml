@@ -100,8 +100,11 @@ forbidden_modules = [
     "milknado.domains.graph._persistence",
     "milknado.domains.graph._pipeline",
     "milknado.domains.graph._reads",
+    "milknado.domains.graph._run_persistence",
+    "milknado.domains.graph._sqlite_rows",
     "milknado.domains.graph._status",
     "milknado.domains.graph._transitions",
+    "milknado.domains.graph._verification",
     "milknado.domains.wiki._locate",
     "milknado.domains.wiki._serialize",
 ]
@@ -168,6 +171,7 @@ max-statements = 40
 "src/milknado/domains/graph/_persistence.py" = ["PLR0913"]
 "src/milknado/domains/graph/_pipeline.py" = ["BLE001", "PLR0913"]
 "src/milknado/domains/graph/_reads.py" = ["PLR0913"]
+"src/milknado/domains/graph/_run_persistence.py" = ["PLR0913"]
 "src/milknado/domains/graph/_status.py" = ["ARG001", "PLR0913"]
 "src/milknado/domains/graph/graph.py" = ["PLR0913", "SIM105"]
 "src/milknado/domains/planning/context.py" = ["BLE001", "PLR0913"]
@@ -255,7 +259,6 @@ venv = ".venv"
 [[tool.basedpyright.executionEnvironments]]
 root = "tests"
 extraPaths = ["."]
-
 [tool.vulture]
 # src/ only, deliberately: code reachable solely from tests is dead code in a
 # shipped package, not live code. Adding tests/ here would hide exactly that.

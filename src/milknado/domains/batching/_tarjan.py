@@ -85,7 +85,7 @@ def _advance_neighbor(
 
 def _finish_node(v: str, call_stack: list[tuple[str, int]], s: _TarjanState) -> None:
     """Pop ``v`` from call_stack, propagate lowlink to parent, and emit SCC if ``v`` is a root."""
-    call_stack.pop()
+    _ = call_stack.pop()
     if call_stack:
         parent, _ = call_stack[-1]
         s.lowlink[parent] = min(s.lowlink[parent], s.lowlink[v])
