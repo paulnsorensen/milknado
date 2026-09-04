@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from milknado.domains.common import NodeStatus, RunResult
 from milknado.domains.common.config import MilknadoConfig
 from milknado.domains.graph import MikadoGraph
 
@@ -18,6 +19,43 @@ class RunWindow:
     exit_code_path: Path
     env: dict[str, str] = field(default_factory=dict)
     brief_path: Path | None = None
+
+
+class FinishDispatchPort(Protocol):
+    """The graph capability required to persist a worker terminal result."""
+
+    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+    def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus, /) -> bool: ...
+    def get_node(self, node_id: int, /) -> object | None: ...
+
+
+class RunReaderPort(Protocol):
+    """The graph capability required to observe one persisted run."""
+
+    def get_run(self, run_id: str, /) -> Mapping[str, object] | None: ...
+
+
+class RunFinalizerPort(RunReaderPort, Protocol):
+    """The graph capabilities required to finalize one persisted run."""
+
+    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+
+
+class StaleRunPort(Protocol):
+    """The graph capability required by stale-run reconciliation."""
+
+    def runs_for_node(self, node_id: int, /) -> Iterable[Mapping[str, object]]: ...
+    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+
+
+class WorkerOutcomePort(Protocol):
+    """The worker result fields consumed by lifecycle finalization."""
+
+    @property
+    def exit_code(self) -> int: ...
+
+    @property
+    def timed_out(self) -> bool: ...
 
 
 class TmuxPort(Protocol):

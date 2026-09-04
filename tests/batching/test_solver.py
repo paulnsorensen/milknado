@@ -1,11 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from milknado.domains.batching import FileChange, NewRelationship, SymbolRef, plan_batches
+from milknado.domains.batching import (
+    BatchPlan,
+    FileChange,
+    NewRelationship,
+    SymbolRef,
+    plan_batches,
+)
 
 
-def _batch_index(plan, change_id: str) -> int:
+def _batch_index(plan: BatchPlan, change_id: str) -> int:
     """Return the batch index containing change_id."""
     for batch in plan.batches:
         if change_id in batch.change_ids:
@@ -13,7 +21,7 @@ def _batch_index(plan, change_id: str) -> int:
     raise KeyError(f"{change_id} not found in any batch")
 
 
-def _all_change_ids(plan) -> set[str]:
+def _all_change_ids(plan: BatchPlan) -> set[str]:
     return {cid for batch in plan.batches for cid in batch.change_ids}
 
 
@@ -28,17 +36,17 @@ def test_duplicate_ids_raises() -> None:
     a = FileChange(id="1", path="a.py")
     b = FileChange(id="1", path="b.py")
     with pytest.raises(ValueError, match="duplicate"):
-        plan_batches([a, b], budget=70_000)
+        _ = plan_batches([a, b], budget=70_000)
 
 
-def test_precedence_respected(tmp_path) -> None:
+def test_precedence_respected(tmp_path: Path) -> None:
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
     plan = plan_batches([a, b], budget=70_000, root=tmp_path)
     assert _batch_index(plan, "a") <= _batch_index(plan, "b")
 
 
-def test_budget_forces_three_batches(tmp_path) -> None:
+def test_budget_forces_three_batches(tmp_path: Path) -> None:
     changes = [FileChange(id=str(i), path=f"x{i}.py", edit_kind="add") for i in range(3)]
     plan = plan_batches(changes, budget=1900, root=tmp_path)  # each = 1875; 2 won't fit
     assert plan.solver_status in ("OPTIMAL", "FEASIBLE")
@@ -46,7 +54,7 @@ def test_budget_forces_three_batches(tmp_path) -> None:
     assert _all_change_ids(plan) == {"0", "1", "2"}
 
 
-def test_cycle_co_batches(tmp_path) -> None:
+def test_cycle_co_batches(tmp_path: Path) -> None:
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete")
     rels = [
@@ -57,7 +65,7 @@ def test_cycle_co_batches(tmp_path) -> None:
     assert _batch_index(plan, "a") == _batch_index(plan, "b")
 
 
-def test_same_symbol_co_locates(tmp_path) -> None:
+def test_same_symbol_co_locates(tmp_path: Path) -> None:
     sym = SymbolRef(name="UserService", file="a.py")
     changes = [
         FileChange(id=str(i), path=f"f{i}.py", edit_kind="delete", symbols=(sym,))
@@ -67,7 +75,7 @@ def test_same_symbol_co_locates(tmp_path) -> None:
     assert all(ss.spread == 0 for ss in plan.spread_report)
 
 
-def test_spread_report_measures_distance_not_max_batch(tmp_path) -> None:
+def test_spread_report_measures_distance_not_max_batch(tmp_path: Path) -> None:
     """Regression: earlier version computed spread = max(batch_of), not max - min.
     Force a symbol across two batches via budget; spread must be 1, not 2+.
     """
@@ -83,7 +91,7 @@ def test_spread_report_measures_distance_not_max_batch(tmp_path) -> None:
     assert actual_distance == 1
 
 
-def test_oversized_single_change_infeasible(tmp_path) -> None:
+def test_oversized_single_change_infeasible(tmp_path: Path) -> None:
     # Legacy test name kept; behaviour changed: oversized SCCs pass through, not INFEASIBLE.
     c = FileChange(id="1", path="big.py", edit_kind="add")  # 1875 tokens
     plan = plan_batches([c], budget=100, root=tmp_path)
@@ -93,13 +101,13 @@ def test_oversized_single_change_infeasible(tmp_path) -> None:
     assert plan.batches[0].change_ids == ("1",)
 
 
-def test_timeout_returns_feasible_or_unknown(tmp_path) -> None:
+def test_timeout_returns_feasible_or_unknown(tmp_path: Path) -> None:
     changes = [FileChange(id=str(i), path=f"f{i}.py", edit_kind="add") for i in range(30)]
     plan = plan_batches(changes, budget=2000, time_limit_s=0.05, root=tmp_path)
     assert plan.solver_status in ("OPTIMAL", "FEASIBLE", "UNKNOWN")
 
 
-def test_batch_depends_on_chain(tmp_path) -> None:
+def test_batch_depends_on_chain(tmp_path: Path) -> None:
     """Chain a -> b -> c produces sequential depends_on."""
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
@@ -115,7 +123,7 @@ def test_batch_depends_on_chain(tmp_path) -> None:
     assert batch_b.index in batch_c.depends_on or batch_b.index == batch_c.index
 
 
-def test_new_relationship_adds_edge(tmp_path) -> None:
+def test_new_relationship_adds_edge(tmp_path: Path) -> None:
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete")
     rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_call")
@@ -128,7 +136,7 @@ def test_new_relationship_adds_edge(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_oversized_scc_passthrough(tmp_path) -> None:
+def test_oversized_scc_passthrough(tmp_path: Path) -> None:
     """A single change exceeding budget gets its own oversized batch."""
     c = FileChange(id="big", path="big.py", edit_kind="add")
     plan = plan_batches([c], budget=100, root=tmp_path)
@@ -138,7 +146,7 @@ def test_oversized_scc_passthrough(tmp_path) -> None:
     assert plan.batches[0].change_ids == ("big",)
 
 
-def test_oversized_plus_normal(tmp_path) -> None:
+def test_oversized_plus_normal(tmp_path: Path) -> None:
     """Oversized SCC and normal SCC with an edge: two batches, correct ordering."""
     # big -> small (oversized must come before normal)
     big = FileChange(id="big", path="big.py", edit_kind="add")
@@ -154,7 +162,7 @@ def test_oversized_plus_normal(tmp_path) -> None:
     assert big_batch.index in small_batch.depends_on
 
 
-def test_independent_changes_co_batch(tmp_path) -> None:
+def test_independent_changes_co_batch(tmp_path: Path) -> None:
     """Two independent changes that fit in budget land in one batch."""
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete")
@@ -164,7 +172,7 @@ def test_independent_changes_co_batch(tmp_path) -> None:
     assert _all_change_ids(plan) == {"a", "b"}
 
 
-def test_total_cost_prefers_balanced_batches_over_one(tmp_path) -> None:
+def test_total_cost_prefers_balanced_batches_over_one(tmp_path: Path) -> None:
     """Composite cost can prefer two batches even when one fits the budget.
 
     Ten independent deletes total 800 estimated tokens, so one batch is
@@ -179,7 +187,7 @@ def test_total_cost_prefers_balanced_batches_over_one(tmp_path) -> None:
     assert _all_change_ids(plan) == {str(i) for i in range(10)}
 
 
-def test_total_cost_keeps_dependency_batches_compact(tmp_path) -> None:
+def test_total_cost_keeps_dependency_batches_compact(tmp_path: Path) -> None:
     """Composite cost keeps a dependency chain and independent work compact."""
     a = FileChange(id="a", path="a.py", edit_kind="delete")
     b = FileChange(id="b", path="b.py", edit_kind="delete", depends_on=("a",))
@@ -192,7 +200,7 @@ def test_total_cost_keeps_dependency_batches_compact(tmp_path) -> None:
     assert _all_change_ids(plan) == {"a", "b", "c"}
 
 
-def test_batch_depends_on_from_original_edges(tmp_path) -> None:
+def test_batch_depends_on_from_original_edges(tmp_path: Path) -> None:
     """Chain a->b->c forces 3 separate batches; depends_on reflects the chain."""
     # delete costs 80 tokens flat; budget=80 forces one change per batch
     a = FileChange(id="a", path="a.py", edit_kind="delete")
@@ -207,7 +215,7 @@ def test_batch_depends_on_from_original_edges(tmp_path) -> None:
     assert sorted_batches[2].depends_on == (sorted_batches[1].index,)
 
 
-def test_shared_path_tokens_counted_once_per_scc(tmp_path) -> None:
+def test_shared_path_tokens_counted_once_per_scc(tmp_path: Path) -> None:
     """Two changes in the same SCC sharing a path charge the file mass once, not twice.
 
     A cycle forces a and b into the same SCC.  With path dedup, the SCC mass is
@@ -235,7 +243,7 @@ def test_shared_path_tokens_counted_once_per_scc(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_two_pass_tie_break_minimizes_spread(tmp_path) -> None:
+def test_two_pass_tie_break_minimizes_spread(tmp_path: Path) -> None:
     """Pass-2 tie-break: among equal-cost plans, co-locate changes sharing a symbol.
 
     Why this matters: three deletes at 80 tokens each, budget=160.
@@ -264,7 +272,7 @@ def test_two_pass_tie_break_minimizes_spread(tmp_path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_total_cost_scales_without_hanging(tmp_path) -> None:
+def test_build_total_cost_scales_without_hanging(tmp_path: Path) -> None:
     """_build_total_cost must find OPTIMAL at K=50 well within the solver budget.
 
     50 delete changes at budget=80 → each forced into its own batch (K=50).

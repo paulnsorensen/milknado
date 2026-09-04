@@ -26,6 +26,7 @@ from milknado.domains.dispatch import (
     reconcile_run_window,
 )
 from milknado.mcp._core import (
+    Response,
     RunDict,
     build_run_dict,
     mcp,
@@ -176,7 +177,7 @@ def milknado_run_cancel(run_id: str, project_root: str = "") -> RunDict:
 
 
 @mcp.tool()
-def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -> dict:
+def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -> Response:
     """Persist a worker's complete deliverable to the run's durable result sink.
 
     Called by a worker as its final step with its *complete* deliverable in
@@ -205,7 +206,7 @@ _VALID_REVIEW_VERDICTS = frozenset({"approve", "reject"})
 @mcp.tool()
 def milknado_deposit_review(
     run_id: str, verdict: str, findings_md: str, project_root: str = ""
-) -> dict:
+) -> Response:
     """Persist a reviewer worker's structured verdict alongside the free-text result.
 
     Called by a reviewer worker as its final step with `verdict` ("approve" or

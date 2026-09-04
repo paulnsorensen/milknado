@@ -18,7 +18,7 @@ def test_rename_is_flat_120(tmp_path: Path) -> None:
 
 def test_modify_uses_tiktoken_on_existing_file(tmp_path: Path) -> None:
     f = tmp_path / "a.py"
-    f.write_text("def hello():\n    return 42\n")
+    _ = f.write_text("def hello():\n    return 42\n")
     c = FileChange(id="1", path="a.py", edit_kind="modify")
     with patch("milknado.domains.batching.weights._tiktoken_count", return_value=10):
         n = estimate_tokens(c, tmp_path)

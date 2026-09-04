@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+# Planning tests intentionally use dynamic subprocess and mock seams.
 import subprocess
 import sys
 from pathlib import Path
+from typing import Never, cast
 from unittest.mock import MagicMock, patch
 
 import msgspec
@@ -11,6 +13,8 @@ import typer
 
 from milknado.cli.plan import (
     CriticVerdict,
+    PlanCriticError,
+    _exec_plan_interactive,
     _exec_plan_non_interactive,
     _parse_critic_output,
     _PlanningSubprocess,
@@ -19,7 +23,7 @@ from milknado.cli.plan import (
 )
 from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
-from milknado.domains.common.config import default_config
+from milknado.domains.common.config import MilknadoConfig, default_config
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
 from milknado.domains.planning.manifest import (
@@ -45,17 +49,17 @@ def tmp_graph(tmp_path: Path) -> MikadoGraph:
 @pytest.fixture()
 def mock_crg() -> MagicMock:
     crg = MagicMock()
-    crg.get_architecture_overview.return_value = {
+    crg.get_architecture_overview.return_value = {  # pyright: ignore[reportAny]
         "communities": ["auth", "payments"],
         "entry_points": ["main.py"],
     }
-    crg.get_impact_radius.return_value = {
+    crg.get_impact_radius.return_value = {  # pyright: ignore[reportAny]
         "files": ["auth.py", "models.py"],
     }
-    crg.list_communities.return_value = [{"name": f"community_{i}"} for i in range(10)]
-    crg.list_flows.return_value = [{"name": f"flow_{i}"} for i in range(10)]
-    crg.get_bridge_nodes.return_value = [{"name": f"bridge_{i}"} for i in range(10)]
-    crg.get_hub_nodes.return_value = [{"name": f"hub_{i}"} for i in range(10)]
+    crg.list_communities.return_value = [{"name": f"community_{i}"} for i in range(10)]  # pyright: ignore[reportAny]
+    crg.list_flows.return_value = [{"name": f"flow_{i}"} for i in range(10)]  # pyright: ignore[reportAny]
+    crg.get_bridge_nodes.return_value = [{"name": f"bridge_{i}"} for i in range(10)]  # pyright: ignore[reportAny]
+    crg.get_hub_nodes.return_value = [{"name": f"hub_{i}"} for i in range(10)]  # pyright: ignore[reportAny]
     return crg
 
 
@@ -67,10 +71,10 @@ class TestPlanningSubprocess:
     ) -> None:
         monkeypatch.delenv("MILKNADO_LOCAL_PLANNER", raising=False)
         context = tmp_path / "context.md"
-        context.write_text("plan context", encoding="utf-8")
+        _ = context.write_text("plan context", encoding="utf-8")
 
         with pytest.raises(ValueError, match="requires MILKNADO_LOCAL_PLANNER"):
-            _PlanningSubprocess().run_agent(context, "local-planner", tmp_path)
+            _ = _PlanningSubprocess().run_agent(context, "local-planner", tmp_path)
 
     def test_local_planner_must_be_inside_project(
         self,
@@ -80,13 +84,13 @@ class TestPlanningSubprocess:
         project = tmp_path / "project"
         project.mkdir()
         context = project / "context.md"
-        context.write_text("plan context", encoding="utf-8")
+        _ = context.write_text("plan context", encoding="utf-8")
         outside = tmp_path / "planner.py"
-        outside.write_text("print('no')", encoding="utf-8")
+        _ = outside.write_text("print('no')", encoding="utf-8")
         monkeypatch.setenv("MILKNADO_LOCAL_PLANNER", str(outside))
 
         with pytest.raises(ValueError, match="within the project root"):
-            _PlanningSubprocess().run_agent(context, "local-planner", project)
+            _ = _PlanningSubprocess().run_agent(context, "local-planner", project)
 
     @patch("milknado.app.plan.subprocess.run")
     def test_local_planner_uses_exact_interpreter_contract(
@@ -96,9 +100,9 @@ class TestPlanningSubprocess:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         context = tmp_path / "context.md"
-        context.write_text("plan context", encoding="utf-8")
+        _ = context.write_text("plan context", encoding="utf-8")
         planner = tmp_path / "planner.py"
-        planner.write_text("print('ok')", encoding="utf-8")
+        _ = planner.write_text("print('ok')", encoding="utf-8")
         monkeypatch.setenv("MILKNADO_LOCAL_PLANNER", str(planner))
         mock_run.return_value = MagicMock(returncode=0, stdout="manifest", stderr="")
 
@@ -131,10 +135,10 @@ class TestPlanningSubprocess:
         tmp_path: Path,
     ) -> None:
         context = tmp_path / "context.md"
-        context.write_text("plan context", encoding="utf-8")
+        _ = context.write_text("plan context", encoding="utf-8")
 
         with pytest.raises(ValueError, match="worker_cmd"):
-            _PlanningSubprocess().run_agent(context, "/tmp/claude -p", tmp_path)
+            _ = _PlanningSubprocess().run_agent(context, "/tmp/claude -p", tmp_path)
 
         mock_run.assert_not_called()
 
@@ -170,36 +174,36 @@ class TestBuildPlanningContext:
     ) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Architecture Overview" not in ctx
-        mock_crg.get_architecture_overview.assert_not_called()
+        mock_crg.get_architecture_overview.assert_not_called()  # pyright: ignore[reportAny]
 
     def test_includes_empty_graph(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "No existing nodes" in ctx
 
     def test_includes_existing_nodes(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root goal")
-        tmp_graph.add_node("child task", parent_id=1)
+        _ = tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("child task", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "[1] root goal (pending)" in ctx
         assert "[2] child task (pending)" in ctx
 
     def test_includes_dependency_edges(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root goal")
-        tmp_graph.add_node("child a", parent_id=1)
-        tmp_graph.add_node("child b", parent_id=1)
+        _ = tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("child a", parent_id=1)
+        _ = tmp_graph.add_node("child b", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "deps: [2, 3]" in ctx
 
     def test_includes_file_ownership(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("root goal")
         tmp_graph.set_file_ownership(1, ["src/auth.py", "src/models.py"])
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "src/auth.py" in ctx
         assert "src/models.py" in ctx
 
     def test_includes_ready_nodes(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root goal")
-        tmp_graph.add_node("leaf task", parent_id=1)
+        _ = tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("leaf task", parent_id=1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Ready to Execute" in ctx
         assert "[2] leaf task" in ctx
@@ -207,7 +211,7 @@ class TestBuildPlanningContext:
     def test_no_ready_section_when_all_done(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("root goal")
         tmp_graph.mark_running(1)
         tmp_graph.mark_done(1)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
@@ -226,7 +230,7 @@ class TestBuildPlanningContext:
     def test_resume_instructions_when_nodes_exist(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("root goal")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Instructions (resuming)" in ctx
         assert "Do NOT recreate" in ctx
@@ -245,15 +249,15 @@ class TestBuildPlanningContext:
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
         """The resuming branch carries the same preview/commit guidance."""
-        tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("root goal")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "milknado_plan_batches" in ctx
         assert "milknado_plan_apply" in ctx
 
     def test_progress_summary(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root")
-        tmp_graph.add_node("done child", parent_id=1)
-        tmp_graph.add_node("pending child", parent_id=1)
+        _ = tmp_graph.add_node("root goal")
+        _ = tmp_graph.add_node("child a", parent_id=1)
+        _ = tmp_graph.add_node("child b", parent_id=1)
         tmp_graph.mark_running(2)
         tmp_graph.mark_done(2)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
@@ -263,8 +267,8 @@ class TestBuildPlanningContext:
         assert "2 pending" in ctx
 
     def test_failed_nodes_section(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
-        tmp_graph.add_node("root")
-        tmp_graph.add_node("broken task", parent_id=1)
+        _ = tmp_graph.add_node("root")
+        _ = tmp_graph.add_node("broken task", parent_id=1)
         tmp_graph.mark_running(2)
         tmp_graph.mark_failed(2)
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
@@ -274,7 +278,7 @@ class TestBuildPlanningContext:
     def test_no_failed_section_when_none_failed(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("root")
+        _ = tmp_graph.add_node("root")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Failed" not in ctx
 
@@ -302,7 +306,7 @@ class TestBuildPlanningContext:
 
     def test_empty_spec_text_raises(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         with pytest.raises(ValueError, match="spec_text"):
-            build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
+            _ = build_planning_context("goal", mock_crg, tmp_graph, spec_text="")
 
     # --- v2 prompt schema tests ---
 
@@ -348,7 +352,7 @@ class TestBuildPlanningContext:
     def test_v2_instructions_resume_also_has_edge_storage(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("root")
+        _ = tmp_graph.add_node("root")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "parent_id" in ctx
         assert "child_id" in ctx
@@ -358,7 +362,7 @@ class TestBuildPlanningContext:
     def test_node_description_truncated_to_first_line(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("First line\n\nSecond paragraph with more detail.")
+        _ = tmp_graph.add_node("First line\n\nSecond paragraph with more detail.")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "First line" in ctx
         assert "Second paragraph" not in ctx
@@ -367,7 +371,7 @@ class TestBuildPlanningContext:
     def test_single_line_description_not_truncated(
         self, tmp_graph: MikadoGraph, mock_crg: MagicMock
     ) -> None:
-        tmp_graph.add_node("Only one line here")
+        _ = tmp_graph.add_node("Only one line here")
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "Only one line here" in ctx
         # no ellipsis for single-line descriptions
@@ -409,9 +413,9 @@ class TestPlanner:
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
-        planner.launch("my goal", tmp_path)
+        _ = planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        cmd = cast(list[str], mock_run.call_args[0][0])
         assert cmd[0] == "claude"
         assert cmd[-1] == "-"
 
@@ -430,9 +434,9 @@ class TestPlanner:
             "claude -p --dangerously-skip-permissions",
             _ports(),
         )
-        planner.launch("my goal", tmp_path)
+        _ = planner.launch("my goal", tmp_path)
         mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        cmd = cast(list[str], mock_run.call_args[0][0])
         assert cmd == [
             "claude",
             "-p",
@@ -442,7 +446,7 @@ class TestPlanner:
             "Read,Glob,Grep",
             "-",
         ]
-        kwargs = mock_run.call_args[1]
+        kwargs = cast(dict[str, object], mock_run.call_args[1])
         assert kwargs.get("text") is True
         assert kwargs.get("input") is not None
         assert "my goal" in str(kwargs.get("input", ""))
@@ -454,7 +458,7 @@ class TestPlanner:
         tmp_path: Path,
     ) -> None:
         process = MagicMock()
-        process.run_agent.return_value = PlanningProcessResult(exit_code=0, stdout="")
+        process.run_agent.return_value = PlanningProcessResult(exit_code=0, stdout="")  # pyright: ignore[reportAny]
         planner = Planner(
             tmp_graph,
             mock_crg,
@@ -465,7 +469,7 @@ class TestPlanner:
         result = planner.launch("goal", tmp_path)
 
         assert result.success is True
-        process.run_agent.assert_called_once_with(
+        process.run_agent.assert_called_once_with(  # pyright: ignore[reportAny]
             tmp_path / ".milknado" / "planning-context.md",
             "claude",
             tmp_path,
@@ -554,7 +558,7 @@ class TestPlanner:
             ValueError,
             match=r"^unsupported planning agent executable: 'aider'$",
         ):
-            planner.launch("goal", tmp_path)
+            _ = planner.launch("goal", tmp_path)
         mock_run.assert_not_called()
 
     @patch("milknado.app.plan.subprocess.run")
@@ -567,7 +571,7 @@ class TestPlanner:
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
-        planner.launch("goal", tmp_path)
+        _ = planner.launch("goal", tmp_path)
         assert mock_run.call_args[1]["cwd"] == tmp_path
 
     @patch("milknado.app.plan.subprocess.run")
@@ -578,11 +582,11 @@ class TestPlanner:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
+        _ = (tmp_path / ".mcp.json").write_text('{"mcpServers": {}}', encoding="utf-8")
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
-        planner.launch("goal", tmp_path)
-        cmd = mock_run.call_args[0][0]
+        _ = planner.launch("goal", tmp_path)
+        cmd = cast(list[str], mock_run.call_args[0][0])
         assert "--mcp-config" not in cmd
         assert str(tmp_path / ".mcp.json") not in cmd
 
@@ -598,7 +602,7 @@ class TestPlanner:
             [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
         )
 
-        def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
+        def _side_effect(argv: list[str], *_args: object, **_kwargs: object) -> MagicMock:
             if argv and argv[0] == "python":
                 return MagicMock(returncode=0, stdout="", stderr="")
             return MagicMock(returncode=0, stdout=stdout)
@@ -618,7 +622,7 @@ class TestPlanner:
             call for call in mock_run.call_args_list if call.args and call.args[0][0] == "python"
         )
         assert hook_call.args[0][:2] == ["python", "scripts/validate_plan.py"]
-        hook_payload = hook_call.kwargs["input"]
+        hook_payload = cast(str, hook_call.kwargs["input"])
         assert '"manifest_version": "milknado.plan.v2"' in hook_payload
         assert '"id": "c1"' in hook_payload
 
@@ -634,7 +638,7 @@ class TestPlanner:
             [{"id": "c1", "path": "src/foo.py", "description": "Add Foo"}]
         )
 
-        def _side_effect(argv: list[str], *args: object, **kwargs: object) -> MagicMock:
+        def _side_effect(argv: list[str], *_args: object, **_kwargs: object) -> MagicMock:
             if argv and argv[0] == "node":
                 return MagicMock(returncode=1, stdout="", stderr="missing goal summary")
             return MagicMock(returncode=0, stdout=stdout)
@@ -694,7 +698,7 @@ class TestPlanResult:
 import json as _json_module
 
 
-def _make_v2_manifest_stdout(changes: list[dict]) -> str:  # type: ignore[type-arg]
+def _make_v2_manifest_stdout(changes: list[dict[str, object]]) -> str:
     payload = {
         "manifest_version": "milknado.plan.v2",
         "goal": "Test goal",
@@ -715,7 +719,7 @@ class TestPlannerSpecPath:
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="")
         spec = tmp_path / "spec.md"
-        spec.write_text("## My Spec\nDo the thing.", encoding="utf-8")
+        _ = spec.write_text("## My Spec\nDo the thing.", encoding="utf-8")
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         result = planner.launch("goal", tmp_path, spec_path=spec)
         assert result.context_path is not None
@@ -731,7 +735,7 @@ class TestPlannerSpecPath:
     ) -> None:
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
         with pytest.raises(FileNotFoundError, match="spec_path"):
-            planner.launch("goal", tmp_path, spec_path=tmp_path / "nonexistent.md")
+            _ = planner.launch("goal", tmp_path, spec_path=tmp_path / "nonexistent.md")
 
     @patch("milknado.app.plan.subprocess.run")
     def test_no_manifest_returns_no_manifest_status(
@@ -758,7 +762,7 @@ class TestPlannerSpecPath:
     ) -> None:
         mock_run.return_value = MagicMock(returncode=0, stdout="no block")
         planner = Planner(tmp_graph, mock_crg, "claude", _ports())
-        planner.launch("goal", tmp_path)
+        _ = planner.launch("goal", tmp_path)
         assert not (tmp_path / ".milknado" / "calibration.jsonl").exists()
 
     @patch("milknado.app.plan.subprocess.run")
@@ -788,7 +792,7 @@ class TestPlannerSpecPath:
         tmp_graph: MikadoGraph,
         mock_crg: MagicMock,
     ) -> None:
-        mock_crg.ensure_graph.side_effect = RuntimeError("CRG unavailable")
+        mock_crg.ensure_graph.side_effect = RuntimeError("CRG unavailable")  # pyright: ignore[reportAny]
         stdout = _make_v2_manifest_stdout(
             [
                 {"id": "c1", "path": "src/foo.py", "description": "Add Foo"},
@@ -800,16 +804,20 @@ class TestPlannerSpecPath:
         assert result.nodes_created > 0
 
 
-def _wrap(payload: dict) -> str:
+def _wrap(payload: dict[str, object]) -> str:
     import json as _json
 
     return "preamble\n```json\n" + _json.dumps(payload) + "\n```\ntrailer"
 
 
+def _change_dicts(payload: dict[str, object]) -> list[dict[str, object]]:
+    return cast(list[dict[str, object]], payload["changes"])
+
+
 class TestParseManifestFromDict:
     """parse_manifest_from_dict validates a raw dict, returning None on failure."""
 
-    def _valid_dict(self) -> dict:
+    def _valid_dict(self) -> dict[str, object]:
         return {
             "manifest_version": "milknado.plan.v2",
             "goal": "Refactor foo",
@@ -843,7 +851,7 @@ class TestParseManifestFromDict:
 
     def test_invalid_edit_kind_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["edit_kind"] = "frobnicate"
+        _change_dicts(bad)[0]["edit_kind"] = "frobnicate"
         assert parse_manifest_from_dict(bad) is None
 
     def test_text_path_delegates_to_dict_path(self) -> None:
@@ -888,7 +896,7 @@ class TestParseManifestFromDict:
 
     def test_valid_new_relationship_round_trips(self) -> None:
         payload = self._valid_dict()
-        payload["changes"].append(
+        _change_dicts(payload).append(
             {"id": "c2", "path": "src/bar.py", "description": "Add Bar", "depends_on": ["c1"]}
         )
         payload["new_relationships"] = [
@@ -904,7 +912,7 @@ class TestParseManifestFromDict:
 
     def test_invalid_relationship_reason_returns_none(self) -> None:
         payload = self._valid_dict()
-        payload["changes"].append({"id": "c2", "path": "src/bar.py", "description": "Add Bar"})
+        _change_dicts(payload).append({"id": "c2", "path": "src/bar.py", "description": "Add Bar"})
         payload["new_relationships"] = [
             {"source_change_id": "c1", "dependant_change_id": "c2", "reason": "telepathy"}
         ]
@@ -919,32 +927,32 @@ class TestParseManifestFromDict:
 
     def test_duplicate_change_id_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"].append({"id": "c1", "path": "src/dup.py", "description": "Dup"})
+        _change_dicts(bad).append({"id": "c1", "path": "src/dup.py", "description": "Dup"})
         assert parse_manifest_from_dict(bad) is None
 
     def test_depends_on_unknown_id_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["depends_on"] = ["nonexistent"]
+        _change_dicts(bad)[0]["depends_on"] = ["nonexistent"]
         assert parse_manifest_from_dict(bad) is None
 
     def test_absolute_change_path_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["path"] = "/etc/passwd"
+        _change_dicts(bad)[0]["path"] = "/etc/passwd"
         assert parse_manifest_from_dict(bad) is None
 
     def test_traversal_change_path_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["path"] = "../escape.py"
+        _change_dicts(bad)[0]["path"] = "../escape.py"
         assert parse_manifest_from_dict(bad) is None
 
     def test_absolute_symbol_file_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "/etc/passwd"}]
+        _change_dicts(bad)[0]["symbols"] = [{"name": "Foo", "file": "/etc/passwd"}]
         assert parse_manifest_from_dict(bad) is None
 
     def test_traversal_symbol_file_returns_none(self) -> None:
         bad = self._valid_dict()
-        bad["changes"][0]["symbols"] = [{"name": "Foo", "file": "../secret.py"}]
+        _change_dicts(bad)[0]["symbols"] = [{"name": "Foo", "file": "../secret.py"}]
         assert parse_manifest_from_dict(bad) is None
 
 
@@ -1238,7 +1246,7 @@ class TestPlanChangeManifest:
             new_relationships=(),
         )
         with pytest.raises(Exception):  # frozen dataclass
-            manifest.changes = ()  # ty: ignore[invalid-assignment]
+            manifest.changes = ()  # pyright: ignore[reportAttributeAccessIssue]  # ty: ignore[invalid-assignment]
 
     def test_v2_parse_with_descriptions(self) -> None:
         output = _wrap(
@@ -1429,20 +1437,31 @@ class TestPlanChangeManifest:
         assert change.description == ""
 
 
-def _cfg(tmp_path: Path, **overrides: object) -> object:
+def _cfg(tmp_path: Path, **overrides: object) -> MilknadoConfig:
     return msgspec.structs.replace(default_config(tmp_path), **overrides)
 
 
-def _plan_result(**overrides: object) -> PlanResult:
-    base = {
-        "success": True,
-        "exit_code": 0,
-        "solver_status": "OPTIMAL",
-        "change_count": 1,
-        "batch_count": 1,
-    }
-    base.update(overrides)
-    return PlanResult(**base)
+def _plan_result(
+    *,
+    success: bool = True,
+    exit_code: int = 0,
+    solver_status: str = "OPTIMAL",
+    change_count: int = 1,
+    batch_count: int = 1,
+    nodes_created: int = 0,
+    oversized_count: int = 0,
+    mega_batch_change_count: int | None = None,
+) -> PlanResult:
+    return PlanResult(
+        success=success,
+        exit_code=exit_code,
+        solver_status=solver_status,
+        change_count=change_count,
+        batch_count=batch_count,
+        nodes_created=nodes_created,
+        oversized_count=oversized_count,
+        mega_batch_change_count=mega_batch_change_count,
+    )
 
 
 class TestParseCriticOutput:
@@ -1497,10 +1516,10 @@ class TestRunPlanCritic:
         cfg = _cfg(tmp_path, plan_reviewer_agent="claude --model sonnet -p")
 
         with pytest.raises(ValueError, match="unparseable <verdict>"):
-            run_plan_critic("goal", "manifest summary", cfg)
+            _ = run_plan_critic("goal", "manifest summary", cfg)
 
         assert mock_spawn.call_count == 2
-        second_prompt = mock_spawn.call_args_list[1].args[1]
+        second_prompt = cast(str, mock_spawn.call_args_list[1].args[1])
         assert "did not include a valid" in second_prompt
 
 
@@ -1511,11 +1530,11 @@ class TestSpawnPlanCritic:
     def test_writes_context_and_returns_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from milknado.app.plan import _spawn_plan_critic
+        from milknado.app.plan import _spawn_plan_critic  # pyright: ignore[reportPrivateUsage]
 
         captured: dict[str, object] = {}
 
-        def fake_run(argv, **kwargs):
+        def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
             captured["argv"] = argv
             captured["kwargs"] = kwargs
             return subprocess.CompletedProcess(argv, 0, stdout="<verdict>approve</verdict>")
@@ -1527,15 +1546,16 @@ class TestSpawnPlanCritic:
         assert out == "<verdict>approve</verdict>"
         context = tmp_path / ".milknado" / "plan-critic-context.md"
         assert context.read_text(encoding="utf-8") == "REVIEW THIS PLAN"
-        assert captured["kwargs"]["cwd"] == tmp_path
-        assert captured["kwargs"]["stdout"] == subprocess.PIPE
+        captured_kwargs = cast(dict[str, object], captured["kwargs"])
+        assert captured_kwargs["cwd"] == tmp_path
+        assert captured_kwargs["stdout"] == subprocess.PIPE
 
     def test_returns_empty_string_when_agent_emits_no_stdout(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from milknado.app.plan import _spawn_plan_critic
+        from milknado.app.plan import _spawn_plan_critic  # pyright: ignore[reportPrivateUsage]
 
-        def fake_run(argv, **kwargs):
+        def fake_run(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(argv, 0, stdout=None)
 
         monkeypatch.setattr(subprocess, "run", fake_run)
@@ -1546,7 +1566,7 @@ class TestSpawnPlanCritic:
 class TestRunPlanWithCritic:
     def test_returns_none_verdict_when_plan_reviewer_agent_unset(self, tmp_path: Path) -> None:
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         cfg = _cfg(tmp_path, plan_reviewer_agent=None)
 
         result, verdict = _run_plan_with_critic(
@@ -1555,12 +1575,12 @@ class TestRunPlanWithCritic:
 
         assert verdict is None
         assert result == _plan_result()
-        planner.launch.assert_called_once()
+        planner.launch.assert_called_once()  # pyright: ignore[reportAny]
 
     @patch("milknado.app.plan.run_plan_critic")
     def test_returns_early_on_approve(self, mock_critic: MagicMock, tmp_path: Path) -> None:
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         mock_critic.return_value = CriticVerdict(approved=True, feedback="")
         cfg = _cfg(
             tmp_path,
@@ -1574,7 +1594,7 @@ class TestRunPlanWithCritic:
 
         assert verdict == CriticVerdict(approved=True, feedback="")
         assert result == _plan_result()
-        planner.launch.assert_called_once()
+        planner.launch.assert_called_once()  # pyright: ignore[reportAny]
         mock_critic.assert_called_once()
 
     @patch("milknado.app.plan.run_plan_critic")
@@ -1582,7 +1602,7 @@ class TestRunPlanWithCritic:
         first = _plan_result(change_count=1)
         second = _plan_result(change_count=2)
         planner = MagicMock()
-        planner.launch.side_effect = [first, second]
+        planner.launch.side_effect = [first, second]  # pyright: ignore[reportAny]
         mock_critic.side_effect = [
             CriticVerdict(approved=False, feedback="add more detail"),
             CriticVerdict(approved=True, feedback=""),
@@ -1599,8 +1619,8 @@ class TestRunPlanWithCritic:
 
         assert result == second
         assert verdict == CriticVerdict(approved=True, feedback="")
-        assert planner.launch.call_count == 2
-        replan_goal = planner.launch.call_args_list[1].args[0]
+        assert planner.launch.call_count == 2  # pyright: ignore[reportAny]
+        replan_goal = planner.launch.call_args_list[1].args[0]  # pyright: ignore[reportAny]
         assert "add more detail" in replan_goal
 
     @patch("milknado.app.plan.run_plan_critic")
@@ -1608,7 +1628,7 @@ class TestRunPlanWithCritic:
         self, mock_critic: MagicMock, tmp_path: Path
     ) -> None:
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         mock_critic.return_value = CriticVerdict(approved=False, feedback="still not right")
         cfg = _cfg(
             tmp_path,
@@ -1616,25 +1636,23 @@ class TestRunPlanWithCritic:
             plan_review_max_rounds=2,
         )
 
-        result, verdict = _run_plan_with_critic(
-            planner, "goal", tmp_path, tmp_path / "spec.md", cfg
-        )
+        _, verdict = _run_plan_with_critic(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
 
         assert verdict == CriticVerdict(approved=False, feedback="still not right")
         # initial launch + one replan per round == 1 + plan_review_max_rounds
-        assert planner.launch.call_count == 1 + cfg.plan_review_max_rounds
+        assert planner.launch.call_count == 1 + cfg.plan_review_max_rounds  # pyright: ignore[reportAny]
         assert mock_critic.call_count == cfg.plan_review_max_rounds
 
     def test_repeated_noninteractive_policy_runs_are_equivalent(self, tmp_path: Path) -> None:
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         cfg = _cfg(tmp_path, plan_reviewer_agent=None)
 
         first = _run_plan_with_critic(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
         second = _run_plan_with_critic(planner, "goal", tmp_path, tmp_path / "spec.md", cfg)
 
         assert second == first
-        assert planner.launch.call_count == 2
+        assert planner.launch.call_count == 2  # pyright: ignore[reportAny]
 
 
 class TestExecPlanNonInteractive:
@@ -1643,7 +1661,7 @@ class TestExecPlanNonInteractive:
         self, mock_critic: MagicMock, tmp_path: Path
     ) -> None:
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         mock_critic.return_value = CriticVerdict(approved=False, feedback="nope")
         cfg = _cfg(
             tmp_path,
@@ -1670,7 +1688,7 @@ class TestExecPlanInteractive:
         from milknado.cli.plan import _exec_plan_interactive
 
         planner = MagicMock()
-        planner.launch.return_value = _plan_result()
+        planner.launch.return_value = _plan_result()  # pyright: ignore[reportAny]
         mock_critic.return_value = CriticVerdict(approved=False, feedback="needs more detail")
         mock_prompt.return_value = "1"  # accept, so the loop returns without raising
         cfg = _cfg(
@@ -1689,20 +1707,24 @@ class TestExecPlanInteractive:
 def test_cli_plan_surfaces_critic_failures_in_both_modes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+
     import importlib
 
     cli_plan = importlib.import_module("milknado.cli.plan")
-
     cfg = default_config(tmp_path)
-    monkeypatch.setattr(
-        cli_plan,
-        "_run_plan_with_critic",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(cli_plan.PlanCriticError("critic failed")),
-    )
+
+    def raise_critic_error(*_args: object, **_kwargs: object) -> Never:
+        raise PlanCriticError("critic failed")
+
+    monkeypatch.setattr(cli_plan, "_run_plan_with_critic", raise_critic_error)
     with pytest.raises(typer.Exit) as non_interactive:
-        cli_plan._exec_plan_non_interactive(None, "goal", tmp_path, tmp_path / "spec", cfg)
+        _exec_plan_non_interactive(
+            cast(Planner, MagicMock()), "goal", tmp_path, tmp_path / "spec", cfg
+        )
     assert non_interactive.value.exit_code == 1
 
     with pytest.raises(typer.Exit) as interactive:
-        cli_plan._exec_plan_interactive(None, "goal", tmp_path, tmp_path / "spec", 1, cfg)
+        _exec_plan_interactive(
+            cast(Planner, MagicMock()), "goal", tmp_path, tmp_path / "spec", 1, cfg
+        )
     assert interactive.value.exit_code == 1

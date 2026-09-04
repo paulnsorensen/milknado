@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Protocol, cast, final
+
+from rich.console import RenderableType
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import DataTable, Input, Static
+from typing_extensions import override
 
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import (
@@ -19,18 +23,28 @@ from milknado.app.run_view import (
     summary_text,
 )
 
+
+class _ExecutionAppLike(Protocol):
+    compact: bool
+    route: str
+
+    def pause_auto_follow(self) -> None: ...
+
+
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 RUN_COLUMNS = (("Node", 3), ("Description", 20), ("Status", 12), ("Progress", 13), ("Elapsed", 6))
 
 
-class RunTable(DataTable):
+class RunTable(DataTable[RenderableType]):
     """Run selector that preserves the focused table across compact resizes."""
 
     def on_focus(self) -> None:
-        if not self.app.compact:
-            self.app.route = "list"
+        app = cast(_ExecutionAppLike, cast(object, self.app))
+        if not app.compact:
+            app.route = "list"
 
 
+@final
 class RunListPanel(Vertical):
     """List pane owning the totals line and the run table."""
 
@@ -40,14 +54,15 @@ class RunListPanel(Vertical):
     #runs { height: 1fr; }
     """
 
+    @override
     def compose(self) -> ComposeResult:
         yield Static(id="totals", markup=False)
         yield RunTable(id="runs", cursor_type="row")
 
     def on_mount(self) -> None:
-        table = self.query_one("#runs", DataTable)
+        table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
         for label, width in RUN_COLUMNS:
-            table.add_column(label, width=width)
+            _ = table.add_column(label, width=width)
 
     def update(
         self,
@@ -56,14 +71,15 @@ class RunListPanel(Vertical):
         selected_run_id: str | None,
     ) -> None:
         self.query_one("#totals", Static).update(subtitle_text(snapshot))
-        table = self.query_one("#runs", DataTable)
-        table.clear(columns=False)
+        table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
+        _ = table.clear(columns=False)
         for run in runs:
-            table.add_row(*run_row(run), key=run.run_id)
+            _ = table.add_row(*run_row(run), key=run.run_id)
         if selected_run_id is not None:
-            table.move_cursor(row=run_index(runs, selected_run_id))
+            _ = table.move_cursor(row=run_index(runs, selected_run_id))
 
 
+@final
 class RunDetailPanel(VerticalScroll):
     """Detail pane that pauses output following before consuming wheel input."""
 
@@ -76,6 +92,7 @@ class RunDetailPanel(VerticalScroll):
     #guidance { margin: 0 1 1 1; }
     """
 
+    @override
     def compose(self) -> ComposeResult:
         yield Static(id="summary", markup=False)
         with VerticalScroll(id="output"):
@@ -85,11 +102,11 @@ class RunDetailPanel(VerticalScroll):
         yield Static(id="confirmation", markup=False)
         yield Input(placeholder="Queue guidance for the selected run", id="guidance")
 
-    def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
-        self.app._pause_auto_follow()
+    def on_mouse_scroll_up(self, _event: MouseScrollUp) -> None:
+        cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
 
-    def on_mouse_scroll_down(self, event: MouseScrollDown) -> None:
-        self.app._pause_auto_follow()
+    def on_mouse_scroll_down(self, _event: MouseScrollDown) -> None:
+        cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
 
     def update(
         self,
@@ -119,12 +136,12 @@ class RunDetailPanel(VerticalScroll):
         """Re-apply the paused output position: a relayout otherwise scrolls it to the top."""
         output = self.query_one("#output", VerticalScroll)
         position = output.scroll_offset.y
-        self.call_after_refresh(output.scroll_to, y=position, animate=False)
+        _ = self.call_after_refresh(output.scroll_to, y=position, animate=False)
 
     def set_confirmation(self, message: str) -> None:
         confirmation = self.query_one("#confirmation", Static)
         confirmation.update(message)
-        confirmation.add_class("visible")
+        _ = confirmation.add_class("visible")
 
     def clear_confirmation(self) -> None:
-        self.query_one("#confirmation", Static).remove_class("visible")
+        _ = self.query_one("#confirmation", Static).remove_class("visible")

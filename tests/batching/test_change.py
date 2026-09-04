@@ -18,7 +18,7 @@ from milknado.domains.batching.change import Batch, SymbolSpread
 def test_symbol_ref_is_frozen() -> None:
     s = SymbolRef(name="foo", file="bar.py")
     with pytest.raises(FrozenInstanceError):
-        s.name = "baz"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        s.name = "baz"  # pyright: ignore[reportAttributeAccessIssue]  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 def test_file_change_defaults() -> None:
@@ -70,7 +70,7 @@ def test_new_relationship_fields() -> None:
 def test_new_relationship_is_frozen() -> None:
     rel = NewRelationship(source_change_id="a", dependant_change_id="b", reason="new_file")
     with pytest.raises(FrozenInstanceError):
-        rel.reason = "new_call"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        rel.reason = "new_call"  # pyright: ignore[reportAttributeAccessIssue]  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 def test_batch_fields() -> None:
@@ -90,7 +90,7 @@ def test_batch_oversized_flag() -> None:
 def test_batch_is_frozen() -> None:
     b = Batch(index=0, change_ids=("a",), depends_on=())
     with pytest.raises(FrozenInstanceError):
-        b.index = 1  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        b.index = 1  # pyright: ignore[reportAttributeAccessIssue]  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 def test_symbol_spread_fields() -> None:
@@ -104,7 +104,7 @@ def test_symbol_spread_is_frozen() -> None:
     sym = SymbolRef(name="foo", file="bar.py")
     ss = SymbolSpread(symbol=sym, spread=1)
     with pytest.raises(FrozenInstanceError):
-        ss.spread = 0  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        ss.spread = 0  # pyright: ignore[reportAttributeAccessIssue]  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
 
 
 def test_batch_plan_fields() -> None:
@@ -120,4 +120,4 @@ def test_batch_plan_fields() -> None:
 def test_batch_plan_is_frozen() -> None:
     p = BatchPlan(batches=(), spread_report=(), solver_status="OPTIMAL")
     with pytest.raises(FrozenInstanceError):
-        p.solver_status = "INFEASIBLE"  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+        p.solver_status = "INFEASIBLE"  # pyright: ignore[reportAttributeAccessIssue]  # type: ignore[assignment]  # ty: ignore[invalid-assignment]

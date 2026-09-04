@@ -121,10 +121,12 @@ def _build_report(
 
 def rebalance(
     project_root: Path,
-    options: RebalanceOptions = RebalanceOptions(),
+    options: RebalanceOptions | None = None,
     git: GitPort | None = None,
 ) -> RebalanceReport:
     """Run selected passes; dry-run mutates only a migrated in-memory snapshot."""
+    if options is None:
+        options = RebalanceOptions()
     db_path = project_root / _DB_PATH
     if options.dry_run and not db_path.exists():
         return RebalanceReport()

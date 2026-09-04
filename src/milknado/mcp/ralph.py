@@ -19,15 +19,18 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import cast
 
-from milknado.adapters import TmuxAdapter  # noqa: F401  # monkeypatch seam for tests
+from milknado.adapters import (
+    TmuxAdapter,  # pyright: ignore[reportUnusedImport]  # noqa: F401  # monkeypatch seam for tests
+)
 from milknado.app.ralph import (
-    _DEFAULT_RUNNER,
+    _DEFAULT_RUNNER,  # pyright: ignore[reportPrivateUsage]
     RalphClaim,
     RalphStartRequest,
-    _record_spawn_failure,
-    _remove_reclaimed_worktree,
-    _resolve_runner_cmd,
+    _record_spawn_failure,  # pyright: ignore[reportPrivateUsage]
+    _remove_reclaimed_worktree,  # pyright: ignore[reportPrivateUsage]
+    _resolve_runner_cmd,  # pyright: ignore[reportPrivateUsage]
     start_ralph_run,
 )
 from milknado.domains.dispatch import (
@@ -80,7 +83,7 @@ def milknado_run_loop_start(
     )
     graph, _cfg = open_graph(root)
     try:
-        return build_run_dict(start_ralph_run(graph, request))
+        return build_run_dict(cast(object, start_ralph_run(graph, request)))
     finally:
         graph.close()
 

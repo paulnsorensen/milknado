@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from typing_extensions import override
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -19,7 +20,7 @@ from milknado.app.run import (
     build_execution_controller,
 )
 from milknado.domains.common import MilknadoConfig
-from milknado.domains.execution import ExecutionConfig
+from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
     ActiveRunState,
     RunActionState,
@@ -162,6 +163,55 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.cancelled == ["run-1"]
     assert loop.force_stops == [("run-1", 2.5)]
     assert loop.stop_scheduling_calls == 1
+
+
+def test_controller_waits_for_worker_cleanup_before_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import milknado.app.run as run_module
+
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        cast(RunLoop, cast(object, loop)),
+        cast(ExecutionConfig, cast(object, None)),
+        cast(int, cast(object, None)),
+    )
+    outcome_ready = Event()
+    release_worker = Event()
+    first_returned = Event()
+    first_result: list[object] = []
+
+    class GatedQueue(Queue[object]):
+        @override
+        def put(
+            self,
+            item: object,
+            block: bool = True,
+            timeout: float | None = None,
+        ) -> None:
+            super().put(item, block, timeout)
+            if self.maxsize == 1 and not outcome_ready.is_set():
+                outcome_ready.set()
+                _ = release_worker.wait(timeout=1)
+
+    monkeypatch.setattr(run_module, "Queue", GatedQueue)
+
+    def run_first() -> None:
+        first_result.append(controller.run(feature_branch="feature"))
+        first_returned.set()
+
+    runner = Thread(target=run_first)
+    runner.start()
+    assert outcome_ready.wait(timeout=1)
+    try:
+        assert not first_returned.wait(timeout=0.1)
+    finally:
+        release_worker.set()
+    assert first_returned.wait(timeout=1)
+    runner.join(timeout=1)
+
+    assert first_result == ["result"]
+    assert controller.run(feature_branch="feature") == "result"
 
 
 def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes() -> None:

@@ -12,6 +12,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     FlavorProfile,
@@ -21,6 +22,18 @@ from milknado.domains.common import (
 )
 from milknado.domains.dispatch import create_isolated_worktree, now_iso
 from milknado.domains.graph import CLAIM_ROLE
+
+if TYPE_CHECKING:
+    from milknado.domains.common import FlavorOverride, MikadoNode, MilknadoConfig
+    from milknado.domains.graph import MikadoGraph
+
+__all__ = [
+    "GOAL_OWNER_ENV_VAR",
+    "_provision_claim_run",
+    "_resolve_model",
+    "_resolve_node_tools",
+    "_resolve_owner",
+]
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +67,9 @@ def _resolve_model(execution_agent: str) -> str:
     return match.group(1) if match else "sonnet"
 
 
-def _resolve_node_tools(cfg, profile: FlavorProfile, override) -> tuple[str, ...]:
+def _resolve_node_tools(
+    cfg: MilknadoConfig, profile: FlavorProfile, override: FlavorOverride | None
+) -> tuple[str, ...]:
     """Resolve the worker tool allowlist for a native-backend node.
 
     Mirrors the subprocess execution_agent precedence (resolve_flavor_profile):
@@ -87,7 +102,12 @@ def _resolve_owner(owner: str) -> str:
 
 
 def _provision_claim_run(
-    graph, root, node, run_id: str, worktree: bool | None, cfg
+    graph: MikadoGraph,
+    root: Path,
+    node: MikadoNode,
+    run_id: str,
+    worktree: bool | None,
+    cfg: MilknadoConfig,
 ) -> Path | None:
     """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE.
 
@@ -112,7 +132,7 @@ def _provision_claim_run(
         # Stamp the native-backend marker so the done-transition gate fires
         # for this run even before its first verify (fail-closed), while
         # leaving subprocess runs — which never carry it — exempt.
-        graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
+        _ = graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
     except Exception:
         # Claim succeeded but worktree/run setup failed: release the claim with a
         # fenced terminal write so the node is not stranded RUNNING.

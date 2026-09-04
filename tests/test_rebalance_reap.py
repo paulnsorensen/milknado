@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+# These tests intentionally exercise private database helpers.
 from pathlib import Path
 
 from milknado.adapters.git import GitAdapter
@@ -11,10 +12,10 @@ from milknado.domains.graph.rebalance import (
 from tests.rebalance_helpers import (
     NOW,
     FakeGit,
-    _git,
-    _insert_node,
-    _project_with_db,
-    _register_run,
+    insert_node,
+    project_with_db,
+    register_run,
+    run_git,
     run_rebalance,
 )
 
@@ -23,8 +24,8 @@ from tests.rebalance_helpers import (
 
 class TestReap:
     def test_reap_removes_worktrees_and_deletes_branches(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn,
             "archived with worktree",
             "done",
@@ -32,9 +33,9 @@ class TestReap:
             worktree_path=str(tmp_path / ".worktrees" / "wt-1"),
             branch_name="milknado/1-wt",
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         # No run record is still eligible; only an actively running run blocks reap.
-        _insert_node(
+        _ = insert_node(
             conn,
             "archived stray",
             "done",
@@ -64,15 +65,15 @@ class TestReap:
     def test_done_but_unarchived_worktree_is_never_reaped(self, tmp_path: Path) -> None:
         # Archive gates destruction: a DONE node whose subtree was never
         # archived keeps its worktree, even with terminal-run evidence.
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn,
             "done but live",
             "done",
             worktree_path=str(tmp_path / ".worktrees" / "wt-live"),
             branch_name="milknado/live",
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         conn.commit()
         conn.close()
 
@@ -83,8 +84,8 @@ class TestReap:
 
     def test_archived_worktree_without_run_record_is_reaped(self, tmp_path: Path) -> None:
         """Archive state is durable teardown evidence even without run history."""
-        conn = _project_with_db(tmp_path)
-        _insert_node(
+        conn = project_with_db(tmp_path)
+        _ = insert_node(
             conn,
             "archived stray",
             "done",
@@ -105,10 +106,10 @@ class TestReap:
         assert str(tmp_path / "elsewhere") in render_report(report)
 
     def test_teardown_failure_is_preserved_and_pass_continues(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
+        conn = project_with_db(tmp_path)
         bad_wt = str(tmp_path / ".worktrees" / "wt-bad")
         good_wt = str(tmp_path / ".worktrees" / "wt-good")
-        bad = _insert_node(
+        bad = insert_node(
             conn,
             "bad",
             "done",
@@ -116,8 +117,8 @@ class TestReap:
             worktree_path=bad_wt,
             branch_name="milknado/bad",
         )
-        _register_run(conn, bad)
-        good = _insert_node(
+        register_run(conn, bad)
+        good = insert_node(
             conn,
             "good",
             "done",
@@ -125,7 +126,7 @@ class TestReap:
             worktree_path=good_wt,
             branch_name="milknado/good",
         )
-        _register_run(conn, good)
+        register_run(conn, good)
         conn.commit()
         conn.close()
 
@@ -146,11 +147,11 @@ class TestReap:
         # adapter's remove_worktree raises, the node is preserved, and the
         # prune that heals the stale registration still runs.
         repo = tmp_path
-        _git(repo, "init", "-b", "main")
-        _git(repo, "commit", "--allow-empty", "-m", "init")
-        conn = _project_with_db(tmp_path)
+        run_git(repo, "init", "-b", "main")
+        run_git(repo, "commit", "--allow-empty", "-m", "init")
+        conn = project_with_db(tmp_path)
         gone = str(tmp_path / ".worktrees" / "wt-gone")
-        node = _insert_node(
+        node = insert_node(
             conn,
             "stale",
             "done",
@@ -158,7 +159,7 @@ class TestReap:
             worktree_path=gone,
             branch_name=None,
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         conn.commit()
         conn.close()
 
@@ -169,9 +170,9 @@ class TestReap:
     def test_unmerged_branch_is_kept_and_reported_worktree_stays_reaped(
         self, tmp_path: Path
     ) -> None:
-        conn = _project_with_db(tmp_path)
+        conn = project_with_db(tmp_path)
         wt = str(tmp_path / ".worktrees" / "wt-2")
-        node = _insert_node(
+        node = insert_node(
             conn,
             "archived",
             "done",
@@ -179,7 +180,7 @@ class TestReap:
             worktree_path=wt,
             branch_name="milknado/2-y",
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         conn.commit()
         conn.close()
 
@@ -203,8 +204,8 @@ class TestReap:
 
 class TestReapSkips:
     def test_running_run_is_not_terminal_evidence(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn,
             "archived but still running",
             "done",
@@ -212,7 +213,7 @@ class TestReapSkips:
             worktree_path=str(tmp_path / ".worktrees" / "wt-run"),
             branch_name="milknado/9-run",
         )
-        _register_run(conn, node, status="running")
+        register_run(conn, node, status="running")
         conn.commit()
         conn.close()
 
@@ -222,8 +223,8 @@ class TestReapSkips:
         assert report.reaped == () and report.branches_deleted == () and report.preserved == ()
 
     def test_running_run_overrides_historical_terminal_run(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn,
             "archived with active rerun",
             "done",
@@ -231,10 +232,10 @@ class TestReapSkips:
             worktree_path=str(tmp_path / ".worktrees" / "wt-rerun"),
             branch_name="milknado/9-rerun",
         )
-        _register_run(conn, node, status="completed")
-        conn.execute(
+        register_run(conn, node, status="completed")
+        _ = conn.execute(
             "INSERT INTO runs (run_id, node_id, status, log_path, started_at) "
-            "VALUES (?, ?, ?, '', ?)",
+            + "VALUES (?, ?, ?, '', ?)",
             ("run-active", node, "running", NOW),
         )
         conn.commit()
@@ -248,11 +249,11 @@ class TestReapSkips:
         assert report.reaped == ()
 
     def test_archived_node_without_worktree_is_skipped(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn, "archived no worktree", "done", archived_at=NOW, branch_name="milknado/9-none"
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         conn.commit()
         conn.close()
 
@@ -262,8 +263,8 @@ class TestReapSkips:
         assert report.reaped == () and report.branches_deleted == () and report.preserved == ()
 
     def test_dry_run_reap_does_not_prune(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        node = _insert_node(
+        conn = project_with_db(tmp_path)
+        node = insert_node(
             conn,
             "archived wt",
             "done",
@@ -271,10 +272,10 @@ class TestReapSkips:
             worktree_path=str(tmp_path / ".worktrees" / "wt-dry"),
             branch_name="milknado/9-dry",
         )
-        _register_run(conn, node)
+        register_run(conn, node)
         conn.commit()
         conn.close()
 
         git = FakeGit()
-        run_rebalance(tmp_path, dry_run=True, sweep=False, restructure=False, git=git)
+        _ = run_rebalance(tmp_path, dry_run=True, sweep=False, restructure=False, git=git)
         assert git.pruned == 0

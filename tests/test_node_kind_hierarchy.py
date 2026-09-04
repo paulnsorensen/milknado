@@ -458,7 +458,7 @@ class TestEditNodeFlavor:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             result = milknado_edit_node(task.id, flavor="spike", project_root=str(tmp_path))
-            assert result["flavor"] == "spike"
+            assert result.get("flavor") == "spike"
 
     def test_edit_node_flavor_on_goal_raises(self, tmp_path: Path) -> None:
         """Setting flavor on a non-task node raises ValueError."""
@@ -481,7 +481,7 @@ class TestEditNodeFlavor:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="flavor"):
-                milknado_edit_node(goal.id, flavor="spike", project_root=str(tmp_path))
+                _ = milknado_edit_node(goal.id, flavor="spike", project_root=str(tmp_path))
 
     def test_edit_node_kind_to_non_task_clears_flavor(self, tmp_path: Path) -> None:
         """Changing kind from task to goal clears the flavor (invariant enforced)."""
@@ -510,7 +510,7 @@ class TestEditNodeFlavor:
             # Edit task to kind=task still (no kind change) and verify flavor readable
             result = milknado_edit_node(task.id, description="renamed", project_root=str(tmp_path))
             # After description-only edit, flavor should still be spike
-            assert result["flavor"] == "spike"
+            assert result.get("flavor") == "spike"
 
     def test_edit_node_kind_and_flavor_conflict_raises(self, tmp_path: Path) -> None:
         """Passing kind=goal and flavor together raises ValueError."""
@@ -535,7 +535,7 @@ class TestEditNodeFlavor:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             with pytest.raises(ValueError, match="flavor"):
-                milknado_edit_node(
+                _ = milknado_edit_node(
                     task.id, kind="goal", flavor="spike", project_root=str(tmp_path)
                 )
 
@@ -801,7 +801,7 @@ class TestEditNodeFlavorPersistence:
             mock_cfg = cfg_mod.default_config(tmp_path)
             mock_open.return_value = (mock_graph, mock_cfg)
             result = milknado_edit_node(task_id, flavor="research", project_root=str(tmp_path))
-            assert result["flavor"] == "research"
+            assert result.get("flavor") == "research"
 
         # Reload from disk — verify the DB row has the updated flavor
         g2 = MikadoGraph(graph_path)

@@ -9,7 +9,21 @@ from typing import Annotated, Literal
 import typer
 
 from milknado.adapters.hallouminate import HallouminateIndexer
-from milknado.cli._helpers import _emit, _ensure_db, _load_or_default, console
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    console,
+    typer_argument,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    emit as _emit,
+)
+from milknado.cli._helpers import (
+    ensure_db as _ensure_db,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 from milknado.domains.wiki import (
     RoadmapModel,
     export_roadmap,
@@ -26,9 +40,9 @@ from milknado.domains.wiki import (
 
 roadmap_app = typer.Typer(name="roadmap", help="Import/export and inspect roadmap graphs")
 
-_ProjectRoot = Annotated[Path, typer.Option("--project-root", help="Project root directory")]
-_Out = Annotated[Path | None, typer.Option("--out", help="Write output to this path")]
-_Format = Annotated[Literal["mermaid", "html"], typer.Option("--format", help="Render format")]
+_ProjectRoot = Annotated[Path, typer_option("--project-root", help="Project root directory")]
+_Out = Annotated[Path | None, typer_option("--out", help="Write output to this path")]
+_Format = Annotated[Literal["mermaid", "html"], typer_option("--format", help="Render format")]
 
 
 def _roadmap_model(project_root: Path, slug: str) -> RoadmapModel:
@@ -48,8 +62,8 @@ def roadmap_schema_cmd(out: _Out = None) -> None:
 
 @roadmap_app.command("json")
 def roadmap_json_cmd(
-    slug: Annotated[str, typer.Argument(help="Roadmap slug")],
-    project_root: _ProjectRoot = Path("."),
+    slug: Annotated[str, typer_argument(help="Roadmap slug")],
+    project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT,
     out: _Out = None,
 ) -> None:
     """Print or write a canonical roadmap JSON instance."""
@@ -63,9 +77,9 @@ def roadmap_json_cmd(
 
 @roadmap_app.command("render")
 def roadmap_render_cmd(
-    slug: Annotated[str, typer.Argument(help="Roadmap slug")],
+    slug: Annotated[str, typer_argument(help="Roadmap slug")],
     format: _Format = "mermaid",
-    project_root: _ProjectRoot = Path("."),
+    project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT,
     out: _Out = None,
 ) -> None:
     """Render a roadmap graph as Mermaid or self-contained HTML."""
@@ -80,8 +94,8 @@ def roadmap_render_cmd(
 
 @roadmap_app.command("import")
 def import_roadmap_cmd(
-    slug: Annotated[str, typer.Argument(help="Roadmap slug (directory under roadmaps/)")],
-    project_root: _ProjectRoot = Path("."),
+    slug: Annotated[str, typer_argument(help="Roadmap slug (directory under roadmaps/)")],
+    project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Seed milknado roadmap + goal nodes from a wiki roadmap directory."""
     project_root = project_root.resolve()
@@ -96,14 +110,14 @@ def import_roadmap_cmd(
         graph.close()
     console.print(
         f"Imported roadmap {slug}: {result.created_count} created, "
-        f"{result.reused_count} reused, {len(result.goal_node_ids)} goals."
+        + f"{result.reused_count} reused, {len(result.goal_node_ids)} goals."
     )
 
 
 @roadmap_app.command("export")
 def export_roadmap_cmd(
-    slug: Annotated[str, typer.Argument(help="Roadmap slug (directory under roadmaps/)")],
-    project_root: _ProjectRoot = Path("."),
+    slug: Annotated[str, typer_argument(help="Roadmap slug (directory under roadmaps/)")],
+    project_root: _ProjectRoot = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Harvest milknado execution state back into the wiki goal files."""
     project_root = project_root.resolve()
@@ -122,5 +136,5 @@ def export_roadmap_cmd(
     detail = f": {result.index.detail}" if result.index.detail else ""
     console.print(
         f"Exported roadmap {slug}: {result.files_written} updated, "
-        f"{result.files_created} created, index={result.index.status}{detail}."
+        + f"{result.files_created} created, index={result.index.status}{detail}."
     )

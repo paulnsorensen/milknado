@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
-from milknado.domains.common import NodeStatus, RunResult, pid_alive
+from milknado.domains.common import MikadoNode, NodeStatus, RunResult, pid_alive
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
+from milknado.domains.dispatch.ports import StaleRunPort
+
+if TYPE_CHECKING:
+    from milknado.domains.graph import MikadoGraph, RunRecord
 
 _logger = logging.getLogger(__name__)
 
@@ -15,7 +21,7 @@ _logger = logging.getLogger(__name__)
 _STALE_GRACE_SECONDS = 30
 
 
-def fail_stale_running_runs(graph, node_id: int) -> list[dict]:
+def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str, object]]:
     """Finalize confirmed-dead owners and timeout-stale pid-less runs.
 
     A run row's pid is its worker pid. In-process coordinator runs deliberately
@@ -24,14 +30,17 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:
     metadata never proves death and still follows the existing timeout path.
     """
     now = datetime.now(UTC)
-    node = graph.get_node(node_id) if hasattr(graph, "get_node") else None
-    flipped: list[dict] = []
+    graph_with_node = getattr(graph, "get_node", None)
+    node = cast(MikadoNode | None, graph_with_node(node_id)) if callable(graph_with_node) else None
+    flipped: list[dict[str, object]] = []
     for state in graph.runs_for_node(node_id):
         if state.get("status") != "running":
             continue
-        run_id = state["run_id"]
+        run_id = state.get("run_id")
+        if not isinstance(run_id, str):
+            continue
         worker_pid = state.get("pid")
-        owner_pid = worker_pid
+        owner_pid = worker_pid if isinstance(worker_pid, int) else None
         if (
             owner_pid is None
             and node is not None
@@ -71,7 +80,7 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:
             continue
         started_at = state.get("started_at")
         timeout = state.get("timeout_seconds")
-        if not started_at or timeout is None:
+        if not isinstance(started_at, str) or not isinstance(timeout, int):
             continue
         try:
             started = datetime.fromisoformat(started_at)
@@ -114,30 +123,34 @@ def fail_stale_running_runs(graph, node_id: int) -> list[dict]:
     return flipped
 
 
-def reconcile_orphaned_runs(graph) -> list[dict]:
+def reconcile_orphaned_runs(graph: object) -> list[RunRecord]:
     """Finalize and release orphaned nodes before a new coordinator dispatches."""
-    if not hasattr(graph, "get_all_nodes"):
+    get_all_nodes = getattr(graph, "get_all_nodes", None)
+    if not callable(get_all_nodes):
         return []
-    reconciled: list[dict] = []
-    for node in graph.get_all_nodes():
+    typed_graph = cast("MikadoGraph", graph)
+    reconciled: list[RunRecord] = []
+    nodes = cast(Iterable[object], get_all_nodes())
+    for node_value in nodes:
+        node = cast(MikadoNode, node_value)
         if node.status is not NodeStatus.RUNNING or node.run_id is None:
             continue
-        fail_stale_running_runs(graph, node.id)
+        _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id)
         terminal = latest_terminal_run(
-            find_terminal_runs_for_node(graph, node.id, run_id=node.run_id)
+            find_terminal_runs_for_node(typed_graph, node.id, run_id=node.run_id)
         )
         if terminal is None:
             continue
-        reconcile_node_status(graph, node.id, terminal["status"], run_id=node.run_id)
+        reconcile_node_status(typed_graph, node.id, terminal["status"], run_id=node.run_id)
         reconciled.append(terminal)
     return reconciled
 
 
 def find_terminal_runs_for_node(
-    graph,
+    graph: MikadoGraph,
     node_id: int,
     run_id: str | None = None,
-) -> list[dict]:
+) -> list[RunRecord]:
     """Return this node's runs that reached a terminal status. Used by callers that
     want to reconcile orphaned runs (started, worker finished, but never polled —
     node still marked RUNNING).
@@ -149,7 +162,7 @@ def find_terminal_runs_for_node(
     return graph.runs_for_node(node_id, terminal_only=True, run_id=run_id)
 
 
-def latest_terminal_run(runs: list[dict]) -> dict | None:
+def latest_terminal_run(runs: list[RunRecord]) -> RunRecord | None:
     """Return the most recent terminal run by ended_at, or None if runs is empty.
 
     Deterministic selection for reconcile: when a node has multiple terminal
@@ -165,7 +178,9 @@ def latest_terminal_run(runs: list[dict]) -> dict | None:
     return max(terminal, key=lambda r: r.get("ended_at") or "")
 
 
-def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | None = None) -> None:
+def reconcile_node_status(
+    graph: MikadoGraph, node_id: int, run_status: str, run_id: str | None = None
+) -> None:
     """Transition a node to its run's terminal status, idempotently and fenced.
 
     When `run_id` is given AND the node carries a run_id, the write goes through
@@ -193,7 +208,7 @@ def reconcile_node_status(graph, node_id: int, run_status: str, run_id: str | No
     if target is None:
         return
     if run_id is not None and node.run_id is not None:
-        graph.mark_terminal(node_id, run_id, target)
+        _ = graph.mark_terminal(node_id, run_id, target)
     elif target is NodeStatus.DONE:
         graph.mark_done(node_id)
     else:

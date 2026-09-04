@@ -7,7 +7,21 @@ from typing import Annotated, Literal
 
 import typer
 
-from milknado.cli._helpers import _emit, _ensure_db, _load_or_default, console
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    console,
+    typer_argument,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    emit as _emit,
+)
+from milknado.cli._helpers import (
+    ensure_db as _ensure_db,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 from milknado.domains.graph import render_dot
 
 edge_app = typer.Typer(name="edge", help="Direct edge operations on the Mikado graph")
@@ -16,10 +30,10 @@ graph_app = typer.Typer(name="graph", help="Archive lifecycle operations on the 
 
 @graph_app.command("archive")
 def archive(
-    node_id: Annotated[int, typer.Argument(help="Subtree root node ID")],
+    node_id: Annotated[int, typer_argument(help="Subtree root node ID")],
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Soft-hide an all-DONE subtree (reversible; refuses when any node is live)."""
     project_root = project_root.resolve()
@@ -39,10 +53,10 @@ def archive(
 
 @graph_app.command("unarchive")
 def unarchive(
-    node_id: Annotated[int, typer.Argument(help="Subtree root node ID")],
+    node_id: Annotated[int, typer_argument(help="Subtree root node ID")],
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Restore an archived subtree; refuses while an ancestor stays archived."""
     project_root = project_root.resolve()
@@ -62,11 +76,11 @@ def unarchive(
 
 @edge_app.command("add")
 def add(
-    parent_id: Annotated[int, typer.Argument(help="Parent node ID")],
-    child_id: Annotated[int, typer.Argument(help="Child node ID")],
+    parent_id: Annotated[int, typer_argument(help="Parent node ID")],
+    child_id: Annotated[int, typer_argument(help="Child node ID")],
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Add a prereq edge between two existing nodes, rejecting cycles."""
     project_root = project_root.resolve()
@@ -80,7 +94,7 @@ def add(
                 raise typer.Exit(code=1)
 
         try:
-            graph.add_edge(parent_id, child_id)
+            _ = graph.add_edge(parent_id, child_id)
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(code=1) from None
@@ -92,18 +106,16 @@ def add(
 
 @graph_app.command("export")
 def export(
-    format: Annotated[  # noqa: ARG001 — only "dot" is supported; Literal enforces the value.
-        Literal["dot"], typer.Option("--format", help="Export format")
-    ] = "dot",
-    out: Annotated[Path | None, typer.Option("--out", help="Write output to this path")] = None,
+    format: Annotated[Literal["dot"], typer_option("--format", help="Export format")] = "dot",
+    out: Annotated[Path | None, typer_option("--out", help="Write output to this path")] = None,
     include_archived: Annotated[
-        bool, typer.Option("--include-archived", help="Include archived nodes")
+        bool, typer_option("--include-archived", help="Include archived nodes")
     ] = False,
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
-    """Export the live Mikado graph as Graphviz DOT."""
+    _ = format
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)

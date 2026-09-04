@@ -1,25 +1,40 @@
-"""Plan command: CLI parsing, presentation, and exit-code mapping.
-
-Planning policy and adapter wiring live in ``milknado.app.plan``. This module
-owns all human-facing summaries, prompts, Rich rendering, and Typer exits.
-"""
+"""Plan CLI veneer; policy and adapter wiring live in milknado.app.plan."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 from rich.console import Console
 
 import milknado.app.plan as plan_policy
-from milknado.cli._helpers import _ensure_db, _load_or_default
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    ensure_db as _ensure_db,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 
 if TYPE_CHECKING:
     from milknado.domains.common import MilknadoConfig
     from milknado.domains.planning import Planner, PlanResult
 
 console = Console()
+
+
+@dataclass
+class _FetchedIssue:
+    title: str
+    body: str
+    number: int | None
+    url: str
+
 
 CriticVerdict = plan_policy.CriticVerdict
 PlanCriticError = plan_policy.PlanCriticError
@@ -58,7 +73,7 @@ def _prompt_plan_action() -> str:
     console.print("  2) Revise with feedback")
     console.print("  3) Cancel")
     while True:
-        choice = typer.prompt("Selection", show_choices=False).strip()
+        choice = cast(str, typer.prompt("Selection", show_choices=False)).strip()
         if choice in {"1", "2", "3"}:
             return choice
         console.print("[yellow]Please enter 1, 2, or 3.[/yellow]")
@@ -80,7 +95,7 @@ def _exec_plan_non_interactive(
     if verdict is not None and not verdict.approved:
         console.print(
             f"[red]Plan critic did not approve within {cfg.plan_review_max_rounds} "
-            f"round(s):[/red] {verdict.feedback}"
+            + f"round(s):[/red] {verdict.feedback}"
         )
         raise typer.Exit(code=1)
     exit_code = _plan_exit_code(result)
@@ -115,7 +130,7 @@ def _exec_plan_interactive(
         if verdict is not None and not verdict.approved:
             console.print(
                 f"[yellow]Plan critic did not approve within {cfg.plan_review_max_rounds} "
-                f"round(s); falling back to manual review:[/yellow] {verdict.feedback}"
+                + f"round(s); falling back to manual review:[/yellow] {verdict.feedback}"
             )
         exit_code = _plan_exit_code(result)
         if result.solver_status == "UNKNOWN" and result.batch_count >= 1:
@@ -133,13 +148,13 @@ def _exec_plan_interactive(
             return
         if action == "3":
             raise typer.Exit(code=1)
-        feedback = typer.prompt("What should change in the plan?").strip()
+        feedback = cast(str, typer.prompt("What should change in the plan?")).strip()
         if not feedback:
             console.print(
                 "[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]"
             )
             continue
-        current_goal = plan_policy._build_replan_goal(goal, feedback, result)
+        current_goal = plan_policy.build_replan_goal(goal, feedback, result)
     console.print(f"[red]Reached max iterations ({max_iterations}) without acceptance.[/red]")
     raise typer.Exit(code=1)
 
@@ -159,9 +174,6 @@ def execute_plan(
         _exec_plan_interactive(planner, goal, project_root, effective_spec, max_iterations, cfg)
     else:
         _exec_plan_non_interactive(planner, goal, project_root, effective_spec, cfg)
-
-
-# ── CSV helpers ───────────────────────────────────────────────────────────────
 
 
 def _flatten_csv(items: list[str] | None) -> list[str]:
@@ -190,11 +202,12 @@ def _validate_spec_paths(raw_paths: list[str]) -> list[Path]:
     return validated
 
 
-def _fetch_issue(issue_ref: str):
+def _fetch_issue(issue_ref: str) -> _FetchedIssue:
     from milknado.adapters.gh import GhTransportError, gh_issue_view
 
     try:
-        return gh_issue_view(issue_ref)
+        issue = gh_issue_view(issue_ref)
+        return _FetchedIssue(issue.title, issue.body, issue.number, issue.url)
     except GhTransportError as exc:
         console.print(f"[red]gh issue view {issue_ref} failed:[/red] {exc}")
         raise typer.Exit(code=1) from None
@@ -221,13 +234,10 @@ def _derive_goal(spec_path: Path) -> str:
         ) from None
 
 
-# ── plan command ──────────────────────────────────────────────────────────────
-
-
 def plan(
     spec: Annotated[
         list[str] | None,
-        typer.Option(
+        typer_option(
             "--spec",
             help=(
                 "Spec .md file(s). Repeat the flag or pass comma-separated paths "
@@ -237,7 +247,7 @@ def plan(
     ] = None,
     issue: Annotated[
         list[str] | None,
-        typer.Option(
+        typer_option(
             "--issue",
             help=(
                 "GitHub issue ref (number, owner/repo#123, or URL) fetched via gh. "
@@ -246,18 +256,18 @@ def plan(
         ),
     ] = None,
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
     interactive: Annotated[
         bool,
-        typer.Option(
+        typer_option(
             "--interactive/--no-interactive",
             help="Iterate on planning with accept/revise/cancel prompts.",
         ),
     ] = False,
     max_iterations: Annotated[
         int,
-        typer.Option(
+        typer_option(
             "--max-iterations",
             min=1,
             help="Maximum planner iterations in interactive mode.",

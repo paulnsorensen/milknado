@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 import typer
 from rich.console import Console
 
-from milknado.cli._helpers import _load_or_default
+from milknado.cli._helpers import (
+    DEFAULT_PROJECT_ROOT,
+    typer_option,
+)
+from milknado.cli._helpers import (
+    load_or_default as _load_or_default,
+)
 from milknado.domains.common import build_planning_subprocess
 
 console = Console()
@@ -25,15 +31,15 @@ def _redact_extra(key: str, value: object) -> object:
     if key == "input":
         return "<stdin>"
     if key == "env" and isinstance(value, dict):
-        return f"<{len(value)} env vars>"
+        return f"<{len(cast(dict[object, object], value))} env vars>"
     return value
 
 
 @agents_app.command("check")
 def agents_check(
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Print resolved planning/execution commands and sample planning argv."""
     project_root = project_root.resolve()
@@ -44,7 +50,7 @@ def agents_check(
 
     sample = project_root / ".milknado" / ".agent-check-sample.md"
     sample.parent.mkdir(parents=True, exist_ok=True)
-    sample.write_text("# sample planning context\n", encoding="utf-8")
+    _ = sample.write_text("# sample planning context\n", encoding="utf-8")
     try:
         argv, extra = build_planning_subprocess(
             sample,

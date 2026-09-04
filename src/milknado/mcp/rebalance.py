@@ -8,7 +8,7 @@ import logging
 from milknado.app.rebalance import RebalanceOptions
 from milknado.app.rebalance import rebalance as _rebalance_impl
 from milknado.domains.graph import render_report
-from milknado.mcp._core import mcp, resolve_project_root
+from milknado.mcp._core import Response, mcp, resolve_project_root
 
 _logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def milknado_rebalance(
     restructure: bool = True,
     reap: bool = True,
     project_root: str = "",
-) -> dict:
+) -> Response:
     """Rebalance the working tree: archive finished subtrees, regroup orphans, reap worktrees.
 
     Passes run in order sweep -> restructure -> reap; each can be disabled.

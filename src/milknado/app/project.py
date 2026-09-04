@@ -11,6 +11,11 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from milknado.domains.common import MilknadoConfig
+    from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
 
@@ -86,7 +91,7 @@ def require_worker_run(run_id: str) -> None:
         raise ValueError(f"worker run {run_id!r} does not match injected run {injected!r}")
 
 
-def open_graph(root: Path):
+def open_graph(root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
     from milknado.project import open_project
 
     project = open_project(root)
