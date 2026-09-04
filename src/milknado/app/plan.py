@@ -36,6 +36,7 @@ __all__ = [
     "_plan_exit_code",
     "_plan_summary",
     "_run_plan_with_critic",
+    "build_replan_goal",
     "build_planner",
     "run_plan_critic",
 ]
@@ -139,7 +140,7 @@ def _plan_exit_code(result: PlanResult) -> int:
     return 0
 
 
-def _build_replan_goal(base_goal: str, feedback: str, prior_result: PlanResult) -> str:
+def build_replan_goal(base_goal: str, feedback: str, prior_result: PlanResult) -> str:
     return (
         f"{base_goal}\n\n"
         "## User revision request\n"
@@ -252,7 +253,7 @@ def _run_plan_with_critic(
         verdict = run_plan_critic(goal, _plan_summary(result), cfg)
         if verdict.approved:
             return result, verdict
-        revised_goal = _build_replan_goal(goal, verdict.feedback, result)
+        revised_goal = build_replan_goal(goal, verdict.feedback, result)
         result = planner.launch(revised_goal, project_root, spec_path=effective_spec)
     return result, verdict
 

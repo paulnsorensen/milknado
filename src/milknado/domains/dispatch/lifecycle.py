@@ -25,7 +25,6 @@ from milknado.domains.dispatch.isolate import (
 )
 from milknado.domains.dispatch.ports import (
     FinishDispatchPort,
-    GraphLookupPort,
     ProcessPort,
     WorkerOutcomePort,
 )
@@ -113,32 +112,30 @@ def _finish_dispatch(
 
 
 def dispatch_node_sync(
-    graph: GraphLookupPort,
+    graph: MikadoGraph,
     git: GitPort,
     request: SyncDispatchRequest,
 ) -> dict[str, object]:
     node = graph.get_node(request.node_id)
     if node is None:
         raise ValueError(f"node {request.node_id} not found")
-    node = cast(MikadoNode, node)
-    typed_graph = cast("MikadoGraph", graph)
     if node.kind != NodeKind.TASK:
         raise ValueError(
             f"node {request.node_id} has kind={node.kind.value}; only task nodes can be dispatched"
         )
     run_id = make_run_id(request.node_id)
-    typed_graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
     try:
         brief = render_brief(
-            typed_graph,
+            graph,
             request.node_id,
             prepend=request.brief_prepend,
             project_root=request.project_root,
         )
-        cwd, isolate = _setup_sync_worktree(typed_graph, git, node, run_id, request)
-        typed_graph.start_run(
+        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
+        graph.start_run(
             run_id,
             request.node_id,
             str(log_path),
@@ -161,13 +158,13 @@ def dispatch_node_sync(
         merge = _maybe_merge_back(git, request, isolate, terminal)
         if merge is not None and not merge.rebased:
             terminal = "failed"
-        _finish_dispatch(typed_graph, request.node_id, run_id, result, terminal, merge)
+        _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
     except Exception as exc:
         terminal_error: BaseException | None = None
         try:
             run_written = True
             if started:
-                run_written = typed_graph.finish_run(
+                run_written = graph.finish_run(
                     run_id,
                     RunResult(
                         status="failed",
@@ -177,7 +174,7 @@ def dispatch_node_sync(
                         error=f"{type(exc).__name__}: {exc}",
                     ),
                 )
-            node_written = typed_graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
+            node_written = graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
             if run_written is False or node_written is False:
                 terminal_error = RuntimeError(
                     f"terminal persistence lost its fence for run {run_id}"
@@ -187,7 +184,7 @@ def dispatch_node_sync(
         if terminal_error is not None:
             raise terminal_error from exc
         raise
-    final = typed_graph.get_node(request.node_id)
+    final = graph.get_node(request.node_id)
     if final is None:
         raise RuntimeError(f"node {request.node_id} not found after run completed")
     return {

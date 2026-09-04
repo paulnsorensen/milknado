@@ -154,7 +154,7 @@ def _exec_plan_interactive(
                 "[yellow]Empty feedback; keeping original goal for next iteration.[/yellow]"
             )
             continue
-        current_goal = plan_policy._build_replan_goal(goal, feedback, result)  # pyright: ignore[reportPrivateUsage]
+        current_goal = plan_policy.build_replan_goal(goal, feedback, result)
     console.print(f"[red]Reached max iterations ({max_iterations}) without acceptance.[/red]")
     raise typer.Exit(code=1)
 

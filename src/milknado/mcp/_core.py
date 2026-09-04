@@ -8,21 +8,13 @@ would form an import cycle.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Literal, NotRequired, cast
 
 from fastmcp import FastMCP
 from typing_extensions import TypedDict
 
-from milknado.app.project import (
-    open_graph as _open_graph,
-)
-from milknado.app.project import (
-    require_worker_run,
-    resolve_project_root,
-)
-from milknado.domains.common import MilknadoConfig, NodeKind, NodeStatus
-from milknado.domains.graph import MikadoGraph
+from milknado.app.project import open_graph, require_worker_run, resolve_project_root
+from milknado.domains.common import NodeKind, NodeStatus
 
 __all__ = [
     "Flavor",
@@ -92,10 +84,6 @@ class BatchPlanResponse(TypedDict):
 class PlanApplyResponse(TypedDict):
     nodes_created: list[int]
     graph_summary: GraphSummaryResponse
-
-
-def open_graph(root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
-    return _open_graph(root)
 
 
 class RunDict(TypedDict):

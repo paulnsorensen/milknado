@@ -21,12 +21,6 @@ class RunWindow:
     brief_path: Path | None = None
 
 
-class GraphLookupPort(Protocol):
-    """The graph capability required for dispatch preflight."""
-
-    def get_node(self, node_id: int, /) -> object | None: ...
-
-
 class FinishDispatchPort(Protocol):
     """The graph capability required to persist a worker terminal result."""
 
@@ -51,6 +45,7 @@ class StaleRunPort(Protocol):
     """The graph capability required by stale-run reconciliation."""
 
     def runs_for_node(self, node_id: int, /) -> Iterable[Mapping[str, object]]: ...
+    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
 
 
 class WorkerOutcomePort(Protocol):

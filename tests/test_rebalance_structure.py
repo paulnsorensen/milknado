@@ -11,7 +11,7 @@ from milknado.domains.graph.rebalance import (
 )
 from tests.rebalance_helpers import (
     NOW,
-    _insert_node,  # pyright: ignore[reportPrivateUsage]
+    insert_node,
     structural_report,
 )
 
@@ -23,7 +23,7 @@ class TestStructuralReport:
         ids: list[int] = []
         parent: int | None = None
         for i in range(depth):
-            node_id = _insert_node(
+            node_id = insert_node(
                 conn, f"chain goal {i}", "in_progress", kind="goal", parent_id=parent
             )
             ids.append(node_id)
@@ -47,30 +47,30 @@ class TestStructuralReport:
         assert report.chains == (tuple(ids),)
 
     def test_branching_breaks_the_chain(self, conn: sqlite3.Connection) -> None:
-        g1 = _insert_node(conn, "g1", "in_progress", kind="goal")
-        g2 = _insert_node(conn, "g2", "in_progress", kind="goal", parent_id=g1)
-        g3 = _insert_node(conn, "g3", "in_progress", kind="goal", parent_id=g2)
+        g1 = insert_node(conn, "g1", "in_progress", kind="goal")
+        g2 = insert_node(conn, "g2", "in_progress", kind="goal", parent_id=g1)
+        g3 = insert_node(conn, "g3", "in_progress", kind="goal", parent_id=g2)
         # g3 forks into two goal children, so no single-child run reaches 4.
-        _ = _insert_node(conn, "g4a", "in_progress", kind="goal", parent_id=g3)
-        _ = _insert_node(conn, "g4b", "in_progress", kind="goal", parent_id=g3)
+        _ = insert_node(conn, "g4a", "in_progress", kind="goal", parent_id=g3)
+        _ = insert_node(conn, "g4b", "in_progress", kind="goal", parent_id=g3)
         assert structural_report(conn).chains == ()
 
     def test_goal_with_20_direct_tasks_is_reported(self, conn: sqlite3.Connection) -> None:
-        goal = _insert_node(conn, "fat goal", "in_progress", kind="goal")
+        goal = insert_node(conn, "fat goal", "in_progress", kind="goal")
         for i in range(20):
-            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = insert_node(conn, f"task {i}", "pending", parent_id=goal)
         assert structural_report(conn).lopsided == (goal,)
 
     def test_goal_with_19_direct_tasks_is_not_reported(self, conn: sqlite3.Connection) -> None:
-        goal = _insert_node(conn, "almost fat goal", "in_progress", kind="goal")
+        goal = insert_node(conn, "almost fat goal", "in_progress", kind="goal")
         for i in range(19):
-            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = insert_node(conn, f"task {i}", "pending", parent_id=goal)
         assert structural_report(conn).lopsided == ()
 
     def test_archived_nodes_are_excluded(self, conn: sqlite3.Connection) -> None:
         parent: int | None = None
         for i in range(4):
-            parent = _insert_node(
+            parent = insert_node(
                 conn,
                 f"archived chain goal {i}",
                 "done",
@@ -82,9 +82,9 @@ class TestStructuralReport:
 
     def test_structural_report_never_mutates(self, conn: sqlite3.Connection) -> None:
         _ = self._goal_chain(conn, 4)
-        goal = _insert_node(conn, "fat goal", "in_progress", kind="goal")
+        goal = insert_node(conn, "fat goal", "in_progress", kind="goal")
         for i in range(20):
-            _ = _insert_node(conn, f"task {i}", "pending", parent_id=goal)
+            _ = insert_node(conn, f"task {i}", "pending", parent_id=goal)
         nodes_before = conn.execute("SELECT * FROM nodes ORDER BY id").fetchall()
         edges_before = conn.execute("SELECT * FROM edges ORDER BY parent_id, child_id").fetchall()
         report = structural_report(conn)

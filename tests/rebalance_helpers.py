@@ -55,7 +55,7 @@ def conn() -> Generator[sqlite3.Connection, None, None]:
     c.close()
 
 
-def _insert_node(  # pyright: ignore[reportUnusedFunction]
+def insert_node(
     conn: sqlite3.Connection,
     description: str,
     status: str,
@@ -81,16 +81,14 @@ def _insert_node(  # pyright: ignore[reportUnusedFunction]
     return node_id
 
 
-def _register_run(  # pyright: ignore[reportUnusedFunction]
-    conn: sqlite3.Connection, node_id: int, status: str = "completed"
-) -> None:
+def register_run(conn: sqlite3.Connection, node_id: int, status: str = "completed") -> None:
     _ = conn.execute(
         "INSERT INTO runs (run_id, node_id, status, log_path, started_at) VALUES (?, ?, ?, '', ?)",
         (f"run-{node_id}", node_id, status, NOW),
     )
 
 
-def _archived_ids(conn: sqlite3.Connection) -> set[int]:  # pyright: ignore[reportUnusedFunction]
+def archived_ids(conn: sqlite3.Connection) -> set[int]:
     rows = cast(
         list[sqlite3.Row],
         conn.execute("SELECT id FROM nodes WHERE archived_at IS NOT NULL").fetchall(),
@@ -108,7 +106,8 @@ class FakeGit:
         self.fail_remove: set[str] = set()
         self.fail_delete: set[str] = set()
 
-    def remove_worktree(self, path: Path, _target: str = "HEAD") -> None:
+    def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
+        _ = target
         if str(path) in self.fail_remove:
             raise GitOperationError("worktree remove", "simulated teardown failure")
         self.removed.append(path)
@@ -121,13 +120,14 @@ class FakeGit:
     def prune_worktrees(self) -> None:
         self.pruned += 1
 
-    def worktree_teardown_blocker(self, path: Path, _target: str = "HEAD") -> str | None:
+    def worktree_teardown_blocker(self, path: Path, target: str = "HEAD") -> str | None:
+        _ = target
         if str(path) in self.fail_remove:
             return "simulated teardown failure"
         return None
 
 
-def _project_with_db(tmp_path: Path) -> sqlite3.Connection:  # pyright: ignore[reportUnusedFunction]
+def project_with_db(tmp_path: Path) -> sqlite3.Connection:
     db_path = tmp_path / ".milknado" / "milknado.db"
     db_path.parent.mkdir(exist_ok=True)
     connection = sqlite3.connect(db_path)
@@ -137,7 +137,7 @@ def _project_with_db(tmp_path: Path) -> sqlite3.Connection:  # pyright: ignore[r
     return connection
 
 
-def _git(repo: Path, *args: str) -> None:  # pyright: ignore[reportUnusedFunction]
+def run_git(repo: Path, *args: str) -> None:
     _ = subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
         cwd=repo,

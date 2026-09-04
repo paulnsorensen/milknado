@@ -15,10 +15,10 @@ from milknado.domains.graph.rebalance import (
 from tests.rebalance_helpers import (
     NOW,
     FakeGit,
-    _archived_ids,  # pyright: ignore[reportPrivateUsage]
-    _insert_node,  # pyright: ignore[reportPrivateUsage]
-    _project_with_db,  # pyright: ignore[reportPrivateUsage]
-    _register_run,  # pyright: ignore[reportPrivateUsage]
+    archived_ids,
+    insert_node,
+    project_with_db,
+    register_run,
     run_rebalance,
 )
 
@@ -27,14 +27,14 @@ from tests.rebalance_helpers import (
 
 class TestDryRun:
     def test_dry_run_mutates_nothing_and_prefixes_report(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
-        done_root = _insert_node(conn, "done goal", "done", kind="goal")
-        orphan = _insert_node(conn, "orphan", "pending")
+        conn = project_with_db(tmp_path)
+        done_root = insert_node(conn, "done goal", "done", kind="goal")
+        orphan = insert_node(conn, "orphan", "pending")
         wt = str(tmp_path / ".worktrees" / "wt-3")
-        reaped_node = _insert_node(
+        reaped_node = insert_node(
             conn, "done wt", "done", worktree_path=wt, branch_name="milknado/3-z"
         )
-        _register_run(conn, reaped_node)
+        register_run(conn, reaped_node)
         conn.commit()
         conn.close()
 
@@ -53,7 +53,7 @@ class TestDryRun:
 
         check = sqlite3.connect(str(tmp_path / ".milknado" / "milknado.db"))
         check.row_factory = sqlite3.Row
-        assert _archived_ids(check) == set()
+        assert archived_ids(check) == set()
         row = cast(
             sqlite3.Row,
             check.execute("SELECT parent_id FROM nodes WHERE id = ?", (orphan,)).fetchone(),
@@ -77,9 +77,9 @@ class TestDryRun:
         # A concurrent writer holds the RESERVED lock; a read-only dry-run must
         # still compute the full plan (the old BEGIN IMMEDIATE path would fail
         # with "database is locked" here).
-        conn = _project_with_db(tmp_path)
-        done_root = _insert_node(conn, "done goal", "done", kind="goal")
-        _ = _insert_node(conn, "orphan", "pending")
+        conn = project_with_db(tmp_path)
+        done_root = insert_node(conn, "done goal", "done", kind="goal")
+        _ = insert_node(conn, "orphan", "pending")
         conn.commit()
         conn.close()
 
@@ -103,7 +103,7 @@ class TestDryRun:
         assert not (tmp_path / ".milknado" / "milknado.db").exists()
 
     def test_dry_run_migrates_only_its_snapshot(self, tmp_path: Path) -> None:
-        conn = _project_with_db(tmp_path)
+        conn = project_with_db(tmp_path)
         _ = conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
         _ = conn.execute("PRAGMA user_version = 2")
         conn.commit()
@@ -126,8 +126,8 @@ class TestDryRun:
     def test_dry_run_plan_renders_new_inbox_when_one_would_be_created(
         self, tmp_path: Path
     ) -> None:
-        conn = _project_with_db(tmp_path)
-        _ = _insert_node(conn, "orphan", "pending")
+        conn = project_with_db(tmp_path)
+        _ = insert_node(conn, "orphan", "pending")
         conn.commit()
         conn.close()
 
@@ -142,12 +142,12 @@ class TestDryRun:
 
 
 def _seed_rebalance_project(root: Path) -> dict[str, int | str]:
-    conn = _project_with_db(root)
-    done_root = _insert_node(conn, "done goal", "done", kind="goal")
-    _ = _insert_node(conn, "orphan", "pending")
+    conn = project_with_db(root)
+    done_root = insert_node(conn, "done goal", "done", kind="goal")
+    _ = insert_node(conn, "orphan", "pending")
     wt = str(root / ".worktrees" / "wt-x")
-    reaped = _insert_node(conn, "done wt", "done", worktree_path=wt, branch_name="milknado/x")
-    _register_run(conn, reaped)
+    reaped = insert_node(conn, "done wt", "done", worktree_path=wt, branch_name="milknado/x")
+    register_run(conn, reaped)
     conn.commit()
     conn.close()
     return {"done_root": done_root, "wt": wt}
@@ -188,10 +188,10 @@ class TestArchivedInboxEndToEnd:
         # The reproduced defect: Inbox fills with DONE work -> sweep archives
         # the Inbox subtree -> a new orphan must attach to a FRESH Inbox, not
         # the archived one.
-        conn = _project_with_db(tmp_path)
-        inbox = _insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
-        _ = _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
-        orphan = _insert_node(conn, "fresh live orphan", "pending")
+        conn = project_with_db(tmp_path)
+        inbox = insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
+        _ = insert_node(conn, "finished inbox task", "done", parent_id=inbox)
+        orphan = insert_node(conn, "fresh live orphan", "pending")
         conn.commit()
         conn.close()
 
@@ -229,10 +229,10 @@ class TestArchivedInboxEndToEnd:
 
 def _seed_swept_inbox_project(root: Path) -> int:
     """An all-DONE Inbox subtree (sweep-eligible) plus one live orphan."""
-    conn = _project_with_db(root)
-    inbox = _insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
-    _ = _insert_node(conn, "finished inbox task", "done", parent_id=inbox)
-    _ = _insert_node(conn, "fresh live orphan", "pending")
+    conn = project_with_db(root)
+    inbox = insert_node(conn, INBOX_DESCRIPTION, "done", kind="goal")
+    _ = insert_node(conn, "finished inbox task", "done", parent_id=inbox)
+    _ = insert_node(conn, "fresh live orphan", "pending")
     conn.commit()
     conn.close()
     return inbox

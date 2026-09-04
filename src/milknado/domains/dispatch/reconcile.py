@@ -32,7 +32,6 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
     now = datetime.now(UTC)
     graph_with_node = getattr(graph, "get_node", None)
     node = cast(MikadoNode | None, graph_with_node(node_id)) if callable(graph_with_node) else None
-    typed_graph = cast("MikadoGraph", graph)
     flipped: list[dict[str, object]] = []
     for state in graph.runs_for_node(node_id):
         if state.get("status") != "running":
@@ -55,7 +54,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
             error = "worker session gone"
             ended_at = _now_iso()
             if (
-                typed_graph.finish_run(
+                graph.finish_run(
                     run_id,
                     RunResult(
                         status="failed",
@@ -98,7 +97,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
         ended_at = _now_iso()
         error = "worker vanished before writing terminal state (stale running run)"
         if (
-            typed_graph.finish_run(
+            graph.finish_run(
                 run_id,
                 RunResult(
                     status="failed",
