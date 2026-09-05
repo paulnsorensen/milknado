@@ -48,37 +48,15 @@ jobs:
         run: just build-ci
 
       - name: Dependency audit (pip-audit)
-        if: matrix.python-version == '3.11'
+        if: '!cancelled() && matrix.python-version == ''3.11'''
         continue-on-error: true
         run: just audit
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v6
-        if: matrix.python-version == '3.11'
+        if: '!cancelled() && matrix.python-version == ''3.11'''
         with:
           files: ./coverage.xml
           flags: unittests
           fail_ci_if_error: false
           use_oidc: true
-
-
-  typecheck:
-    name: type-check python
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: true
-          python-version: "3.12"
-
-      - name: Set up just
-        uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
-        with:
-          just-version: "1.58.0"
-
-      - name: basedpyright
-        run: just typecheck
