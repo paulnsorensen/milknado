@@ -61,7 +61,7 @@ must `/mcp` reconnect after each restart to pick up the new process.
 
 Milknado is a Mikado execution engine — it decomposes goals into dependency graphs and executes them as parallel ralph loops.
 
-- **Entry points**: `milknado` CLI (`src/milknado/cli.py`), `milknado-mcp` MCP server (`src/milknado/mcp_server.py`)
+- **Entry points**: `milknado` CLI (`src/milknado/cli/`, `milknado.cli:app`), `milknado-mcp` MCP server (`src/milknado/mcp/server.py`, `milknado.mcp.server:main`)
 - **Architecture**: Sliced Bread — vertical slices under `src/milknado/domains/`, adapters in `src/milknado/adapters/`
 - **Tests**: `tests/` — pytest, 95% coverage required (matches `codecov.yml`)
 

@@ -170,7 +170,7 @@ def latest_terminal_run(runs: list[RunRecord]) -> RunRecord | None:
     latest ended_at wins. Callers that fence on run_id must filter to the fence
     first (see find_terminal_runs_for_node) so a stale run with a later ended_at
     cannot mask the current owner's terminal file. Shared by the headless
-    (mcp_run) and detached-ralph (mcp_ralph) dispatch paths.
+    (mcp/run.py) and detached-ralph (mcp/ralph.py) dispatch paths.
     """
     terminal = [r for r in runs if r.get("status") in ("done", "failed")]
     if not terminal:
@@ -192,8 +192,8 @@ def reconcile_node_status(
 
     A node with no run_id (in-process TUI / legacy) has no fence to honour, so it
     falls back to the unconditional transition; only a RUNNING node is touched, so
-    a node reset out of RUNNING is never force-marked. Shared by the sync (`mcp_run`)
-    and detached worktree (`mcp_ralph`) dispatch tools.
+    a node reset out of RUNNING is never force-marked. Shared by the sync (`mcp/run.py`)
+    and detached worktree (`mcp/ralph.py`) dispatch tools.
     """
     _logger.info(
         "run reconciliation: run_id=%s node_id=%d status=%s",

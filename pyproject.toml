@@ -302,7 +302,6 @@ allow = [
     "milknado.domains.execution.executor:Executor.note_unconfirmed_stop",
     "milknado.domains.graph._analytics_facade:_AnalyticsFacade._conn",
     "milknado.domains.graph._edge_facade:_EdgeFacade._conn",
-    "milknado.domains.graph._pipeline:StatusMiddleware.meta",
     "milknado.domains.graph._pipeline:StatusMiddleware.before_status_change",
     "milknado.domains.graph._pipeline:StatusMiddleware.after_status_change",
     # Confirmed dead reference cycle, grandfathered on adoption; triage in #365
