@@ -27,6 +27,14 @@ from milknado.domains.common.flavor_profile import (
 from milknado.domains.common.types import BUILTIN_FLAVORS
 from milknado.domains.dispatch import validate_worker_argv
 
+
+def _call(tool: object, **kwargs: object) -> dict[str, object]:
+    fn = getattr(tool, "fn", tool)
+    if not callable(fn):
+        raise TypeError("tool is not callable")
+    return cast(dict[str, object], fn(**kwargs))
+
+
 # ── AC2: single-list grammar + sentinel ─────────────────────────────────────
 
 
@@ -819,12 +827,6 @@ def test_todo_brief_returns_flavor_prepend_from_config(tmp_path: Path) -> None:
     from milknado.mcp.todo import milknado_todo_brief
     from milknado.mcp.todo_mutate import milknado_todo_add
 
-    def _call(tool: object, **kwargs: object) -> dict[str, object]:
-        fn = getattr(tool, "fn", tool)
-        if not callable(fn):
-            raise TypeError("tool is not callable")
-        return cast(dict[str, object], fn(**kwargs))
-
     root = str(tmp_path)
     cfg_path = tmp_path / "milknado.toml"
     _ = cfg_path.write_text(
@@ -845,12 +847,6 @@ def test_todo_brief_resolves_custom_flavor_brief_path(tmp_path: Path) -> None:
     """A registry flavor's file-backed prepend reaches the worker brief."""
     from milknado.mcp.todo import milknado_todo_brief
     from milknado.mcp.todo_mutate import milknado_todo_add
-
-    def _call(tool: object, **kwargs: object) -> dict[str, object]:
-        fn = getattr(tool, "fn", tool)
-        if not callable(fn):
-            raise TypeError("tool is not callable")
-        return cast(dict[str, object], fn(**kwargs))
 
     marker = "TRIAGE_MARKER: evidence first."
     brief_file = tmp_path / "triage.md"

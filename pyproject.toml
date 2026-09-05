@@ -181,7 +181,6 @@ max-statements = 40
 "src/milknado/loop/_run_types.py" = ["PTH201"]
 "src/milknado/loop/adapters/_generic.py" = ["ARG002"]
 "src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
-"src/milknado/loop/hooks.py" = ["ANN401", "BLE001"]
 "src/milknado/mcp/_ralph_node_runner.py" = ["ANN001", "BLE001"]
 "src/milknado/mcp/run.py" = ["PLR0913"]
 "src/milknado/mcp/server.py" = ["PLR0913"]

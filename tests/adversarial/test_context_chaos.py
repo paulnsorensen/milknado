@@ -39,7 +39,7 @@ class _FakeCrg:
         self.hubs: _CrgRows = hubs or []
 
     def ensure_graph(self, project_root: Path) -> None:
-        del project_root
+        _ = project_root
 
     def get_impact_radius(self, files: list[str]) -> dict[str, object]:
         del files

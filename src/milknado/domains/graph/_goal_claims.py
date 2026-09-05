@@ -22,6 +22,8 @@ class _ClaimCursor(Protocol):
     @property
     def rowcount(self) -> int: ...
 
+    def fetchone(self) -> object | None: ...
+
 
 class _ClaimConn(Protocol):
     """The minimal connection surface the claim writers actually use."""
@@ -59,11 +61,9 @@ def claim_goal_row(
         if inserted == 1:
             conn.commit()
             return True
-        claim = fetchone(
-            cast(sqlite3.Connection, conn),
-            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?",
-            (goal_id,),
-        )
+        claim = conn.execute(
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,)
+        ).fetchone()
         if claim is None:
             conn.rollback()
             return False
@@ -178,9 +178,7 @@ def claim_or_reclaim_goal(
         return False
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        row = fetchone(
-            cast(sqlite3.Connection, conn), "SELECT kind FROM nodes WHERE id = ?", (goal_id,)
-        )
+        row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
         if row is None:
             raise ValueError(f"node {goal_id} not found")
         kind = cast(str, _field(row, "kind"))
@@ -194,11 +192,9 @@ def claim_or_reclaim_goal(
         if inserted == 1:
             conn.commit()
             return True
-        claim = fetchone(
-            cast(sqlite3.Connection, conn),
-            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?",
-            (goal_id,),
-        )
+        claim = conn.execute(
+            "SELECT run_id, pid FROM goal_claims WHERE goal_id = ?", (goal_id,)
+        ).fetchone()
         if claim is None:
             conn.rollback()
             return False

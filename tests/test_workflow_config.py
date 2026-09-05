@@ -116,7 +116,7 @@ def test_per_flavor_none_fields_inherit_global(tmp_path: Path) -> None:
 
 def test_toml_parse_per_flavor_workflow_fields(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    _ = _ = path.write_text("""[milknado]
+    _ = path.write_text("""[milknado]
     agent_family = "claude"
     worker_agent_type = "team:worker"
     

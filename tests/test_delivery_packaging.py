@@ -46,7 +46,8 @@ def test_delivery_packages_exist() -> None:
 def test_console_script_targets_resolve(target: str, attr: str) -> None:
     module = import_module(target)
 
-    assert callable(module.__dict__.get(attr)), f"{target}:{attr} is not callable"
+    entrypoint = getattr(module, attr)  # pyright: ignore[reportAny]
+    assert callable(entrypoint), f"{target}:{attr} is not callable"
 
 
 def test_pyproject_declares_packaged_script_targets() -> None:

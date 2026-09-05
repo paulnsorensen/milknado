@@ -269,8 +269,9 @@ class FakeRalph:
             runtime_policy,
             completion_probe,
         )
-        if self.create_run_error is not None:
-            raise self.create_run_error
+        create_run_error = self.create_run_error
+        if create_run_error is not None:
+            raise create_run_error
         self.runs_created.append(
             {
                 "agent": agent,
@@ -1990,6 +1991,8 @@ def test_review_redispatch_fence_loss_stops_and_finalizes_fresh_run(
     assert row is not None, "the fresh run's row must not be orphaned"
     assert row["status"] != "running", "fresh run's row must not zombie as running"
     assert row["error"] == "dispatch aborted"
+    node = graph.get_node(1)
+    assert node is not None, "the redispatched node must reload from persisted state"
     assert node.run_id == old_run_id, "the old run id keeps the node fence"
     old_row = graph.get_run(old_run_id)
     assert old_row is not None and old_row["status"] != "running", (
