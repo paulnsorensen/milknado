@@ -82,7 +82,18 @@ Milknado is a Mikado execution engine — it decomposes goals into dependency gr
 
 ## No Migration Code
 
-This project is pre-release. Do not add migration backfills, deprecation shims, or compatibility layers.
+This project is pre-release. Do not add migration backfills, deprecation shims, or
+compatibility layers that preserve or transform data written by an older release.
+
+**Exception — forward-only schema setup.** The SQLite schema ladder in
+`src/milknado/domains/graph/_persistence.py` (`MIGRATIONS`, `migrate()`) is permitted and
+currently load-bearing. It is not a backfill: `migrate()` runs after `create_tables()` on
+every database open, including the first, and is the only code that creates some
+current-schema objects — `node_reviews` exists on fresh installs solely because migration
+step v2 creates it.
+
+Extend the ladder when the schema gains a table or column. Do not use it to migrate data
+written by an older release; a stale local database is recreated, not upgraded.
 
 ## Code-Intelligence Routing
 
