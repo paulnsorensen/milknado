@@ -1,9 +1,10 @@
 # Build Gate — just check-llm
 
 `just check-llm` is **the** PR gate. Run it — and only it — before opening any PR.
-It bundles lint, format, typecheck, tests, project coverage, and diff coverage in one
-shot, so you never need to chain the individual recipes to gate. Source: `justfile`,
-`AGENTS.md` (`CLAUDE.md` is a symlink to it), `codecov.yml`.
+It bundles file-size, import-contracts, dead-code, lint, format, tests, project
+coverage, diff coverage, and typecheck in one shot, so you never need to chain the
+individual recipes to gate. Source: `justfile`, `AGENTS.md` (`CLAUDE.md` is a symlink
+to it), `codecov.yml`.
 
 ## What it checks, in order
 
@@ -12,11 +13,12 @@ Defined in the `check-llm` recipe (`justfile`), threshold pinned to `COVERAGE_TH
 1. **file-size** — `python scripts/check_file_lengths.py`
 2. **import-contracts** — `lint-imports`
 3. **dead-code** — `python scripts/check_dead_code.py`
-4. **typecheck** — `basedpyright` at the recommended tier
-5. **lint+format** — `just lint`
-6. **tests+coverage** — `pytest tests/ -q --cov=src/milknado --cov-fail-under=95`, writing `coverage.xml`
-7. **dead-code-coverage** — `python scripts/check_dead_code_coverage.py`
-8. **diff-coverage** — `diff-cover coverage.xml --compare-branch=origin/main --fail-under=95`
+4. **lint+format** — `just lint`
+5. **tests+coverage** — `pytest tests/ -q --cov=src/milknado --cov-fail-under=95`, writing `coverage.xml`
+6. **dead-code-coverage** — `python scripts/check_dead_code_coverage.py`
+7. **diff-coverage** — `diff-cover coverage.xml --compare-branch=origin/main --fail-under=95`
+8. **typecheck** — `basedpyright` at the recommended tier, run LAST so a type-check
+   failure never suppresses lint, test, or coverage signal from this sole gate command
 
 It runs `git fetch -q origin main` first so the diff base is current.
 
@@ -53,15 +55,15 @@ just lint-fix       # ruff check --fix + ruff format (autofix)
 just test [args]    # pytest tests/ (e.g. just test -k pattern)
 just test-file <f>  # pytest on a single file
 just check-llm      # THE PR GATE — quiet on success, failing step only on failure
-just build          # autofix pipeline: lint-fix → test → coverage-check
-just build-ci       # no-autofix pipeline: lint → file-size → dead-code → typecheck → coverage (CI uses this)
+just build          # autofix pipeline: lint-fix → coverage-check → typecheck
+just build-ci       # no-autofix pipeline: lint → file-size → dead-code → coverage → dead-code-coverage → typecheck (CI uses this)
 just mcp-dev        # run milknado-mcp under watchfiles, restart on src/ changes
 just clean          # remove .pytest_cache, .ruff_cache, htmlcov, .coverage, *.pyc
 ```
 
 `build` vs `build-ci`: `build` starts with `lint-fix` (mutating), while `build-ci`
-runs the check-only lint, file-size, dead-code, typecheck, coverage, and dead-code
-coverage stages. CI runs `build-ci`.
+runs the check-only lint, file-size, dead-code, coverage, and dead-code-coverage
+stages. Both end with `typecheck` last. CI runs `build-ci`.
 
 ## mcp-dev caveat
 

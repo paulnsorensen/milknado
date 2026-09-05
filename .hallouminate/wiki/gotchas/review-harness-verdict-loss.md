@@ -27,7 +27,9 @@ Also: `MILKNADO_RUN_ID` is unset in reviewer environments.
    not the work.
 2. Mechanically verify the worktree yourself — run each check as a SEPARATE command
    (chained checks have silently skipped): `grep -rn "^# pyright:" tests/` (must be
-   empty), scoped gate commands, tests.
+   empty), scoped gate commands, tests. `just check-llm` remains the gate; this
+   separate-command warning is about ad-hoc `&&` chains during forensic verification,
+   not a substitute for the gate.
 3. Dispatch an independent reviewer (severity-report) over the worker diff; cure real
    findings; squash to one commit; rebase onto campaign tip; ff-merge; push.
 4. Mark done via direct SQL `UPDATE nodes SET status='done' WHERE id=N` —
