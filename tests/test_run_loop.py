@@ -906,14 +906,15 @@ def test_stop_latched_before_run_skips_terminal_spec_verification(
 
 
 class TestRunLoopSingleNode:
-    def test_solo_root_not_dispatched(
+    def test_solo_root_not_marked_done_when_undecomposed(
         self,
         run_loop: RunLoop,
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        # Root is never dispatched as a work node; it's completed via verify_spec.
-        # Without spec_text, root stays PENDING and root_done is False.
+        # Root is never dispatched as a work node. With no non-root nodes, the
+        # goal was never decomposed, so nothing was done — the structural
+        # fallback must not vacuously mark it complete.
         _ = graph.add_node("root goal")
         result = run_loop.run(config, "main")
 
@@ -922,7 +923,7 @@ class TestRunLoopSingleNode:
         assert result.failed_total == 0
         assert result.root_done is False
 
-    def test_solo_root_stays_pending_without_spec(
+    def test_solo_root_marked_done_without_spec_after_leaf_completes(
         self,
         run_loop: RunLoop,
         graph: MikadoGraph,
@@ -934,7 +935,7 @@ class TestRunLoopSingleNode:
 
         root_node = graph.get_node(root.id)
         assert root_node is not None
-        assert root_node.status == NodeStatus.PENDING
+        assert root_node.status == NodeStatus.DONE
 
 
 class TestRunLoopParentChild:
@@ -944,8 +945,8 @@ class TestRunLoopParentChild:
         graph: MikadoGraph,
         config: ExecutionConfig,
     ) -> None:
-        # Root is excluded from dispatch; only the leaf is dispatched.
-        # Without spec_text, root stays PENDING.
+        # Root is excluded from dispatch; only the leaf is dispatched. Without
+        # spec_text, the structural fallback completes the root once the leaf is done.
         root = graph.add_node("root")
         leaf = graph.add_node("leaf", parent_id=root.id)
 
@@ -953,13 +954,13 @@ class TestRunLoopParentChild:
 
         assert result.dispatched_total == 1
         assert result.completed_total == 1
-        assert result.root_done is False
+        assert result.root_done is True
         leaf_node = graph.get_node(leaf.id)
         root_node = graph.get_node(root.id)
         assert leaf_node is not None and leaf_node.status == NodeStatus.DONE
-        assert root_node is not None and root_node.status == NodeStatus.PENDING
+        assert root_node is not None and root_node.status == NodeStatus.DONE
 
-    def test_leaf_done_root_pending_without_spec(
+    def test_leaf_done_root_marked_done_without_spec(
         self,
         run_loop: RunLoop,
         graph: MikadoGraph,
@@ -972,7 +973,7 @@ class TestRunLoopParentChild:
 
         root_node = graph.get_node(root.id)
         assert root_node is not None
-        assert root_node.status == NodeStatus.PENDING
+        assert root_node.status == NodeStatus.DONE
 
 
 class TestRunLoopStoppedOutcome:
@@ -1061,8 +1062,8 @@ class TestRunLoopParallelLeaves:
 
         assert result.dispatched_total == 2
         assert result.completed_total == 2
-        # Root not dispatched; stays PENDING without spec_text.
-        assert result.root_done is False
+        # Root not dispatched; structural fallback completes it once both leaves are done.
+        assert result.root_done is True
 
 
 class TestRunLoopConcurrencyLimit:
@@ -1079,10 +1080,10 @@ class TestRunLoopConcurrencyLimit:
 
         result = run_loop.run(config, "main", concurrency_limit=2)
 
-        # 3 leaves dispatched, root excluded.
+        # 3 leaves dispatched, root excluded, then structurally completed.
         assert result.dispatched_total == 3
         assert result.completed_total == 3
-        assert result.root_done is False
+        assert result.root_done is True
 
 
 class TestRunLoopFailure:
@@ -1282,10 +1283,11 @@ class TestRunLoopFileConflicts:
 
         result = loop.run(config, "main")
 
-        # 2 leaves dispatched (serialized due to file conflict), root excluded.
+        # 2 leaves dispatched (serialized due to file conflict), root excluded,
+        # then structurally completed.
         assert result.dispatched_total == 2
         assert result.completed_total == 2
-        assert result.root_done is False
+        assert result.root_done is True
 
 
 _RICH_DESC = "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
@@ -1889,6 +1891,108 @@ class TestRootCompletionViaVerifySpec:
         root_node = graph.get_node(root.id)
         assert root_node is not None
         assert root_node.status == NodeStatus.PENDING
+
+
+class TestRootCompletionStructuralFallback:
+    def test_root_marked_done_without_spec_when_all_leaves_done(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        verify_calls: list[tuple[str, str]] = []
+        original_verify_spec = ralph.verify_spec
+
+        def tracking_verify_spec(spec_text: str, graph_state: str) -> VerifySpecResult:
+            verify_calls.append((spec_text, graph_state))
+            return original_verify_spec(spec_text, graph_state)
+
+        _set_attr(ralph, "verify_spec", tracking_verify_spec)
+
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root goal")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+
+        result = loop.run(config, "main")
+
+        assert result.root_done is True
+        assert result.verify_outcome is None
+        root_node = graph.get_node(root.id)
+        leaf_node = graph.get_node(leaf.id)
+        assert root_node is not None and root_node.status == NodeStatus.DONE
+        assert leaf_node is not None and leaf_node.status == NodeStatus.DONE
+        assert verify_calls == []
+
+    def test_root_stays_pending_without_spec_when_leaf_not_done(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        _success(ralph)["run-1"] = False
+
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root goal")
+        _ = graph.add_node("leaf", parent_id=root.id)
+
+        result = loop.run(config, "main")
+
+        assert result.root_done is False
+        root_node = graph.get_node(root.id)
+        assert root_node is not None
+        assert root_node.status == NodeStatus.PENDING
+
+    def test_root_stays_pending_without_spec_when_failure_triggered(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        _success(ralph)["run-1"] = False
+
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root goal")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+
+        result = loop.run(config, "main", strict=True)
+
+        assert result.root_done is False
+        root_node = graph.get_node(root.id)
+        leaf_node = graph.get_node(leaf.id)
+        assert root_node is not None and root_node.status == NodeStatus.PENDING
+        assert leaf_node is not None and leaf_node.status != NodeStatus.DONE
+
+    def test_bare_root_not_marked_done_without_children(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+
+        root = graph.add_node("root goal")
+
+        result = loop.run(config, "main")
+
+        assert result.root_done is False
+        assert result.dispatched_total == 0
+        root_node = graph.get_node(root.id)
+        assert root_node is not None and root_node.status == NodeStatus.PENDING
 
 
 # ---------------------------------------------------------------------------
