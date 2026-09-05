@@ -24,8 +24,8 @@ from milknado.loop._run_types import (
 from milknado.loop.manager import ManagedRun, RunManager
 from tests.loop.helpers import (
     MOCK_SUBPROCESS,
-    drain_events,  # pyright: ignore[reportUnknownVariableType]
-    event_types,  # pyright: ignore[reportUnknownVariableType]
+    drain_events,
+    event_types,
     make_config,
     ok_proc,
 )
@@ -99,7 +99,7 @@ class TestRunManagerStartRun:
         assert managed.thread is not None
         managed.thread.join(timeout=5)
 
-        events = drain_events(cast(QueueEmitter, managed.emitter))  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(cast(QueueEmitter, managed.emitter))
         types = event_types(events)
         assert EventType.RUN_STARTED in types
         assert EventType.RUN_STOPPED in types

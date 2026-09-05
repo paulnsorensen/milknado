@@ -98,7 +98,7 @@ init` to auto-detect gates from your project type:
 
 | Project marker | Auto-detected gates |
 |---|---|
-| `pyproject.toml` | `uv run pytest`, `uv run ruff check`, `uv run ty check` |
+| `pyproject.toml` | `uv run pytest`, `uv run ruff check`, `uv run basedpyright` |
 | `Cargo.toml` | `cargo test`, `cargo clippy -- -D warnings` |
 | `package.json` | `npm test` |
 | `go.mod` | `go test ./...`, `go vet ./...` |

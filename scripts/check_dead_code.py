@@ -96,6 +96,13 @@ _TEXTUAL_METHOD_PREFIXES = ("on_", "action_")
 _TEXTUAL_CLASS_VARS = {"CSS", "DEFAULT_CSS", "BINDINGS"}
 # self.<name> assignments Textual itself reads: App's window subtitle.
 _TEXTUAL_APP_SELF_ATTRS = {"sub_title"}
+# Reactive descriptors App declares. A subclass redeclares them as a bare class-level
+# annotation (``title: Reactive[str]``) so a type checker can see the descriptor type;
+# the annotation binds no value, so Vulture reads it as an unused variable.
+_TEXTUAL_APP_REACTIVES = {"title", "sub_title"}
+# Empty start value for the base-class walk below; a literal call in a parameter
+# default is rejected by the type checker's recommended tier.
+_NO_BASES: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,11 +144,53 @@ def _resolve_base(base: ast.expr, imports: Mapping[str, str]) -> str | None:
     return None
 
 
-def _has_textual_base(class_def: ast.ClassDef, imports: Mapping[str, str]) -> bool:
-    return any(
-        (resolved := _resolve_base(base, imports)) is not None and resolved.startswith("textual.")
-        for base in class_def.bases
+def _module_ast(dotted: str) -> tuple[ast.Module, dict[str, str]] | None:
+    """Parse the in-repo module named by *dotted*, or None when it is not ours."""
+    if not dotted.startswith("milknado."):
+        return None
+    rel = Path(*dotted.split("."))
+    candidates = (
+        REPO_ROOT / "src" / rel.with_suffix(".py"),
+        REPO_ROOT / "src" / rel / "__init__.py",
     )
+    for candidate in candidates:
+        try:
+            tree = ast.parse(candidate.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError):
+            continue
+        return tree, _import_map(tree)
+    return None
+
+
+def _has_textual_base(
+    class_def: ast.ClassDef, imports: Mapping[str, str], _seen: frozenset[str] = _NO_BASES
+) -> bool:
+    """Whether *class_def* inherits from Textual, directly or through our own classes.
+
+    A subclass of one of milknado's own App classes is still a Textual app, so the
+    walk follows in-repo bases one module at a time. ``_seen`` stops an import loop.
+    """
+    for base in class_def.bases:
+        resolved = _resolve_base(base, imports)
+        if resolved is None:
+            continue
+        if resolved.startswith("textual."):
+            return True
+        if resolved in _seen:
+            continue
+        module_name, _, class_name = resolved.rpartition(".")
+        parsed = _module_ast(module_name)
+        if parsed is None:
+            continue
+        base_module, base_imports = parsed
+        for node in base_module.body:
+            if (
+                isinstance(node, ast.ClassDef)
+                and node.name == class_name
+                and _has_textual_base(node, base_imports, _seen | {resolved})
+            ):
+                return True
+    return False
 
 
 def _is_textual_lifecycle_method(name: str) -> bool:
@@ -150,6 +199,26 @@ def _is_textual_lifecycle_method(name: str) -> bool:
 
 def _method_start_line(node: ast.FunctionDef | ast.AsyncFunctionDef) -> int:
     return node.decorator_list[0].lineno if node.decorator_list else node.lineno
+
+
+def _is_class_var_binding(item: ast.stmt, name: str, line: int) -> bool:
+    """Whether *item* binds class variable *name* at *line*, annotated or not.
+
+    Annotating a Textual class attribute (``CSS: ClassVar[str] = "..."``) turns the
+    node from ``Assign`` into ``AnnAssign``; both are the same declaration.
+    """
+    if item.lineno != line:
+        return False
+    if isinstance(item, ast.AnnAssign):
+        return (
+            item.value is not None and isinstance(item.target, ast.Name) and item.target.id == name
+        )
+    return (
+        isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == name
+    )
 
 
 def _accepted_reason(finding: _Finding, module: ast.Module, imports: dict[str, str]) -> str | None:
@@ -172,14 +241,18 @@ def _accepted_reason(finding: _Finding, module: ast.Module, imports: dict[str, s
                     return "Textual lifecycle method override"
         if finding.typ == "variable" and finding.name in _TEXTUAL_CLASS_VARS:
             for item in node.body:
+                if _is_class_var_binding(item, finding.name, finding.first_line):
+                    return "Textual lifecycle class attribute"
+        if finding.typ == "variable" and finding.name in _TEXTUAL_APP_REACTIVES:
+            for item in node.body:
                 if (
-                    isinstance(item, ast.Assign)
-                    and len(item.targets) == 1
-                    and isinstance(item.targets[0], ast.Name)
-                    and item.targets[0].id == finding.name
+                    isinstance(item, ast.AnnAssign)
+                    and item.value is None
+                    and isinstance(item.target, ast.Name)
+                    and item.target.id == finding.name
                     and item.lineno == finding.first_line
                 ):
-                    return "Textual lifecycle class attribute"
+                    return "Textual App reactive redeclaration"
         if finding.typ == "attribute" and finding.name in _TEXTUAL_APP_SELF_ATTRS:
             for inner in ast.walk(node):
                 if (

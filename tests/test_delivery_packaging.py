@@ -13,6 +13,7 @@ from __future__ import annotations
 import tomllib
 from importlib import import_module
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -46,7 +47,7 @@ def test_delivery_packages_exist() -> None:
 def test_console_script_targets_resolve(target: str, attr: str) -> None:
     module = import_module(target)
 
-    entrypoint = getattr(module, attr)  # pyright: ignore[reportAny]
+    entrypoint = cast(object, getattr(module, attr))
     assert callable(entrypoint), f"{target}:{attr} is not callable"
 
 

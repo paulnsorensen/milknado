@@ -721,7 +721,7 @@ class TestExecutorDispatch:
             assert graph.claim_node(1, "run-B", now=now_iso()) is True
             return RebaseResult(success=True)
 
-        fake_git.rebase = _reclaim_during_merge  # ty: ignore[invalid-assignment]
+        fake_git.rebase = _reclaim_during_merge
 
         result = ex.complete(1, "main")
 
@@ -801,7 +801,7 @@ class TestExecutorDispatch:
         # Worktree cleanup must have run despite mark_pending raising
         assert len(fake_git.removed) == 1
 
-        graph.mark_pending = original_mark_pending  # ty: ignore[invalid-assignment]  # restore
+        graph.mark_pending = original_mark_pending  # restore
 
     def test_path_traversal_in_worktree_pattern_raises(
         self,

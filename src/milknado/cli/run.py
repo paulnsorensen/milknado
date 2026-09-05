@@ -106,8 +106,8 @@ def _is_interactive_terminal() -> bool:
 
 def watch(
     project_root: Annotated[
-        Path, typer.Option("--project-root", help="Project root directory")
-    ] = Path("."),
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
 ) -> None:
     """Observe durable run state in a live, read-only TUI."""
     if not _is_interactive_terminal():

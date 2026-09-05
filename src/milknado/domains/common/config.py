@@ -477,7 +477,7 @@ def detect_project_gates(project_root: Path) -> tuple[Gate, ...] | None:
         return (
             Gate(command="uv run pytest"),
             Gate(command="uv run ruff check"),
-            Gate(command="uv run ty check"),
+            Gate(command="uv run basedpyright"),
         )
     if (project_root / "Cargo.toml").exists():
         return (

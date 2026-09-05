@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
+from pathlib import Path
 from typing import get_type_hints
 from unittest.mock import patch
 
@@ -12,11 +13,12 @@ from milknado.app.run import ExecutionController, ExecutionSnapshot
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
+from milknado.app.watch import WatchSnapshotSource
 
 
 class FakeSource:
     def __init__(self, snapshot: ExecutionSnapshot) -> None:
-        self.current = snapshot
+        self.current: ExecutionSnapshot = snapshot
 
     def snapshot(self) -> ExecutionSnapshot:
         return self.current
@@ -46,7 +48,8 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         app.poll()
         assert app.title == "Refreshed goal"
         assert app.sub_title.endswith("2 available")
-        assert [tuple(binding[:3]) for binding in app.BINDINGS] == [
+        bindings = [binding for binding in app.BINDINGS if isinstance(binding, tuple)]
+        assert [binding[:3] for binding in bindings] == [
             ("up", "previous_run", "Previous run"),
             ("down", "next_run", "Next run"),
             ("enter", "open_detail", "Open selected run"),
@@ -55,7 +58,7 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
             ("h", "help", "Help"),
             ("q", "quit_all", "Quit"),
         ]
-        assert {binding[1] for binding in app.BINDINGS}.isdisjoint(
+        assert {binding[1] for binding in bindings}.isdisjoint(
             {"focus_guidance", "cancel", "force"}
         )
 
@@ -69,11 +72,13 @@ def test_watch_quit_exits_without_controlling_the_observed_run() -> None:
     exit_app.assert_called_once_with()
 
 
-def test_watch_tui_entry_builds_source_and_discards_app_result(monkeypatch, tmp_path) -> None:
+def test_watch_tui_entry_builds_source_and_discards_app_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     expected = object()
 
     class FakeApp:
-        def __init__(self, source: object) -> None:
+        def __init__(self, source: WatchSnapshotSource) -> None:
             assert source.project_root == tmp_path
             assert source.db_path == tmp_path / "milknado.db"
 
@@ -90,4 +95,5 @@ def test_snapshot_view_has_no_execution_controller_contract() -> None:
     assert not issubclass(watch_tui.WatchApp, ExecutionApp)
     assert get_type_hints(ExecutionSnapshotApp.__init__)["source"] is ExecutionSnapshotSource
     assert get_type_hints(ExecutionApp.__init__)["controller"] is ExecutionController
-    assert list(inspect.signature(watch_tui._WatchController.subscribe).parameters) == ["listener"]
+    controller = watch_tui._WatchController  # pyright: ignore[reportPrivateUsage] -- exercising the read-only adapter's Protocol shape directly
+    assert list(inspect.signature(controller.subscribe).parameters) == ["listener"]

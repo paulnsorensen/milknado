@@ -5,11 +5,11 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import msgspec
 
-from milknado.domains.graph import _run_persistence
+from milknado.domains.graph._run_persistence import run_row_to_dict
 
 _READY_COUNT_SQL = """
 WITH ready(id) AS (
@@ -74,20 +74,20 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     uri = f"{db_path.resolve().as_uri()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    _ = conn.execute("PRAGMA query_only=ON")
+    _ = conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
 def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...]:
-    rows = conn.execute(
+    rows: list[sqlite3.Row] = conn.execute(
         "SELECT r.*, n.description FROM runs r JOIN nodes n ON n.id = r.node_id "
-        "ORDER BY r.started_at DESC LIMIT ?",
+        + "ORDER BY r.started_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return tuple(
         msgspec.convert(
-            _run_persistence._run_row_to_dict(row) | {"description": row["description"]},
+            run_row_to_dict(row) | {"description": row["description"]},
             type=DurableRun,
             strict=True,
         )
@@ -96,11 +96,14 @@ def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...
 
 
 def _goal_description(conn: sqlite3.Connection) -> str:
-    row = conn.execute(
-        "SELECT description FROM nodes "
-        "WHERE id NOT IN (SELECT DISTINCT child_id FROM edges) "
-        "AND archived_at IS NULL ORDER BY id LIMIT 1"
-    ).fetchone()
+    row = cast(
+        "sqlite3.Row | None",
+        conn.execute(
+            "SELECT description FROM nodes "
+            + "WHERE id NOT IN (SELECT DISTINCT child_id FROM edges) "
+            + "AND archived_at IS NULL ORDER BY id LIMIT 1"
+        ).fetchone(),
+    )
     return row[0] if row is not None else ""
 
 
@@ -110,11 +113,12 @@ def read_observer_snapshot(db_path: Path, limit: int = 50) -> ObserverSnapshot:
         raise ValueError("limit must be between 0 and 100")
     conn = _connect(db_path)
     try:
-        conn.execute("BEGIN")
+        _ = conn.execute("BEGIN")
+        ready_row = cast("sqlite3.Row", conn.execute(_READY_COUNT_SQL).fetchone())
         return ObserverSnapshot(
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
-            available=conn.execute(_READY_COUNT_SQL).fetchone()[0],
+            available=cast(int, ready_row[0]),
         )
     finally:
         conn.rollback()

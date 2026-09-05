@@ -4,6 +4,7 @@
 - [archive-rebalance-001](./archive-rebalance-001.md) — ADR-001: archived_at flag over status enum or archive-root reparent  [status: accepted]
 - [archive-rebalance-002](./archive-rebalance-002.md) — ADR-002: archive gates destruction; reap is fail-closed only  [status: accepted]
 - [archive-rebalance-003](./archive-rebalance-003.md) — ADR-003: restructure = orphan grouping + structural report  [status: accepted]
+- [basedpyright-typecheck-gate-decision](./basedpyright-typecheck-gate-decision.md) — Basedpyright type-check gate — decision
 - [dead-code-coverage-gate-decision](./dead-code-coverage-gate-decision.md) — Dead-code coverage gate — decision
 - [github-roadmap-pr-split](./github-roadmap-pr-split.md) — GitHub Projects v2 roadmap integration — PR split map
 - [loop-vendor-in-decision](./loop-vendor-in-decision.md) — Decision — Vendor the Ralphify Engine into milknado.loop

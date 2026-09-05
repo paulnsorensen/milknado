@@ -11,7 +11,12 @@ Spec: `dead-code-coverage-gate` (durable specs corpus). Related issues: #363 (cl
 
 ### Context: why `ty`, not `mypy`, and what it costs here
 
-milknado's toolchain is Astral end-to-end (`ruff`, `uv`, `ty>=0.0.38` as a dev dep); `mypy` is not a dependency. Neither type checker runs in the `check-llm` gate today. `ty` is pre-1.0 and ships no unreachable diagnostic (astral-sh/ty#784 open), which is exactly why closing class 4 would force a reach back to `mypy --warn-unreachable` — the cost of the toolchain-cohesion bet.
+> **Superseded 2026-09:** `ty` was removed in favour of basedpyright, which now runs in
+> `check-llm` and `build-ci` — see `basedpyright-typecheck-gate-decision.md`. The claims
+> below (`ty` as the dev dep, no type checker in the gate) describe the toolchain as it
+> stood when this ADR was written, not the current state.
+
+milknado's toolchain was Astral end-to-end (`ruff`, `uv`, `ty>=0.0.38` as a dev dep); `mypy` is not a dependency. Neither type checker ran in the `check-llm` gate at the time. `ty` was pre-1.0 and shipped no unreachable diagnostic (astral-sh/ty#784 open), which is exactly why closing class 4 would have forced a reach back to `mypy --warn-unreachable` — the cost of the toolchain-cohesion bet.
 
 ### ADR-dead-code-coverage-gate-004: CI and local gates run the same dead-code checks  [status: accepted]
 

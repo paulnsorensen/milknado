@@ -35,9 +35,9 @@ from milknado.loop.engine import (
 from tests.loop.helpers import (
     MOCK_RUN_COMMAND,
     MOCK_SUBPROCESS,
-    drain_events,  # pyright: ignore[reportUnknownVariableType]
-    event_types,  # pyright: ignore[reportUnknownVariableType]
-    events_of_type,  # pyright: ignore[reportUnknownVariableType]
+    drain_events,
+    event_types,
+    events_of_type,
     fail_proc,
     make_config,
     make_state,
@@ -118,9 +118,9 @@ class TestRunLoop:
         run_loop(config, state, q)
 
         assert state.status == RunStatus.FAILED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "error"  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(q)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
 
     @patch(MOCK_SUBPROCESS, side_effect=fail_proc)
     def test_max_consecutive_failures_stops_run(self, mock_run: MagicMock, tmp_path: Path):
@@ -134,9 +134,9 @@ class TestRunLoop:
         assert mock_run.call_count == 3
         assert state.failed == 3
         assert state.status == RunStatus.FAILED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "error"  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(q)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
 
     @patch(MOCK_SUBPROCESS)
     def test_consecutive_failure_count_resets_on_success(
@@ -393,15 +393,15 @@ class TestPromiseCompletionSignals:
         assert state.status == RunStatus.COMPLETED
         assert state.promise_completed is True
 
-        events = drain_events(emitter)  # pyright: ignore[reportUnknownVariableType]
-        completed_events = events_of_type(events, EventType.ITERATION_COMPLETED)  # pyright: ignore[reportUnknownVariableType]
-        assert len(completed_events) == 1  # pyright: ignore[reportUnknownArgumentType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "completed"  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["total"] == 1  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["completed"] == 1  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["failed"] == 0  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["timed_out_count"] == 0  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(emitter)
+        completed_events = events_of_type(events, EventType.ITERATION_COMPLETED)
+        assert len(completed_events) == 1
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "completed"
+        assert stop_event.data["total"] == 1
+        assert stop_event.data["completed"] == 1
+        assert stop_event.data["failed"] == 0
+        assert stop_event.data["timed_out_count"] == 0
 
     @patch("milknado.loop.engine.execute_agent")
     def test_custom_promise_text_matches_inner_tag_text(
@@ -430,11 +430,11 @@ class TestPromiseCompletionSignals:
         assert state.status == RunStatus.COMPLETED
         assert state.promise_completed is True
 
-        events = drain_events(emitter)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "completed"  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["total"] == 1  # pyright: ignore[reportUnknownMemberType]
-        assert stop_event.data["completed"] == 1  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(emitter)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "completed"
+        assert stop_event.data["total"] == 1
+        assert stop_event.data["completed"] == 1
 
     @patch("milknado.loop.engine.execute_agent")
     def test_promise_tag_normalizes_inner_whitespace_before_matching(
@@ -561,8 +561,8 @@ class TestPromiseCompletionSignals:
 
         run_loop(config, state, emitter)
 
-        completed_event = events_of_type(drain_events(emitter), EventType.ITERATION_COMPLETED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert completed_event.data["echo_stdout"] == "plain blocking output\n"  # pyright: ignore[reportUnknownMemberType]
+        completed_event = events_of_type(drain_events(emitter), EventType.ITERATION_COMPLETED)[0]
+        assert completed_event.data.get("echo_stdout") == "plain blocking output\n"
 
 
 class TestCompletionVerifier:
@@ -716,15 +716,15 @@ class TestCompletionVerifier:
         assert state.iteration == 3
         assert state.status == RunStatus.FAILED
 
-        events = drain_events(emitter)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "error"  # pyright: ignore[reportUnknownMemberType]
-        error_logs = [  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(emitter)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
+        error_logs = [
             e
-            for e in events_of_type(events, EventType.LOG_MESSAGE)  # pyright: ignore[reportUnknownVariableType]
-            if "verifier never accepted" in e.data["message"]  # pyright: ignore[reportUnknownMemberType]
+            for e in events_of_type(events, EventType.LOG_MESSAGE)
+            if "verifier never accepted" in e.data["message"]
         ]
-        assert len(error_logs) == 1  # pyright: ignore[reportUnknownArgumentType]
+        assert len(error_logs) == 1
 
     @patch("milknado.loop.engine.execute_agent")
     def test_verifier_not_consulted_without_promise(
@@ -793,7 +793,7 @@ class TestRunLoopEvents:
 
         run_loop(config, state, q)
 
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(q)
         types = event_types(events)
         assert types[0] == EventType.RUN_STARTED
         assert types[-1] == EventType.RUN_STOPPED
@@ -810,7 +810,7 @@ class TestRunLoopEvents:
 
         run_loop(config, state, q)
 
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(q)
         assert EventType.ITERATION_FAILED in event_types(events)
 
     @patch(MOCK_SUBPROCESS, side_effect=timeout_proc)
@@ -821,7 +821,7 @@ class TestRunLoopEvents:
 
         run_loop(config, state, q)
 
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(q)
         assert EventType.ITERATION_TIMED_OUT in event_types(events)
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
@@ -832,7 +832,7 @@ class TestRunLoopEvents:
 
         run_loop(config, state, q)
 
-        for event in drain_events(q):  # pyright: ignore[reportUnknownVariableType]
+        for event in drain_events(q):
             assert event.run_id == "test-run-001"
 
 
@@ -863,9 +863,9 @@ class TestRunStateControls:
         run_loop(config, state, q)
 
         assert state.status == RunStatus.STOPPED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "user_requested"  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(q)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "user_requested"
 
 
 class TestRalphArgs:
@@ -1054,9 +1054,9 @@ class TestAgentCommandParsing:
         run_loop(config, state, q)
 
         assert state.status == RunStatus.FAILED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        log_events = events_of_type(events, EventType.LOG_MESSAGE)  # pyright: ignore[reportUnknownVariableType]
-        assert any("Invalid agent command syntax" in e.data["message"] for e in log_events)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        events = drain_events(q)
+        log_events = events_of_type(events, EventType.LOG_MESSAGE)
+        assert any("Invalid agent command syntax" in e.data["message"] for e in log_events)
 
     @patch(MOCK_SUBPROCESS)
     def test_agent_path_spoof_fails_before_popen(self, mock_popen: MagicMock, tmp_path: Path):
@@ -1082,9 +1082,9 @@ class TestAgentCommandParsing:
         run_loop(config, state, q)
 
         assert state.status == RunStatus.FAILED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        log_events = events_of_type(events, EventType.LOG_MESSAGE)  # pyright: ignore[reportUnknownVariableType]
-        assert any("Agent command not found" in e.data["message"] for e in log_events)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        events = drain_events(q)
+        log_events = events_of_type(events, EventType.LOG_MESSAGE)
+        assert any("Agent command not found" in e.data["message"] for e in log_events)
 
 
 class TestRunLoopCrashHandling:
@@ -1111,18 +1111,18 @@ class TestRunLoopCrashHandling:
 
         run_loop(config, state, q)
 
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
+        events = drain_events(q)
         types = event_types(events)
         assert EventType.LOG_MESSAGE in types
         assert EventType.RUN_STOPPED in types
 
-        log_event = events_of_type(events, EventType.LOG_MESSAGE)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert log_event.data["level"] == "error"  # pyright: ignore[reportUnknownMemberType]
-        assert "disk full" in log_event.data["message"]  # pyright: ignore[reportUnknownMemberType]
-        assert "traceback" in log_event.data  # pyright: ignore[reportUnknownMemberType]
+        log_event = events_of_type(events, EventType.LOG_MESSAGE)[0]
+        assert log_event.data["level"] == "error"
+        assert "disk full" in log_event.data["message"]
+        assert "traceback" in log_event.data
 
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "error"  # pyright: ignore[reportUnknownMemberType]
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "error"
 
     @patch(MOCK_SUBPROCESS)
     def test_unexpected_exception_only_runs_one_iteration(
@@ -1153,9 +1153,9 @@ class TestRunLoopCrashHandling:
         run_loop(config, state, q)
 
         assert state.status == RunStatus.FAILED
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        log_events = events_of_type(events, EventType.LOG_MESSAGE)  # pyright: ignore[reportUnknownVariableType]
-        assert any("corrupt YAML" in e.data["message"] for e in log_events)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        events = drain_events(q)
+        log_events = events_of_type(events, EventType.LOG_MESSAGE)
+        assert any("corrupt YAML" in e.data["message"] for e in log_events)
 
 
 class TestDelayIfNeeded:
@@ -1185,10 +1185,11 @@ class TestDelayIfNeeded:
         elapsed = time.monotonic() - start
 
         assert elapsed >= 0.1
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
+        events = drain_events(q)
+        assert len(events) == 1
         assert events[0].type == EventType.LOG_MESSAGE
-        assert "Waiting" in events[0].data["message"]  # pyright: ignore[reportUnknownMemberType]
+        log_event = events_of_type(events, EventType.LOG_MESSAGE)[0]
+        assert "Waiting" in log_event.data["message"]
 
     def test_delay_message_uses_format_duration(self, tmp_path: Path):
         """Delay log message should use format_duration for consistency with
@@ -1203,9 +1204,10 @@ class TestDelayIfNeeded:
         state.request_stop()
         _delay_if_needed(config, state, emit)
 
-        events = drain_events(q)  # pyright: ignore[reportUnknownVariableType]
-        assert len(events) == 1  # pyright: ignore[reportUnknownArgumentType]
-        msg = events[0].data["message"]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        events = drain_events(q)
+        assert len(events) == 1
+        log_event = events_of_type(events, EventType.LOG_MESSAGE)[0]
+        msg = log_event.data["message"]
         assert "2m 0s" in msg, f"Expected formatted duration '2m 0s' in message, got: {msg!r}"
 
     def test_no_delay_on_last_iteration(self, tmp_path: Path):
@@ -1756,6 +1758,6 @@ class TestOpenCodeEndToEnd:
         assert state.failed == 0
         assert state.status == RunStatus.COMPLETED
 
-        events = drain_events(emitter)  # pyright: ignore[reportUnknownVariableType]
-        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]  # pyright: ignore[reportUnknownVariableType]
-        assert stop_event.data["reason"] == "completed"  # pyright: ignore[reportUnknownMemberType]
+        events = drain_events(emitter)
+        stop_event = events_of_type(events, EventType.RUN_STOPPED)[0]
+        assert stop_event.data["reason"] == "completed"

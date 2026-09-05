@@ -416,8 +416,11 @@ class TestDetectProjectGates:
         result = detect_project_gates(tmp_path)
         assert result is not None
         commands = [g.command for g in result]
-        assert "uv run pytest" in commands
-        assert "uv run ruff check" in commands
+        assert commands == [
+            "uv run pytest",
+            "uv run ruff check",
+            "uv run basedpyright",
+        ]
 
     def test_rust_project_returns_cargo_gates(self, tmp_path: Path) -> None:
         _ = (tmp_path / "Cargo.toml").write_text("[package]\nname = 'x'\n", encoding="utf-8")

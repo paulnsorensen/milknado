@@ -608,7 +608,7 @@ async def test_navigation_actions_and_resume_auto_follow() -> None:
 
         app.action_open_detail()
         assert app.route == "detail"
-        _ = app.action_back()
+        await app.action_back()
         assert app.route == "list"
         app.action_open_detail()
 

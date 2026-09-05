@@ -60,7 +60,7 @@ _RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _RUN_STATUS_RUNNING = "running"  # sole owner: runs.status compares case-sensitively
 
 
-def _run_row_to_dict(row: sqlite3.Row) -> RunRecord:
+def run_row_to_dict(row: sqlite3.Row) -> RunRecord:
     """Serialize a runs row to the sidecar-shaped dict callers consumed before.
 
     `timed_out` / `rebased` are stored as INTEGER and re-hydrated to bool/None so
@@ -147,7 +147,7 @@ def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
 def get_run(conn: sqlite3.Connection, run_id: str) -> RunRecord | None:
     """SELECT one run row as a dict (replaces read_state for poll)."""
     row = fetchone(conn, "SELECT * FROM runs WHERE run_id = ?", (run_id,))
-    return _run_row_to_dict(row) if row else None
+    return run_row_to_dict(row) if row else None
 
 
 def runs_for_node(
@@ -171,13 +171,13 @@ def runs_for_node(
         sql += " AND run_id = ?"
         params.append(run_id)
     rows = fetchall(conn, sql, params)
-    return [_run_row_to_dict(row) for row in rows]
+    return [run_row_to_dict(row) for row in rows]
 
 
 def recent_runs(conn: sqlite3.Connection, limit: int) -> list[RunRecord]:
     """Return the most-recently-started runs as dicts (replaces the run-list scan)."""
     rows = fetchall(conn, "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (max(limit, 0),))
-    return [_run_row_to_dict(row) for row in rows]
+    return [run_row_to_dict(row) for row in rows]
 
 
 def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:

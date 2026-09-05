@@ -69,8 +69,8 @@ coverage-check:
     if result.returncode != 0:
         sys.exit(result.returncode)
 
-# Full build with autofix: lint-fix → coverage check (for agents/developers)
-build: lint-fix coverage-check
+# Full build with autofix: lint-fix → coverage check → typecheck (for agents/developers)
+build: lint-fix coverage-check typecheck
     @echo "✅ Build passed — ready for PR"
 
 # Enforce the source file-size budget (mirrors the file-size step in check-llm)
@@ -86,16 +86,17 @@ dead-code-coverage:
     uv run python scripts/check_dead_code_coverage.py
 
 # Type-check all Python (basedpyright recommended tier; fails on warnings too).
-# Not yet part of check-llm/build-ci — joins the gates when the burn-down
-# campaign reaches zero diagnostics.
 typecheck:
     uv run basedpyright
-# Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage (for CI validation)
-build-ci: lint file-size dead-code coverage-check dead-code-coverage
+
+# Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage → typecheck (for CI validation)
+build-ci: lint file-size dead-code coverage-check dead-code-coverage typecheck
     @echo "✅ CI build passed"
 
-# Agent gate: lint + format + dead code + tests + project coverage + diff coverage.
+# Agent gate: lint + format + dead code + tests + project coverage + diff coverage + typecheck.
 # Quiet on success (one line), full output only on the failing step. Non-mutating.
+# typecheck runs LAST: the runner exits at the first failing step, so a typecheck
+# failure must not suppress lint, test, or coverage signal from this sole gate command.
 # diff-coverage mirrors codecov/patch: it fails if the lines THIS branch changes
 # (vs origin/main, including staged/uncommitted edits) aren't covered to threshold.
 check-llm:
@@ -137,6 +138,7 @@ check-llm:
                 f"--fail-under={threshold}",
             ],
         ),
+        ("typecheck", ["just", "typecheck"]),
     ]
 
     for name, cmd in steps:
@@ -147,8 +149,8 @@ check-llm:
             sys.exit(result.returncode)
 
     print(
-        f"✅ check:llm PASS — lint+format clean, no dead code, tests green, "
-        f"project+diff coverage ≥{threshold}%"
+        f"✅ check:llm PASS — lint+format clean, no dead code, "
+        f"tests green, project+diff coverage ≥{threshold}%, typecheck clean"
     )
 
 # Run the CLI for manual testing
