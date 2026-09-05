@@ -132,10 +132,12 @@ MIGRATIONS: list[tuple[int, str]] = [
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
 
-# Fresh databases are created with the full current schema at user_version=0,
-# so migrate() always runs against them: an ALTER ... ADD COLUMN whose column
-# is already present must be skipped (still stamping user_version) rather than
-# failing with "duplicate column name".
+# Fresh databases start at user_version=0, so migrate() always runs against them.
+# create_tables() covers most of the current schema but NOT node_reviews — step v2
+# is what creates that table, on old and fresh databases alike. Objects it does
+# create (e.g. nodes.archived_at) make the matching step redundant, so an
+# ALTER ... ADD COLUMN whose column is already present is skipped (still stamping
+# user_version) rather than failing with "duplicate column name".
 _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE)
 
 
