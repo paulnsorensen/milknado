@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+# These tests intentionally exercise private persistence seams.
 import logging
 import shutil
 import sqlite3
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -21,6 +23,7 @@ from milknado.domains.graph._persistence import (
     set_dispatched_at,
     set_spec_hash,
 )
+from tests.graph_helpers import graph_conn
 
 
 @pytest.fixture()
@@ -41,10 +44,11 @@ def graph(tmp_path: Path) -> Generator[MikadoGraph, None, None]:
 
 class TestCreateTables:
     def test_tables_created(self, conn: sqlite3.Connection) -> None:
-        names = {
-            r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-        }
+        rows = cast(
+            list[tuple[str]],
+            conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall(),
+        )
+        names = {r[0] for r in rows}
         assert {
             "nodes",
             "edges",
@@ -60,14 +64,20 @@ class TestCreateTables:
         part of the schema contract, so a dropped CREATE INDEX must fail a test."""
         indexes = {
             r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+            for r in cast(
+                list[tuple[str]],
+                conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall(),
+            )
         }
         assert "idx_runs_node_status" in indexes
 
     def test_run_message_indexes_match_latest_lookups(self, conn: sqlite3.Connection) -> None:
         indexes = {
             r[0]
-            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+            for r in cast(
+                list[tuple[str]],
+                conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall(),
+            )
         }
         assert {
             "idx_run_messages_latest_role",
@@ -77,9 +87,9 @@ class TestCreateTables:
     def test_populated_latest_result_query_uses_covering_index_without_temp_sort(
         self, conn: sqlite3.Connection
     ) -> None:
-        conn.executemany(
-            "INSERT INTO runs (run_id, node_id, status, log_path, started_at) "
-            "VALUES (?, ?, 'completed', '', ?)",
+        _ = conn.executemany(
+            """INSERT INTO runs (run_id, node_id, status, log_path, started_at)
+            VALUES (?, ?, 'completed', '', ?)""",
             [
                 ("node-1-old", 1, "2026-01-01T00:00:00+00:00"),
                 ("node-1-new", 1, "2026-01-02T00:00:00+00:00"),
@@ -90,9 +100,9 @@ class TestCreateTables:
             ],
         )
         body = "result-body-" + ("x" * 1024)
-        conn.executemany(
-            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+        _ = conn.executemany(
+            """INSERT INTO run_messages (run_id, seq, role, body, created_at)
+            VALUES (?, ?, ?, ?, ?)""",
             [
                 ("node-1-old", 1, "stdout", "ignored", "2026-01-01T00:00:01+00:00"),
                 ("node-1-old", 2, "result", body + "-1-old", "2026-01-01T00:00:02+00:00"),
@@ -134,14 +144,18 @@ class TestCreateTables:
             "newer_m.created_at = m.created_at AND newer_m.seq > m.seq))"
             ")"
         )
-        plan = "\n".join(row[3] for row in conn.execute("EXPLAIN QUERY PLAN " + query))
+        plan_rows = cast(
+            list[tuple[int, int, int, str]],
+            conn.execute("EXPLAIN QUERY PLAN " + query).fetchall(),
+        )
+        plan = "\n".join(row[3] for row in plan_rows)
         assert "USING COVERING INDEX idx_run_messages_result_latest" in plan
         assert "USE TEMP B-TREE" not in plan
 
     def test_candidate_ownership_loader_deduplicates_and_ignores_missing(
         self, conn: sqlite3.Connection
     ) -> None:
-        conn.executemany(
+        _ = conn.executemany(
             "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
             [(1, "a.py"), (2, "b.py")],
         )
@@ -173,19 +187,19 @@ class TestPlanState:
 
 class TestDropAll:
     def test_drop_all_returns_node_count(self, graph: MikadoGraph) -> None:
-        graph.add_node("one")
-        graph.add_node("two")
+        _ = graph.add_node("one")
+        _ = graph.add_node("two")
         count = graph.drop_all()
         assert count == 2
 
     def test_drop_all_clears_nodes(self, graph: MikadoGraph) -> None:
-        graph.add_node("node")
-        graph.drop_all()
+        _ = graph.add_node("node")
+        _ = graph.drop_all()
         assert graph.get_all_nodes() == []
 
     def test_drop_all_clears_plan_state(self, graph: MikadoGraph) -> None:
         graph.set_spec_hash("abc")
-        graph.drop_all()
+        _ = graph.drop_all()
         assert graph.get_spec_hash() is None
 
     def test_drop_all_on_empty_returns_zero(self, graph: MikadoGraph) -> None:
@@ -196,11 +210,11 @@ class TestDropAll:
         foreign_keys=ON, so drop_all must clear goal_claims before nodes or the
         DELETE FROM nodes raises IntegrityError. Seed a claim, then prove reset works."""
         goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
-        graph.claim_or_reclaim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
-        assert get_goal_claim(graph._conn, goal.id) is not None
+        _ = graph.claim_or_reclaim_goal(goal.id, "run-x", now="2026-01-01T00:00:00+00:00")
+        assert get_goal_claim(graph_conn(graph), goal.id) is not None
         # Must not raise sqlite3.IntegrityError, and must clear the claim row.
         assert graph.drop_all() == 1
-        assert get_goal_claim(graph._conn, goal.id) is None
+        assert get_goal_claim(graph_conn(graph), goal.id) is None
 
 
 class TestRunsRepo:
@@ -234,7 +248,7 @@ class TestRunsRepo:
     def test_finish_run_transitions_running_to_done(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
         graph.start_run("r1", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.finish_run(
+        _ = graph.finish_run(
             "r1",
             RunResult(
                 status="done",
@@ -274,7 +288,9 @@ class TestRunsRepo:
         )
         assert first is True
         assert second is False
-        assert graph.get_run("r-fenced")["status"] == "done"
+        run = graph.get_run("r-fenced")
+        assert run is not None
+        assert run["status"] == "done"
 
     def test_finish_run_rehydrates_timed_out_and_rebased_bools(self, graph: MikadoGraph) -> None:
         """timed_out/rebased are stored as INTEGER; _run_row_to_dict must return
@@ -282,7 +298,7 @@ class TestRunsRepo:
         payload matches the old JSON sidecar's bool shape."""
         nid = self._node(graph)
         graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
-        graph.finish_run(
+        _ = graph.finish_run(
             "rt",
             RunResult(
                 status="failed",
@@ -300,7 +316,7 @@ class TestRunsRepo:
     def test_finish_run_rebased_true_round_trips(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
         graph.start_run("rb", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
-        graph.finish_run(
+        _ = graph.finish_run(
             "rb",
             RunResult(
                 status="done",
@@ -321,7 +337,7 @@ class TestRunsRepo:
         terminal-state clobber race the old sidecar flow guarded against."""
         nid = self._node(graph)
         graph.start_run("rc", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.finish_run(
+        _ = graph.finish_run(
             "rc",
             RunResult(
                 status="failed",
@@ -332,7 +348,7 @@ class TestRunsRepo:
             ),
         )
         # The wedged worker finally finishes and lands its own terminal write.
-        graph.finish_run(
+        _ = graph.finish_run(
             "rc",
             RunResult(
                 status="done",
@@ -362,7 +378,7 @@ class TestRunsRepo:
         the sidecar read-then-write guard prevented."""
         nid = self._node(graph)
         graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 600, pid=11)
-        graph.finish_run(
+        _ = graph.finish_run(
             "rt",
             RunResult(
                 status="done",
@@ -380,7 +396,7 @@ class TestRunsRepo:
         nid = self._node(graph)
         graph.start_run("live", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
         graph.start_run("done", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.finish_run(
+        _ = graph.finish_run(
             "done",
             RunResult(
                 status="done",
@@ -430,8 +446,10 @@ class TestRunsRepo:
         a later 'progress' row must not mask the 'result' the poll surfaces."""
         nid = self._node(graph)
         graph.start_run("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.deposit_run_message("r", "result", "the-deliverable", "2026-01-01T00:00:01+00:00")
-        graph.deposit_run_message("r", "progress", "step-2", "2026-01-01T00:00:02+00:00")
+        _ = graph.deposit_run_message(
+            "r", "result", "the-deliverable", "2026-01-01T00:00:01+00:00"
+        )
+        _ = graph.deposit_run_message("r", "progress", "step-2", "2026-01-01T00:00:02+00:00")
         assert graph.latest_run_message("r", "result") == "the-deliverable"
         assert graph.latest_run_message("r", "progress") == "step-2"
 
@@ -450,7 +468,7 @@ class TestSetDispatchedAt:
             set_dispatched_at(conn, 9999)
 
     def test_set_dispatched_at_persists(self, graph: MikadoGraph) -> None:
-        graph.add_node("task")
+        _ = graph.add_node("task")
         graph.set_dispatched_at(1)
         node = graph.get_node(1)
         assert node is not None
@@ -468,19 +486,19 @@ class TestWalDurability:
         # but stays open, so its frames sit in the shared -wal.
         runner = MikadoGraph(db_path)
         try:
-            runner.add_node("written-by-runner")
+            _ = runner.add_node("written-by-runner")
             # Short-lived MCP-tool-call connection: open then close. Its close()
             # must checkpoint the shared WAL. A non-last-connection close does no
             # implicit checkpoint, so without the fix the frames stay in -wal.
             MikadoGraph(db_path).close()
             # Model `git add -f milknado.db` capturing ONLY the main db file.
             committed = tmp_path / "committed.db"
-            shutil.copy(db_path, committed)
+            _ = shutil.copy(db_path, committed)
         finally:
             runner.close()
         fresh = sqlite3.connect(str(committed))
         try:
-            count = fresh.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
+            count = cast(int, fresh.execute("SELECT COUNT(*) FROM nodes").fetchone()[0])
         finally:
             fresh.close()
         assert count == 1, "WAL tail lost: main db missing the runner's committed write"
@@ -489,7 +507,7 @@ class TestWalDurability:
         """busy_timeout is pinned to 5000ms so concurrent writers (detached
         runner + server) wait rather than failing instantly — guards against a
         future connect() change silently dropping the wait window."""
-        (timeout,) = graph._conn.execute("PRAGMA busy_timeout").fetchone()
+        (timeout,) = cast(tuple[int], graph_conn(graph).execute("PRAGMA busy_timeout").fetchone())
         assert timeout == 5000
 
     def test_close_survives_checkpoint_failure(
@@ -499,7 +517,7 @@ class TestWalDurability:
         connection still has to be released and the failure only logged, so a
         checkpoint error can't crash an MCP tool call mid-cleanup."""
         graph = MikadoGraph(tmp_path / "g.db")
-        graph._conn.close()  # force the checkpoint PRAGMA to raise sqlite3.Error
+        graph_conn(graph).close()  # force the checkpoint PRAGMA to raise sqlite3.Error
         with caplog.at_level(logging.WARNING):
             graph.close()  # must not raise
         assert "WAL checkpoint on close failed" in caplog.text
@@ -519,10 +537,10 @@ class TestArchiveSeed:
     def test_archived_at_round_trips_as_datetime(self, graph: MikadoGraph) -> None:
         node = graph.add_node("stamp me")
         stamp = datetime(2026, 7, 24, 12, 0, 0, tzinfo=UTC)
-        graph._conn.execute(
+        _ = graph_conn(graph).execute(
             "UPDATE nodes SET archived_at = ? WHERE id = ?", (stamp.isoformat(), node.id)
         )
-        graph._conn.commit()
+        graph_conn(graph).commit()
         reread = graph.get_node(node.id)
         assert reread is not None
         assert reread.archived_at == stamp
@@ -533,13 +551,13 @@ class TestArchiveSeed:
         db = tmp_path / "g.db"
         conn = sqlite3.connect(str(db))
         create_tables(conn)
-        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
-        conn.execute("PRAGMA user_version = 2")
+        _ = conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
+        _ = conn.execute("PRAGMA user_version = 2")
         conn.commit()
         conn.close()
 
         graph = MikadoGraph(db)
-        version = graph._conn.execute("PRAGMA user_version").fetchone()[0]
+        version = cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0])
         assert version == 3
         node = graph.add_node("migrated task")
         assert node.archived_at is None
@@ -551,18 +569,18 @@ class TestArchiveSeed:
         db = tmp_path / "g.db"
         conn = sqlite3.connect(str(db))
         create_tables(conn)
-        conn.execute(
-            "INSERT INTO nodes (description, status, kind, created_at) "
-            "VALUES ('pre-v3 done task', 'done', 'task', '2026-07-20T00:00:00+00:00')"
+        _ = conn.execute(
+            """INSERT INTO nodes (description, status, kind, created_at)
+            VALUES ('pre-v3 done task', 'done', 'task', '2026-07-20T00:00:00+00:00')"""
         )
-        conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
-        conn.execute("PRAGMA user_version = 2")
+        _ = conn.execute("ALTER TABLE nodes DROP COLUMN archived_at")
+        _ = conn.execute("PRAGMA user_version = 2")
         conn.commit()
         conn.close()
 
         graph = MikadoGraph(db)
         try:
-            assert graph._conn.execute("PRAGMA user_version").fetchone()[0] == 3
+            assert cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0]) == 3
             node = graph.get_node(1)
             assert node is not None
             assert node.description == "pre-v3 done task"
@@ -589,16 +607,16 @@ class TestPruneRunMessages:
     test below covers one of them.
     """
 
-    OLD = "2026-01-01T00:00:00+00:00"
+    OLD: str = "2026-01-01T00:00:00+00:00"
     # More than _RUN_MESSAGE_MAX_AGE_SECONDS (7 days) after OLD, so depositing at
     # this instant puts every OLD message behind the age cutoff.
-    PAST_CUTOFF = "2026-03-01T00:00:00+00:00"
+    PAST_CUTOFF: str = "2026-03-01T00:00:00+00:00"
 
     def _seed_runs(self, conn: sqlite3.Connection) -> None:
         """One run left running, one driven to a terminal status."""
         _persistence.start_run(conn, "live", 1, "/l", self.OLD, 600)
         _persistence.start_run(conn, "done", 1, "/l", self.OLD, 600)
-        _persistence.finish_run(
+        _ = _persistence.finish_run(
             conn,
             "done",
             RunResult(status="done", exit_code=0, timed_out=False, ended_at=self.OLD),
@@ -608,13 +626,16 @@ class TestPruneRunMessages:
         rows = conn.execute(
             "SELECT body FROM run_messages WHERE run_id = ? ORDER BY seq", (run_id,)
         ).fetchall()
-        return [r[0] for r in rows]
+        typed_rows = cast(list[tuple[str]], rows)
+        return [r[0] for r in typed_rows]
 
     def test_age_cutoff_spares_running_run(self, conn: sqlite3.Connection) -> None:
         self._seed_runs(conn)
-        _run_persistence.deposit_run_message(conn, "live", "result", "live-old", self.OLD)
-        _run_persistence.deposit_run_message(conn, "done", "result", "done-old", self.OLD)
-        _run_persistence.deposit_run_message(conn, "done", "result", "trigger", self.PAST_CUTOFF)
+        _ = _run_persistence.deposit_run_message(conn, "live", "result", "live-old", self.OLD)
+        _ = _run_persistence.deposit_run_message(conn, "done", "result", "done-old", self.OLD)
+        _ = _run_persistence.deposit_run_message(
+            conn, "done", "result", "trigger", self.PAST_CUTOFF
+        )
         assert self._bodies(conn, "live") == ["live-old"], (
             "the age cutoff deleted history for a still-running run"
         )
@@ -628,11 +649,11 @@ class TestPruneRunMessages:
         monkeypatch.setattr(_run_persistence, "_MAX_RETAINED_RUN_MESSAGES", 1)
         self._seed_runs(conn)
         deposit = _run_persistence.deposit_run_message
-        deposit(conn, "live", "result", "live-1", "2026-01-01T00:00:01Z")
-        deposit(conn, "live", "result", "live-2", "2026-01-01T00:00:02Z")
-        deposit(conn, "done", "result", "done-1", "2026-01-01T00:00:03Z")
-        deposit(conn, "done", "result", "done-2", "2026-01-01T00:00:04Z")
-        deposit(conn, "done", "result", "done-3", "2026-01-01T00:00:05Z")
+        _ = deposit(conn, "live", "result", "live-1", "2026-01-01T00:00:01Z")
+        _ = deposit(conn, "live", "result", "live-2", "2026-01-01T00:00:02Z")
+        _ = deposit(conn, "done", "result", "done-1", "2026-01-01T00:00:03Z")
+        _ = deposit(conn, "done", "result", "done-2", "2026-01-01T00:00:04Z")
+        _ = deposit(conn, "done", "result", "done-3", "2026-01-01T00:00:05Z")
         assert self._bodies(conn, "live") == ["live-1", "live-2"], (
             "the retention cap counted a still-running run's messages and evicted them"
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from milknado.domains.common import GraphExecutionSnapshot, GraphReadPort, MikadoNode
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph.traversals import walk_ancestors
 
@@ -29,7 +30,7 @@ class TestWalkAncestors:
         c = graph.add_node("C", parent_id=d.id)
         # A depends on both B and C — add A then manually add second parent edge
         a = graph.add_node("A", parent_id=b.id)
-        graph.add_edge(c.id, a.id)
+        _ = graph.add_edge(c.id, a.id)
 
         result = walk_ancestors(graph, a.id)
         # Must start at A and end at D
@@ -42,7 +43,7 @@ class TestWalkAncestors:
 
     def test_unknown_node_id_raises_value_error(self, graph: MikadoGraph) -> None:
         with pytest.raises(ValueError, match="Node 9999 not found"):
-            walk_ancestors(graph, 9999)
+            _ = walk_ancestors(graph, 9999)
 
 
 def test_walk_ancestors_accepts_read_port(graph: MikadoGraph) -> None:
@@ -50,7 +51,17 @@ def test_walk_ancestors_accepts_read_port(graph: MikadoGraph) -> None:
     leaf = graph.add_node("leaf", parent_id=root.id)
 
     class ReadPort:
-        def get_node(self, node_id: int):
+        def get_node(self, node_id: int) -> MikadoNode | None:
             return {root.id: root, leaf.id: leaf}.get(node_id)
 
-    assert [node.id for node in walk_ancestors(ReadPort(), leaf.id)] == [leaf.id, root.id]
+        def get_children(self, node_id: int) -> list[MikadoNode]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+        def get_file_ownership(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+        def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
+    read_port: GraphReadPort = ReadPort()
+    assert [node.id for node in walk_ancestors(read_port, leaf.id)] == [leaf.id, root.id]

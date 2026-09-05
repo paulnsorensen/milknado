@@ -22,7 +22,7 @@ SHIPPED_CONFIG = REPO_ROOT / "milknado.toml"
 
 def _write(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    _ = path.write_text(body, encoding="utf-8")
     return path
 
 
@@ -57,9 +57,12 @@ def test_old_extend_grammar_fails_to_parse(tmp_path: Path) -> None:
     """
     bad = _write(
         tmp_path / "milknado.toml",
-        '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.worker.tools.claude]\n"
-        'extend = ["Bash(just:*)"]\n',
+        """[milknado]
+agent_family = "claude"
+
+[milknado.worker.tools.claude]
+extend = ["Bash(just:*)"]
+""",
     )
     # Match the full defect signature, not just the context prefix: the
     # `extend=` table collapses the family value to a dict, and the loader
@@ -70,16 +73,19 @@ def test_old_extend_grammar_fails_to_parse(tmp_path: Path) -> None:
         ValueError,
         match=r"\[milknado\.worker\.tools\.claude\] must be a list of strings, got dict",
     ):
-        load_config(bad, include_global=False)
+        _ = load_config(bad, include_global=False)
 
 
 def test_new_single_list_grammar_parses(tmp_path: Path) -> None:
     """The supported single-list form parses where the old one failed."""
     good = _write(
         tmp_path / "milknado.toml",
-        '[milknado]\nagent_family = "claude"\n\n'
-        "[milknado.worker.tools]\n"
-        'claude = ["...", "Bash(just:*)"]\n',
+        """[milknado]
+agent_family = "claude"
+
+[milknado.worker.tools]
+claude = ["...", "Bash(just:*)"]
+""",
     )
     cfg = load_config(good, include_global=False)
     assert cfg.worker_tools["claude"] == ("...", "Bash(just:*)")

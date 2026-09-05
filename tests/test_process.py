@@ -24,7 +24,7 @@ from milknado.domains.common import pid_alive
         None,
     ],
 )
-def test_pid_alive_rejects_invalid_pid(bad_pid):
+def test_pid_alive_rejects_invalid_pid(bad_pid: object) -> None:
     assert pid_alive(bad_pid) is False
 
 

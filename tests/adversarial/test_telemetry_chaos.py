@@ -16,11 +16,15 @@ from milknado.domains.batching.change import (
     Batch,
     BatchPlan,
     FileChange,
+    SolverStatus,
     SymbolRef,
     SymbolSpread,
 )
 from milknado.domains.planning.manifest import MANIFEST_VERSION, PlanChangeManifest
-from milknado.domains.planning.telemetry import _build_record, record_batch_snapshot
+from milknado.domains.planning.telemetry import (
+    _build_record,  # pyright: ignore[reportPrivateUsage]
+    record_batch_snapshot,
+)
 
 
 def _make_manifest(changes: tuple[FileChange, ...] = ()) -> PlanChangeManifest:
@@ -38,12 +42,12 @@ def _make_plan(
     *,
     batches: tuple[Batch, ...] = (),
     spread_report: tuple[SymbolSpread, ...] = (),
-    solver_status: str = "OPTIMAL",
+    solver_status: SolverStatus = "OPTIMAL",
 ) -> BatchPlan:
     return BatchPlan(
         batches=batches,
         spread_report=spread_report,
-        solver_status=solver_status,  # ty: ignore[invalid-argument-type]
+        solver_status=solver_status,
     )
 
 
@@ -111,11 +115,15 @@ class TestFloatEdgeCasesInSpread:
     def test_nan_spread_in_spread_report(self) -> None:
         """NaN in spread — _build_record propagates it; json.dumps allows NaN by default."""
         sym = SymbolRef(name="foo", file="src/foo.py")
-        spread_report = (SymbolSpread(symbol=sym, spread=float("nan")),)  # ty: ignore[invalid-argument-type]
+        spread_report = (
+            SymbolSpread(symbol=sym, spread=float("nan")),  # pyright: ignore[reportArgumentType]
+        )
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(spread_report=spread_report)
         record = _build_record(manifest, plan)
-        assert math.isnan(record["max_spread"])  # type: ignore[arg-type]
+        max_spread = record["max_spread"]
+        assert isinstance(max_spread, float)
+        assert math.isnan(max_spread)
         dumped = json.dumps(record)
         assert "NaN" in dumped  # json.dumps(allow_nan=True) is the Python default
 
@@ -124,7 +132,9 @@ class TestFloatEdgeCasesInSpread:
         Infinity by default.
         """
         sym = SymbolRef(name="foo", file="src/foo.py")
-        spread_report = (SymbolSpread(symbol=sym, spread=float("inf")),)  # ty: ignore[invalid-argument-type]
+        spread_report = (
+            SymbolSpread(symbol=sym, spread=float("inf")),  # pyright: ignore[reportArgumentType]
+        )
         manifest = _make_manifest(changes=(_make_change("c1"),))
         plan = _make_plan(spread_report=spread_report)
         record = _build_record(manifest, plan)
@@ -175,9 +185,9 @@ class TestUnknownSolverStatus:
         plan = BatchPlan(
             batches=(),
             spread_report=(),
-            solver_status="TIMEOUT",  # ty: ignore[invalid-argument-type]
+            solver_status="TIMEOUT",  # pyright: ignore[reportArgumentType]
         )
         record_batch_snapshot(tmp_path, manifest, plan)
         line = (tmp_path / ".milknado" / "calibration.jsonl").read_text().strip()
-        record = json.loads(line)
+        record = json.loads(line)  # pyright: ignore[reportAny]
         assert record["solver_status"] == "TIMEOUT"

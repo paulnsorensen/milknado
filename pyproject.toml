@@ -218,6 +218,7 @@ max-statements = 40
 "tests/rebalance_helpers.py" = ["PLR0913"]
 "tests/test_adapters_tmux.py" = ["PLR0915"]
 "tests/test_adversarial_review_runtime.py" = ["PLR0913"]
+"tests/test_cli.py" = ["PLR0913"]
 "tests/test_execution.py" = ["PLR0913"]
 "tests/test_executor_duration.py" = ["PLR0913"]
 "tests/test_executor_merge_back.py" = ["PLR0913", "PLR0915"]
@@ -315,7 +316,6 @@ allow = [
     "milknado.loop._agent:_load_kernel32",
     "milknado.loop._agent:_resume_windows_process",
 ]
-
 [tool.milknado.quality]
 max_file_lines = 300
 

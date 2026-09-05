@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import msgspec
 import pytest
@@ -19,7 +20,7 @@ runner = CliRunner()
 
 def _write(path: Path, body: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    _ = path.write_text(body, encoding="utf-8")
     return path
 
 
@@ -32,7 +33,7 @@ def xdg(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_inherit_global_false_skips_global_layer(xdg: Path, tmp_path: Path) -> None:
-    _write(xdg / "milknado" / "milknado.toml", "[milknado]\nconcurrency_limit = 99\n")
+    _ = _write(xdg / "milknado" / "milknado.toml", "[milknado]\nconcurrency_limit = 99\n")
     local = _write(
         tmp_path / "milknado.toml",
         '[milknado]\ninherit_global = false\nagent_family = "claude"\n',
@@ -42,7 +43,7 @@ def test_inherit_global_false_skips_global_layer(xdg: Path, tmp_path: Path) -> N
 
 
 def test_flavor_inherit_false_replaces_global_table(xdg: Path, tmp_path: Path) -> None:
-    _write(
+    _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
             "[milknado]\nmax_turns = 60\n\n"
@@ -78,10 +79,11 @@ def test_invalid_inherit_controls_fail_at_config_boundary(
     tmp_path: Path, body: str, match: str
 ) -> None:
     with pytest.raises(msgspec.ValidationError, match=match):
-        load_config(_write(tmp_path / "milknado.toml", body))
+        _ = load_config(_write(tmp_path / "milknado.toml", body))
 
 
 def test_resolved_flavor_output_is_the_runtime_profile(xdg: Path, tmp_path: Path) -> None:
+    _ = xdg
     local = _write(
         tmp_path / "milknado.toml",
         (
@@ -90,7 +92,9 @@ def test_resolved_flavor_output_is_the_runtime_profile(xdg: Path, tmp_path: Path
         ),
     )
     details = load_config_details(local)
-    expected = msgspec.to_builtins(resolve_flavor_profile(details.config, "research"))
+    expected = cast(
+        dict[str, object], msgspec.to_builtins(resolve_flavor_profile(details.config, "research"))
+    )
 
     assert resolved_view(details, "research") == expected
     result = runner.invoke(
@@ -105,7 +109,7 @@ def test_explain_attributes_overridden_and_inherited_flavor_keys(
     xdg: Path, tmp_path: Path
 ) -> None:
     global_path = xdg / "milknado" / "milknado.toml"
-    _write(
+    _ = _write(
         global_path,
         (
             "[milknado]\nconcurrency_limit = 7\n\n"
@@ -120,7 +124,9 @@ def test_explain_attributes_overridden_and_inherited_flavor_keys(
         ),
     )
 
-    explained = explain_view(load_config_details(local), "research")
+    explained = cast(
+        dict[str, dict[str, object]], explain_view(load_config_details(local), "research")
+    )
 
     assert explained["max_turns"]["source"] == f"global:{global_path} (flavor:research)"
     assert explained["brief_prepend"]["source"] == f"local:{local} (flavor:research)"
@@ -128,8 +134,8 @@ def test_explain_attributes_overridden_and_inherited_flavor_keys(
 
 def test_config_show_resolved_and_explain_are_json(xdg: Path, tmp_path: Path) -> None:
     global_path = xdg / "milknado" / "milknado.toml"
-    _write(global_path, "[milknado]\nconcurrency_limit = 7\n")
-    _write(tmp_path / "milknado.toml", "[milknado]\nconcurrency_limit = 12\n")
+    _ = _write(global_path, "[milknado]\nconcurrency_limit = 7\n")
+    _ = _write(tmp_path / "milknado.toml", "[milknado]\nconcurrency_limit = 12\n")
 
     resolved = runner.invoke(
         app, ["config", "show", "--resolved", "--project-root", str(tmp_path)]

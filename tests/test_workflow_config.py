@@ -8,6 +8,7 @@ max_iterations / max_turns: global defaults, global override, per-flavor overrid
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypedDict, Unpack
 
 import pytest
 
@@ -25,7 +26,15 @@ from milknado.domains.common.config import (
 from milknado.domains.common.flavor_profile import resolve_flavor_profile
 
 
-def _cfg(tmp_path: Path, **kwargs) -> MilknadoConfig:
+class _ConfigOverrides(TypedDict, total=False):
+    worker_agent_type: str
+    loop_mode: str
+    max_iterations: int
+    max_turns: int
+    flavors: dict[str, FlavorOverride]
+
+
+def _cfg(tmp_path: Path, **kwargs: Unpack[_ConfigOverrides]) -> MilknadoConfig:
     return MilknadoConfig(
         agent_family="claude",
         project_root=tmp_path,
@@ -107,15 +116,20 @@ def test_per_flavor_none_fields_inherit_global(tmp_path: Path) -> None:
 
 def test_toml_parse_per_flavor_workflow_fields(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text(
-        '[milknado]\nagent_family = "claude"\n'
-        'worker_agent_type = "team:worker"\n\n'
-        "[milknado.flavor.implement]\n"
-        'loop_mode = "redispatch"\nmax_iterations = 5\nmax_turns = 40\n\n'
-        "[milknado.flavor.spike]\n"
-        'loop_mode = "single"\nmax_turns = 25\n'
-        'agent_type = "milknado:milknado-spike-worker"\n'
-    )
+    _ = path.write_text("""[milknado]
+    agent_family = "claude"
+    worker_agent_type = "team:worker"
+    
+    [milknado.flavor.implement]
+    loop_mode = "redispatch"
+    max_iterations = 5
+    max_turns = 40
+    
+    [milknado.flavor.spike]
+    loop_mode = "single"
+    max_turns = 25
+    agent_type = "milknado:milknado-spike-worker"
+    """)
     cfg = load_config(path, include_global=False)
     assert cfg.worker_agent_type == "team:worker"
     impl = resolve_flavor_profile(cfg, "implement")
@@ -128,7 +142,7 @@ def test_toml_parse_per_flavor_workflow_fields(tmp_path: Path) -> None:
 
 def test_loop_mode_defaults_to_redispatch_when_absent(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text(
+    _ = path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nmax_turns = 25\n'
     )
     cfg = load_config(path, include_global=False)
@@ -138,34 +152,34 @@ def test_loop_mode_defaults_to_redispatch_when_absent(tmp_path: Path) -> None:
 
 def test_invalid_loop_mode_rejected(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\nloop_mode = "turbo"\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\nloop_mode = "turbo"\n')
     with pytest.raises(ValueError, match="loop_mode must be one of"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_invalid_max_iterations_rejected(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text(
+    _ = path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nmax_iterations = 0\n'
     )
     with pytest.raises(ValueError, match="max_iterations must be >= 1"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_non_string_worker_agent_type_rejected(tmp_path: Path) -> None:
     """A non-string worker_agent_type is rejected, not silently str()-coerced."""
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\nworker_agent_type = 7\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\nworker_agent_type = 7\n')
     with pytest.raises(ValueError, match="worker_agent_type must be a string"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_config_commit_footer_rejects_non_string(tmp_path: Path) -> None:
     """A non-string commit_footer is rejected, not silently str()-coerced."""
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\ncommit_footer = 7\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\ncommit_footer = 7\n')
     with pytest.raises(ValueError, match="commit_footer must be a string"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 # ── save/load round-trip ─────────────────────────────────────────────────────
@@ -202,20 +216,20 @@ def test_save_load_round_trip_preserves_workflow_fields(tmp_path: Path) -> None:
 
 def test_per_flavor_agent_type_must_be_string(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text(
+    _ = path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nagent_type = 7\n'
     )
     with pytest.raises(ValueError, match="agent_type must be a string"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_per_flavor_max_iterations_must_be_integer(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text(
+    _ = path.write_text(
         '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.spike]\nmax_iterations = "lots"\n'
     )
     with pytest.raises(ValueError, match="max_iterations must be an integer"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_global_max_iterations_rejects_non_positive(tmp_path: Path) -> None:
@@ -223,24 +237,24 @@ def test_global_max_iterations_rejects_non_positive(tmp_path: Path) -> None:
     zero/negative max_iterations would make the redispatch loop never dispatch a
     worker, so it must be rejected at parse, not silently coerced."""
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\nmax_iterations = 0\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\nmax_iterations = 0\n')
     with pytest.raises(ValueError, match=r"\[milknado\] max_iterations must be >= 1"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_global_max_turns_rejects_negative(tmp_path: Path) -> None:
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\nmax_turns = -3\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\nmax_turns = -3\n')
     with pytest.raises(ValueError, match=r"\[milknado\] max_turns must be >= 1"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 def test_global_max_iterations_rejects_bool(tmp_path: Path) -> None:
     """TOML booleans are ints in Python; the cap must not accept ``true`` as 1."""
     path = tmp_path / "milknado.toml"
-    path.write_text('[milknado]\nagent_family = "claude"\nmax_iterations = true\n')
+    _ = path.write_text('[milknado]\nagent_family = "claude"\nmax_iterations = true\n')
     with pytest.raises(ValueError, match=r"\[milknado\] max_iterations must be an integer"):
-        load_config(path, include_global=False)
+        _ = load_config(path, include_global=False)
 
 
 @pytest.mark.parametrize(
@@ -262,4 +276,4 @@ def test_normalization_preserves_domain_validation_messages(
     payload: dict[str, object], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        decode_milknado_section(payload)
+        _ = decode_milknado_section(payload)

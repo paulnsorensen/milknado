@@ -26,7 +26,7 @@ def _fake_run(cmd: list[str], **_kwargs: object) -> MagicMock:
     return result
 
 
-def _fake_pkg_version(name: str) -> str:
+def _fake_pkg_version(_name: str) -> str:
     return "1.0.0"
 
 

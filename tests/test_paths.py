@@ -24,11 +24,11 @@ class TestNormalizeHintPaths:
 
     def test_dotdot_escape_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="escapes"):
-            normalize_hint_paths(["../outside.py"], tmp_path)
+            _ = normalize_hint_paths(["../outside.py"], tmp_path)
 
     def test_absolute_outside_root_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="escapes"):
-            normalize_hint_paths(["/etc/passwd"], tmp_path)
+            _ = normalize_hint_paths(["/etc/passwd"], tmp_path)
 
     def test_nonexistent_path_accepted(self, tmp_path: Path) -> None:
         result = normalize_hint_paths(["does/not/exist.py"], tmp_path)
@@ -49,7 +49,7 @@ class TestNormalizeHintPaths:
         # An absolute path like /root/../../../etc/passwd still escapes after resolution
         escaping = str(tmp_path / ".." / ".." / "etc" / "passwd")
         with pytest.raises(ValueError, match="escapes"):
-            normalize_hint_paths([escaping], tmp_path)
+            _ = normalize_hint_paths([escaping], tmp_path)
 
     def test_absolute_with_dotdot_staying_under_root_accepted(self, tmp_path: Path) -> None:
         # /root/sub/../other.py resolves to /root/other.py — still under root
@@ -62,18 +62,18 @@ class TestNormalizeHintPaths:
         # outside the root escapes after resolution and must be rejected.
         inside = tmp_path / "link.py"
         outside = tmp_path.parent / "real.py"
-        outside.write_text("x")
+        _ = outside.write_text("x")
         inside.symlink_to(outside)
         with pytest.raises(ValueError, match="escapes"):
-            normalize_hint_paths([str(inside)], tmp_path)
+            _ = normalize_hint_paths([str(inside)], tmp_path)
 
     def test_empty_string_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="empty"):
-            normalize_hint_paths([""], tmp_path)
+            _ = normalize_hint_paths([""], tmp_path)
 
     def test_whitespace_only_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="empty"):
-            normalize_hint_paths(["  "], tmp_path)
+            _ = normalize_hint_paths(["  "], tmp_path)
 
     def test_padded_path_trimmed_before_normalization(self, tmp_path: Path) -> None:
         # Padding must not persist into the stored hint, or it never matches the real file.
@@ -108,4 +108,4 @@ class TestResolveProjectPath:
         assert isinstance(trusted, TrustedGlobalPath)
         assert resolve_project_path(trusted, tmp_path, label="path") == outside
         with pytest.raises(ValueError, match="escapes"):
-            resolve_project_path(str(outside), tmp_path, label="path")
+            _ = resolve_project_path(str(outside), tmp_path, label="path")
