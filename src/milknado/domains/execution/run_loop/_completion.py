@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
+from milknado.domains.execution.run_loop._protocols import RunLoopState
 from milknado.domains.execution.run_loop.display import _summarize_description
 from milknado.domains.execution.run_loop.state import TerminalRunState
 from milknado.loop import RunStatus
@@ -14,13 +15,12 @@ from milknado.loop import RunStatus
 if TYPE_CHECKING:
     from rich.live import Live
 
-    from milknado.domains.execution.run_loop import RunLoop
 
 _logger = logging.getLogger("milknado")
 
 
 def handle_completion(
-    loop: RunLoop,
+    loop: RunLoopState,
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,

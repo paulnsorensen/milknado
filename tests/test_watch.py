@@ -8,13 +8,16 @@ import pytest
 
 from milknado.app.run import ExecutionRunStatus
 from milknado.app.run_view import summary_text
-from milknado.app.watch import WatchSnapshotSource, _tail_open_file
+from milknado.app.watch import (
+    WatchSnapshotSource,
+    _tail_open_file,  # pyright: ignore[reportPrivateUsage] -- wrapping the tail helper directly to assert its cache-hit count
+)
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus, RunResult
 from milknado.domains.graph import MikadoGraph, read_observer_snapshot
 
 
 def _finish(graph: MikadoGraph, run_id: str, node_id: int) -> None:
-    graph.finish_run(
+    _ = graph.finish_run(
         run_id,
         RunResult(
             status="done",
@@ -23,7 +26,7 @@ def _finish(graph: MikadoGraph, run_id: str, node_id: int) -> None:
             ended_at="2026-09-03T12:01:30+00:00",
         ),
     )
-    graph.mark_terminal(node_id, run_id, NodeStatus.DONE)
+    _ = graph.mark_terminal(node_id, run_id, NodeStatus.DONE)
 
 
 def _observed_runs(tmp_path: Path) -> tuple[Path, Path]:
@@ -34,12 +37,12 @@ def _observed_runs(tmp_path: Path) -> tuple[Path, Path]:
     goal = graph.add_node("Ship observer", spec=NodeSpec(kind=NodeKind.GOAL))
     active = graph.add_node("Watch active work", parent_id=goal.id)
     terminal = graph.add_node("Retain finished work", parent_id=goal.id)
-    graph.add_node("Ready next work", parent_id=goal.id)
+    _ = graph.add_node("Ready next work", parent_id=goal.id)
     log_dir = project_root / ".milknado" / "runs" / "active"
     log_dir.mkdir(parents=True)
-    (log_dir / "001.log").write_text("first line\nlatest line\n", encoding="utf-8")
+    _ = (log_dir / "001.log").write_text("first line\nlatest line\n", encoding="utf-8")
     secret = tmp_path / "secret.log"
-    secret.write_text("must not render\n", encoding="utf-8")
+    _ = secret.write_text("must not render\n", encoding="utf-8")
     (log_dir / "999.log").symlink_to(secret)
     assert graph.claim_node(active.id, "active-run", now="2026-09-03T12:00:00+00:00")
     graph.start_run("active-run", active.id, str(log_dir), "2026-09-03T12:00:00+00:00", 600)
@@ -56,7 +59,7 @@ def test_watch_snapshot_projects_safe_cached_durable_state(tmp_path: Path) -> No
     source = WatchSnapshotSource(project_root, db_path)
     with patch("milknado.app.watch._tail_open_file", wraps=_tail_open_file) as read_tail:
         snapshot = source.snapshot()
-        source.snapshot()
+        _ = source.snapshot()
 
     assert read_tail.call_count == 1
     assert snapshot.goal == "Ship observer"
@@ -84,7 +87,7 @@ def test_watch_rejects_log_replaced_by_out_of_root_symlink(
     project_root, db_path = _observed_runs(tmp_path)
     candidate = project_root / ".milknado" / "runs" / "active" / "001.log"
     secret = tmp_path / "replacement-secret.log"
-    secret.write_text("must not render after swap\n", encoding="utf-8")
+    _ = secret.write_text("must not render after swap\n", encoding="utf-8")
     real_open = os.open
     monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
     swapped = False
@@ -143,7 +146,7 @@ def test_observer_counts_exact_dispatch_availability_without_conflict_pairs(
     blocked = graph.add_node("blocked by active", parent_id=goal.id)
     first = graph.add_node("first shared candidate", parent_id=goal.id)
     later = graph.add_node("later shared candidate", parent_id=goal.id)
-    graph.add_node("unowned candidate", parent_id=goal.id)
+    _ = graph.add_node("unowned candidate", parent_id=goal.id)
     graph.set_file_ownership(active.id, ["active.py"])
     graph.set_file_ownership(blocked.id, ["active.py"])
     graph.set_file_ownership(first.id, ["shared.py"])

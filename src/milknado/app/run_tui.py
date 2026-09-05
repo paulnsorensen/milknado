@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from textual import on
+from textual.binding import BindingType
 from textual.widgets import Input
+from typing_extensions import override
 
 from milknado.app.run import ExecutionController
 from milknado.app.run_commands import ExecutionCommandsMixin
@@ -23,7 +25,7 @@ if TYPE_CHECKING:
 class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     """Controller-backed operator view for one execution."""
 
-    BINDINGS = [  # noqa: V107 - Textual reads binding configuration
+    BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),
         ("enter", "open_detail", "Open selected run"),
@@ -45,15 +47,16 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         spec_text: str | None = None,
         spec_path: Path | None = None,
     ) -> None:
-        self.controller = controller
-        self.feature_branch = feature_branch
-        self.strict = strict
-        self.spec_text = spec_text
-        self.spec_path = spec_path
-        self._execution_worker: Worker | None = None
+        self.controller: ExecutionController = controller
+        self.feature_branch: str | None = feature_branch
+        self.strict: bool = strict
+        self.spec_text: str | None = spec_text
+        self.spec_path: Path | None = spec_path
+        self._execution_worker: Worker[None] | None = None
         self._confirmation: tuple[str, str | None] | None = None
         super().__init__(controller)
 
+    @override
     def on_mount(self) -> None:
         super().on_mount()
         if self.feature_branch is not None:
@@ -65,7 +68,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self.set_focus(None)
         run = self._selected_active_run()
         if text and run is not None and run.actions.can_queue_guidance:
-            self._queue_guidance(run.run_id, text)
+            _ = self._queue_guidance(run.run_id, text)
 
     def _set_confirmation(self, action: str, run_id: str | None) -> None:
         self._confirmation = (action, run_id)
@@ -77,11 +80,12 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self._confirmation = None
         self.query_one("#detail", RunDetailPanel).clear_confirmation()
 
-    def action_back(self) -> None:
+    @override
+    async def action_back(self) -> None:
         if self._confirmation is not None:
             self._clear_confirmation()
         else:
-            super().action_back()
+            await super().action_back()
 
     def action_focus_guidance(self) -> None:  # noqa: V105 - Textual binding action
         run = self._selected_active_run()
@@ -98,6 +102,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         if run is not None and run.actions.can_force_stop:
             self._set_confirmation("force", run.run_id)
 
+    @override
     def action_quit_all(self) -> None:  # noqa: V105 - Textual binding action
         if self.snapshot.active_runs or self._execution_in_flight():
             self._set_confirmation("quit", None)
@@ -107,6 +112,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     def _execution_in_flight(self) -> bool:
         return self._execution_worker is not None and not self._execution_worker.is_finished
 
+    @override
     def on_key(self, event: Key) -> None:
         if self._confirmation is None:
             super().on_key(event)

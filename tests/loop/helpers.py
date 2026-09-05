@@ -11,15 +11,25 @@ import itertools
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any, Literal, overload
 from unittest.mock import MagicMock
 
 import yaml
 
 from milknado.loop._events import (
+    CommandsCompletedData,
+    CommandsStartedData,
     Event,
     EventData,
     EventType,
+    IterationEndedData,
+    IterationStartedData,
+    LogMessageData,
+    PromptAssembledData,
     QueueEmitter,
+    RunStartedData,
+    RunStoppedData,
+    TurnCappedData,
 )
 from milknado.loop._frontmatter import RALPH_MARKER
 from milknado.loop._run_types import (
@@ -274,9 +284,48 @@ def drain_events(emitter: QueueEmitter) -> list[Event[EventData]]:
     return events
 
 
+@overload
 def events_of_type(
-    events: list[Event[EventData]], event_type: EventType
-) -> list[Event[EventData]]:
+    events: list[Event[EventData]], event_type: Literal[EventType.RUN_STARTED]
+) -> list[Event[RunStartedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.RUN_STOPPED]
+) -> list[Event[RunStoppedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.ITERATION_STARTED]
+) -> list[Event[IterationStartedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]],
+    event_type: Literal[
+        EventType.ITERATION_COMPLETED,
+        EventType.ITERATION_FAILED,
+        EventType.ITERATION_TIMED_OUT,
+    ],
+) -> list[Event[IterationEndedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.COMMANDS_STARTED]
+) -> list[Event[CommandsStartedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.COMMANDS_COMPLETED]
+) -> list[Event[CommandsCompletedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.PROMPT_ASSEMBLED]
+) -> list[Event[PromptAssembledData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.ITERATION_TURN_CAPPED]
+) -> list[Event[TurnCappedData]]: ...
+@overload
+def events_of_type(
+    events: list[Event[EventData]], event_type: Literal[EventType.LOG_MESSAGE]
+) -> list[Event[LogMessageData]]: ...
+def events_of_type(events: list[Event[EventData]], event_type: EventType) -> list[Event[Any]]:  # pyright: ignore[reportExplicitAny]  # unifies invariant overloads
     """Filter a list of events to only those matching *event_type*."""
     return [event for event in events if event.type == event_type]
 

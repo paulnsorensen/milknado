@@ -25,7 +25,7 @@ class RunManager:
 
     def __init__(self) -> None:
         self._runs: dict[str, ManagedRun] = {}
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     def _lookup(self, run_id: str) -> ManagedRun:
         """Look up a run by ID. The caller must hold ``_lock``."""

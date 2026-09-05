@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from threading import get_ident
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from textual import on
 from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.containers import Horizontal
+from textual.reactive import Reactive
 from textual.widgets import DataTable, Footer, Header, Static
+from typing_extensions import override
 
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_panels import RunDetailPanel, RunListPanel
@@ -26,7 +30,7 @@ RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 class ExecutionSnapshotApp(App[RunLoopResult | None]):
     """Responsive presentation that depends only on immutable snapshots."""
 
-    CSS = """
+    CSS: ClassVar[str] = """
     #workspace { height: 1fr; }
     #events { height: auto; max-height: 25%; margin: 0 1; border: round $secondary; }
     .visible { display: block; }
@@ -36,7 +40,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     .compact.list #detail { display: none; }
     .compact.detail #run-panel { display: none; }
     """
-    BINDINGS = [  # noqa: V107 - Textual reads binding configuration
+    BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),
         ("enter", "open_detail", "Open selected run"),
@@ -45,19 +49,22 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         ("h", "help", "Help"),
         ("q", "quit_all", "Quit"),
     ]
+    title: Reactive[str]
+    sub_title: Reactive[str]
 
     def __init__(self, source: ExecutionSnapshotSource) -> None:
         super().__init__()
-        self.source = source
-        self.snapshot = source.snapshot()
+        self.source: ExecutionSnapshotSource = source
+        self.snapshot: ExecutionSnapshot = source.snapshot()
         runs = self._runs()
-        self.selected_run_id = runs[0].run_id if runs else None
-        self.route = "list"
-        self.compact = False
-        self.auto_follow = True
+        self.selected_run_id: str | None = runs[0].run_id if runs else None
+        self.route: str = "list"
+        self.compact: bool = False
+        self.auto_follow: bool = True
         self._ui_thread_id: int | None = None
-        self._unsubscribe = None
+        self._unsubscribe: Callable[[], None] | None = None
 
+    @override
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Horizontal(id="workspace"):
@@ -107,9 +114,9 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         if compact:
             self._sync_compact_route_to_focus()
         self.compact = compact
-        self.set_class(compact, "compact")
-        self.set_class(compact and self.route == "list", "list")
-        self.set_class(compact and self.route == "detail", "detail")
+        _ = self.set_class(compact, "compact")
+        _ = self.set_class(compact and self.route == "list", "list")
+        _ = self.set_class(compact and self.route == "detail", "detail")
         if not self.auto_follow:
             self.query_one("#detail", RunDetailPanel).preserve_output_offset()
 
@@ -168,19 +175,20 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
             self.route = "detail"
             self._set_layout(True)
 
-    def action_back(self) -> None:
+    @override
+    async def action_back(self) -> None:
         if self.compact and self.route == "detail":
             self.route = "list"
             self._set_layout(True)
         else:
-            self.query_one("#help", Static).remove_class("visible")
+            _ = self.query_one("#help", Static).remove_class("visible")
 
     def action_resume_output(self) -> None:
         self.auto_follow = True
         self._refresh_view()
 
     def action_help(self) -> None:
-        self.query_one("#help", Static).toggle_class("visible")
+        _ = self.query_one("#help", Static).toggle_class("visible")
 
     def action_quit_all(self) -> None:
         self.exit()

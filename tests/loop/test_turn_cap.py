@@ -55,8 +55,8 @@ from milknado.loop.adapters.opencode import (
 )
 from milknado.loop.engine import run_loop
 from tests.loop.helpers import (
-    drain_events,  # pyright: ignore[reportUnknownVariableType]
-    event_types,  # pyright: ignore[reportUnknownVariableType]
+    drain_events,
+    event_types,
     make_config,
     make_state,
 )

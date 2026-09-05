@@ -29,7 +29,7 @@ _LOG_TAIL_BYTES = 2000
 
 
 def _tail_open_file(log_file: BinaryIO, size: int) -> str:
-    log_file.seek(max(0, size - _LOG_TAIL_BYTES))
+    _ = log_file.seek(max(0, size - _LOG_TAIL_BYTES))
     data = log_file.read(_LOG_TAIL_BYTES)
     return data.decode("utf-8", errors="replace")
 
@@ -126,7 +126,7 @@ class WatchSnapshotSource:
             if descriptor >= 0:
                 os.close(descriptor)
         if len(self._tail_cache) >= self.limit and candidate not in self._tail_cache:
-            self._tail_cache.pop(next(iter(self._tail_cache)))
+            _ = self._tail_cache.pop(next(iter(self._tail_cache)))
         self._tail_cache[candidate] = (signature, output)
         return output
 
