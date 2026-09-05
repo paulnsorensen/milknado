@@ -1,6 +1,6 @@
 """Shared run-id, log-tail, and cancel-sentinel helpers for `.milknado/runs/` —
 used by both the headless worker path (`runner.py`) and the worktree-isolated
-ralph path (`mcp_ralph.py` + `_ralph_node_runner.py`). Run ids share one namespace
+ralph path (`mcp/ralph.py` + `_ralph_node_runner.py`). Run ids share one namespace
 and format so reconciliation is uniform regardless of which path spawned the run.
 Run *state* lives in the SQLite `runs` table; only log files and cancel sentinels
 remain on the filesystem here.
