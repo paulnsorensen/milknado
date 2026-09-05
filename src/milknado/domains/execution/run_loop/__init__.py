@@ -453,7 +453,21 @@ class RunLoop:
         with self._scheduling_lock:
             if self._scheduling_stopped:
                 return None
-            return self._maybe_verify_spec(spec_text, spec_path, config)
+            if spec_text:
+                return self._maybe_verify_spec(spec_text, spec_path, config)
+            self._complete_root_if_settled()
+            return None
+
+    def _complete_root_if_settled(self) -> None:
+        """Complete the root structurally when no spec was supplied to verify against."""
+        if self._failure_triggered or self._active:
+            return
+        root = self._graph.get_root()
+        if root is None:
+            return
+        if not any(n.id != root.id for n in self._graph.get_all_nodes()):
+            return  # undecomposed goal: nothing was done, so nothing is achieved
+        _ = self._graph.complete_root()
 
     def _maybe_verify_spec(
         self,

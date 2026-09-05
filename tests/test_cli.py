@@ -1417,7 +1417,7 @@ class TestRunCommand:
         )
         assert result.exit_code == 0
         assert "Starting execution loop" in result.output
-        assert "1 completed" in result.output
+        assert "All nodes complete. Root goal achieved." in result.output
 
     def test_dispatches_multiple_parallel_leaves(
         self,
@@ -1445,7 +1445,7 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "2 completed" in result.output
+        assert "All nodes complete. Root goal achieved." in result.output
 
     def test_skips_conflicting_nodes(
         self,
@@ -1475,7 +1475,7 @@ class TestRunCommand:
             ["run", "--project-root", str(project_dir)],
         )
         assert result.exit_code == 0
-        assert "2 completed" in result.output
+        assert "All nodes complete. Root goal achieved." in result.output
 
     def test_strict_flag_maps_strict_exit_to_exit_1(
         self,
