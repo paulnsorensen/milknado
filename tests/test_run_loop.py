@@ -190,6 +190,7 @@ class FakeRun:
 class _FakeReview:
     approved: bool = True
     findings_md: str = ""
+    error: bool = False
 
 
 class FakeGit:

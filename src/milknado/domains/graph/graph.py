@@ -622,12 +622,12 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def insert_node_review(
         self,
         node_id: int,
-        round_number: int,
+        round_number: int | None,
         verdict: str,
         findings: str,
         created_at: str,
-    ) -> None:
-        _run_persistence.insert_node_review(
+    ) -> int:
+        return _run_persistence.insert_node_review(
             self._conn, node_id, round_number, verdict, findings, created_at
         )
 

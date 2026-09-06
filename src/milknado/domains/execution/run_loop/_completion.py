@@ -57,6 +57,10 @@ def handle_completion(
                     f"[yellow]![/yellow] [{node_id}] {desc} — review notification failed"
                 )
             logs.append(f"[{ts()}] ! node {node_id} review notification failed")
+        if result.review_audit_failed:
+            if live is not None:
+                live.console.print(f"[red]![/red] [{node_id}] {desc} — review audit failed")
+            logs.append(f"[{ts()}] ! node {node_id} review audit failed")
         if result.redispatch is not None:
             redispatch = result.redispatch
             active[redispatch.run_id] = node_id

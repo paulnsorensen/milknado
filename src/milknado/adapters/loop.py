@@ -353,6 +353,7 @@ def _drain_review_run(
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
+                    error=True,
                 )
             try:
                 event = ev_queue.get(timeout=remaining)
@@ -361,6 +362,7 @@ def _drain_review_run(
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
+                    error=True,
                 )
             if event.type in {
                 EventType.ITERATION_COMPLETED,
@@ -377,9 +379,8 @@ def _drain_review_run(
             _ = local_manager.stop_and_join(run_id, timeout=5.0)
         except Exception:
             _logger.exception("node review stop failed for run_id=%s", run_id)
-        return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}")
-    approved, findings_md = _parse_review_output("\n".join(output_parts))
-    return ReviewVerdict(approved=approved, findings_md=findings_md)
+        return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}", error=True)
+    return _parse_review_verdict("\n".join(output_parts))
 
 
 def _parse_verify_output(output: str) -> VerifySpecResult:
@@ -437,12 +438,21 @@ def _build_ralph_content(
     )
 
 
-def _parse_review_output(output: str) -> tuple[bool, str]:
-    match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
-    findings_md = output[: match.start()].strip() if match else output.strip()
-    if match and match.group(1).lower() == "approve":
-        return True, findings_md
-    if match:
-        return False, findings_md
-    _logger.warning("run_node_review: unparseable reviewer output; treating as revise")
-    return False, findings_md or "reviewer produced no parseable <verdict> tag"
+def _parse_review_verdict(output: str) -> ReviewVerdict:
+    match = re.search(
+        r"<verdict>\s*(approve|reject|revise)\s*</verdict>",
+        output,
+        re.I,
+    )
+    marker_matches = list(re.finditer(r"</?verdict\b", output, re.I))
+    valid_span = match.span() if match is not None else None
+    extra_markers = valid_span is None or any(
+        marker.start() < valid_span[0] or marker.start() >= valid_span[1]
+        for marker in marker_matches
+    )
+    if match is None or extra_markers:
+        _logger.warning("run_node_review: unparseable or conflicting reviewer output")
+        findings = output.strip() or "reviewer produced no parseable <verdict> tag"
+        return ReviewVerdict(approved=False, findings_md=findings, error=True)
+    findings_md = output[: match.start()].strip()
+    return ReviewVerdict(approved=match.group(1).lower() == "approve", findings_md=findings_md)

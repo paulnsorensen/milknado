@@ -52,3 +52,4 @@ def build_verify_prompt(
 class ReviewVerdict:
     approved: bool
     findings_md: str
+    error: bool = False
