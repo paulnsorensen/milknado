@@ -205,23 +205,6 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool) -> str:
     return f"{sys.executable} {script}"
 
 
-@pytest.fixture()
-def worker_stub(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Callable[[str], str]:
-    """Same pattern as test_mcp_server.py: a `claude` shim that exec's its args."""
-    bindir = tmp_path_factory.mktemp("worker-stub-bin")
-    stub = bindir / "claude"
-    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    def _cmd(command: str) -> str:
-        return f"claude {command}"
-
-    return _cmd
-
-
 def _wait_for_terminal(run_id: str, root: str, tool: object, timeout: float = 5.0) -> _CallResult:
     deadline = time.monotonic() + timeout
     last = None

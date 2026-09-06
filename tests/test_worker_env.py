@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import shlex
 from pathlib import Path
 
 import pytest
@@ -13,6 +13,7 @@ from milknado.domains.dispatch.runner import (
     _WORKER_ENV_ALLOWLIST,  # pyright: ignore[reportPrivateUsage]
     build_worker_env,
 )
+from tests.worker_fixtures import install_worker_command
 
 
 def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,13 +79,9 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
     never appear in the spawned worker's environment. The worker dumps its own
     env to the log; we assert the secret value is absent and the allowlisted
     MILKNADO_NODE_ID injection is present."""
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "claude"
-    # Passthrough agent stub: dumps the worker-visible environment to stdout (→ log).
-    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    default_cmd = install_worker_command(
+        tmp_path / "bin", monkeypatch, agent="claude", script="#!/bin/sh\nexec env\n"
+    )
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTED-LEAK-CANARY")
 
     result = run_headless(
@@ -92,7 +89,7 @@ def test_run_headless_does_not_leak_planted_secret_to_worker(
         node_id=7,
         brief="hi",
         timeout_seconds=10,
-        default_cmd="claude",
+        default_cmd=default_cmd,
         process=ProcessAdapter(),
     )
 
@@ -113,13 +110,15 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
     after unification. The brief is piped to stdin; this test confirms that a
     multi-flag command preserves stdin-brief delivery.
     """
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "claude"
-    # Stub echoes stdin to stdout (log), ignores flags.
-    _ = stub.write_text("#!/bin/sh\ncat\n", encoding="utf-8")
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    default_cmd = (
+        install_worker_command(
+            tmp_path / "bin",
+            monkeypatch,
+            agent="claude",
+            script="#!/bin/sh\ncat\n",
+        )
+        + " -p --dangerously-skip-permissions --allowedTools 'Read,Edit'"
+    )
 
     brief_marker = "BRIEF_MARKER_XYZ_12345"
     result = run_headless(
@@ -127,7 +126,7 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
         node_id=1,
         brief=brief_marker,
         timeout_seconds=10,
-        default_cmd="claude -p --dangerously-skip-permissions --allowedTools 'Read,Edit'",
+        default_cmd=default_cmd,
         process=ProcessAdapter(),
     )
 
@@ -141,15 +140,15 @@ def test_run_headless_brief_reaches_stdin_under_multiflag_cmd(
 def test_run_headless_delivers_omp_brief_as_positional_argument(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "omp"
-    _ = stub.write_text(
-        '#!/bin/sh\nprintf "argv=<%s>\\n" "$*"\nprintf "stdin=<%s>\\n" "$(cat)"\n',
-        encoding="utf-8",
+    default_cmd = (
+        install_worker_command(
+            tmp_path / "bin",
+            monkeypatch,
+            agent="omp",
+            script='#!/bin/sh\nprintf "argv=<%s>\\n" "$*"\nprintf "stdin=<%s>\\n" "$(cat)"\n',
+        )
+        + " -p --auto-approve --no-session"
     )
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
 
     brief_marker = "OMP_BRIEF_MARKER_XYZ_12345"
     result = run_headless(
@@ -157,7 +156,7 @@ def test_run_headless_delivers_omp_brief_as_positional_argument(
         node_id=1,
         brief=brief_marker,
         timeout_seconds=10,
-        default_cmd="omp -p --auto-approve --no-session",
+        default_cmd=default_cmd,
         process=ProcessAdapter(),
     )
 
@@ -172,12 +171,15 @@ def test_run_headless_forwards_openrouter_key_to_omp_worker(
 ) -> None:
     """An omp worker authenticates via OPENROUTER_API_KEY, so it must reach the
     omp subprocess even though build_worker_env filters secrets by default."""
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "omp"
-    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    default_cmd = (
+        install_worker_command(
+            tmp_path / "bin",
+            monkeypatch,
+            agent="omp",
+            script="#!/bin/sh\nexec env\n",
+        )
+        + " -p --auto-approve --no-session"
+    )
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")
 
     result = run_headless(
@@ -185,7 +187,7 @@ def test_run_headless_forwards_openrouter_key_to_omp_worker(
         node_id=1,
         brief="hi",
         timeout_seconds=10,
-        default_cmd="omp -p --auto-approve --no-session",
+        default_cmd=default_cmd,
         process=ProcessAdapter(),
     )
 
@@ -199,12 +201,15 @@ def test_run_headless_does_not_forward_openrouter_key_to_non_omp_worker(
 ) -> None:
     """A non-omp worker (e.g. claude) has no use for OPENROUTER_API_KEY, so the
     default secret-filtering behavior of build_worker_env must still apply."""
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    stub = bindir / "claude"
-    _ = stub.write_text("#!/bin/sh\nexec env\n", encoding="utf-8")
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    default_cmd = (
+        install_worker_command(
+            tmp_path / "bin",
+            monkeypatch,
+            agent="claude",
+            script="#!/bin/sh\nexec env\n",
+        )
+        + " -p"
+    )
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key-CANARY-12345")
 
     result = run_headless(
@@ -212,10 +217,50 @@ def test_run_headless_does_not_forward_openrouter_key_to_non_omp_worker(
         node_id=1,
         brief="hi",
         timeout_seconds=10,
-        default_cmd="claude -p",
+        default_cmd=default_cmd,
         process=ProcessAdapter(),
     )
 
     assert result.exit_code == 0
     log_text = result.log_path.read_text(encoding="utf-8")
     assert "OPENROUTER_API_KEY" not in log_text
+
+
+def test_worker_launcher_rejects_unknown_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with pytest.raises(ValueError, match="worker_cmd must start with"):
+        _ = install_worker_command(
+            tmp_path / "bin", monkeypatch, agent="not-an-agent", script="#!/bin/sh\n"
+        )
+
+
+def test_worker_launcher_preserves_subprocess_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = '#!/bin/sh\nprintf "argv=<%s>\\n" "$*"\nprintf "stdin=<%s>\\n" "$(cat)"\nexit 7\n'
+    default_cmd = (
+        install_worker_command(
+            tmp_path / "bin",
+            monkeypatch,
+            agent="claude",
+            script=script,
+        )
+        + " first 'two words'"
+    )
+
+    result = run_headless(
+        tmp_path,
+        node_id=1,
+        brief="brief-marker",
+        timeout_seconds=10,
+        default_cmd=default_cmd,
+        process=ProcessAdapter(),
+    )
+
+    script_path = Path(shlex.split(default_cmd)[1])
+    assert script_path.stat().st_mode & 0o111 == 0
+    assert result.exit_code == 7
+    assert result.log_path.read_text(encoding="utf-8") == (
+        "argv=<first two words>\nstdin=<brief-marker>\n"
+    )

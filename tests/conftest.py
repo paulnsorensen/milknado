@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -9,6 +9,7 @@ import pytest
 
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.graph import MikadoGraph
+from tests.worker_fixtures import install_worker_stub
 
 pytest_plugins = ("tests.rebalance_helpers",)
 
@@ -37,6 +38,13 @@ def _isolate_worker_identity(  # pyright: ignore[reportUnusedFunction]
     for name in tuple(os.environ):
         if name.startswith("MILKNADO_"):
             monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture()
+def worker_stub(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[str], str]:
+    return install_worker_stub(tmp_path_factory.mktemp("worker-stub-bin"), monkeypatch)
 
 
 @pytest.fixture()

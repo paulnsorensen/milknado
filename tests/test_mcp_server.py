@@ -190,31 +190,6 @@ def _run_status(graph: MikadoGraph, run_id: str) -> str:
     return row["status"]
 
 
-@pytest.fixture()
-def worker_stub(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Callable[[str], str]:
-    """Install a `claude` passthrough executable on PATH so run-mechanics tests
-    can drive the dispatcher with the worker-cmd allowlist enforced.
-
-    The worker_cmd allowlist (`dispatch.validate_worker_argv`) only admits real
-    agent CLIs (claude/codex/...). These tests exercise dispatch plumbing, not a
-    live agent, so they route their throwaway commands (`cat`, `false`, `sleep`)
-    through a stub named `claude` that just `exec "$@"` — stdin, exit code, and
-    timeout behaviour all pass through unchanged.
-    """
-    bindir = tmp_path_factory.mktemp("worker-stub-bin")
-    stub = bindir / "claude"
-    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    def _cmd(command: str) -> str:
-        return f"claude {command}"
-
-    return _cmd
-
-
 class TestMcpServer:
     def test_open_graph_creates_default_db_dir(self, tmp_path: Path) -> None:
         graph, _cfg = open_graph(tmp_path)
