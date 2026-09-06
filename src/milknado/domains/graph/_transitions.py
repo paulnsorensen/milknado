@@ -14,6 +14,7 @@ from typing import cast
 
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
+from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
 from milknado.domains.graph._sqlite_rows import fetchone
 
 
@@ -44,19 +45,15 @@ def _apply_transition(
     target: NodeStatus,
     sql: str,
     params: Sequence[object],
-) -> None:
-    """Run a CAS UPDATE gated on the source status observed by assert_transition,
-    committing then raising InvalidTransition on 0 rows.
-
-    A 0-row result means a concurrent writer moved the node off the status
-    assert_transition saw between its SELECT and this UPDATE. Re-read the node's
-    actual status so the raised InvalidTransition reports where the node truly is
-    now (and the valid_targets reachable from there), not the stale pre-conflict
-    value assert_transition observed.
-    """
+    *,
+    lost_fence_is_noop: bool = False,
+) -> bool:
+    """Apply a status write and release terminal goal claims at the producer."""
     cur = conn.execute(sql, params)
     conn.commit()
     if cur.rowcount == 0:
+        if lost_fence_is_noop:
+            return False
         row = fetchone(conn, "SELECT status FROM nodes WHERE id = ?", (node_id,))
         if row is None:
             raise ValueError(f"Node {node_id} not found")
@@ -67,13 +64,16 @@ def _apply_transition(
             target=target,
             valid_targets=tuple(VALID_TRANSITIONS.get(actual, set())),
         )
+    if target in (NodeStatus.DONE, NodeStatus.FAILED):
+        release_goal_claim_on_terminal(conn, node_id)
+    return True
 
 
 def transition_status(conn: sqlite3.Connection, node_id: int, target: NodeStatus) -> None:
     """Validate then apply a plain status change (sets completed_at on DONE)."""
     current = assert_transition(conn, node_id, target)
     completed_at = datetime.now(UTC).isoformat() if target == NodeStatus.DONE else None
-    _apply_transition(
+    _ = _apply_transition(
         conn,
         node_id,
         target,
@@ -84,7 +84,7 @@ def transition_status(conn: sqlite3.Connection, node_id: int, target: NodeStatus
 
 def mark_failed(conn: sqlite3.Connection, node_id: int) -> None:
     current = assert_transition(conn, node_id, NodeStatus.FAILED)
-    _apply_transition(
+    _ = _apply_transition(
         conn,
         node_id,
         NodeStatus.FAILED,
@@ -102,7 +102,7 @@ def mark_running(
     run_id: str | None = None,
 ) -> None:
     current = assert_transition(conn, node_id, NodeStatus.RUNNING)
-    _apply_transition(
+    _ = _apply_transition(
         conn,
         node_id,
         NodeStatus.RUNNING,
@@ -114,7 +114,7 @@ def mark_running(
 
 def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
     current = assert_transition(conn, node_id, NodeStatus.PENDING)
-    _apply_transition(
+    _ = _apply_transition(
         conn,
         node_id,
         NodeStatus.PENDING,
@@ -178,26 +178,25 @@ def mark_terminal(
     """Write a terminal status gated on the active run fence."""
     if status is NodeStatus.DONE:
         completed_at = datetime.now(UTC).isoformat()
-        cur = conn.execute(
+        sql = (
             "UPDATE nodes SET status = ?, completed_at = ? "
-            + "WHERE id = ? AND run_id = ? AND status = 'running'",
-            (NodeStatus.DONE.value, completed_at, node_id, run_id),
+            + "WHERE id = ? AND run_id = ? AND status = 'running'"
         )
+        params: Sequence[object] = (NodeStatus.DONE.value, completed_at, node_id, run_id)
     elif status is NodeStatus.FAILED:
         recovery = (
             "run_id = NULL"
             if preserve_recovery
             else ("worktree_path = NULL, branch_name = NULL, run_id = NULL")
         )
-        cur = conn.execute(
+        sql = (
             f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "
-            + "WHERE id = ? AND run_id = ? AND status = 'running'",
-            (NodeStatus.FAILED.value, node_id, run_id),
+            + "WHERE id = ? AND run_id = ? AND status = 'running'"
         )
+        params = (NodeStatus.FAILED.value, node_id, run_id)
     else:
         raise ValueError(f"mark_terminal status must be DONE or FAILED, got {status}")
-    conn.commit()
-    return cur.rowcount == 1
+    return _apply_transition(conn, node_id, status, sql, params, lost_fence_is_noop=True)
 
 
 def mark_blocked(conn: sqlite3.Connection, node_id: int, run_id: str) -> bool:

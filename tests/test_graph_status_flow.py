@@ -7,11 +7,13 @@ import pytest
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeSpec, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, _transitions
+from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph.status_flow import (
     subtree_post_order,
     validate_todo_status,
 )
+from tests.graph_helpers import graph_conn
 
 _ALL = {
     NodeStatus.PENDING,
@@ -114,3 +116,41 @@ def test_run_startup_reconciles_completed_goal_through_cli(
     goal_node = graph.get_node(goal.id)
     assert goal_node is not None
     assert goal_node.status is NodeStatus.DONE
+
+
+def _claimed_goal(graph: MikadoGraph) -> int:
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    assert graph.claim_ancestor_goal(goal.id, "run-A", 4321, now="now") == goal.id
+    return goal.id
+
+
+def _assert_goal_claim_released(graph: MikadoGraph, goal_id: int) -> None:
+    assert get_goal_claim(graph_conn(graph), goal_id) is None
+
+
+def test_mark_done_releases_goal_claim(graph: MikadoGraph) -> None:
+    goal_id = _claimed_goal(graph)
+    graph.mark_running(goal_id)
+    graph.mark_done(goal_id)
+    _assert_goal_claim_released(graph, goal_id)
+
+
+def test_mark_failed_releases_goal_claim(graph: MikadoGraph) -> None:
+    goal_id = _claimed_goal(graph)
+    graph.mark_running(goal_id)
+    graph.mark_failed(goal_id)
+    _assert_goal_claim_released(graph, goal_id)
+
+
+def test_subtree_done_releases_goal_claim(graph: MikadoGraph) -> None:
+    goal_id = _claimed_goal(graph)
+    _ = graph.add_node("task", parent_id=goal_id)
+    assert graph.set_subtree_status(goal_id, NodeStatus.DONE) == 2
+    _assert_goal_claim_released(graph, goal_id)
+
+
+def test_low_level_terminal_transition_releases_goal_claim(graph: MikadoGraph) -> None:
+    goal_id = _claimed_goal(graph)
+    graph.mark_running(goal_id)
+    _transitions.transition_status(graph_conn(graph), goal_id, NodeStatus.DONE)
+    _assert_goal_claim_released(graph, goal_id)

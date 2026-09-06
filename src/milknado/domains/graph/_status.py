@@ -14,7 +14,6 @@ from typing import cast
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._transitions as _transitions
 from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
-from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
 from milknado.domains.graph._pipeline import StatusPipeline
 from milknado.domains.graph._sqlite_rows import as_tuple as _values
 from milknado.domains.graph._sqlite_rows import fetchone
@@ -45,8 +44,6 @@ def _apply_subtree_status(
             mark_pending(pipeline, conn, node.id)
         else:
             transition_status(pipeline, conn, node.id, step)
-        if step is NodeStatus.DONE or step is NodeStatus.FAILED:
-            release_goal_claim_on_terminal(conn, node.id)
     return True
 
 
@@ -66,7 +63,6 @@ def transition_status(
 
 def mark_done(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
     transition_status(pipeline, conn, node_id, NodeStatus.DONE)
-    release_goal_claim_on_terminal(conn, node_id)
 
 
 def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int) -> None:
@@ -80,7 +76,6 @@ def mark_failed(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int
     _ = pipeline.run(
         lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.FAILED, mutate
     )
-    release_goal_claim_on_terminal(conn, node_id)
 
 
 def mark_running(
@@ -254,12 +249,9 @@ def mark_terminal(
             conn, node_id, run_id, status, preserve_recovery=preserve_recovery
         )
 
-    ok = pipeline.run(
+    return pipeline.run(
         lambda nid: _reads.get_node(conn, nid), node_id, NodeStatus.RUNNING, status, mutate
     )
-    if ok:
-        release_goal_claim_on_terminal(conn, node_id)
-    return ok
 
 
 def mark_blocked_fenced(

@@ -22,6 +22,7 @@ import milknado.domains.graph._rebalance as _rebalance
 import milknado.domains.graph._run_persistence as _run_persistence
 import milknado.domains.graph._status as _status
 from milknado.domains.common import (
+    BUILTIN_FLAVORS,
     GraphExecutionSnapshot,
     MikadoNode,
     NodeKind,
@@ -29,7 +30,6 @@ from milknado.domains.common import (
     NodeStatus,
     RunResult,
 )
-from milknado.domains.common.types import BUILTIN_FLAVORS
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, synchronized
 from milknado.domains.graph._edge_facade import _EdgeFacade
 from milknado.domains.graph._pipeline import (
@@ -71,11 +71,16 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return self._lock
 
     def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
+        self._initialize(db_path, self._open(db_path), plugins)
+
+    def _initialize(
+        self, db_path: Path, raw_conn: sqlite3.Connection, plugins: Sequence[PluginHook]
+    ) -> None:
         self._lock = RLock()
         self._db_path = db_path
         self._closed = False
         self._close_stack = None
-        self._raw_conn = self._open(db_path)
+        self._raw_conn = raw_conn
         self._pipeline = StatusPipeline(
             cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
         )
@@ -101,13 +106,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         finally:
             source.close()
         graph = cls.__new__(cls)
-        graph._lock = RLock()
-        graph._db_path = db_path
-        graph._closed = False
-        graph._close_stack = None
-        graph._raw_conn = snapshot
-        graph._pipeline = StatusPipeline([])
-        graph._dispatch_exclusions = set()
+        graph._initialize(db_path, snapshot, ())
         return graph
 
     # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────

@@ -148,6 +148,28 @@ class TestUpdateNode:
         with pytest.raises(ValueError, match="nothing to update"):
             graph.update_node(node.id)
 
+    @pytest.mark.parametrize("kind", [NodeKind.GOAL, NodeKind.ROADMAP])
+    def test_update_flavor_rejects_non_task_nodes(
+        self, graph: MikadoGraph, kind: NodeKind
+    ) -> None:
+        node = graph.add_node("non-task", spec=NodeSpec(kind=kind))
+        with pytest.raises(ValueError, match="flavor is only valid for task nodes"):
+            graph.update_node(node.id, flavor="implement")
+
+
+class TestSnapshot:
+    def test_snapshot_has_normal_instance_fields(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "graph.db"
+        normal = MikadoGraph(db_path)
+        expected_fields = set(vars(normal))
+        normal.close()
+
+        snapshot = MikadoGraph.open_snapshot(db_path)
+        try:
+            assert set(vars(snapshot)) == expected_fields
+        finally:
+            snapshot.close()
+
 
 class TestMoveNode:
     def test_move_rewrites_edge_and_parent_id(self, graph: MikadoGraph) -> None:
@@ -517,7 +539,7 @@ class TestStatusTransitions:
             # graph_a, unaware of graph_b's write, applies a CAS UPDATE still
             # gated on the stale belief that status is RUNNING.
             with pytest.raises(InvalidTransition) as exc_info:
-                _transitions._apply_transition(  # pyright: ignore[reportPrivateUsage]
+                _ = _transitions._apply_transition(  # pyright: ignore[reportPrivateUsage]
                     graph_conn(graph_a),
                     node.id,
                     NodeStatus.FAILED,
