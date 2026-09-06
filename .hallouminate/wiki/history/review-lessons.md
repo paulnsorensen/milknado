@@ -237,3 +237,28 @@ the one that fires.
 [^notify-field]: `src/milknado/domains/execution/run_loop/_completion.py`, `src/milknado/domains/execution/executor.py`; PR #359 commit `0a094144d14042741d963472d67203703487b88b`
 
 _Source: PRs #355, #356, #359 · Updated: 2026-08-16 · Supersedes: none_
+
+## Gate: a coverage-gate zero-caller finding can mean "silently disconnected," not "confirmed dead" (#416)
+
+The whole-symbol dead-code gate ([[dead-code-coverage-gate-decision]]) correctly
+flagged `complete_root` as zero-caller, and issue #365 AC-2 directed deleting it
+as confirmed dead. The gate was right about the symptom and wrong about the
+cause: the `run_loop.py` → `run_loop/` package split had silently dropped the
+only live call to `complete_root`, not deliberately removed it. Every headless
+and TUI `milknado run` left the root goal stranded `PENDING` even after every
+child node finished `DONE`, because the sole completion path
+(`_maybe_verify_spec`) early-returns on a `spec_text` that no production caller
+ever supplies — only tests ever set it. Deleting the symbol would have
+cemented the bug and erased the evidence of the dropped wiring.
+
+**Rule:** before actioning a dead-code-gate finding as "delete", read why the
+symbol lost its last caller. A symbol that shipped *with* a caller and now has
+none is a candidate for "wiring dropped in a refactor", not just "confirmed
+dead" — restoring the call site can be the correct fix. The commit that
+introduced the symbol and the commit that removed its last call tell you which
+case you are in. The fix here also added a guard the original code lacked:
+structural root-completion refuses to fire on a root with no non-root nodes,
+since completion over an empty child set is vacuously true.
+
+_Source: PR #416 (commit `ca93d305b3008009b80134533fdb8553d76a009e`) · Updated:
+2026-09-06 · Supersedes: issue #365 AC-2 (which had directed deletion)_

@@ -15,8 +15,12 @@ that section's list automatically.
   Mikado graph, planning, batching, execution/dispatch, adapters, entry points.
 - [Conventions](./conventions/index.md) — the build gate (`just check-llm`),
   code style, complexity budgets, and engineering principles.
+- [Gotchas](./gotchas/index.md) — pitfalls that cost real debugging time:
+  platform-specific startup quirks, review-verdict handling.
 - [History](./history/index.md) — distilled decisions and recurring review
   lessons (the durable residue of `.cheese/` review artifacts).
+- [Roadmap — Milestone 0.3.0](./roadmaps/milestone-0-3-0/index.md) — the
+  active goal graph for the next milestone, in milknado's own goal-file format.
 
 ## Start here
 
