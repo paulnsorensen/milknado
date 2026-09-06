@@ -1348,7 +1348,6 @@ class Executor:
     def _gate_review(
         self, node: MikadoNode, worktree: Path, config: ExecutionConfig
     ) -> tuple[CompletionResult | None, ReviewNotification]:
-        review_error = False
         try:
             approved, findings, review_error = self._run_review(node, worktree, config)
         except Exception as exc:

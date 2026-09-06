@@ -120,8 +120,14 @@ def test_blocked_claim_is_scheduler_hold_and_second_claim_is_fenced(tmp_path: Pa
         _call(milknado_todo_claim, node_id=task["id"], worktree=False, project_root=root),
     )
     assert payload["node_id"] == task["id"]
-    assert payload["run_id"]
     assert task["id"] in _ids_by_status(root, "in_progress")
+    graph, _config = open_graph(tmp_path)
+    try:
+        held = graph.get_node(task["id"])
+        assert held is not None
+        assert held.run_id == payload["run_id"]
+    finally:
+        graph.close()
 
     with pytest.raises(ValueError, match="already running"):
         _ = _call(milknado_todo_claim, node_id=task["id"], worktree=False, project_root=root)

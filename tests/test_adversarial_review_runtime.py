@@ -1107,11 +1107,11 @@ def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: 
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node("approved audit")
 
-    _ = executor.dispatch(1, _config(tmp_path))
+    dispatched = executor.dispatch(1, _config(tmp_path))
     result = executor.complete(1, "main")
 
     assert result.rebased is True
-    assert git.removed
+    assert git.removed == [dispatched.worktree]
     rows = graph.node_reviews_for_node(1)
     assert [(row["round"], row["verdict"]) for row in rows] == [(1, "approve")]
 
