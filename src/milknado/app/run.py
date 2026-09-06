@@ -66,8 +66,6 @@ class RunActionAvailability:
 
 @dataclass(frozen=True, slots=True)
 class ActiveRunSnapshot:
-    """Application-owned immutable read model for one active agent run."""
-
     run_id: str
     node_id: int
     description: str
@@ -87,8 +85,6 @@ class ActiveRunSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class TerminalRunSnapshot:
-    """Bounded terminal record retained after an active run exits."""
-
     run_id: str
     node_id: int
     description: str
@@ -100,8 +96,6 @@ class TerminalRunSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ExecutionSnapshot:
-    """Immutable presentation state published by the application controller."""
-
     goal: str
     active_runs: tuple[ActiveRunSnapshot, ...]
     terminal_runs: tuple[TerminalRunSnapshot, ...]
@@ -120,12 +114,12 @@ class ProtectedBranchRefusal(RuntimeError):
     branch: str
     reason: str
 
-    def __post_init__(self) -> None:
-        RuntimeError.__init__(self, self.__str__())
-
     @override
     def __str__(self) -> str:
         return f"{self.reason} branch {self.branch!r}"
+
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, self.__str__())
 
 
 def ensure_dispatch_allowed(cfg: MilknadoConfig, branch: str, allow_protected: bool) -> None:
@@ -166,8 +160,6 @@ class _ControlRequest:
 
 @final
 class ExecutionController:
-    """UI-neutral application boundary for one execution run."""
-
     def __init__(
         self,
         loop: RunLoop,
@@ -197,7 +189,6 @@ class ExecutionController:
         allow_protected: bool = False,
     ) -> RunLoopResult:
         ensure_dispatch_allowed(self._config, feature_branch, allow_protected)
-
         with self._state_lock:
             if self._running:
                 raise RuntimeError("execution controller is already running")
@@ -449,7 +440,6 @@ def run_execution_loop(
 
 def resolve_run_attach_target(graph: MikadoGraph, project_root: Path, run_id: str) -> str:
     """Resolve the tmux target for a durable run identifier."""
-
     from milknado.domains.dispatch import resolve_attach_target
 
     return resolve_attach_target(graph, TmuxAdapter(project_root), run_id)
@@ -461,7 +451,6 @@ def validate_worker_cmd(worker_cmd: str | None) -> None:
     The eager MCP check is repeated when the environment fallback or built-in
     default is resolved in ``runner.resolve_worker_cmd``.
     """
-
     from milknado.domains.dispatch import validate_worker_argv
 
     if not worker_cmd or not worker_cmd.strip():

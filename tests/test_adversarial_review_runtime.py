@@ -1049,8 +1049,9 @@ class _HeadlessRoundExecutor:
     def fail(self, node_id: int, detail: str | None = None) -> None:
         _ = node_id, detail
 
-    def note_unconfirmed_stop(self, run_id: str) -> None:
-        _ = run_id
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return True
 
 
 class _HeadlessRoundRalph:

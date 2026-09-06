@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -23,12 +22,13 @@ from tenacity import (
     wait_exponential,
 )
 
-from milknado.domains.common import ReviewResult, RunFenceLostError
+from milknado.domains.common import ReviewResult
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.errors import (
     GitOperationError,
     InvalidTransition,
     RebaseAbortError,
+    RunFenceLostError,
     TransientDispatchError,
     UnlandedWorkError,
 )
@@ -42,8 +42,12 @@ from milknado.domains.common.types import (
     RebaseResult,
     RunResult,
 )
-from milknado.domains.dispatch import render_brief
-from milknado.domains.dispatch._runstate import is_cancel_requested, make_run_id, runs_dir
+from milknado.domains.dispatch import (
+    is_cancel_requested,
+    make_run_id,
+    render_brief,
+    runs_dir,
+)
 from milknado.domains.execution._review import (
     ReviewNotification,
     build_review_prompt,
@@ -159,46 +163,17 @@ def _build_commit_message(node_id: int, description: str) -> str:
 _LOOP_SCAFFOLDING = ("RALPH.md", ".ralph-logs/")
 
 
-def _git_common_dir(worktree: Path) -> Path | None:
-    """Resolve a linked worktree's common git dir (the main checkout's `.git`).
-
-    A linked worktree's `.git` is a gitlink file, not a dir, so the common dir is
-    where shared state lives. Returns ``None`` when `worktree` is not a real git
-    checkout (e.g. a test double's bare path) so callers can degrade best-effort.
-    """
-    try:
-        common = subprocess.run(
-            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            cwd=worktree,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, OSError):
-        return None
-    return Path(common)
-
-
-def _exclude_loop_scaffolding(worktree: Path) -> None:
-    """Mark the loop's own scaffolding (RALPH.md, .ralph-logs/) git-ignored so the
-    worker's `git add -A` never stages it into the squashed commit.
-
-    Git consults `info/exclude` only in the common git dir, resolved via
-    `_git_common_dir`, and we append idempotently. Best-effort: a worktree that is
-    not a real git checkout — e.g. a test double's bare path — has no exclude file
-    to write, and an exclude-file I/O error (permissions, a non-UTF8 file) must not
-    abort dispatch, so failures are logged, not raised.
-    """
-    common = _git_common_dir(worktree)
+def _exclude_loop_scaffolding(common: Path | None) -> None:
+    """Exclude loop scaffolding from the shared git directory."""
     if common is None:
-        _logger.debug("Skipping scaffolding-exclude for %s: not a git checkout", worktree)
+        _logger.debug("Skipping scaffolding-exclude: git port returned no common dir")
         return
     exclude = common / "info" / "exclude"
     try:
         exclude.parent.mkdir(parents=True, exist_ok=True)
         existing = exclude.read_text() if exclude.exists() else ""
         present = set(existing.splitlines())
-        missing = [p for p in _LOOP_SCAFFOLDING if p not in present]
+        missing = [path for path in _LOOP_SCAFFOLDING if path not in present]
         if not missing:
             return
         prefix = "" if existing == "" or existing.endswith("\n") else "\n"
@@ -207,7 +182,7 @@ def _exclude_loop_scaffolding(worktree: Path) -> None:
         _logger.warning("Failed to exclude loop scaffolding under %s: %s", exclude, exc)
 
 
-def _preserve_run_logs(worktree: Path, node_id: int) -> None:
+def _preserve_run_logs(common: Path | None, worktree: Path, node_id: int) -> None:
     """Copy the worktree's `.ralph-logs/` to `.milknado/logs/<node_id>/` in the
     main checkout root before the worktree is destroyed, so a run's post-mortem
     evidence survives worktree removal. `.milknado/` is already local, untracked
@@ -223,7 +198,6 @@ def _preserve_run_logs(worktree: Path, node_id: int) -> None:
     logs = worktree / ".ralph-logs"
     if not logs.is_dir():
         return
-    common = _git_common_dir(worktree)
     root = common.parent if common is not None else worktree.parent
     dest = root / ".milknado" / "logs" / str(node_id)
     try:
@@ -310,16 +284,10 @@ class WorktreeManager:
         self._git: GitPort = git
         self._worktrees: dict[int, Path] = {}
 
-    def current_branch(self) -> str:
-        return self._git.current_branch()
-
-    def resolve_ref(self, ref: str) -> str:
-        return self._git.resolve_ref(ref)
-
     def create(self, node_id: int, wt_path: Path, branch: str) -> None:
         _ = self._git.create_worktree(wt_path, branch)
         self._worktrees[node_id] = wt_path
-        _exclude_loop_scaffolding(wt_path)
+        _exclude_loop_scaffolding(self._git.git_common_dir(wt_path))
 
     def relocate_occupied(self, wt_path: Path, branch: str) -> tuple[Path, str]:
         """Relocate a dispatch whose canonical path or branch is still taken.
@@ -398,11 +366,12 @@ class WorktreeManager:
             )
 
     def discard(self, node_id: int, wt_path: Path) -> None:
-        """Explicitly destructive, best-effort removal — the ONLY path to
-        `--force` (`force_remove_worktree`); all exceptions suppressed."""
+        """Explicitly destructive, best-effort removal."""
         _ = self._worktrees.pop(node_id, None)
-        with contextlib.suppress(Exception):
+        try:
             self._git.force_remove_worktree(wt_path)
+        except Exception as exc:
+            _logger.warning("Failed to force-remove worktree %s: %s", wt_path, exc)
 
     def rebase_and_merge(
         self,
@@ -443,7 +412,7 @@ class WorktreeManager:
             landed = rebase_result.success
             return rebase_result
         finally:
-            _preserve_run_logs(worktree, node_id)
+            _preserve_run_logs(self._git.git_common_dir(worktree), worktree, node_id)
             if landed:
                 self.remove(node_id, worktree, target=merge_target)
             else:
@@ -491,8 +460,8 @@ class Executor:
         parent_run_id: str | None = None,
     ) -> DispatchResult:
         _ = self._review_enabled(config)
-        target_branch = self._wt.current_branch()
-        target_oid = base_oid or self._wt.resolve_ref(target_branch)
+        target_branch = self._git.current_branch()
+        target_oid = base_oid or self._git.resolve_ref(target_branch)
         max_retries = config.dispatch_max_retries
 
         def _before_sleep(retry_state: RetryCallState) -> None:
@@ -591,7 +560,7 @@ class Executor:
             self._graph.set_worktree(node_id, owner_run_id, str(wt_path), branch)
             create_attempted = True
             self._wt.create(node_id, wt_path, branch)
-            dispatch_base_oid = base_oid or self._wt.resolve_ref(self._wt.current_branch())
+            dispatch_base_oid = base_oid or self._git.resolve_ref(self._git.current_branch())
             run_id = self._create_ralph_run(
                 node,
                 config,
@@ -821,7 +790,7 @@ class Executor:
         backoff)`` once force_stop_run itself resolved either way.
         """
         try:
-            stopped = self._ralph.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for cancelled ralph run %s; row left "
@@ -1009,7 +978,7 @@ class Executor:
         )
         base_oid = self._base_oid_by_node.get(node.id)
         if base_oid is None:
-            base_oid = self._wt.resolve_ref(self._wt.current_branch())
+            raise ValueError(f"node {node.id} has no dispatch base oid for review")
         session = self._session_by_node.get(node.id)
         run_id = self._create_ralph_run(
             node,
@@ -1099,37 +1068,9 @@ class Executor:
                     )
 
     def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
-        """Confirmed force-stop + fenced finalize for a ralph run abandoned
-        after start.
-
-        Shared teardown for every dispatch-abort path (dispatch fence loss,
-        review-redispatch fence loss, post-start setup failure). The run's
-        worktree is about to be discarded or reused, so the stop is a
-        force-stop; the runs row is finalized only when the stop is
-        confirmed. On an unconfirmed stop — force_stop_run returned False or
-        raised — the row is deliberately left 'running' and False is
-        returned so the caller keeps the worktree instead of tearing it out
-        from under a still-live loop: the same fail-closed policy as the
-        cancel watcher. The run id is registered in
-        _unconfirmed_stop_run_ids so the cancel watcher — which was spawned
-        before the abort on every path except the post-start window —
-        finalizes the row (fenced, 'loop exited after unconfirmed stop')
-        when the wedged loop later self-exits; these ids never enter
-        _worker_run_id_by_node, so no completion path owns them. Accepted
-        residual: a run aborted in the post-start window whose watcher
-        itself failed to spawn has no observer, so on an unconfirmed stop
-        there its row has no in-tree finalizer — the loud preserved-worktree
-        error names the run id for manual recovery.
-        """
-        # Register before attempting the stop, not after failure: the cancel
-        # watcher (already running independently) can observe a dead thread
-        # the instant force_stop_run kills it, and checks this set at that
-        # exact moment. Adding only on a failure branch left a window where
-        # the watcher's check could land before this call ever completes,
-        # permanently zombie-ing the row since nothing else would own it.
-        self._unconfirmed_stop_run_ids.add(run_id)
+        """Force-stop and finalize a ralph run abandoned after start."""
         try:
-            stopped = self._ralph.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for aborted ralph run %s (%s); row left running",
@@ -1145,7 +1086,6 @@ class Executor:
                 context,
             )
             return False
-        self._unconfirmed_stop_run_ids.discard(run_id)
         self._finalize_worker_run(
             run_id,
             RunResult(
@@ -1158,22 +1098,27 @@ class Executor:
         )
         return True
 
-    def note_unconfirmed_stop(self, run_id: str) -> None:
-        """Register a run whose stop request was not confirmed so its cancel
-        watcher (if one exists) finalizes the row when the run later
-        self-exits, instead of leaving a permanent 'running' zombie.
-
-        Used by callers (e.g. headless dispatch) that issue their own
-        stop_run/force_stop_run outside Executor's own abort paths
-        (_stop_aborted_run) and so would otherwise never register the id.
-        """
+    def _stop_with_bookkeeping(self, run_id: str, timeout: float | None, *, force: bool) -> bool:
         self._unconfirmed_stop_run_ids.add(run_id)
+        stopper = self._ralph.force_stop_run if force else self._ralph.stop_run
+        stopped = stopper(run_id, timeout=timeout)
+        if stopped:
+            self._unconfirmed_stop_run_ids.discard(run_id)
+        return stopped
+
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        """Stop a dispatched run and register its unconfirmed outcome."""
+        return self._stop_with_bookkeeping(run_id, timeout, force=False)
+
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        """Force-stop a dispatched run and register its unconfirmed outcome."""
+        return self._stop_with_bookkeeping(run_id, timeout, force=True)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
         target_branch = self._target_branch_by_node.get(node_id)
         if target_branch is None:
             return
-        current_branch = self._wt.current_branch()
+        current_branch = self._git.current_branch()
         if feature_branch != target_branch or current_branch != target_branch:
             target_oid = self._target_oid_by_node.get(node_id, "(unknown)")
             raise GitOperationError(

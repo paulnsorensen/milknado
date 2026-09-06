@@ -407,9 +407,10 @@ node. `reconcile_orphan_node` is the shared three-call recovery:
    `timeout + _STALE_GRACE_SECONDS` (30s) to `failed` — **skipping (and
    logging) a row whose recorded pid is still alive** (#54), so a slow live
    worker is never force-failed by the sweep.
-2. `latest_terminal_run(node_id, run_id)` selects the terminal row for the
-   still-owned fence after the stale-run sweep. The producer requires `run_id`
-   in that query, so a stale later-ended row cannot mask the current owner's row.
+2. `fail_stale_running_runs` has marked stale rows failed, then
+   `latest_terminal_run(node_id, run_id)` selects the terminal row for the
+   still-owned fence. The producer requires `run_id` in that query, so a stale
+   later-ended row cannot mask the current owner's row.
 3. `reconcile_node_status` — fenced terminal transition. With a `run_id` it uses
    the atomic fenced `mark_terminal` (closes the TOCTOU where two reconcilers both
    pass a Python-level run_id check but only the matching UPDATE lands); with no

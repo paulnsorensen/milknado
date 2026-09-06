@@ -325,6 +325,7 @@ def test_controller_listener_failure_is_visible_to_other_listeners(
 
     assert listener_calls == 3
     assert received[-1].active_runs[0].output == ("second",)
+
     listener_errors = received[-1].listener_errors
     assert controller.snapshot().listener_errors == listener_errors
     assert set(listener_errors) == {

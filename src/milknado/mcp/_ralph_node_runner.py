@@ -16,8 +16,9 @@ import os
 from pathlib import Path
 from typing import Protocol, cast
 
-from milknado.domains.common import RunFenceLostError, RunResult
+from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
+from milknado.domains.graph import RunFenceLostError
 
 _logger = logging.getLogger("milknado")
 

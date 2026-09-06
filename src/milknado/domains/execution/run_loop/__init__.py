@@ -187,7 +187,7 @@ class RunLoop:
         self._publish_state()
 
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
-        stopped = self._ralph.force_stop_run(run_id, timeout)
+        stopped = self._executor.force_stop_run(run_id, timeout)
         self._publish_state()
         return stopped
 
@@ -314,7 +314,7 @@ class RunLoop:
         newly_failed = 0
         for timed_out_id in list(self._active):
             nid = self._active[timed_out_id]
-            if not self._ralph.stop_run(timed_out_id, timeout=10.0):
+            if not self._executor.stop_run(timed_out_id, timeout=10.0):
                 _logger.error(
                     "worker did not exit after stop; preserving ownership node_id=%d run_id=%s",
                     nid,

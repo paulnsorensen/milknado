@@ -299,7 +299,6 @@ allow = [
     "milknado.adapters.toolchain:SystemToolchainAdapter.home",
     "milknado.domains.batching.weights:_configure_tiktoken_cache",
     "milknado.domains.batching.weights:_get_encoder",
-    "milknado.domains.execution.executor:Executor.note_unconfirmed_stop",
     "milknado.domains.graph._analytics_facade:_AnalyticsFacade._conn",
     "milknado.domains.graph._edge_facade:_EdgeFacade._conn",
     "milknado.domains.graph._pipeline:StatusMiddleware.before_status_change",

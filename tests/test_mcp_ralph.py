@@ -319,6 +319,47 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
         )
 
 
+def test_spawn_failure_accepts_already_finalized_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from milknado.app import ralph as ralph_app
+    from milknado.domains.common import NodeStatus
+    from milknado.domains.graph import RunFenceLostError
+
+    task = _call(
+        milknado_todo_add, description="spawn-fence", kind="task", project_root=str(tmp_path)
+    )
+    run_id = "node-1-20260101T000000Z-spawn"
+    claim_graph, _cfg = open_graph(tmp_path)
+    try:
+        claim_graph.claim_node_for_dispatch(task["id"], run_id, now="2026-01-01T00:00:00+00:00")
+    finally:
+        claim_graph.close()
+    claim = ralph_app.RalphClaim(
+        run_id=run_id,
+        node_id=task["id"],
+        target_branch="main",
+        base_oid="HEAD",
+        stale_worktree=None,
+    )
+    _seed_run(tmp_path, run_id=run_id, node_id=task["id"])
+    graph, _cfg = open_graph(tmp_path)
+
+    def fence_lost(*_args: object, **_kwargs: object) -> None:
+        raise RunFenceLostError("run already finalized")
+
+    monkeypatch.setattr(graph, "finish_run", fence_lost)
+    try:
+        ralph_app._record_spawn_failure(  # pyright: ignore[reportPrivateUsage]
+            graph, claim, OSError("spawn failed")
+        )
+        node = graph.get_node(task["id"])
+        assert node is not None
+        assert node.status is NodeStatus.FAILED
+    finally:
+        graph.close()
+
+
 def test_start_unknown_node_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="not found"):
         _ = _call(milknado_run_loop_start, node_id=99, project_root=str(tmp_path))
@@ -771,6 +812,11 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
 
         def fail(self, _node_id: int) -> None:
             pass
+
+        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+            _ = timeout
+            stub_ralph.stopped.append(run_id)
+            return True
 
     stub_ralph = _StubRalph()
     graph = _Graph()

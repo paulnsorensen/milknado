@@ -374,6 +374,28 @@ class TestProtectedDispatch:
                 worktree=WorktreeMode.THIS_BRANCH,
             )
 
+    def test_inline_isolated_checkout_rejects_non_git_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from milknado.adapters import GitAdapter
+        from milknado.domains.common import GitOperationError
+
+        def no_git_branch(_adapter: GitAdapter) -> str:
+            raise GitOperationError("rev-parse", "not a repository")
+
+        monkeypatch.setattr(GitAdapter, "current_branch", no_git_branch)
+        fn = cast(
+            Callable[..., _CallResult], getattr(milknado_run_inline, "fn", milknado_run_inline)
+        )
+
+        with pytest.raises(GitOperationError, match="not a repository"):
+            _ = fn(
+                node_id=1,
+                project_root=str(tmp_path),
+                worktree=WorktreeMode.ISOLATE,
+                allow_protected=False,
+            )
+
     def test_inline_start_refuses_detached_head(self, tmp_path: Path) -> None:
         import subprocess
 
