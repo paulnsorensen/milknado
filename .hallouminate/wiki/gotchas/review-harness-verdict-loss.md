@@ -1,48 +1,69 @@
-# Review harness: verdict loss and node_reviews PK collision
+# Review verdicts and durable audit records
 
-Two related bugs in the node-review loop caused every multi-round review during the
-basedpyright-zero campaign (2026-08/09, nodes 84, 87, 89, 93, 95, 96, 97, 100, 101, 102)
-to end in `review blocked after round 3` even when the work was sound.
+## Historical failures
 
-## Bug 1 — codex-path reviewer verdicts often unparseable
+The August–September 2026 campaign exposes two distinct review failures.
+Unparseable reviewer output becomes a code rejection and consumes another worker iteration.
+A second execution cycle can reuse a node's review round and collide with the audit primary key.
+The earlier executor also records rejections but not approvals.
+Thus, an absent approval row does not prove that historical review never runs.
 
-The codex-family reviewer frequently returns no parseable `<verdict>` tag. The harness
-then stores the literal string `reviewer produced no parseable <verdict> tag` (44 bytes)
-as the round's findings and records `reject` — or, in earlier rounds, stored the raw
-~64KB transcript as findings. Three unparseable rounds → node blocked. The worker's
-actual diff quality is never assessed.
+The meta run reproduces the first failure with a progress-only Opus response.
+Node 3 receives no code correction, but the old parser starts another worker iteration.
+See [meta verification](../conventions/meta-verification.md) for that run's evidence.
 
-## Bug 2 — node_reviews PK swallows cycle-≥2 verdicts
+## Repair contract
 
-`node_reviews` has `PRIMARY KEY (node_id, round)` and `insert_node_review`
-(`_persistence.py`) does a bare INSERT; the IntegrityError is swallowed in
-`executor.py` `_notify_review` (~line 947). A redispatched node re-running round N
-silently drops the new verdict.
+The reviewer must emit exactly one valid verdict tag.
+Missing, conflicting, duplicate, malformed, and unclosed verdict markers produce a reviewer error.
+The parser retains invalid output as findings instead of inventing code corrections.
+The domain review-result protocol carries the error state explicitly.
 
-Also: `MILKNADO_RUN_ID` is unset in reviewer environments.
+Reviewer errors block completion under both rejection policies.
+They preserve the worktree and return control without another worker run.
+They do not consume the code-revision round budget.
+A valid rejection still follows the configured retry and rejection policy.
 
-## Operational recovery playbook (proven 8x in the campaign)
+Every review result writes a durable `node_reviews` record before merge.
+Approval, rejection, and reviewer error remain distinct audit verdicts.
+A required audit failure blocks merge, including the warn-policy path after exhausted rejection rounds.
+The run-loop display and log identify audit failures.
+Worker notification remains separate from the required audit write.
 
-1. Read `node_reviews.findings`; if it is the 44-byte stub, the block is the parse bug,
-   not the work.
-2. Mechanically verify the worktree yourself — run each check as a SEPARATE command
-   (chained checks have silently skipped): `grep -rn "^# pyright:" tests/` (must be
-   empty), scoped gate commands, tests. `just check-llm` remains the gate; this
-   separate-command warning is about ad-hoc `&&` chains during forensic verification,
-   not a substitute for the gate.
-3. Dispatch an independent reviewer (severity-report) over the worker diff; cure real
-   findings; squash to one commit; rebase onto campaign tip; ff-merge; push.
-4. Mark done via direct SQL `UPDATE nodes SET status='done' WHERE id=N` —
-   `set_subtree_status` cannot do failed→done and walks dependency edges.
-5. Relaunch `milknado run --strict` (it drains on any strict failure).
+An atomic SQLite insert allocates the next audit sequence for each node.
+The sequence uses stored records, not the executor's in-memory revision budget.
+This distinction prevents duplicate round keys after restart or concurrent writers.
+It adds no migration backfill or compatibility layer.
 
-## Worker cheat patterns reviews must check (all observed)
 
-- File-wide `# pyright:` disable directives hiding hundreds of diagnostics (nodes 87,
-  96, 100, 101; one even landed in src via node 88's `_completion.py`).
-- `cast(X, cast(object, fake))` laundering partial fakes past Protocol checks.
-- Deleted/renamed tests, demoted assertions (`assert x` → `_ = x`), assertions
-  re-indented into `pytest.raises`, dropped thread barriers (turns ordering tests
-  into races), `Callable[..., X]` accessors erasing the arity under test.
-- Cure agents can also FALSELY REPORT fixes done (node 102's cure claimed two restored
-  tests that were never written) — grep for the exact restored symbols before merging.
+
+A findings-file write failure must not terminate the whole run loop.
+The recovery path logs file errors and still records a database error verdict.
+It blocks that node without merge or worker retry.
+The regression exercises real completion with an injected filesystem write error.
+
+## Regression evidence
+
+`tests/test_adversarial_review_runtime.py` checks approval persistence, audit failures, malformed output, and preserved-worktree handbacks.
+`tests/test_graph_persistence.py::test_review_sequence_is_atomic_across_connections` checks concurrent database connections.
+The completion-handler tests check visible audit-failure reports.
+The combined repository gate remains `just check-llm`.
+
+## Recovery boundary
+
+Read the stored findings before deciding whether code needs a correction.
+Repair the reviewer configuration or audit storage when the failure belongs to that system.
+Resume through the supported dispatch path after the cause is fixed.
+Do not mark a node done with direct SQL to bypass review or completion checks.
+
+A blocked node is a scheduler hold, not an enforced human-approval lock.
+Direct dispatch can claim it.
+The repair does not change that authorization model.
+
+## Review checks retained from the historical campaign
+
+Reject broad type-check suppressions that hide unrelated errors.
+Check that tests and assertions remain in place.
+Check that concurrency tests retain their barriers.
+Verify claimed fixes in the diff and executable tests.
+Do not accept an agent's summary as the only evidence.

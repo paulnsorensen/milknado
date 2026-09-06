@@ -7,7 +7,6 @@ machinery.
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import time
@@ -62,21 +61,9 @@ def _init_repo(root: Path) -> None:
 
 
 @pytest.fixture()
-def worker_stub(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Install a `claude` shim that exec's its args, so a worker_cmd can run `sh -c`."""
-    bindir = tmp_path_factory.mktemp("worker-stub-bin")
-    stub = bindir / "claude"
-    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
-    _ = stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}:{os.environ.get('PATH', '')}")
-
-
-@pytest.fixture()
-def worker_writes_pwd(worker_stub: None) -> str:
+def worker_writes_pwd(worker_stub: Callable[[str], str]) -> str:
     """A worker that writes its cwd to a deliverable and exits 0."""
-    _ = worker_stub
-    # deliverable the merge-back can land.
-    return "claude sh -c 'pwd > deliverable.txt'"
+    return worker_stub("sh -c 'pwd > deliverable.txt'")
 
 
 def _spy_worker_cwd(monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
@@ -404,9 +391,8 @@ class TestMergeBackReuse:
         assert calls[0][0] == "refs/heads/main"
 
     def test_branch_switch_cannot_redirect_merge_target(
-        self, tmp_path: Path, worker_stub: None
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
     ) -> None:
-        _ = worker_stub
         root = tmp_path / "repo"
         _init_repo(root)
         worker = tmp_path / "switch-worker.py"
@@ -431,7 +417,7 @@ class TestMergeBackReuse:
             _call(
                 milknado_run_inline,
                 node_id=task["id"],
-                worker_cmd=f"claude {sys.executable} {worker}",
+                worker_cmd=worker_stub(f"{sys.executable} {worker}"),
                 project_root=str(root),
             ),
         )
@@ -704,9 +690,8 @@ class TestIsolateWorkerFailure:
     """
 
     def test_nonzero_exit_fails_node_and_skips_merge_back(
-        self, tmp_path: Path, worker_stub: None
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
     ) -> None:
-        _ = worker_stub
         root = tmp_path / "repo"
         _init_repo(root)
         task = cast(
@@ -720,7 +705,7 @@ class TestIsolateWorkerFailure:
             _call(
                 milknado_run_inline,
                 node_id=task["id"],
-                worker_cmd="claude sh -c 'pwd > deliverable.txt; exit 7'",
+                worker_cmd=worker_stub("sh -c 'pwd > deliverable.txt; exit 7'"),
                 project_root=str(root),
             ),
         )
@@ -739,7 +724,10 @@ class TestAsyncStartFailure:
     milknado.app.run.run_inline_start."""
 
     def test_start_headless_failure_releases_claim_as_failed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        worker_stub: Callable[[str], str],
     ) -> None:
         import milknado.domains.dispatch as dispatch_mod
 
@@ -761,7 +749,7 @@ class TestAsyncStartFailure:
                 _call(
                     milknado_run_inline_start,
                     node_id=task["id"],
-                    worker_cmd="claude sh -c 'true'",
+                    worker_cmd=worker_stub("sh -c 'true'"),
                     worktree=WorktreeMode.THIS_BRANCH,
                     merge_back=False,
                     project_root=str(root),

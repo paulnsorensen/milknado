@@ -17,7 +17,7 @@ from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters.loop import (
     LoopAdapter,
     _drain_review_run,  # pyright: ignore[reportPrivateUsage]
-    _parse_review_output,  # pyright: ignore[reportPrivateUsage]
+    _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.common import (
     Gate,
@@ -44,6 +44,7 @@ from milknado.domains.execution import (
     RunLoop,
     run_node_to_completion,
 )
+from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.graph import MikadoGraph
@@ -160,7 +161,7 @@ class _ReviewRalph:
         self.created: list[dict[str, object]] = []
         self.started: list[str] = []
         self.stdout_requests: list[str] = []
-        self.reviews: list[tuple[str, Path]] = []
+        self.reviews: list[tuple[str, str, Path]] = []
         self.ralph_md_calls: list[dict[str, object]] = []
         self._next_id: int = 0
 
@@ -251,8 +252,8 @@ class _ReviewRalph:
     def run_node_review(
         self, agent: str, prompt: str, worktree: Path, project_root: Path
     ) -> ReviewVerdict:
-        _ = prompt, project_root
-        self.reviews.append((agent, worktree))
+        _ = project_root
+        self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
             approved=next(self.verdicts),
             findings_md="[P1][correctness] finding",
@@ -413,9 +414,6 @@ def test_findings_delivered_in_memory_when_db_writes_fail(
     monkeypatch.setattr(
         graph, "deposit_run_message", MagicMock(side_effect=RuntimeError("db down"))
     )
-    monkeypatch.setattr(
-        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("db down"))
-    )
     rejected = executor.complete(1, "main")
 
     assert rejected.review_notification_failed is True
@@ -569,18 +567,26 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
     ralph = _ReviewRalph([True])
-    executor = _executor(graph, tmp_path, ralph)
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
     executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
     _ = (tmp_path / "RALPH.md").write_text("generated context", encoding="utf-8")
-    prompt = executor._review_prompt(  # pyright: ignore[reportPrivateUsage]
-        node, tmp_path, _config(tmp_path, session_mode="fresh")
+    prompt = build_review_prompt(
+        node,
+        tmp_path,
+        _config(tmp_path, session_mode="fresh").project_root,
+        "direct helper diff",
     )
     assert str((tmp_path / "spec.md").resolve()) in prompt
     assert "generated context" in prompt
-    assert "diff from base-oid" in prompt
+    assert "exactly one verdict tag" in prompt
+    _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
+        node, tmp_path, _config(tmp_path, session_mode="fresh")
+    )
+    assert "diff from base-oid" in ralph.reviews[0][1]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
-        node, verdict="reject", findings_md="finding", round_number=1
+        node, verdict="reject", findings_md="finding"
     )
 
     class _MissingReviewer:
@@ -676,7 +682,7 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
 def test_review_prompt_requires_dispatch_base_oid(graph: MikadoGraph, tmp_path: Path) -> None:
     executor = _executor(graph, tmp_path, _ReviewRalph([True]))
     with pytest.raises(ValueError, match="dispatch base oid"):
-        _ = executor._review_prompt(  # pyright: ignore[reportPrivateUsage]
+        _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
             MikadoNode(id=20, description="missing base"),
             tmp_path,
             _config(tmp_path, session_mode="fresh"),
@@ -741,6 +747,28 @@ def test_review_failure_blocks_without_redispatch(
     node = graph.get_node(1)
     assert node is not None
     assert node.status.value == "blocked"
+
+
+def test_review_findings_write_failure_still_audits_and_blocks(
+    graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, _ReviewRalph([True]), git)
+    _ = graph.add_node("findings write failure")
+
+    def fail_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError("findings unavailable")
+
+    monkeypatch.setattr(Path, "write_text", fail_write)
+    _ = executor.dispatch(1, _config(tmp_path))
+    result = executor.complete(1, "main")
+
+    assert result.blocked is True
+    assert result.redispatch is None
+    assert not git.rebases
+    rows = graph.node_reviews_for_node(1)
+    assert rows[0]["verdict"] == "error"
+    assert "findings unavailable" in rows[0]["findings"]
 
 
 def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -881,8 +909,16 @@ def test_adapter_stdout_and_review_parser_paths() -> None:
         )
         assert adapter.get_run_stdout("run") == expected
 
-    assert _parse_review_output("no tag")[0] is False
-    assert _parse_review_output("<verdict>reject</verdict>")[0] is False
+    assert _parse_review_verdict("no tag").error is True
+    assert _parse_review_verdict("<verdict>reject</verdict>").approved is False
+    assert (
+        _parse_review_verdict("<verdict>approve</verdict><verdict>unknown</verdict>").error is True
+    )
+    assert _parse_review_verdict("<verdict>\nanalysis\n<verdict>approve</verdict>").error is True
+    assert (
+        _parse_review_verdict("<verdict>approve</verdict><verdict>approve</verdict>").error is True
+    )
+    assert _parse_review_verdict("<verdict>approve</verdict><verdict>reject").error is True
 
 
 def test_loop_adapter_runs_bounded_review_in_pinned_worktree(
@@ -1048,3 +1084,128 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     assert any("review notification failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
     printed = " ".join(str(call) for call in console.print_calls)
     assert "review notification failed" in printed
+
+
+def test_completion_handler_surfaces_review_audit_failure() -> None:
+    result = CompletionResult(
+        1, rebased=False, newly_ready=[], blocked=True, review_audit_failed=True
+    )
+    loop = _handler_loop(result)
+    live, console = _handler_live()
+
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+
+    assert (completed, failed, conflicts) == (0, 1, [])
+    assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
+    printed = " ".join(str(call) for call in console.print_calls)
+    assert "review audit failed" in printed
+
+
+def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: Path) -> None:
+    ralph = _ReviewRalph([True])
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
+    _ = graph.add_node("approved audit")
+
+    dispatched = executor.dispatch(1, _config(tmp_path))
+    result = executor.complete(1, "main")
+
+    assert result.rebased is True
+    assert git.removed == [dispatched.worktree]
+    rows = graph.node_reviews_for_node(1)
+    assert [(row["round"], row["verdict"]) for row in rows] == [(1, "approve")]
+
+
+def test_approval_audit_failure_blocks_before_merge(
+    graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ralph = _ReviewRalph([True])
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
+    _ = graph.add_node("audit failure")
+    monkeypatch.setattr(
+        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+    )
+
+    _ = executor.dispatch(1, _config(tmp_path, on_reject="warn"))
+    result = executor.complete(1, "main")
+
+    assert result.blocked is True
+    assert result.review_audit_failed is True
+    assert not git.rebases
+    node = graph.get_node(1)
+    assert node is not None
+    assert node.status.value == "blocked"
+
+
+@pytest.mark.parametrize("policy", ["block", "warn"])
+def test_rejection_audit_failure_blocks_before_merge(
+    graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: str
+) -> None:
+    ralph = _ReviewRalph([False])
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
+    _ = graph.add_node(f"rejection audit failure {policy}")
+    monkeypatch.setattr(
+        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+    )
+
+    _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
+    executor._review_round_by_node[1] = 1  # pyright: ignore[reportPrivateUsage]
+    result = executor.complete(1, "main")
+
+    assert result.blocked is True
+    assert result.review_audit_failed is True
+    assert result.redispatch is None
+    assert not git.rebases
+
+
+def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
+    db = tmp_path / "review.db"
+    graph = MikadoGraph(db)
+    node = graph.add_node("restart sequence")
+    assert graph.insert_node_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
+    graph.close()
+
+    reopened = MikadoGraph(db)
+    executor = _executor(reopened, tmp_path, _ReviewRalph([True]))
+    audit = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
+        node, verdict="approve", findings_md="new"
+    )
+
+    assert audit.audit_succeeded is True
+    assert [row["round"] for row in reopened.node_reviews_for_node(node.id)] == [1, 2]
+    reopened.close()
+
+
+class _MalformedReviewRalph(_ReviewRalph):
+    def run_node_review(  # pyright: ignore[reportImplicitOverride]
+        self, agent: str, prompt: str, worktree: Path, project_root: Path
+    ) -> ReviewVerdict:
+        _ = agent, prompt, worktree, project_root
+        return _parse_review_verdict("progress only")
+
+
+@pytest.mark.parametrize("policy", ["block", "warn"])
+def test_invalid_review_blocks_without_worker_revision(
+    graph: MikadoGraph, tmp_path: Path, policy: str
+) -> None:
+    ralph = _MalformedReviewRalph([])
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
+    _ = graph.add_node(f"invalid review {policy}")
+
+    _ = executor.dispatch(
+        1,
+        _config(tmp_path, on_reject=policy, review_max_rounds=3),
+    )
+    result = executor.complete(1, "main")
+
+    assert result.blocked is True
+    assert result.redispatch is None
+    assert len(ralph.created) == 1
+    assert not git.rebases
+    assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
+    rows = graph.node_reviews_for_node(1)
+    assert rows[0]["verdict"] == "error"
+    assert rows[0]["findings"] == "progress only"

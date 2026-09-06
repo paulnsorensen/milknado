@@ -40,7 +40,7 @@ _SUPERSET_KEYS = frozenset(RunDict.__annotations__)
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
-from milknado.mcp._core import open_graph
+from milknado.app.project import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
@@ -203,23 +203,6 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool) -> str:
         _STUB_RUNNER.format(status=status, rebased=rebased, exit_code=0 if status == "done" else 1)
     )
     return f"{sys.executable} {script}"
-
-
-@pytest.fixture()
-def worker_stub(
-    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
-) -> Callable[[str], str]:
-    """Same pattern as test_mcp_server.py: a `claude` shim that exec's its args."""
-    bindir = tmp_path_factory.mktemp("worker-stub-bin")
-    stub = bindir / "claude"
-    _ = stub.write_text('#!/bin/sh\nexec "$@"\n')
-    stub.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
-
-    def _cmd(command: str) -> str:
-        return f"claude {command}"
-
-    return _cmd
 
 
 def _wait_for_terminal(run_id: str, root: str, tool: object, timeout: float = 5.0) -> _CallResult:

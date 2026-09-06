@@ -7,8 +7,10 @@ import logging
 import shutil
 import sqlite3
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 from typing import cast
 
 import pytest
@@ -660,3 +662,31 @@ class TestPruneRunMessages:
         assert self._bodies(conn, "done") == ["done-2", "done-3"], (
             "the retention cap must still evict a terminal run's oldest message"
         )
+
+
+def test_review_sequence_is_atomic_across_connections(tmp_path: Path) -> None:
+    db = tmp_path / "concurrent-reviews.db"
+    graph = MikadoGraph(db)
+    node = graph.add_node("concurrent reviews")
+    graph.close()
+    barrier = Barrier(2)
+
+    def insert(index: int) -> int:
+        connection = sqlite3.connect(str(db), timeout=10)
+        connection.row_factory = sqlite3.Row
+        try:
+            _ = barrier.wait(timeout=5)
+            return _run_persistence.insert_node_review(
+                connection,
+                node.id,
+                "approve",
+                f"review-{index}",
+                f"2026-01-01T00:00:0{index}+00:00",
+            )
+        finally:
+            connection.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        rounds = sorted(pool.map(insert, (1, 2)))
+
+    assert rounds == [1, 2]

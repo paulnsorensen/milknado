@@ -145,7 +145,6 @@ def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
 
 
 def get_run(conn: sqlite3.Connection, run_id: str) -> RunRecord | None:
-    """SELECT one run row as a dict (replaces read_state for poll)."""
     row = fetchone(conn, "SELECT * FROM runs WHERE run_id = ?", (run_id,))
     return run_row_to_dict(row) if row else None
 
@@ -175,7 +174,6 @@ def runs_for_node(
 
 
 def recent_runs(conn: sqlite3.Connection, limit: int) -> list[RunRecord]:
-    """Return the most-recently-started runs as dicts (replaces the run-list scan)."""
     rows = fetchall(conn, "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (max(limit, 0),))
     return [run_row_to_dict(row) for row in rows]
 
@@ -248,22 +246,24 @@ def deposit_review_verdict(
 def insert_node_review(
     conn: sqlite3.Connection,
     node_id: int,
-    round_number: int,
     verdict: str,
     findings: str,
     created_at: str,
-) -> None:
-    """Persist one review verdict keyed by (node_id, round); no dependency on runs."""
-    _ = conn.execute(
+) -> int:
+    """Append a review verdict; the table assigns the next round for the node."""
+    sql = (
         "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
-        + "VALUES (?, ?, ?, ?, ?)",
-        (node_id, round_number, verdict, findings, created_at),
+        "SELECT ?, COALESCE(MAX(round), 0) + 1, ?, ?, ? "
+        "FROM node_reviews WHERE node_id = ? RETURNING round"
     )
-    conn.commit()
+    with conn:
+        row = fetchone(conn, sql, (node_id, verdict, findings, created_at, node_id))
+    if row is None:
+        raise RuntimeError("node review insert returned no row")
+    return cast(int, _as_tuple(row)[0])
 
 
 def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[NodeReviewRecord]:
-    """Return all recorded review verdicts for a node, round order."""
     rows = fetchall(
         conn,
         "SELECT node_id, round, verdict, findings, created_at "
@@ -283,7 +283,6 @@ def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[NodeRe
 
 
 def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:
-    """Return the body of the latest message for this run+role, or None."""
     row = fetchone(
         conn,
         "SELECT body FROM run_messages WHERE run_id = ? AND role = ? "

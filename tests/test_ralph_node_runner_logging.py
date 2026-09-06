@@ -12,8 +12,8 @@ def test_main_logs_terminal_event_with_run_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import milknado.adapters as adapters
+    import milknado.app.project as project
     import milknado.domains.execution as execution
-    import milknado.mcp._core as mcp_core
     from milknado.domains.execution.headless import HeadlessOutcome
     from milknado.mcp import _ralph_node_runner
 
@@ -99,7 +99,7 @@ def test_main_logs_terminal_event_with_run_id(
     def _run_node_to_completion(*_args: object, **_kwargs: object) -> HeadlessOutcome:
         return HeadlessOutcome(node_id=1, success=True, detail=None)
 
-    monkeypatch.setattr(mcp_core, "open_graph", _open_graph)
+    monkeypatch.setattr(project, "open_graph", _open_graph)
     monkeypatch.setattr(adapters, "GitAdapter", _make_git)
     monkeypatch.setattr(adapters, "LoopAdapter", _make_ralph)
     monkeypatch.setattr(execution, "Executor", _make_executor)

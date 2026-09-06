@@ -71,13 +71,13 @@ def main(argv: list[str] | None = None) -> int:
     args = cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
 
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.app.project import open_graph
     from milknado.domains.common import resolve_flavor_profile
     from milknado.domains.execution import (
         ExecutionConfig,
         Executor,
         run_node_to_completion,
     )
-    from milknado.mcp._core import open_graph
 
     root = Path(args.project_root)
     from milknado.domains.execution import NO_GATES_CONFIGURED_MESSAGE

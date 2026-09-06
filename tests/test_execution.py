@@ -203,6 +203,7 @@ class FakeGit:
 class FakeReview:
     approved: bool = True
     findings_md: str = ""
+    error: bool = False
 
 
 class _CreateRunArgs(TypedDict, total=False):
