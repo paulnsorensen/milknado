@@ -161,7 +161,7 @@ class _ReviewRalph:
         self.created: list[dict[str, object]] = []
         self.started: list[str] = []
         self.stdout_requests: list[str] = []
-        self.reviews: list[tuple[str, Path]] = []
+        self.reviews: list[tuple[str, str, Path]] = []
         self.ralph_md_calls: list[dict[str, object]] = []
         self._next_id: int = 0
 
@@ -252,8 +252,8 @@ class _ReviewRalph:
     def run_node_review(
         self, agent: str, prompt: str, worktree: Path, project_root: Path
     ) -> ReviewVerdict:
-        _ = prompt, project_root
-        self.reviews.append((agent, worktree))
+        _ = project_root
+        self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
             approved=next(self.verdicts),
             findings_md="[P1][correctness] finding",
@@ -567,19 +567,24 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
     ralph = _ReviewRalph([True])
-    executor = _executor(graph, tmp_path, ralph)
+    git = FakeGit()
+    executor = _executor(graph, tmp_path, ralph, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
+    executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
     _ = (tmp_path / "RALPH.md").write_text("generated context", encoding="utf-8")
     prompt = build_review_prompt(
         node,
         tmp_path,
         _config(tmp_path, session_mode="fresh").project_root,
-        "diff from base-oid",
+        "direct helper diff",
     )
     assert str((tmp_path / "spec.md").resolve()) in prompt
     assert "generated context" in prompt
-    assert "diff from base-oid" in prompt
     assert "exactly one verdict tag" in prompt
+    _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
+        node, tmp_path, _config(tmp_path, session_mode="fresh")
+    )
+    assert "diff from base-oid" in ralph.reviews[0][1]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="reject", findings_md="finding"
     )
@@ -593,7 +598,6 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
         ralph=_MissingReviewer(),  # pyright: ignore[reportArgumentType]
         crg=FakeCrg(),
     )
-    no_reviewer._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match="requires a LoopPort reviewer"):
         _ = no_reviewer._run_review(  # pyright: ignore[reportPrivateUsage]
             node, tmp_path, _config(tmp_path, session_mode="fresh")

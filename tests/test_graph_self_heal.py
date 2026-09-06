@@ -138,7 +138,7 @@ def test_stale_db_automigrates_on_open(tmp_path: Path) -> None:
     version = cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0])
     assert version == _persistence.SCHEMA_VERSION
     node = graph.add_node("migrated")
-    graph.insert_node_review(node.id, 1, "reject", "findings", "2026-07-23T00:00:00Z")
+    _ = graph.insert_node_review(node.id, 1, "reject", "findings", "2026-07-23T00:00:00Z")
     rows = graph.node_reviews_for_node(node.id)
     assert [r["verdict"] for r in rows] == ["reject"]
     graph.close()
@@ -211,7 +211,7 @@ def test_reopen_of_current_db_is_noop_migration(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("persistent")
-    graph.insert_node_review(node.id, 1, "reject", "f", "2026-07-23T00:00:00Z")
+    _ = graph.insert_node_review(node.id, 1, "reject", "f", "2026-07-23T00:00:00Z")
     graph.close()
 
     reopened = MikadoGraph(db)
@@ -237,7 +237,7 @@ def test_delete_node_cleans_node_reviews(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("reviewed")
-    graph.insert_node_review(node.id, 1, "reject", "findings", "2026-07-23T00:00:00Z")
+    _ = graph.insert_node_review(node.id, 1, "reject", "findings", "2026-07-23T00:00:00Z")
 
     deleted = graph.delete_node(node.id)
 
@@ -252,7 +252,7 @@ def test_drop_all_cleans_node_reviews(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("reviewed")
-    graph.insert_node_review(node.id, 1, "approve", "", "2026-07-23T00:00:00Z")
+    _ = graph.insert_node_review(node.id, 1, "approve", "", "2026-07-23T00:00:00Z")
 
     count = graph.drop_all()
 
