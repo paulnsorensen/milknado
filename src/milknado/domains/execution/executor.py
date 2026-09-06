@@ -44,6 +44,11 @@ from milknado.domains.common.types import (
 )
 from milknado.domains.dispatch import render_brief
 from milknado.domains.dispatch._runstate import is_cancel_requested, make_run_id, runs_dir
+from milknado.domains.execution._review import (
+    ReviewNotification,
+    build_review_prompt,
+    persist_review_findings,
+)
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
@@ -110,12 +115,6 @@ class CompletionResult:
     blocked: bool = False
     review_notification_failed: bool = False
     review_audit_failed: bool = False
-
-
-@dataclass(frozen=True)
-class _ReviewNotification:
-    audit_succeeded: bool
-    notification_succeeded: bool
 
 
 @dataclass(frozen=True)
@@ -902,52 +901,13 @@ class Executor:
         self._session_by_node[node.id] = session
         return session
 
-    def _review_prompt(self, node: MikadoNode, worktree: Path, config: ExecutionConfig) -> str:
-        base_oid = self._base_oid_by_node.get(node.id)
-        if not base_oid:
-            raise ValueError(f"node {node.id} has no dispatch base oid for review")
-        diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
-        try:
-            brief = (worktree / "RALPH.md").read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            brief = node.description
-        spec_path = node.artifact_path
-        if spec_path:
-            candidate = Path(spec_path).expanduser()
-            if not candidate.is_absolute():
-                candidate = (config.project_root / candidate).resolve()
-            spec_path = str(candidate)
-        return (
-            f"# Adversarial review: {node.description}\n\n"
-            "## Generated node brief/context\n\n"
-            f"{brief.rstrip()}\n\n"
-            f"## Spec\n\n{spec_path or '(no spec path)'}\n\n"
-            "Review the pinned worktree against the brief and spec. Report "
-            "easy-cheese severity/dimension findings with evidence and fixes, "
-            "then emit exactly one verdict tag, with no other verdict tags:\n\n"
-            "<verdict>approve</verdict>\n\nor\n\n"
-            "<verdict>reject</verdict>\n\n"
-            f"## Full base-to-worktree diff\n\n```diff\n{diff}\n```\n"
-        )
-
-    def _persist_review_findings(
-        self,
-        node: MikadoNode,
-        worktree: Path,
-        findings_md: str,
-    ) -> None:
-        slug = slugify(node.description, max_length=30) or str(node.id)
-        path = worktree / ".cheese" / "age" / f"{slug}.md"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _ = path.write_text(findings_md.rstrip() + "\n", encoding="utf-8")
-
     def _notify_review(
         self,
         node: MikadoNode,
         *,
         verdict: str,
         findings_md: str,
-    ) -> _ReviewNotification:
+    ) -> ReviewNotification:
         now = datetime.now(UTC).isoformat()
         audit_succeeded = True
         try:
@@ -958,7 +918,7 @@ class Executor:
         worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
         if not worker_run_id:
             _logger.error("node_review_notification_missing_run node_id=%d", node.id)
-            return _ReviewNotification(audit_succeeded, False)
+            return ReviewNotification(audit_succeeded, False)
         body = json.dumps(
             {"node_id": node.id, "verdict": verdict, "findings": findings_md},
             sort_keys=True,
@@ -971,8 +931,8 @@ class Executor:
                 node.id,
                 worker_run_id,
             )
-            return _ReviewNotification(audit_succeeded, False)
-        return _ReviewNotification(audit_succeeded, True)
+            return ReviewNotification(audit_succeeded, False)
+        return ReviewNotification(audit_succeeded, True)
 
     def _run_review(
         self,
@@ -987,16 +947,18 @@ class Executor:
         )
         if reviewer is None or config.review_agent is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
+        if not (base_oid := self._base_oid_by_node.get(node.id)):
+            raise ValueError(f"node {node.id} has no dispatch base oid for review")
+        diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
         result: ReviewResult = reviewer(
             config.review_agent,
-            self._review_prompt(node, worktree, config),
+            build_review_prompt(node, worktree, config.project_root, diff),
             worktree,
             config.project_root,
         )
         approved = result.approved
-        findings = result.findings_md.strip()
-        review_error = result.error
-        self._persist_review_findings(node, worktree, findings or "reviewer returned no findings")
+        findings, review_error = result.findings_md.strip(), result.error
+        persist_review_findings(node, worktree, findings or "reviewer returned no findings")
         return approved, findings, review_error
 
     def _redispatch_review_round(
@@ -1287,9 +1249,9 @@ class Executor:
         self,
         node: MikadoNode,
         worktree: Path,
-        notification: _ReviewNotification,
+        notification: ReviewNotification,
         detail: str,
-    ) -> tuple[CompletionResult, _ReviewNotification]:
+    ) -> tuple[CompletionResult, ReviewNotification]:
         if node.run_id:
             blocked = self._graph.mark_blocked_fenced(node.id, node.run_id)
         else:
@@ -1327,7 +1289,7 @@ class Executor:
         config: ExecutionConfig,
         findings: str,
         review_error: bool,
-    ) -> tuple[CompletionResult | None, _ReviewNotification]:
+    ) -> tuple[CompletionResult | None, ReviewNotification]:
         node_id = node.id
         round_number = self._review_round_by_node.get(node_id, 0)
         review_round = round_number + 1
@@ -1375,7 +1337,6 @@ class Executor:
                     newly_ready=[],
                     redispatch=redispatch,
                     review_notification_failed=not notification.notification_succeeded,
-                    review_audit_failed=not notification.audit_succeeded,
                 ),
                 notification,
             )
@@ -1395,7 +1356,7 @@ class Executor:
 
     def _gate_review(
         self, node: MikadoNode, worktree: Path, config: ExecutionConfig
-    ) -> tuple[CompletionResult | None, _ReviewNotification]:
+    ) -> tuple[CompletionResult | None, ReviewNotification]:
         review_error = False
         try:
             approved, findings, review_error = self._run_review(node, worktree, config)
@@ -1404,7 +1365,7 @@ class Executor:
             approved = False
             findings = f"reviewer failed: {type(exc).__name__}: {exc}"
             try:
-                self._persist_review_findings(node, worktree, findings)
+                persist_review_findings(node, worktree, findings)
             except OSError:
                 _logger.exception(
                     "adversarial review findings recovery failed for node %d",
@@ -1447,7 +1408,7 @@ class Executor:
         self._validate_completion_target(node_id, feature_branch)
         worktree = Path(node.worktree_path) if node.worktree_path else None
         config = self._config_by_node.get(node_id)
-        notification = _ReviewNotification(True, True)
+        notification = ReviewNotification(True, True)
         if worktree is not None and config is not None and self._review_enabled(config):
             early, notification = self._gate_review(node, worktree, config)
             if early is not None:

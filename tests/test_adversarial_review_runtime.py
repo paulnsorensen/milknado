@@ -44,6 +44,7 @@ from milknado.domains.execution import (
     RunLoop,
     run_node_to_completion,
 )
+from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.graph import MikadoGraph
@@ -568,10 +569,12 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     ralph = _ReviewRalph([True])
     executor = _executor(graph, tmp_path, ralph)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
-    executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
     _ = (tmp_path / "RALPH.md").write_text("generated context", encoding="utf-8")
-    prompt = executor._review_prompt(  # pyright: ignore[reportPrivateUsage]
-        node, tmp_path, _config(tmp_path, session_mode="fresh")
+    prompt = build_review_prompt(
+        node,
+        tmp_path,
+        _config(tmp_path, session_mode="fresh").project_root,
+        "diff from base-oid",
     )
     assert str((tmp_path / "spec.md").resolve()) in prompt
     assert "generated context" in prompt
@@ -590,6 +593,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
         ralph=_MissingReviewer(),  # pyright: ignore[reportArgumentType]
         crg=FakeCrg(),
     )
+    no_reviewer._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match="requires a LoopPort reviewer"):
         _ = no_reviewer._run_review(  # pyright: ignore[reportPrivateUsage]
             node, tmp_path, _config(tmp_path, session_mode="fresh")
@@ -674,7 +678,7 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
 def test_review_prompt_requires_dispatch_base_oid(graph: MikadoGraph, tmp_path: Path) -> None:
     executor = _executor(graph, tmp_path, _ReviewRalph([True]))
     with pytest.raises(ValueError, match="dispatch base oid"):
-        _ = executor._review_prompt(  # pyright: ignore[reportPrivateUsage]
+        _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
             MikadoNode(id=20, description="missing base"),
             tmp_path,
             _config(tmp_path, session_mode="fresh"),

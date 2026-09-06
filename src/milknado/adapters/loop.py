@@ -439,11 +439,7 @@ def _build_ralph_content(
 
 
 def _parse_review_verdict(output: str) -> ReviewVerdict:
-    match = re.search(
-        r"<verdict>\s*(approve|reject|revise)\s*</verdict>",
-        output,
-        re.I,
-    )
+    match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
     marker_matches = list(re.finditer(r"</?verdict\b", output, re.I))
     valid_span = match.span() if match is not None else None
     extra_markers = valid_span is None or any(
