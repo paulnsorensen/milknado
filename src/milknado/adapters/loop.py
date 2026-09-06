@@ -268,7 +268,7 @@ class LoopAdapter:
                 stop_on_completion_signal=True,
                 max_iterations=1,
                 timeout=timeout_seconds,
-                log_dir=temp_root / ".ralph-logs",
+                log_dir=worktree / ".ralph-logs" / "review",
             )
             run = local_manager.create_run(config, emitter=local_emitter)
             local_manager.start_run(run.state.run_id)
