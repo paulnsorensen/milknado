@@ -2068,7 +2068,7 @@ class TestArgDeliveryStdin:
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
     def test_execute_agent_threads_arg_delivery_through_omp(self):
-        with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
+        with patch(MOCK_SUBPROCESS, return_value=ok_proc()) as mock_popen:
             _ = execute_agent(
                 AgentRunSpec(
                     ["omp", "-p", "--auto-approve"],
@@ -2085,9 +2085,11 @@ class TestArgDeliveryStdin:
             "--auto-approve",
             "--mode",
             "json",
-            "do the work",
         ]
-        assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
+        assert mock_popen.call_args.kwargs["stdin"] == subprocess.PIPE
+        mock_popen.return_value.stdin.write.assert_called_once_with(  # pyright: ignore[reportAny]
+            "do the work"
+        )
 
     def test_arg_delivery_does_not_hang_when_child_ignores_stdin(self, tmp_path: Path):
         """Real subprocess: an arg-delivery agent that never reads stdin must
