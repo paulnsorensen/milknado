@@ -313,7 +313,7 @@ allow = [
 max_file_lines = 300
 
 [tool.milknado.quality.file_exceptions]
-"src/milknado/adapters/loop.py" = { max_lines = 456, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline." }
+"src/milknado/adapters/loop.py" = { max_lines = 458, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
 "src/milknado/app/run.py" = { max_lines = 599, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 584 for the elapsed/attempt/ETA/progress fields added to the run read model." }
 "src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
