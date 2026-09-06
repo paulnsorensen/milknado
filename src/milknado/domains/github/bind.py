@@ -75,7 +75,7 @@ def bind_github_project(
         intent = goal_intent(goal, file_map, wiki_root)
         marker = _correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
         matches = _correlated_item_ids(items, marker)
-        attempt = cast(dict[str, object] | None, graph.get_github_bind_attempt(goal.id))
+        attempt = cast(dict[str, object] | None, graph.github.attempt(goal.id))
 
         if attempt is not None:
             if len(matches) > 1:
@@ -86,7 +86,7 @@ def bind_github_project(
             if len(matches) == 1:
                 recovered_id = matches[0]
                 graph.set_github_ref(goal.id, recovered_id)
-                graph.clear_github_bind_attempt(goal.id)
+                graph.github.clear(goal.id)
                 continue
             issue_url = attempt.get("issue_url")
             if not isinstance(issue_url, str) or not issue_url:
@@ -96,7 +96,7 @@ def bind_github_project(
                 )
             item_id = github.item_add(owner, number, issue_url)
             graph.set_github_ref(goal.id, item_id)
-            graph.clear_github_bind_attempt(goal.id)
+            graph.github.clear(goal.id)
             items_added += 1
             items.append(GithubItem(id=item_id, body=f"{marker}\n", url=issue_url))
             continue
@@ -110,13 +110,13 @@ def bind_github_project(
             graph.set_github_ref(goal.id, recovered_id)
             continue
 
-        graph.set_github_bind_attempt(goal.id, marker, None, datetime.now(UTC).isoformat())
+        graph.github.bind(goal.id, marker, None, datetime.now(UTC).isoformat())
         body = f"{intent.rstrip()}\n\n{marker}\n"
         url = github.issue_create(issue_owner, issue_repo, goal.description, body)
-        graph.set_github_bind_attempt(goal.id, marker, url, datetime.now(UTC).isoformat())
+        graph.github.bind(goal.id, marker, url, datetime.now(UTC).isoformat())
         item_id = github.item_add(owner, number, url)
         graph.set_github_ref(goal.id, item_id)
-        graph.clear_github_bind_attempt(goal.id)
+        graph.github.clear(goal.id)
         issues_created += 1
         items_added += 1
         items.append(GithubItem(id=item_id, title=goal.description, body=body, url=url))

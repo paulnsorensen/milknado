@@ -56,7 +56,7 @@ p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
-    graph.finish_run(
+    graph.runs.finish(
         a.run_id,
         RunResult(
             status="{status}",
@@ -89,7 +89,7 @@ p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
-    graph.finish_run(
+    graph.runs.finish(
         a.run_id,
         RunResult(
             status="done",
@@ -137,7 +137,7 @@ def _call_tree(tool: object, **kwargs: object) -> list[NodeSummary]:
 def _read_run(root: Path, run_id: str) -> RunRecord:
     graph, _cfg = open_graph(root)
     try:
-        row = graph.get_run(run_id)
+        row = graph.runs.get(run_id)
         assert row is not None
         return row
     finally:
@@ -147,7 +147,7 @@ def _read_run(root: Path, run_id: str) -> RunRecord:
 def _node_runs(root: Path, node_id: int) -> list[RunRecord]:
     graph, _cfg = open_graph(root)
     try:
-        return graph.runs_for_node(node_id)
+        return graph.runs.for_node(node_id)
     finally:
         graph.close()
 
@@ -178,9 +178,9 @@ def _seed_run(
         )
         started_at = started_at or datetime.now(UTC).isoformat()
         log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
-        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        graph.runs.start(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 run_id,
                 RunResult(
                     status=status,
@@ -480,8 +480,9 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
     class Graph:
         def __init__(self) -> None:
             self.terminal: tuple[int, str, NodeStatus] | None = None
+            self.runs: Graph = self
 
-        def finish_run(self, _run_id: str, _result: object) -> None:
+        def finish(self, _run_id: str, _result: object) -> None:
             raise RuntimeError("database unavailable")
 
         def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
@@ -507,7 +508,10 @@ def test_spawn_failure_preserves_node_persistence_exception() -> None:
     from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
 
     class Graph:
-        def finish_run(self, _run_id: str, _result: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, _run_id: str, _result: object) -> None:
             pass
 
         def mark_terminal(self, _node_id: int, _run_id: str, _status: object) -> bool:
@@ -659,20 +663,18 @@ def test_runner_writes_done_on_successful_outcome(
         def __init__(self) -> None:
             self.closed: bool = False
             self.finished: dict[str, object] | None = None
+            self.runs: _Graph = self
 
         def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result: RunResult) -> None:
+        def finish(self, run_id: str, result: RunResult) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
-
-        def set_run_pid(self, *_args: object) -> None:
-            pass
 
         def set_pid(self, *_args: object) -> None:
             pass
 
-        def deposit_run_message(self, *_args: object, **_kwargs: object) -> int:
+        def deposit_message(self, *_args: object, **_kwargs: object) -> int:
             return 1
 
         def close(self) -> None:
@@ -756,20 +758,18 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         def __init__(self) -> None:
             self.closed: bool = False
             self.finished: dict[str, object] | None = None
+            self.runs: _Graph = self
 
         def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result: RunResult) -> None:
+        def finish(self, run_id: str, result: RunResult) -> None:
             self.finished = {"run_id": run_id, **vars(result)}
-
-        def set_run_pid(self, *_args: object) -> None:
-            pass
 
         def set_pid(self, *_args: object) -> None:
             pass
 
-        def deposit_run_message(self, *_args: object, **_kwargs: object) -> int:
+        def deposit_message(self, *_args: object, **_kwargs: object) -> int:
             return 1
 
         def close(self) -> None:

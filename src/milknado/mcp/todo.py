@@ -124,7 +124,7 @@ def milknado_todo_brief(node_id: int, project_root: str = "") -> Response:
             prepend=profile.brief_prepend,
             project_root=root,
         )
-        files = graph.get_file_ownership(node_id)
+        files = graph.files.for_node(node_id)
         return {"node_id": node_id, "brief": brief, "files": files}
     finally:
         graph.close()

@@ -178,9 +178,9 @@ def _seed_run(
         )
         started_at = started_at or datetime.now(UTC).isoformat()
         log_path = log_path or str(root / ".milknado" / "runs" / f"{run_id}.log")
-        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        graph.runs.start(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 run_id,
                 RunResult(
                     status=status,
@@ -199,7 +199,7 @@ def _read_run(root: Path, run_id: str) -> RunRecord:
     """Read a runs row back (replaces reading a .state.json sidecar)."""
     graph, _cfg = open_graph(root)
     try:
-        row = graph.get_run(run_id)
+        row = graph.runs.get(run_id)
         assert row is not None
         return row
     finally:
@@ -210,7 +210,7 @@ def _run_status(graph: MikadoGraph, run_id: str) -> str:
     """Fetch a run's status, asserting the row exists first. Keeps the
     stale-sweep assertions from masking a missing row (get_run -> None) as a raw
     TypeError instead of a clear 'run vanished' failure."""
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None, f"run {run_id!r} not found"
     return row["status"]
 
@@ -514,7 +514,7 @@ class TestTodoBriefAndRun:
             from milknado.domains.common import NodeKind, NodeSpec
 
             node = graph.add_node("touch foo", spec=NodeSpec(kind=NodeKind.TASK))
-            graph.set_file_ownership(node.id, ["src/foo.py", "src/bar.py"])
+            graph.files.claim(node.id, ["src/foo.py", "src/bar.py"])
         finally:
             graph.close()
 
@@ -1142,7 +1142,7 @@ class TestTodoAsyncRun:
             )
         graph, _cfg = open_graph(root)
         try:
-            winner = graph.latest_terminal_run(node_id, "node-42-20200101T000001Z-bbbb")
+            winner = graph.runs.latest_terminal(node_id, "node-42-20200101T000001Z-bbbb")
         finally:
             graph.close()
         assert winner is not None
@@ -1170,15 +1170,15 @@ class TestTodoAsyncRun:
             )
         graph, _cfg = open_graph(root)
         try:
-            latest = graph.latest_terminal_run(node_id, owner)
+            latest = graph.runs.latest_terminal(node_id, owner)
             assert latest is not None
             assert latest["status"] == "done", "the owner fence selects only its terminal row"
-            stale_latest = graph.latest_terminal_run(node_id, stale)
+            stale_latest = graph.runs.latest_terminal(node_id, stale)
             assert stale_latest is not None
             assert stale_latest["status"] == "failed"
             with pytest.raises(ValueError, match="run_id is required"):
-                _ = graph.latest_terminal_run(node_id, "")
-            unfenced = graph.runs_for_node(node_id)
+                _ = graph.runs.latest_terminal(node_id, "")
+            unfenced = graph.runs.for_node(node_id)
             assert len(unfenced) == 2, "listing returns both terminal runs"
         finally:
             graph.close()
@@ -1267,7 +1267,7 @@ class TestTodoAsyncRun:
     def test_latest_terminal_run_returns_none_for_unknown_run(self, tmp_path: Path) -> None:
         graph, _cfg = open_graph(Path(tmp_path))
         try:
-            assert graph.latest_terminal_run(1, "missing") is None
+            assert graph.runs.latest_terminal(1, "missing") is None
         finally:
             graph.close()
 

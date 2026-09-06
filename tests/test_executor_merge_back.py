@@ -202,14 +202,14 @@ class TestMergeBackIntegration:
         try:
             _ = graph.add_node("Add the added() helper")
             graph.mark_running(1, worktree_path=str(wt), branch_name=branch, run_id="run-1")
-            graph.start_run("run-1", 1, "run.log", "2026-01-01T00:00:00+00:00", 300)
+            graph.runs.start("run-1", 1, "run.log", "2026-01-01T00:00:00+00:00", 300)
             ex = Executor(
                 graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
             )
             _worker_run_ids(ex)[1] = "run-1"
 
             result = ex.complete(1, "feature")
-            row = graph.get_run("run-1")
+            row = graph.runs.get("run-1")
             assert result.rebased is False
             assert result.rebase_conflict is not None
             assert "untracked integration-checkout path collision: addons" in (

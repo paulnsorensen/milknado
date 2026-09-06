@@ -302,7 +302,7 @@ def add_node(
             ),
         )
         if files:
-            graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
+            graph.files.claim(node.id, normalize_hint_paths(files, project_root))
         maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
     finally:

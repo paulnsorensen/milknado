@@ -551,7 +551,7 @@ class TestMergeBackFailure:
         assert _node(root, task["id"]).status.value == "failed"
         graph, _cfg = open_graph(root)
         try:
-            latest = graph.recent_runs(1)[0]
+            latest = graph.runs.recent(1)[0]
         finally:
             graph.close()
         assert latest["status"] == "failed"

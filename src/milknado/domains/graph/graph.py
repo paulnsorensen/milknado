@@ -19,7 +19,6 @@ import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
-import milknado.domains.graph._run_persistence as _run_persistence
 import milknado.domains.graph._status as _status
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
@@ -28,10 +27,10 @@ from milknado.domains.common import (
     NodeKind,
     NodeSpec,
     NodeStatus,
-    RunResult,
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, synchronized
 from milknado.domains.graph._edge_facade import _EdgeFacade
+from milknado.domains.graph._facades import _FileFacade, _GithubFacade, _RunFacade
 from milknado.domains.graph._pipeline import (
     StatusMiddleware,
     StatusPipeline,
@@ -65,6 +64,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _raw_conn: sqlite3.Connection | None
     _pipeline: StatusPipeline
     _dispatch_exclusions: set[int]
+    runs: _RunFacade
+    files: _FileFacade
+    github: _GithubFacade
 
     @property
     def synchronization_lock(self) -> AbstractContextManager[object]:
@@ -85,6 +87,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
         )
         self._dispatch_exclusions = set()
+        self.runs = _RunFacade(self)
+        self.files = _FileFacade(self)
+        self.github = _GithubFacade(self)
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:
@@ -560,116 +565,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def drop_all(self) -> int:
         return _persistence.drop_all(self._conn)
-
-    # ── Run repository ───────────────────────────────────────────────────────
-
-    @synchronized
-    def start_run(
-        self,
-        run_id: str,
-        node_id: int,
-        log_path: str,
-        started_at: str,
-        timeout_seconds: int | None,
-        pid: int | None = None,
-    ) -> None:
-        _run_persistence.start_run(
-            self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid
-        )
-
-    @synchronized
-    def finish_run(self, run_id: str, result: RunResult) -> None:
-        _run_persistence.finish_run(self._conn, run_id, result)
-
-    @synchronized
-    def set_run_pid(self, run_id: str, pid: int) -> None:
-        _run_persistence.set_run_pid(self._conn, run_id, pid)
-
-    @synchronized
-    def get_run(self, run_id: str) -> _run_persistence.RunRecord | None:
-        return _run_persistence.get_run(self._conn, run_id)
-
-    @synchronized
-    def runs_for_node(self, node_id: int) -> list[_run_persistence.RunRecord]:
-        return _run_persistence.runs_for_node(self._conn, node_id)
-
-    @synchronized
-    def latest_terminal_run(self, node_id: int, run_id: str) -> _run_persistence.RunRecord | None:
-        return _run_persistence.latest_terminal_run(self._conn, node_id, run_id)
-
-    @synchronized
-    def latest_unowned_terminal_run(self, node_id: int) -> _run_persistence.RunRecord | None:
-        return _reads.latest_unowned_terminal_run(self._conn, node_id)
-
-    @synchronized
-    def recent_runs(self, limit: int) -> list[_run_persistence.RunRecord]:
-        return _run_persistence.recent_runs(self._conn, limit)
-
-    @synchronized
-    def deposit_run_message(self, run_id: str, role: str, body: str, created_at: str) -> int:
-        return _run_persistence.deposit_run_message(self._conn, run_id, role, body, created_at)
-
-    @synchronized
-    def deposit_review_verdict(
-        self, run_id: str, verdict: str, findings: str, created_at: str
-    ) -> int:
-        return _run_persistence.deposit_review_verdict(
-            self._conn, run_id, verdict, findings, created_at
-        )
-
-    @synchronized
-    def latest_run_message(self, run_id: str, role: str) -> str | None:
-        return _run_persistence.latest_run_message(self._conn, run_id, role)
-
-    @synchronized
-    def insert_node_review(
-        self,
-        node_id: int,
-        verdict: str,
-        findings: str,
-        created_at: str,
-    ) -> int:
-        return _run_persistence.insert_node_review(
-            self._conn, node_id, verdict, findings, created_at
-        )
-
-    @synchronized
-    def node_reviews_for_node(self, node_id: int) -> list[_run_persistence.NodeReviewRecord]:
-        return _run_persistence.node_reviews_for_node(self._conn, node_id)
-
-    # ── File ownership ───────────────────────────────────────────────────────
-
-    @synchronized
-    def set_file_ownership(self, node_id: int, files: list[str]) -> None:
-        _persistence.set_file_ownership(self._conn, node_id, files)
-
-    @synchronized
-    def get_file_ownership(self, node_id: int) -> list[str]:
-        return _persistence.get_file_ownership(self._conn, node_id)
-
-    @synchronized
-    def get_file_ownership_map(
-        self, node_ids: Iterable[int] | None = None
-    ) -> dict[int, list[str]]:
-        return _persistence.get_file_ownership_map(self._conn, node_ids)
-
-    @synchronized
-    def get_github_bind_attempt(self, goal_id: int) -> _persistence.GithubBindAttempt | None:
-        return _persistence.get_github_bind_attempt(self._conn, goal_id)
-
-    @synchronized
-    def set_github_bind_attempt(
-        self,
-        goal_id: int,
-        marker: str,
-        issue_url: str | None,
-        created_at: str,
-    ) -> None:
-        _persistence.set_github_bind_attempt(self._conn, goal_id, marker, issue_url, created_at)
-
-    @synchronized
-    def clear_github_bind_attempt(self, goal_id: int) -> None:
-        _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
     # ── Goal-claim fencing ───────────────────────────────────────────────────
 

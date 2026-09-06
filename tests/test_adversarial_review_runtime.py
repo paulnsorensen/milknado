@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import queue
+import sqlite3
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -59,7 +60,16 @@ from milknado.loop._events import (
 )
 from milknado.loop._run_types import RunConfig, RunState, RunStatus
 from milknado.loop.manager import ManagedRun, RunManager
+from tests.graph_helpers import graph_conn
 from tests.test_execution import FakeCrg, FakeGit
+
+
+def _node_reviews(graph: MikadoGraph, node_id: int) -> list[sqlite3.Row]:
+    return (
+        graph_conn(graph)
+        .execute("SELECT * FROM node_reviews WHERE node_id = ? ORDER BY round", (node_id,))
+        .fetchall()
+    )
 
 
 def _iteration_payload(
@@ -415,13 +425,13 @@ def test_notify_review_dual_writes_node_reviews_and_run_messages(
     _ = executor.dispatch(1, _config(tmp_path))
     _ = executor.complete(1, "main")
 
-    rows = graph.node_reviews_for_node(1)
+    rows = _node_reviews(graph, 1)
     assert len(rows) == 1
     assert rows[0]["verdict"] == "reject"
     assert rows[0]["round"] == 1
     assert rows[0]["findings"] == "[P1][correctness] finding"
     worker_run_id = ralph.started[0]
-    assert graph.latest_run_message(worker_run_id, "node_review") is not None
+    assert graph.runs.latest_message(worker_run_id, "node_review") is not None
 
 
 def test_findings_delivered_in_memory_when_db_writes_fail(
@@ -435,7 +445,7 @@ def test_findings_delivered_in_memory_when_db_writes_fail(
 
     _ = executor.dispatch(1, _config(tmp_path))
     monkeypatch.setattr(
-        graph, "deposit_run_message", MagicMock(side_effect=RuntimeError("db down"))
+        graph.runs, "deposit_message", MagicMock(side_effect=RuntimeError("db down"))
     )
     rejected = executor.complete(1, "main")
 
@@ -461,7 +471,7 @@ def test_second_rejection_round_accumulates_audits_and_labels_round_2(
     second = executor.complete(1, "main")
     assert first.redispatch is not None and second.redispatch is not None
 
-    rows = graph.node_reviews_for_node(1)
+    rows = _node_reviews(graph, 1)
     assert [r["round"] for r in rows] == [1, 2]
     assert all(r["verdict"] == "reject" for r in rows)
     assert ralph.ralph_md_calls[1]["findings_round"] == 1
@@ -505,7 +515,7 @@ def test_block_policy_retains_pinned_worktree(
     git = FakeGit()
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node("blocked review")
-    monkeypatch.setattr(graph, "deposit_run_message", MagicMock(return_value=1))
+    monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
 
     first = executor.dispatch(1, _config(tmp_path))
     assert executor.complete(1, "main").redispatch is not None
@@ -654,7 +664,7 @@ def test_adopted_review_keeps_parent_fence_and_notifies_worker(
     parent_fence = "parent-fence"
     assert graph.claim_node(1, parent_fence, now=now_iso())
     notified = MagicMock(return_value=1)
-    monkeypatch.setattr(graph, "deposit_run_message", notified)
+    monkeypatch.setattr(graph.runs, "deposit_message", notified)
 
     _ = executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
     rejected = executor.complete(1, "main")
@@ -682,8 +692,8 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
         executor = _executor(graph, tmp_path, _ReviewRalph([False, False]))
         _ = executor.dispatch(node_id, _config(tmp_path, on_reject=policy))
         monkeypatch.setattr(
-            graph,
-            "deposit_run_message",
+            graph.runs,
+            "deposit_message",
             MagicMock(side_effect=RuntimeError("notification store unavailable")),
         )
 
@@ -768,7 +778,7 @@ def test_review_failure_blocks_without_redispatch(
 
     executor = _executor(graph, tmp_path, FailingReviewRalph([True]))
     _ = graph.add_node("review failure")
-    monkeypatch.setattr(graph, "deposit_run_message", MagicMock(return_value=1))
+    monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
     _ = executor.dispatch(1, _config(tmp_path))
     result = executor.complete(1, "main")
     assert result.blocked is True
@@ -795,7 +805,7 @@ def test_review_findings_write_failure_still_audits_and_blocks(
     assert result.blocked is True
     assert result.redispatch is None
     assert not git.rebases
-    rows = graph.node_reviews_for_node(1)
+    rows = _node_reviews(graph, 1)
     assert rows[0]["verdict"] == "error"
     assert "findings unavailable" in rows[0]["findings"]
 
@@ -1147,7 +1157,7 @@ def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: 
 
     assert result.rebased is True
     assert git.removed == [dispatched.worktree]
-    rows = graph.node_reviews_for_node(1)
+    rows = _node_reviews(graph, 1)
     assert [(row["round"], row["verdict"]) for row in rows] == [(1, "approve")]
 
 
@@ -1159,7 +1169,7 @@ def test_approval_audit_failure_blocks_before_merge(
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node("audit failure")
     monkeypatch.setattr(
-        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+        graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject="warn"))
@@ -1182,7 +1192,7 @@ def test_rejection_audit_failure_blocks_before_merge(
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node(f"rejection audit failure {policy}")
     monkeypatch.setattr(
-        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+        graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
@@ -1199,7 +1209,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     db = tmp_path / "review.db"
     graph = MikadoGraph(db)
     node = graph.add_node("restart sequence")
-    assert graph.insert_node_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
+    assert graph.runs.insert_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
     graph.close()
 
     reopened = MikadoGraph(db)
@@ -1209,7 +1219,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     )
 
     assert audit.audit_succeeded is True
-    assert [row["round"] for row in reopened.node_reviews_for_node(node.id)] == [1, 2]
+    assert [row["round"] for row in _node_reviews(reopened, node.id)] == [1, 2]
     reopened.close()
 
 
@@ -1247,6 +1257,6 @@ def test_invalid_review_blocks_without_worker_revision(
     assert len(ralph.created) == 1
     assert not git.rebases
     assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
-    rows = graph.node_reviews_for_node(1)
+    rows = _node_reviews(graph, 1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"

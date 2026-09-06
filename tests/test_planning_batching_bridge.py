@@ -310,7 +310,7 @@ class TestApplyBatchesToGraph:
 
         created = apply_batches_to_graph(graph, plan, manifest)
 
-        files = graph.get_file_ownership(created[1])
+        files = graph.files.for_node(created[1])
         assert set(files) == {"src/one.py", "src/two.py"}
 
     def test_end_to_end_persistence_reopens_db(

@@ -23,8 +23,12 @@ from milknado.domains.graph import RunFenceLostError
 _logger = logging.getLogger("milknado")
 
 
-class _RunFinisher(Protocol):
-    def finish_run(self, run_id: str, result: RunResult) -> None: ...
+class _RunFacade(Protocol):
+    def finish(self, run_id: str, result: RunResult) -> None: ...
+
+
+class _GraphWithRuns(Protocol):
+    runs: _RunFacade
 
 
 class _RunnerArgs(Protocol):
@@ -38,7 +42,7 @@ class _RunnerArgs(Protocol):
 
 def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bool:
     try:
-        cast(_RunFinisher, graph).finish_run(run_id, result)
+        cast(_GraphWithRuns, graph).runs.finish(run_id, result)
     except RunFenceLostError as exc:
         detail = str(exc)
     except Exception as exc:
@@ -91,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     graph, cfg = open_graph(root)
     pid = os.getpid()
-    graph.set_run_pid(args.run_id, pid)
+    graph.runs.set_pid(args.run_id, pid)
     graph.set_pid(args.node_id, args.run_id, pid)
     try:
         node = graph.get_node(args.node_id)

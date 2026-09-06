@@ -256,8 +256,8 @@ class TestStatus:
         root = graph.add_node("Root")
         a = graph.add_node("Node A", parent_id=root.id)
         b = graph.add_node("Node B", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
         graph.close()
 
         result = runner.invoke(app, ["status", str(project_dir)])
@@ -385,7 +385,7 @@ class TestAddNode:
 
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
-        files = graph.get_file_ownership(1)
+        files = graph.files.for_node(1)
         graph.close()
         assert set(files) == {"src/auth.py", "src/login.py"}
 
@@ -1464,8 +1464,8 @@ class TestRunCommand:
         root = graph.add_node("root")
         a = graph.add_node("leaf-a", parent_id=root.id)
         b = graph.add_node("leaf-b", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
         graph.close()
 
         _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)

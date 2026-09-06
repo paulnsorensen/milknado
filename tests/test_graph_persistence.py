@@ -236,8 +236,8 @@ class TestRunsRepo:
 
     def test_start_then_get_round_trips_running_row(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r1", nid, "/logs/r1.log", "2026-01-01T00:00:00+00:00", 600, None)
-        row = graph.get_run("r1")
+        graph.runs.start("r1", nid, "/logs/r1.log", "2026-01-01T00:00:00+00:00", 600, None)
+        row = graph.runs.get("r1")
         assert row is not None
         assert row["status"] == "running"
         assert row["node_id"] == nid
@@ -250,12 +250,12 @@ class TestRunsRepo:
         assert row["rebased"] is None
 
     def test_get_run_unknown_returns_none(self, graph: MikadoGraph) -> None:
-        assert graph.get_run("nope") is None
+        assert graph.runs.get("nope") is None
 
     def test_finish_run_transitions_running_to_done(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r1", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        _ = graph.finish_run(
+        graph.runs.start("r1", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        _ = graph.runs.finish(
             "r1",
             RunResult(
                 status="done",
@@ -265,7 +265,7 @@ class TestRunsRepo:
                 detail="all-green",
             ),
         )
-        row = graph.get_run("r1")
+        row = graph.runs.get("r1")
         assert row is not None
         assert row["status"] == "done"
         assert row["exit_code"] == 0
@@ -274,8 +274,8 @@ class TestRunsRepo:
 
     def test_finish_run_second_terminal_write_loses_fence(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r-fenced", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.finish_run(
+        graph.runs.start("r-fenced", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.runs.finish(
             "r-fenced",
             RunResult(
                 status="done",
@@ -285,7 +285,7 @@ class TestRunsRepo:
             ),
         )
         with pytest.raises(RunFenceLostError, match="running-row fence"):
-            graph.finish_run(
+            graph.runs.finish(
                 "r-fenced",
                 RunResult(
                     status="failed",
@@ -294,7 +294,7 @@ class TestRunsRepo:
                     ended_at="2026-01-01T00:02:00+00:00",
                 ),
             )
-        run = graph.get_run("r-fenced")
+        run = graph.runs.get("r-fenced")
         assert run is not None
         assert run["status"] == "done"
 
@@ -303,8 +303,8 @@ class TestRunsRepo:
         real bools (and keep rebased=None distinct from rebased=False) so a poll
         payload matches the old JSON sidecar's bool shape."""
         nid = self._node(graph)
-        graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
-        _ = graph.finish_run(
+        graph.runs.start("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
+        _ = graph.runs.finish(
             "rt",
             RunResult(
                 status="failed",
@@ -314,15 +314,15 @@ class TestRunsRepo:
                 rebased=False,
             ),
         )
-        row = graph.get_run("rt")
+        row = graph.runs.get("rt")
         assert row is not None
         assert row["timed_out"] is True
         assert row["rebased"] is False, "rebased=False must stay False, not collapse to None"
 
     def test_finish_run_rebased_true_round_trips(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("rb", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
-        _ = graph.finish_run(
+        graph.runs.start("rb", nid, "/l", "2026-01-01T00:00:00+00:00", 5)
+        _ = graph.runs.finish(
             "rb",
             RunResult(
                 status="done",
@@ -332,7 +332,7 @@ class TestRunsRepo:
                 rebased=True,
             ),
         )
-        row = graph.get_run("rb")
+        row = graph.runs.get("rb")
         assert row is not None
         assert row["rebased"] is True
 
@@ -342,8 +342,8 @@ class TestRunsRepo:
         recorded outcome — an unconditional UPDATE would reintroduce the
         terminal-state clobber race the old sidecar flow guarded against."""
         nid = self._node(graph)
-        graph.start_run("rc", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        _ = graph.finish_run(
+        graph.runs.start("rc", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        _ = graph.runs.finish(
             "rc",
             RunResult(
                 status="failed",
@@ -355,7 +355,7 @@ class TestRunsRepo:
         )
         # The wedged worker finally finishes and loses the running-row fence.
         with pytest.raises(RunFenceLostError, match="running-row fence"):
-            graph.finish_run(
+            graph.runs.finish(
                 "rc",
                 RunResult(
                     status="done",
@@ -364,7 +364,7 @@ class TestRunsRepo:
                     ended_at="2026-01-01T00:02:00+00:00",
                 ),
             )
-        row = graph.get_run("rc")
+        row = graph.runs.get("rc")
         assert row is not None
         assert row["status"] == "failed", "late terminal write must not clobber the first"
         assert row["error"] == "cancelled"
@@ -372,9 +372,9 @@ class TestRunsRepo:
 
     def test_set_run_pid_writes_on_running(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("rp", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.set_run_pid("rp", 4321)
-        row = graph.get_run("rp")
+        graph.runs.start("rp", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.runs.set_pid("rp", 4321)
+        row = graph.runs.get("rp")
         assert row is not None
         assert row["pid"] == 4321
 
@@ -384,8 +384,8 @@ class TestRunsRepo:
         Drop the gate and this pid lands on a 'done' row — exactly the regression
         the sidecar read-then-write guard prevented."""
         nid = self._node(graph)
-        graph.start_run("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 600, pid=11)
-        _ = graph.finish_run(
+        graph.runs.start("rt", nid, "/l", "2026-01-01T00:00:00+00:00", 600, pid=11)
+        _ = graph.runs.finish(
             "rt",
             RunResult(
                 status="done",
@@ -394,58 +394,58 @@ class TestRunsRepo:
                 ended_at="2026-01-01T00:00:10+00:00",
             ),
         )
-        graph.set_run_pid("rt", 9999)
-        row = graph.get_run("rt")
+        graph.runs.set_pid("rt", 9999)
+        row = graph.runs.get("rt")
         assert row is not None
         assert row["pid"] == 11, "set_run_pid must not write a pid onto a terminal run"
 
     def test_runs_for_node_isolates_node_id(self, graph: MikadoGraph) -> None:
         a = self._node(graph, "a")
         b = self._node(graph, "b")
-        graph.start_run("ra", a, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.start_run("rb", b, "/l", "2026-01-01T00:00:00+00:00", 600)
-        assert [r["run_id"] for r in graph.runs_for_node(a)] == ["ra"]
+        graph.runs.start("ra", a, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.runs.start("rb", b, "/l", "2026-01-01T00:00:00+00:00", 600)
+        assert [r["run_id"] for r in graph.runs.for_node(a)] == ["ra"]
 
     def test_recent_runs_orders_by_started_at_desc(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("old", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.start_run("new", nid, "/l", "2026-01-02T00:00:00+00:00", 600)
-        graph.start_run("mid", nid, "/l", "2026-01-01T12:00:00+00:00", 600)
-        assert [r["run_id"] for r in graph.recent_runs(10)] == ["new", "mid", "old"]
+        graph.runs.start("old", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.runs.start("new", nid, "/l", "2026-01-02T00:00:00+00:00", 600)
+        graph.runs.start("mid", nid, "/l", "2026-01-01T12:00:00+00:00", 600)
+        assert [r["run_id"] for r in graph.runs.recent(10)] == ["new", "mid", "old"]
 
     def test_recent_runs_honors_limit(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("old", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.start_run("new", nid, "/l", "2026-01-02T00:00:00+00:00", 600)
-        assert [r["run_id"] for r in graph.recent_runs(1)] == ["new"]
+        graph.runs.start("old", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        graph.runs.start("new", nid, "/l", "2026-01-02T00:00:00+00:00", 600)
+        assert [r["run_id"] for r in graph.runs.recent(1)] == ["new"]
 
     def test_recent_runs_zero_limit_returns_empty(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        assert graph.recent_runs(0) == []
+        graph.runs.start("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        assert graph.runs.recent(0) == []
 
     def test_deposit_run_message_increments_seq(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        assert graph.deposit_run_message("r", "result", "a", "2026-01-01T00:00:01+00:00") == 1
-        assert graph.deposit_run_message("r", "result", "b", "2026-01-01T00:00:02+00:00") == 2
+        graph.runs.start("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        assert graph.runs.deposit_message("r", "result", "a", "2026-01-01T00:00:01+00:00") == 1
+        assert graph.runs.deposit_message("r", "result", "b", "2026-01-01T00:00:02+00:00") == 2
 
     def test_latest_run_message_is_role_scoped(self, graph: MikadoGraph) -> None:
         """latest_run_message must return the latest body for the asked role only —
         a later 'progress' row must not mask the 'result' the poll surfaces."""
         nid = self._node(graph)
-        graph.start_run("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        _ = graph.deposit_run_message(
+        graph.runs.start("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        _ = graph.runs.deposit_message(
             "r", "result", "the-deliverable", "2026-01-01T00:00:01+00:00"
         )
-        _ = graph.deposit_run_message("r", "progress", "step-2", "2026-01-01T00:00:02+00:00")
-        assert graph.latest_run_message("r", "result") == "the-deliverable"
-        assert graph.latest_run_message("r", "progress") == "step-2"
+        _ = graph.runs.deposit_message("r", "progress", "step-2", "2026-01-01T00:00:02+00:00")
+        assert graph.runs.latest_message("r", "result") == "the-deliverable"
+        assert graph.runs.latest_message("r", "progress") == "step-2"
 
     def test_latest_run_message_unknown_returns_none(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
-        graph.start_run("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        assert graph.latest_run_message("r", "result") is None
+        graph.runs.start("r", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
+        assert graph.runs.latest_message("r", "result") is None
 
 
 class TestSetDispatchedAt:

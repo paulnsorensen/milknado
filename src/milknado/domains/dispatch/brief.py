@@ -154,7 +154,7 @@ def render_brief(
         lines = _brief_header("Plate", node, chain, done, "Work to publish")
         return _finish_brief(lines, _PLATE_INSTRUCTIONS, prepend)
 
-    files = graph.get_file_ownership(node_id)
+    files = graph.files.for_node(node_id)
     lines = _brief_header("Task", node, chain, done, "Prerequisites already done")
 
     lines.append("## Relevant files")

@@ -33,7 +33,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
     graph_with_node = getattr(graph, "get_node", None)
     node = cast(MikadoNode | None, graph_with_node(node_id)) if callable(graph_with_node) else None
     flipped: list[dict[str, object]] = []
-    for state in graph.runs_for_node(node_id):
+    for state in graph.runs.for_node(node_id):
         if state.get("status") != "running":
             continue
         run_id = state.get("run_id")
@@ -53,7 +53,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
                 continue
             error = "worker session gone"
             ended_at = _now_iso()
-            graph.finish_run(
+            graph.runs.finish(
                 run_id,
                 RunResult(
                     status="failed",
@@ -92,7 +92,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
             continue
         ended_at = _now_iso()
         error = "worker vanished before writing terminal state (stale running run)"
-        graph.finish_run(
+        graph.runs.finish(
             run_id,
             RunResult(
                 status="failed",
@@ -128,7 +128,7 @@ def reconcile_orphaned_runs(graph: object) -> list[RunRecord]:
         if node.status is not NodeStatus.RUNNING or node.run_id is None:
             continue
         _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id)
-        terminal = typed_graph.latest_terminal_run(node.id, node.run_id)
+        terminal = typed_graph.runs.latest_terminal(node.id, node.run_id)
         if terminal is None:
             continue
         reconcile_node_status(typed_graph, node.id, terminal["status"], run_id=node.run_id)

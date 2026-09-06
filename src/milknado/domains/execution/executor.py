@@ -633,7 +633,7 @@ class Executor:
         }
         if node.flavor == "review":
             create_kwargs["completion_probe"] = lambda run_id=ralph_run_id: (
-                self._graph.latest_run_message(run_id, "review_terminal") is not None
+                self._graph.runs.latest_message(run_id, "review_terminal") is not None
             )
         if session is not None:
             create_kwargs["runtime_policy"] = RuntimePolicy(session=session)
@@ -659,7 +659,7 @@ class Executor:
         log_dir = wt_path / ".ralph-logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "0000-dispatch.log").touch()
-        self._graph.start_run(
+        self._graph.runs.start(
             run_id,
             node.id,
             str(log_dir),
@@ -693,10 +693,10 @@ class Executor:
         if not run_id:
             return
         try:
-            row = cast(dict[str, object] | None, self._graph.get_run(run_id))
+            row = cast(dict[str, object] | None, self._graph.runs.get(run_id))
             if row is None or row.get("status") != "running":
                 return
-            self._graph.finish_run(run_id, result)
+            self._graph.runs.finish(run_id, result)
         except RunFenceLostError:
             _logger.info("runs-row finalize adopted terminal winner for ralph run %s", run_id)
         except Exception:
@@ -891,7 +891,7 @@ class Executor:
         now = datetime.now(UTC).isoformat()
         audit_succeeded = True
         try:
-            _ = self._graph.insert_node_review(node.id, verdict, findings_md, now)
+            _ = self._graph.runs.insert_review(node.id, verdict, findings_md, now)
         except Exception:
             audit_succeeded = False
             _logger.exception("node_review_table_write_failed node_id=%d", node.id)
@@ -904,7 +904,7 @@ class Executor:
             sort_keys=True,
         )
         try:
-            _ = self._graph.deposit_run_message(worker_run_id, "node_review", body, now)
+            _ = self._graph.runs.deposit_message(worker_run_id, "node_review", body, now)
         except Exception:
             _logger.exception(
                 "node_review_notification_failed node_id=%d run_id=%s",

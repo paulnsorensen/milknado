@@ -196,7 +196,7 @@ class TestBuildPlanningContext:
 
     def test_includes_file_ownership(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         _ = tmp_graph.add_node("root goal")
-        tmp_graph.set_file_ownership(1, ["src/auth.py", "src/models.py"])
+        tmp_graph.files.claim(1, ["src/auth.py", "src/models.py"])
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert "src/auth.py" in ctx
         assert "src/models.py" in ctx

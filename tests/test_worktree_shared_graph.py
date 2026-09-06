@@ -783,11 +783,11 @@ class TestDeleteOneClearsRuns:
         run_messages.run_id references runs. A node dispatched via claim/start_run
         gets a runs row; without clearing run_messages then runs before
         DELETE FROM nodes, deleting that node (here via its parent goal's cascade)
-        _ = graph.deposit_run_message("run-started", "result", "partial output", now_iso())
+        _ = graph.runs.deposit_message("run-started", "result", "partial output", now_iso())
         """
         goal_id, task_id = _make_goal_with_task(graph)
-        graph.start_run("run-started", task_id, "/log", now_iso(), 600)
-        _ = graph.deposit_run_message("run-started", "result", "partial output", now_iso())
+        graph.runs.start("run-started", task_id, "/log", now_iso(), 600)
+        _ = graph.runs.deposit_message("run-started", "result", "partial output", now_iso())
         # Must not raise: _delete_one must clear run_messages then runs first.
         deleted = graph.delete_node(goal_id, cascade=True)
         assert deleted == 2, "goal + task must be deleted"

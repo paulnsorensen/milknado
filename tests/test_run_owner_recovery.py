@@ -40,6 +40,7 @@ class _RecoveryGraph:
             "rebased": None,
         }
         self.finish_succeeds: bool = finish_succeeds
+        self.runs: _RecoveryRuns = _RecoveryRuns(self)
 
     def get_all_nodes(self) -> list[_RecoveryNode]:
         return [self.node]
@@ -47,29 +48,34 @@ class _RecoveryGraph:
     def get_node(self, node_id: int) -> _RecoveryNode | None:
         return self.node if node_id == self.node.id else None
 
-    def runs_for_node(self, node_id: int) -> list[RunRecord]:
-        return [self.state] if node_id == self.node.id else []
+    def mark_terminal(self, _node_id: int, _run_id: str, status: NodeStatus) -> bool:
+        self.node.status = status
+        self.node.run_id = None
+        return True
 
-    def latest_terminal_run(self, node_id: int, run_id: str) -> RunRecord | None:
-        if node_id != self.node.id or run_id != self.state["run_id"]:
+
+class _RecoveryRuns:
+    def __init__(self, graph: _RecoveryGraph) -> None:
+        self._graph: _RecoveryGraph = graph
+
+    def for_node(self, node_id: int) -> list[RunRecord]:
+        return [self._graph.state] if node_id == self._graph.node.id else []
+
+    def latest_terminal(self, node_id: int, run_id: str) -> RunRecord | None:
+        if node_id != self._graph.node.id or run_id != self._graph.state["run_id"]:
             return None
-        return self.state if self.state["status"] in ("done", "failed") else None
+        return self._graph.state if self._graph.state["status"] in ("done", "failed") else None
 
-    def finish_run(self, _run_id: str, result: RunResult) -> None:
-        if not self.finish_succeeds:
-            raise RunFenceLostError("finish_run lost its running-row fence")
-        self.state.update(
+    def finish(self, _run_id: str, result: RunResult) -> None:
+        if not self._graph.finish_succeeds:
+            raise RunFenceLostError("runs.finish lost its running-row fence")
+        self._graph.state.update(
             status=result.status,
             exit_code=result.exit_code,
             timed_out=result.timed_out,
             ended_at=result.ended_at,
             error=result.error,
         )
-
-    def mark_terminal(self, _node_id: int, _run_id: str, status: NodeStatus) -> bool:
-        self.node.status = status
-        self.node.run_id = None
-        return True
 
 
 def _pid_dead(_pid: int) -> bool:
