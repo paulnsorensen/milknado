@@ -579,8 +579,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         )
 
     @synchronized
-    def finish_run(self, run_id: str, result: RunResult) -> bool:
-        return _run_persistence.finish_run(self._conn, run_id, result)
+    def finish_run(self, run_id: str, result: RunResult) -> None:
+        _run_persistence.finish_run(self._conn, run_id, result)
 
     @synchronized
     def set_run_pid(self, run_id: str, pid: int) -> None:
@@ -591,12 +591,16 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _run_persistence.get_run(self._conn, run_id)
 
     @synchronized
-    def runs_for_node(
-        self, node_id: int, *, terminal_only: bool = False, run_id: str | None = None
-    ) -> list[_run_persistence.RunRecord]:
-        return _run_persistence.runs_for_node(
-            self._conn, node_id, terminal_only=terminal_only, run_id=run_id
-        )
+    def runs_for_node(self, node_id: int) -> list[_run_persistence.RunRecord]:
+        return _run_persistence.runs_for_node(self._conn, node_id)
+
+    @synchronized
+    def latest_terminal_run(self, node_id: int, run_id: str) -> _run_persistence.RunRecord | None:
+        return _run_persistence.latest_terminal_run(self._conn, node_id, run_id)
+
+    @synchronized
+    def latest_unowned_terminal_run(self, node_id: int) -> _run_persistence.RunRecord | None:
+        return _reads.latest_unowned_terminal_run(self._conn, node_id)
 
     @synchronized
     def recent_runs(self, limit: int) -> list[_run_persistence.RunRecord]:

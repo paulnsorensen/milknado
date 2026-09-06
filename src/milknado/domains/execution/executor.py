@@ -23,7 +23,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from milknado.domains.common import ReviewResult
+from milknado.domains.common import ReviewResult, RunFenceLostError
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.errors import (
     GitOperationError,
@@ -718,12 +718,8 @@ class Executor:
     def _finalize_worker_run(self, run_id: str | None, result: RunResult) -> None:
         """Best-effort terminal write for an executor ralph run's runs row.
 
-        Executor ralph rows are registered at dispatch (#296); without a
-        matching finish they zombie as status='running' forever and pid-less
-        cancel takes a sentinel path nothing observed. The finish_run fence
-        (status='running') makes double-writes safe; the pre-check only keeps
-        the fence's dropped-write warning out of the logs. A failed finalize
-        must not kill node completion — loud log, like the dispatch insert.
+        The pre-check avoids retrying an already-terminal row. A failed finalize
+        must not kill node completion.
         """
         if not run_id:
             return
@@ -731,7 +727,9 @@ class Executor:
             row = cast(dict[str, object] | None, self._graph.get_run(run_id))
             if row is None or row.get("status") != "running":
                 return
-            _ = self._graph.finish_run(run_id, result)
+            self._graph.finish_run(run_id, result)
+        except RunFenceLostError:
+            _logger.info("runs-row finalize adopted terminal winner for ralph run %s", run_id)
         except Exception:
             _logger.exception("runs-row finalize failed for ralph run %s", run_id)
 

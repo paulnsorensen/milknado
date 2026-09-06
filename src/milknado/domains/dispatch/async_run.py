@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import GitPort, RunResult
+from milknado.domains.common import GitPort, RunFenceLostError, RunResult
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -228,20 +228,16 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
         if cancelled:
-            if (
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=timed_out,
-                        ended_at=_now_iso(),
-                        error="cancelled",
-                    ),
-                )
-                is False
-            ):
-                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+            graph.finish_run(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    error="cancelled",
+                ),
+            )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
             merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
@@ -253,21 +249,17 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # Persist a preserved (un-torn-down) worktree via the run row's `detail`
             # column so milknado_run_inline_poll surfaces `worktree_preserved`,
             # matching the sync dispatch path and milknado_run_cancel.
-            if (
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status=terminal,
-                        exit_code=exit_code,
-                        timed_out=timed_out,
-                        ended_at=_now_iso(),
-                        rebased=merge.rebased if merge is not None else None,
-                        detail=merge.worktree_preserved if merge is not None else None,
-                    ),
-                )
-                is False
-            ):
-                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+            graph.finish_run(
+                run_id,
+                RunResult(
+                    status=terminal,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    rebased=merge.rebased if merge is not None else None,
+                    detail=merge.worktree_preserved if merge is not None else None,
+                ),
+            )
             _logger.info(
                 (
                     "async dispatch terminal: run_id=%s node_id=%d status=%s "
@@ -281,6 +273,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 cancelled,
                 merge.rebased if merge is not None else None,
             )
+    except RunFenceLostError:
+        _logger.info("async worker terminal write lost fence for run %s", run_id)
     except Exception as exc:
         original_detail = f"{type(exc).__name__}: {exc}"
         _logger.warning(
@@ -299,9 +293,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # deliberately ignored.
             pass
         if graph is not None:
-            terminal_detail = original_detail
             try:
-                written = graph.finish_run(
+                graph.finish_run(
                     run_id,
                     RunResult(
                         status="failed",
@@ -311,13 +304,13 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                         error=original_detail,
                     ),
                 )
+            except RunFenceLostError:
+                _logger.info("async worker failure run already finalized: run_id=%s", run_id)
             except Exception as persist_exc:
-                written = False
                 terminal_detail = (
                     f"{original_detail}; terminal persistence raised: "
                     f"{type(persist_exc).__name__}: {persist_exc}"
                 )
-            if written is False:
                 with suppress(OSError):
                     _ = (rdir / f"{run_id}.terminal-error").write_text(
                         f"run_id={run_id}\n"

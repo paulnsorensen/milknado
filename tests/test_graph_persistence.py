@@ -17,7 +17,12 @@ import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.common.errors import ArchiveIneligible
-from milknado.domains.graph import MikadoGraph, _persistence, _run_persistence
+from milknado.domains.graph import (
+    MikadoGraph,
+    RunFenceLostError,
+    _persistence,
+    _run_persistence,
+)
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import (
     create_tables,
@@ -270,7 +275,7 @@ class TestRunsRepo:
     def test_finish_run_second_terminal_write_loses_fence(self, graph: MikadoGraph) -> None:
         nid = self._node(graph)
         graph.start_run("r-fenced", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        first = graph.finish_run(
+        graph.finish_run(
             "r-fenced",
             RunResult(
                 status="done",
@@ -279,17 +284,16 @@ class TestRunsRepo:
                 ended_at="2026-01-01T00:01:00+00:00",
             ),
         )
-        second = graph.finish_run(
-            "r-fenced",
-            RunResult(
-                status="failed",
-                exit_code=1,
-                timed_out=False,
-                ended_at="2026-01-01T00:02:00+00:00",
-            ),
-        )
-        assert first is True
-        assert second is False
+        with pytest.raises(RunFenceLostError, match="running-row fence"):
+            graph.finish_run(
+                "r-fenced",
+                RunResult(
+                    status="failed",
+                    exit_code=1,
+                    timed_out=False,
+                    ended_at="2026-01-01T00:02:00+00:00",
+                ),
+            )
         run = graph.get_run("r-fenced")
         assert run is not None
         assert run["status"] == "done"
@@ -349,16 +353,17 @@ class TestRunsRepo:
                 error="cancelled",
             ),
         )
-        # The wedged worker finally finishes and lands its own terminal write.
-        _ = graph.finish_run(
-            "rc",
-            RunResult(
-                status="done",
-                exit_code=0,
-                timed_out=False,
-                ended_at="2026-01-01T00:02:00+00:00",
-            ),
-        )
+        # The wedged worker finally finishes and loses the running-row fence.
+        with pytest.raises(RunFenceLostError, match="running-row fence"):
+            graph.finish_run(
+                "rc",
+                RunResult(
+                    status="done",
+                    exit_code=0,
+                    timed_out=False,
+                    ended_at="2026-01-01T00:02:00+00:00",
+                ),
+            )
         row = graph.get_run("rc")
         assert row is not None
         assert row["status"] == "failed", "late terminal write must not clobber the first"
@@ -393,24 +398,6 @@ class TestRunsRepo:
         row = graph.get_run("rt")
         assert row is not None
         assert row["pid"] == 11, "set_run_pid must not write a pid onto a terminal run"
-
-    def test_runs_for_node_terminal_only_excludes_running(self, graph: MikadoGraph) -> None:
-        nid = self._node(graph)
-        graph.start_run("live", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        graph.start_run("done", nid, "/l", "2026-01-01T00:00:00+00:00", 600)
-        _ = graph.finish_run(
-            "done",
-            RunResult(
-                status="done",
-                exit_code=0,
-                timed_out=False,
-                ended_at="2026-01-01T00:00:10+00:00",
-            ),
-        )
-        all_runs = {r["run_id"] for r in graph.runs_for_node(nid)}
-        terminal = {r["run_id"] for r in graph.runs_for_node(nid, terminal_only=True)}
-        assert all_runs == {"live", "done"}
-        assert terminal == {"done"}, "terminal_only must drop the still-running run"
 
     def test_runs_for_node_isolates_node_id(self, graph: MikadoGraph) -> None:
         a = self._node(graph, "a")

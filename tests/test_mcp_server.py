@@ -1123,11 +1123,8 @@ class TestTodoAsyncRun:
         assert len(errors) == 1, f"expected exactly 1 'already running' error, got errors={errors}"
         assert "already running" in errors[0]
 
-    def test_latest_terminal_run_picks_most_recent_by_ended_at(self, tmp_path: Path) -> None:
-        """When a node has multiple terminal runs, latest_terminal_run returns the
-        one with the highest ended_at timestamp. The older 'done' must not beat the
-        newer 'failed' — the most recent outcome is authoritative for reconcile."""
-        from milknado.domains.dispatch import find_terminal_runs_for_node, latest_terminal_run
+    def test_latest_terminal_run_returns_fenced_owner(self, tmp_path: Path) -> None:
+        """The graph latest-run query requires the node's owning run fence."""
 
         root = Path(tmp_path)
         node_id = 42
@@ -1145,19 +1142,15 @@ class TestTodoAsyncRun:
             )
         graph, _cfg = open_graph(root)
         try:
-            terminal_runs = find_terminal_runs_for_node(graph, node_id)
-            winner = latest_terminal_run(terminal_runs)
+            winner = graph.latest_terminal_run(node_id, "node-42-20200101T000001Z-bbbb")
         finally:
             graph.close()
         assert winner is not None
-        assert winner["status"] == "failed", "newer run (failed) must win over older run (done)"
+        assert winner["status"] == "failed", "owner fence selects its terminal row"
         assert winner["run_id"] == "node-42-20200101T000001Z-bbbb"
 
-    def test_find_terminal_runs_filters_by_run_id(self, tmp_path: Path) -> None:
-        """The fence must be applied BEFORE picking the latest run: a stale run with
-        a later ended_at must not mask the current owner's terminal run. Filtering
-        by run_id first leaves only the owner's run for latest_terminal_run."""
-        from milknado.domains.dispatch import find_terminal_runs_for_node, latest_terminal_run
+    def test_latest_terminal_run_does_not_mask_owner_with_stale_run(self, tmp_path: Path) -> None:
+        """A stale run with a later ended_at cannot mask the current owner's run."""
 
         root = Path(tmp_path)
         node_id = 7
@@ -1177,70 +1170,56 @@ class TestTodoAsyncRun:
             )
         graph, _cfg = open_graph(root)
         try:
-            fenced = find_terminal_runs_for_node(graph, node_id, run_id=owner)
-            assert [r["run_id"] for r in fenced] == [owner]
-            latest = latest_terminal_run(fenced)
+            latest = graph.latest_terminal_run(node_id, owner)
             assert latest is not None
-            assert latest["status"] == "done", (
-                "the owner's run wins once the stale later-ended_at run is fenced out"
-            )
-            unfenced = find_terminal_runs_for_node(graph, node_id)
-            assert len(unfenced) == 2, "no fence returns both terminal runs"
+            assert latest["status"] == "done", "the owner fence selects only its terminal row"
+            stale_latest = graph.latest_terminal_run(node_id, stale)
+            assert stale_latest is not None
+            assert stale_latest["status"] == "failed"
+            with pytest.raises(ValueError, match="run_id is required"):
+                _ = graph.latest_terminal_run(node_id, "")
+            unfenced = graph.runs_for_node(node_id)
+            assert len(unfenced) == 2, "listing returns both terminal runs"
         finally:
             graph.close()
 
-    def test_find_terminal_runs_isolates_node_id(self, tmp_path: Path) -> None:
-        """Node scoping is the runs query's `WHERE node_id = ?`: node 1's runs must
-        not pick up node 12's terminal run. Replaces the old glob-prefix isolation
-        — the db keys runs on the integer node_id directly."""
-        from milknado.domains.dispatch import find_terminal_runs_for_node
+    def test_reclaim_stale_node_uses_unowned_terminal_run_only(self, tmp_path: Path) -> None:
+        from milknado.domains.dispatch import reclaim_stale_node
 
-        root = Path(tmp_path)
-        for run_id, node_id in [
-            ("node-1-20200101T000000Z-aaaa", 1),
-            ("node-12-20200101T000000Z-bbbb", 12),
-        ]:
-            _seed_run(
-                root,
-                run_id=run_id,
-                node_id=node_id,
-                status="done",
-                ended_at="2020-01-01T00:00:10+00:00",
-                exit_code=0,
-            )
-        graph, _cfg = open_graph(root)
-        try:
-            result = find_terminal_runs_for_node(graph, 1)
-        finally:
-            graph.close()
-        assert [r["run_id"] for r in result] == ["node-1-20200101T000000Z-aaaa"], (
-            "node 1's query must not pick up node 12's terminal run"
-        )
-
-    def test_find_terminal_runs_excludes_non_terminal_runs(self, tmp_path: Path) -> None:
-        """The status filter is the terminality gate: a still-'running' run for the
-        node must be excluded, only done/failed runs returned. Guards against the
-        terminal-status filter regressing into letting a live run reconcile."""
-        from milknado.domains.dispatch import find_terminal_runs_for_node
-
-        root = Path(tmp_path)
         _seed_run(
-            root,
-            run_id="node-5-20200101T000000Z-done",
-            node_id=5,
+            tmp_path,
+            run_id="node-1-20200101T000000Z-done",
+            node_id=1,
             status="done",
             ended_at="2020-01-01T00:00:10+00:00",
             exit_code=0,
         )
-        _seed_run(root, run_id="node-5-20200101T000001Z-runn", node_id=5, status="running")
-        graph, _cfg = open_graph(root)
+        _seed_run(
+            tmp_path,
+            run_id="node-2-20200101T000000Z-done",
+            node_id=2,
+            status="done",
+            ended_at="2020-01-01T00:00:10+00:00",
+            exit_code=0,
+        )
+        graph, _cfg = open_graph(tmp_path)
         try:
-            result = find_terminal_runs_for_node(graph, 5)
+            _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
+                "UPDATE nodes SET run_id = ? WHERE id = ?",
+                ("current-owner", 2),
+            )
+            graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
+            reclaim_stale_node(graph, 1, None)
+            reclaim_stale_node(graph, 2, None)
+            unowned = graph.get_node(1)
+            owned = graph.get_node(2)
         finally:
             graph.close()
-        assert [r["run_id"] for r in result] == ["node-5-20200101T000000Z-done"], (
-            "a 'running' run must not be returned as a terminal run"
-        )
+        assert unowned is not None
+        assert unowned.status.value == "done"
+        assert owned is not None
+        assert owned.status.value == "running"
+        assert owned.run_id == "current-owner"
 
     def test_reconcile_node_status_is_fenced_on_run_id(self, tmp_path: Path) -> None:
         """A reconcile carrying a stale run_id must not clobber a node now RUNNING
@@ -1269,10 +1248,12 @@ class TestTodoAsyncRun:
         finally:
             g.close()
 
-    def test_latest_terminal_run_returns_none_for_empty(self) -> None:
-        from milknado.domains.dispatch import latest_terminal_run
-
-        assert latest_terminal_run([]) is None
+    def test_latest_terminal_run_returns_none_for_unknown_run(self, tmp_path: Path) -> None:
+        graph, _cfg = open_graph(Path(tmp_path))
+        try:
+            assert graph.latest_terminal_run(1, "missing") is None
+        finally:
+            graph.close()
 
     def test_start_sets_run_id_on_graph_node(
         self, tmp_path: Path, worker_stub: Callable[[str], str]

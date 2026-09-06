@@ -9,6 +9,10 @@ class MilknadoError(Exception):
     """Base for all milknado-specific exceptions."""
 
 
+class RunFenceLostError(MilknadoError):
+    """Raised when a terminal write loses ownership of its run fence."""
+
+
 class GitOperationError(MilknadoError):
     def __init__(self, operation: str, detail: str = "") -> None:
         self.operation: str = operation

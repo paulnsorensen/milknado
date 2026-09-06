@@ -7,7 +7,14 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from milknado.domains.common import GitPort, MikadoNode, RunResult, UnlandedWorkError, pid_alive
+from milknado.domains.common import (
+    GitPort,
+    MikadoNode,
+    RunFenceLostError,
+    RunResult,
+    UnlandedWorkError,
+    pid_alive,
+)
 from milknado.domains.dispatch._runstate import clear_cancel, now_iso, request_cancel, runs_dir
 from milknado.domains.dispatch.ports import (
     ProcessTerminationPort,
@@ -35,26 +42,26 @@ def _finalize_cancelled(graph: RunFinalizerPort, run_id: str) -> dict[str, objec
     The direct-finalize path (pid run, or the fallback when the async worker never
     responds within the bound).
     """
-    written = graph.finish_run(
-        run_id,
-        RunResult(
-            status="failed",
-            exit_code=-1,
-            timed_out=False,
-            ended_at=now_iso(),
-            error="cancelled",
-        ),
-    )
+    try:
+        graph.finish_run(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=now_iso(),
+                error="cancelled",
+            ),
+        )
+    except RunFenceLostError:
+        _logger.info("cancel adopted terminal winner for run_id=%s", run_id)
     record = graph.get_run(run_id)
     if record is None or record.get("status") == "running":
         raise RuntimeError(
             f"run {run_id!r} cancellation finalization was not confirmed; "
             + "state and worktree preserved"
         )
-    state: dict[str, object] = dict(record)
-    if not written:
-        state["terminal_persistence"] = "late-write-lost"
-    return state
+    return dict(record)
 
 
 def _reconcile_cancel(

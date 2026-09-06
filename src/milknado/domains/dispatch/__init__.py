@@ -40,8 +40,6 @@ from milknado.domains.dispatch.ports import (
 )
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
-    find_terminal_runs_for_node,
-    latest_terminal_run,
     reconcile_node_status,
     reconcile_orphaned_runs,
 )
@@ -80,9 +78,7 @@ __all__ = [
     "exit_code_path",
     "ensure_tmux_ready",
     "fail_stale_running_runs",
-    "find_terminal_runs_for_node",
     "is_cancel_requested",
-    "latest_terminal_run",
     "make_run_id",
     "now_iso",
     "poll_async_run",

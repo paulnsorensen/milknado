@@ -70,7 +70,7 @@ finally:
 
 
 class _FinalizationGraph(Protocol):
-    def finish_run(self, run_id: str, result: RunResult) -> bool: ...
+    def finish_run(self, run_id: str, result: RunResult) -> None: ...
 
     def get_run(self, run_id: str) -> dict[str, object] | None: ...
 
@@ -773,8 +773,8 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
                 }
             ]
 
-        def finish_run(self, _run_id: str, _result: RunResult) -> bool:
-            return False
+        def finish_run(self, _run_id: str, _result: RunResult) -> None:
+            pass
 
     with caplog.at_level(logging.WARNING):
         assert fail_stale_running_runs(Graph(), 4) == []
@@ -1486,8 +1486,8 @@ class TestCancelFinalizeAndRace:
         )
 
         class Graph:
-            def finish_run(self, _run_id: str, _result: object) -> bool:
-                return False
+            def finish_run(self, _run_id: str, _result: object) -> None:
+                pass
 
             def get_run(self, _run_id: str) -> None:
                 return None
@@ -1794,19 +1794,44 @@ class TestDepositResult:
         assert result_text.count("\n") == 39, "every line of the deliverable must survive"
 
 
-def test_finish_dispatch_rejects_lost_run_fence() -> None:
+def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
 
-    class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return False
-
-    with pytest.raises(RuntimeError, match="terminal run write lost its fence"):
-        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
-            Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        node = graph.add_node("fenced task")
+        graph.claim_node_for_dispatch(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
+        graph.start_run("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+        graph.finish_run(
+            "run-1",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-01-01T00:01:00+00:00",
+            ),
         )
+
+        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+            graph,
+            node.id,
+            "run-1",
+            SimpleNamespace(exit_code=1, timed_out=False),
+            "failed",
+            None,
+        )
+
+        final = graph.get_node(node.id)
+        assert final is not None
+        assert final.status.value == "running"
+        assert final.run_id == "run-1"
+        winner = graph.get_run("run-1")
+        assert winner is not None
+        assert winner["status"] == "done"
+    finally:
+        graph.close()
 
 
 def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
@@ -1815,8 +1840,8 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return True
+        def finish_run(self, *_args: object) -> None:
+            pass
 
         def mark_terminal(self, *_args: object) -> bool:
             return False
@@ -1829,13 +1854,14 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
     )
 
 
-def test_sync_dispatch_reports_terminal_persistence_loss(
+def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
     from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
+    from milknado.domains.graph import RunFenceLostError
 
     class Graph:
         def get_node(self, _node_id: int):
@@ -1847,8 +1873,8 @@ def test_sync_dispatch_reports_terminal_persistence_loss(
         def start_run(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args: object, **_kwargs: object) -> bool:
-            return False
+        def finish_run(self, *_args: object, **_kwargs: object) -> None:
+            raise RunFenceLostError("finish_run lost its running-row fence")
 
         def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
             return True
@@ -1868,30 +1894,32 @@ def test_sync_dispatch_reports_terminal_persistence_loss(
         process=cast(ProcessPort, object()),
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
-    with pytest.raises(RuntimeError, match="terminal persistence lost its fence"):
+    with pytest.raises(RuntimeError, match="worker failed"):
         _ = lifecycle.dispatch_node_sync(
             cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
         )
 
 
-def test_cancel_finalize_surfaces_late_write_loss() -> None:
+def test_cancel_finalize_adopts_late_terminal_winner() -> None:
     from milknado.domains.dispatch import cancel
+    from milknado.domains.graph import RunFenceLostError
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return False
+        def finish_run(self, *_args: object) -> None:
+            raise RunFenceLostError("finish_run lost its running-row fence")
 
         def get_run(self, _run_id: str) -> dict[str, object]:
             return {"run_id": _run_id, "status": "done"}
 
-    result = cancel._finalize_cancelled(Graph(), "run-1")  # pyright: ignore[reportPrivateUsage]
-    assert result["terminal_persistence"] == "late-write-lost"
+    final = cancel._finalize_cancelled(Graph(), "run-1")  # pyright: ignore[reportPrivateUsage]
+    assert final["status"] == "done"
 
 
 def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
     from datetime import UTC, datetime, timedelta
 
     from milknado.domains.dispatch import reconcile
+    from milknado.domains.graph import RunFenceLostError
 
     class Graph:
         def runs_for_node(self, _node_id: int) -> list[dict[str, object]]:
@@ -1904,10 +1932,10 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
                 }
             ]
 
-        def finish_run(self, *_args: object) -> bool:
-            return False
+        def finish_run(self, *_args: object) -> None:
+            raise RunFenceLostError("finish_run lost its running-row fence")
 
-    with pytest.raises(RuntimeError, match="stale terminal write lost"):
+    with pytest.raises(RunFenceLostError, match="running-row fence"):
         _ = reconcile.fail_stale_running_runs(Graph(), 1)
 
 
@@ -1931,7 +1959,7 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
     log_path.touch()
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
+        def finish_run(self, *_args: object) -> None:
             raise RuntimeError("database unavailable")
 
         def close(self) -> None:
@@ -1986,8 +2014,8 @@ def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return True
+        def finish_run(self, *_args: object) -> None:
+            pass
 
         def mark_terminal(self, *_args: object) -> bool:
             return False
@@ -2019,8 +2047,8 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         def start_run(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args: object, **_kwargs: object) -> bool:
-            return True
+        def finish_run(self, *_args: object, **_kwargs: object) -> None:
+            pass
 
         def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
             raise RuntimeError("database unavailable")
@@ -2065,9 +2093,11 @@ def test_async_worker_reports_cancelled_run_fence_loss(
     log_path.parent.mkdir(parents=True)
     log_path.touch()
 
+    from milknado.domains.graph import RunFenceLostError
+
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return False
+        def finish_run(self, *_args: object) -> None:
+            raise RunFenceLostError("running-row fence already finalized")
 
         def close(self) -> None:
             return None
@@ -2093,3 +2123,5 @@ def test_async_worker_reports_cancelled_run_fence_loss(
         process=cast(ProcessPort, object()),
     )
     async_run._async_worker(context)  # pyright: ignore[reportPrivateUsage]
+    sidecar = log_path.with_name(f"{request.run_id}.terminal-error")
+    assert not sidecar.exists()
