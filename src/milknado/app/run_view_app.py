@@ -132,7 +132,9 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
             route=self.route,
             auto_follow=self.auto_follow,
         )
-        self.query_one("#events", Static).update(events_text(self.snapshot.event_lines))
+        self.query_one("#events", Static).update(
+            events_text(self.snapshot.event_lines, self.snapshot.listener_errors)
+        )
 
     def _runs(self) -> tuple[RunSnapshot, ...]:
         return (*self.snapshot.active_runs, *reversed(self.snapshot.terminal_runs))

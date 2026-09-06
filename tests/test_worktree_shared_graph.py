@@ -199,6 +199,22 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def _seed(self, tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
         """Create a graph with a goal->task tree; return (root, graph, goal_id, task_id)."""
+        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+        _ = subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir()
         g = MikadoGraph(db)
@@ -216,7 +232,10 @@ class TestDispatchRefusalUnderClaimedGoal:
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             _ = milknado_run_inline(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
 
     def test_run_inline_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
@@ -228,7 +247,10 @@ class TestDispatchRefusalUnderClaimedGoal:
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             _ = milknado_run_inline_start(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
 
     def test_run_loop_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
@@ -251,7 +273,10 @@ class TestDispatchRefusalUnderClaimedGoal:
         # Should NOT raise a goal-claimed error; may raise other validation errors
         try:
             _ = milknado_run_inline_start(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (
@@ -269,7 +294,10 @@ class TestDispatchRefusalUnderClaimedGoal:
         # Should NOT raise a goal-claimed error; dead claimant is reclaimed on dispatch
         try:
             _ = milknado_run_inline_start(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (
@@ -609,6 +637,22 @@ class TestProductionClaimPath:
     """
 
     def _seed(self, tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
+        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+        _ = subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ],
+            cwd=tmp_path,
+            check=True,
+        )
         db = tmp_path / ".milknado" / "milknado.db"
         db.parent.mkdir()
         g = MikadoGraph(db)
@@ -649,7 +693,10 @@ class TestProductionClaimPath:
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             _ = milknado_run_inline_start(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
 
     def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
@@ -665,7 +712,10 @@ class TestProductionClaimPath:
 
         try:
             _ = milknado_run_inline_start(
-                task_id, worktree=WorktreeMode.THIS_BRANCH, project_root=str(root)
+                task_id,
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+                allow_protected=True,
             )
         except ValueError as exc:
             assert "claimed" not in str(exc).lower(), (

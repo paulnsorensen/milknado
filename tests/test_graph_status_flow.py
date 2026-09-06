@@ -104,7 +104,7 @@ def test_run_startup_reconciles_completed_goal_through_cli(
         patch("milknado.cli.run._load_or_default", return_value=(object(), [])),
         patch("milknado.cli.run._ensure_db", return_value=graph),
         patch("milknado.app.run.resolve_feature_branch", return_value="feature"),
-        patch("milknado.app.run.check_protected_branch", return_value=None),
+        patch("milknado.app.run.ensure_dispatch_allowed"),
         patch("milknado.cli.run._is_interactive_terminal", return_value=False),
         patch("milknado.domains.dispatch.reconcile_orphaned_runs"),
         patch("milknado.domains.execution.get_dispatchable_nodes", return_value=[]),

@@ -315,7 +315,7 @@ max_file_lines = 300
 [tool.milknado.quality.file_exceptions]
 "src/milknado/adapters/loop.py" = { max_lines = 458, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
-"src/milknado/app/run.py" = { max_lines = 599, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 584 for the elapsed/attempt/ETA/progress fields added to the run read model." }
+"src/milknado/app/run.py" = { max_lines = 662, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 599 for listener failure reporting, centralized dispatch policy, and restored boundary documentation." }
 "src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
 "src/milknado/domains/common/agent_argv.py" = { max_lines = 365, reason = "Pre-existing agent command boundary; keep its measured ceiling until command builders are split." }
 "src/milknado/domains/common/flavor_codec.py" = { max_lines = 304, reason = "Pre-existing flavor codec boundary; keep its measured ceiling until codec concerns are split. Bumped from 300 for the review_timeout_seconds field mirroring review_max_rounds." }

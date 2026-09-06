@@ -1,9 +1,7 @@
-"""Application-layer policy and adapter wiring for the run / dispatch surfaces.
+"""Application-layer policy and adapter wiring for the run and dispatch surfaces.
 
-The CLI ``run``/``attach`` commands and the MCP ``milknado_run_inline*`` tools are
-thin: they parse I/O and call the functions here, which own the policy (protected
-branch refusal, execution-config assembly, worker-cmd validation, worktree
-isolation) and construct adapters; entry modules hold no inline dispatch policy.
+The CLI and MCP entry points parse input and call this module. This module owns
+dispatch policy, execution configuration, worker validation, and adapter wiring.
 """
 
 from __future__ import annotations
@@ -11,7 +9,7 @@ from __future__ import annotations
 import logging
 import shlex
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
 from queue import Queue
@@ -22,6 +20,7 @@ from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
+    GitOperationError,
     GitPort,
     MikadoNode,
     MilknadoConfig,
@@ -111,32 +110,30 @@ class ExecutionSnapshot:
     stopped: int
     available: int
     event_lines: tuple[str, ...]
+    listener_errors: tuple[str, ...] = ()
 
 
-@dataclass(frozen=True)
-class ProtectedBranchRefusal:
-    """Structured refusal returned before graph/log setup can create side effects."""
+@dataclass(frozen=True, slots=True)
+class ProtectedBranchRefusal(RuntimeError):
+    """Structured refusal raised before dispatch side effects begin."""
 
     branch: str
     reason: str
 
+    def __post_init__(self) -> None:
+        RuntimeError.__init__(self, self.__str__())
 
-def check_protected_branch(
-    cfg: MilknadoConfig,
-    branch: str,
-    allow_protected: bool,
-) -> ProtectedBranchRefusal | None:
-    """Return a typed refusal for detached or protected branches.
+    @override
+    def __str__(self) -> str:
+        return f"{self.reason} branch {self.branch!r}"
 
-    The caller owns presentation and exit-code mapping. This keeps the policy
-    reusable by MCP and other non-CLI entry points without importing Typer or
-    Rich.
-    """
+
+def ensure_dispatch_allowed(cfg: MilknadoConfig, branch: str, allow_protected: bool) -> None:
+    """Raise a typed refusal for detached or protected branches."""
     if branch in ("", "HEAD"):
-        return ProtectedBranchRefusal(branch=branch, reason="detached")
+        raise ProtectedBranchRefusal(branch=branch, reason="detached")
     if not allow_protected and branch in cfg.protected_branches:
-        return ProtectedBranchRefusal(branch=branch, reason="protected")
-    return None
+        raise ProtectedBranchRefusal(branch=branch, reason="protected")
 
 
 def build_exec_config(config: MilknadoConfig, project_root: Path) -> ExecutionConfig:
@@ -176,13 +173,16 @@ class ExecutionController:
         loop: RunLoop,
         execution_config: ExecutionConfig,
         concurrency_limit: int,
+        config: MilknadoConfig,
     ) -> None:
         self._loop = loop
         self._execution_config = execution_config
         self._concurrency_limit = concurrency_limit
+        self._config = config
         self._controls: Queue[_ControlRequest] = Queue()
         self._state_lock = Lock()
         self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
+        self._listener_errors: tuple[str, ...] = ()
         self._snapshot = self._project_snapshot(loop.state())
         self._running = False
         loop.set_state_listener(self._receive_state)
@@ -194,7 +194,10 @@ class ExecutionController:
         strict: bool = False,
         spec_text: str | None = None,
         spec_path: Path | None = None,
+        allow_protected: bool = False,
     ) -> RunLoopResult:
+        ensure_dispatch_allowed(self._config, feature_branch, allow_protected)
+
         with self._state_lock:
             if self._running:
                 raise RuntimeError("execution controller is already running")
@@ -251,15 +254,42 @@ class ExecutionController:
     def _receive_state(self, state: RunLoopState) -> None:
         snapshot = self._project_snapshot(state)
         with self._state_lock:
+            snapshot = replace(snapshot, listener_errors=self._listener_errors)
             self._snapshot = snapshot
             listeners = tuple(self._listeners)
+
+        failures: list[tuple[int, str]] = []
         for listener in listeners:
             try:
                 listener(snapshot)
-            except Exception:
-                _logger.exception(
-                    "execution snapshot listener failed listener=%s",
-                    getattr(listener, "__qualname__", type(listener).__qualname__),
+            except Exception as exc:
+                listener_name = getattr(listener, "__qualname__", type(listener).__qualname__)
+                failures.append((id(listener), f"{listener_name}: {exc}"))
+        if not failures:
+            return
+
+        with self._state_lock:
+            errors = list(self._listener_errors)
+            for _, error in failures:
+                if error not in errors:
+                    errors.append(error)
+            self._listener_errors = tuple(errors)
+            visible = replace(self._snapshot, listener_errors=self._listener_errors)
+        for _, error in failures:
+            _logger.error("execution snapshot listener failed: %s", error)
+
+        failed_ids = {listener_id for listener_id, _ in failures}
+        for listener in listeners:
+            if id(listener) in failed_ids:
+                continue
+            try:
+                listener(visible)
+            except Exception as exc:
+                listener_name = getattr(listener, "__qualname__", type(listener).__qualname__)
+                _logger.error(
+                    "execution snapshot listener failed while publishing error: %s: %s",
+                    listener_name,
+                    exc,
                 )
 
     @staticmethod
@@ -380,6 +410,7 @@ def build_execution_controller(
         loop,
         execution_config=build_exec_config(config, project_root),
         concurrency_limit=config.concurrency_limit,
+        config=config,
     )
 
 
@@ -389,8 +420,10 @@ def run_execution_loop(
     project_root: Path,
     feature_branch: str,
     strict: bool,
+    allow_protected: bool = False,
 ) -> RunLoopResult:
     """Wire the executor + run loop and drive it to completion."""
+    ensure_dispatch_allowed(config, feature_branch, allow_protected)
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
@@ -411,18 +444,20 @@ def run_execution_loop(
 
 
 def resolve_run_attach_target(graph: MikadoGraph, project_root: Path, run_id: str) -> str:
-    """Resolve the tmux window target for a run (adapter wiring for ``attach``)."""
+    """Resolve the tmux target for a durable run identifier."""
+
     from milknado.domains.dispatch import resolve_attach_target
 
     return resolve_attach_target(graph, TmuxAdapter(project_root), run_id)
 
 
 def validate_worker_cmd(worker_cmd: str | None) -> None:
-    """Reject an explicit worker_cmd whose executable isn't an allowed AI agent CLI.
+    """Validate an explicit worker command before dispatch.
 
-    Eager pre-check on the MCP arg; the env fallback and built-in default are
-    validated again where they're resolved (``runner.resolve_worker_cmd``).
+    The eager MCP check is repeated when the environment fallback or built-in
+    default is resolved in ``runner.resolve_worker_cmd``.
     """
+
     from milknado.domains.dispatch import validate_worker_argv
 
     if not worker_cmd or not worker_cmd.strip():
@@ -468,14 +503,35 @@ def _require_task_node(graph: MikadoGraph, node_id: int) -> MikadoNode:
     return node
 
 
+def _git_for_inline_dispatch(
+    cfg: MilknadoConfig,
+    root: Path,
+    request: InlineRunRequest,
+    allow_protected: bool,
+) -> GitPort:
+    from milknado.adapters import GitAdapter
+
+    git = GitAdapter(root)
+    try:
+        branch = git.current_branch()
+    except GitOperationError:
+        if request.worktree is not WorktreeMode.THIS_BRANCH:
+            raise
+    else:
+        ensure_dispatch_allowed(cfg, branch, allow_protected)
+    return git
+
+
 def run_inline(
     graph: MikadoGraph,
     cfg: MilknadoConfig,
     root: Path,
     request: InlineRunRequest,
+    *,
+    allow_protected: bool = False,
 ) -> dict[str, object]:
-    """Dispatch a node to a blocking subprocess worker; return the run state dict."""
-    from milknado.adapters import GitAdapter
+    """Dispatch one task to a blocking worker and return its run state."""
+    git = _git_for_inline_dispatch(cfg, root, request, allow_protected)
     from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
 
     _logger.info(
@@ -489,7 +545,7 @@ def run_inline(
     profile = resolve_flavor_profile(cfg, node.flavor)
     state = dispatch_node_sync(
         graph,
-        GitAdapter(root),
+        git,
         SyncDispatchRequest(
             node_id=request.node_id,
             project_root=root,
@@ -512,9 +568,11 @@ def run_inline_start(
     root: Path,
     request: InlineRunRequest,
     use_tmux: bool,
+    *,
+    allow_protected: bool = False,
 ) -> dict[str, object]:
-    """Start an async worker (optionally in tmux); return the initial run state dict."""
-    from milknado.adapters import GitAdapter
+    """Start an asynchronous worker and return its initial run state."""
+    git = _git_for_inline_dispatch(cfg, root, request, allow_protected)
     from milknado.app.project import open_graph
     from milknado.domains.dispatch import (
         AsyncRunRequest,
@@ -537,7 +595,7 @@ def run_inline_start(
         # Explicit tmux requests fail closed before any claim.
         tmux = TmuxAdapter(root)
         ensure_tmux_ready(tmux)
-    git = GitAdapter(root)
+
     node = _require_task_node(graph, request.node_id)
     run_id = make_run_id(request.node_id)
     if node.status == NodeStatus.RUNNING:

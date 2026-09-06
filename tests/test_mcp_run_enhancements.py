@@ -28,6 +28,7 @@ from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.run import (
     milknado_deposit_result,
     milknado_run_cancel,
+    milknado_run_inline,
     milknado_run_inline_poll,
     milknado_run_inline_start,
     milknado_run_list,
@@ -126,6 +127,10 @@ def _call(tool: object, **kwargs: object) -> _CallResult:
     # test opts into ISOLATE explicitly.
     if fn.__name__ in ("milknado_run_inline", "milknado_run_inline_start"):
         _ = kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+        _ = kwargs.setdefault("allow_protected", True)
+        root = kwargs.get("project_root")
+        if root is not None and not (Path(str(root)) / ".git").exists():
+            _init_git(Path(str(root)))
     return fn(**kwargs)
 
 
@@ -277,6 +282,111 @@ class TestUnifiedRunSchema:
         assert not missing, f"milknado_run_inline_poll missing keys: {missing}"
         assert final["run_id"] == started["run_id"]
         assert "rebased" in final  # may be None for headless runs
+
+
+class TestProtectedDispatch:
+    def test_inline_start_refuses_protected_branch_without_opt_in(self, tmp_path: Path) -> None:
+        from milknado.app.run import ProtectedBranchRefusal
+
+        _init_git(tmp_path)
+        task = _call(
+            milknado_todo_add, description="protected", kind="task", project_root=str(tmp_path)
+        )
+
+        with pytest.raises(ProtectedBranchRefusal, match="protected"):
+            _ = _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                project_root=str(tmp_path),
+                allow_protected=False,
+            )
+
+    def test_inline_refuses_protected_branch_without_opt_in(self, tmp_path: Path) -> None:
+        from milknado.app.run import ProtectedBranchRefusal
+
+        _init_git(tmp_path)
+        task = _call(
+            milknado_todo_add,
+            description="protected-sync",
+            kind="task",
+            project_root=str(tmp_path),
+        )
+
+        with pytest.raises(ProtectedBranchRefusal, match="protected"):
+            _ = _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                project_root=str(tmp_path),
+                allow_protected=False,
+            )
+
+    def test_inline_shared_checkout_allows_non_git_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import milknado.domains.dispatch as dispatch
+        from milknado.adapters import GitAdapter
+        from milknado.domains.common import GitOperationError
+
+        task = _call(
+            milknado_todo_add, description="non-git", kind="task", project_root=str(tmp_path)
+        )
+
+        def no_git_branch(_adapter: GitAdapter) -> str:
+            raise GitOperationError("rev-parse", "not a repository")
+
+        monkeypatch.setattr(GitAdapter, "current_branch", no_git_branch)
+
+        def fake_dispatch(*_args: object) -> dict[str, object]:
+            return {"node_id": task["id"], "status": "done"}
+
+        monkeypatch.setattr(dispatch, "dispatch_node_sync", fake_dispatch)
+        fn = cast(
+            Callable[..., _CallResult], getattr(milknado_run_inline, "fn", milknado_run_inline)
+        )
+
+        result = fn(
+            node_id=task["id"],
+            project_root=str(tmp_path),
+            worktree=WorktreeMode.THIS_BRANCH,
+            allow_protected=False,
+        )
+        assert result["status"] == "done"
+
+    def test_inline_start_refuses_detached_head(self, tmp_path: Path) -> None:
+        import subprocess
+
+        from milknado.app.run import ProtectedBranchRefusal
+
+        _init_git(tmp_path)
+        _ = subprocess.run(["git", "checkout", "--detach", "-q", "HEAD"], cwd=tmp_path, check=True)
+        task = _call(
+            milknado_todo_add, description="detached", kind="task", project_root=str(tmp_path)
+        )
+
+        with pytest.raises(ProtectedBranchRefusal, match="detached"):
+            _ = _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                project_root=str(tmp_path),
+                allow_protected=True,
+            )
+
+    def test_inline_start_allows_protected_branch_with_opt_in(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
+        _init_git(tmp_path)
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="allowed", kind="task", project_root=root)
+        started = _call(
+            milknado_run_inline_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("true"),
+            project_root=root,
+            allow_protected=True,
+        )
+
+        finished = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
+        assert finished["status"] == "done"
 
     def test_run_loop_start_returns_superset_schema(self, tmp_path: Path) -> None:
         _init_git(tmp_path)
