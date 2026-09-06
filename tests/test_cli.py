@@ -1875,6 +1875,28 @@ class TestPrintRunResult:
         )
         assert "Root goal achieved" in capsys.readouterr().out
 
+    def test_verification_gap_is_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.execution.run_loop._result import VerifyOutcome
+
+        _print_run_result(
+            RunLoopResult(
+                root_done=False,
+                dispatched_total=0,
+                completed_total=0,
+                failed_total=0,
+                verify_outcome=VerifyOutcome(
+                    done=False,
+                    goal_delta="verification unavailable: no agent configured",
+                ),
+            )
+        )
+
+        assert "Verification incomplete: verification unavailable: no agent configured" in (
+            capsys.readouterr().out
+        )
+
     def test_rebase_conflicts_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
         from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
         from milknado.domains.execution.executor import RebaseConflict

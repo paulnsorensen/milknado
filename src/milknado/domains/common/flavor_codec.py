@@ -68,14 +68,9 @@ def coerce_tool_list(value: object, ctx: str) -> tuple[str, ...]:
         raise ValueError(f"{ctx} must be a list of strings, got {type(value).__name__}")
     values = cast(list[object] | tuple[object, ...], value)
     items: list[str] = []
-    sentinels = 0
     for index, item in enumerate(values):
         if not isinstance(item, str) or not item:
             raise ValueError(f"{ctx}[{index}] must be a non-empty string")
-        if item == "...":
-            sentinels += 1
-            if sentinels > 1:
-                raise ValueError(f'{ctx} may contain at most one "..." sentinel, found multiple')
         items.append(item)
     return tuple(items)
 
@@ -207,7 +202,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         return "\n\n".join(part for part in parts if part) or None
 
 
-def normalize_flavor_table(value: object) -> object:
+def normalize_flavor_table(value: object, *, tools_ctx: str = "tools") -> object:
     if not isinstance(value, dict):
         return value
     normalized = dict(cast(dict[str, object], value))
@@ -239,7 +234,7 @@ def normalize_flavor_table(value: object) -> object:
     ):
         raise ValueError("brief_prepend_path must be a string or list of strings")
     if "tools" in normalized and normalized["tools"] is not None:
-        normalized["tools"] = coerce_tool_list(normalized["tools"], "tools")
+        normalized["tools"] = coerce_tool_list(normalized["tools"], tools_ctx)
     if "quality_gates" in normalized:
         normalized["quality_gates"] = normalize_gates(normalized["quality_gates"])
     return normalized

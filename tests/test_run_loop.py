@@ -15,6 +15,7 @@ from rich.table import Table
 from typing_extensions import override
 
 import milknado.domains.execution.run_loop.display as _display
+from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpecResult
 from milknado.domains.common.config import Gate, MilknadoConfig
 from milknado.domains.common.protocols import LoopPort
@@ -1927,6 +1928,38 @@ class TestRootCompletionStructuralFallback:
         assert root_node is not None and root_node.status == NodeStatus.DONE
         assert leaf_node is not None and leaf_node.status == NodeStatus.DONE
         assert verify_calls == []
+
+    def test_missing_verifier_keeps_completed_leaves_pending(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        from milknado.domains.planning.planner import Planner
+
+        ralph = LoopAdapter()
+        planner = MagicMock(spec=Planner)
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, planner=planner)
+
+        root = graph.add_node("root goal")
+        leaf = graph.add_node("leaf", parent_id=root.id)
+        graph.mark_running(leaf.id)
+        graph.mark_done(leaf.id)
+
+        result = loop.run(config, "main", spec_text="spec: do the thing")
+
+        assert result.root_done is False
+        assert result.verify_outcome is not None
+        assert result.verify_outcome.done is False
+        assert result.verify_outcome.goal_delta == (
+            "verification unavailable: no agent configured"
+        )
+        root_node = graph.get_node(root.id)
+        assert root_node is not None
+        assert root_node.status == NodeStatus.PENDING
+        _mock_attr(planner, "replan_with_delta").assert_not_called()
 
     def test_root_stays_pending_without_spec_when_leaf_not_done(
         self,

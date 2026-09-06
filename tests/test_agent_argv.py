@@ -504,6 +504,11 @@ def test_resolve_worker_tools_sentinel_at_end() -> None:
     assert "mcp__serena__find_symbol" in tools
 
 
+def test_resolve_worker_tools_rejects_multiple_sentinels() -> None:
+    with pytest.raises(ValueError, match='at most one "..." sentinel'):
+        _ = resolve_worker_tools("claude", ["...", "Read", "..."])
+
+
 def test_resolve_execution_agent_uses_tools_kwarg() -> None:
     cmd = resolve_execution_agent_command("claude", tools=["Read", "Edit"])
     assert "--allowedTools 'Read,Edit'" in cmd

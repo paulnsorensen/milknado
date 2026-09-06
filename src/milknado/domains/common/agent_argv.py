@@ -116,16 +116,17 @@ def resolve_worker_tools(
     family: str,
     tools: Sequence[str] | None,
 ) -> tuple[str, ...]:
-    """Resolve a single-list tool spec (with optional \"...\" sentinel) to the final tool list.
-
+    """Resolve a single-list tool spec (with optional "..." sentinel) to the final tool list.
     - ``None`` returns the built-in family default (``WORKER_ALLOWED_TOOLS[family]``).
-    - A list without ``\"...\"`` replaces the family default entirely.
-    - A list with ``\"...\"`` expands it in place to the built-in default, then dedupes
+    - A list without ``"..."`` replaces the family default entirely.
+    - A list with ``"..."`` expands it in place to the built-in default, then dedupes
       first-wins across the full list.
-    - At most one ``\"...\"`` is allowed; validated by the caller at config load.
+    - More than one ``"..."`` raises ``ValueError``.
     """
     if tools is None:
         return WORKER_ALLOWED_TOOLS.get(family, ())
+    if tools.count("...") > 1:
+        raise ValueError('worker tools may contain at most one "..." sentinel')
     base = WORKER_ALLOWED_TOOLS.get(family, ())
     expanded: list[str] = []
     for item in tools:
@@ -133,7 +134,6 @@ def resolve_worker_tools(
             expanded.extend(base)
         else:
             expanded.append(item)
-    # Dedupe: first occurrence wins.
     seen: set[str] = set()
     result: list[str] = []
     for t in expanded:

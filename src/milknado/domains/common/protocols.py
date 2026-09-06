@@ -22,6 +22,7 @@ class ProgressEvent:
 class VerifySpecResult:
     outcome: Literal["done", "gaps"]
     goal_delta: str | None = None
+    replan: bool = True
 
 
 @dataclass(frozen=True)

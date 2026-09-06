@@ -490,7 +490,7 @@ class RunLoop:
         if result.outcome == "done":
             self._graph.mark_running(root.id)
             self._graph.mark_done(root.id)
-        elif result.outcome == "gaps" and self._planner and result.goal_delta:
+        elif result.outcome == "gaps" and result.replan and self._planner and result.goal_delta:
             _ = self._planner.replan_with_delta(result.goal_delta, config.project_root, spec_path)
         return outcome
 

@@ -206,8 +206,12 @@ class LoopAdapter:
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
         if not self._agent:
-            _logger.warning("verify_spec: no agent configured, returning done")
-            return VerifySpecResult(outcome="done")
+            _logger.error("verify_spec: no agent configured; verification not performed")
+            return VerifySpecResult(
+                outcome="gaps",
+                goal_delta="verification unavailable: no agent configured",
+                replan=False,
+            )
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:

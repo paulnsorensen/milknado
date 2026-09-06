@@ -54,6 +54,11 @@ def _print_run_result(result: RunLoopResult) -> None:
             + f"{result.failed_total} failed.[/yellow]"
         )
 
+    verification = result.verify_outcome
+    if verification is not None and not verification.done:
+        delta = verification.goal_delta or "no explanation provided"
+        console.print(f"[red]Verification incomplete: {delta}[/red]")
+
     for conflict in result.rebase_conflicts:
         console.print(
             f"\n[red bold]Rebase conflict — node {conflict.node_id}:[/red bold] "
