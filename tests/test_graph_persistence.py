@@ -679,7 +679,6 @@ def test_review_sequence_is_atomic_across_connections(tmp_path: Path) -> None:
             return _run_persistence.insert_node_review(
                 connection,
                 node.id,
-                None,
                 "approve",
                 f"review-{index}",
                 f"2026-01-01T00:00:0{index}+00:00",

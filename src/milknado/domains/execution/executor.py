@@ -911,7 +911,7 @@ class Executor:
         now = datetime.now(UTC).isoformat()
         audit_succeeded = True
         try:
-            _ = self._graph.insert_node_review(node.id, None, verdict, findings_md, now)
+            _ = self._graph.insert_node_review(node.id, verdict, findings_md, now)
         except Exception:
             audit_succeeded = False
             _logger.exception("node_review_table_write_failed node_id=%d", node.id)
@@ -1251,7 +1251,7 @@ class Executor:
         worktree: Path,
         notification: ReviewNotification,
         detail: str,
-    ) -> tuple[CompletionResult, ReviewNotification]:
+    ) -> CompletionResult:
         if node.run_id:
             blocked = self._graph.mark_blocked_fenced(node.id, node.run_id)
         else:
@@ -1270,16 +1270,13 @@ class Executor:
             ),
         )
         _logger.warning("node_review_blocked node_id=%d worktree=%s", node.id, worktree)
-        return (
-            CompletionResult(
-                node_id=node.id,
-                rebased=False,
-                newly_ready=[],
-                blocked=True,
-                review_notification_failed=not notification.notification_succeeded,
-                review_audit_failed=not notification.audit_succeeded,
-            ),
-            notification,
+        return CompletionResult(
+            node_id=node.id,
+            rebased=False,
+            newly_ready=[],
+            blocked=True,
+            review_notification_failed=not notification.notification_succeeded,
+            review_audit_failed=not notification.audit_succeeded,
         )
 
     def _handle_review_rejection(
@@ -1302,19 +1299,15 @@ class Executor:
                 config.on_reject,
             )
         if not notification.audit_succeeded:
-            return self._block_review(
-                node,
-                worktree,
-                notification,
-                "review blocked after audit failure",
+            blocked = self._block_review(
+                node, worktree, notification, "review blocked after audit failure"
             )
+            return blocked, notification
         if review_error:
-            return self._block_review(
-                node,
-                worktree,
-                notification,
-                f"review blocked after reviewer error: {findings}",
+            blocked = self._block_review(
+                node, worktree, notification, f"review blocked after reviewer error: {findings}"
             )
+            return blocked, notification
         if round_number < config.review_max_rounds:
             self._review_round_by_node[node_id] = review_round
             redispatch = self._redispatch_review_round(
@@ -1341,12 +1334,10 @@ class Executor:
                 notification,
             )
         if config.on_reject == "block":
-            return self._block_review(
-                node,
-                worktree,
-                notification,
-                f"review blocked after round {review_round}",
+            blocked = self._block_review(
+                node, worktree, notification, f"review blocked after round {review_round}"
             )
+            return blocked, notification
         _logger.warning(
             "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
             node_id,
@@ -1375,12 +1366,10 @@ class Executor:
         if approved and not review_error:
             notification = self._notify_review(node, verdict="approve", findings_md=findings)
             if not notification.audit_succeeded:
-                return self._block_review(
-                    node,
-                    worktree,
-                    notification,
-                    "review approval audit failed",
+                blocked = self._block_review(
+                    node, worktree, notification, "review approval audit failed"
                 )
+                return blocked, notification
             return None, notification
         return self._handle_review_rejection(node, worktree, config, findings, review_error)
 

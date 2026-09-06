@@ -439,16 +439,13 @@ def _build_ralph_content(
 
 
 def _parse_review_verdict(output: str) -> ReviewVerdict:
-    match = re.search(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I)
-    marker_matches = list(re.finditer(r"</?verdict\b", output, re.I))
-    valid_span = match.span() if match is not None else None
-    extra_markers = valid_span is None or any(
-        marker.start() < valid_span[0] or marker.start() >= valid_span[1]
-        for marker in marker_matches
-    )
-    if match is None or extra_markers:
+    verdicts = list(re.finditer(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I))
+    marker_count = len(re.findall(r"</?verdict\b", output, re.I))
+    # Exactly one valid tag contributes exactly two markers; anything else is ambiguous.
+    if len(verdicts) != 1 or marker_count != 2:
         _logger.warning("run_node_review: unparseable or conflicting reviewer output")
         findings = output.strip() or "reviewer produced no parseable <verdict> tag"
         return ReviewVerdict(approved=False, findings_md=findings, error=True)
+    match = verdicts[0]
     findings_md = output[: match.start()].strip()
     return ReviewVerdict(approved=match.group(1).lower() == "approve", findings_md=findings_md)

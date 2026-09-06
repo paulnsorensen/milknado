@@ -1164,7 +1164,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     db = tmp_path / "review.db"
     graph = MikadoGraph(db)
     node = graph.add_node("restart sequence")
-    assert graph.insert_node_review(node.id, 1, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
+    assert graph.insert_node_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
     graph.close()
 
     reopened = MikadoGraph(db)

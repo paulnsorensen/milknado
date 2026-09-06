@@ -162,8 +162,6 @@ def test_repository_profiles_match_every_field_and_runtime_projection(
 
     assert EXPECTED_PROFILES["implement"].review_agent == OPUS_REVIEWER
     assert EXPECTED_PROFILES["spec"].review_agent == OPUS_REVIEWER
-    assert EXPECTED_PROFILES["implement"].review_agent
-    assert EXPECTED_PROFILES["spec"].review_agent
 
 
 def _write_override_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

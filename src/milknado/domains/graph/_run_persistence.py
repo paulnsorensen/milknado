@@ -246,28 +246,21 @@ def deposit_review_verdict(
 def insert_node_review(
     conn: sqlite3.Connection,
     node_id: int,
-    round_number: int | None,
     verdict: str,
     findings: str,
     created_at: str,
 ) -> int:
+    """Append a review verdict; the table assigns the next round for the node."""
+    sql = (
+        "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
+        "SELECT ?, COALESCE(MAX(round), 0) + 1, ?, ?, ? "
+        "FROM node_reviews WHERE node_id = ? RETURNING round"
+    )
     with conn:
-        if round_number is None:
-            sql = (
-                "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
-                "SELECT ?, COALESCE(MAX(round), 0) + 1, ?, ?, ? "
-                "FROM node_reviews WHERE node_id = ? RETURNING round"
-            )
-            row = fetchone(conn, sql, (node_id, verdict, findings, created_at, node_id))
-            if row is None:
-                raise RuntimeError("node review insert returned no row")
-            return cast(int, _as_tuple(row)[0])
-        _ = conn.execute(
-            "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
-            + "VALUES (?, ?, ?, ?, ?)",
-            (node_id, round_number, verdict, findings, created_at),
-        )
-    return round_number
+        row = fetchone(conn, sql, (node_id, verdict, findings, created_at, node_id))
+    if row is None:
+        raise RuntimeError("node review insert returned no row")
+    return cast(int, _as_tuple(row)[0])
 
 
 def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[NodeReviewRecord]:
