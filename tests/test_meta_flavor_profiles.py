@@ -166,9 +166,7 @@ def test_repository_profiles_match_every_field_and_runtime_projection(
     assert EXPECTED_PROFILES["spec"].review_agent
 
 
-def test_flavor_overrides_beat_global_defaults_and_tools_derive_execution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _write_override_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _ = _isolated_global(tmp_path, monkeypatch)
     global_path = tmp_path / "xdg" / "milknado" / "milknado.toml"
     _ = global_path.write_text(
@@ -199,7 +197,13 @@ def test_flavor_overrides_beat_global_defaults_and_tools_derive_execution(
         + "tools = ['Read']\n",
         encoding="utf-8",
     )
+    return local
 
+
+def test_flavor_overrides_beat_global_defaults_and_tools_derive_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    local = _write_override_configs(tmp_path, monkeypatch)
     details = load_config_details(local)
     derived = resolve_flavor_profile(details.config, "derived")
     assert derived == _profile(
