@@ -578,6 +578,33 @@ def _put_stopped(q: queue.Queue[MagicMock]) -> None:
     q.put(event)
 
 
+class TestRunNodeReviewTimeout:
+    @patch("milknado.adapters.loop.RunManager")
+    def test_timeout_returns_error_verdict(
+        self,
+        mock_manager_cls: MagicMock,
+        adapter: LoopAdapter,
+        tmp_path: Path,
+    ) -> None:
+        mock_manager = MagicMock()
+        mock_manager_cls.return_value = mock_manager
+        mock_emitter = MagicMock()
+        mock_emitter.queue = queue.Queue()
+        mock_run = MagicMock()
+        mock_run.state.run_id = "review-timeout"  # pyright: ignore[reportAny]
+        mock_run.emitter = mock_emitter
+        mock_manager.create_run.return_value = mock_run  # pyright: ignore[reportAny]
+
+        verdict = adapter.run_node_review("agent", "x", tmp_path, tmp_path, timeout_seconds=0.5)
+
+        mock_manager.stop_and_join.assert_called_once_with(  # pyright: ignore[reportAny]
+            "review-timeout", timeout=5.0
+        )
+        assert verdict.error is True
+        assert verdict.approved is False
+        assert verdict.findings_md == "reviewer timed out before producing a verdict"
+
+
 class TestLoopAdapterInit:
     @patch("milknado.adapters.loop.RunManager")
     @patch("milknado.adapters.loop.QueueEmitter")

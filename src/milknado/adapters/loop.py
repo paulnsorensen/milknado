@@ -245,6 +245,8 @@ class LoopAdapter:
         prompt: str,
         worktree: Path,
         project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewVerdict:
         """Run one bounded, read-only reviewer turn in the pinned worktree."""
         del project_root
@@ -265,12 +267,12 @@ class LoopAdapter:
                 completion_signal="MILKNADO_NODE_REVIEW_COMPLETE",
                 stop_on_completion_signal=True,
                 max_iterations=1,
-                timeout=1800,
+                timeout=timeout_seconds,
                 log_dir=temp_root / ".ralph-logs",
             )
             run = local_manager.create_run(config, emitter=local_emitter)
             local_manager.start_run(run.state.run_id)
-            return _drain_review_run(local_manager, run.state.run_id, local_queue)
+            return _drain_review_run(local_manager, run.state.run_id, local_queue, timeout_seconds)
 
     def generate_ralph_md(
         self,
@@ -344,10 +346,11 @@ def _drain_review_run(
     local_manager: RunManager,
     run_id: str,
     ev_queue: queue.Queue[Event[EventData]],
+    timeout_seconds: float,
 ) -> ReviewVerdict:
     """Drain one reviewer run and convert its final output into a verdict."""
     output_parts: list[str] = []
-    deadline = time.monotonic() + 1800.0
+    deadline = time.monotonic() + timeout_seconds
     try:
         while True:
             remaining = deadline - time.monotonic()
