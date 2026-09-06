@@ -40,3 +40,15 @@ The package version alone is not a freshness check.
 [^3]: `just check` passes in the isolated dotfiles worktree. Focused UV tests pass 18 cases. The deployed live-source filter passes 14 cases. A full live `dots sync` is not run because it also changes unrelated machine configuration.
 [^4]: `.context/uv-moving-main-test`: commit `64c2d1493cea55bf7d9d7417a01407a259bb960b` becomes `8a789548e8cf005e252f0ad970b70c8fe6fb746f`. A private UV tool directory and cache isolate the experiment from live tools.
 [^5]: `uv tool upgrade milknado` prints `Nothing to upgrade`; `git ls-remote origin refs/heads/main` matches the installed `milknado-0.2.1.dist-info/direct_url.json` receipt. This is a September 2026 observation, not a permanent SHA pin.
+
+
+The publication branch applies only the floating-tool patch to newer dotfiles `main` at `8b8f3ffa`.
+It excludes the unrelated local Codex pin from the original repair branch.
+A sync-fixture failure reproduces on both that branch and a clean control at the same `main` commit.
+The fixture omits the new external tilth install command from its shared mocks.
+It calls the live mise shim under the fake test home, where the shim has no installed tool.
+The fixture repair mocks that external command without changes to production behavior or assertions.
+
+The first publication gate also reports one broker readiness setup failure.
+Its focused rerun passes; the exact cause of that isolated startup failure is not established.
+
