@@ -219,6 +219,10 @@ class FakeGit:
         _ = worktree
         return None
 
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        _ = worktree
+        return None
+
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         self.removed.append(path)
         _ = target
