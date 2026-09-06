@@ -1,5 +1,6 @@
 # gotchas
 
 <!-- HALLOUMINATE:INDEX-START -->
-- [review-harness-verdict-loss](./review-harness-verdict-loss.md) — Review harness: verdict loss and node_reviews PK collision
+- [macos-worker-stub-startup](./macos-worker-stub-startup.md) — macOS worker stub startup
+- [review-harness-verdict-loss](./review-harness-verdict-loss.md) — Review verdicts and durable audit records
 <!-- HALLOUMINATE:INDEX-END -->
