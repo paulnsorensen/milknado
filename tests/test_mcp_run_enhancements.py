@@ -40,7 +40,7 @@ _SUPERSET_KEYS = frozenset(RunDict.__annotations__)
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
-from milknado.mcp._core import open_graph
+from milknado.app.project import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)

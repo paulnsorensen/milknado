@@ -44,7 +44,7 @@ def _initialize_git_repository(tmp_path: Path) -> None:  # pyright: ignore[repor
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
-from milknado.mcp._core import open_graph
+from milknado.app.project import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
@@ -596,8 +596,8 @@ def test_runner_writes_done_on_successful_outcome(
     node to completion, then overwrite the state file with a terminal 'done' the
     poll reads — preserving the base schema (log_path/timeout_seconds)."""
     import milknado.adapters as adapters
+    import milknado.app.project as project
     import milknado.domains.execution as execution
-    import milknado.mcp._core as mcp_core
     from milknado.domains.execution.headless import HeadlessOutcome
     from milknado.mcp import _ralph_node_runner
 
@@ -644,7 +644,7 @@ def test_runner_writes_done_on_successful_outcome(
             return "main"
 
     graph = _Graph()
-    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(project, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
     class _StubRalph:
@@ -692,8 +692,8 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     _ralph_node_runner.main path without monkeypatching run_node_to_completion,
     so the real CompletionTimeout handler is exercised end-to-end."""
     import milknado.adapters as adapters
+    import milknado.app.project as project
     import milknado.domains.execution as execution
-    import milknado.mcp._core as mcp_core
     from milknado.domains.common.errors import CompletionTimeout
     from milknado.domains.execution.executor import DispatchResult
     from milknado.mcp import _ralph_node_runner
@@ -774,7 +774,7 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
 
     stub_ralph = _StubRalph()
     graph = _Graph()
-    monkeypatch.setattr(mcp_core, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(project, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
     monkeypatch.setattr(adapters, "LoopAdapter", lambda *_args, **_kwargs: stub_ralph)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(adapters, "CrgAdapter", lambda *_args, **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
