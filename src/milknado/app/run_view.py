@@ -1,7 +1,5 @@
 """Pure string/style formatting for the execution TUI — no Textual imports."""
 
-from __future__ import annotations
-
 from rich.text import Text
 
 from milknado.app.run import (

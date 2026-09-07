@@ -17,6 +17,8 @@ from milknado.app.run_view import confirmation_text
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
 
+__all__ = ["ExecutionApp", "run_execution_tui"]
+
 if TYPE_CHECKING:
     from textual.events import Key
     from textual.worker import Worker

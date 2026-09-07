@@ -1,7 +1,7 @@
 import collections
-import io
-import time
-from collections.abc import Callable, Sequence
+import subprocess
+import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
@@ -9,16 +9,10 @@ from typing import Protocol, TypeVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from rich.console import Console, RenderableType
-from rich.panel import Panel
-from rich.table import Table
-from typing_extensions import override
 
-import milknado.domains.execution.run_loop.display as _display
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpecResult
 from milknado.domains.common.config import Gate, MilknadoConfig
-from milknado.domains.common.protocols import LoopPort
 from milknado.domains.common.types import NodeSpec, NodeStatus, RebaseResult
 from milknado.domains.execution import (
     NO_GATES_CONFIGURED_MESSAGE,
@@ -28,37 +22,15 @@ from milknado.domains.execution import (
     RunLoop,
 )
 from milknado.domains.execution.executor import RebaseConflict, WorktreeManager
-from milknado.domains.execution.run_loop.display import TuiState
-from milknado.domains.execution.run_loop.input import InputState
-from milknado.domains.execution.run_loop.state import RunLoopState, TerminalRunState
+from milknado.domains.execution.run_loop.state import (
+    RunLoopState,
+    TerminalRunState,
+    summarize_description,
+)
 from milknado.domains.graph import MikadoGraph
 from milknado.loop import RunStatus
 
 T = TypeVar("T")
-
-_BUILD_LOG_PANEL = cast(Callable[[Sequence[str]], Panel], attrgetter("_build_log_panel")(_display))
-_BUILD_TITLE = cast(
-    Callable[[dict[str, int], MikadoGraph], str], attrgetter("_build_title")(_display)
-)
-_BUILD_WORKER_TABLE = cast(
-    Callable[[TuiState, MikadoGraph], Table], attrgetter("_build_worker_table")(_display)
-)
-_RENDER_OVERLAY = cast(
-    Callable[[str, TuiState, MikadoGraph, LoopPort], Panel],
-    attrgetter("_render_overlay")(_display),
-)
-_RENDER_PROGRESS_BAR_IMPL = cast(
-    Callable[[str, float, float | None, float], str], attrgetter("_render_progress_bar")(_display)
-)
-
-
-def _RENDER_PROGRESS_BAR(
-    frame: str, *, elapsed: float, pct: float | None, stall_threshold: float
-) -> str:
-    return _RENDER_PROGRESS_BAR_IMPL(frame, elapsed, pct, stall_threshold)
-
-
-_ETA_STR = cast(Callable[[float | None, float], str], attrgetter("_eta_str")(_display))
 
 
 def _active(loop: RunLoop) -> dict[str, int]:
@@ -128,10 +100,6 @@ def _managed_worktrees(executor: Executor) -> dict[int, Path]:
     return cast(dict[int, Path], attrgetter("_worktrees")(_worktree_manager(executor)))
 
 
-def _input_state(loop: RunLoop) -> InputState:
-    return cast(InputState, attrgetter("_input")(loop))
-
-
 def _execute_run(
     loop: RunLoop,
     config: ExecutionConfig,
@@ -151,13 +119,13 @@ def _execute_run(
 
 
 def _dispatch_batch(
-    loop: RunLoop, config: ExecutionConfig, concurrency_limit: int, live: object
+    loop: RunLoop, config: ExecutionConfig, concurrency_limit: int
 ) -> tuple[int, int]:
     method = cast(
-        Callable[[ExecutionConfig, int, object], tuple[int, int]],
+        Callable[[ExecutionConfig, int], tuple[int, int]],
         attrgetter("_dispatch_batch")(loop),
     )
-    return method(config, concurrency_limit, live)
+    return method(config, concurrency_limit)
 
 
 def _handle_completion_timeout(loop: RunLoop, timeout: object) -> int:
@@ -168,11 +136,6 @@ def _handle_completion_timeout(loop: RunLoop, timeout: object) -> int:
 def _publish_state(loop: RunLoop) -> None:
     method = cast(Callable[[], None], attrgetter("_publish_state")(loop))
     method()
-
-
-def _render_live_frame(loop: RunLoop, live: object) -> None:
-    method = cast(Callable[[object], None], attrgetter("_render_live_frame")(loop))
-    method(live)
 
 
 def _progress_before_completion(ralph: object) -> list[ProgressEvent]:
@@ -698,7 +661,7 @@ def test_terminal_run_duration_seconds_from_stopped_completion(
         "milknado.domains.execution.run_loop._completion.time.monotonic",
         return_value=142.0,
     ):
-        _ = handle_completion(run_loop, "run-1", "stopped", "main", None)
+        _ = handle_completion(run_loop, "run-1", "stopped", "main")
 
     assert _terminal_runs(run_loop)[-1].duration_seconds == 42.0
 
@@ -1331,281 +1294,6 @@ class TestRunLoopFileConflicts:
         assert result.root_done is True
 
 
-_RICH_DESC = "US-204: split bundling\n\n## Reuse candidates\n- foo.py:123\n- bar.py:45"
-
-
-def _make_tui_state(node_id: int) -> TuiState:
-    return TuiState(
-        tick=0,
-        active={"run-1": node_id},
-        logs=[],
-        dispatched_at={"run-1": time.monotonic()},
-        attempts={},
-        progress_by_run={},
-        completion_durations=[],
-        stall_threshold=300.0,
-        max_retries=2,
-        exec_agent="claude",
-    )
-
-
-def _render_to_text(renderable: RenderableType) -> str:
-    buf = io.StringIO()
-    console = Console(file=buf, force_terminal=False, no_color=True, width=200)
-    console.print(renderable)
-    return buf.getvalue()
-
-
-def _snapshot(renderable: RenderableType) -> str:
-    console = Console(record=True, width=200)
-    console.print(renderable)
-    return console.export_text()
-
-
-class TestWorkerTableDescriptionSanitization:
-    def test_description_cell_is_summarized(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "split bundling" in rendered
-        assert "##" not in rendered
-        assert "Reuse" not in rendered
-
-    def test_description_cell_has_no_raw_newlines(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "\n\n" not in rendered
-
-
-class TestRenderOverlayPreservesRawDescription:
-    """Overlay panel title uses _summarize_description (consistent with worker table)."""
-
-    def test_overlay_title_collapses_newlines(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        ralph = FakeRalph()
-        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
-
-        assert "\n" not in (panel.title or "")
-        assert "split bundling" in (panel.title or "")
-
-    def test_overlay_sanitization_is_nondestructive(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        _ = _BUILD_WORKER_TABLE(state, graph)
-
-        fresh = graph.get_node(node.id)
-        assert fresh is not None
-        assert "##" in fresh.description
-        assert "- foo.py:123" in fresh.description
-        assert "- bar.py:45" in fresh.description
-
-
-# ---------------------------------------------------------------------------
-# US-208: headless TUI snapshot tests
-# ---------------------------------------------------------------------------
-
-
-class TestBuildTitle:
-    def test_shows_done_count(self, graph: MikadoGraph) -> None:
-        n = graph.add_node("done-node")
-        graph.mark_running(n.id)
-        graph.mark_done(n.id)
-
-        text = _snapshot(_BUILD_TITLE({}, graph))
-
-        assert "1 done" in text
-
-    def test_shows_failed_count(self, graph: MikadoGraph) -> None:
-        n = graph.add_node("fail-node")
-        graph.mark_failed(n.id)
-
-        text = _snapshot(_BUILD_TITLE({}, graph))
-
-        assert "1 failed" in text
-
-    def test_shows_blocked_count(self, graph: MikadoGraph) -> None:
-        n = graph.add_node("blocked-node")
-        graph.mark_blocked(n.id)
-
-        text = _snapshot(_BUILD_TITLE({}, graph))
-
-        assert "1 blocked" in text
-
-    def test_all_counts_aggregate(self, graph: MikadoGraph) -> None:
-        done_n = graph.add_node("done")
-        graph.mark_running(done_n.id)
-        graph.mark_done(done_n.id)
-
-        fail_n = graph.add_node("fail")
-        graph.mark_failed(fail_n.id)
-
-        blocked_n = graph.add_node("blocked")
-        graph.mark_blocked(blocked_n.id)
-
-        text = _snapshot(_BUILD_TITLE({}, graph))
-
-        assert "1 done" in text
-        assert "1 failed" in text
-        assert "1 blocked" in text
-
-
-class TestRenderProgressBar:
-    def test_normal_returns_spinner_frame(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=0.0, pct=None, stall_threshold=300.0)
-
-        assert "◜" in result
-        assert "⚠" not in result
-
-    def test_stalled_includes_warning_glyph(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=400.0, pct=None, stall_threshold=300.0)
-
-        assert "⚠" in result
-
-    def test_with_pct_shows_bar_and_percentage(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=70.0, stall_threshold=300.0)
-
-        assert "70%" in result
-        assert "█" in result
-
-    def test_completed_full_bar(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=30.0, pct=100.0, stall_threshold=300.0)
-
-        assert "100%" in result
-        assert "░" not in result
-
-    def test_pct_over_100_clamped_to_100(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=150.0, stall_threshold=300.0)
-        # Bar chars should be exactly 10 total, percentage clamped to 100
-        bar_chars = result.count("█") + result.count("░")
-        assert bar_chars == 10
-        assert "100%" in result
-
-    def test_pct_negative_clamped_to_0(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=-5.0, stall_threshold=300.0)
-        bar_chars = result.count("█") + result.count("░")
-        assert bar_chars == 10
-        assert "0%" in result
-
-    def test_pct_50_sanity_check(self) -> None:
-        result = _RENDER_PROGRESS_BAR("◜", elapsed=10.0, pct=50.0, stall_threshold=300.0)
-        bar_chars = result.count("█") + result.count("░")
-        assert bar_chars == 10
-        assert "50%" in result
-
-
-class TestBuildWorkerTableColumns:
-    def test_elapsed_column_present(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("simple task")
-        state = _make_tui_state(node.id)
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "Elapsed" in text
-
-    def test_eta_column_shows_unknown_when_no_history(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("simple task")
-        state = _make_tui_state(node.id)
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "~?" in text
-
-    def test_files_column_shows_owned_files(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("task with files")
-        graph.files.claim(node.id, ["src/foo.py"])
-        state = _make_tui_state(node.id)
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "src/foo.py" in text
-
-    def test_attempt_column_empty_on_first_attempt(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("fresh task")
-        state = _make_tui_state(node.id)
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "1/" not in text
-
-    def test_attempt_column_shows_ratio_on_retry(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("retried task")
-        state = TuiState(
-            tick=0,
-            active={"run-1": node.id},
-            logs=[],
-            dispatched_at={"run-1": time.monotonic()},
-            attempts={node.id: 1},
-            progress_by_run={},
-            completion_durations=[],
-            stall_threshold=300.0,
-            max_retries=2,
-            exec_agent="claude",
-        )
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "2/3" in text
-
-    def test_description_is_single_line(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
-
-        lines_with_desc = [ln for ln in text.splitlines() if "split bundling" in ln]
-        assert len(lines_with_desc) == 1
-
-
-class _RalphWithStdout(FakeRalph):
-    _lines: list[str]
-
-    def __init__(self, lines: list[str]) -> None:
-        super().__init__()
-        self._lines = lines
-
-    @override
-    def get_run_stdout(self, run_id: str) -> list[str]:
-        return self._lines
-
-    @override
-    def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
-        return self._lines[-max_lines:]
-
-
-class TestRenderOverlayLogLines:
-    def test_stdout_lines_appear_in_overlay(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("node-with-output")
-        state = _make_tui_state(node.id)
-        ralph = _RalphWithStdout(["line alpha", "line beta", "line gamma"])
-        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
-        text = _snapshot(panel)
-
-        assert "line alpha" in text
-        assert "line gamma" in text
-
-    def test_only_last_100_stdout_lines_shown(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("many-lines")
-        state = _make_tui_state(node.id)
-        ralph = _RalphWithStdout([f"log-line-{i}" for i in range(150)])
-        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
-        text = _snapshot(panel)
-
-        assert "log-line-149" in text
-        assert "log-line-0" not in text
-
-    def test_overlay_title_is_summarized(self, graph: MikadoGraph) -> None:
-        node = graph.add_node(_RICH_DESC)
-        state = _make_tui_state(node.id)
-        ralph = FakeRalph()
-        panel = _RENDER_OVERLAY("run-1", state, graph, ralph)
-
-        assert "US-204" not in (panel.title or "")
-        assert "\n" not in (panel.title or "")
-
-
-# ---------------------------------------------------------------------------
-# US-207: four integration paths
-# ---------------------------------------------------------------------------
-
-
 class TestStrictDrain:
     def test_no_new_dispatch_after_failure_in_flight_completes(
         self,
@@ -1731,27 +1419,6 @@ class TestProtectedBranchGuard:
                 ensure_dispatch_allowed(cfg, branch, allow_protected=True)
 
 
-class TestStalledWorkerGlyph:
-    def test_stalled_worker_shows_warning_glyph_in_table(self, graph: MikadoGraph) -> None:
-        node = graph.add_node("long-running task")
-        past = time.monotonic() - 400.0
-        state = TuiState(
-            tick=0,
-            active={"run-1": node.id},
-            logs=[],
-            dispatched_at={"run-1": past},
-            attempts={},
-            progress_by_run={},
-            completion_durations=[],
-            stall_threshold=300.0,
-            max_retries=2,
-            exec_agent="claude",
-        )
-        rendered = _render_to_text(_BUILD_WORKER_TABLE(state, graph))
-
-        assert "⚠" in rendered
-
-
 class TestOrphanCleanupTransientRetries:
     def test_ensure_clean_worktree_called_each_attempt_no_stale_accumulation(
         self,
@@ -1815,44 +1482,6 @@ class TestOrphanCleanupTransientRetries:
         assert all(sz == 0 for sz in worktree_sizes)
         # Final state: successful dispatch recorded, not cleared
         assert 1 in _managed_worktrees(executor)
-
-
-class TestBuildLogPanel:
-    def test_deque_maxlen_30_truncates_older_entries(self) -> None:
-        logs: collections.deque[str] = collections.deque(maxlen=30)
-        for i in range(40):
-            logs.append(f"entry-{i}")
-        text = _snapshot(_BUILD_LOG_PANEL(logs))
-
-        assert "entry-39" in text
-        assert "entry-9" not in text
-
-    def test_deque_within_maxlen_shows_all(self) -> None:
-        logs: collections.deque[str] = collections.deque(maxlen=30)
-        for i in range(20):
-            logs.append(f"item-{i}")
-        text = _snapshot(_BUILD_LOG_PANEL(logs))
-
-        assert "item-0" in text
-        assert "item-19" in text
-
-    def test_no_mid_line_cuts(self) -> None:
-        complete_entry = "start:end"
-        logs: collections.deque[str] = collections.deque(maxlen=30)
-        logs.append(complete_entry)
-        text = _snapshot(_BUILD_LOG_PANEL(logs))
-
-        assert "start:end" in text
-
-    def test_empty_logs_shows_placeholder(self) -> None:
-        text = _snapshot(_BUILD_LOG_PANEL([]))
-
-        assert "No events yet" in text
-
-
-# ---------------------------------------------------------------------------
-# Root completion via _maybe_verify_spec (not via dispatch)
-# ---------------------------------------------------------------------------
 
 
 class TestRootCompletionViaVerifySpec:
@@ -2112,84 +1741,35 @@ class TestLoopAdapterLogDir:
 
 
 # ---------------------------------------------------------------------------
-# Coverage helpers: display.py missing branches
+# Coverage helpers: state.py missing branches
 # ---------------------------------------------------------------------------
-
-
-class TestEtaStr:
-    def test_shows_unknown_when_no_history(self) -> None:
-
-        assert _ETA_STR(None, 0.0) == "~?"
-
-    def test_shows_estimate_when_avg_provided(self) -> None:
-
-        result = _ETA_STR(120.0, 30.0)
-        assert result.startswith("~")
-        assert "01:30" in result or "00:" in result  # remaining ≈ 90s
-
-    def test_clamps_to_zero_when_elapsed_exceeds_avg(self) -> None:
-
-        result = _ETA_STR(60.0, 200.0)
-        assert "00:00" in result
 
 
 class TestSummarizeDescriptionTruncation:
     def test_long_description_is_truncated(self) -> None:
-        from milknado.domains.execution.run_loop.display import _summarize_description
-
         long_text = "A" * 100
-        result = _summarize_description(long_text, max_chars=80)
+        result = summarize_description(long_text, 80)
         assert len(result) <= 80
         assert result.endswith("…")
 
     def test_short_description_unchanged(self) -> None:
-        from milknado.domains.execution.run_loop.display import _summarize_description
-
-        result = _summarize_description("short task")
+        result = summarize_description("short task", 80)
         assert result == "short task"
 
 
-class TestBuildWorkerTableMissingNode:
-    def test_row_skipped_when_node_missing_from_graph(self, graph: MikadoGraph) -> None:
-        import time as _time
+def test_execution_domain_imports_without_rich() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules['rich'] = None; import milknado.domains.execution",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-        # active has node_id 999 which doesn't exist in graph
-        state = TuiState(
-            tick=0,
-            active={"run-1": 999},
-            logs=[],
-            dispatched_at={"run-1": _time.monotonic()},
-            attempts={},
-            progress_by_run={},
-            completion_durations=[],
-            stall_threshold=300.0,
-            max_retries=2,
-            exec_agent="claude",
-        )
-        table = _BUILD_WORKER_TABLE(state, graph)
-        # Should not crash; row count is 0 (skipped)
-        assert table.row_count == 0
-
-
-class TestRenderOverlayMissingRunId:
-    def test_returns_not_found_panel(self, graph: MikadoGraph) -> None:
-
-        state = TuiState(
-            tick=0,
-            active={},
-            logs=[],
-            dispatched_at={},
-            attempts={},
-            progress_by_run={},
-            completion_durations=[],
-            stall_threshold=300.0,
-            max_retries=2,
-            exec_agent="claude",
-        )
-        ralph = FakeRalph()
-        panel = _RENDER_OVERLAY("unknown-run", state, graph, ralph)
-        text = _snapshot(panel)
-        assert "worker not found" in text or "Overlay" in text
+    assert result.returncode == 0, result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -2449,14 +2029,12 @@ class TestDispatchBatchDirectGuards:
         config: ExecutionConfig,
         fake_ralph: FakeRalph,
     ) -> None:
-        from unittest.mock import MagicMock
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         _set_attr(loop, "_strict", True)
         _set_attr(loop, "_failure_triggered", True)
 
-        live = MagicMock()
-        result = _dispatch_batch(loop, config, 4, live)
+        result = _dispatch_batch(loop, config, 4)
 
         assert result == (0, 0)
 
@@ -2467,14 +2045,12 @@ class TestDispatchBatchDirectGuards:
         config: ExecutionConfig,
         fake_ralph: FakeRalph,
     ) -> None:
-        from unittest.mock import MagicMock
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         # Fill active to the limit
         _set_attr(loop, "_active", {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4})
 
-        live = MagicMock()
-        result = _dispatch_batch(loop, config, 4, live)
+        result = _dispatch_batch(loop, config, 4)
 
         assert result == (0, 0)
 
@@ -2492,14 +2068,11 @@ class TestDispatchBatchDirectGuards:
         leaf = graph.add_node("failing-leaf", parent_id=root.id)
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
-        live = MagicMock()
-        dispatched, failed = _dispatch_batch(loop, config, 4, live)
+        dispatched, failed = _dispatch_batch(loop, config, 4)
 
         assert dispatched == 0
         assert failed == 1
-        _mock_attr(_mock_attr(live, "console"), "print").assert_called_once_with(
-            f"[red]✗[/red] [{leaf.id}] failing-leaf: boom"
-        )
+        assert f"✗ dispatch node {leaf.id}" in loop.state().event_lines[-1]
 
     def test_strict_mode_breaks_on_dispatch_exception(
         self,
@@ -2517,32 +2090,10 @@ class TestDispatchBatchDirectGuards:
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         _set_attr(loop, "_strict", True)
-        live = MagicMock()
-        _ = _dispatch_batch(loop, config, 4, live)
+        _ = _dispatch_batch(loop, config, 4)
 
         assert _mock_attr(executor, "dispatch").call_count == 1
         assert cast(bool, attrgetter("_failure_triggered")(loop)) is True
-
-
-class TestRenderLiveFrameOverlayBranch:
-    def test_overlay_branch_used_when_overlay_state_set(
-        self,
-        executor: Executor,
-        graph: MikadoGraph,
-        fake_ralph: FakeRalph,
-    ) -> None:
-        from unittest.mock import MagicMock
-
-        from milknado.domains.execution.run_loop import RunLoop
-
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
-        _input_state(loop).overlay_state = "run-xyz"
-
-        live_mock = MagicMock()
-        # Should call _render_overlay (not _build_layout); won't crash even with no such run_id
-        _render_live_frame(loop, live_mock)
-
-        _mock_attr(live_mock, "update").assert_called_once()
 
 
 class TestDispatchBatchFlavoredGates:
@@ -2588,8 +2139,7 @@ class TestDispatchBatchFlavoredGates:
         _mock_attr(executor, "dispatch").side_effect = dispatch
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
-        live = MagicMock()
-        _ = _dispatch_batch(loop, config, 4, live)
+        _ = _dispatch_batch(loop, config, 4)
 
         assert len(captured) == 1, "expected exactly one dispatch call"
         assert captured[0].quality_gates == (), (

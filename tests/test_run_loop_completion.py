@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import deque
 from typing import cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -115,9 +114,8 @@ class TestHandleCompletionSuccess:
     def test_returns_one_completed_zero_failed(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", "completed", "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "completed", "main")
 
         assert c == 1
         assert f == 0
@@ -126,18 +124,16 @@ class TestHandleCompletionSuccess:
     def test_removes_run_from_active(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "completed", "main", live)
+        _ = handle_completion(loop, "run-1", "completed", "main")
 
         assert "run-1" not in loop._active  # pyright: ignore[reportPrivateUsage]
 
     def test_appends_duration_on_success(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "completed", "main", live)
+        _ = handle_completion(loop, "run-1", "completed", "main")
 
         assert len(loop._completion_durations) == 1  # pyright: ignore[reportPrivateUsage]
 
@@ -145,9 +141,8 @@ class TestHandleCompletionSuccess:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         loop._input.overlay_state = "run-1"  # pyright: ignore[reportPrivateUsage]
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "completed", "main", live)
+        _ = handle_completion(loop, "run-1", "completed", "main")
 
         assert loop._input.overlay_state is None  # pyright: ignore[reportPrivateUsage]
 
@@ -156,9 +151,8 @@ class TestHandleCompletionFailure:
     def test_returns_zero_completed_one_failed(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", "failed", "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "failed", "main")
 
         assert c == 0
         assert f == 1
@@ -167,9 +161,8 @@ class TestHandleCompletionFailure:
     def test_calls_executor_fail(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "failed", "main", live)
+        _ = handle_completion(loop, "run-1", "failed", "main")
 
         assert 1 in exec_.failed_ids
 
@@ -177,9 +170,8 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = True  # pyright: ignore[reportPrivateUsage]
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "failed", "main", live)
+        _ = handle_completion(loop, "run-1", "failed", "main")
 
         assert loop._failure_triggered is True  # pyright: ignore[reportPrivateUsage]
 
@@ -187,9 +179,8 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = False  # pyright: ignore[reportPrivateUsage]
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "failed", "main", live)
+        _ = handle_completion(loop, "run-1", "failed", "main")
 
         assert loop._failure_triggered is False  # pyright: ignore[reportPrivateUsage]
 
@@ -202,10 +193,9 @@ class TestHandleCompletionFailure:
             _FakeRalph,
             cast(object, loop._ralph),  # pyright: ignore[reportPrivateUsage]
         ).failure_detail = "Error: unknown flag: --mcp-config"
-        live = MagicMock()
         caplog.set_level("WARNING", logger="milknado")
 
-        _ = handle_completion(loop, "run-1", "failed", "main", live)
+        _ = handle_completion(loop, "run-1", "failed", "main")
 
         assert "unknown flag: --mcp-config" in caplog.text
         # The real failure detail is threaded into fail() so the runs row
@@ -216,10 +206,9 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         cast(_FakeRalph, cast(object, loop._ralph)).failure_detail = None  # pyright: ignore[reportPrivateUsage]
-        live = MagicMock()
         caplog.set_level("WARNING", logger="milknado")
 
-        _ = handle_completion(loop, "run-1", "failed", "main", live)
+        _ = handle_completion(loop, "run-1", "failed", "main")
 
         assert "node_failed node_id=1" in caplog.text
         assert "detail=" not in caplog.text
@@ -239,9 +228,8 @@ class TestHandleCompletionRebaseConflict:
             node_id=1, rebased=False, newly_ready=[], rebase_conflict=conflict
         )
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        c, f, cs = handle_completion(loop, "run-1", "completed", "main", live)
+        c, f, cs = handle_completion(loop, "run-1", "completed", "main")
 
         assert c == 0
         assert f == 1
@@ -258,17 +246,15 @@ class TestHandleCompletionRebaseConflict:
         )
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = True  # pyright: ignore[reportPrivateUsage]
-        live = MagicMock()
 
-        _ = handle_completion(loop, "run-1", "completed", "main", live)
+        _ = handle_completion(loop, "run-1", "completed", "main")
 
         assert loop._failure_triggered is True  # pyright: ignore[reportPrivateUsage]
 
     def test_no_conflict_does_not_append_to_conflicts(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        live = MagicMock()
 
-        _, _, cs = handle_completion(loop, "run-1", "completed", "main", live)
+        _, _, cs = handle_completion(loop, "run-1", "completed", "main")
 
         assert cs == []

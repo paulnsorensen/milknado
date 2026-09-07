@@ -39,6 +39,7 @@ markers = [
 
 [tool.importlinter]
 root_package = "milknado"
+include_external_packages = true
 
 # Domains are the pure core: they must never import a delivery or application layer.
 [[tool.importlinter.contracts]]
@@ -46,6 +47,13 @@ name = "domains must not import app, cli, or mcp"
 type = "forbidden"
 source_modules = ["milknado.domains"]
 forbidden_modules = ["milknado.app", "milknado.cli", "milknado.mcp"]
+
+# Domains are pure. Rich presentation belongs in app or cli.
+[[tool.importlinter.contracts]]
+name = "domains must not import Rich"
+type = "forbidden"
+source_modules = ["milknado.domains"]
+forbidden_modules = ["rich"]
 
 # The graph is a transactional state crust, never an execution-policy consumer.
 [[tool.importlinter.contracts]]
@@ -202,7 +210,6 @@ max-statements = 40
 "src/milknado/domains/dispatch/cancel.py" = ["ANN001", "PLR0913"]
 "src/milknado/domains/dispatch/tmux_run.py" = ["ANN001", "PLR0913"]
 "src/milknado/domains/execution/completion.py" = ["PLR0913"]
-"src/milknado/domains/execution/run_loop/display.py" = ["PLR0913"]
 "src/milknado/domains/execution/run_loop/_completion.py" = ["PLR0913", "PLR0915"]
 "src/milknado/domains/github/ports.py" = ["PLR0913"]
 "src/milknado/domains/graph/_creation.py" = ["PLR0913"]
