@@ -1427,10 +1427,20 @@ class Executor:
     def fail(self, node_id: int, detail: str | None = None) -> None:
         self._wt.ensure_clean(node_id)
         node = self._graph.get_node(node_id)
+        preserved: str | None = None
         if node and node.worktree_path:
             wt = Path(node.worktree_path)
             if wt.exists():
-                self._wt.remove(node_id, wt)
+                try:
+                    self._wt.remove(node_id, wt)
+                except UnlandedWorkError as exc:
+                    preserved = str(wt)
+                    _logger.warning(
+                        "Preserving failed node %d worktree %s; recording for recovery: %s",
+                        node_id,
+                        wt,
+                        exc,
+                    )
         self._graph.mark_failed(node_id)
         self._finish_node_worker_run(
             node_id,
@@ -1439,7 +1449,7 @@ class Executor:
                 exit_code=None,
                 timed_out=False,
                 ended_at=datetime.now(UTC).isoformat(),
-                detail=detail or "node failed",
+                detail=preserved or detail or "node failed",
             ),
         )
 
