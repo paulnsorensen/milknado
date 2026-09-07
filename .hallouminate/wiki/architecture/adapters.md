@@ -56,9 +56,12 @@ signal. This is where Milknado's parallel execution actually happens.
   stalling the whole batch.
 - **`verify_spec`**: spins up a *separate, throwaway* `RunManager` in a tempdir to ask
   an agent whether a spec is fully implemented, parsing `<result>done|gaps</result>`
-  (+ optional `<goal_delta>`) out of iteration text. Edge handling is deliberately
-  lenient: no agent configured, a 120s timeout, unparseable output, or an exception
-  all degrade to a safe default (`done`/`gaps`) rather than crashing the run.
+  (+ optional `<goal_delta>`) out of iteration text. The adapter reports facts through
+  `VerifySpecResult.outcome`: `done` means verification passed, `gaps` means the agent
+  found work, and `unavailable` means verification did not run. The run loop owns policy:
+  it completes the root for `done`, replans only `gaps`, and keeps the root pending
+  without replanning for `unavailable`. Timeouts, unparseable output, and agent failures
+  remain explanatory `gaps`.[^verification-outcomes]
 - **`generate_ralph_md`**: writes the per-node `ralph.md` prompt (description,
   context, quality gates, the Mikado "register follow-ups rather than widen scope"
   instruction, and the completion-signal contract). An `OSError` becomes
@@ -91,4 +94,7 @@ operations shell out to the `code-review-graph` CLI via `_run_crg`.
   events never reach the shared completion queue.
 
 
+_Source: PR #423 cure · Updated: 2026-09-07 · Supersedes: prior fail-open missing-verifier behavior_
+
 [^code-intelligence-boundary]: `src/milknado/domains/planning/context.py:11-36`; `src/milknado/domains/common/agent_argv.py:13-74`
+[^verification-outcomes]: `src/milknado/domains/common/protocols.py:21-24`; `src/milknado/adapters/loop.py:207-213`; `src/milknado/domains/execution/run_loop/__init__.py:488-494`; PR #423.

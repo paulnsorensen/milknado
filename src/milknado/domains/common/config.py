@@ -15,6 +15,7 @@ from milknado.domains.common.agent_argv import (
     resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+    validate_worker_tool_sentinels,
 )
 from milknado.domains.common.config_layers import (
     OriginMap,
@@ -196,6 +197,32 @@ def _typed_convert(value: object, model: type[T]) -> T:
     return msgspec.convert(value, type=model, strict=True)
 
 
+def _validate_worker_tools(tools: tuple[str, ...], ctx: str) -> tuple[str, ...]:
+    try:
+        validate_worker_tool_sentinels(tools)
+    except ValueError as exc:
+        raise ValueError(f"{ctx}: {exc}") from exc
+    return tools
+
+
+def _normalize_worker_tools(tools: dict[str, object]) -> dict[str, tuple[str, ...]]:
+    normalized: dict[str, tuple[str, ...]] = {}
+    for family, value in tools.items():
+        ctx = f"[milknado.worker.tools.{family}]"
+        tool_list = coerce_tool_list(value, ctx)
+        normalized[family] = _validate_worker_tools(tool_list, ctx)
+    return normalized
+
+
+def _normalize_flavor_entry(entry: object, name: str) -> object:
+    ctx = f"[milknado.flavor.{name}].tools"
+    normalized = normalize_flavor_table(entry, tools_ctx=ctx)
+    table = _as_table(normalized)
+    if table is not None and table.get("tools") is not None:
+        table["tools"] = _validate_worker_tools(cast(tuple[str, ...], table["tools"]), ctx)
+    return normalized
+
+
 def _validate_section_scalars(section: dict[str, object]) -> None:
     if "worktree" in section and not isinstance(section["worktree"], bool):
         raise msgspec.ValidationError("[milknado] worktree must be a boolean")
@@ -248,10 +275,7 @@ def _normalize_section(raw: object) -> object:
         tools = _as_table(worker["tools"])
         if tools is None:
             raise msgspec.ValidationError("[milknado.worker.tools] must be a table")
-        worker["tools"] = {
-            family: coerce_tool_list(value, f"[milknado.worker.tools.{family}]")
-            for family, value in tools.items()
-        }
+        worker["tools"] = _normalize_worker_tools(tools)
         normalized["worker"] = worker
     flavors = _as_table(normalized.get("flavor"))
     if flavors is not None:
@@ -263,7 +287,7 @@ def _normalize_section(raw: object) -> object:
                 )
             if _as_table(entry) is None:
                 raise msgspec.ValidationError(f"[milknado.flavor.{name}] must be a table")
-            normalized_flavors[name] = normalize_flavor_table(entry)
+            normalized_flavors[name] = _normalize_flavor_entry(entry, name)
         normalized["flavor"] = normalized_flavors
     return normalized
 
@@ -583,12 +607,13 @@ def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
         planning_agent=section.planning_agent,
     )
     family_tools = section.worker.tools.get(family)
+    resolved_tools = (
+        resolve_worker_tools(family, list(family_tools)) if family_tools is not None else None
+    )
     execution_agent = resolve_execution_agent_command(
         family,
         execution_agent=section.execution_agent,
-        tools=(
-            resolve_worker_tools(family, list(family_tools)) if family_tools is not None else None
-        ),
+        tools=resolved_tools,
     )
     return planning_agent, execution_agent
 

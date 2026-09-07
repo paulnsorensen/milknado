@@ -473,10 +473,13 @@ class TestParseVerifyOutput:
 
 
 class TestVerifySpec:
-    def test_no_agent_returns_done(self, adapter: LoopAdapter) -> None:
+    def test_no_agent_returns_unavailable(self, adapter: LoopAdapter) -> None:
         adapter._agent = ""  # pyright: ignore[reportPrivateUsage]
         result = adapter.verify_spec("spec text", "state")
-        assert result == VerifySpecResult(outcome="done")
+        assert result == VerifySpecResult(
+            outcome="unavailable",
+            goal_delta="verification unavailable: no agent configured",
+        )
 
     @patch("milknado.adapters.loop.RunManager")
     def test_done_signal(

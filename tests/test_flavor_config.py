@@ -75,7 +75,40 @@ def test_resolve_worker_tools_at_most_one_sentinel_validated_at_load(tmp_path: P
         + 'claude = ["...", "Read", "..."]\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="at most one"):
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.worker\.tools\.claude\].*at most one",
+    ):
+        _ = load_config(cfg_path)
+
+
+def test_load_config_rejects_duplicate_sentinel_for_inactive_family(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.worker.tools]\n"
+        + 'gemini = ["...", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.worker\.tools\.gemini\].*at most one",
+    ):
+        _ = load_config(cfg_path)
+
+
+def test_load_config_reports_flavor_tool_context(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.flavor.spike]\n"
+        + 'tools = ["...", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.flavor\.spike\]\.tools.*at most one",
+    ):
         _ = load_config(cfg_path)
 
 

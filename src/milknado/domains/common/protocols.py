@@ -20,7 +20,7 @@ class ProgressEvent:
 
 @dataclass(frozen=True)
 class VerifySpecResult:
-    outcome: Literal["done", "gaps"]
+    outcome: Literal["done", "gaps", "unavailable"]
     goal_delta: str | None = None
 
 
