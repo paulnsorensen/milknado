@@ -163,6 +163,7 @@ class _ReviewRalph:
         self.stdout_requests: list[str] = []
         self.reviews: list[tuple[str, str, Path]] = []
         self.ralph_md_calls: list[dict[str, object]] = []
+        self.timeout_seconds_seen: list[float] = []
         self._next_id: int = 0
 
     def create_run(
@@ -250,9 +251,16 @@ class _ReviewRalph:
         raise RuntimeError("Not expected in review executor tests")
 
     def run_node_review(
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewVerdict:
         _ = project_root
+        self.timeout_seconds_seen.append(timeout_seconds)
         self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
             approved=next(self.verdicts),
@@ -298,6 +306,7 @@ class _ConfigOverrides(TypedDict, total=False):
     review: bool
     review_agent: str | None
     review_max_rounds: int
+    review_timeout_seconds: int
     session_mode: str
     agent_family: str
     on_reject: str
@@ -312,6 +321,7 @@ def _config(root: Path, **overrides: Unpack[_ConfigOverrides]) -> ExecutionConfi
         "review": True,
         "review_agent": "age",
         "review_max_rounds": 1,
+        "review_timeout_seconds": 1800,
         "session_mode": "resume",
         "on_reject": "block",
     }
@@ -360,6 +370,19 @@ def test_reject_redispatches_pinned_worktree_and_resumes_session(
     assert (
         first.worktree / ".cheese" / "age" / "reviewed-change.md"
     ).read_text() == "[P1][correctness] finding\n"
+
+
+def test_review_timeout_seconds_reaches_the_reviewer_port(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    ralph = _ReviewRalph([True])
+    executor = _executor(graph, tmp_path, ralph)
+    _ = graph.add_node("custom timeout")
+
+    _ = executor.dispatch(1, _config(tmp_path, review_timeout_seconds=123))
+    _ = executor.complete(1, "main")
+
+    assert ralph.timeout_seconds_seen == [123]
 
 
 def test_redispatch_threads_findings_into_ralph_regeneration(
@@ -733,7 +756,13 @@ def test_review_failure_blocks_without_redispatch(
 ) -> None:
     class FailingReviewRalph(_ReviewRalph):
         def run_node_review(  # pyright: ignore[reportImplicitOverride]
-            self, agent: str, prompt: str, worktree: Path, project_root: Path
+            self,
+            agent: str,
+            prompt: str,
+            worktree: Path,
+            project_root: Path,
+            *,
+            timeout_seconds: float,
         ) -> ReviewVerdict:
             raise RuntimeError("review process failed")
 
@@ -798,6 +827,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         timeout_manager,
         "timeout",
         queue.Queue[Event[EventData]](),
+        1800.0,
     )
     assert timed_out.approved is False
     assert timeout_manager.stopped is True
@@ -820,6 +850,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         empty_manager,
         "empty",
         empty_events,
+        1800.0,
     )
     assert empty.approved is False
     assert empty_manager.stopped is True
@@ -837,6 +868,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         failed_manager,
         "failed",
         failed_events,
+        1800.0,
     )
     assert failed.approved is False
     assert "event stream failed" in failed.findings_md
@@ -957,7 +989,9 @@ def test_loop_adapter_runs_bounded_review_in_pinned_worktree(
 
     monkeypatch.setattr("milknado.adapters.loop.RunManager", FakeManager)
     adapter = LoopAdapter()
-    verdict = adapter.run_node_review("age", "review prompt", tmp_path, tmp_path)
+    verdict = adapter.run_node_review(
+        "age", "review prompt", tmp_path, tmp_path, timeout_seconds=1800.0
+    )
     assert verdict.approved is True
     # The adapter's __init__ creates its own manager; the review run uses the
     # most recently constructed one — assert on the instance that got the run.
@@ -977,7 +1011,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
     )
     events.put(Event(EventType.RUN_STOPPED, "r", NoData()))
     manager = RunManager()
-    result = _drain_review_run(manager, "r", events)
+    result = _drain_review_run(manager, "r", events, 1800.0)
     assert result.approved is True
 
 
@@ -1180,9 +1214,15 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
 
 class _MalformedReviewRalph(_ReviewRalph):
     def run_node_review(  # pyright: ignore[reportImplicitOverride]
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewVerdict:
-        _ = agent, prompt, worktree, project_root
+        _ = agent, prompt, worktree, project_root, timeout_seconds
         return _parse_review_verdict("progress only")
 
 

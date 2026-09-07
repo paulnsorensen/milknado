@@ -9,7 +9,13 @@ from typing import cast
 from typing_extensions import override
 
 from milknado.loop.adapters._generic import GenericAdapter
-from milknado.loop.adapters._protocol import ADAPTERS, AdapterEvent, CountsWhat, Invocation
+from milknado.loop.adapters._protocol import (
+    ADAPTERS,
+    AdapterEvent,
+    CountsWhat,
+    Invocation,
+    stdin_invocation,
+)
 
 
 class OmpAdapter(GenericAdapter):
@@ -47,7 +53,8 @@ class OmpAdapter(GenericAdapter):
 
     @override
     def deliver_prompt(self, cmd: list[str], prompt: str) -> Invocation:
-        return Invocation([*cmd, prompt], None)
+        """omp reads the prompt from stdin; argv would hit MAX_ARG_STRLEN on large briefs."""
+        return stdin_invocation(cmd, prompt)
 
     @override
     def parse_event(self, line: str) -> AdapterEvent | None:

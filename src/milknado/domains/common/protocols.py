@@ -166,6 +166,8 @@ class LoopPort(Protocol):
         prompt: str,
         worktree: Path,
         project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewResult: ...
     def verify_spec(
         self,

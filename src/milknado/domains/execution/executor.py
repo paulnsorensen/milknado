@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
 from tenacity import (
     RetryCallState,
@@ -74,6 +74,18 @@ _TRANSIENT_MSG_RE = re.compile(
 )
 
 
+class _ReviewCallable(Protocol):
+    def __call__(
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
+    ) -> ReviewResult: ...
+
+
 @dataclass(frozen=True)
 class ExecutionConfig:
     execution_agent: str
@@ -88,6 +100,7 @@ class ExecutionConfig:
     review: bool = False
     review_agent: str | None = None
     review_max_rounds: int = 0
+    review_timeout_seconds: int = 1800
     on_reject: str = "warn"
     session_mode: str = "fresh"
     completion_timeout_seconds: int | None = None
@@ -942,7 +955,7 @@ class Executor:
     ) -> tuple[bool, str, bool]:
         _ = self._capture_session(node, config)
         reviewer = cast(
-            Callable[[str, str, Path, Path], ReviewResult] | None,
+            _ReviewCallable | None,
             getattr(self._ralph, "run_node_review", None),
         )
         if reviewer is None or config.review_agent is None:
@@ -955,6 +968,7 @@ class Executor:
             build_review_prompt(node, worktree, config.project_root, diff),
             worktree,
             config.project_root,
+            timeout_seconds=float(config.review_timeout_seconds),
         )
         approved = result.approved
         findings, review_error = result.findings_md.strip(), result.error

@@ -122,6 +122,7 @@ class _FlavorFields(msgspec.Struct, frozen=True, kw_only=True):
     review: bool | None = None
     review_agent: str | None = None
     review_max_rounds: int = 2
+    review_timeout_seconds: int = 1800
     on_reject: str = "block"
 
 
@@ -148,6 +149,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         _ = validate_positive_int(self.max_iterations, "max_iterations")
         _ = validate_positive_int(self.max_turns, "max_turns")
         _ = validate_positive_int(self.review_max_rounds, "review_max_rounds")
+        _ = validate_positive_int(self.review_timeout_seconds, "review_timeout_seconds")
         if self.session_mode == "resume":
             self._reject_cursor_resume()
 
@@ -179,6 +181,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
             review=self.review,
             review_agent=self.review_agent,
             review_max_rounds=self.review_max_rounds,
+            review_timeout_seconds=self.review_timeout_seconds,
             on_reject=self.on_reject,
         )
 
@@ -223,7 +226,7 @@ def normalize_flavor_table(value: object, *, tools_ctx: str = "tools") -> object
         field = normalized.get(key)
         if field is not None and not isinstance(field, bool):
             raise ValueError(f"{key} must be a boolean")
-    for key in ("max_iterations", "max_turns", "review_max_rounds"):
+    for key in ("max_iterations", "max_turns", "review_max_rounds", "review_timeout_seconds"):
         if key in normalized:
             _ = validate_positive_int(normalized[key], key)
     path = normalized.get("brief_prepend_path")
@@ -266,6 +269,7 @@ def serialize_flavor_tables(
                 ("review", flavor.review),
                 ("review_agent", flavor.review_agent),
                 ("review_max_rounds", flavor.review_max_rounds),
+                ("review_timeout_seconds", flavor.review_timeout_seconds),
                 ("on_reject", flavor.on_reject),
             )
             if value is not None

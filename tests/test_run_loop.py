@@ -414,9 +414,15 @@ class FakeRalph:
         return []
 
     def run_node_review(
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> _FakeReview:
-        _ = (agent, prompt, worktree, project_root)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds)
         return _FakeReview()
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:

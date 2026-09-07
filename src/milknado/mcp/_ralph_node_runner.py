@@ -130,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             review=profile.review,
             review_agent=profile.review_agent,
             review_max_rounds=profile.review_max_rounds,
+            review_timeout_seconds=profile.review_timeout_seconds,
             on_reject=profile.on_reject,
             session_mode=profile.session_mode,
             completion_timeout_seconds=int(args.timeout),
