@@ -605,13 +605,12 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     assert state["timeout_seconds"] == 10
 
 
-def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
-    """When quality_gates is absent from config, the runner fails closed immediately
-    before building adapters — the run row records the fail-closed message."""
+def test_runner_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
+    """When quality_gates is absent, dispatch fails closed and records the error."""
     from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
     from milknado.mcp import _ralph_node_runner
 
-    # No milknado.toml → quality_gates=None (fail-closed)
+    # No milknado.toml → quality_gates=None; Executor.dispatch fails closed.
     run_id = "node-1-20260101T000000Z-pref"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
     rc = _ralph_node_runner.main(
@@ -631,7 +630,7 @@ def test_runner_preflight_fails_closed_when_no_quality_gates(tmp_path: Path) -> 
     assert rc == 1
     state = _read_run(tmp_path, run_id)
     assert state["status"] == "failed"
-    assert state["detail"] == NO_GATES_CONFIGURED_MESSAGE
+    assert state["detail"] == (f"QualityGatesNotConfigured: {NO_GATES_CONFIGURED_MESSAGE}")
 
 
 def test_runner_writes_done_on_successful_outcome(

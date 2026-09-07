@@ -84,7 +84,6 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     root = Path(args.project_root)
-    from milknado.domains.execution import NO_GATES_CONFIGURED_MESSAGE
 
     _logger.info(
         "ralph runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
@@ -100,27 +99,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
-        if profile.quality_gates is None:
-            _logger.error(
-                "ralph preflight failed: run_id=%s node_id=%d error=%s",
-                args.run_id,
-                args.node_id,
-                NO_GATES_CONFIGURED_MESSAGE,
-            )
-            _ = _finish_run(
-                graph,
-                root,
-                args.run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=NO_GATES_CONFIGURED_MESSAGE,
-                ),
-            )
-            return 1
         git = GitAdapter(root)
         ralph = LoopAdapter()
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=CrgAdapter(root))

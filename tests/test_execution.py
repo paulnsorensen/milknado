@@ -18,6 +18,7 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     GitOperationError,
     InvalidTransition,
+    QualityGatesNotConfigured,
     RebaseAbortError,
     TransientDispatchError,
     UnlandedWorkError,
@@ -612,6 +613,18 @@ class TestExecutorDispatch:
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             _ = executor.dispatch(999, config)
+
+    def test_dispatch_without_quality_gates_fails_closed(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        _ = graph.add_node("task")
+        missing_gates = replace(config, quality_gates=None)
+
+        with pytest.raises(QualityGatesNotConfigured, match="no quality_gates configured"):
+            _ = executor.dispatch(1, missing_gates)
 
     def test_creates_git_worktree(
         self,
