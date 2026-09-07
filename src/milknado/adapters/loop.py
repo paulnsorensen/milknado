@@ -208,9 +208,8 @@ class LoopAdapter:
         if not self._agent:
             _logger.error("verify_spec: no agent configured; verification not performed")
             return VerifySpecResult(
-                outcome="gaps",
+                outcome="unavailable",
                 goal_delta="verification unavailable: no agent configured",
-                replan=False,
             )
         import tempfile
 

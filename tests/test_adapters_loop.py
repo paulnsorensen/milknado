@@ -473,13 +473,12 @@ class TestParseVerifyOutput:
 
 
 class TestVerifySpec:
-    def test_no_agent_returns_unverified_gap(self, adapter: LoopAdapter) -> None:
+    def test_no_agent_returns_unavailable(self, adapter: LoopAdapter) -> None:
         adapter._agent = ""  # pyright: ignore[reportPrivateUsage]
         result = adapter.verify_spec("spec text", "state")
         assert result == VerifySpecResult(
-            outcome="gaps",
+            outcome="unavailable",
             goal_delta="verification unavailable: no agent configured",
-            replan=False,
         )
 
     @patch("milknado.adapters.loop.RunManager")

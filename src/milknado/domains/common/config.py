@@ -15,6 +15,7 @@ from milknado.domains.common.agent_argv import (
     resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+    validate_worker_tool_sentinels,
 )
 from milknado.domains.common.config_layers import (
     OriginMap,
@@ -196,9 +197,9 @@ def _typed_convert(value: object, model: type[T]) -> T:
     return msgspec.convert(value, type=model, strict=True)
 
 
-def _validate_worker_tools(family: str, tools: tuple[str, ...], ctx: str) -> tuple[str, ...]:
+def _validate_worker_tools(tools: tuple[str, ...], ctx: str) -> tuple[str, ...]:
     try:
-        _ = resolve_worker_tools(family, tools)
+        validate_worker_tool_sentinels(tools)
     except ValueError as exc:
         raise ValueError(f"{ctx}: {exc}") from exc
     return tools
@@ -209,16 +210,16 @@ def _normalize_worker_tools(tools: dict[str, object]) -> dict[str, tuple[str, ..
     for family, value in tools.items():
         ctx = f"[milknado.worker.tools.{family}]"
         tool_list = coerce_tool_list(value, ctx)
-        normalized[family] = _validate_worker_tools(family, tool_list, ctx)
+        normalized[family] = _validate_worker_tools(tool_list, ctx)
     return normalized
 
 
-def _normalize_flavor_entry(entry: object, name: str, family: str) -> object:
+def _normalize_flavor_entry(entry: object, name: str) -> object:
     ctx = f"[milknado.flavor.{name}].tools"
     normalized = normalize_flavor_table(entry, tools_ctx=ctx)
     table = _as_table(normalized)
     if table is not None and table.get("tools") is not None:
-        table["tools"] = _validate_worker_tools(family, cast(tuple[str, ...], table["tools"]), ctx)
+        table["tools"] = _validate_worker_tools(cast(tuple[str, ...], table["tools"]), ctx)
     return normalized
 
 
@@ -286,7 +287,7 @@ def _normalize_section(raw: object) -> object:
                 )
             if _as_table(entry) is None:
                 raise msgspec.ValidationError(f"[milknado.flavor.{name}] must be a table")
-            normalized_flavors[name] = _normalize_flavor_entry(entry, name, family)
+            normalized_flavors[name] = _normalize_flavor_entry(entry, name)
         normalized["flavor"] = normalized_flavors
     return normalized
 

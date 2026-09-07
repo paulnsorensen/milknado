@@ -57,7 +57,7 @@ def _print_run_result(result: RunLoopResult) -> None:
     verification = result.verify_outcome
     if verification is not None and not verification.done:
         delta = verification.goal_delta or "no explanation provided"
-        console.print(f"[red]Verification incomplete: {delta}[/red]")
+        console.print(f"Verification incomplete: {delta}", markup=False, style="red")
 
     for conflict in result.rebase_conflicts:
         console.print(
