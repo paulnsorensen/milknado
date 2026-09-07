@@ -49,6 +49,13 @@ When a reviewer error blocks a node whose corrections already passed the gate, s
 Prepend a `PRIOR ATTEMPT` paragraph to the node description that names the file and tells the worker to `git apply --3way` it first, then re-verify each finding.
 Node 113 landed on the next dispatch this way with no repeated implementation work.
 
+## A multi-root database never completes the goal
+
+`get_root()` returns the live root with the lowest id, and `complete_root()` requires every live non-root node to be `done`.
+A project database that keeps older goals alive (here nodes 1, 71, 83 beside 107) therefore never flips the running goal to `done` on a specless run.
+Archive finished campaigns before starting a new goal, or mark the goal done by hand after the loop exits.
+Tracked as GitHub issue #433.
+
 ## Launch the run loop from an operator terminal
 
 A run loop started as a background process of an agent harness inherits that harness's resource guards.
