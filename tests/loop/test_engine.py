@@ -47,6 +47,16 @@ from tests.loop.helpers import (
 )
 
 
+def _delivered_prompt(subprocess_mock: MagicMock) -> str:
+    """Return the prompt the engine handed the agent.
+
+    The default ``omp`` agent pipes the prompt through stdin (never as an
+    argv element, or a prompt over MAX_ARG_STRLEN fails with E2BIG), so it
+    is captured by ``proc.stdin.write`` rather than appended to the command.
+    """
+    return subprocess_mock.return_value.stdin.write.call_args.args[0]  # pyright: ignore[reportAny]
+
+
 class TestRunLoop:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_single_iteration(self, mock_run: MagicMock, tmp_path: Path):
@@ -231,7 +241,7 @@ class TestRunLoop:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_run.call_args.args[0][-1] == "my prompt text"
+        assert _delivered_prompt(mock_run) == "my prompt text"
 
     @patch(MOCK_SUBPROCESS)
     def test_log_dir_creates_files(self, mock_run: MagicMock, tmp_path: Path):
@@ -881,7 +891,7 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        prompt_arg = mock_run.call_args.args[0][-1]  # pyright: ignore[reportAny]
+        prompt_arg = _delivered_prompt(mock_run)
         assert prompt_arg == "Research ./src focus: perf"
 
     @patch(MOCK_SUBPROCESS)
@@ -896,7 +906,7 @@ class TestRalphArgs:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        prompt_arg = mock_run.call_args.args[0][-1]  # pyright: ignore[reportAny]
+        prompt_arg = _delivered_prompt(mock_run)
         assert prompt_arg == "Before  after"
 
 
@@ -919,7 +929,7 @@ class TestCommandExecution:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        prompt_arg = mock_agent.call_args.args[0][-1]  # pyright: ignore[reportAny]
+        prompt_arg = _delivered_prompt(mock_agent)
         assert "test output" in prompt_arg
         assert "{{ commands.tests }}" not in prompt_arg
 
@@ -1692,7 +1702,7 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        prompt_arg = mock_run.call_args.args[0][-1]  # pyright: ignore[reportAny]
+        prompt_arg = _delivered_prompt(mock_run)
         assert "Co-authored-by: Team <team@example.com>" in prompt_arg
 
     @patch(MOCK_SUBPROCESS)
@@ -1702,7 +1712,7 @@ class TestCommitFooterInLoop:
         state = make_state()
         run_loop(config, state, NullEmitter())
 
-        prompt_arg = mock_run.call_args.args[0][-1]  # pyright: ignore[reportAny]
+        prompt_arg = _delivered_prompt(mock_run)
         assert "Co-authored-by" not in prompt_arg
 
 

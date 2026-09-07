@@ -2067,7 +2067,9 @@ class TestArgDeliveryStdin:
         assert spawn_cmd == ["opencode", "run", "--format", "json", "do the work"]
         assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
-    def test_execute_agent_threads_arg_delivery_through_omp(self):
+    def test_execute_agent_pipes_omp_prompt_through_stdin(self):
+        """omp reads its prompt from stdin, never as an argv element: a review
+        prompt over Linux MAX_ARG_STRLEN as one argv string fails with E2BIG."""
         with patch(MOCK_SUBPROCESS, side_effect=ok_proc) as mock_popen:
             _ = execute_agent(
                 AgentRunSpec(
@@ -2085,9 +2087,8 @@ class TestArgDeliveryStdin:
             "--auto-approve",
             "--mode",
             "json",
-            "do the work",
         ]
-        assert mock_popen.call_args.kwargs["stdin"] == subprocess.DEVNULL
+        assert mock_popen.call_args.kwargs["stdin"] == subprocess.PIPE
 
     def test_arg_delivery_does_not_hang_when_child_ignores_stdin(self, tmp_path: Path):
         """Real subprocess: an arg-delivery agent that never reads stdin must
