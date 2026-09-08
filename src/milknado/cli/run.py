@@ -139,8 +139,9 @@ def run(
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
     from milknado.app.run import (
+        ProtectedBranchRefusal,
         build_execution_controller,
-        check_protected_branch,
+        ensure_dispatch_allowed,
         resolve_feature_branch,
         run_execution_loop,
     )
@@ -151,25 +152,13 @@ def run(
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
-
-    feature_branch = resolve_feature_branch(project_root)
-    refusal = check_protected_branch(config, feature_branch, allow_protected)
-    if refusal is not None:
-        if refusal.reason == "detached":
-            console.print(
-                f"[red]Refusing to run on detached HEAD (branch {refusal.branch!r}); "
-                + "check out a named branch first.[/red]"
-            )
-        else:
-            console.print(
-                f"[red]Refusing to run on protected branch '{refusal.branch}'. "
-                + "Pass --allow-protected to override.[/red]"
-            )
-        raise typer.Exit(code=2)
-
-    graph = _ensure_db(config, plugins)
+    graph = None
 
     try:
+        feature_branch = resolve_feature_branch(project_root)
+        ensure_dispatch_allowed(config, feature_branch, allow_protected)
+        graph = _ensure_db(config, plugins)
+
         _ = graph.reconcile_completed_goals()
         root_reports = validate_runnable_roots(graph)
         excluded: set[int] = set()
@@ -203,13 +192,35 @@ def run(
                 controller,
                 feature_branch=feature_branch,
                 strict=strict,
+                allow_protected=allow_protected,
             )
             if result is None:
                 return
         else:
-            result = run_execution_loop(graph, config, project_root, feature_branch, strict)
+            result = run_execution_loop(
+                graph,
+                config,
+                project_root,
+                feature_branch,
+                strict,
+                allow_protected=allow_protected,
+            )
+
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)
+    except ProtectedBranchRefusal as refusal:
+        if refusal.reason == "detached":
+            console.print(
+                f"[red]Refusing to run on detached HEAD (branch {refusal.branch!r}); "
+                + "check out a named branch first.[/red]"
+            )
+        else:
+            console.print(
+                f"[red]Refusing to run on protected branch '{refusal.branch}'. "
+                + "Pass --allow-protected to override.[/red]"
+            )
+        raise typer.Exit(code=2) from None
     finally:
-        graph.close()
+        if graph is not None:
+            graph.close()

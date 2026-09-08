@@ -115,8 +115,33 @@ def _call_tree(tool: object, **kwargs: object) -> list[_TreeNode]:
     return fn(**kwargs)
 
 
+def _ensure_git(project_root: str) -> None:
+    root = Path(project_root)
+    if not (root / ".git").exists():
+        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+        _ = subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "initial",
+            ],
+            cwd=root,
+            check=True,
+        )
+
+
 def _call_this_branch(tool: object, **kwargs: object) -> _McpResponse:
     """Invoke a run tool explicitly against the shared checkout."""
+    project_root = kwargs.get("project_root")
+    if project_root is not None:
+        _ensure_git(str(project_root))
+    _ = kwargs.setdefault("allow_protected", True)
     return _call(tool, worktree=WorktreeMode.THIS_BRANCH, **kwargs)
 
 
@@ -811,6 +836,7 @@ class TestTodoAsyncRun:
             worker_cmd="claude",
             timeout_seconds=10,
             project_root=root,
+            allow_protected=True,
         )
         final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
         assert final["status"] == "failed"
@@ -1059,6 +1085,7 @@ class TestTodoAsyncRun:
         can pass the RUNNING status check simultaneously and each spawn a worker —
         this is the race #38 guards against."""
         root = str(tmp_path)
+        _ensure_git(root)
         task = _call(milknado_todo_add, description="concurrent", kind="task", project_root=root)
         # Use a slow worker so it's still running if the lock leaks two starters.
         slow_cmd = worker_stub("sleep 10")

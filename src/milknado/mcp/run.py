@@ -45,6 +45,7 @@ def milknado_run_inline(
     timeout_seconds: int = 600,
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
+    allow_protected: bool = False,
     project_root: str = "",
 ) -> RunDict:
     """Spawn a subprocess worker with the task brief on stdin; capture log and update status.
@@ -53,6 +54,9 @@ def milknado_run_inline(
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
     use milknado_run_inline_start / milknado_run_inline_poll.
+    Dispatch refuses detached HEAD and protected branches by default. Set
+    allow_protected=True to permit a named protected branch; detached HEAD always refuses.
+
 
     worktree controls isolation (safe by default): ISOLATE runs the worker in a
     fresh git worktree + branch, and on exit 0 (when merge_back, the default)
@@ -72,6 +76,7 @@ def milknado_run_inline(
             cfg,
             root,
             InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
+            allow_protected=allow_protected,
         )
         return build_run_dict(state)
     finally:
@@ -86,6 +91,7 @@ def milknado_run_inline_start(
     use_tmux: bool = False,
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
+    allow_protected: bool = False,
     project_root: str = "",
 ) -> RunDict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
@@ -94,6 +100,8 @@ def milknado_run_inline_start(
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits. use_tmux=True runs the worker inside a named tmux
     window (`milknado attach <run_id>`); fails fast if tmux is unavailable.
+    Dispatch refuses detached HEAD and protected branches by default. Set
+    allow_protected=True to permit a named protected branch; detached HEAD always refuses.
 
     worktree controls isolation (safe by default): ISOLATE runs the worker in a
     fresh git worktree + branch; on exit 0 (when merge_back, the default) the
@@ -113,6 +121,7 @@ def milknado_run_inline_start(
             root,
             InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
             use_tmux,
+            allow_protected=allow_protected,
         )
         return build_run_dict(state)
     finally:

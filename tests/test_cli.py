@@ -1582,7 +1582,6 @@ class TestRunCommand:
         )
 
         assert result.exit_code == 2
-        assert "Starting execution loop" not in result.output
         assert "Refusing to run on protected branch" in result.output
         # No executor/worktree constructed: the adapter class is never instantiated.
         mock_ralph_cls.assert_not_called()
@@ -1735,6 +1734,7 @@ class TestRunRunnabilityGate:
             controller,
             feature_branch="feature/tui",
             strict=False,
+            allow_protected=False,
         )
         run_legacy.assert_not_called()
         print_result.assert_not_called()
@@ -2131,16 +2131,14 @@ def test_run_cli_reports_detached_head_refusal(
     import importlib
 
     cli_run = importlib.import_module("milknado.cli.run")
-    from milknado.app.run import ProtectedBranchRefusal
     from milknado.domains.common import default_config
 
     cfg = default_config(tmp_path)
+
     monkeypatch.setattr(cli_run, "_load_or_default", lambda _root: (cfg, None))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
     monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda _root: "HEAD")  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
-    monkeypatch.setattr(
-        "milknado.app.run.check_protected_branch",
-        lambda *_args: ProtectedBranchRefusal(branch="HEAD", reason="detached"),  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
-    )
+
     with pytest.raises(typer.Exit) as error:
         cli_run.run(tmp_path)  # pyright: ignore[reportAny]
     assert error.value.exit_code == 2
+    assert not cfg.db_path.exists()

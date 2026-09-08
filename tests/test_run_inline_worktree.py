@@ -36,6 +36,11 @@ def _call(tool: object, **kwargs: object) -> object:
     fn = getattr(tool, "fn", tool)
     if not callable(fn):
         raise TypeError(f"tool is not callable: {tool!r}")
+    if getattr(fn, "__name__", "") in ("milknado_run_inline", "milknado_run_inline_start"):
+        _ = kwargs.setdefault("allow_protected", True)
+        root = kwargs.get("project_root")
+        if root is not None and not (Path(str(root)) / ".git").exists():
+            _init_repo(Path(str(root)))
     return fn(**kwargs)
 
 
@@ -889,6 +894,7 @@ def test_async_start_reports_lost_terminal_fence(
                     merge_back=False,
                 ),
                 use_tmux=False,
+                allow_protected=True,
             )
     finally:
         graph.close()

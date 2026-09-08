@@ -1632,10 +1632,8 @@ class TestStrictDrain:
 
 
 class TestProtectedBranchGuard:
-    def test_protected_branch_returns_typed_refusal_before_log_created(
-        self, tmp_path: Path
-    ) -> None:
-        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
+    def test_protected_branch_refused_before_log_created(self, tmp_path: Path) -> None:
+        from milknado.app.run import ProtectedBranchRefusal, ensure_dispatch_allowed
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1643,13 +1641,13 @@ class TestProtectedBranchGuard:
             db_path=tmp_path / ".milknado" / "milknado.db",
             protected_branches=("main", "master"),
         )
-        refusal = check_protected_branch(cfg, "main", allow_protected=False)
 
-        assert refusal == ProtectedBranchRefusal(branch="main", reason="protected")
+        with pytest.raises(ProtectedBranchRefusal, match="protected branch"):
+            ensure_dispatch_allowed(cfg, "main", allow_protected=False)
         assert not any((tmp_path / ".milknado").glob("run-*.log"))
 
     def test_protected_branch_with_allow_protected_does_not_raise(self, tmp_path: Path) -> None:
-        from milknado.app.run import check_protected_branch
+        from milknado.app.run import ensure_dispatch_allowed
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1658,11 +1656,10 @@ class TestProtectedBranchGuard:
             protected_branches=("main", "master"),
         )
 
-        # Explicit opt-in past the guard: no exception, returns None.
-        assert check_protected_branch(cfg, "main", allow_protected=True) is None
+        ensure_dispatch_allowed(cfg, "main", allow_protected=True)
 
-    def test_unprotected_branch_does_not_raise(self, tmp_path: Path) -> None:
-        from milknado.app.run import check_protected_branch
+    def test_feature_branch_does_not_raise(self, tmp_path: Path) -> None:
+        from milknado.app.run import ensure_dispatch_allowed
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1671,10 +1668,10 @@ class TestProtectedBranchGuard:
             protected_branches=("main", "master"),
         )
 
-        assert check_protected_branch(cfg, "feature-x", allow_protected=False) is None
+        ensure_dispatch_allowed(cfg, "feature-x", allow_protected=False)
 
-    def test_second_protected_branch_also_returns_typed_refusal(self, tmp_path: Path) -> None:
-        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
+    def test_second_protected_branch_is_refused(self, tmp_path: Path) -> None:
+        from milknado.app.run import ProtectedBranchRefusal, ensure_dispatch_allowed
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1683,12 +1680,11 @@ class TestProtectedBranchGuard:
             protected_branches=("main", "master"),
         )
 
-        assert check_protected_branch(cfg, "master", allow_protected=False) == (
-            ProtectedBranchRefusal(branch="master", reason="protected")
-        )
+        with pytest.raises(ProtectedBranchRefusal, match="protected branch"):
+            ensure_dispatch_allowed(cfg, "master", allow_protected=False)
 
     def test_detached_head_refused_even_with_allow_protected(self, tmp_path: Path) -> None:
-        from milknado.app.run import ProtectedBranchRefusal, check_protected_branch
+        from milknado.app.run import ProtectedBranchRefusal, ensure_dispatch_allowed
         from milknado.domains.common.config import MilknadoConfig
 
         cfg = MilknadoConfig(
@@ -1698,9 +1694,8 @@ class TestProtectedBranchGuard:
         )
 
         for branch in ("HEAD", ""):
-            assert check_protected_branch(cfg, branch, allow_protected=True) == (
-                ProtectedBranchRefusal(branch=branch, reason="detached")
-            )
+            with pytest.raises(ProtectedBranchRefusal, match="detached branch"):
+                ensure_dispatch_allowed(cfg, branch, allow_protected=True)
 
 
 class TestStalledWorkerGlyph:

@@ -63,6 +63,7 @@ def _call(tool: object, **kwargs: object) -> _RunResult:
         "milknado_run_inline_start",
     ):
         _ = kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+        _ = kwargs.setdefault("allow_protected", True)
     return fn(**kwargs)
 
 
