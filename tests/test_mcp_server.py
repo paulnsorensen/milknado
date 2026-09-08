@@ -1203,7 +1203,7 @@ class TestTodoAsyncRun:
             )
         graph, _cfg = open_graph(root)
         try:
-            result = graph.runs_for_node(1)
+            result = graph.runs.for_node(1)
         finally:
             graph.close()
         assert [r["run_id"] for r in result] == ["node-1-20200101T000000Z-aaaa"], (
@@ -1229,7 +1229,7 @@ class TestTodoAsyncRun:
         )
         graph, _cfg = open_graph(root)
         try:
-            result = graph.runs_for_node(5)
+            result = graph.runs.for_node(5)
         finally:
             graph.close()
         assert {run["run_id"]: run["status"] for run in result} == {

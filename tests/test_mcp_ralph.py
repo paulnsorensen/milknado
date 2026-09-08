@@ -348,7 +348,7 @@ def test_spawn_failure_accepts_already_finalized_run(
     def fence_lost(*_args: object, **_kwargs: object) -> None:
         raise RunFenceLostError("run already finalized")
 
-    monkeypatch.setattr(graph, "finish_run", fence_lost)
+    monkeypatch.setattr(graph.runs, "finish", fence_lost)
     try:
         ralph_app._record_spawn_failure(  # pyright: ignore[reportPrivateUsage]
             graph, claim, OSError("spawn failed")
