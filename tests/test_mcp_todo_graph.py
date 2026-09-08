@@ -4,9 +4,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from milknado.mcp._core import NodeSummary
 from milknado.mcp.todo import milknado_todo_next
-from milknado.mcp.todo_mutate import milknado_todo_add, milknado_todo_set_status
+from milknado.mcp.todo_mutate import (
+    milknado_edit_node,
+    milknado_todo_add,
+    milknado_todo_set_status,
+)
 
 
 def _call(tool: object, **kwargs: object) -> NodeSummary | None:
@@ -46,3 +52,17 @@ def test_todo_next_waits_for_named_prerequisite(tmp_path: Path) -> None:
     second = _call(milknado_todo_next, project_root=root)
     assert second is not None
     assert second["id"] == dependent["id"]
+
+
+def test_edit_node_propagates_graph_flavor_error(tmp_path: Path) -> None:
+    root = str(tmp_path)
+    goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+    assert goal is not None
+
+    with pytest.raises(ValueError, match="flavor is only valid for task nodes"):
+        _ = _call(
+            milknado_edit_node,
+            node_id=goal["id"],
+            flavor="implement",
+            project_root=root,
+        )

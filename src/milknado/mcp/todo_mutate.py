@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import MilknadoConfig, NodeKind, NodeSpec
+from milknado.domains.common import MilknadoConfig, NodeSpec
 from milknado.domains.common import normalize_hint_paths, validate_hint_path
 from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import Flavor, Kind, NodeSummary, Response, TodoStatus
@@ -283,20 +283,6 @@ def milknado_edit_node(
     graph, cfg = open_graph(root)
     try:
         node_flavor = parse_flavor(flavor, cfg.flavor_registry) if flavor is not None else None
-        if node_flavor is not None and node_kind is not None and node_kind != NodeKind.TASK:
-            raise ValueError(
-                "flavor is only valid for task nodes; cannot set flavor with non-task kind"
-            )
-        if node_flavor is not None and node_kind is None:
-            # Check existing node kind before setting flavor
-            existing = graph.get_node(node_id)
-            if existing is None:
-                raise ValueError(f"node {node_id} not found")
-            if existing.kind != NodeKind.TASK:
-                raise ValueError(
-                    "flavor is only valid for task nodes; "
-                    + f"node {node_id} has kind {existing.kind.value!r}"
-                )
         if (
             description is not None
             or node_kind is not None
