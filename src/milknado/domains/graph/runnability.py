@@ -49,7 +49,7 @@ def validate_goal_runnable(graph: MikadoGraph, goal_id: int) -> RunnabilityRepor
                 f"leaf node {current.id} (kind={current.kind.value}) is not a task; "
                 + "all leaf descendants must be tasks"
             )
-        elif current.flavor == DEFAULT_FLAVOR and not graph.get_file_ownership(current.id):
+        elif current.flavor == DEFAULT_FLAVOR and not graph.files.for_node(current.id):
             report.warnings.append(
                 f"task {current.id} has no file hints (implement-flavored tasks "
                 + "should declare which files they touch)"

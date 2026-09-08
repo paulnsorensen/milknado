@@ -1290,8 +1290,8 @@ class TestRunLoopFileConflicts:
         root = graph.add_node("root")
         a = graph.add_node("a", parent_id=root.id)
         b = graph.add_node("b", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
 
         result = loop.run(config, "main")
 
@@ -1485,7 +1485,7 @@ class TestBuildWorkerTableColumns:
 
     def test_files_column_shows_owned_files(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task with files")
-        graph.set_file_ownership(node.id, ["src/foo.py"])
+        graph.files.claim(node.id, ["src/foo.py"])
         state = _make_tui_state(node.id)
         text = _snapshot(_BUILD_WORKER_TABLE(state, graph))
 

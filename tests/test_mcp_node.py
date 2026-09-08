@@ -114,7 +114,7 @@ def test_claim_marks_running_creates_worktree_writes_run_no_spawn(repo: Path) ->
         assert node.status == NodeStatus.RUNNING
         assert node.run_id == payload["run_id"]
         # runs row present and running.
-        run = graph.get_run(payload["run_id"])
+        run = graph.runs.get(payload["run_id"])
         assert run is not None
         assert run["status"] == "running"
         assert node.worktree_path == payload["worktree_path"]
@@ -241,7 +241,7 @@ def test_claim_worktree_false_override_skips_worktree(repo: Path) -> None:
         assert node is not None
         assert node.status == NodeStatus.RUNNING
         assert node.worktree_path is None
-        run = graph.get_run(payload["run_id"])
+        run = graph.runs.get(payload["run_id"])
         assert run is not None and run["status"] == "running"
     finally:
         graph.close()
@@ -471,13 +471,13 @@ def test_done_gate_exempts_subprocess_run_node(repo: Path) -> None:
         # but NO claim/verify message, because the subprocess path never calls
         # milknado_todo_claim or milknado_node_verify.
         assert graph.claim_node(node_id, run_id, now=now_iso()) is True
-        graph.start_run(run_id, node_id, "log", now_iso(), None)
-        _ = graph.deposit_run_message(run_id, "result", "subprocess deliverable", now_iso())
+        graph.runs.start(run_id, node_id, "log", now_iso(), None)
+        _ = graph.runs.deposit_message(run_id, "result", "subprocess deliverable", now_iso())
         node = graph.get_node(node_id)
         assert node is not None
         assert node.run_id == run_id
-        assert graph.latest_run_message(run_id, "claim") is None
-        assert graph.latest_run_message(run_id, "verify") is None
+        assert graph.runs.latest_message(run_id, "claim") is None
+        assert graph.runs.latest_message(run_id, "verify") is None
     finally:
         graph.close()
 
@@ -531,7 +531,7 @@ def test_node_verify_in_place_no_worktree_uses_project_root(repo: Path) -> None:
     run_id = "node-1-20260101T000000Z-deadbeef"
     graph, _cfg = open_graph(repo)
     try:
-        _ = graph.start_run(run_id, node_id, "log", datetime.now(UTC).isoformat(), None)
+        _ = graph.runs.start(run_id, node_id, "log", datetime.now(UTC).isoformat(), None)
     finally:
         graph.close()
     # An in-place node with non-empty gates keeps the stageable-change check;
@@ -602,7 +602,7 @@ def test_done_transition_rejects_invalid_verdict(repo: Path, verdict: str) -> No
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     graph, _cfg = open_graph(repo)
     try:
-        _ = graph.deposit_run_message(claim["run_id"], VERIFY_ROLE, verdict, now_iso())
+        _ = graph.runs.deposit_message(claim["run_id"], VERIFY_ROLE, verdict, now_iso())
         with pytest.raises(ValueError, match="has not returned ok=True"):
             _ = graph.set_todo_status(node_id, NodeStatus.DONE)
     finally:
@@ -757,7 +757,10 @@ def test_provision_claim_run_fails_loudly_when_terminal_release_loses_fence(
     from milknado.app import node as node_app
 
     class Graph:
-        def start_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def start(self, *_args: object) -> None:
             raise RuntimeError("startup failed")
 
         def mark_terminal(self, *_args: object) -> bool:

@@ -53,7 +53,7 @@ def _create_todo(
         ),
     )
     if files is not None:
-        graph.set_file_ownership(node.id, files)
+        graph.files.claim(node.id, files)
     return node_to_summary(node)
 
 
@@ -307,7 +307,7 @@ def milknado_edit_node(
             )
             if only_files and not node_exists:
                 raise ValueError(f"node {node_id} not found")
-            graph.set_file_ownership(node_id, hint_paths)
+            graph.files.claim(node_id, hint_paths)
         updated = graph.get_node(node_id)
         if updated is None:
             raise ValueError(f"node {node_id} not found after edit")

@@ -84,7 +84,7 @@ def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest
     if node.status == NodeStatus.RUNNING:
         _ = fail_stale_running_runs(graph, request.node_id)
         if node.run_id is not None:
-            winner = graph.latest_terminal_run(request.node_id, node.run_id)
+            winner = graph.runs.latest_terminal(request.node_id, node.run_id)
             if winner is not None:
                 reconcile_node_status(
                     graph,
@@ -93,7 +93,7 @@ def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest
                     run_id=winner.get("run_id"),
                 )
         else:
-            orphan = graph.latest_unowned_terminal_run(request.node_id)
+            orphan = graph.runs.latest_unowned_terminal(request.node_id)
             if orphan is not None:
                 reconcile_node_status(graph, request.node_id, orphan["status"])
         _ = graph.try_reclaim(request.node_id, now=now_iso())
@@ -178,7 +178,7 @@ def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception)
     node_written = False
     persistence_error: Exception | None = None
     try:
-        graph.finish_run(
+        graph.runs.finish(
             claim.run_id,
             RunResult(
                 status="failed",
@@ -222,7 +222,7 @@ def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str,
     _remove_reclaimed_worktree(git, claim)
     log_path = runs_dir(request.root) / f"{claim.run_id}.log"
     log_path.touch()
-    graph.start_run(
+    graph.runs.start(
         claim.run_id,
         request.node_id,
         str(log_path),
@@ -234,7 +234,7 @@ def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str,
     except (OSError, TmuxDispatchError) as exc:
         _record_spawn_failure(graph, claim, exc)
         raise
-    graph.set_run_pid(claim.run_id, pid)
+    graph.runs.set_pid(claim.run_id, pid)
     graph.set_pid(request.node_id, claim.run_id, pid)
     _logger.info(
         "ralph dispatch started: run_id=%s node_id=%d pid=%d target_branch=%s base_oid=%s",

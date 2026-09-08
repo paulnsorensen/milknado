@@ -111,7 +111,7 @@ def _run_worker_process(
             run_id=request.run_id,
             project_root=request.project_root,
             process=process,
-            on_started=lambda pid: graph.set_run_pid(request.run_id, pid),
+            on_started=lambda pid: graph.runs.set_pid(request.run_id, pid),
         )
     return _run_in_tmux_window(
         cwd,
@@ -172,7 +172,7 @@ def _run_in_tmux_window(
         window,
         timeout,
         rdir,
-        on_start=lambda pane_pid: graph.set_run_pid(run_id, pane_pid),
+        on_start=lambda pane_pid: graph.runs.set_pid(run_id, pane_pid),
     )
 
 
@@ -228,7 +228,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
         if cancelled:
-            graph.finish_run(
+            graph.runs.finish(
                 run_id,
                 RunResult(
                     status="failed",
@@ -249,7 +249,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # Persist a preserved (un-torn-down) worktree via the run row's `detail`
             # column so milknado_run_inline_poll surfaces `worktree_preserved`,
             # matching the sync dispatch path and milknado_run_cancel.
-            graph.finish_run(
+            graph.runs.finish(
                 run_id,
                 RunResult(
                     status=terminal,
@@ -294,7 +294,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             pass
         if graph is not None:
             try:
-                graph.finish_run(
+                graph.runs.finish(
                     run_id,
                     RunResult(
                         status="failed",
@@ -343,7 +343,7 @@ def start_headless_async(
     log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
-        graph.start_run(
+        graph.runs.start(
             request.run_id,
             request.node_id,
             str(log_path),
@@ -374,7 +374,7 @@ def start_headless_async(
 def poll_async_run(graph: MikadoGraph, project_root: Path, run_id: str) -> dict[str, object]:
     if not _RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    if (record := graph.get_run(run_id)) is None:
+    if (record := graph.runs.get(run_id)) is None:
         raise ValueError(f"run {run_id!r} not found")
     state: dict[str, object] = dict(record)
     # Derive the log path from the validated run_id rather than trusting the

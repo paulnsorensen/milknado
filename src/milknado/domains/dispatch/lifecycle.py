@@ -86,7 +86,7 @@ def _finish_dispatch(
     typed_graph = cast(FinishDispatchPort, graph)
     worker_result = cast(WorkerOutcomePort, result)
     try:
-        typed_graph.finish_run(
+        typed_graph.runs.finish(
             run_id,
             RunResult(
                 status=terminal,
@@ -134,7 +134,7 @@ def dispatch_node_sync(
             project_root=request.project_root,
         )
         cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
-        graph.start_run(
+        graph.runs.start(
             run_id,
             request.node_id,
             str(log_path),
@@ -163,7 +163,7 @@ def dispatch_node_sync(
         try:
             if started:
                 try:
-                    graph.finish_run(
+                    graph.runs.finish(
                         run_id,
                         RunResult(
                             status="failed",
@@ -227,10 +227,10 @@ def reclaim_stale_node(graph: MikadoGraph, node_id: int, fence_run_id: str | Non
     """
     _ = fail_stale_running_runs(graph, node_id)
     if fence_run_id is None:
-        orphan = graph.latest_unowned_terminal_run(node_id)
+        orphan = graph.runs.latest_unowned_terminal(node_id)
         if orphan is not None:
             reconcile_node_status(graph, node_id, orphan["status"])
         return
-    winner = graph.latest_terminal_run(node_id, fence_run_id)
+    winner = graph.runs.latest_terminal(node_id, fence_run_id)
     if winner is not None:
         reconcile_node_status(graph, node_id, winner["status"], run_id=winner.get("run_id"))

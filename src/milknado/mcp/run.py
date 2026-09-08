@@ -144,7 +144,7 @@ def milknado_run_inline_poll(run_id: str, project_root: str = "") -> RunDict:
             )
         if state["status"] == "done":
             reconcile_run_window(TmuxAdapter(root), state)
-        state["result"] = graph.latest_run_message(run_id, "result")
+        state["result"] = graph.runs.latest_message(run_id, "result")
     finally:
         graph.close()
     state["worktree_preserved"] = state.get("detail")
@@ -161,7 +161,7 @@ def milknado_run_list(project_root: str = "", limit: int = 50) -> list[RunDict]:
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        return [build_run_dict(r) for r in graph.recent_runs(limit)]
+        return [build_run_dict(r) for r in graph.runs.recent(limit)]
     finally:
         graph.close()
 
@@ -201,9 +201,9 @@ def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -
     require_worker_run(run_id)
     graph, _cfg = open_graph(root)
     try:
-        if graph.get_run(run_id) is None:
+        if graph.runs.get(run_id) is None:
             raise ValueError(f"run {run_id!r} not found")
-        seq = graph.deposit_run_message(run_id, "result", payload, now_iso())
+        seq = graph.runs.deposit_message(run_id, "result", payload, now_iso())
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}
@@ -233,9 +233,9 @@ def milknado_deposit_review(
     require_worker_run(run_id)
     graph, _cfg = open_graph(root)
     try:
-        if graph.get_run(run_id) is None:
+        if graph.runs.get(run_id) is None:
             raise ValueError(f"run {run_id!r} not found")
-        seq = graph.deposit_review_verdict(run_id, verdict, findings_md, now_iso())
+        seq = graph.runs.deposit_review(run_id, verdict, findings_md, now_iso())
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}

@@ -53,7 +53,7 @@ p.add_argument("--base-oid")
 a = p.parse_args()
 graph, _cfg = open_graph(Path(a.project_root))
 try:
-    graph.finish_run(
+    graph.runs.finish(
         a.run_id,
         RunResult(
             status="{status}",
@@ -69,10 +69,14 @@ finally:
 """
 
 
-class _FinalizationGraph(Protocol):
-    def finish_run(self, run_id: str, result: RunResult) -> None: ...
+class _FinalizationRuns(Protocol):
+    def finish(self, run_id: str, result: RunResult) -> None: ...
 
-    def get_run(self, run_id: str) -> dict[str, object] | None: ...
+    def get(self, run_id: str) -> dict[str, object] | None: ...
+
+
+class _FinalizationGraph(Protocol):
+    runs: _FinalizationRuns
 
 
 class _CallResult(TypedDict):
@@ -166,9 +170,9 @@ def _seed_run(
         )
         started_at = started_at or datetime.now(UTC).isoformat()
         log_path = log_path or str(root / ".milknado" / "runs" / f"{run_id}.log")
-        graph.start_run(run_id, node_id, log_path, started_at, timeout_seconds, pid)
+        graph.runs.start(run_id, node_id, log_path, started_at, timeout_seconds, pid)
         if status != "running":
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 run_id,
                 RunResult(
                     status=status,
@@ -186,7 +190,7 @@ def _seed_run(
 def _read_run(root: Path, run_id: str) -> RunRecord:
     graph, _cfg = open_graph(root)
     try:
-        row = graph.get_run(run_id)
+        row = graph.runs.get(run_id)
         assert row is not None
         return row
     finally:
@@ -197,7 +201,7 @@ def _node_running_runs(root: Path, node_id: int) -> list[RunRecord]:
     """Return this node's 'running' run rows (replaces a runs-dir glob)."""
     graph, _cfg = open_graph(root)
     try:
-        return [r for r in graph.runs_for_node(node_id) if r["status"] == "running"]
+        return [r for r in graph.runs.for_node(node_id) if r["status"] == "running"]
     finally:
         graph.close()
 
@@ -659,7 +663,7 @@ class TestSyncRunOrphanRescue:
             node = graph.get_node(task["id"])
             assert node is not None
             assert node.status.value == "failed", "exception must fail the node, not strand it"
-            runs = graph.runs_for_node(task["id"])
+            runs = graph.runs.for_node(task["id"])
             assert runs, "dispatch must have created a run row before the worker ran"
             assert all(r["status"] != "running" for r in runs), "no run may be left running"
             assert any(r["status"] == "failed" for r in runs), "the crashed run must be failed"
@@ -758,6 +762,7 @@ class TestDispatchLifecycleGuards:
         class Graph:
             def __init__(self) -> None:
                 self.reads: int = 0
+                self.runs: Graph = self
 
             def get_node(self, node_id: int) -> object | None:  # pyright: ignore[reportUnusedParameter]
                 self.reads += 1
@@ -766,10 +771,10 @@ class TestDispatchLifecycleGuards:
             def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-            def start_run(self, *_args: object, **_kwargs: object) -> None:
+            def start(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
-            def finish_run(self, *_args: object, **_kwargs: object) -> None:
+            def finish(self, *_args: object, **_kwargs: object) -> None:
                 pass
 
             def mark_terminal(self, *_args: object, **_kwargs: object) -> None:
@@ -807,7 +812,10 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
     from milknado.domains.dispatch import fail_stale_running_runs
 
     class Graph:
-        def runs_for_node(self, _node_id: int) -> list[dict[str, object]]:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
                 {
                     "run_id": "node-4-20260101T000000Z-bad1",
@@ -817,7 +825,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
                 }
             ]
 
-        def finish_run(self, _run_id: str, _result: RunResult) -> None:
+        def finish(self, _run_id: str, _result: RunResult) -> None:
             pass
 
     with caplog.at_level(logging.WARNING):
@@ -1291,13 +1299,13 @@ class TestAsyncCancel:
         # The worker finalizes `done` during the finalize poll window: the run row
         # flips to done and that is what `_await_cancel_finalize` returns.
         def fake_finalize(graph: _FinalizationGraph, rid: str) -> dict[str, object] | None:
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 rid,
                 RunResult(
                     status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
                 ),
             )
-            row = graph.get_run(rid)
+            row = graph.runs.get(rid)
             assert row is not None
             return row
 
@@ -1481,7 +1489,7 @@ class TestCancelFinalizeAndRace:
         _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running")
 
         def elapsed_after_done(graph: _FinalizationGraph, rid: str) -> None:
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 rid,
                 RunResult(
                     status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:00:00Z"
@@ -1530,10 +1538,13 @@ class TestCancelFinalizeAndRace:
         )
 
         class Graph:
-            def finish_run(self, _run_id: str, _result: object) -> None:
+            def __init__(self) -> None:
+                self.runs: Graph = self
+
+            def finish(self, _run_id: str, _result: object) -> None:
                 pass
 
-            def get_run(self, _run_id: str) -> None:
+            def get(self, _run_id: str) -> None:
                 return None
 
         class Process:
@@ -1557,7 +1568,10 @@ class TestCancelFinalizeAndRace:
         from milknado.domains.dispatch import runs_dir as _runs_dir
 
         class Graph:
-            def get_run(self, _run_id: str) -> dict[str, object]:
+            def __init__(self) -> None:
+                self.runs: Graph = self
+
+            def get(self, _run_id: str) -> dict[str, object]:
                 return {"status": "running"}
 
         def _never_finishes(_graph: object, _run_id: str) -> None:
@@ -1662,7 +1676,7 @@ class TestDepositResult:
         assert second["seq"] == 2, "seq must increment per deposit"
         graph, _cfg = open_graph(tmp_path)
         try:
-            assert graph.latest_run_message(run_id, "result") == "again"
+            assert graph.runs.latest_message(run_id, "result") == "again"
         finally:
             graph.close()
 
@@ -1819,7 +1833,7 @@ class TestDepositResult:
         )
         graph, _cfg = open_graph(tmp_path)
         try:
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 run_id,
                 RunResult(
                     status="done",
@@ -1847,8 +1861,8 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
     try:
         node = graph.add_node("fenced task")
         graph.claim_node_for_dispatch(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
-        graph.start_run("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
-        graph.finish_run(
+        graph.runs.start("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+        graph.runs.finish(
             "run-1",
             RunResult(
                 status="done",
@@ -1871,7 +1885,7 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
         assert final is not None
         assert final.status.value == "running"
         assert final.run_id == "run-1"
-        winner = graph.get_run("run-1")
+        winner = graph.runs.get("run-1")
         assert winner is not None
         assert winner["status"] == "done"
     finally:
@@ -1884,7 +1898,10 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, *_args: object) -> None:
             pass
 
         def mark_terminal(self, *_args: object) -> bool:
@@ -1908,16 +1925,19 @@ def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
         def get_node(self, _node_id: int):
             return SimpleNamespace(kind=NodeKind.TASK)
 
         def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def start_run(self, *_args: object, **_kwargs: object) -> None:
+        def start(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args: object, **_kwargs: object) -> None:
+        def finish(self, *_args: object, **_kwargs: object) -> None:
             raise RunFenceLostError("finish_run lost its running-row fence")
 
         def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
@@ -1949,10 +1969,13 @@ def test_cancel_finalize_adopts_late_terminal_winner() -> None:
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
-        def finish_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, *_args: object) -> None:
             raise RunFenceLostError("finish_run lost its running-row fence")
 
-        def get_run(self, _run_id: str) -> dict[str, object]:
+        def get(self, _run_id: str) -> dict[str, object]:
             return {"run_id": _run_id, "status": "done"}
 
     final = cancel._finalize_cancelled(Graph(), "run-1")  # pyright: ignore[reportPrivateUsage]
@@ -1966,7 +1989,10 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
-        def runs_for_node(self, _node_id: int) -> list[dict[str, object]]:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
                 {
                     "run_id": "run-stale",
@@ -1976,7 +2002,7 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
                 }
             ]
 
-        def finish_run(self, *_args: object) -> None:
+        def finish(self, *_args: object) -> None:
             raise RunFenceLostError("finish_run lost its running-row fence")
 
     with pytest.raises(RunFenceLostError, match="running-row fence"):
@@ -2003,7 +2029,10 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
     log_path.touch()
 
     class Graph:
-        def finish_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, *_args: object) -> None:
             raise RuntimeError("database unavailable")
 
         def close(self) -> None:
@@ -2044,7 +2073,10 @@ def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
     _ = (rdir / f"{run_id}.terminal-error").write_text("persistence failed", encoding="utf-8")
 
     class Graph:
-        def get_run(self, _run_id: str) -> dict[str, object]:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def get(self, _run_id: str) -> dict[str, object]:
             return {"run_id": _run_id, "status": "failed", "log_path": "tampered"}
 
     result = async_run.poll_async_run(cast(MikadoGraph, cast(object, Graph())), tmp_path, run_id)
@@ -2058,7 +2090,10 @@ def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
-        def finish_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, *_args: object) -> None:
             pass
 
         def mark_terminal(self, *_args: object) -> bool:
@@ -2082,16 +2117,19 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
     from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
 
     class Graph:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
         def get_node(self, _node_id: int):
             return SimpleNamespace(kind=NodeKind.TASK)
 
         def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def start_run(self, *_args: object, **_kwargs: object) -> None:
+        def start(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        def finish_run(self, *_args: object, **_kwargs: object) -> None:
+        def finish(self, *_args: object, **_kwargs: object) -> None:
             pass
 
         def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
@@ -2140,7 +2178,10 @@ def test_async_worker_reports_cancelled_run_fence_loss(
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
-        def finish_run(self, *_args: object) -> None:
+        def __init__(self) -> None:
+            self.runs: Graph = self
+
+        def finish(self, *_args: object) -> None:
             raise RunFenceLostError("running-row fence already finalized")
 
         def close(self) -> None:

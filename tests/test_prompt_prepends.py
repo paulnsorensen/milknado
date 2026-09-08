@@ -130,7 +130,7 @@ def test_ralph_wraps_the_same_rendered_brief_with_flavor_prepend(tmp_path: Path)
     try:
         goal = graph.add_node("ship the feature", spec=NodeSpec(kind=NodeKind.GOAL))
         task = graph.add_node("do the subtask", parent_id=goal.id)
-        graph.set_file_ownership(task.id, ["src/milknado/brief.py"])
+        graph.files.claim(task.id, ["src/milknado/brief.py"])
         brief = render_brief(graph, task.id, prepend="### Flavor rule: work narrowly.")
     finally:
         graph.close()

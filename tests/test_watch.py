@@ -17,7 +17,7 @@ from milknado.domains.graph import MikadoGraph, read_observer_snapshot
 
 
 def _finish(graph: MikadoGraph, run_id: str, node_id: int) -> None:
-    _ = graph.finish_run(
+    _ = graph.runs.finish(
         run_id,
         RunResult(
             status="done",
@@ -45,9 +45,9 @@ def _observed_runs(tmp_path: Path) -> tuple[Path, Path]:
     _ = secret.write_text("must not render\n", encoding="utf-8")
     (log_dir / "999.log").symlink_to(secret)
     assert graph.claim_node(active.id, "active-run", now="2026-09-03T12:00:00+00:00")
-    graph.start_run("active-run", active.id, str(log_dir), "2026-09-03T12:00:00+00:00", 600)
+    graph.runs.start("active-run", active.id, str(log_dir), "2026-09-03T12:00:00+00:00", 600)
     assert graph.claim_node(terminal.id, "done-run", now="2026-09-03T12:00:00+00:00")
-    graph.start_run("done-run", terminal.id, str(log_dir), "2026-09-03T12:00:00+00:00", 600)
+    graph.runs.start("done-run", terminal.id, str(log_dir), "2026-09-03T12:00:00+00:00", 600)
     _finish(graph, "done-run", terminal.id)
     graph.close()
     return project_root, db_path
@@ -123,7 +123,7 @@ def test_watch_snapshot_refresh_uses_read_only_observer_query(tmp_path: Path) ->
     ):
         assert source.snapshot().active_runs == ()
         assert writer.claim_node(node.id, "fresh-run", now="2026-09-03T12:00:00+00:00")
-        writer.start_run(
+        writer.runs.start(
             "fresh-run",
             node.id,
             str(tmp_path / "missing.log"),
@@ -147,10 +147,10 @@ def test_observer_counts_exact_dispatch_availability_without_conflict_pairs(
     first = graph.add_node("first shared candidate", parent_id=goal.id)
     later = graph.add_node("later shared candidate", parent_id=goal.id)
     _ = graph.add_node("unowned candidate", parent_id=goal.id)
-    graph.set_file_ownership(active.id, ["active.py"])
-    graph.set_file_ownership(blocked.id, ["active.py"])
-    graph.set_file_ownership(first.id, ["shared.py"])
-    graph.set_file_ownership(later.id, ["shared.py"])
+    graph.files.claim(active.id, ["active.py"])
+    graph.files.claim(blocked.id, ["active.py"])
+    graph.files.claim(first.id, ["shared.py"])
+    graph.files.claim(later.id, ["shared.py"])
     graph.mark_running(active.id)
 
     with (

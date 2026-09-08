@@ -151,7 +151,7 @@ def _worker_stats(
     files = (
         ownership_map.get(node_id, [])
         if ownership_map is not None
-        else graph.get_file_ownership(node_id)
+        else graph.files.for_node(node_id)
     )
     return _WorkerStats(elapsed=elapsed, pct=pct, attempts=attempts, files=files)
 
@@ -162,7 +162,7 @@ def _build_worker_table(state: TuiState, graph: MikadoGraph) -> Table:
     frame = _SPINNER_FRAMES[state.tick % len(_SPINNER_FRAMES)]
     now = time.monotonic()
     avg_dur = _average_duration(state.completion_durations)
-    ownership_map = graph.get_file_ownership_map(state.active.values())
+    ownership_map = graph.files.for_nodes(state.active.values())
 
     table = Table(title=_build_title(state.active, graph), show_header=True, header_style="bold")
     table.add_column("", width=12, no_wrap=True)
