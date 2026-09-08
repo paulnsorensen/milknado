@@ -27,6 +27,7 @@ from milknado.domains.common.agent_argv import NodeAgentSession, capture_session
 from milknado.domains.common.errors import (
     GitOperationError,
     InvalidTransition,
+    QualityGatesNotConfigured,
     RebaseAbortError,
     RunFenceLostError,
     TransientDispatchError,
@@ -53,6 +54,7 @@ from milknado.domains.execution._review import (
     build_review_prompt,
     persist_review_findings,
 )
+from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
@@ -459,6 +461,8 @@ class Executor:
         base_oid: str | None = None,
         parent_run_id: str | None = None,
     ) -> DispatchResult:
+        if config.quality_gates is None:
+            raise QualityGatesNotConfigured(NO_GATES_CONFIGURED_MESSAGE)
         _ = self._review_enabled(config)
         target_branch = self._git.current_branch()
         target_oid = base_oid or self._git.resolve_ref(target_branch)

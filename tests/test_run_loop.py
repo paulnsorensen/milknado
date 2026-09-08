@@ -20,7 +20,13 @@ from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpe
 from milknado.domains.common.config import Gate, MilknadoConfig
 from milknado.domains.common.protocols import LoopPort
 from milknado.domains.common.types import NodeSpec, NodeStatus, RebaseResult
-from milknado.domains.execution import DispatchResult, ExecutionConfig, Executor, RunLoop
+from milknado.domains.execution import (
+    NO_GATES_CONFIGURED_MESSAGE,
+    DispatchResult,
+    ExecutionConfig,
+    Executor,
+    RunLoop,
+)
 from milknado.domains.execution.executor import RebaseConflict, WorktreeManager
 from milknado.domains.execution.run_loop.display import TuiState
 from milknado.domains.execution.run_loop.input import InputState
@@ -1186,6 +1192,29 @@ class TestRunLoopDispatchFailure:
         leaf_node = graph.get_node(leaf.id)
         assert leaf_node is not None
         assert leaf_node.status == NodeStatus.FAILED
+
+    def test_missing_quality_gates_are_visible_in_dispatch_failure(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        root = graph.add_node("root")
+        leaf = graph.add_node("missing gates", parent_id=root.id)
+
+        result = loop.run(replace(config, quality_gates=None), "main")
+
+        assert result.dispatched_total == 0
+        assert result.failed_total == 1
+        leaf_node = graph.get_node(leaf.id)
+        assert leaf_node is not None
+        assert leaf_node.status == NodeStatus.FAILED
+        assert NO_GATES_CONFIGURED_MESSAGE in caplog.text
 
     def test_dispatch_failure_does_not_crash_loop(
         self,
@@ -2460,7 +2489,7 @@ class TestDispatchBatchDirectGuards:
         executor = MagicMock()
         _mock_attr(executor, "dispatch").side_effect = RuntimeError("boom")
         root = graph.add_node("root")
-        _ = graph.add_node("failing-leaf", parent_id=root.id)
+        leaf = graph.add_node("failing-leaf", parent_id=root.id)
 
         loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
         live = MagicMock()
@@ -2468,6 +2497,9 @@ class TestDispatchBatchDirectGuards:
 
         assert dispatched == 0
         assert failed == 1
+        _mock_attr(_mock_attr(live, "console"), "print").assert_called_once_with(
+            f"[red]✗[/red] [{leaf.id}] failing-leaf: boom"
+        )
 
     def test_strict_mode_breaks_on_dispatch_exception(
         self,

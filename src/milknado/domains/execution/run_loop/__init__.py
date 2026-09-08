@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from milknado.domains.common.protocols import LoopPort
     from milknado.domains.execution.executor import ExecutionConfig, Executor
     from milknado.domains.graph import MikadoGraph
-    from milknado.domains.planning.planner import Planner
+    from milknado.domains.planning import Planner
 
 _logger = logging.getLogger("milknado")
 _ETA_SAMPLE_SIZE_DEFAULT = 10
@@ -531,23 +531,6 @@ class RunLoop:
                     on_reject=profile.on_reject,
                     session_mode=profile.session_mode,
                 )
-            if node_config.quality_gates is None:
-                from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
-
-                _logger.error(
-                    "preflight: node %d (%s): %s", node_id, desc, NO_GATES_CONFIGURED_MESSAGE
-                )
-                if live is not None:
-                    live.console.print(
-                        f"[red]✗[/red] [{node_id}] {desc}: {NO_GATES_CONFIGURED_MESSAGE}"
-                    )
-                self._executor.fail(node_id)
-                self._logs.append(f"[{ts()}] ✗ node {node_id}: no quality_gates configured")
-                failed += 1
-                if self._strict:
-                    self._failure_triggered = True
-                    break
-                continue
             try:
                 result = self._executor.dispatch(node_id, node_config)
             except Exception as exc:
@@ -558,6 +541,8 @@ class RunLoop:
                     type(exc).__name__,
                     exc,
                 )
+                if live is not None:
+                    live.console.print(f"[red]✗[/red] [{node_id}] {desc}: {exc}")
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
                 failed += 1

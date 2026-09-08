@@ -30,6 +30,7 @@ import pytest
 
 import milknado.domains.execution.executor as _executor_module
 from milknado.adapters.git import GitAdapter
+from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import GitOperationError
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.common.types import RebaseResult
@@ -230,7 +231,7 @@ class TestMergeBackIntegration:
                     1,
                     ExecutionConfig(
                         execution_agent="claude",
-                        quality_gates=None,
+                        quality_gates=(Gate(command="uv run pytest"),),
                         worktree_pattern="milknado-{node_id}",
                         project_root=project,
                     ),
