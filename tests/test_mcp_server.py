@@ -1183,43 +1183,59 @@ class TestTodoAsyncRun:
         finally:
             graph.close()
 
-    def test_reclaim_stale_node_uses_unowned_terminal_run_only(self, tmp_path: Path) -> None:
-        from milknado.domains.dispatch import reclaim_stale_node
+    def test_find_terminal_runs_isolates_node_id(self, tmp_path: Path) -> None:
+        """Node scoping is the runs query's `WHERE node_id = ?`: node 1's runs must
+        not pick up node 12's terminal run. Replaces the old glob-prefix isolation
+        — the db keys runs on the integer node_id directly."""
 
-        _seed_run(
-            tmp_path,
-            run_id="node-1-20200101T000000Z-done",
-            node_id=1,
-            status="done",
-            ended_at="2020-01-01T00:00:10+00:00",
-            exit_code=0,
-        )
-        _seed_run(
-            tmp_path,
-            run_id="node-2-20200101T000000Z-done",
-            node_id=2,
-            status="done",
-            ended_at="2020-01-01T00:00:10+00:00",
-            exit_code=0,
-        )
-        graph, _cfg = open_graph(tmp_path)
-        try:
-            _ = graph._conn.execute(  # pyright: ignore[reportPrivateUsage]
-                "UPDATE nodes SET run_id = ? WHERE id = ?",
-                ("current-owner", 2),
+        root = Path(tmp_path)
+        for run_id, node_id in [
+            ("node-1-20200101T000000Z-aaaa", 1),
+            ("node-12-20200101T000000Z-bbbb", 12),
+        ]:
+            _seed_run(
+                root,
+                run_id=run_id,
+                node_id=node_id,
+                status="done",
+                ended_at="2020-01-01T00:00:10+00:00",
+                exit_code=0,
             )
-            graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
-            reclaim_stale_node(graph, 1, None)
-            reclaim_stale_node(graph, 2, None)
-            unowned = graph.get_node(1)
-            owned = graph.get_node(2)
+        graph, _cfg = open_graph(root)
+        try:
+            result = graph.runs_for_node(1)
         finally:
             graph.close()
-        assert unowned is not None
-        assert unowned.status.value == "done"
-        assert owned is not None
-        assert owned.status.value == "running"
-        assert owned.run_id == "current-owner"
+        assert [r["run_id"] for r in result] == ["node-1-20200101T000000Z-aaaa"], (
+            "node 1's query must not pick up node 12's terminal run"
+        )
+
+    def test_runs_for_node_lists_all_statuses(self, tmp_path: Path) -> None:
+        """The graph listing returns live and terminal rows without policy filters."""
+        root = Path(tmp_path)
+        _seed_run(
+            root,
+            run_id="node-5-20200101T000000Z-running",
+            node_id=5,
+            status="running",
+        )
+        _seed_run(
+            root,
+            run_id="node-5-20200101T000000Z-done",
+            node_id=5,
+            status="done",
+            ended_at="2020-01-01T00:00:10+00:00",
+            exit_code=0,
+        )
+        graph, _cfg = open_graph(root)
+        try:
+            result = graph.runs_for_node(5)
+        finally:
+            graph.close()
+        assert {run["run_id"]: run["status"] for run in result} == {
+            "node-5-20200101T000000Z-running": "running",
+            "node-5-20200101T000000Z-done": "done",
+        }
 
     def test_reconcile_node_status_is_fenced_on_run_id(self, tmp_path: Path) -> None:
         """A reconcile carrying a stale run_id must not clobber a node now RUNNING
@@ -1252,6 +1268,41 @@ class TestTodoAsyncRun:
         graph, _cfg = open_graph(Path(tmp_path))
         try:
             assert graph.latest_terminal_run(1, "missing") is None
+        finally:
+            graph.close()
+
+    def test_reclaim_stale_node_uses_unowned_terminal_run_only(self, tmp_path: Path) -> None:
+        from milknado.domains.dispatch import reclaim_stale_node
+        from milknado.domains.dispatch._runstate import now_iso
+
+        root = Path(tmp_path)
+        _seed_run(
+            root,
+            run_id="node-9-done",
+            node_id=9,
+            status="done",
+            ended_at="2020-01-01T00:00:10+00:00",
+            exit_code=0,
+        )
+        _seed_run(
+            root,
+            run_id="node-10-failed",
+            node_id=10,
+            status="failed",
+            ended_at="2020-01-01T00:00:10+00:00",
+            exit_code=1,
+        )
+        graph, _cfg = open_graph(root)
+        try:
+            reclaim_stale_node(graph, 9, fence_run_id=None)
+            unowned = graph.get_node(9)
+            assert unowned is not None and unowned.status.value == "done"
+
+            graph.mark_pending(10)
+            assert graph.claim_node(10, "owner", now=now_iso())
+            reclaim_stale_node(graph, 10, fence_run_id=None)
+            owned = graph.get_node(10)
+            assert owned is not None and owned.status.value == "running"
         finally:
             graph.close()
 

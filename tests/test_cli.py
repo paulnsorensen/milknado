@@ -2134,7 +2134,6 @@ def test_run_cli_reports_detached_head_refusal(
     from milknado.domains.common import default_config
 
     cfg = default_config(tmp_path)
-
     monkeypatch.setattr(cli_run, "_load_or_default", lambda _root: (cfg, None))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
     monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda _root: "HEAD")  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
 

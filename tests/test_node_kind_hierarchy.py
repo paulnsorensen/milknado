@@ -151,6 +151,7 @@ class TestRunStartRefusal:
         with (
             patch("milknado.adapters.GitAdapter.current_branch", return_value="feature"),
             patch("milknado.mcp.run.open_graph") as mock_open,
+            patch("milknado.app.run.resolve_feature_branch", return_value="feature"),
         ):
             import milknado.domains.common.config as cfg_mod
 

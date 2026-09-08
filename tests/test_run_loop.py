@@ -209,6 +209,10 @@ class FakeGit:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        _ = worktree
+        return None
+
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         self.removed.append(path)
         _ = target
@@ -2284,8 +2288,8 @@ class TestHandleCompletionTimeout:
         from milknado.domains.common.errors import CompletionTimeout
 
         executor = MagicMock()
+        executor.stop_run = MagicMock(return_value=False)
         ralph = FakeRalph()
-        ralph.stop_run = MagicMock(return_value=False)
         loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
         _set_attr(loop, "_active", {"run-1": 7})
 
@@ -2296,7 +2300,7 @@ class TestHandleCompletionTimeout:
         assert failed == 0
         assert _active(loop) == {"run-1": 7}
         _mock_attr(executor, "fail").assert_not_called()
-        _mock_attr(ralph, "stop_run").assert_called_once_with("run-1", timeout=10.0)
+        _mock_attr(executor, "stop_run").assert_called_once_with("run-1", timeout=10.0)
 
 
 class TestVerifySpecGapsPath:

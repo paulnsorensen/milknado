@@ -37,10 +37,10 @@ from milknado.domains.execution.executor import ExecutionConfig, Executor, Workt
 from milknado.domains.graph import MikadoGraph
 
 _EXCLUDE_LOOP_SCAFFOLDING = cast(
-    Callable[[Path], None], attrgetter("_exclude_loop_scaffolding")(_executor_module)
+    Callable[[Path | None], None], attrgetter("_exclude_loop_scaffolding")(_executor_module)
 )
 _PRESERVE_RUN_LOGS = cast(
-    Callable[[Path, int], None], attrgetter("_preserve_run_logs")(_executor_module)
+    Callable[[Path | None, Path, int], None], attrgetter("_preserve_run_logs")(_executor_module)
 )
 
 
@@ -115,7 +115,7 @@ class TestMergeBackIntegration:
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
         _ = git.create_worktree(wt, branch)
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
@@ -142,7 +142,7 @@ class TestMergeBackIntegration:
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
         _ = git.create_worktree(wt, branch)
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
@@ -166,7 +166,7 @@ class TestMergeBackIntegration:
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
         _ = git.create_worktree(wt, branch)
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
         _worker_did_work(wt)
 
         graph = MikadoGraph(tmp_path / "g.db")
@@ -191,7 +191,7 @@ class TestMergeBackIntegration:
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
         _ = git.create_worktree(wt, branch)
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
         _worker_did_work(wt)
         (wt / "addons").symlink_to("worker-addons")
         _ = _git(wt, "add", "addons")
@@ -305,7 +305,7 @@ class TestExcludeLoopScaffolding:
         git = GitAdapter(project)
         wt = project / "milknado-1-x"
         _ = git.create_worktree(wt, "milknado/1-x")
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
 
         common = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -322,8 +322,8 @@ class TestExcludeLoopScaffolding:
         git = GitAdapter(project)
         wt = project / "milknado-1-x"
         _ = git.create_worktree(wt, "milknado/1-x")
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
 
         common = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -340,7 +340,7 @@ class TestExcludeLoopScaffolding:
         """A test double's bare path is not a git checkout — must not raise."""
         bogus = tmp_path / "not-a-worktree"
         bogus.mkdir()
-        _EXCLUDE_LOOP_SCAFFOLDING(bogus)  # no exception
+        _EXCLUDE_LOOP_SCAFFOLDING(None)  # no exception
 
     def test_exclude_file_io_error_is_logged_not_raised(self, project: Path) -> None:
         """A real git checkout whose `info/exclude` cannot be written (here: it is a
@@ -360,14 +360,14 @@ class TestExcludeLoopScaffolding:
         if exclude.exists():
             exclude.unlink()
         exclude.mkdir()  # now read_text/write_text on a dir path raise OSError
-        _EXCLUDE_LOOP_SCAFFOLDING(wt)  # must not raise
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))  # must not raise
 
 
 class TestPreserveRunLogs:
     def test_no_logs_is_noop(self, tmp_path: Path) -> None:
         wt = tmp_path / "proj" / "wt"
         wt.mkdir(parents=True)
-        _PRESERVE_RUN_LOGS(wt, 7)
+        _PRESERVE_RUN_LOGS(None, wt, 7)
         assert not (tmp_path / "proj" / ".milknado").exists()
 
     def test_copies_logs_tree(self, tmp_path: Path) -> None:
@@ -375,7 +375,7 @@ class TestPreserveRunLogs:
         (wt / ".ralph-logs" / "sub").mkdir(parents=True)
         _ = (wt / ".ralph-logs" / "a.log").write_text("a\n")
         _ = (wt / ".ralph-logs" / "sub" / "b.log").write_text("b\n")
-        _PRESERVE_RUN_LOGS(wt, 7)
+        _PRESERVE_RUN_LOGS(None, wt, 7)
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert (dest / "a.log").read_text() == "a\n"
         assert (dest / "sub" / "b.log").read_text() == "b\n"
@@ -389,7 +389,7 @@ class TestPreserveRunLogs:
             _ = path.write_text(f"{index}\n")
             os.utime(path, (index, index))
 
-        _PRESERVE_RUN_LOGS(wt, 7)
+        _PRESERVE_RUN_LOGS(None, wt, 7)
 
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert {path.name for path in dest.iterdir()} == {
@@ -408,7 +408,7 @@ class TestPreserveRunLogs:
         _ = git.create_worktree(wt, "milknado/1-x")
         (wt / ".ralph-logs").mkdir()
         _ = (wt / ".ralph-logs" / "run.log").write_text("nested log\n")
-        _PRESERVE_RUN_LOGS(wt, 1)
+        _PRESERVE_RUN_LOGS(git.git_common_dir(wt), wt, 1)
         # Correct: under the main checkout root.
         preserved = project / ".milknado" / "logs" / "1" / "run.log"
         assert preserved.read_text() == "nested log\n"
@@ -630,6 +630,10 @@ class _RecordingGit:
 
     def current_branch(self) -> str:
         return "feature"
+
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        _ = worktree
+        return None
 
     def squash_and_commit(self, worktree: Path, onto: str, msg: str) -> bool:
         _ = (worktree, onto, msg)

@@ -779,6 +779,10 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
         def resolve_ref(self, ref: str) -> str:
             return "base-before" if ref == "refs/heads/main" else "base-after"
 
+        def git_common_dir(self, worktree: Path) -> Path | None:
+            _ = worktree
+            return None
+
         def create_worktree(self, path: Path, _branch: str) -> None:
             path.mkdir(parents=True)
 
@@ -826,6 +830,10 @@ class TestMergeBackLock:
 
             def resolve_ref(self, ref: str) -> str:
                 return f"{ref}-oid"
+
+            def git_common_dir(self, worktree: Path) -> Path | None:
+                _ = worktree
+                return None
 
             def compare_and_swap_ref(self, _ref: str, _expected_oid: str, _new_oid: str) -> None:
                 return None
