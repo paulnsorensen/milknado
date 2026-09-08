@@ -98,6 +98,10 @@ class _RunFacade(_SubFacade):
             self._conn, node_id, verdict, findings, created_at
         )
 
+    @synchronized  # noqa: V105 - public graph sub-facade API
+    def reviews_for_node(self, node_id: int) -> list[_run_persistence.NodeReviewRecord]:
+        return _run_persistence.node_reviews_for_node(self._conn, node_id)
+
 
 class _FileFacade(_SubFacade):
     @synchronized

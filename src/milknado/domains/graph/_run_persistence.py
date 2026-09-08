@@ -46,6 +46,14 @@ class RunRecord(TypedDict):
     rebased: bool | None
 
 
+class NodeReviewRecord(TypedDict):
+    node_id: int
+    round: int
+    verdict: str
+    findings: str
+    created_at: str
+
+
 _MAX_RETAINED_RUN_MESSAGES = 1000
 _MAX_RUN_MESSAGE_BYTES = 64 * 1024
 _RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -247,6 +255,25 @@ def insert_node_review(
     if row is None:
         raise RuntimeError("node review insert returned no row")
     return cast(int, _as_tuple(row)[0])
+
+
+def node_reviews_for_node(conn: sqlite3.Connection, node_id: int) -> list[NodeReviewRecord]:
+    rows = fetchall(
+        conn,
+        "SELECT node_id, round, verdict, findings, created_at "
+        + "FROM node_reviews WHERE node_id = ? ORDER BY round",
+        (node_id,),
+    )
+    return [
+        {
+            "node_id": cast(int, values[0]),
+            "round": cast(int, values[1]),
+            "verdict": cast(str, values[2]),
+            "findings": cast(str, values[3]),
+            "created_at": cast(str, values[4]),
+        }
+        for values in (_as_tuple(row) for row in rows)
+    ]
 
 
 def latest_run_message(conn: sqlite3.Connection, run_id: str, role: str) -> str | None:

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import queue
-import sqlite3
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -60,16 +59,7 @@ from milknado.loop._events import (
 )
 from milknado.loop._run_types import RunConfig, RunState, RunStatus
 from milknado.loop.manager import ManagedRun, RunManager
-from tests.graph_helpers import graph_conn
 from tests.test_execution import FakeCrg, FakeGit
-
-
-def _node_reviews(graph: MikadoGraph, node_id: int) -> list[sqlite3.Row]:
-    return (
-        graph_conn(graph)
-        .execute("SELECT * FROM node_reviews WHERE node_id = ? ORDER BY round", (node_id,))
-        .fetchall()
-    )
 
 
 def _iteration_payload(
@@ -425,7 +415,7 @@ def test_notify_review_dual_writes_node_reviews_and_run_messages(
     _ = executor.dispatch(1, _config(tmp_path))
     _ = executor.complete(1, "main")
 
-    rows = _node_reviews(graph, 1)
+    rows = graph.runs.reviews_for_node(1)
     assert len(rows) == 1
     assert rows[0]["verdict"] == "reject"
     assert rows[0]["round"] == 1
@@ -471,7 +461,7 @@ def test_second_rejection_round_accumulates_audits_and_labels_round_2(
     second = executor.complete(1, "main")
     assert first.redispatch is not None and second.redispatch is not None
 
-    rows = _node_reviews(graph, 1)
+    rows = graph.runs.reviews_for_node(1)
     assert [r["round"] for r in rows] == [1, 2]
     assert all(r["verdict"] == "reject" for r in rows)
     assert ralph.ralph_md_calls[1]["findings_round"] == 1
@@ -805,7 +795,7 @@ def test_review_findings_write_failure_still_audits_and_blocks(
     assert result.blocked is True
     assert result.redispatch is None
     assert not git.rebases
-    rows = _node_reviews(graph, 1)
+    rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert "findings unavailable" in rows[0]["findings"]
 
@@ -1157,7 +1147,7 @@ def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: 
 
     assert result.rebased is True
     assert git.removed == [dispatched.worktree]
-    rows = _node_reviews(graph, 1)
+    rows = graph.runs.reviews_for_node(1)
     assert [(row["round"], row["verdict"]) for row in rows] == [(1, "approve")]
 
 
@@ -1219,7 +1209,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     )
 
     assert audit.audit_succeeded is True
-    assert [row["round"] for row in _node_reviews(reopened, node.id)] == [1, 2]
+    assert [row["round"] for row in reopened.runs.reviews_for_node(node.id)] == [1, 2]
     reopened.close()
 
 
@@ -1257,6 +1247,6 @@ def test_invalid_review_blocks_without_worker_revision(
     assert len(ralph.created) == 1
     assert not git.rebases
     assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
-    rows = _node_reviews(graph, 1)
+    rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"
