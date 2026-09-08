@@ -14,6 +14,7 @@ from typing import cast
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import children_id_map, row_to_node
+from milknado.domains.graph._run_persistence import RunRecord, run_row_to_dict
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 
@@ -43,6 +44,18 @@ def get_node(conn: sqlite3.Connection, node_id: int) -> MikadoNode | None:
         if claim is not None:
             return replace(node, goal_run_id=claim["run_id"])
     return node
+
+
+def latest_unowned_terminal_run(conn: sqlite3.Connection, node_id: int) -> RunRecord | None:
+    """Return the latest terminal run only when the node has no current owner."""
+    row = fetchone(
+        conn,
+        "SELECT runs.* FROM runs JOIN nodes ON nodes.id = runs.node_id "
+        + "WHERE runs.node_id = ? AND nodes.run_id IS NULL "
+        + "AND runs.status IN ('done', 'failed') ORDER BY runs.ended_at DESC LIMIT 1",
+        (node_id,),
+    )
+    return run_row_to_dict(row) if row else None
 
 
 def get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoNode]:

@@ -31,6 +31,27 @@ def _git(cwd: str | Path, *args: str) -> None:
     _ = subprocess.run(["git", *args], cwd=str(cwd), check=True, capture_output=True)
 
 
+def _seed_goal_task_repo(tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
+    _git(tmp_path, "init", "-q", "-b", "main")
+    _git(
+        tmp_path,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "--allow-empty",
+        "-qm",
+        "initial",
+    )
+    db = tmp_path / ".milknado" / "milknado.db"
+    db.parent.mkdir()
+    graph = MikadoGraph(db)
+    goal_id, task_id = _make_goal_with_task(graph)
+    graph.close()
+    return tmp_path, MikadoGraph(db), goal_id, task_id
+
+
 def _git_worktree_setup(base: Path) -> tuple[Path, Path]:
     """Create a git repo at base/main with one commit and a linked worktree at base/wt."""
     main = base / "main"
@@ -197,33 +218,8 @@ class TestClaimGoal:
 class TestDispatchRefusalUnderClaimedGoal:
     """Dispatch tools refuse a task whose ancestor goal is claimed by a DIFFERENT live run."""
 
-    def _seed(self, tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
-        """Create a graph with a goal->task tree; return (root, graph, goal_id, task_id)."""
-        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
-        _ = subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "commit",
-                "--allow-empty",
-                "-qm",
-                "initial",
-            ],
-            cwd=tmp_path,
-            check=True,
-        )
-        db = tmp_path / ".milknado" / "milknado.db"
-        db.parent.mkdir()
-        g = MikadoGraph(db)
-        goal_id, task_id = _make_goal_with_task(g)
-        g.close()
-        return tmp_path, MikadoGraph(db), goal_id, task_id
-
     def test_run_inline_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         # different live pid
         _ = graph.claim_or_reclaim_goal(goal_id, "run-A", os.getppid(), now=now_iso())
         graph.close()
@@ -239,7 +235,7 @@ class TestDispatchRefusalUnderClaimedGoal:
             )
 
     def test_run_inline_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-A", os.getppid(), now=now_iso())
         graph.close()
 
@@ -254,7 +250,7 @@ class TestDispatchRefusalUnderClaimedGoal:
             )
 
     def test_run_loop_start_refuses_task_under_claimed_goal(self, tmp_path: Path) -> None:
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-A", os.getppid(), now=now_iso())
         graph.close()
 
@@ -265,7 +261,7 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def test_dispatch_allowed_when_goal_not_claimed(self, tmp_path: Path) -> None:
         """No claimed goal → dispatch proceeds normally (kind check error, not goal error)."""
-        root, graph, _goal_id, task_id = self._seed(tmp_path)
+        root, graph, _goal_id, task_id = _seed_goal_task_repo(tmp_path)
         graph.close()
 
         from milknado.mcp.run import milknado_run_inline_start
@@ -285,7 +281,7 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def test_dispatch_allowed_after_dead_claimant_reclaim(self, tmp_path: Path) -> None:
         """Dead claimant → reclaimed → dispatch no longer blocked."""
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-coord-A", _DEAD_PID, now=now_iso())
         graph.close()
 
@@ -306,7 +302,7 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def test_same_run_id_is_allowed_to_dispatch(self, tmp_path: Path) -> None:
         """Same run_id claiming the goal is not a blocker (own coordinator)."""
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-coord-A", os.getpid(), now=now_iso())
         graph.close()
 
@@ -318,7 +314,7 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def test_same_coordinator_run_dispatches_two_siblings(self, tmp_path: Path) -> None:
         """One coordinator can dispatch both siblings under its claimed goal."""
-        _root, graph, _goal_id, first_task_id = self._seed(tmp_path)
+        _root, graph, _goal_id, first_task_id = _seed_goal_task_repo(tmp_path)
         sibling = graph.add_node("sibling", parent_id=_goal_id)
         pid = os.getpid()
 
@@ -336,7 +332,7 @@ class TestDispatchRefusalUnderClaimedGoal:
 
     def test_cross_run_dispatch_still_refused_after_sibling_fix(self, tmp_path: Path) -> None:
         """A different live coordinator is still refused after the sibling-exemption fix."""
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-coord-X", os.getpid(), now=now_iso())
         graph.close()
 
@@ -636,33 +632,9 @@ class TestProductionClaimPath:
     claim is reclaimed inline and run B proceeds.
     """
 
-    def _seed(self, tmp_path: Path) -> tuple[Path, MikadoGraph, int, int]:
-        _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
-        _ = subprocess.run(
-            [
-                "git",
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "commit",
-                "--allow-empty",
-                "-qm",
-                "initial",
-            ],
-            cwd=tmp_path,
-            check=True,
-        )
-        db = tmp_path / ".milknado" / "milknado.db"
-        db.parent.mkdir()
-        g = MikadoGraph(db)
-        goal_id, task_id = _make_goal_with_task(g)
-        g.close()
-        return tmp_path, MikadoGraph(db), goal_id, task_id
-
     def test_claim_ancestor_goal_for_dispatch_writes_claim(self, tmp_path: Path) -> None:
         """claim_ancestor_goal_for_dispatch claims the ancestor goal with the caller pid."""
-        _, graph, goal_id, task_id = self._seed(tmp_path)
+        _, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         run_id = "run-A"
         graph.claim_ancestor_goal_for_dispatch(task_id, run_id)
         goal = graph.get_node(goal_id)
@@ -681,7 +653,7 @@ class TestProductionClaimPath:
         Simulate a different coordinator by overwriting the claim's pid with a
         different live process pid after claiming.
         """
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         # Run A claims via the production helper.
         graph.claim_ancestor_goal_for_dispatch(task_id, "run-A")
         # Simulate run A running in a different (live) process so the fence blocks run B.
@@ -701,7 +673,7 @@ class TestProductionClaimPath:
 
     def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
         """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
-        root, graph, goal_id, task_id = self._seed(tmp_path)
+        root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         # Run A claims, then set a dead pid to simulate coordinator crash.
         graph.claim_ancestor_goal_for_dispatch(task_id, "run-dead")
         _force_claim_pid(graph, goal_id, "run-dead", _DEAD_PID)
@@ -733,7 +705,7 @@ class TestProductionClaimPath:
         node under an ancestor goal already held by a different live run must
         raise — the node claim never happens.
         """
-        _root, graph, goal_id, task_id = self._seed(tmp_path)
+        _root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         # Run A claims the ancestor goal.
         graph.claim_ancestor_goal_for_dispatch(task_id, "run-A")
         # Simulate run A as a different live process so the fence blocks run B.
@@ -761,7 +733,7 @@ class TestProductionClaimPath:
         from milknado.domains.dispatch._runstate import now_iso
         from milknado.domains.graph._goal_claims import claim_goal_row, get_goal_claim
 
-        _, graph, goal_id, _ = self._seed(tmp_path)
+        _, graph, goal_id, _ = _seed_goal_task_repo(tmp_path)
         pid = os.getpid()
         connection = graph._conn  # pyright: ignore[reportPrivateUsage]
         _ = claim_goal_row(connection, goal_id, "run-atomic", now_iso(), pid=pid)

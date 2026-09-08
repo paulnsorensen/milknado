@@ -466,8 +466,8 @@ def test_spawn_failure_preserves_node_persistence_exception() -> None:
     from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
 
     class Graph:
-        def finish_run(self, _run_id: str, _result: object) -> bool:
-            return True
+        def finish_run(self, _run_id: str, _result: object) -> None:
+            pass
 
         def mark_terminal(self, _node_id: int, _run_id: str, _status: object) -> bool:
             raise RuntimeError("node database unavailable")

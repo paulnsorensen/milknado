@@ -20,7 +20,13 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
-from milknado.domains.common import NodeKind, NodeStatus, RunResult, UnlandedWorkError
+from milknado.domains.common import (
+    NodeKind,
+    NodeStatus,
+    RunFenceLostError,
+    RunResult,
+    UnlandedWorkError,
+)
 from milknado.domains.dispatch import (
     ProcessPort,
     RunWindow,
@@ -28,8 +34,6 @@ from milknado.domains.dispatch import (
     ensure_tmux_ready,
     exit_code_path,
     fail_stale_running_runs,
-    find_terminal_runs_for_node,
-    latest_terminal_run,
     make_run_id,
     now_iso,
     reconcile_node_status,
@@ -79,16 +83,19 @@ def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest
     stale_worktree = Path(node.worktree_path) if node.worktree_path else None
     if node.status == NodeStatus.RUNNING:
         _ = fail_stale_running_runs(graph, request.node_id)
-        winner = latest_terminal_run(
-            find_terminal_runs_for_node(graph, request.node_id, run_id=node.run_id)
-        )
-        if winner is not None:
-            reconcile_node_status(
-                graph,
-                request.node_id,
-                winner["status"],
-                run_id=winner.get("run_id"),
-            )
+        if node.run_id is not None:
+            winner = graph.latest_terminal_run(request.node_id, node.run_id)
+            if winner is not None:
+                reconcile_node_status(
+                    graph,
+                    request.node_id,
+                    winner["status"],
+                    run_id=winner.get("run_id"),
+                )
+        else:
+            orphan = graph.latest_unowned_terminal_run(request.node_id)
+            if orphan is not None:
+                reconcile_node_status(graph, request.node_id, orphan["status"])
         _ = graph.try_reclaim(request.node_id, now=now_iso())
     run_id = make_run_id(request.node_id)
     graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
@@ -168,11 +175,10 @@ def _spawn_ralph(
 
 
 def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception) -> None:
-    run_written = False
     node_written = False
     persistence_error: Exception | None = None
     try:
-        run_written = graph.finish_run(
+        graph.finish_run(
             claim.run_id,
             RunResult(
                 status="failed",
@@ -183,26 +189,20 @@ def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception)
                 detail=f"spawn failed: {type(exc).__name__}: {exc}",
             ),
         )
+    except RunFenceLostError:
+        _logger.info("spawn failure run already finalized: %s", claim.run_id)
     except Exception as error:
         persistence_error = error
-        _logger.exception(
-            "spawn failure run terminal write failed: run_id=%s node_id=%d",
-            claim.run_id,
-            claim.node_id,
-        )
+        _logger.exception("spawn failure run terminal write failed: run_id=%s", claim.run_id)
     try:
         node_written = graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
     except Exception as error:
         persistence_error = persistence_error or error
-        _logger.exception(
-            "spawn failure node terminal write failed: run_id=%s node_id=%d",
-            claim.run_id,
-            claim.node_id,
-        )
-    if run_written is False or node_written is False:
+        _logger.exception("spawn failure node terminal write failed: node_id=%d", claim.node_id)
+    if persistence_error is not None or node_written is False:
         detail = (
             f"spawn failure persistence failed: terminal writes incomplete: "
-            f"run_written={run_written} node_written={node_written}"
+            f"node_written={node_written}"
         )
         _logger.error("%s run_id=%s node_id=%d", detail, claim.run_id, claim.node_id)
         raise RuntimeError(detail) from persistence_error

@@ -50,9 +50,12 @@ def test_main_logs_terminal_event_with_run_id(
         def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish_run(self, run_id: str, result: object) -> bool:
+        def finish_run(self, run_id: str, result: object) -> None:
             self.finished = {"run_id": run_id, "result": result}
-            return self.finish_result
+            if not self.finish_result:
+                from milknado.domains.graph import RunFenceLostError
+
+                raise RunFenceLostError("finish_run lost its running-row fence")
 
         def set_run_pid(self, *_args: object) -> None:
             pass
@@ -156,8 +159,10 @@ def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) 
     from milknado.mcp import _ralph_node_runner
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return False
+        def finish_run(self, *_args: object) -> None:
+            from milknado.domains.graph import RunFenceLostError
+
+            raise RunFenceLostError("finish_run lost its running-row fence")
 
     result = RunResult(
         status="failed",
@@ -180,7 +185,7 @@ def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) ->
     from milknado.mcp import _ralph_node_runner
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
+        def finish_run(self, *_args: object) -> None:
             raise RuntimeError("database unavailable")
 
     result = RunResult(
@@ -207,8 +212,10 @@ def test_finish_run_logs_sidecar_write_failure(
     from milknado.mcp import _ralph_node_runner
 
     class Graph:
-        def finish_run(self, *_args: object) -> bool:
-            return False
+        def finish_run(self, *_args: object) -> None:
+            from milknado.domains.graph import RunFenceLostError
+
+            raise RunFenceLostError("finish_run lost its running-row fence")
 
     class Sidecar:
         def write_text(self, *_args: object, **_kwargs: object) -> NoReturn:

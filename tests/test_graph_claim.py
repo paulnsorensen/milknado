@@ -8,6 +8,7 @@ UPDATE is the mutex; the unique `run_id` on the node row is the fence.
 
 from __future__ import annotations
 
+import logging
 import os
 
 import pytest
@@ -106,13 +107,23 @@ class TestSetPid:
         assert node is not None
         assert node.pid == 4321
 
-    def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
+    def test_is_a_noop_for_a_stale_run_id(
+        self, graph: MikadoGraph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING)
         node_id = _add_pending(graph)
         _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_pid(node_id, "run-stale", 4321)  # CAS on the fence: wrong owner
         node = graph.get_node(node_id)
         assert node is not None
         assert node.pid is None
+        assert any(
+            record.levelno == logging.WARNING
+            and isinstance(record.args, tuple)
+            and node_id in record.args
+            and "run-stale" in record.args
+            for record in caplog.records
+        )
 
 
 class TestTryReclaim:
@@ -295,10 +306,20 @@ class TestSetWorktree:
         assert node.branch_name == "milknado/1-x"
         assert node.status == NodeStatus.RUNNING, "no status transition"
 
-    def test_is_a_noop_for_a_stale_run_id(self, graph: MikadoGraph) -> None:
+    def test_is_a_noop_for_a_stale_run_id(
+        self, graph: MikadoGraph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING)
         node_id = _add_pending(graph)
         _ = graph.claim_node(node_id, "run-A", now=now_iso())
         graph.set_worktree(node_id, "run-stale", "/tmp/wt", "milknado/1-x")
         node = graph.get_node(node_id)
         assert node is not None
         assert node.worktree_path is None
+        assert any(
+            record.levelno == logging.WARNING
+            and isinstance(record.args, tuple)
+            and node_id in record.args
+            and "run-stale" in record.args
+            for record in caplog.records
+        )

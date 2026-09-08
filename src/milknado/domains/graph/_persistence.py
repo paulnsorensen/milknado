@@ -605,14 +605,16 @@ def set_pid(conn: sqlite3.Connection, node_id: int, run_id: str, pid: int) -> No
     """Record the worker pid on the node, gated on the fence (current run_id).
 
     A CAS on the owning run_id: if the node has since been reclaimed under a new
-    run_id, the write hits zero rows and is silently dropped — the pid belongs to
-    a run that no longer owns the node, so recording it would be wrong.
+    run_id, the write hits zero rows and is dropped with a warning — the pid belongs
+    to a run that no longer owns the node, so recording it would be wrong.
     """
-    _ = conn.execute(
+    cur = conn.execute(
         "UPDATE nodes SET pid = ? WHERE id = ? AND run_id = ?",
         (pid, node_id, run_id),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        _logger.warning("set_pid dropped fenced write for node %s run %s", node_id, run_id)
 
 
 def set_worktree(
@@ -624,8 +626,10 @@ def set_worktree(
     RUNNING -> RUNNING transition, so only the worktree metadata is written, and
     only if this run still owns the node.
     """
-    _ = conn.execute(
+    cur = conn.execute(
         "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ? AND run_id = ?",
         (worktree_path, branch_name, node_id, run_id),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        _logger.warning("set_worktree dropped fenced write for node %s run %s", node_id, run_id)

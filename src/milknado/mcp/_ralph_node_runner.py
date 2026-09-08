@@ -16,14 +16,14 @@ import os
 from pathlib import Path
 from typing import Protocol, cast
 
-from milknado.domains.common import RunResult
+from milknado.domains.common import RunFenceLostError, RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
 
 _logger = logging.getLogger("milknado")
 
 
 class _RunFinisher(Protocol):
-    def finish_run(self, run_id: str, result: RunResult) -> bool: ...
+    def finish_run(self, run_id: str, result: RunResult) -> None: ...
 
 
 class _RunnerArgs(Protocol):
@@ -37,14 +37,13 @@ class _RunnerArgs(Protocol):
 
 def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bool:
     try:
-        finish_run = cast(_RunFinisher, graph).finish_run
-        written = finish_run(run_id, result)
+        cast(_RunFinisher, graph).finish_run(run_id, result)
+    except RunFenceLostError as exc:
+        detail = str(exc)
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
     else:
-        if written is not False:
-            return True
-        detail = "finish_run lost its running-row fence"
+        return True
     _logger.error("ralph terminal persistence failed: run_id=%s detail=%s", run_id, detail)
     try:
         _ = (

@@ -265,6 +265,25 @@ def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes(
     assert received[1].active_runs[0].output == ("new line",)
 
 
+def test_controller_removes_listener_when_initial_replay_fails() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    calls = 0
+
+    def failing_listener(_snapshot: ExecutionSnapshot) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("initial replay failed")
+
+    with pytest.raises(RuntimeError, match="initial replay failed"):
+        _ = controller.subscribe(failing_listener)
+
+    loop.publish(loop_state(output=("replacement",)))
+    assert calls == 1
+
+
 def test_controller_snapshot_reads_the_latest_projected_state() -> None:
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
@@ -276,7 +295,9 @@ def test_controller_snapshot_reads_the_latest_projected_state() -> None:
     assert controller.snapshot() == snapshot(output=("replacement",))
 
 
-def test_controller_listener_failure_is_visible_to_other_listeners() -> None:
+def test_controller_listener_failure_is_visible_to_other_listeners(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
         _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
@@ -288,19 +309,32 @@ def test_controller_listener_failure_is_visible_to_other_listeners() -> None:
     def failing_listener(_snapshot: ExecutionSnapshot) -> None:
         nonlocal listener_calls
         listener_calls += 1
-        if listener_calls == 2:
-            raise RuntimeError("listener failed")
+        if listener_calls > 1:
+            raise RuntimeError(f"listener failed {listener_calls}")
 
-    _ = controller.subscribe(failing_listener)
+    def error_listener(current: ExecutionSnapshot) -> None:
+        if current.listener_errors:
+            raise RuntimeError("cannot render errors")
+
+    unsubscribe = controller.subscribe(failing_listener)
+    error_unsubscribe = controller.subscribe(error_listener)
     _ = controller.subscribe(received.append)
-    loop.publish(loop_state(output=("replacement",)))
-    loop.publish(loop_state(output=("second",)))
+    with caplog.at_level("ERROR", logger="milknado.app.run"):
+        loop.publish(loop_state(output=("replacement",)))
+        loop.publish(loop_state(output=("second",)))
 
     assert listener_calls == 3
     assert received[-1].active_runs[0].output == ("second",)
     listener_errors = received[-1].listener_errors
-    assert len(listener_errors) == 1
-    assert listener_errors[0].endswith("failing_listener: listener failed")
+    assert controller.snapshot().listener_errors == listener_errors
+    assert set(listener_errors) == {
+        f"{failing_listener.__qualname__}: listener failed {listener_calls}",
+        f"{error_listener.__qualname__}: cannot render errors",
+    }
+    assert "failed while publishing error" in caplog.text
+    unsubscribe()
+    error_unsubscribe()
+    assert controller.snapshot().listener_errors == ()
     from milknado.app.run_view import events_text
 
     rendered = events_text(received[-1].event_lines, listener_errors)
