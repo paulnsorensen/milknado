@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Thread
 from typing import Protocol, cast
@@ -47,6 +47,14 @@ def _static(app: ExecutionApp, widget_id: str) -> Static:
 
 def _plain(app: ExecutionApp, widget_id: str) -> str:
     return cast(Text, _static(app, widget_id).render()).plain
+
+
+def _confirmation(app: ExecutionApp) -> Static:
+    return app.screen.query_one("#confirmation-overlay", Static)
+
+
+def _confirmation_text(app: ExecutionApp) -> str:
+    return cast(Text, _confirmation(app).render()).plain
 
 
 def _output(app: ExecutionApp) -> VerticalScroll:
@@ -224,11 +232,199 @@ async def test_wide_view_queues_guidance_and_confirms_force_stop() -> None:
         assert controller.guidance == [("run-1", "check tests")]
         assert _input(app, "#guidance").value == ""
         app.action_force()
-        assert "Force stop run-1?" in _plain(app, "#confirmation")
+        await pilot.pause()
+        assert "Force stop run-1?" in _confirmation_text(app)
         assert controller.force_stops == []
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
         assert controller.force_stops == ["run-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
+@pytest.mark.parametrize("detail", [False, True])
+async def test_force_confirmation_is_visible_from_each_route(
+    size: tuple[int, int], detail: bool
+) -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=size) as pilot:
+        if detail and app.compact:
+            await pilot.press("enter")
+
+        app.action_force()
+        await pilot.pause()
+        confirmation = _confirmation(app)
+
+        rendered = app.export_screenshot().replace("&#160;", " ")
+        assert "Force stop run-1?" in rendered
+        assert "[n/Esc] cancel" in rendered
+        assert app.screen.region.contains_region(confirmation.region)
+
+        await pilot.press("y")
+        await _wait_for_workers(app).wait_for_complete()
+        assert controller.force_stops == ["run-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_key", ["n", "escape"])
+@pytest.mark.parametrize("detail", [False, True])
+async def test_force_confirmation_cancel_restores_view_and_focus(
+    cancel_key: str, detail: bool
+) -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(40, 15)) as pilot:
+        if detail:
+            await pilot.press("enter")
+            focus_target = _input(app, "#guidance")
+        else:
+            focus_target = _runs(app)
+        _ = focus_target.focus()
+        await pilot.pause()
+        selected = app.selected_run_id
+        route = app.route
+
+        app.action_force()
+        await pilot.press(cancel_key)
+
+        assert not app.screen.is_modal
+        assert controller.force_stops == []
+        assert app.selected_run_id == selected
+        assert app.route == route
+        assert app.screen.focused is focus_target
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
+async def test_quit_confirmation_is_visible_at_supported_sizes(
+    size: tuple[int, int],
+) -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("q")
+        app.show_snapshot(snapshot(event_lines=("heartbeat",)))
+        await pilot.pause()
+        confirmation = _confirmation(app)
+
+        assert confirmation.has_class("visible")
+        assert confirmation.display is True
+        assert "1 active run" in _confirmation_text(app)
+        assert "[n/Esc] cancel" in _confirmation_text(app)
+        assert controller.stop_requests == 0
+
+        await pilot.press("escape")
+        assert not app.screen.is_modal
+        assert controller.stop_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_quit_confirmation_follows_resize_to_compact_list() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        guidance = _input(app, "#guidance")
+        _ = guidance.focus()
+        await pilot.pause()
+        assert guidance.has_focus
+        app.action_quit_all()
+        await pilot.pause()
+        await pilot.resize_terminal(width=40, height=15)
+        confirmation = _confirmation(app)
+
+        assert app.route == "list"
+        assert confirmation.has_class("visible")
+        assert confirmation.display is True
+        assert confirmation.region.width > 0
+        assert "1 active run" in _confirmation_text(app)
+        assert controller.stop_requests == 0
+
+        await pilot.press("n")
+        assert not app.screen.is_modal
+        assert app.route == "detail"
+        assert guidance.has_focus
+        assert controller.stop_requests == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivered", [False, True])
+@pytest.mark.parametrize(
+    ("action", "replacement"),
+    [
+        ("quit", snapshot(second=True)),
+        ("quit", replace(snapshot(), active_runs=snapshot(second=True).active_runs[1:])),
+        ("force", stopped_snapshot()),
+        (
+            "force",
+            replace(
+                snapshot(),
+                active_runs=(
+                    replace(
+                        snapshot().active_runs[0],
+                        actions=RunActionAvailability(force_stop_reason="Unavailable"),
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+async def test_confirmation_rejects_changed_consent(
+    action: str, replacement: ExecutionSnapshot, delivered: bool
+) -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("q" if action == "quit" else "f")
+        controller.initial_snapshot = replacement
+        if delivered:
+            app.show_snapshot(replacement)
+        await pilot.pause()
+        assert app.screen.is_modal is not delivered
+        await pilot.press("y")
+        await _wait_for_workers(app).wait_for_complete()
+        assert not app.screen.is_modal
+        assert controller.stop_requests == 0
+        assert controller.force_stops == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["force", "quit"])
+async def test_confirmation_blocks_pointer_access_to_guidance(action: str) -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+    async with app.run_test(size=(120, 40)) as pilot:
+        guidance = _input(app, "#guidance")
+        point = (guidance.region.x + 2, guidance.region.y + 1)
+        await pilot.press("q" if action == "quit" else "f")
+        _ = await pilot.click(offset=point)
+        await pilot.press("d", "r", "a", "f", "t")
+        assert app.screen.is_modal
+        assert not guidance.has_focus
+        assert guidance.value == ""
+        assert controller.force_stops == []
+        assert controller.stop_requests == 0
+        assert controller.cancellations == []
+        await pilot.press("n")
+        assert not app.screen.is_modal
+
+
+@pytest.mark.asyncio
+async def test_guidance_shortcut_opens_compact_detail() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+    async with app.run_test(size=(40, 15)) as pilot:
+        await pilot.press("g")
+        guidance = _input(app, "#guidance")
+        assert app.route == "detail"
+        assert guidance.has_focus
+        assert app.screen.region.contains_region(guidance.region)
+        await pilot.press("y", "n", "j", "k")
+        assert guidance.value == "ynjk"
 
 
 @pytest.mark.asyncio
@@ -266,12 +462,10 @@ async def test_help_and_quit_confirmation_only_show_current_actions() -> None:
 
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.press("h")
-        assert "g queue guidance" in _plain(app, "#help")
-        assert "f force stop" in _plain(app, "#help")
+        assert "g queue guidance" in _plain(app, "#help-overlay")
+        assert "f force stop" in _plain(app, "#help-overlay")
         await pilot.press("escape", "q")
-        assert "Stop scheduling and gracefully stop 1 active run?" in (
-            _plain(app, "#confirmation")
-        )
+        assert "Stop scheduling and gracefully stop 1 active run?" in (_confirmation_text(app))
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
         assert controller.stop_requests == 1
@@ -450,6 +644,78 @@ async def test_quit_stops_future_scheduling_before_waiting_for_run_result() -> N
 
 
 @pytest.mark.asyncio
+async def test_compact_help_overlay_is_visible_and_escape_preserves_state() -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot(second=True)))
+
+    async with app.run_test(size=(40, 15)) as pilot:
+        await pilot.pause()
+        focused_id = app.screen.focused.id if app.screen.focused is not None else None
+        await pilot.press("h")
+
+        overlay = _static(app, "#help-overlay")
+        assert overlay.has_class("visible")
+        assert "Help" in app.export_screenshot().replace("&#160;", " ")
+        assert app.screen.region.contains_region(overlay.region)
+        assert app.query_one("#detail").display is False
+
+        route = app.route
+        selected = app.selected_run_id
+        auto_follow = app.auto_follow
+        await pilot.press("escape")
+
+        assert not overlay.has_class("visible")
+        assert app.route == route
+        assert app.selected_run_id == selected
+        assert app.auto_follow is auto_follow
+        assert app.screen.focused is not None
+        assert app.screen.focused.id == focused_id
+        await pilot.press("enter")
+        detail_focused_id = getattr(app.screen.focused, "id", None)
+        await pilot.press("f1")
+        assert app.route == "detail"
+        assert "escape back" in cast(Text, overlay.render()).plain
+
+        await pilot.press("escape")
+        assert not overlay.has_class("visible")
+        assert app.route == "detail"
+        assert app.selected_run_id == selected
+        assert app.auto_follow is auto_follow
+        after_focus_id = getattr(app.screen.focused, "id", None)
+        assert after_focus_id == detail_focused_id
+
+
+@pytest.mark.asyncio
+async def test_help_bindings_support_alias_navigation_without_stealing_guidance_text() -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot(second=True)))
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("j")
+        assert app.selected_run_id == "run-2"
+        await pilot.press("k")
+        assert app.selected_run_id == "run-1"
+
+        guidance = _input(app, "#guidance")
+        _ = guidance.focus()
+        await pilot.press("j", "k")
+
+        assert guidance.value == "jk"
+        assert app.selected_run_id == "run-1"
+
+
+@pytest.mark.asyncio
+async def test_narrow_footer_keeps_help_quit_and_open_discoverable() -> None:
+    app = _execution_app(FakeController())
+
+    async with app.run_test(size=(40, 15)) as pilot:
+        await pilot.pause()
+        rendered = app.export_screenshot().replace("&#160;", " ")
+
+        assert "Help" in rendered
+        assert "Quit" in rendered
+        assert "Open" in rendered
+
+
+@pytest.mark.asyncio
 async def test_quit_waits_for_an_in_flight_execution_without_active_runs() -> None:
 
     controller = FakeController(
@@ -474,9 +740,7 @@ async def test_quit_waits_for_an_in_flight_execution_without_active_runs() -> No
         setattr(app, worker_attr, InFlightWorker())
         await pilot.press("q")
 
-        assert "Stop scheduling and gracefully stop 0 active runs?" in (
-            _plain(app, "#confirmation")
-        )
+        assert "Stop scheduling and gracefully stop 0 active runs?" in (_confirmation_text(app))
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
 

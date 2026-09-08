@@ -17,7 +17,7 @@ from typing_extensions import override
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_panels import RunDetailPanel, RunListPanel
 from milknado.app.run_source import ExecutionSnapshotSource
-from milknado.app.run_view import events_text, subtitle_text
+from milknado.app.run_view import events_text, help_text, subtitle_text
 from milknado.domains.execution import RunLoopResult
 
 if TYPE_CHECKING:
@@ -27,13 +27,47 @@ WIDE_MIN_COLUMNS = 116
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
 
+class _RunFooter(Footer):
+    """Keep the compact open action visible despite DataTable's Enter binding."""
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield from super().compose()
+        yield Static("Enter Open", id="open-hint", markup=False)
+
+
 class ExecutionSnapshotApp(App[RunLoopResult | None]):
     """Responsive presentation that depends only on immutable snapshots."""
 
     CSS: ClassVar[str] = """
-    #workspace { height: 1fr; }
-    #events { height: auto; max-height: 25%; margin: 0 1; border: round $secondary; }
-    .visible { display: block; }
+    Screen { layers: base overlay; }
+    #workspace { height: 1fr; layer: base; }
+    #events { height: auto; max-height: 25%; margin: 0 1; border: round $secondary; layer: base; }
+    Footer { layer: base; }
+    #open-hint {
+        display: none;
+        dock: right;
+        width: auto;
+        height: 1;
+        padding: 0 1;
+        background: $footer-background;
+    }
+    .compact #open-hint { display: block; }
+    #help-overlay {
+        display: none;
+        position: absolute;
+        offset: 0 1;
+        margin: 0 1;
+        width: 1fr;
+        max-height: 1fr;
+        padding: 1 2;
+        border: round $accent;
+        background: $surface;
+        layer: overlay;
+        overflow-y: auto;
+    }
+    #help-overlay.visible { display: block; }
+    #detail #help { display: none; }
     .compact #workspace { display: block; }
     .compact #totals { display: block; }
     .compact #run-panel { width: 1fr; }
@@ -41,13 +75,17 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     .compact.detail #run-panel { display: none; }
     """
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
+        ("?", "help", "Help"),
+        ("q", "quit_all", "Quit"),
+        ("enter", "open_detail", "Open"),
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),
-        ("enter", "open_detail", "Open selected run"),
+        ("j", "next_run", "Next run"),
+        ("k", "previous_run", "Previous run"),
         ("escape", "back", "Back"),
         ("r", "resume_output", "Resume output"),
+        ("f1", "help", "Help"),
         ("h", "help", "Help"),
-        ("q", "quit_all", "Quit"),
     ]
     title: Reactive[str]
     sub_title: Reactive[str]
@@ -71,7 +109,8 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
             yield RunListPanel(id="run-panel")
             yield RunDetailPanel(id="detail")
         yield Static(id="events", markup=False)
-        yield Footer()
+        yield Static(id="help-overlay", markup=False)
+        yield _RunFooter()
 
     def on_mount(self) -> None:
         self._ui_thread_id = get_ident()
@@ -128,9 +167,15 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         )
         self.query_one("#detail", RunDetailPanel).update(
             self._selected_run(),
-            compact=self.compact,
-            route=self.route,
             auto_follow=self.auto_follow,
+        )
+        self.query_one("#help-overlay", Static).update(
+            help_text(
+                self._selected_run(),
+                compact=self.compact,
+                route=self.route,
+                auto_follow=self.auto_follow,
+            )
         )
         self.query_one("#events", Static).update(
             events_text(self.snapshot.event_lines, self.snapshot.listener_errors)
@@ -158,6 +203,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         if self.compact:
             self.route = "detail"
             self._set_layout(True)
+            self._refresh_view()
 
     def action_previous_run(self) -> None:
         self._move_selection(-1)
@@ -176,21 +222,25 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         if self.compact and self._selected_run() is not None:
             self.route = "detail"
             self._set_layout(True)
+            self._refresh_view()
 
     @override
     async def action_back(self) -> None:
+        help_overlay = self.query_one("#help-overlay", Static)
+        if help_overlay.has_class("visible"):
+            _ = help_overlay.remove_class("visible")
+            return
         if self.compact and self.route == "detail":
             self.route = "list"
             self._set_layout(True)
-        else:
-            _ = self.query_one("#help", Static).remove_class("visible")
+            self._refresh_view()
 
     def action_resume_output(self) -> None:
         self.auto_follow = True
         self._refresh_view()
 
     def action_help(self) -> None:
-        _ = self.query_one("#help", Static).toggle_class("visible")
+        _ = self.query_one("#help-overlay", Static).toggle_class("visible")
 
     def action_quit_all(self) -> None:
         self.exit()

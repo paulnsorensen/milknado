@@ -3,13 +3,21 @@ from __future__ import annotations
 import inspect
 from dataclasses import replace
 from pathlib import Path
-from typing import get_type_hints
+from typing import cast, get_type_hints
 from unittest.mock import patch
 
 import pytest
+from rich.text import Text
+from textual.widgets import Static
 
 import milknado.app.watch_tui as watch_tui
-from milknado.app.run import ExecutionController, ExecutionSnapshot
+from milknado.app.run import (
+    ActiveRunSnapshot,
+    ExecutionController,
+    ExecutionRunStatus,
+    ExecutionSnapshot,
+    RunActionAvailability,
+)
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
@@ -48,19 +56,8 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         app.poll()
         assert app.title == "Refreshed goal"
         assert app.sub_title.endswith("2 available")
-        bindings = [binding for binding in app.BINDINGS if isinstance(binding, tuple)]
-        assert [binding[:3] for binding in bindings] == [
-            ("up", "previous_run", "Previous run"),
-            ("down", "next_run", "Next run"),
-            ("enter", "open_detail", "Open selected run"),
-            ("escape", "back", "Back"),
-            ("r", "resume_output", "Resume output"),
-            ("h", "help", "Help"),
-            ("q", "quit_all", "Quit"),
-        ]
-        assert {binding[1] for binding in bindings}.isdisjoint(
-            {"focus_guidance", "cancel", "force"}
-        )
+        actions = {active.binding.action for active in app.screen.active_bindings.values()}
+        assert actions.isdisjoint({"focus_guidance", "cancel", "force"})
 
 
 def test_watch_quit_exits_without_controlling_the_observed_run() -> None:
@@ -97,3 +94,35 @@ def test_snapshot_view_has_no_execution_controller_contract() -> None:
     assert get_type_hints(ExecutionApp.__init__)["controller"] is ExecutionController
     controller = watch_tui._WatchController  # pyright: ignore[reportPrivateUsage] -- exercising the read-only adapter's Protocol shape directly
     assert list(inspect.signature(controller.subscribe).parameters) == ["listener"]
+
+
+@pytest.mark.asyncio
+async def test_watch_help_overlay_is_visible_and_excludes_operator_actions() -> None:
+    active = ActiveRunSnapshot(
+        run_id="watch-active",
+        node_id=1,
+        description="Observed run",
+        status=ExecutionRunStatus.RUNNING,
+        progress="Working",
+        stop_requested=False,
+        actions=RunActionAvailability("Read-only", "Read-only", "Read-only"),
+        output=(),
+        pending_guidance=None,
+        elapsed_seconds=0.0,
+        progress_pct=None,
+        eta_seconds=None,
+        attempt=1,
+        max_attempts=1,
+        stalled=False,
+    )
+    app = watch_tui.WatchApp(FakeSource(replace(snapshot(), active_runs=(active,))))
+
+    async with app.run_test(size=(40, 15)) as pilot:
+        await pilot.pause()
+        await pilot.press("f1")
+
+        overlay = app.query_one("#help-overlay", Static)
+        assert overlay.has_class("visible")
+        assert "Help" in app.export_screenshot().replace("&#160;", " ")
+        help_text = cast(Text, overlay.render()).plain
+        assert all(label not in help_text for label in ("g queue guidance", "c cancel", "f force"))

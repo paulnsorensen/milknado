@@ -41,13 +41,17 @@ class WatchApp(ExecutionSnapshotApp):
     """Read-only execution view refreshed from durable state."""
 
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
+        ("?", "help", "Help"),
+        ("q", "quit_all", "Quit"),
+        ("enter", "open_detail", "Open"),
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),
-        ("enter", "open_detail", "Open selected run"),
+        ("j", "next_run", "Next run"),
+        ("k", "previous_run", "Previous run"),
         ("escape", "back", "Back"),
         ("r", "resume_output", "Resume output"),
+        ("f1", "help", "Help"),
         ("h", "help", "Help"),
-        ("q", "quit_all", "Quit"),
     ]
 
     def __init__(

@@ -113,8 +113,8 @@ def actions_text(run: RunSnapshot | None) -> str:
 
 
 def help_text(run: RunSnapshot | None, *, compact: bool, route: str, auto_follow: bool) -> str:
-    actions = ["↑/↓ select", "h close help", "q quit"]
-    if compact:
+    actions = ["↑/↓ or j/k select", "?/F1/h toggle help", "q quit"]
+    if compact and run is not None:
         actions.append("enter open" if route == "list" else "escape back")
     if isinstance(run, ActiveRunSnapshot):
         if run.actions.can_queue_guidance:
@@ -125,7 +125,7 @@ def help_text(run: RunSnapshot | None, *, compact: bool, route: str, auto_follow
             actions.append("f force stop")
     if not auto_follow:
         actions.append("r resume output")
-    return "Help\n" + " · ".join(actions)
+    return "Help\n" + "\n".join(actions)
 
 
 def output_border_title(*, auto_follow: bool) -> str:
@@ -165,8 +165,9 @@ def run_index(runs: tuple[RunSnapshot, ...], selected_run_id: str | None) -> int
 
 def confirmation_text(action: str, run_id: str | None, active_run_count: int) -> str:
     if action == "force":
-        return f"Force stop {run_id}? [y] confirm [n] cancel"
+        return f"Force stop {run_id}? [y] confirm [n/Esc] cancel"
     label = "active run" if active_run_count == 1 else "active runs"
     return (
-        f"Stop scheduling and gracefully stop {active_run_count} {label}? [y] confirm [n] cancel"
+        f"Stop scheduling and gracefully stop {active_run_count} {label}? "
+        "[y] confirm [n/Esc] cancel"
     )
