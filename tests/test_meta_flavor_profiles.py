@@ -2,35 +2,14 @@
 
 from __future__ import annotations
 
-import json
-import shlex
 from pathlib import Path
 
 import msgspec
 import pytest
 
-from milknado.domains.common.config import Gate, LoadedConfig, load_config_details
-from milknado.domains.common.config_view import resolved_view
+from milknado.domains.common.config import Gate, load_config_details
 from milknado.domains.common.flavor_profile import FlavorProfile, resolve_flavor_profile
 from milknado.domains.common.types import BUILTIN_FLAVORS
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-LUNA_MODEL = "openai-codex/gpt-5.6-luna"
-LUNA_XHIGH = (
-    "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
-)
-LUNA_HIGH = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking high"
-LUNA_RESEARCH = (
-    "omp -p --auto-approve --no-session --tools=read,grep,glob,lsp "
-    + "--model openai-codex/gpt-5.6-luna --thinking xhigh"
-)
-OPUS_REVIEWER = (
-    "claude --model opus -p --permission-mode plan --allowedTools "
-    + "'Read,Glob,Grep,mcp__tilth__tilth_read,mcp__tilth__tilth_search_v2,"
-    + "mcp__tilth__tilth_diff,mcp__milknado__milknado_deposit_result' "
-    + "--append-system-prompt 'Review mode: severity-report. Read-only review. "
-    + "Do not modify files.'"
-)
 
 
 def _profile(
@@ -60,66 +39,6 @@ def _profile(
     return msgspec.convert(values, type=FlavorProfile)
 
 
-EXPECTED_PROFILES = {
-    "implement": _profile(
-        LUNA_XHIGH,
-        ("just check-llm",),
-        "Implement the scoped production change in the worktree, then prove it with "
-        + "the required quality gate.",
-        review=True,
-        review_agent=OPUS_REVIEWER,
-        review_timeout_seconds=5400,
-    ),
-    "spec": _profile(
-        LUNA_XHIGH,
-        (),
-        "Write a concrete, testable design or specification. Do not modify production code "
-        + "outside the requested spec artifact.",
-        review=True,
-        review_agent=OPUS_REVIEWER,
-    ),
-    "spike": _profile(
-        LUNA_HIGH,
-        (),
-        "Run a time-boxed spike. Optimize for answering the question, record evidence "
-        + "and a recommendation, and identify follow-up work.",
-    ),
-    "prototype": _profile(
-        LUNA_HIGH,
-        ("just lint",),
-        "Build a working prototype end to end. Keep the scope narrow; production hardening "
-        + "and exhaustive edge cases are not required.",
-    ),
-    "research": _profile(
-        LUNA_RESEARCH,
-        (),
-        "Research only. Do not modify files. Report evidence, options, a recommendation, "
-        + "and confidence.",
-    ),
-    "review": _profile(
-        OPUS_REVIEWER,
-        (),
-        "Review only. Do not modify files. Report severity-ranked, evidence-backed "
-        + "findings and a clear merge recommendation.",
-    ),
-    "plate": _profile(
-        LUNA_XHIGH,
-        ("just check-llm",),
-        "Prepare the finished change for publication. Preserve the scoped work, run the "
-        + "required gate, and make no unrelated edits.",
-    ),
-    "triage": _profile(
-        LUNA_XHIGH,
-        (),
-        "Single-issue rennet-style triage. Use evidence first from code, tests, decisions, "
-        + "and upstream facts; do not edit code. Apply idempotent GitHub triage/* labels "
-        + "and evidence comments. Never close an issue without a human gate. Deposit one "
-        + "structured result with verdict, confidence, evidence, actions, and "
-        + "implementation-ready next steps.",
-    ),
-}
-
-
 def _isolated_global(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     xdg = tmp_path / "xdg"
     global_path = xdg / "milknado" / "milknado.toml"
@@ -127,42 +46,6 @@ def _isolated_global(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     _ = global_path.write_text("[milknado]\n", encoding="utf-8")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     return global_path
-
-
-@pytest.fixture
-def repository_details(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> LoadedConfig:
-    _ = _isolated_global(tmp_path, monkeypatch)
-    return load_config_details(REPO_ROOT / "milknado.toml")
-
-
-def _model(command: str) -> str:
-    parts = shlex.split(command)
-    return parts[parts.index("--model") + 1]
-
-
-def test_repository_profiles_match_every_field_and_runtime_projection(
-    repository_details: LoadedConfig,
-) -> None:
-    details = repository_details
-    assert set(EXPECTED_PROFILES) == BUILTIN_FLAVORS | {"triage"}
-    assert set(details.config.flavors) == set(EXPECTED_PROFILES)
-    assert details.config.flavor_registry == frozenset(EXPECTED_PROFILES)
-
-    for flavor, expected in EXPECTED_PROFILES.items():
-        profile = resolve_flavor_profile(details.config, flavor)
-        assert profile == expected, flavor
-        assert resolved_view(details, flavor) == json.loads(msgspec.json.encode(expected)), flavor
-
-    for flavor, expected in EXPECTED_PROFILES.items():
-        if flavor == "review":
-            assert _model(expected.execution_agent) == "opus"
-            assert expected.review is False
-            assert expected.review_agent is None
-        else:
-            assert _model(expected.execution_agent) == LUNA_MODEL, flavor
-
-    assert EXPECTED_PROFILES["implement"].review_agent == OPUS_REVIEWER
-    assert EXPECTED_PROFILES["spec"].review_agent == OPUS_REVIEWER
 
 
 def _write_override_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

@@ -13,13 +13,13 @@ worker_agent_type = "milknado:milknado-worker"
 
 [milknado.flavor.implement]
 execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
-review_agent = "claude --model opus -p --permission-mode plan --allowedTools 'Read,Glob,Grep,mcp__tilth__tilth_read,mcp__tilth__tilth_search_v2,mcp__tilth__tilth_diff,mcp__milknado__milknado_deposit_result' --append-system-prompt 'Review mode: severity-report. Read-only review. Do not modify files.'"
+review_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-sol --thinking medium"
 review_timeout_seconds = 5400
 brief_prepend = "Implement the scoped production change in the worktree, then prove it with the required quality gate."
 
 [milknado.flavor.spec]
 execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking xhigh"
-review_agent = "claude --model opus -p --permission-mode plan --allowedTools 'Read,Glob,Grep,mcp__tilth__tilth_read,mcp__tilth__tilth_search_v2,mcp__tilth__tilth_diff,mcp__milknado__milknado_deposit_result' --append-system-prompt 'Review mode: severity-report. Read-only review. Do not modify files.'"
+review_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-sol --thinking medium"
 quality_gates = []
 brief_prepend = "Write a concrete, testable design or specification. Do not modify production code outside the requested spec artifact."
 
@@ -39,7 +39,7 @@ quality_gates = []
 brief_prepend = "Research only. Do not modify files. Report evidence, options, a recommendation, and confidence."
 
 [milknado.flavor.review]
-execution_agent = "claude --model opus -p --permission-mode plan --allowedTools 'Read,Glob,Grep,mcp__tilth__tilth_read,mcp__tilth__tilth_search_v2,mcp__tilth__tilth_diff,mcp__milknado__milknado_deposit_result' --append-system-prompt 'Review mode: severity-report. Read-only review. Do not modify files.'"
+execution_agent = "omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-sol --thinking medium"
 quality_gates = []
 brief_prepend = "Review only. Do not modify files. Report severity-ranked, evidence-backed findings and a clear merge recommendation."
 
