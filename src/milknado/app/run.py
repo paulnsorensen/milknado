@@ -182,7 +182,7 @@ class ExecutionController:
         self._controls: Queue[_ControlRequest] = Queue()
         self._state_lock = Lock()
         self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
-        self._listener_errors: tuple[str, ...] = ()
+        self._listener_errors: dict[int, str] = {}
         self._snapshot = self._project_snapshot(loop.state())
         self._running = False
         loop.set_state_listener(self._receive_state)
@@ -243,18 +243,26 @@ class ExecutionController:
         with self._state_lock:
             self._listeners.add(listener)
             snapshot = self._snapshot
-        listener(snapshot)
+        try:
+            listener(snapshot)
+        except BaseException:
+            with self._state_lock:
+                self._listeners.discard(listener)
+            raise
 
         def unsubscribe() -> None:
             with self._state_lock:
                 self._listeners.discard(listener)
+                _ = self._listener_errors.pop(id(listener), None)
+                errors = tuple(self._listener_errors.values())
+                self._snapshot = replace(self._snapshot, listener_errors=errors)
 
         return unsubscribe
 
     def _receive_state(self, state: RunLoopState) -> None:
         snapshot = self._project_snapshot(state)
         with self._state_lock:
-            snapshot = replace(snapshot, listener_errors=self._listener_errors)
+            snapshot = replace(snapshot, listener_errors=tuple(self._listener_errors.values()))
             self._snapshot = snapshot
             listeners = tuple(self._listeners)
 
@@ -264,19 +272,16 @@ class ExecutionController:
                 listener(snapshot)
             except Exception as exc:
                 listener_name = getattr(listener, "__qualname__", type(listener).__qualname__)
-                failures.append((id(listener), f"{listener_name}: {exc}"))
+                error = f"{listener_name}: {exc}"
+                failures.append((id(listener), error))
+                _logger.exception("execution snapshot listener failed: %s", error)
         if not failures:
             return
 
         with self._state_lock:
-            errors = list(self._listener_errors)
-            for _, error in failures:
-                if error not in errors:
-                    errors.append(error)
-            self._listener_errors = tuple(errors)
-            visible = replace(self._snapshot, listener_errors=self._listener_errors)
-        for _, error in failures:
-            _logger.error("execution snapshot listener failed: %s", error)
+            self._listener_errors.update(failures)
+            errors = tuple(self._listener_errors.values())
+            self._snapshot = visible = replace(self._snapshot, listener_errors=errors)
 
         failed_ids = {listener_id for listener_id, _ in failures}
         for listener in listeners:
@@ -284,12 +289,11 @@ class ExecutionController:
                 continue
             try:
                 listener(visible)
-            except Exception as exc:
+            except Exception:
                 listener_name = getattr(listener, "__qualname__", type(listener).__qualname__)
-                _logger.error(
-                    "execution snapshot listener failed while publishing error: %s: %s",
+                _logger.exception(
+                    "execution snapshot listener failed while publishing error: %s",
                     listener_name,
-                    exc,
                 )
 
     @staticmethod
@@ -514,8 +518,9 @@ def _git_for_inline_dispatch(
     git = GitAdapter(root)
     try:
         branch = git.current_branch()
-    except GitOperationError:
-        if request.worktree is not WorktreeMode.THIS_BRANCH:
+    except GitOperationError as exc:
+        non_repository = "not a git repository" in exc.detail.lower()
+        if request.worktree is not WorktreeMode.THIS_BRANCH or not non_repository:
             raise
     else:
         ensure_dispatch_allowed(cfg, branch, allow_protected)

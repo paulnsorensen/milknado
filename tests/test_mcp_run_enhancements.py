@@ -323,7 +323,6 @@ class TestProtectedDispatch:
     def test_inline_shared_checkout_allows_non_git_root(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import milknado.domains.dispatch as dispatch
         from milknado.adapters import GitAdapter
         from milknado.domains.common import GitOperationError
 
@@ -332,14 +331,14 @@ class TestProtectedDispatch:
         )
 
         def no_git_branch(_adapter: GitAdapter) -> str:
-            raise GitOperationError("rev-parse", "not a repository")
+            raise GitOperationError("rev-parse", "fatal: not a git repository")
 
         monkeypatch.setattr(GitAdapter, "current_branch", no_git_branch)
 
         def fake_dispatch(*_args: object) -> dict[str, object]:
             return {"node_id": task["id"], "status": "done"}
 
-        monkeypatch.setattr(dispatch, "dispatch_node_sync", fake_dispatch)
+        monkeypatch.setattr("milknado.domains.dispatch.dispatch_node_sync", fake_dispatch)
         fn = cast(
             Callable[..., _CallResult], getattr(milknado_run_inline, "fn", milknado_run_inline)
         )
@@ -351,6 +350,29 @@ class TestProtectedDispatch:
             allow_protected=False,
         )
         assert result["status"] == "done"
+
+    def test_inline_shared_checkout_propagates_other_git_failures(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from milknado.adapters import GitAdapter
+        from milknado.domains.common import GitOperationError
+
+        task = _call(
+            milknado_todo_add, description="broken-git", kind="task", project_root=str(tmp_path)
+        )
+
+        def denied_branch(_adapter: GitAdapter) -> str:
+            raise GitOperationError("rev-parse", "permission denied")
+
+        monkeypatch.setattr(GitAdapter, "current_branch", denied_branch)
+
+        with pytest.raises(GitOperationError, match="permission denied"):
+            _ = _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                project_root=str(tmp_path),
+                worktree=WorktreeMode.THIS_BRANCH,
+            )
 
     def test_inline_start_refuses_detached_head(self, tmp_path: Path) -> None:
         import subprocess
