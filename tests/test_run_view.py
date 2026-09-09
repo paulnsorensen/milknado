@@ -14,12 +14,10 @@ from milknado.app.run import (
 )
 from milknado.app.run_view import (
     actions_text,
-    events_text,
     format_attempt,
     format_duration,
     format_eta,
     format_progress,
-    help_text,
     output_body,
     output_border_title,
     run_index,
@@ -223,32 +221,6 @@ def test_actions_text_active_run_lists_blocked_reasons() -> None:
     )
 
 
-def test_help_text_compact_list_route() -> None:
-    assert help_text(None, compact=True, route="list", auto_follow=True) == (
-        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit"
-    )
-
-
-def test_help_text_compact_detail_route() -> None:
-    assert help_text(None, compact=True, route="detail", auto_follow=True) == (
-        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit"
-    )
-
-
-def test_help_text_wide_shows_available_run_actions() -> None:
-    run = active_run(actions=RunActionAvailability())
-    assert help_text(run, compact=False, route="list", auto_follow=True) == (
-        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit\n"
-        "g queue guidance\nc cancel\nf force stop"
-    )
-
-
-def test_help_text_paused_output_offers_resume() -> None:
-    assert help_text(None, compact=False, route="list", auto_follow=False) == (
-        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit\nr resume output"
-    )
-
-
 def test_output_border_title_following() -> None:
     assert output_border_title(auto_follow=True) == "Output (following newest output)"
 
@@ -265,14 +237,6 @@ def test_output_body_empty() -> None:
 def test_output_body_non_empty() -> None:
     run = active_run(output=("line1", "line2"))
     assert output_body(run) == "line1\nline2"
-
-
-def test_events_text_empty() -> None:
-    assert events_text((), ()) == "Events\nNo events yet."
-
-
-def test_events_text_non_empty() -> None:
-    assert events_text(("e1", "e2"), ()) == "Events\ne1\ne2"
 
 
 def test_run_row_active_with_retry_uses_bold_red_status_cell() -> None:

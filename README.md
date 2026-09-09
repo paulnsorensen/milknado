@@ -96,12 +96,15 @@ Outside text fields, the execution dashboard and read-only `milknado watch` view
 - Use the arrow keys or `j`/`k` to select a run.
 - Press Enter to open the selected run in a narrow terminal.
 - Press Escape to close help or return to the run list.
+- Press `e` to focus Events. Use arrow keys or Home/End to scroll; Escape returns to the run list.
 - Press `q` to quit. The observer exits without stopping runs.
 
 Ctrl+C and Ctrl+Q also request quit, including from text fields.
 Execution quit shortcuts use the same confirmation and wait for shutdown to complete.
 
 In the execution dashboard, press `g` to open guidance for a selected, available run.
+Guidance reaches the next iteration, not the current worker prompt.
+Escape leaves the guidance field without sending or clearing its draft.
 Force-stop and active execution quit requests require confirmation.
 Press `y` to confirm or `n` or Escape to cancel.
 The prompt closes without action if its target or active run set becomes invalid.

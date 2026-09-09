@@ -112,6 +112,7 @@ def actions_text(run: RunSnapshot | None) -> str:
 
 def help_text(run: RunSnapshot | None, *, compact: bool, route: str, auto_follow: bool) -> str:
     actions = ["↑/↓ or j/k select", "?/F1/h toggle help", "q quit"]
+    actions.append("e events; ↑/↓ Home/End scroll")
     if compact and run is not None:
         actions.append("enter open" if route == "list" else "escape back")
     if isinstance(run, ActiveRunSnapshot):
@@ -137,8 +138,7 @@ def output_body(run: RunSnapshot | None) -> str:
 
 def events_text(event_lines: tuple[str, ...], listener_errors: tuple[str, ...]) -> str:
     lines = (*(f"Listener error: {error}" for error in listener_errors), *event_lines)
-    events = "\n".join(lines) or "No events yet."
-    return f"Events\n{events}"
+    return "\n".join(lines) or "No events yet."
 
 
 def run_row(run: RunSnapshot) -> tuple[str, str, Text, str, str]:
