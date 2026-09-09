@@ -1,8 +1,8 @@
 """Headless single-node ralph loop: dispatch -> wait-for-completion -> merge.
 
-The TUI-free twin of one `RunLoop` iteration. `RunLoop.run()` drives a
-`rich.live.Live` display and a keyboard-input thread, so it cannot run inside a
-headless server process or a detached subprocess. This function reuses the same
+The TUI-free twin of one `RunLoop` iteration. The application-layer presenter
+drives interactive output and keyboard input, so this function can run inside
+a headless server process or a detached subprocess. It reuses the same
 `Executor` + `LoopPort` primitives and mirrors the success/failure branching of
 `run_loop._completion.handle_completion`, but with no terminal dependency.
 """

@@ -11,7 +11,6 @@ from typing import Protocol, TypedDict, Unpack, cast
 from unittest.mock import MagicMock
 
 import pytest
-from rich.live import Live
 
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters.loop import (
@@ -111,14 +110,6 @@ class _Run:
         return self._state
 
 
-class _Console:
-    def __init__(self) -> None:
-        self.print_calls: list[tuple[object, ...]] = []
-
-    def print(self, *args: object, **_kwargs: object) -> None:
-        self.print_calls.append(args)
-
-
 def _handler_loop(result: CompletionResult) -> RunLoop:
     def _get_node(node_id: int) -> MikadoNode:
         return MikadoNode(node_id, "handler node")
@@ -145,14 +136,6 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
     )
     # The test double implements only the fields used by the completion handler.
     return cast(RunLoop, cast(object, loop))
-
-
-def _handler_live() -> tuple[Live, _Console]:
-    console = _Console()
-    live_double = SimpleNamespace(console=console)
-    # Live exposes a large concrete surface; only .console is exercised here,
-    # so a single justified cast is the narrowest honest representation.
-    return cast(Live, live_double), console  # pyright: ignore[reportInvalidCast]
 
 
 class _ReviewRalph:
@@ -1080,7 +1063,6 @@ def test_headless_follows_review_redispatch() -> None:
 
 
 def test_completion_handler_tracks_review_round_and_block_paths() -> None:
-    live, _console = _handler_live()
     redispatch = CompletionResult(
         1,
         rebased=False,
@@ -1088,18 +1070,18 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", "completed", "main", live) == (0, 0, [])
+    assert handle_completion(loop, "run-1", "completed", "main") == (0, 0, [])
     assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", "completed", "main", live)[1] == 1
+    assert handle_completion(blocked, "run-1", "completed", "main")[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = _handler_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", "completed", "main", live)[2] == [conflict]
+    assert handle_completion(failed, "run-1", "completed", "main")[2] == [conflict]
     passed = _handler_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", "completed", "main", live)[0] == 1
+    assert handle_completion(passed, "run-1", "completed", "main")[0] == 1
 
 
 def test_completion_handler_surfaces_review_notification_failure() -> None:
@@ -1110,15 +1092,12 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     """
     result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
     loop = _handler_loop(result)
-    live, console = _handler_live()
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
 
     # The node still completes normally — the notice does not change the outcome.
     assert (completed, failed, conflicts) == (1, 0, [])
     assert any("review notification failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
-    printed = " ".join(str(call) for call in console.print_calls)
-    assert "review notification failed" in printed
 
 
 def test_completion_handler_surfaces_review_audit_failure() -> None:
@@ -1126,14 +1105,11 @@ def test_completion_handler_surfaces_review_audit_failure() -> None:
         1, rebased=False, newly_ready=[], blocked=True, review_audit_failed=True
     )
     loop = _handler_loop(result)
-    live, console = _handler_live()
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
 
     assert (completed, failed, conflicts) == (0, 1, [])
     assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
-    printed = " ".join(str(call) for call in console.print_calls)
-    assert "review audit failed" in printed
 
 
 def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: Path) -> None:
