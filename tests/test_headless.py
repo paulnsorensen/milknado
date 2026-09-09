@@ -35,7 +35,8 @@ class _FakeExecutor:
         self.completed: list[int] = []
         self.cancelled: list[int] = []
         self.failed: list[int] = []
-        self.unconfirmed_stops: list[str] = []
+        self.stopped: list[str] = []
+        self.stop_result: bool = True
 
     def dispatch(
         self,
@@ -63,8 +64,10 @@ class _FakeExecutor:
     def cancel(self, node_id: int) -> None:
         self.cancelled.append(node_id)
 
-    def note_unconfirmed_stop(self, run_id: str) -> None:
-        self.unconfirmed_stops.append(run_id)
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = timeout
+        self.stopped.append(run_id)
+        return self.stop_result
 
 
 class _FakeRalph:
@@ -197,7 +200,7 @@ def test_timeout_stops_the_ralph_run() -> None:
     outcome = run_node_to_completion(ex, ralph, 10, _EXEC_CONFIG, "main", 5.0)
     assert outcome.success is False
     assert "timeout" in (outcome.detail or "")
-    assert ralph.stopped == ["run-10"], "timeout must stop the ralph run"
+    assert ex.stopped == ["run-10"], "executor must stop the ralph run"
 
 
 def test_non_completed_stops_the_ralph_run() -> None:
@@ -207,7 +210,7 @@ def test_non_completed_stops_the_ralph_run() -> None:
     ralph = _FakeRalph(outcome="failed")
     outcome = run_node_to_completion(ex, ralph, 11, _EXEC_CONFIG, "main", 30.0)
     assert outcome.success is False
-    assert ralph.stopped == ["run-11"], "non-completion must stop the ralph run"
+    assert ex.stopped == ["run-11"], "executor must stop the ralph run"
 
 
 def test_stopped_run_cancels_without_merging() -> None:
@@ -248,32 +251,28 @@ def test_progress_event_uses_remaining_completion_deadline(
 
 
 def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
-    """High: an unconfirmed stop here must register with the executor's
-    cancel watcher (note_unconfirmed_stop) — headless.py issues its own
-    stop_run outside Executor's own abort paths, so without this the row
-    would never be finalized once the wedged loop later self-exits."""
+    """An unconfirmed stop stays owned by the executor for watcher cleanup."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(timeout=True)
-    ralph.stop_result = False
+    ex.stop_result = False
 
     result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
 
     assert result.success is False
     assert result.detail == "completion timeout; worker did not exit, ownership preserved"
     assert ex.failed == []
-    assert ex.unconfirmed_stops == ["run-1"]
+    assert ex.stopped == ["run-1"]
 
 
 def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:
-    """High: same note_unconfirmed_stop registration as the timeout branch
-    above — the non-completed-run unconfirmed-stop path had the same gap."""
+    """An incomplete run uses the executor stop wrapper before returning."""
     ex = _FakeExecutor()
     ralph = _FakeRalph(outcome="failed")
-    ralph.stop_result = False
+    ex.stop_result = False
 
     result = run_node_to_completion(ex, ralph, 1, _EXEC_CONFIG, "main", 0.01)
 
     assert result.success is False
     assert result.detail == "worker run did not complete or exit; ownership preserved"
     assert ex.failed == []
-    assert ex.unconfirmed_stops == ["run-1"]
+    assert ex.stopped == ["run-1"]

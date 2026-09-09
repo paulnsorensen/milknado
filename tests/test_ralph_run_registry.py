@@ -69,7 +69,7 @@ def _executor(graph: MikadoGraph) -> Executor:
 
 
 def _run_record(graph: MikadoGraph, run_id: str) -> RunRecord:
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None
     return row
 
@@ -95,7 +95,7 @@ def test_dispatch_inserts_runs_row(graph: MikadoGraph, tmp_path: Path) -> None:
     _ = graph.add_node("registered ralph run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
 
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None, "ralph dispatch must insert a runs row"
     assert row["node_id"] == 1
     assert row["status"] == "running"
@@ -110,18 +110,18 @@ def test_verdict_message_deposit_no_longer_fk_fails(graph: MikadoGraph, tmp_path
     _ = graph.add_node("verdict target")
     result = _executor(graph).dispatch(1, _config(tmp_path))
 
-    seq = graph.deposit_run_message(
+    seq = graph.runs.deposit_message(
         result.run_id, "node_review", '{"verdict":"reject"}', "2026-07-23T00:00:00Z"
     )
     assert seq == 1
-    assert graph.latest_run_message(result.run_id, "node_review") == '{"verdict":"reject"}'
+    assert graph.runs.latest_message(result.run_id, "node_review") == '{"verdict":"reject"}'
 
 
 def test_run_list_includes_ralph_runs(graph: MikadoGraph, tmp_path: Path) -> None:
     _ = graph.add_node("listed ralph run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
 
-    listed = graph.recent_runs(50)
+    listed = graph.runs.recent(50)
     assert result.run_id in {r["run_id"] for r in listed}
 
 
@@ -130,7 +130,7 @@ def test_cancel_marks_ralph_run_row_cancelled(graph: MikadoGraph, tmp_path: Path
     row is finalized with the cancelled marker."""
     _ = graph.add_node("cancellable ralph run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
-    graph.set_run_pid(result.run_id, 424242)
+    graph.runs.set_pid(result.run_id, 424242)
     graph.set_pid(1, result.run_id, 424242)
 
     class _Process:
@@ -148,7 +148,7 @@ def test_cancel_marks_ralph_run_row_cancelled(graph: MikadoGraph, tmp_path: Path
     )
     assert final["status"] == "failed"
     assert final["error"] == "cancelled"
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["error"] == "cancelled"
 
 
@@ -186,7 +186,7 @@ def test_watcher_exits_when_run_thread_is_dead(graph: MikadoGraph, tmp_path: Pat
     if watcher is not None:  # None: it already exited — the same proof
         watcher.join(timeout=5)
         assert not watcher.is_alive(), "watcher must exit once the run thread is dead"
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["status"] == "running"
 
 
@@ -235,11 +235,11 @@ def test_watcher_retry_backoff_doubles_and_caps(
     ralph.force_stop_result = True
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        row = graph.get_run(result.run_id)
+        row = graph.runs.get(result.run_id)
         if row is not None and row["status"] != "running":
             break
         real_sleep(0.05)
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["error"] == "cancelled"
 
     # Poll-cadence sleeps are exactly _RALPH_CANCEL_POLL_SECS; only backoff
@@ -263,7 +263,7 @@ def test_completed_ralph_run_row_is_finalized(graph: MikadoGraph, tmp_path: Path
 
     _ = executor.complete(1, "main")
 
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None
     assert row["status"] == "done"
     assert row["ended_at"] is not None
@@ -280,13 +280,13 @@ def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
     Executor runs intentionally leave ``runs.pid`` NULL because their owner is
     the coordinator; cancellation must not process-kill that coordinator."""
     call_order: list[str] = []
-    orig_graph_start_run = graph.start_run
+    orig_graph_start_run = graph.runs.start
 
     def spy_graph_start_run(*a: object, **kw: object) -> object:
         call_order.append("graph")
         return cast(Callable[..., object], orig_graph_start_run)(*a, **kw)
 
-    monkeypatch.setattr(graph, "start_run", spy_graph_start_run)
+    monkeypatch.setattr(graph.runs, "start", spy_graph_start_run)
 
     ralph = FakeRalph()
     orig_ralph_start_run = ralph.start_run
@@ -303,7 +303,7 @@ def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
     result = executor.dispatch(1, config)
 
     assert call_order == ["graph", "ralph"], "the DB insert must land before the loop starts"
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None
     assert row["timeout_seconds"] == 900
     assert row["pid"] is None
@@ -317,7 +317,7 @@ def test_runs_row_insert_failure_fails_closed_and_never_starts_loop(
     never start on a failed registration."""
     _ = graph.add_node("fail-closed dispatch")
     ralph = FakeRalph()
-    monkeypatch.setattr(graph, "start_run", MagicMock(side_effect=RuntimeError("db down")))
+    monkeypatch.setattr(graph.runs, "start", MagicMock(side_effect=RuntimeError("db down")))
 
     with pytest.raises(RuntimeError, match="db down"):
         _ = _executor_with_ralph(graph, ralph).dispatch(1, _config(tmp_path))
@@ -343,7 +343,7 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     timeout = 300
     old_started = (datetime.now(UTC) - timedelta(seconds=timeout + 3600)).isoformat()
 
-    graph.start_run(run_id, 1, str(tmp_path / "pidless.log"), old_started, timeout)
+    graph.runs.start(run_id, 1, str(tmp_path / "pidless.log"), old_started, timeout)
     assert _run_record(graph, run_id)["pid"] is None
 
     flipped = fail_stale_running_runs(graph, 1)
@@ -356,7 +356,7 @@ def test_cancel_refuses_pidless_run_without_owner_without_writing_marker(
 ) -> None:
     _ = graph.add_node("pidless cancel routing")
     run_id = "node-1-20200101T000000Z-routing"
-    graph.start_run(run_id, 1, str(tmp_path / "routing.log"), "2020-01-01T00:00:00Z", 300)
+    graph.runs.start(run_id, 1, str(tmp_path / "routing.log"), "2020-01-01T00:00:00Z", 300)
 
     with pytest.raises(RuntimeError, match="no confirmed worker owner"):
         _ = cancel_run(graph, MagicMock(), MagicMock(), tmp_path, run_id)
@@ -373,7 +373,7 @@ def test_cancel_recovers_dead_coordinator_without_terminating_its_group(
     _ = graph.add_node("dead coordinator")
     run_id = "node-1-20200101T000000Z-dead"
     assert graph.claim_node(1, run_id, now="2026-01-01T00:00:00+00:00", pid=424242)
-    graph.start_run(run_id, 1, str(tmp_path / "dead.log"), "2026-01-01T00:00:00+00:00", 300)
+    graph.runs.start(run_id, 1, str(tmp_path / "dead.log"), "2026-01-01T00:00:00+00:00", 300)
 
     def _dead_pid(_pid: int) -> bool:
         return False

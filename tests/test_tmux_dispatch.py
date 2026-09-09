@@ -63,6 +63,7 @@ def _call(tool: object, **kwargs: object) -> _RunResult:
         "milknado_run_inline_start",
     ):
         _ = kwargs.setdefault("worktree", WorktreeMode.THIS_BRANCH)
+        _ = kwargs.setdefault("allow_protected", True)
     return fn(**kwargs)
 
 
@@ -259,7 +260,7 @@ def test_loop_start_use_tmux_opens_window_named_after_run_id(
     assert started["pid"] == fake.pane_pid
     graph, _cfg = open_graph(tmp_path)
     try:
-        row = graph.get_run(started["run_id"])
+        row = graph.runs.get(started["run_id"])
         assert row is not None
         assert row["pid"] == fake.pane_pid
     finally:
@@ -425,12 +426,12 @@ def test_run_cancel_of_tmux_run_inline_kills_pane_group(
     graph, _cfg = open_graph(tmp_path)
     try:
         deadline = time.monotonic() + 5.0
-        row = graph.get_run(started["run_id"])
+        row = graph.runs.get(started["run_id"])
         assert row is not None
         while row["pid"] is None:
             assert time.monotonic() < deadline, "pane pid never recorded"
             time.sleep(0.05)
-            row = graph.get_run(started["run_id"])
+            row = graph.runs.get(started["run_id"])
             assert row is not None
     finally:
         graph.close()
@@ -555,8 +556,8 @@ def test_loop_poll_does_not_reconcile_done_run_window(
     graph, _cfg = open_graph(tmp_path)
     try:
         node = graph.add_node("loop-reconcile")
-        graph.start_run(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
-        _ = graph.finish_run(
+        graph.runs.start(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
+        _ = graph.runs.finish(
             run_id,
             RunResult(
                 status="done", exit_code=0, timed_out=False, ended_at="2026-01-01T00:01:00+00:00"
@@ -592,9 +593,9 @@ def test_reconcile_run_window_never_breaks_a_poll(
 
 def _seed_run(graph: MikadoGraph, run_id: str, status: str = "running") -> None:
     node = graph.add_node("attach-target")
-    graph.start_run(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
+    graph.runs.start(run_id, node.id, f"/tmp/{run_id}.log", "2026-01-01T00:00:00+00:00", 60)
     if status != "running":
-        _ = graph.finish_run(
+        _ = graph.runs.finish(
             run_id,
             RunResult(
                 status=status,

@@ -7,7 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TypedDict, cast
 
-from milknado.domains.common import RunResult
+from milknado.domains.common import RunFenceLostError, RunResult
 from milknado.domains.graph._sqlite_rows import as_tuple as _as_tuple
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
@@ -104,8 +104,8 @@ def start_run(
     conn.commit()
 
 
-def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool:
-    """Write one terminal result; return whether this fenced write won."""
+def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None:
+    """Write one terminal result; raise when the running-row fence is lost."""
     cur = conn.execute(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
         + "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = ?",
@@ -122,14 +122,13 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> bool
         ),
     )
     conn.commit()
-    won = cur.rowcount == 1
-    if not won:
+    if cur.rowcount == 0:
         _logger.warning(
             "finish_run dropped late terminal write for run %s (status=%s)",
             run_id,
             result.status,
         )
-    return won
+        raise RunFenceLostError(f"finish_run lost its running-row fence for run {run_id}")
 
 
 def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:
@@ -149,28 +148,23 @@ def get_run(conn: sqlite3.Connection, run_id: str) -> RunRecord | None:
     return run_row_to_dict(row) if row else None
 
 
-def runs_for_node(
-    conn: sqlite3.Connection,
-    node_id: int,
-    *,
-    terminal_only: bool = False,
-    run_id: str | None = None,
-) -> list[RunRecord]:
-    """Return this node's runs as dicts (replaces find_terminal_runs_for_node).
-
-    Callers still apply fence-before-latest: pass run_id to filter to the fence
-    BEFORE calling latest_terminal_run, so a stale run with a later ended_at
-    cannot mask the owner.
-    """
-    sql = "SELECT * FROM runs WHERE node_id = ?"
-    params: list[object] = [node_id]
-    if terminal_only:
-        sql += " AND status IN ('done', 'failed')"
-    if run_id is not None:
-        sql += " AND run_id = ?"
-        params.append(run_id)
-    rows = fetchall(conn, sql, params)
+def runs_for_node(conn: sqlite3.Connection, node_id: int) -> list[RunRecord]:
+    """Return this node's runs for listing."""
+    rows = fetchall(conn, "SELECT * FROM runs WHERE node_id = ?", (node_id,))
     return [run_row_to_dict(row) for row in rows]
+
+
+def latest_terminal_run(conn: sqlite3.Connection, node_id: int, run_id: str) -> RunRecord | None:
+    """Return the terminal run identified by the supplied owner fence."""
+    if not run_id:
+        raise ValueError("run_id is required to select a latest terminal run")
+    row = fetchone(
+        conn,
+        "SELECT * FROM runs WHERE node_id = ? AND run_id = ? "
+        + "AND status IN ('done', 'failed')",
+        (node_id, run_id),
+    )
+    return run_row_to_dict(row) if row else None
 
 
 def recent_runs(conn: sqlite3.Connection, limit: int) -> list[RunRecord]:

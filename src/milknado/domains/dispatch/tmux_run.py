@@ -154,7 +154,7 @@ def resolve_attach_target(graph: MikadoGraph, tmux: TmuxPort, run_id: str) -> st
     """
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    state = graph.get_run(run_id)
+    state = graph.runs.get(run_id)
     if state is None:
         raise ValueError(f"run {run_id!r} not found")
     if state.get("status") != "running":

@@ -8,6 +8,7 @@ from typing import Annotated, cast
 
 import typer
 
+from milknado.app.graph_display import render_tree
 from milknado.cli._helpers import (
     DEFAULT_PROJECT_ROOT,
     console,
@@ -44,7 +45,6 @@ from milknado.domains.common import (
     save_config,
     validate_hint_path,
 )
-from milknado.domains.graph import render_tree
 
 ProjectRootArgument = Annotated[Path, typer_argument(help="Project root directory")]
 ProjectRootOption = Annotated[Path, typer_option("--project-root", help="Project root directory")]
@@ -302,7 +302,7 @@ def add_node(
             ),
         )
         if files:
-            graph.set_file_ownership(node.id, normalize_hint_paths(files, project_root))
+            graph.files.claim(node.id, normalize_hint_paths(files, project_root))
         maybe_block_parent(graph, parent)
         console.print(f"Added node {node.id}: {node.description}")
     finally:

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from milknado.app.graph_display import render_tree, summarize
 from milknado.domains.common import NodeStatus
-from milknado.domains.graph import MikadoGraph, render_tree
-from milknado.domains.graph.display import summarize
+from milknado.domains.graph import MikadoGraph
 
 
 class TestSummarize:
@@ -67,8 +67,8 @@ class TestSummarize:
         root = graph.add_node("Root")
         c1 = graph.add_node("Child 1", parent_id=root.id)
         c2 = graph.add_node("Child 2", parent_id=root.id)
-        graph.set_file_ownership(c1.id, ["src/main.py"])
-        graph.set_file_ownership(c2.id, ["src/main.py", "src/other.py"])
+        graph.files.claim(c1.id, ["src/main.py"])
+        graph.files.claim(c2.id, ["src/main.py", "src/other.py"])
         s = summarize(graph)
         assert len(s.conflicts) == 1
         assert "src/main.py" in s.conflicts[0][2]
@@ -77,8 +77,8 @@ class TestSummarize:
         root = graph.add_node("Root")
         c1 = graph.add_node("Child 1", parent_id=root.id)
         c2 = graph.add_node("Child 2", parent_id=root.id)
-        graph.set_file_ownership(c1.id, ["src/a.py"])
-        graph.set_file_ownership(c2.id, ["src/b.py"])
+        graph.files.claim(c1.id, ["src/a.py"])
+        graph.files.claim(c2.id, ["src/b.py"])
         s = summarize(graph)
         assert s.conflicts == []
 
@@ -132,8 +132,8 @@ class TestRenderTree:
         root = graph.add_node("Root")
         c1 = graph.add_node("A", parent_id=root.id)
         c2 = graph.add_node("B", parent_id=root.id)
-        graph.set_file_ownership(c1.id, ["shared.py"])
-        graph.set_file_ownership(c2.id, ["shared.py"])
+        graph.files.claim(c1.id, ["shared.py"])
+        graph.files.claim(c2.id, ["shared.py"])
         output = render_tree(graph)
         assert "Conflict" in output
         assert "shared.py" in output

@@ -68,14 +68,9 @@ def coerce_tool_list(value: object, ctx: str) -> tuple[str, ...]:
         raise ValueError(f"{ctx} must be a list of strings, got {type(value).__name__}")
     values = cast(list[object] | tuple[object, ...], value)
     items: list[str] = []
-    sentinels = 0
     for index, item in enumerate(values):
         if not isinstance(item, str) or not item:
             raise ValueError(f"{ctx}[{index}] must be a non-empty string")
-        if item == "...":
-            sentinels += 1
-            if sentinels > 1:
-                raise ValueError(f'{ctx} may contain at most one "..." sentinel, found multiple')
         items.append(item)
     return tuple(items)
 
@@ -127,6 +122,7 @@ class _FlavorFields(msgspec.Struct, frozen=True, kw_only=True):
     review: bool | None = None
     review_agent: str | None = None
     review_max_rounds: int = 2
+    review_timeout_seconds: int = 1800
     on_reject: str = "block"
 
 
@@ -153,6 +149,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         _ = validate_positive_int(self.max_iterations, "max_iterations")
         _ = validate_positive_int(self.max_turns, "max_turns")
         _ = validate_positive_int(self.review_max_rounds, "review_max_rounds")
+        _ = validate_positive_int(self.review_timeout_seconds, "review_timeout_seconds")
         if self.session_mode == "resume":
             self._reject_cursor_resume()
 
@@ -184,6 +181,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
             review=self.review,
             review_agent=self.review_agent,
             review_max_rounds=self.review_max_rounds,
+            review_timeout_seconds=self.review_timeout_seconds,
             on_reject=self.on_reject,
         )
 
@@ -207,7 +205,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         return "\n\n".join(part for part in parts if part) or None
 
 
-def normalize_flavor_table(value: object) -> object:
+def normalize_flavor_table(value: object, *, tools_ctx: str = "tools") -> object:
     if not isinstance(value, dict):
         return value
     normalized = dict(cast(dict[str, object], value))
@@ -228,7 +226,7 @@ def normalize_flavor_table(value: object) -> object:
         field = normalized.get(key)
         if field is not None and not isinstance(field, bool):
             raise ValueError(f"{key} must be a boolean")
-    for key in ("max_iterations", "max_turns", "review_max_rounds"):
+    for key in ("max_iterations", "max_turns", "review_max_rounds", "review_timeout_seconds"):
         if key in normalized:
             _ = validate_positive_int(normalized[key], key)
     path = normalized.get("brief_prepend_path")
@@ -239,7 +237,7 @@ def normalize_flavor_table(value: object) -> object:
     ):
         raise ValueError("brief_prepend_path must be a string or list of strings")
     if "tools" in normalized and normalized["tools"] is not None:
-        normalized["tools"] = coerce_tool_list(normalized["tools"], "tools")
+        normalized["tools"] = coerce_tool_list(normalized["tools"], tools_ctx)
     if "quality_gates" in normalized:
         normalized["quality_gates"] = normalize_gates(normalized["quality_gates"])
     return normalized
@@ -271,6 +269,7 @@ def serialize_flavor_tables(
                 ("review", flavor.review),
                 ("review_agent", flavor.review_agent),
                 ("review_max_rounds", flavor.review_max_rounds),
+                ("review_timeout_seconds", flavor.review_timeout_seconds),
                 ("on_reject", flavor.on_reject),
             )
             if value is not None

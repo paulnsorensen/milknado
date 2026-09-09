@@ -1,5 +1,5 @@
+from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._run_persistence import RunRecord
-from milknado.domains.graph.display import render_tree
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import DurableRun, ObserverSnapshot, read_observer_snapshot
 from milknado.domains.graph.rebalance import (
@@ -28,6 +28,7 @@ __all__ = [
     "DurableRun",
     "MikadoGraph",
     "ObserverSnapshot",
+    "RunFenceLostError",
     "RunRecord",
     "ReapFailure",
     "ReapOutcome",
@@ -38,7 +39,6 @@ __all__ = [
     "render_dot",
     "render_report",
     "read_observer_snapshot",
-    "render_tree",
     "subtree_post_order",
     "invalid_subtree_node_ids",
     "VERIFY_ROLE",

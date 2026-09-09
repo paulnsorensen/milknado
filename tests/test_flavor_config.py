@@ -75,7 +75,40 @@ def test_resolve_worker_tools_at_most_one_sentinel_validated_at_load(tmp_path: P
         + 'claude = ["...", "Read", "..."]\n',
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="at most one"):
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.worker\.tools\.claude\].*at most one",
+    ):
+        _ = load_config(cfg_path)
+
+
+def test_load_config_rejects_duplicate_sentinel_for_inactive_family(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.worker.tools]\n"
+        + 'gemini = ["...", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.worker\.tools\.gemini\].*at most one",
+    ):
+        _ = load_config(cfg_path)
+
+
+def test_load_config_reports_flavor_tool_context(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.flavor.spike]\n"
+        + 'tools = ["...", "..."]\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        ValueError,
+        match=r"\[milknado\.flavor\.spike\]\.tools.*at most one",
+    ):
         _ = load_config(cfg_path)
 
 
@@ -927,6 +960,50 @@ def test_load_config_flavor_review_fields_parse(tmp_path: Path) -> None:
     assert fo.on_reject == "warn"
 
 
+def test_load_config_flavor_review_timeout_seconds_default(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n[milknado.flavor.implement]\nreview = true\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavors["implement"].review_timeout_seconds == 1800
+
+
+def test_load_config_flavor_review_timeout_seconds_parses_override(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.flavor.implement]\n"
+        + "review_timeout_seconds = 900\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.flavors["implement"].review_timeout_seconds == 900
+
+
+def test_load_config_flavor_review_timeout_seconds_rejects_zero(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.flavor.spike]\nreview_timeout_seconds = 0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="review_timeout_seconds must be >= 1"):
+        _ = load_config(cfg_path)
+
+
+def test_load_config_flavor_review_timeout_seconds_rejects_negative(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "milknado.toml"
+    _ = cfg_path.write_text(
+        '[milknado]\nagent_family = "claude"\n\n'
+        + "[milknado.flavor.spike]\nreview_timeout_seconds = -5\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="review_timeout_seconds must be >= 1"):
+        _ = load_config(cfg_path)
+
+
 def test_save_load_roundtrip_flavor_review_fields(tmp_path: Path) -> None:
     cfg_path = tmp_path / "milknado.toml"
     cfg = MilknadoConfig(
@@ -1076,6 +1153,7 @@ def test_resolve_flavor_profile_review_config_resolves_from_override(tmp_path: P
                 session_mode="resume",
                 review_agent="claude -p --model opus",
                 review_max_rounds=7,
+                review_timeout_seconds=600,
                 on_reject="warn",
             ),
         },
@@ -1084,6 +1162,7 @@ def test_resolve_flavor_profile_review_config_resolves_from_override(tmp_path: P
     assert profile.session_mode == "resume"
     assert profile.review_agent == "claude -p --model opus"
     assert profile.review_max_rounds == 7
+    assert profile.review_timeout_seconds == 600
     assert profile.on_reject == "warn"
 
 

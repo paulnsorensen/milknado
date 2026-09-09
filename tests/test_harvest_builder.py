@@ -65,11 +65,11 @@ def test_nested_tasks_are_walked(graph: MikadoGraph) -> None:
 def test_result_summaries_collected_from_terminal_runs(graph: MikadoGraph) -> None:
     goal_id = _goal(graph)
     task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
-    graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
-    _ = graph.finish_run(
+    graph.runs.start("run-1", task.id, "/tmp/log", NOW, None)
+    _ = graph.runs.finish(
         "run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW)
     )
-    _ = graph.deposit_run_message("run-1", "result", "shipped the thing", NOW)
+    _ = graph.runs.deposit_message("run-1", "result", "shipped the thing", NOW)
     goal = graph.get_node(goal_id)
     assert goal is not None
     assert build_harvest_summary(graph, goal).result_summaries == ["shipped the thing"]
@@ -78,12 +78,12 @@ def test_result_summaries_collected_from_terminal_runs(graph: MikadoGraph) -> No
 def test_result_summaries_are_bounded(graph: MikadoGraph) -> None:
     goal_id = _goal(graph)
     task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
-    graph.start_run("run-large", task.id, "/tmp/log", NOW, None)
-    _ = graph.finish_run(
+    graph.runs.start("run-large", task.id, "/tmp/log", NOW, None)
+    _ = graph.runs.finish(
         "run-large",
         RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW),
     )
-    _ = graph.deposit_run_message("run-large", "result", "x" * 10_000, NOW)
+    _ = graph.runs.deposit_message("run-large", "result", "x" * 10_000, NOW)
     goal = graph.get_node(goal_id)
     assert goal is not None
 

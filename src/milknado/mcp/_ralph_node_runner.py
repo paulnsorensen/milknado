@@ -18,12 +18,17 @@ from typing import Protocol, cast
 
 from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
+from milknado.domains.graph import RunFenceLostError
 
 _logger = logging.getLogger("milknado")
 
 
-class _RunFinisher(Protocol):
-    def finish_run(self, run_id: str, result: RunResult) -> bool: ...
+class _RunFacade(Protocol):
+    def finish(self, run_id: str, result: RunResult) -> None: ...
+
+
+class _GraphWithRuns(Protocol):
+    runs: _RunFacade
 
 
 class _RunnerArgs(Protocol):
@@ -37,14 +42,13 @@ class _RunnerArgs(Protocol):
 
 def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bool:
     try:
-        finish_run = cast(_RunFinisher, graph).finish_run
-        written = finish_run(run_id, result)
+        cast(_GraphWithRuns, graph).runs.finish(run_id, result)
+    except RunFenceLostError as exc:
+        detail = str(exc)
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
     else:
-        if written is not False:
-            return True
-        detail = "finish_run lost its running-row fence"
+        return True
     _logger.error("ralph terminal persistence failed: run_id=%s detail=%s", run_id, detail)
     try:
         _ = (
@@ -80,7 +84,6 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     root = Path(args.project_root)
-    from milknado.domains.execution import NO_GATES_CONFIGURED_MESSAGE
 
     _logger.info(
         "ralph runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
@@ -91,32 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     graph, cfg = open_graph(root)
     pid = os.getpid()
-    graph.set_run_pid(args.run_id, pid)
+    graph.runs.set_pid(args.run_id, pid)
     graph.set_pid(args.node_id, args.run_id, pid)
     try:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
-        if profile.quality_gates is None:
-            _logger.error(
-                "ralph preflight failed: run_id=%s node_id=%d error=%s",
-                args.run_id,
-                args.node_id,
-                NO_GATES_CONFIGURED_MESSAGE,
-            )
-            _ = _finish_run(
-                graph,
-                root,
-                args.run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=NO_GATES_CONFIGURED_MESSAGE,
-                ),
-            )
-            return 1
         git = GitAdapter(root)
         ralph = LoopAdapter()
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=CrgAdapter(root))
@@ -130,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             review=profile.review,
             review_agent=profile.review_agent,
             review_max_rounds=profile.review_max_rounds,
+            review_timeout_seconds=profile.review_timeout_seconds,
             on_reject=profile.on_reject,
             session_mode=profile.session_mode,
             completion_timeout_seconds=int(args.timeout),

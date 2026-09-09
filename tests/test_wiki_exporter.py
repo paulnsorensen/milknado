@@ -196,11 +196,11 @@ class TestTaskRollup:
         result = import_roadmap(wiki_root, ROADMAP_SLUG, graph)
         goal_id = result.goal_node_ids["wire-export"]
         task = graph.add_node("t1", parent_id=goal_id, spec=NodeSpec(kind=NodeKind.TASK))
-        _ = graph.start_run("run-1", task.id, "/tmp/log", NOW, None)
-        _ = graph.finish_run(
+        _ = graph.runs.start("run-1", task.id, "/tmp/log", NOW, None)
+        _ = graph.runs.finish(
             "run-1", RunResult(status="done", exit_code=0, timed_out=False, ended_at=NOW)
         )
-        _ = graph.deposit_run_message("run-1", "result", "shipped the exporter", NOW)
+        _ = graph.runs.deposit_message("run-1", "result", "shipped the exporter", NOW)
         graph.mark_running(task.id)
         graph.mark_done(task.id)
         _ = export_roadmap(graph, result.roadmap_node_id, wiki_root, StubIndexer(), now=NOW)

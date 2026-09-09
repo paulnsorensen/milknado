@@ -9,3 +9,4 @@
 2026-09-02 · 46add5e19285db9b · merged · history/dead-code-coverage-gate-decision.md · Replaced the broad loop compatibility allowlist with one exact false-positive and retained the turn cap.
 2026-09-02 · 46add5e19285db9b · merged · history/loop-vendor-in-decision.md · Recorded the transition from initial verbatim import to owned and trimmed loop source.
 
+2026-09-07 · ecad750e2367fe79 · merged · architecture/adapters.md · Recorded semantic verifier availability and RunLoop ownership of replanning policy.

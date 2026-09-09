@@ -102,7 +102,7 @@ def apply_batches_to_graph(
             primary_parent = attach_to
         graph.set_parent_id(node.id, primary_parent)
         if files:
-            graph.set_file_ownership(node.id, files)
+            graph.files.claim(node.id, files)
         node_id_by_batch[batch.index] = node.id
         created.append(node.id)
 

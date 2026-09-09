@@ -99,7 +99,7 @@ def _graph_section(graph: MikadoGraph) -> str:
     lines.append(_progress_summary(nodes))
 
     children_map = graph.get_children_map()
-    ownership_map = graph.get_file_ownership_map()
+    ownership_map = graph.files.for_nodes()
     for node in nodes:
         desc = _truncate_description(node.description)
         children = children_map.get(node.id, [])

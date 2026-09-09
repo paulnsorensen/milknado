@@ -1,7 +1,5 @@
 """Pure string/style formatting for the execution TUI — no Textual imports."""
 
-from __future__ import annotations
-
 from rich.text import Text
 
 from milknado.app.run import (
@@ -137,8 +135,9 @@ def output_body(run: RunSnapshot | None) -> str:
     return "\n".join(run.output) if run and run.output else "No output yet."
 
 
-def events_text(event_lines: tuple[str, ...]) -> str:
-    events = "\n".join(event_lines) or "No events yet."
+def events_text(event_lines: tuple[str, ...], listener_errors: tuple[str, ...]) -> str:
+    lines = (*(f"Listener error: {error}" for error in listener_errors), *event_lines)
+    events = "\n".join(lines) or "No events yet."
     return f"Events\n{events}"
 
 

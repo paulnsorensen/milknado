@@ -68,6 +68,7 @@ EXPECTED_PROFILES = {
         + "the required quality gate.",
         review=True,
         review_agent=OPUS_REVIEWER,
+        review_timeout_seconds=5400,
     ),
     "spec": _profile(
         LUNA_XHIGH,

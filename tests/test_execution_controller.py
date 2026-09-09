@@ -44,6 +44,10 @@ def _none_limit() -> int:
     return cast(int, cast(object, None))
 
 
+def _policy_config() -> MilknadoConfig:
+    return MilknadoConfig(protected_branches=())
+
+
 def _as_graph(value: object) -> MikadoGraph:
     return cast(MikadoGraph, value)
 
@@ -155,7 +159,9 @@ def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
 
 def test_controller_delegates_run_and_control_ports() -> None:
     loop = FakeLoop(loop_state())
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
 
     assert controller.run(feature_branch="feature", strict=True, spec_text="spec") == "result"
     assert len(loop.run_calls) == 1
@@ -182,6 +188,18 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.stop_scheduling_calls == 1
 
 
+def test_controller_refuses_protected_branch_before_run() -> None:
+    from milknado.app.run import ProtectedBranchRefusal
+
+    loop = FakeLoop(loop_state())
+    config = MilknadoConfig(protected_branches=("main",))
+    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit(), config)
+
+    with pytest.raises(ProtectedBranchRefusal, match="protected branch"):
+        _ = controller.run(feature_branch="main")
+    assert loop.run_calls == []
+
+
 def test_controller_waits_for_worker_cleanup_before_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -192,6 +210,7 @@ def test_controller_waits_for_worker_cleanup_before_return(
         cast(RunLoop, cast(object, loop)),
         cast(ExecutionConfig, cast(object, None)),
         cast(int, cast(object, None)),
+        _policy_config(),
     )
     outcome_ready = Event()
     release_worker = Event()
@@ -233,7 +252,9 @@ def test_controller_waits_for_worker_cleanup_before_return(
 
 def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes() -> None:
     loop = FakeLoop(loop_state())
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     received: list[ExecutionSnapshot] = []
 
     unsubscribe = controller.subscribe(received.append)
@@ -244,20 +265,43 @@ def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes(
     assert received[1].active_runs[0].output == ("new line",)
 
 
+def test_controller_removes_listener_when_initial_replay_fails() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    calls = 0
+
+    def failing_listener(_snapshot: ExecutionSnapshot) -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("initial replay failed")
+
+    with pytest.raises(RuntimeError, match="initial replay failed"):
+        _ = controller.subscribe(failing_listener)
+
+    loop.publish(loop_state(output=("replacement",)))
+    assert calls == 1
+
+
 def test_controller_snapshot_reads_the_latest_projected_state() -> None:
     loop = FakeLoop(loop_state())
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
 
     loop.publish(loop_state(output=("replacement",)))
 
     assert controller.snapshot() == snapshot(output=("replacement",))
 
 
-def test_controller_listener_failure_does_not_block_other_listeners(
+def test_controller_listener_failure_is_visible_to_other_listeners(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     loop = FakeLoop(loop_state())
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     received: list[ExecutionSnapshot] = []
 
     listener_calls = 0
@@ -266,20 +310,44 @@ def test_controller_listener_failure_does_not_block_other_listeners(
         nonlocal listener_calls
         listener_calls += 1
         if listener_calls > 1:
-            raise RuntimeError("listener failed")
+            raise RuntimeError(f"listener failed {listener_calls}")
 
-    _ = controller.subscribe(failing_listener)
+    def error_listener(current: ExecutionSnapshot) -> None:
+        if current.listener_errors:
+            raise RuntimeError("cannot render errors")
+
+    unsubscribe = controller.subscribe(failing_listener)
+    error_unsubscribe = controller.subscribe(error_listener)
     _ = controller.subscribe(received.append)
-    loop.publish(loop_state(output=("replacement",)))
+    with caplog.at_level("ERROR", logger="milknado.app.run"):
+        loop.publish(loop_state(output=("replacement",)))
+        loop.publish(loop_state(output=("second",)))
 
-    assert received[-1] == snapshot(output=("replacement",))
-    assert "failing_listener" in caplog.text
+    assert listener_calls == 3
+    assert received[-1].active_runs[0].output == ("second",)
+
+    listener_errors = received[-1].listener_errors
+    assert controller.snapshot().listener_errors == listener_errors
+    assert set(listener_errors) == {
+        f"{failing_listener.__qualname__}: listener failed {listener_calls}",
+        f"{error_listener.__qualname__}: cannot render errors",
+    }
+    assert "failed while publishing error" in caplog.text
+    unsubscribe()
+    error_unsubscribe()
+    assert controller.snapshot().listener_errors == ()
+    from milknado.app.run_view import events_text
+
+    rendered = events_text(received[-1].event_lines, listener_errors)
+    assert rendered.splitlines()[1] == f"Listener error: {listener_errors[0]}"
 
 
 def test_controller_reraises_execution_failure() -> None:
     loop = FakeLoop(loop_state())
     loop.run = MagicMock(side_effect=RuntimeError("worker failed"))  # type: ignore[method-assign]
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
 
     with pytest.raises(RuntimeError, match="worker failed"):
         _ = controller.run(feature_branch="feature")
@@ -393,7 +461,9 @@ def test_controller_marshals_run_and_controls_to_one_graph_safe_thread(
 ) -> None:
     _ = graph.add_node("root")
     loop = ThreadBoundLoop(graph)
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     result: list[object] = []
 
     caller = Thread(
@@ -418,7 +488,9 @@ def test_controller_propagates_control_failure_from_execution_thread(
     _ = graph.add_node("root")
     loop = ThreadBoundLoop(graph)
     loop.cancel = MagicMock(side_effect=RuntimeError("cancel failed"))  # type: ignore[method-assign]
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     runner = Thread(target=lambda: controller.run(feature_branch="feature"))
     runner.start()
     assert loop.started.wait(timeout=1)
@@ -434,7 +506,9 @@ def test_controller_propagates_control_failure_from_execution_thread(
 def test_controller_rejects_a_second_concurrent_run(graph: MikadoGraph) -> None:
     _ = graph.add_node("root")
     loop = ThreadBoundLoop(graph)
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     runner = Thread(target=lambda: controller.run(feature_branch="feature"))
     runner.start()
     assert loop.started.wait(timeout=1)
@@ -480,7 +554,9 @@ class StopAdmissionLoop:
 
 def test_controller_admits_stop_before_queuing_control() -> None:
     loop = StopAdmissionLoop()
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     result: list[object] = []
     runner = Thread(target=lambda: result.append(controller.run(feature_branch="feature")))
     runner.start()
@@ -518,7 +594,9 @@ class _ShutdownGateQueue(Queue[object]):
 def test_controller_rejects_control_admitted_during_shutdown(graph: MikadoGraph) -> None:
     _ = graph.add_node("root")
     loop = ThreadBoundLoop(graph)
-    controller = ExecutionController(_as_run_loop(loop), _none_config(), _none_limit())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
     controls = _ShutdownGateQueue(loop)
     controls_attr = "_controls"
     setattr(cast(object, controller), controls_attr, controls)

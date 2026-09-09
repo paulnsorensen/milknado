@@ -1,8 +1,4 @@
-"""Structural node mutations for MikadoGraph: subtree-aware delete and field update.
-
-Free functions taking a connection, mirroring `_persistence.py`. Kept out of
-`graph.py` so the facade stays under the file-size ceiling.
-"""
+"""Structural node mutations for MikadoGraph."""
 
 from __future__ import annotations
 
@@ -10,9 +6,8 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import cast
 
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import BUILTIN_FLAVORS, VALID_CHILD_KINDS, NodeKind, NodeStatus
 from milknado.domains.common.errors import ArchiveIneligible, InvalidContainment
-from milknado.domains.common.types import BUILTIN_FLAVORS, VALID_CHILD_KINDS
 from milknado.domains.graph._persistence import children_id_map
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
@@ -191,11 +186,7 @@ def unarchive_subtree(conn: sqlite3.Connection, node_id: int) -> int:
 def _validate_kind_change_containment(
     conn: sqlite3.Connection, node_id: int, new_kind: NodeKind
 ) -> None:
-    """Reject a kind change that would create an illegal parent->child pair.
-
-    Mirrors the containment guard in ``reparent``/``add_node`` so editing a
-    node's kind cannot bypass ``VALID_CHILD_KINDS`` via its existing edges.
-    """
+    """Reject kind changes that violate existing containment edges."""
     parent = fetchone(
         conn,
         "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.parent_id WHERE e.child_id = ?",
@@ -240,12 +231,21 @@ def update_node_fields(
         if kind != NodeKind.TASK:
             if flavor is not None:
                 raise ValueError(
-                    f"flavor must be None for kind={kind.value} nodes; "
-                    + "cannot set a non-None flavor on a non-task node"
+                    "flavor is only valid for task nodes; cannot set flavor with non-task kind"
                 )
             # Changing to non-task: clear flavor to preserve the invariant
             fields.append("flavor = ?")
             values.append(None)
+    elif flavor is not None:
+        row = fetchone(conn, "SELECT kind FROM nodes WHERE id = ?", (node_id,))
+        if row is None:
+            raise ValueError(f"Node {node_id} not found")
+        existing_kind = NodeKind(cast(str, _values(row)[0]))
+        if existing_kind != NodeKind.TASK:
+            raise ValueError(
+                "flavor is only valid for task nodes; "
+                + f"node {node_id} has kind {existing_kind.value!r}"
+            )
     if flavor is not None:
         fields.append("flavor = ?")
         values.append(flavor)

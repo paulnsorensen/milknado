@@ -21,10 +21,28 @@ class RunWindow:
     brief_path: Path | None = None
 
 
+class FinishRunFacadePort(Protocol):
+    def finish(self, run_id: str, result: RunResult, /) -> None: ...
+
+
+class StaleRunFacadePort(FinishRunFacadePort, Protocol):
+    def for_node(self, node_id: int, /) -> Iterable[Mapping[str, object]]: ...
+
+
+class RunReaderFacadePort(Protocol):
+    def get(self, run_id: str, /) -> Mapping[str, object] | None: ...
+
+
+class RunFinalizerFacadePort(FinishRunFacadePort, Protocol):
+    def get(self, run_id: str, /) -> Mapping[str, object] | None: ...
+
+
 class FinishDispatchPort(Protocol):
     """The graph capability required to persist a worker terminal result."""
 
-    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+    @property
+    def runs(self) -> FinishRunFacadePort: ...
+
     def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus, /) -> bool: ...
     def get_node(self, node_id: int, /) -> object | None: ...
 
@@ -32,20 +50,22 @@ class FinishDispatchPort(Protocol):
 class RunReaderPort(Protocol):
     """The graph capability required to observe one persisted run."""
 
-    def get_run(self, run_id: str, /) -> Mapping[str, object] | None: ...
+    @property
+    def runs(self) -> RunReaderFacadePort: ...
 
 
-class RunFinalizerPort(RunReaderPort, Protocol):
+class RunFinalizerPort(Protocol):
     """The graph capabilities required to finalize one persisted run."""
 
-    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+    @property
+    def runs(self) -> RunFinalizerFacadePort: ...
 
 
 class StaleRunPort(Protocol):
     """The graph capability required by stale-run reconciliation."""
 
-    def runs_for_node(self, node_id: int, /) -> Iterable[Mapping[str, object]]: ...
-    def finish_run(self, run_id: str, result: RunResult, /) -> bool: ...
+    @property
+    def runs(self) -> StaleRunFacadePort: ...
 
 
 class WorkerOutcomePort(Protocol):

@@ -50,14 +50,17 @@ def test_walk_ancestors_accepts_read_port(graph: MikadoGraph) -> None:
     root = graph.add_node("root")
     leaf = graph.add_node("leaf", parent_id=root.id)
 
+    class Files:
+        def for_node(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
     class ReadPort:
+        files: Files = Files()
+
         def get_node(self, node_id: int) -> MikadoNode | None:
             return {root.id: root, leaf.id: leaf}.get(node_id)
 
         def get_children(self, node_id: int) -> list[MikadoNode]:  # pyright: ignore[reportUnusedParameter]
-            raise NotImplementedError
-
-        def get_file_ownership(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
             raise NotImplementedError
 
         def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:  # pyright: ignore[reportUnusedParameter]

@@ -2,19 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
 
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop._protocols import RunLoopState
-from milknado.domains.execution.run_loop.display import _summarize_description
-from milknado.domains.execution.run_loop.state import TerminalRunState
+from milknado.domains.execution.run_loop.state import TerminalRunState, summarize_description
 from milknado.loop import RunStatus
-
-if TYPE_CHECKING:
-    from rich.live import Live
-
 
 _logger = logging.getLogger("milknado")
 
@@ -24,7 +18,6 @@ def handle_completion(
     run_id: str,
     outcome: TerminalRunOutcome,
     feature_branch: str,
-    live: Live | None,
 ) -> tuple[int, int, list[RebaseConflict]]:
     completed = failed = 0
     conflicts: list[RebaseConflict] = []
@@ -40,7 +33,7 @@ def handle_completion(
     if input_state.overlay_state == run_id:
         input_state.overlay_state = None
     node = graph.get_node(node_id)
-    desc = _summarize_description(node.description) if node else str(node_id)
+    desc = summarize_description(node.description) if node else str(node_id)
     start = dispatched_at.pop(run_id, time.monotonic())
     duration = time.monotonic() - start
 
@@ -52,24 +45,13 @@ def handle_completion(
             # Orthogonal to the outcome below: the review ran, but its verdict could
             # not be delivered. Surface it before any early return so the operator
             # sees a review whose result may never have reached the worker.
-            if live is not None:
-                live.console.print(
-                    f"[yellow]![/yellow] [{node_id}] {desc} — review notification failed"
-                )
             logs.append(f"[{ts()}] ! node {node_id} review notification failed")
         if result.review_audit_failed:
-            if live is not None:
-                live.console.print(f"[red]![/red] [{node_id}] {desc} — review audit failed")
             logs.append(f"[{ts()}] ! node {node_id} review audit failed")
         if result.redispatch is not None:
             redispatch = result.redispatch
             active[redispatch.run_id] = node_id
             dispatched_at[redispatch.run_id] = time.monotonic()
-            if live is not None:
-                live.console.print(
-                    f"[yellow]↻[/yellow] [{node_id}] {desc} — "
-                    + "adversarial review requested another round"
-                )
             _logger.info(
                 "node_review_redispatch node_id=%d run_id=%s",
                 node_id,
@@ -81,8 +63,6 @@ def handle_completion(
         attempts = loop._attempts  # pyright: ignore[reportPrivateUsage]
         strict = loop._strict  # pyright: ignore[reportPrivateUsage]
         if result.blocked:
-            if live is not None:
-                live.console.print(f"[red]■[/red] [{node_id}] {desc} — review blocked")
             _logger.warning("node_review_blocked node_id=%d", node_id)
             logs.append(f"[{ts()}] ■ node {node_id} review blocked")
             attempts[node_id] = attempts.get(node_id, 0) + 1
@@ -91,9 +71,6 @@ def handle_completion(
             failed += 1
         elif result.rebase_conflict:
             conflicts.append(result.rebase_conflict)
-            files = ", ".join(result.rebase_conflict.conflicting_files)
-            if live is not None:
-                live.console.print(f"[red]✗[/red] [{node_id}] {desc} — conflict: {files}")
             _logger.warning(
                 "node_conflict node_id=%d files=%s",
                 node_id,
@@ -105,8 +82,6 @@ def handle_completion(
                 loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
             failed += 1
         else:
-            if live is not None:
-                live.console.print(f"[green]✓[/green] [{node_id}] {desc}")
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
             logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
@@ -133,8 +108,6 @@ def handle_completion(
                 duration_seconds=duration,
             )
         )
-        if live is not None:
-            live.console.print(f"[yellow]■[/yellow] [{node_id}] {desc} — stopped")
         _logger.info(
             "node_stopped node_id=%d run_id=%s duration=%.1fs",
             node_id,
@@ -149,8 +122,6 @@ def handle_completion(
         strict = loop._strict  # pyright: ignore[reportPrivateUsage]
         detail = ralph.get_run_failure_detail(run_id)
         executor.fail(node_id, detail=detail)
-        if live is not None:
-            live.console.print(f"[red]✗[/red] [{node_id}] {desc}")
         if detail:
             _logger.warning("node_failed node_id=%d detail=%s", node_id, detail)
         else:

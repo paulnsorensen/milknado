@@ -45,6 +45,7 @@ def milknado_run_inline(
     timeout_seconds: int = 600,
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
+    allow_protected: bool = False,
     project_root: str = "",
 ) -> RunDict:
     """Spawn a subprocess worker with the task brief on stdin; capture log and update status.
@@ -53,6 +54,9 @@ def milknado_run_inline(
     On exit 0 the node is marked done; on nonzero/timeout it is marked failed.
     Blocks for up to timeout_seconds (default 600). For non-blocking dispatch
     use milknado_run_inline_start / milknado_run_inline_poll.
+    Dispatch refuses detached HEAD and protected branches by default. Set
+    allow_protected=True to permit a named protected branch; detached HEAD always refuses.
+
 
     worktree controls isolation (safe by default): ISOLATE runs the worker in a
     fresh git worktree + branch, and on exit 0 (when merge_back, the default)
@@ -72,6 +76,7 @@ def milknado_run_inline(
             cfg,
             root,
             InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
+            allow_protected=allow_protected,
         )
         return build_run_dict(state)
     finally:
@@ -86,6 +91,7 @@ def milknado_run_inline_start(
     use_tmux: bool = False,
     worktree: WorktreeMode = WorktreeMode.ISOLATE,
     merge_back: bool = True,
+    allow_protected: bool = False,
     project_root: str = "",
 ) -> RunDict:
     """Start a worker asynchronously; returns immediately with a run_id for polling.
@@ -94,6 +100,8 @@ def milknado_run_inline_start(
     check progress; node status is reconciled to done/failed on the first poll
     after the worker exits. use_tmux=True runs the worker inside a named tmux
     window (`milknado attach <run_id>`); fails fast if tmux is unavailable.
+    Dispatch refuses detached HEAD and protected branches by default. Set
+    allow_protected=True to permit a named protected branch; detached HEAD always refuses.
 
     worktree controls isolation (safe by default): ISOLATE runs the worker in a
     fresh git worktree + branch; on exit 0 (when merge_back, the default) the
@@ -113,6 +121,7 @@ def milknado_run_inline_start(
             root,
             InlineRunRequest(node_id, worker_cmd, timeout_seconds, worktree, merge_back),
             use_tmux,
+            allow_protected=allow_protected,
         )
         return build_run_dict(state)
     finally:
@@ -135,7 +144,7 @@ def milknado_run_inline_poll(run_id: str, project_root: str = "") -> RunDict:
             )
         if state["status"] == "done":
             reconcile_run_window(TmuxAdapter(root), state)
-        state["result"] = graph.latest_run_message(run_id, "result")
+        state["result"] = graph.runs.latest_message(run_id, "result")
     finally:
         graph.close()
     state["worktree_preserved"] = state.get("detail")
@@ -152,7 +161,7 @@ def milknado_run_list(project_root: str = "", limit: int = 50) -> list[RunDict]:
     root = resolve_project_root(project_root or None)
     graph, _cfg = open_graph(root)
     try:
-        return [build_run_dict(r) for r in graph.recent_runs(limit)]
+        return [build_run_dict(r) for r in graph.runs.recent(limit)]
     finally:
         graph.close()
 
@@ -192,9 +201,9 @@ def milknado_deposit_result(run_id: str, payload: str, project_root: str = "") -
     require_worker_run(run_id)
     graph, _cfg = open_graph(root)
     try:
-        if graph.get_run(run_id) is None:
+        if graph.runs.get(run_id) is None:
             raise ValueError(f"run {run_id!r} not found")
-        seq = graph.deposit_run_message(run_id, "result", payload, now_iso())
+        seq = graph.runs.deposit_message(run_id, "result", payload, now_iso())
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}
@@ -224,9 +233,9 @@ def milknado_deposit_review(
     require_worker_run(run_id)
     graph, _cfg = open_graph(root)
     try:
-        if graph.get_run(run_id) is None:
+        if graph.runs.get(run_id) is None:
             raise ValueError(f"run {run_id!r} not found")
-        seq = graph.deposit_review_verdict(run_id, verdict, findings_md, now_iso())
+        seq = graph.runs.deposit_review(run_id, verdict, findings_md, now_iso())
     finally:
         graph.close()
     return {"run_id": run_id, "seq": seq}

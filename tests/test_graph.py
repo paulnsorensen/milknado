@@ -59,9 +59,9 @@ class TestDeleteNode:
 
     def test_delete_leaf_removes_file_ownership(self, graph: MikadoGraph) -> None:
         node = graph.add_node("leaf")
-        graph.set_file_ownership(node.id, ["src/a.py"])
+        graph.files.claim(node.id, ["src/a.py"])
         _ = graph.delete_node(node.id)
-        assert graph.get_file_ownership(node.id) == []
+        assert graph.files.for_node(node.id) == []
 
     def test_delete_node_with_children_without_cascade_raises(self, graph: MikadoGraph) -> None:
         parent = graph.add_node("parent")
@@ -147,6 +147,28 @@ class TestUpdateNode:
         node = graph.add_node("n")
         with pytest.raises(ValueError, match="nothing to update"):
             graph.update_node(node.id)
+
+    @pytest.mark.parametrize("kind", [NodeKind.GOAL, NodeKind.ROADMAP])
+    def test_update_flavor_rejects_non_task_nodes(
+        self, graph: MikadoGraph, kind: NodeKind
+    ) -> None:
+        node = graph.add_node("non-task", spec=NodeSpec(kind=kind))
+        with pytest.raises(ValueError, match="flavor is only valid for task nodes"):
+            graph.update_node(node.id, flavor="implement")
+
+
+class TestSnapshot:
+    def test_snapshot_has_normal_instance_fields(self, tmp_path: Path) -> None:
+        db_path = tmp_path / "graph.db"
+        normal = MikadoGraph(db_path)
+        expected_fields = set(vars(normal))
+        normal.close()
+
+        snapshot = MikadoGraph.open_snapshot(db_path)
+        try:
+            assert set(vars(snapshot)) == expected_fields
+        finally:
+            snapshot.close()
 
 
 class TestMoveNode:
@@ -517,7 +539,7 @@ class TestStatusTransitions:
             # graph_a, unaware of graph_b's write, applies a CAS UPDATE still
             # gated on the stale belief that status is RUNNING.
             with pytest.raises(InvalidTransition) as exc_info:
-                _transitions._apply_transition(  # pyright: ignore[reportPrivateUsage]
+                _ = _transitions._apply_transition(  # pyright: ignore[reportPrivateUsage]
                     graph_conn(graph_a),
                     node.id,
                     NodeStatus.FAILED,
@@ -541,34 +563,34 @@ class TestStatusTransitions:
 class TestFileOwnership:
     def test_set_and_get(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
-        graph.set_file_ownership(node.id, ["a.py", "b.py"])
-        files = graph.get_file_ownership(node.id)
+        graph.files.claim(node.id, ["a.py", "b.py"])
+        files = graph.files.for_node(node.id)
         assert sorted(files) == ["a.py", "b.py"]
 
     def test_overwrite_ownership(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
-        graph.set_file_ownership(node.id, ["old.py"])
-        graph.set_file_ownership(node.id, ["new.py"])
-        assert graph.get_file_ownership(node.id) == ["new.py"]
+        graph.files.claim(node.id, ["old.py"])
+        graph.files.claim(node.id, ["new.py"])
+        assert graph.files.for_node(node.id) == ["new.py"]
 
     def test_empty_ownership(self, graph: MikadoGraph) -> None:
         node = graph.add_node("task")
-        assert graph.get_file_ownership(node.id) == []
+        assert graph.files.for_node(node.id) == []
 
 
 class TestParallelSafety:
     def test_no_conflicts(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")
         n2 = graph.add_node("b")
-        graph.set_file_ownership(n1.id, ["x.py"])
-        graph.set_file_ownership(n2.id, ["y.py"])
+        graph.files.claim(n1.id, ["x.py"])
+        graph.files.claim(n2.id, ["y.py"])
         assert graph.check_parallel_safety([n1.id, n2.id]) == []
 
     def test_detects_overlap(self, graph: MikadoGraph) -> None:
         n1 = graph.add_node("a")
         n2 = graph.add_node("b")
-        graph.set_file_ownership(n1.id, ["shared.py", "a.py"])
-        graph.set_file_ownership(n2.id, ["shared.py", "b.py"])
+        graph.files.claim(n1.id, ["shared.py", "a.py"])
+        graph.files.claim(n2.id, ["shared.py", "b.py"])
         conflicts = graph.check_parallel_safety([n1.id, n2.id])
         assert len(conflicts) == 1
         assert conflicts[0][2] == ["shared.py"]
@@ -577,9 +599,9 @@ class TestParallelSafety:
         n1 = graph.add_node("a")
         n2 = graph.add_node("b")
         n3 = graph.add_node("c")
-        graph.set_file_ownership(n1.id, ["shared.py"])
-        graph.set_file_ownership(n2.id, ["shared.py"])
-        graph.set_file_ownership(n3.id, ["shared.py"])
+        graph.files.claim(n1.id, ["shared.py"])
+        graph.files.claim(n2.id, ["shared.py"])
+        graph.files.claim(n3.id, ["shared.py"])
         queries: list[str] = []
         graph_conn(graph).set_trace_callback(queries.append)
         conflicts = graph.check_parallel_safety([n1.id, n2.id, n3.id])

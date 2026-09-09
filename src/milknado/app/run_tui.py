@@ -17,6 +17,8 @@ from milknado.app.run_view import confirmation_text
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
 
+__all__ = ["ExecutionApp", "run_execution_tui"]
+
 if TYPE_CHECKING:
     from textual.events import Key
     from textual.worker import Worker
@@ -46,12 +48,14 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         strict: bool = False,
         spec_text: str | None = None,
         spec_path: Path | None = None,
+        allow_protected: bool = False,
     ) -> None:
         self.controller: ExecutionController = controller
         self.feature_branch: str | None = feature_branch
         self.strict: bool = strict
         self.spec_text: str | None = spec_text
         self.spec_path: Path | None = spec_path
+        self.allow_protected: bool = allow_protected
         self._execution_worker: Worker[None] | None = None
         self._confirmation: tuple[str, str | None] | None = None
         super().__init__(controller)
@@ -136,6 +140,7 @@ def run_execution_tui(
     strict: bool = False,
     spec_text: str | None = None,
     spec_path: Path | None = None,
+    allow_protected: bool = False,
 ) -> RunLoopResult | None:
     """Run the controller-backed Textual adapter and return its terminal result."""
     return ExecutionApp(
@@ -144,4 +149,5 @@ def run_execution_tui(
         strict=strict,
         spec_text=spec_text,
         spec_path=spec_path,
+        allow_protected=allow_protected,
     ).run()
