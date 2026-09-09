@@ -149,8 +149,9 @@ class TestRunStartRefusal:
         g.close()
 
         with (
-            patch("milknado.mcp.run.resolve_project_root", return_value=tmp_path),
+            patch("milknado.adapters.GitAdapter.current_branch", return_value="feature"),
             patch("milknado.mcp.run.open_graph") as mock_open,
+            patch("milknado.app.run.resolve_feature_branch", return_value="feature"),
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -396,6 +397,7 @@ class TestCoverageBranches:
 
         with (
             patch("milknado.mcp.run.resolve_project_root", return_value=tmp_path),
+            patch("milknado.adapters.GitAdapter.current_branch", return_value="feature"),
             patch("milknado.mcp.run.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod

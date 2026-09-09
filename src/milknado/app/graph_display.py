@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from rich.console import Console
     from rich.tree import Tree
 
-    from milknado.domains.graph.graph import MikadoGraph
+    from milknado.domains.graph import MikadoGraph
 
 STATUS_COLORS: dict[NodeStatus, str] = {
     NodeStatus.PENDING: "dim",
@@ -49,16 +49,16 @@ class GraphSummary:
 def summarize(graph: MikadoGraph, *, include_archived: bool = False) -> GraphSummary:
     nodes = graph.get_all_nodes(include_archived=include_archived)
     ready = graph.get_ready_nodes(include_archived=include_archived)
-    ready_ids = [n.id for n in ready]
+    ready_ids = [node.id for node in ready]
     conflicts = graph.check_parallel_safety(ready_ids)
-    active = [n for n in nodes if n.status == NodeStatus.RUNNING and n.worktree_path]
+    active = [node for node in nodes if node.status == NodeStatus.RUNNING and node.worktree_path]
 
     return GraphSummary(
         total=len(nodes),
-        done=sum(1 for n in nodes if n.status == NodeStatus.DONE),
-        running=sum(1 for n in nodes if n.status == NodeStatus.RUNNING),
-        failed=sum(1 for n in nodes if n.status == NodeStatus.FAILED),
-        blocked=sum(1 for n in nodes if n.status == NodeStatus.BLOCKED),
+        done=sum(1 for node in nodes if node.status == NodeStatus.DONE),
+        running=sum(1 for node in nodes if node.status == NodeStatus.RUNNING),
+        failed=sum(1 for node in nodes if node.status == NodeStatus.FAILED),
+        blocked=sum(1 for node in nodes if node.status == NodeStatus.BLOCKED),
         ready=ready,
         conflicts=conflicts,
         active_worktrees=active,
@@ -72,7 +72,6 @@ def format_node(node: MikadoNode) -> str:
     if node.status == NodeStatus.RUNNING and node.worktree_path:
         label += f" [dim]({node.worktree_path})[/dim]"
     if node.archived_at is not None:
-        # Escaped so rich renders the literal marker instead of parsing a tag.
         label += " [dim]\\[archived][/dim]"
     return label
 
@@ -133,28 +132,23 @@ def _print_summary(
             )
 
     if summary.ready:
-        names = ", ".join(f"[{n.id}] {n.description}" for n in summary.ready)
+        names = ", ".join(f"[{node.id}] {node.description}" for node in summary.ready)
         console.print(f"[bold]Ready:[/bold] {names}")
 
     if summary.conflicts:
         console.print("[bold red]Conflicts:[/bold red]")
-        for a, b, files in summary.conflicts:
-            console.print(f"  Nodes {a} ↔ {b}: {', '.join(files)}")
+        for first, second, files in summary.conflicts:
+            console.print(f"  Nodes {first} ↔ {second}: {', '.join(files)}")
 
 
 def _run_status_label(
     run_id: str | None,
     run_states: dict[str, str] | None,
 ) -> str:
-    if not run_id:
-        return ""
-    if not run_states:
-        return " [dim]run: unknown[/dim]"
+    if not run_id or not run_states:
+        return "" if not run_id else " [dim]run: unknown[/dim]"
     status = run_states.get(run_id)
     if not status:
         return " [dim]run: unknown[/dim]"
-    color = {"running": "cyan", "completed": "green", "failed": "red"}.get(
-        status,
-        "dim",
-    )
+    color = {"running": "cyan", "completed": "green", "failed": "red"}.get(status, "dim")
     return f" [{color}]run: {status}[/{color}]"

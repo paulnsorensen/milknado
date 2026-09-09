@@ -8,7 +8,7 @@ import pytest
 
 from milknado.domains.common import NodeStatus, RunResult
 from milknado.domains.dispatch import reconcile
-from milknado.domains.graph import RunRecord
+from milknado.domains.graph import RunFenceLostError, RunRecord
 
 
 @dataclass
@@ -40,6 +40,7 @@ class _RecoveryGraph:
             "rebased": None,
         }
         self.finish_succeeds: bool = finish_succeeds
+        self.runs: _RecoveryRuns = _RecoveryRuns(self)
 
     def get_all_nodes(self) -> list[_RecoveryNode]:
         return [self.node]
@@ -47,24 +48,34 @@ class _RecoveryGraph:
     def get_node(self, node_id: int) -> _RecoveryNode | None:
         return self.node if node_id == self.node.id else None
 
-    def runs_for_node(self, node_id: int, **_kwargs: object) -> list[RunRecord]:
-        return [self.state] if node_id == self.node.id else []
-
-    def finish_run(self, _run_id: str, result: RunResult) -> bool:
-        if self.finish_succeeds:
-            self.state.update(
-                status=result.status,
-                exit_code=result.exit_code,
-                timed_out=result.timed_out,
-                ended_at=result.ended_at,
-                error=result.error,
-            )
-        return self.finish_succeeds
-
     def mark_terminal(self, _node_id: int, _run_id: str, status: NodeStatus) -> bool:
         self.node.status = status
         self.node.run_id = None
         return True
+
+
+class _RecoveryRuns:
+    def __init__(self, graph: _RecoveryGraph) -> None:
+        self._graph: _RecoveryGraph = graph
+
+    def for_node(self, node_id: int) -> list[RunRecord]:
+        return [self._graph.state] if node_id == self._graph.node.id else []
+
+    def latest_terminal(self, node_id: int, run_id: str) -> RunRecord | None:
+        if node_id != self._graph.node.id or run_id != self._graph.state["run_id"]:
+            return None
+        return self._graph.state if self._graph.state["status"] in ("done", "failed") else None
+
+    def finish(self, _run_id: str, result: RunResult) -> None:
+        if not self._graph.finish_succeeds:
+            raise RunFenceLostError("runs.finish lost its running-row fence")
+        self._graph.state.update(
+            status=result.status,
+            exit_code=result.exit_code,
+            timed_out=result.timed_out,
+            ended_at=result.ended_at,
+            error=result.error,
+        )
 
 
 def _pid_dead(_pid: int) -> bool:
@@ -110,5 +121,5 @@ def test_dead_owner_recovery_rejects_lost_terminal_fence(
     graph = _RecoveryGraph(pid=424242, finish_succeeds=False)
     monkeypatch.setattr(reconcile, "pid_alive", _pid_dead)
 
-    with pytest.raises(RuntimeError, match="stale terminal write lost"):
+    with pytest.raises(RunFenceLostError, match="running-row fence"):
         _ = reconcile.fail_stale_running_runs(graph, 1)

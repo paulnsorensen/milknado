@@ -19,9 +19,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from milknado.app.graph_display import format_node, render_tree, summarize
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
-from milknado.domains.graph import MikadoGraph, _reads, render_tree
-from milknado.domains.graph.display import format_node, summarize
+from milknado.domains.graph import MikadoGraph, _reads
 from milknado.domains.reporting.harvest import build_harvest_summary
 from tests.graph_helpers import graph_conn
 

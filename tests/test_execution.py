@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
-from typing import Protocol, TypedDict, cast
+from typing import TypedDict, cast
 from uuid import uuid4
 
 import pytest
@@ -18,6 +18,7 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     GitOperationError,
     InvalidTransition,
+    QualityGatesNotConfigured,
     RebaseAbortError,
     TransientDispatchError,
     UnlandedWorkError,
@@ -69,15 +70,6 @@ def _redispatch_review_round(
         attrgetter("_redispatch_review_round")(executor),
     )
     return method(node, config, worktree)
-
-
-class _StopAbortedRunMethod(Protocol):
-    def __call__(self, run_id: str, *, context: str) -> bool: ...
-
-
-def _stop_aborted_run(executor: Executor, run_id: str, context: str) -> bool:
-    method = cast(_StopAbortedRunMethod, attrgetter("_stop_aborted_run")(executor))
-    return method(run_id, context=context)
 
 
 def _finalize_worker_run(executor: Executor, run_id: str | None, result: object) -> None:
@@ -173,6 +165,10 @@ class FakeGit:
 
     def current_branch(self) -> str:
         return "main"
+
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        _ = worktree
+        return None
 
     def resolve_ref(self, ref: str) -> str:
         return f"{ref}-oid"
@@ -358,9 +354,15 @@ class FakeRalph:
         return VerifySpecResult(outcome="done")
 
     def run_node_review(
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> FakeReview:
-        _ = (agent, prompt, worktree, project_root)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds)
         return FakeReview()
 
     def generate_ralph_md(
@@ -463,8 +465,8 @@ class TestGetDispatchableNodes:
         root = graph.add_node("root")
         a = graph.add_node("leaf-a", parent_id=root.id)
         b = graph.add_node("leaf-b", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
         dispatchable = get_dispatchable_nodes(graph)
         assert len(dispatchable) == 1
         assert dispatchable[0] == a.id
@@ -473,8 +475,8 @@ class TestGetDispatchableNodes:
         root = graph.add_node("root")
         active = graph.add_node("active", parent_id=root.id)
         pending = graph.add_node("pending", parent_id=root.id)
-        graph.set_file_ownership(active.id, ["shared.py"])
-        graph.set_file_ownership(pending.id, ["shared.py"])
+        graph.files.claim(active.id, ["shared.py"])
+        graph.files.claim(pending.id, ["shared.py"])
         graph.mark_running(active.id)
 
         assert get_dispatchable_nodes(graph) == []
@@ -485,8 +487,8 @@ class TestGetDispatchableNodes:
         root = graph.add_node("root")
         active = graph.add_node("active", parent_id=root.id)
         pending = graph.add_node("pending", parent_id=root.id)
-        graph.set_file_ownership(active.id, ["shared.py"])
-        graph.set_file_ownership(pending.id, ["shared.py"])
+        graph.files.claim(active.id, ["shared.py"])
+        graph.files.claim(pending.id, ["shared.py"])
         graph.mark_running(active.id)
         logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
 
@@ -611,6 +613,18 @@ class TestExecutorDispatch:
     ) -> None:
         with pytest.raises(ValueError, match="not found"):
             _ = executor.dispatch(999, config)
+
+    def test_dispatch_without_quality_gates_fails_closed(
+        self,
+        executor: Executor,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        _ = graph.add_node("task")
+        missing_gates = replace(config, quality_gates=None)
+
+        with pytest.raises(QualityGatesNotConfigured, match="no quality_gates configured"):
+            _ = executor.dispatch(1, missing_gates)
 
     def test_creates_git_worktree(
         self,
@@ -1341,6 +1355,25 @@ class TestWorktreeRefusalSemantics:
         assert fake_git.force_removed == [tmp_path / "wt"]
         assert fake_git.remove_targets == []  # fail-closed removal never invoked
 
+    def test_discard_logs_force_remove_failure(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class FailingGit(FakeGit):
+            @override
+            def force_remove_worktree(self, path: Path) -> None:
+                raise OSError("permission denied")
+
+        path = tmp_path / "wt"
+        with caplog.at_level(logging.WARNING):
+            WorktreeManager(FailingGit()).discard(1, path)
+
+        assert any(
+            "Failed to force-remove worktree" in record.getMessage()
+            and str(path) in record.getMessage()
+            and "permission denied" in record.getMessage()
+            for record in caplog.records
+        )
+
 
 class TestDispatchRelocation:
     def test_occupied_path_relocates_dispatch(
@@ -1727,7 +1760,7 @@ def test_dispatch_rejects_lost_run_id_fence(
     run_id = ralph.runs_started[0]
     assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None, "the started ralph run's row must not be orphaned"
     assert row["status"] != "running", "row must not zombie as running"
     assert row["error"] == "dispatch aborted"
@@ -1754,7 +1787,7 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
     run_id = ralph.runs_started[0]
     assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None and row["status"] == "running", (
         "unconfirmed stop: row must stay running, not falsely terminal"
     )
@@ -1780,7 +1813,7 @@ def test_dispatch_fence_loss_force_stop_raise_preserves_worktree(
     run_id = ralph.runs_started[0]
     assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None and row["status"] == "running"
     assert git.removed == []
 
@@ -1810,7 +1843,7 @@ def test_watcher_spawn_failure_after_start_stops_and_finalizes(
     run_id = ralph.runs_started[0]
     assert RUN_ID_RE.match(run_id)
     assert ralph.force_stopped == [run_id]
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None and row["status"] != "running", (
         "post-start failure must not leak a zombie 'running' row"
     )
@@ -1849,7 +1882,7 @@ def test_watcher_spawn_failure_unconfirmed_stop_preserves_worktree(
         "the post-start teardown attempted the stop exactly once; the caller's "
         "cleanup must not re-stop a run it never started"
     )
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None and row["status"] == "running", (
         "unconfirmed stop: row must stay running, not falsely terminal"
     )
@@ -1877,7 +1910,7 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     assert len(ralph.runs_started) == 1
     run_id = ralph.runs_started[0]
     assert RUN_ID_RE.match(run_id)
-    row = graph.get_run(run_id)
+    row = graph.runs.get(run_id)
     assert row is not None and row["status"] == "running"
     assert git.removed == [], "unconfirmed stop: worktree preserved"
 
@@ -1886,7 +1919,7 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     _stop_events(ralph)[run_id].set()
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        row = graph.get_run(run_id)
+        row = graph.runs.get(run_id)
         if row is not None and row["status"] != "running":
             break
         time.sleep(0.05)
@@ -1930,14 +1963,10 @@ def test_unconfirmed_stop_blocks_retry_from_starting_second_worker(
     assert node.status.value == "running", "claim retained, not released, under unconfirmed stop"
 
 
-def test_stop_aborted_run_registers_unconfirmed_before_attempting_stop(
+def test_force_stop_run_registers_unconfirmed_before_attempting_stop(
     graph: MikadoGraph,
 ) -> None:
-    """High: _stop_aborted_run must register the run as unconfirmed BEFORE
-    attempting the stop, not only on a failure branch after the call
-    returns — otherwise the independently-polling cancel watcher can
-    observe a dead thread and check membership in the gap before the id is
-    ever added, permanently zombie-ing the row (nothing else owns it)."""
+    """The public stop wrapper registers before its delegate can kill a run."""
     ralph = FakeRalph(id_prefix="registerfirst")
     executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
 
@@ -1953,7 +1982,7 @@ def test_stop_aborted_run_registers_unconfirmed_before_attempting_stop(
     ralph.force_stop_run = _blocking_force_stop_run
 
     thread = threading.Thread(
-        target=lambda: _stop_aborted_run(executor, "run-registerfirst", context="test")
+        target=lambda: executor.force_stop_run("run-registerfirst", timeout=5)
     )
     thread.start()
     try:
@@ -1964,6 +1993,34 @@ def test_stop_aborted_run_registers_unconfirmed_before_attempting_stop(
     finally:
         release.set()
         thread.join(timeout=5)
+
+
+def test_executor_stop_run_owns_unconfirmed_registration(graph: MikadoGraph) -> None:
+    ralph = FakeRalph(id_prefix="stop-wrapper")
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+
+    ralph.stop_result = False
+    assert executor.stop_run("run-stop-wrapper") is False
+    assert "run-stop-wrapper" in _unconfirmed_stops(executor)
+
+    ralph.stop_result = True
+    assert executor.stop_run("run-stop-wrapper") is True
+    assert "run-stop-wrapper" not in _unconfirmed_stops(executor)
+
+
+def test_executor_stop_wrappers_register_failures(graph: MikadoGraph) -> None:
+    ralph = FakeRalph()
+    executor = Executor(graph=graph, git=FakeGit(), ralph=ralph, crg=FakeCrg())
+
+    ralph.stop_raises = RuntimeError("stop failed")
+    with pytest.raises(RuntimeError, match="stop failed"):
+        _ = executor.stop_run("run-stop-error")
+    assert "run-stop-error" in _unconfirmed_stops(executor)
+
+    ralph.force_stop_raises = RuntimeError("force stop failed")
+    with pytest.raises(RuntimeError, match="force stop failed"):
+        _ = executor.force_stop_run("run-force-stop-error")
+    assert "run-force-stop-error" in _unconfirmed_stops(executor)
 
 
 def test_review_redispatch_fence_loss_stops_and_finalizes_fresh_run(
@@ -1988,14 +2045,14 @@ def test_review_redispatch_fence_loss_stops_and_finalizes_fresh_run(
     old_run_id, new_run_id = ralph.runs_started
     assert old_run_id == result.run_id
     assert ralph.force_stopped == [new_run_id]
-    row = graph.get_run(new_run_id)
+    row = graph.runs.get(new_run_id)
     assert row is not None, "the fresh run's row must not be orphaned"
     assert row["status"] != "running", "fresh run's row must not zombie as running"
     assert row["error"] == "dispatch aborted"
     node = graph.get_node(1)
     assert node is not None, "the redispatched node must reload from persisted state"
     assert node.run_id == old_run_id, "the old run id keeps the node fence"
-    old_row = graph.get_run(old_run_id)
+    old_row = graph.runs.get(old_run_id)
     assert old_row is not None and old_row["status"] != "running", (
         "the superseded worker run's row must be finalized unconditionally, "
         "before the fence check, regardless of the raise that follows"
@@ -2024,7 +2081,7 @@ def test_review_redispatch_fence_loss_unconfirmed_stop_leaves_row_running(
     assert len(ralph.runs_started) == 2
     new_run_id = ralph.runs_started[1]
     assert ralph.force_stopped == [new_run_id]
-    row = graph.get_run(new_run_id)
+    row = graph.runs.get(new_run_id)
     assert row is not None and row["status"] == "running"
 
 
@@ -2047,10 +2104,10 @@ def test_review_redispatch_adopted_owner_fence_loss_stops_fresh_run(
     old_run_id, new_run_id = ralph.runs_started
     assert old_run_id == result.run_id
     assert ralph.force_stopped == [new_run_id]
-    row = graph.get_run(new_run_id)
+    row = graph.runs.get(new_run_id)
     assert row is not None and row["status"] != "running"
     assert row["error"] == "dispatch aborted"
-    old_row = graph.get_run(old_run_id)
+    old_row = graph.runs.get(old_run_id)
     assert old_row is not None and old_row["status"] != "running", (
         "the superseded worker run's row must be finalized unconditionally, "
         "before the fence check, regardless of the raise that follows"
@@ -2082,7 +2139,7 @@ def test_review_redispatch_finalizes_prior_round_even_when_fresh_run_fails_to_st
     with pytest.raises(RuntimeError, match="ralph create_run boom"):
         _ = _redispatch_review_round(executor, node, config, result.worktree)
 
-    prior_row = graph.get_run(result.run_id)
+    prior_row = graph.runs.get(result.run_id)
     assert prior_row is not None and prior_row["status"] != "running", (
         "the prior round's row must be finalized even though the fresh round never started"
     )
@@ -2116,12 +2173,12 @@ def test_finalize_worker_run_swallows_finish_run_failure(
     def _get_run(_run_id: str) -> dict[str, str]:
         return {"status": "running"}
 
-    monkeypatch.setattr(graph, "get_run", _get_run)
+    monkeypatch.setattr(graph.runs, "get", _get_run)
 
     def _boom(_run_id: str, _result: object) -> bool:
         raise RuntimeError("db wedged")
 
-    monkeypatch.setattr(graph, "finish_run", _boom)
+    monkeypatch.setattr(graph.runs, "finish", _boom)
     result = RunResult(
         status="failed",
         exit_code=None,
@@ -2169,7 +2226,7 @@ def test_watcher_retries_after_force_stop_raise(
         "force-stop raised for cancelled ralph run" in record.getMessage()
         for record in caplog.records
     ), "the raise must be logged loud"
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["status"] == "running", (
         "fail-closed: a raising force-stop must not leave a falsely-terminal row"
     )
@@ -2178,11 +2235,11 @@ def test_watcher_retries_after_force_stop_raise(
     ralph.force_stop_raises = None
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        row = graph.get_run(result.run_id)
+        row = graph.runs.get(result.run_id)
         if row is not None and row["status"] != "running":
             break
         real_sleep(0.05)
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["error"] == "cancelled", (
         "watcher must retry the force-stop and finalize cancelled"
     )
@@ -2216,7 +2273,7 @@ def test_watcher_does_not_overwrite_a_completion_that_won_the_race(
 
     # Give the watcher's post-stop check a moment to run and (correctly) no-op.
     time.sleep(0.2)
-    row = graph.get_run(result.run_id)
+    row = graph.runs.get(result.run_id)
     assert row is not None and row["status"] == "running", (
         "a completed run must not be overwritten as cancelled by the racing watcher"
     )

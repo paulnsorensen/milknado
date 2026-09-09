@@ -63,6 +63,17 @@ class GitAdapter:
         except OSError as exc:
             raise GitOperationError(" ".join(args), str(exc)) from exc
 
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        """Return the shared git directory for a checkout or linked worktree."""
+        try:
+            common = self._run(
+                ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=worktree,
+            ).stdout.strip()
+        except GitOperationError:
+            return None
+        return Path(common) if common else None
+
     def create_worktree(self, path: Path, branch: str) -> Path:
         _ = self._run(["worktree", "add", "-b", branch, str(path)])
         return path
@@ -83,26 +94,10 @@ class GitAdapter:
         return result.returncode == 0
 
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
-        """Fail-closed worktree removal: refuse dirty or unlanded worktrees.
+        """Fail-closed removal of a clean, landed worktree.
 
-        `target` is a ref resolved in the ROOT repo (default "HEAD" — the
-        checked-out feature branch milknado lands work onto via fast_forward).
-        The landed check runs against the worktree's HEAD *at call time*: by the
-        time `rebase_and_merge`'s finally reaches here, squash + rebase have
-        already rewritten the worktree history, so a fast-forwarded HEAD equals
-        the target tip (trivially landed) while an aborted or never-merged HEAD
-        correctly shows unlanded commits.
-
-        Layer 1 (dirty): pre-check `git status --porcelain`, then remove without
-        `--force` so git's native dirty guard stays as backstop. Layer 2
-        (unlanded): `merge-base --is-ancestor` ancestor containment; a
-        non-zero or inconclusive probe refuses (fail closed).
-
-        Raises UnlandedWorkError naming the worktree and the at-risk work.
-        Raises ValueError when `path` is not itself a registered worktree —
-        git commands run from a stale plain directory resolve against the
-        PARENT repo, which would misreport the root's dirt as the worktree's;
-        callers treat that as a non-refusal failure (nothing to preserve).
+        `target` is resolved in the root repository. Dirty and unlanded paths
+        raise `UnlandedWorkError`; non-worktree paths raise `ValueError`.
         """
         blocker = self.worktree_teardown_blocker(path, target)
         if blocker is not None:
@@ -330,8 +325,13 @@ class GitAdapter:
             )
             base = base_result.stdout.strip()
             _ = self._run(["reset", "--soft", base], cwd=worktree)
-        except subprocess.CalledProcessError:
-            pass
+        except subprocess.CalledProcessError as exc:
+            detail = cast(str | None, exc.stderr) or cast(str | None, exc.stdout) or str(exc)
+            detail = detail.strip() or "(empty)"
+            if exc.returncode != 1:
+                raise GitOperationError("merge-base " + onto, detail) from exc
+            _logger.warning("git merge-base found no common ancestor: stderr=%s", detail)
+
         has_staged = (
             subprocess.run(
                 ["git", "diff", "--cached", "--quiet"],

@@ -138,9 +138,13 @@ def test_stale_db_automigrates_on_open(tmp_path: Path) -> None:
     version = cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0])
     assert version == _persistence.SCHEMA_VERSION
     node = graph.add_node("migrated")
-    _ = graph.insert_node_review(node.id, "reject", "findings", "2026-07-23T00:00:00Z")
-    rows = graph.node_reviews_for_node(node.id)
-    assert [r["verdict"] for r in rows] == ["reject"]
+    _ = graph.runs.insert_review(node.id, "reject", "findings", "2026-07-23T00:00:00Z")
+    rows: list[sqlite3.Row] = (
+        graph_conn(graph)
+        .execute("SELECT * FROM node_reviews WHERE node_id = ? ORDER BY round", (node.id,))
+        .fetchall()
+    )
+    assert [cast(str, r["verdict"]) for r in rows] == ["reject"]
     graph.close()
 
 
@@ -211,15 +215,19 @@ def test_reopen_of_current_db_is_noop_migration(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("persistent")
-    _ = graph.insert_node_review(node.id, "reject", "f", "2026-07-23T00:00:00Z")
+    _ = graph.runs.insert_review(node.id, "reject", "f", "2026-07-23T00:00:00Z")
     graph.close()
 
     reopened = MikadoGraph(db)
     assert graph_conn(reopened).execute("PRAGMA user_version").fetchone()[0] == (
         _persistence.SCHEMA_VERSION
     )
-    rows = reopened.node_reviews_for_node(node.id)
-    assert [r["verdict"] for r in rows] == ["reject"]
+    rows: list[sqlite3.Row] = (
+        graph_conn(reopened)
+        .execute("SELECT * FROM node_reviews WHERE node_id = ? ORDER BY round", (node.id,))
+        .fetchall()
+    )
+    assert [cast(str, r["verdict"]) for r in rows] == ["reject"]
     reopened.close()
 
 
@@ -237,7 +245,7 @@ def test_delete_node_cleans_node_reviews(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("reviewed")
-    _ = graph.insert_node_review(node.id, "reject", "findings", "2026-07-23T00:00:00Z")
+    _ = graph.runs.insert_review(node.id, "reject", "findings", "2026-07-23T00:00:00Z")
 
     deleted = graph.delete_node(node.id)
 
@@ -252,7 +260,7 @@ def test_drop_all_cleans_node_reviews(tmp_path: Path) -> None:
     db = tmp_path / "g.db"
     graph = MikadoGraph(db)
     node = graph.add_node("reviewed")
-    _ = graph.insert_node_review(node.id, "approve", "", "2026-07-23T00:00:00Z")
+    _ = graph.runs.insert_review(node.id, "approve", "", "2026-07-23T00:00:00Z")
 
     count = graph.drop_all()
 

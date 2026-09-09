@@ -268,11 +268,11 @@ def test_output_body_non_empty() -> None:
 
 
 def test_events_text_empty() -> None:
-    assert events_text(()) == "Events\nNo events yet."
+    assert events_text((), ()) == "Events\nNo events yet."
 
 
 def test_events_text_non_empty() -> None:
-    assert events_text(("e1", "e2")) == "Events\ne1\ne2"
+    assert events_text(("e1", "e2"), ()) == "Events\ne1\ne2"
 
 
 def test_run_row_active_with_retry_uses_bold_red_status_cell() -> None:

@@ -42,6 +42,14 @@ The recovery path logs file errors and still records a database error verdict.
 It blocks that node without merge or worker retry.
 The regression exercises real completion with an injected filesystem write error.
 
+
+
+The graph run sub-facade owns audit reads through `graph.runs.reviews_for_node`.[^1]
+Tests and cross-slice code must not query `node_reviews` through the private graph connection.
+That bypass can hide a missing public reader while the storage assertions still pass.
+
+[^1]: src/milknado/domains/graph/_facades.py:101-105; src/milknado/domains/graph/_run_persistence.py:260-276; tests/test_adversarial_review_runtime.py:406-424
+
 ## Regression evidence
 
 `tests/test_adversarial_review_runtime.py` checks approval persistence, audit failures, malformed output, and preserved-worktree handbacks.

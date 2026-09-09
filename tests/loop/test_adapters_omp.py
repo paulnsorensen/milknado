@@ -32,11 +32,13 @@ def test_build_command_replaces_existing_output_mode_idempotently() -> None:
     assert adapter.build_command(expected) == expected
 
 
-def test_deliver_prompt_pipes_prompt_via_stdin() -> None:
+def test_deliver_prompt_uses_stdin_so_large_briefs_survive_argv_limits() -> None:
     adapter = OmpAdapter()
     command = ["omp", "-p", "--auto-approve"]
-    prompt = 'fix "quoted" input\nthen exit'
-    assert adapter.deliver_prompt(command, prompt) == Invocation(command, prompt)
+    prompt = "x" * 140_000  # past Linux MAX_ARG_STRLEN (131072) for one argv element
+    inv = adapter.deliver_prompt(command, prompt)
+    assert inv == Invocation(command, prompt)
+    assert inv.stdin_text == prompt
 
 
 def test_deliver_prompt_keeps_large_prompt_out_of_argv() -> None:

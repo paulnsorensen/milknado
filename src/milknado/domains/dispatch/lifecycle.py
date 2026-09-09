@@ -12,6 +12,7 @@ from milknado.domains.common import (
     MikadoNode,
     NodeKind,
     NodeStatus,
+    RunFenceLostError,
     RunResult,
     WorktreeMode,
 )
@@ -30,14 +31,12 @@ from milknado.domains.dispatch.ports import (
 )
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
-    find_terminal_runs_for_node,
-    latest_terminal_run,
     reconcile_node_status,
 )
 from milknado.domains.dispatch.runner import run_headless
 
 if TYPE_CHECKING:
-    from milknado.domains.graph import MikadoGraph, RunRecord
+    from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
 
@@ -86,8 +85,8 @@ def _finish_dispatch(
 ) -> None:
     typed_graph = cast(FinishDispatchPort, graph)
     worker_result = cast(WorkerOutcomePort, result)
-    if (
-        typed_graph.finish_run(
+    try:
+        typed_graph.runs.finish(
             run_id,
             RunResult(
                 status=terminal,
@@ -97,9 +96,9 @@ def _finish_dispatch(
                 rebased=merge.rebased if merge is not None else None,
             ),
         )
-        is False
-    ):
-        raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+    except RunFenceLostError:
+        _logger.info("sync dispatch terminal run already finalized: run_id=%s", run_id)
+        return
     if (
         typed_graph.mark_terminal(
             node_id, run_id, NodeStatus.DONE if terminal == "done" else NodeStatus.FAILED
@@ -135,7 +134,7 @@ def dispatch_node_sync(
             project_root=request.project_root,
         )
         cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
-        graph.start_run(
+        graph.runs.start(
             run_id,
             request.node_id,
             str(log_path),
@@ -162,20 +161,22 @@ def dispatch_node_sync(
     except Exception as exc:
         terminal_error: BaseException | None = None
         try:
-            run_written = True
             if started:
-                run_written = graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=False,
-                        ended_at=now_iso(),
-                        error=f"{type(exc).__name__}: {exc}",
-                    ),
-                )
+                try:
+                    graph.runs.finish(
+                        run_id,
+                        RunResult(
+                            status="failed",
+                            exit_code=-1,
+                            timed_out=False,
+                            ended_at=now_iso(),
+                            error=f"{type(exc).__name__}: {exc}",
+                        ),
+                    )
+                except RunFenceLostError:
+                    _logger.info("sync dispatch failure run already finalized: run_id=%s", run_id)
             node_written = graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
-            if run_written is False or node_written is False:
+            if node_written is False:
                 terminal_error = RuntimeError(
                     f"terminal persistence lost its fence for run {run_id}"
                 )
@@ -219,22 +220,17 @@ def _maybe_merge_back(
 
 
 def reclaim_stale_node(graph: MikadoGraph, node_id: int, fence_run_id: str | None) -> None:
-    """Reconcile an orphaned RUNNING node before a new async dispatch.
+    """Reconcile a running node before a new async dispatch.
 
-    A prior worker may have finished without anyone polling, leaving the node
-    stuck on RUNNING. Also sweeps runs stuck on "running" past their timeout:
-    the worker thread vanished (e.g. server crash) without writing a terminal
-    state, which would lock the node just as permanently. Routes terminal writes
-    through the atomic run_id + status fence (graph.mark_terminal), closing the
-    TOCTOU a pre-check-then-unfenced-write left open: a node re-claimed under a
-    newer run cannot be clobbered. A legacy node with no run_id has no fence to
-    honour and falls back to the unconditional reconcile.
+    The terminal-run lookup is always scoped to the current owning run_id.
+    Legacy nodes without a run_id use an explicitly unowned terminal lookup.
     """
     _ = fail_stale_running_runs(graph, node_id)
-    # Filter terminal files to this node's fence BEFORE picking the latest, so a
-    # stale run with a later ended_at cannot mask the current owner's file.
-    winner: RunRecord | None = latest_terminal_run(
-        find_terminal_runs_for_node(graph, node_id, run_id=fence_run_id)
-    )
+    if fence_run_id is None:
+        orphan = graph.runs.latest_unowned_terminal(node_id)
+        if orphan is not None:
+            reconcile_node_status(graph, node_id, orphan["status"])
+        return
+    winner = graph.runs.latest_terminal(node_id, fence_run_id)
     if winner is not None:
         reconcile_node_status(graph, node_id, winner["status"], run_id=winner.get("run_id"))

@@ -125,7 +125,7 @@ class NodeSpec:
 
 @dataclass(frozen=True)
 class RunResult:
-    """Terminal outcome of a run, threaded from graph.finish_run to persistence."""
+    """Terminal outcome of a run, threaded from graph.runs.finish to persistence."""
 
     status: str
     exit_code: int | None

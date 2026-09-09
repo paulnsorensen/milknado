@@ -671,6 +671,7 @@ async def test_execution_worker_forwards_options_and_returns_result(
             "feature_branch": "feature",
             "strict": True,
             "spec_text": "spec",
+            "allow_protected": False,
             "spec_path": Path("spec.md"),
         }
     ]

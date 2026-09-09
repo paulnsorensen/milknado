@@ -316,7 +316,7 @@ def test_bind_recovers_item_add_after_issue_creation(tmp_path: Path, graph: Mika
         _ = bind_github_project(graph, rid, root, github)
 
     first_goal = next(goal for goal in graph.get_children(rid) if goal.description == "Goal one")
-    attempt = graph.get_github_bind_attempt(first_goal.id)
+    attempt = graph.github.attempt(first_goal.id)
     assert attempt is not None
     assert attempt["issue_url"] is not None
     assert attempt["issue_url"].endswith("/issues/1")
@@ -328,7 +328,7 @@ def test_bind_recovers_item_add_after_issue_creation(tmp_path: Path, graph: Mika
     assert result.issues_created == 1
     assert result.items_added == 2
     assert len(github.issues) == 2
-    assert graph.get_github_bind_attempt(first_goal.id) is None
+    assert graph.github.attempt(first_goal.id) is None
     recovered = graph.get_node(first_goal.id)
     assert recovered is not None
     assert recovered.github_ref == "PVTI_1"
@@ -342,7 +342,7 @@ def test_bind_recovers_pending_attempt_from_existing_marker(
     roadmap = graph.get_node(rid)
     assert roadmap is not None and roadmap.wiki_ref is not None
     marker = correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
-    _ = graph.set_github_bind_attempt(goal.id, marker, "https://example/issues/9", "now")
+    _ = graph.github.bind(goal.id, marker, "https://example/issues/9", "now")
     github = FakeGh(existing_items=[{"id": "PVTI_recovered", "body": marker}])
 
     result = bind_github_project(graph, rid, root, github)
@@ -359,7 +359,7 @@ def test_bind_rejects_unknown_issue_creation_outcome(tmp_path: Path, graph: Mika
     roadmap = graph.get_node(rid)
     assert roadmap is not None and roadmap.wiki_ref is not None
     marker = correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
-    _ = graph.set_github_bind_attempt(goal.id, marker, None, "now")
+    _ = graph.github.bind(goal.id, marker, None, "now")
 
     with pytest.raises(RuntimeError, match="outcome is unknown"):
         _ = bind_github_project(graph, rid, root, FakeGh())
@@ -375,7 +375,7 @@ def test_bind_rejects_ambiguous_marker_matches(
     assert roadmap is not None and roadmap.wiki_ref is not None
     marker = correlation_marker(roadmap.wiki_ref, goal.wiki_ref or str(goal.id))
     if with_attempt:
-        _ = graph.set_github_bind_attempt(goal.id, marker, "https://example/issues/9", "now")
+        _ = graph.github.bind(goal.id, marker, "https://example/issues/9", "now")
     github = FakeGh(
         existing_items=[
             {"id": "PVTI_a", "body": marker},

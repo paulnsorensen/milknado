@@ -6,7 +6,6 @@ import logging
 import time
 from collections import deque
 from collections.abc import Callable
-from contextlib import nullcontext
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
@@ -22,15 +21,6 @@ from milknado.domains.execution.executor import (
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
-from milknado.domains.execution.run_loop.display import (
-    TuiState,
-    _action_reasons,
-    _average_duration,
-    _build_layout,
-    _progress_state,
-    _render_overlay,
-    _summarize_description,
-)
 from milknado.domains.execution.run_loop.input import (
     InputState,
     drain_input,
@@ -42,21 +32,21 @@ from milknado.domains.execution.run_loop.state import (
     RunActionState,
     RunLoopState,
     TerminalRunState,
+    action_reasons,
+    average_duration,
+    progress_state,
+    summarize_description,
 )
 from milknado.loop import RunStatus
 
 __all__ = ["RunLoop", "RunLoopResult", "TerminalRunOutcome"]
 
 if TYPE_CHECKING:
-    from rich.layout import Layout
-    from rich.live import Live
-    from rich.panel import Panel
-
     from milknado.domains.common.config import MilknadoConfig
     from milknado.domains.common.protocols import LoopPort
     from milknado.domains.execution.executor import ExecutionConfig, Executor
     from milknado.domains.graph import MikadoGraph
-    from milknado.domains.planning.planner import Planner
+    from milknado.domains.planning import Planner
 
 _logger = logging.getLogger("milknado")
 _ETA_SAMPLE_SIZE_DEFAULT = 10
@@ -84,7 +74,7 @@ class RunLoop:
         self._failure_triggered: bool = False
         self._progress_by_run: dict[str, ProgressEvent] = {}
         self._strict: bool = False
-        self._tick: int = 0
+        self._log_path: str | None = None
         eta_n = config.eta_sample_size if config else _ETA_SAMPLE_SIZE_DEFAULT
         self._completion_durations: deque[float] = deque(maxlen=eta_n)
         self._input: InputState = InputState()
@@ -125,6 +115,10 @@ class RunLoop:
             stopped=self._stopped,
             available=available,
             event_lines=tuple(self._logs),
+            execution_agent=(
+                self._exec_config.execution_agent if self._exec_config else "(unknown)"
+            ),
+            log_path=self._log_path,
         )
 
     def _active_state(self, run_id: str, node_id: int, description: str) -> ActiveRunState:
@@ -132,12 +126,12 @@ class RunLoop:
         state = run.state if run is not None else None
         status = getattr(state, "status", RunStatus.RUNNING)
         stop_requested = bool(getattr(state, "stop_requested", False))
-        cancel_reason, guidance_reason, force_stop_reason = _action_reasons(
+        cancel_reason, guidance_reason, force_stop_reason = action_reasons(
             status, stop_requested, bool(getattr(state, "force_stop_requested", False))
         )
-        progress, progress_pct = _progress_state(self._progress_by_run.get(run_id))
+        progress, progress_pct = progress_state(self._progress_by_run.get(run_id))
         elapsed_seconds = (now := time.monotonic()) - self._dispatched_at.get(run_id, now)
-        avg_dur = _average_duration(self._completion_durations)
+        avg_dur = average_duration(self._completion_durations)
         eta_seconds = max(0.0, avg_dur - elapsed_seconds) if avg_dur is not None else None
         cfg = self._milknado_config
         stalled = progress_pct is None and elapsed_seconds >= (
@@ -146,7 +140,7 @@ class RunLoop:
         return ActiveRunState(
             run_id=run_id,
             node_id=node_id,
-            description=_summarize_description(description),
+            description=summarize_description(description),
             status=status,
             progress=progress,
             stop_requested=stop_requested,
@@ -187,7 +181,7 @@ class RunLoop:
         self._publish_state()
 
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
-        stopped = self._ralph.force_stop_run(run_id, timeout)
+        stopped = self._executor.force_stop_run(run_id, timeout)
         self._publish_state()
         return stopped
 
@@ -215,8 +209,6 @@ class RunLoop:
         *,
         interactive: bool = True,
     ) -> RunLoopResult:
-        from rich.console import Console
-
         self._strict = strict
         self._exec_config = config
         self._process_controls = process_controls
@@ -226,16 +218,16 @@ class RunLoop:
         self._completed = 0
         self._failed = 0
         self._stopped = 0
+        self._log_path = None
         if self._process_controls is not None:
             self._process_controls()
-        self._publish_state()
         timeout = (
             self._milknado_config.completion_timeout_seconds if self._milknado_config else None
         )
+        self._publish_state()
 
         with configure_run_logging(config.project_root) as log_path:
-            if interactive:
-                Console().print(f"[dim]Log → {log_path}[/dim]")
+            self._log_path = str(log_path)
             _logger.info("Run started feature_branch=%s", feature_branch)
             if interactive:
                 self._input.input_stop.clear()
@@ -265,36 +257,30 @@ class RunLoop:
         timeout: float | None,
         interactive: bool,
     ) -> tuple[int, int, int, list[RebaseConflict], bool]:
-        from rich.live import Live
-
         dispatched = 0
         conflicts: list[RebaseConflict] = []
         interrupted = False
-        live_context = (
-            Live(self._build_layout(), refresh_per_second=2) if interactive else nullcontext(None)
-        )
         try:
-            with live_context as live:
-                if interactive:
-                    drain_input(self._input, self._active)
-                if self._process_controls is not None:
-                    self._process_controls()
-                added, failed = self._dispatch_if_scheduling_open(config, concurrency_limit, live)
+            if interactive:
+                drain_input(self._input, self._active)
+            if self._process_controls is not None:
+                self._process_controls()
+            added, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+            dispatched += added
+            self._failed += failed
+            self._completion_wait_started = time.monotonic()
+            self._publish_state()
+            while self._active:
+                added, completed, failed, new_conflicts, timed_out = self._poll_and_complete(
+                    config, feature_branch, concurrency_limit, timeout, interactive
+                )
                 dispatched += added
+                self._completed += completed
                 self._failed += failed
-                self._completion_wait_started = time.monotonic()
+                conflicts.extend(new_conflicts)
                 self._publish_state()
-                while self._active:
-                    added, completed, failed, new_conflicts, timed_out = self._poll_and_complete(
-                        config, feature_branch, concurrency_limit, timeout, live
-                    )
-                    dispatched += added
-                    self._completed += completed
-                    self._failed += failed
-                    conflicts.extend(new_conflicts)
-                    self._publish_state()
-                    if timed_out:
-                        break
+                if timed_out:
+                    break
         except KeyboardInterrupt:
             interrupted = True
             _logger.warning("Run interrupted by user (KeyboardInterrupt)")
@@ -314,7 +300,7 @@ class RunLoop:
         newly_failed = 0
         for timed_out_id in list(self._active):
             nid = self._active[timed_out_id]
-            if not self._ralph.stop_run(timed_out_id, timeout=10.0):
+            if not self._executor.stop_run(timed_out_id, timeout=10.0):
                 _logger.error(
                     "worker did not exit after stop; preserving ownership node_id=%d run_id=%s",
                     nid,
@@ -335,7 +321,7 @@ class RunLoop:
         feature_branch: str,
         concurrency_limit: int,
         timeout: float | None,
-        live: Live | None,
+        interactive: bool,
     ) -> tuple[int, int, int, list[RebaseConflict], bool]:
         """One poll-and-handle iteration.
 
@@ -362,29 +348,15 @@ class RunLoop:
             if self._process_controls is not None:
                 self._process_controls()
             self._publish_state()
-            self._render_live_frame(live)
             return 0, 0, 0, [], False
         self._completion_wait_started = time.monotonic()
-        if live is not None:
+        if interactive:
             drain_input(self._input, self._active)
-        completed, failed, conflicts = handle_completion(
-            self, run_id, outcome, feature_branch, live
-        )
+        completed, failed, conflicts = handle_completion(self, run_id, outcome, feature_branch)
         dispatched, dispatch_failures = self._dispatch_if_scheduling_open(
-            config, concurrency_limit, live
+            config, concurrency_limit
         )
-        self._render_live_frame(live)
         return dispatched, completed, failed + dispatch_failures, list(conflicts), False
-
-    def _render_live_frame(self, live: Live | None) -> None:
-        if live is None:
-            return
-        display = (
-            self._render_overlay(self._input.overlay_state)
-            if self._input.overlay_state
-            else self._build_layout()
-        )
-        live.update(display)
 
     def _emit_final_telemetry(
         self,
@@ -411,38 +383,15 @@ class RunLoop:
             ),
         )
 
-    def _tui_state(self) -> TuiState:
-        cfg = self._milknado_config
-        return TuiState(
-            tick=self._tick,
-            active=self._active,
-            logs=list(self._logs),
-            dispatched_at=self._dispatched_at,
-            attempts=self._attempts,
-            progress_by_run=self._progress_by_run,
-            completion_durations=list(self._completion_durations),
-            stall_threshold=cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT,
-            max_retries=cfg.dispatch_max_retries if cfg else 2,
-            exec_agent=self._exec_config.execution_agent if self._exec_config else "(unknown)",
-        )
-
-    def _build_layout(self) -> Layout:
-        self._tick += 1
-        return _build_layout(self._tui_state(), self._graph)
-
-    def _render_overlay(self, run_id: str) -> Panel:
-        return _render_overlay(run_id, self._tui_state(), self._graph, self._ralph)
-
     def _dispatch_if_scheduling_open(
         self,
         config: ExecutionConfig,
         concurrency_limit: int,
-        live: Live | None,
     ) -> tuple[int, int]:
         with self._scheduling_lock:
             if self._scheduling_stopped:
                 return 0, 0
-            return self._dispatch_batch(config, concurrency_limit, live)
+            return self._dispatch_batch(config, concurrency_limit)
 
     def _verify_if_scheduling_open(
         self,
@@ -498,7 +447,6 @@ class RunLoop:
         self,
         config: ExecutionConfig,
         concurrency_limit: int,
-        live: Live | None,
     ) -> tuple[int, int]:
         if self._strict and self._failure_triggered:
             return 0, 0
@@ -515,7 +463,7 @@ class RunLoop:
         failed = 0
         for node_id in dispatchable[:available]:
             node = self._graph.get_node(node_id)
-            desc = _summarize_description(node.description) if node else str(node_id)
+            desc = summarize_description(node.description) if node else str(node_id)
             node_config = config
             if self._milknado_config is not None and node is not None:
                 profile = resolve_flavor_profile(self._milknado_config, node.flavor)
@@ -527,26 +475,10 @@ class RunLoop:
                     review=profile.review,
                     review_agent=profile.review_agent,
                     review_max_rounds=profile.review_max_rounds,
+                    review_timeout_seconds=profile.review_timeout_seconds,
                     on_reject=profile.on_reject,
                     session_mode=profile.session_mode,
                 )
-            if node_config.quality_gates is None:
-                from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
-
-                _logger.error(
-                    "preflight: node %d (%s): %s", node_id, desc, NO_GATES_CONFIGURED_MESSAGE
-                )
-                if live is not None:
-                    live.console.print(
-                        f"[red]✗[/red] [{node_id}] {desc}: {NO_GATES_CONFIGURED_MESSAGE}"
-                    )
-                self._executor.fail(node_id)
-                self._logs.append(f"[{ts()}] ✗ node {node_id}: no quality_gates configured")
-                failed += 1
-                if self._strict:
-                    self._failure_triggered = True
-                    break
-                continue
             try:
                 result = self._executor.dispatch(node_id, node_config)
             except Exception as exc:
@@ -567,8 +499,6 @@ class RunLoop:
             self._active[result.run_id] = node_id
             self._dispatched_at[result.run_id] = time.monotonic()
             self._logs.append(f"[{ts()}] → node {node_id}: {desc}")
-            if live is not None:
-                live.console.print(f"[cyan]→[/cyan] [{node_id}] {desc}")
             _logger.info("node_dispatched node_id=%d run_id=%s", node_id, result.run_id)
             dispatched += 1
         return dispatched, failed

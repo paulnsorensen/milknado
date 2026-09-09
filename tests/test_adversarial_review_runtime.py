@@ -11,7 +11,6 @@ from typing import Protocol, TypedDict, Unpack, cast
 from unittest.mock import MagicMock
 
 import pytest
-from rich.live import Live
 
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters.loop import (
@@ -111,14 +110,6 @@ class _Run:
         return self._state
 
 
-class _Console:
-    def __init__(self) -> None:
-        self.print_calls: list[tuple[object, ...]] = []
-
-    def print(self, *args: object, **_kwargs: object) -> None:
-        self.print_calls.append(args)
-
-
 def _handler_loop(result: CompletionResult) -> RunLoop:
     def _get_node(node_id: int) -> MikadoNode:
         return MikadoNode(node_id, "handler node")
@@ -147,14 +138,6 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
     return cast(RunLoop, cast(object, loop))
 
 
-def _handler_live() -> tuple[Live, _Console]:
-    console = _Console()
-    live_double = SimpleNamespace(console=console)
-    # Live exposes a large concrete surface; only .console is exercised here,
-    # so a single justified cast is the narrowest honest representation.
-    return cast(Live, live_double), console  # pyright: ignore[reportInvalidCast]
-
-
 class _ReviewRalph:
     def __init__(self, verdicts: list[bool]) -> None:
         self.verdicts: Iterator[bool] = iter(verdicts)
@@ -163,6 +146,7 @@ class _ReviewRalph:
         self.stdout_requests: list[str] = []
         self.reviews: list[tuple[str, str, Path]] = []
         self.ralph_md_calls: list[dict[str, object]] = []
+        self.timeout_seconds_seen: list[float] = []
         self._next_id: int = 0
 
     def create_run(
@@ -250,9 +234,16 @@ class _ReviewRalph:
         raise RuntimeError("Not expected in review executor tests")
 
     def run_node_review(
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewVerdict:
         _ = project_root
+        self.timeout_seconds_seen.append(timeout_seconds)
         self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
             approved=next(self.verdicts),
@@ -298,6 +289,7 @@ class _ConfigOverrides(TypedDict, total=False):
     review: bool
     review_agent: str | None
     review_max_rounds: int
+    review_timeout_seconds: int
     session_mode: str
     agent_family: str
     on_reject: str
@@ -312,6 +304,7 @@ def _config(root: Path, **overrides: Unpack[_ConfigOverrides]) -> ExecutionConfi
         "review": True,
         "review_agent": "age",
         "review_max_rounds": 1,
+        "review_timeout_seconds": 1800,
         "session_mode": "resume",
         "on_reject": "block",
     }
@@ -362,6 +355,19 @@ def test_reject_redispatches_pinned_worktree_and_resumes_session(
     ).read_text() == "[P1][correctness] finding\n"
 
 
+def test_review_timeout_seconds_reaches_the_reviewer_port(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    ralph = _ReviewRalph([True])
+    executor = _executor(graph, tmp_path, ralph)
+    _ = graph.add_node("custom timeout")
+
+    _ = executor.dispatch(1, _config(tmp_path, review_timeout_seconds=123))
+    _ = executor.complete(1, "main")
+
+    assert ralph.timeout_seconds_seen == [123]
+
+
 def test_redispatch_threads_findings_into_ralph_regeneration(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
@@ -392,13 +398,13 @@ def test_notify_review_dual_writes_node_reviews_and_run_messages(
     _ = executor.dispatch(1, _config(tmp_path))
     _ = executor.complete(1, "main")
 
-    rows = graph.node_reviews_for_node(1)
+    rows = graph.runs.reviews_for_node(1)
     assert len(rows) == 1
     assert rows[0]["verdict"] == "reject"
     assert rows[0]["round"] == 1
     assert rows[0]["findings"] == "[P1][correctness] finding"
     worker_run_id = ralph.started[0]
-    assert graph.latest_run_message(worker_run_id, "node_review") is not None
+    assert graph.runs.latest_message(worker_run_id, "node_review") is not None
 
 
 def test_findings_delivered_in_memory_when_db_writes_fail(
@@ -412,7 +418,7 @@ def test_findings_delivered_in_memory_when_db_writes_fail(
 
     _ = executor.dispatch(1, _config(tmp_path))
     monkeypatch.setattr(
-        graph, "deposit_run_message", MagicMock(side_effect=RuntimeError("db down"))
+        graph.runs, "deposit_message", MagicMock(side_effect=RuntimeError("db down"))
     )
     rejected = executor.complete(1, "main")
 
@@ -438,7 +444,7 @@ def test_second_rejection_round_accumulates_audits_and_labels_round_2(
     second = executor.complete(1, "main")
     assert first.redispatch is not None and second.redispatch is not None
 
-    rows = graph.node_reviews_for_node(1)
+    rows = graph.runs.reviews_for_node(1)
     assert [r["round"] for r in rows] == [1, 2]
     assert all(r["verdict"] == "reject" for r in rows)
     assert ralph.ralph_md_calls[1]["findings_round"] == 1
@@ -482,7 +488,7 @@ def test_block_policy_retains_pinned_worktree(
     git = FakeGit()
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node("blocked review")
-    monkeypatch.setattr(graph, "deposit_run_message", MagicMock(return_value=1))
+    monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
 
     first = executor.dispatch(1, _config(tmp_path))
     assert executor.complete(1, "main").redispatch is not None
@@ -631,7 +637,7 @@ def test_adopted_review_keeps_parent_fence_and_notifies_worker(
     parent_fence = "parent-fence"
     assert graph.claim_node(1, parent_fence, now=now_iso())
     notified = MagicMock(return_value=1)
-    monkeypatch.setattr(graph, "deposit_run_message", notified)
+    monkeypatch.setattr(graph.runs, "deposit_message", notified)
 
     _ = executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
     rejected = executor.complete(1, "main")
@@ -659,8 +665,8 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
         executor = _executor(graph, tmp_path, _ReviewRalph([False, False]))
         _ = executor.dispatch(node_id, _config(tmp_path, on_reject=policy))
         monkeypatch.setattr(
-            graph,
-            "deposit_run_message",
+            graph.runs,
+            "deposit_message",
             MagicMock(side_effect=RuntimeError("notification store unavailable")),
         )
 
@@ -733,13 +739,19 @@ def test_review_failure_blocks_without_redispatch(
 ) -> None:
     class FailingReviewRalph(_ReviewRalph):
         def run_node_review(  # pyright: ignore[reportImplicitOverride]
-            self, agent: str, prompt: str, worktree: Path, project_root: Path
+            self,
+            agent: str,
+            prompt: str,
+            worktree: Path,
+            project_root: Path,
+            *,
+            timeout_seconds: float,
         ) -> ReviewVerdict:
             raise RuntimeError("review process failed")
 
     executor = _executor(graph, tmp_path, FailingReviewRalph([True]))
     _ = graph.add_node("review failure")
-    monkeypatch.setattr(graph, "deposit_run_message", MagicMock(return_value=1))
+    monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
     _ = executor.dispatch(1, _config(tmp_path))
     result = executor.complete(1, "main")
     assert result.blocked is True
@@ -766,7 +778,7 @@ def test_review_findings_write_failure_still_audits_and_blocks(
     assert result.blocked is True
     assert result.redispatch is None
     assert not git.rebases
-    rows = graph.node_reviews_for_node(1)
+    rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert "findings unavailable" in rows[0]["findings"]
 
@@ -798,6 +810,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         timeout_manager,
         "timeout",
         queue.Queue[Event[EventData]](),
+        1800.0,
     )
     assert timed_out.approved is False
     assert timeout_manager.stopped is True
@@ -820,6 +833,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         empty_manager,
         "empty",
         empty_events,
+        1800.0,
     )
     assert empty.approved is False
     assert empty_manager.stopped is True
@@ -837,6 +851,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         failed_manager,
         "failed",
         failed_events,
+        1800.0,
     )
     assert failed.approved is False
     assert "event stream failed" in failed.findings_md
@@ -957,7 +972,9 @@ def test_loop_adapter_runs_bounded_review_in_pinned_worktree(
 
     monkeypatch.setattr("milknado.adapters.loop.RunManager", FakeManager)
     adapter = LoopAdapter()
-    verdict = adapter.run_node_review("age", "review prompt", tmp_path, tmp_path)
+    verdict = adapter.run_node_review(
+        "age", "review prompt", tmp_path, tmp_path, timeout_seconds=1800.0
+    )
     assert verdict.approved is True
     # The adapter's __init__ creates its own manager; the review run uses the
     # most recently constructed one — assert on the instance that got the run.
@@ -977,7 +994,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
     )
     events.put(Event(EventType.RUN_STOPPED, "r", NoData()))
     manager = RunManager()
-    result = _drain_review_run(manager, "r", events)
+    result = _drain_review_run(manager, "r", events, 1800.0)
     assert result.approved is True
 
 
@@ -1015,8 +1032,9 @@ class _HeadlessRoundExecutor:
     def fail(self, node_id: int, detail: str | None = None) -> None:
         _ = node_id, detail
 
-    def note_unconfirmed_stop(self, run_id: str) -> None:
-        _ = run_id
+    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return True
 
 
 class _HeadlessRoundRalph:
@@ -1045,7 +1063,6 @@ def test_headless_follows_review_redispatch() -> None:
 
 
 def test_completion_handler_tracks_review_round_and_block_paths() -> None:
-    live, _console = _handler_live()
     redispatch = CompletionResult(
         1,
         rebased=False,
@@ -1053,18 +1070,18 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", "completed", "main", live) == (0, 0, [])
+    assert handle_completion(loop, "run-1", "completed", "main") == (0, 0, [])
     assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", "completed", "main", live)[1] == 1
+    assert handle_completion(blocked, "run-1", "completed", "main")[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = _handler_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", "completed", "main", live)[2] == [conflict]
+    assert handle_completion(failed, "run-1", "completed", "main")[2] == [conflict]
     passed = _handler_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", "completed", "main", live)[0] == 1
+    assert handle_completion(passed, "run-1", "completed", "main")[0] == 1
 
 
 def test_completion_handler_surfaces_review_notification_failure() -> None:
@@ -1075,15 +1092,12 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     """
     result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
     loop = _handler_loop(result)
-    live, console = _handler_live()
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
 
     # The node still completes normally — the notice does not change the outcome.
     assert (completed, failed, conflicts) == (1, 0, [])
     assert any("review notification failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
-    printed = " ".join(str(call) for call in console.print_calls)
-    assert "review notification failed" in printed
 
 
 def test_completion_handler_surfaces_review_audit_failure() -> None:
@@ -1091,14 +1105,11 @@ def test_completion_handler_surfaces_review_audit_failure() -> None:
         1, rebased=False, newly_ready=[], blocked=True, review_audit_failed=True
     )
     loop = _handler_loop(result)
-    live, console = _handler_live()
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main", live)
+    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
 
     assert (completed, failed, conflicts) == (0, 1, [])
     assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
-    printed = " ".join(str(call) for call in console.print_calls)
-    assert "review audit failed" in printed
 
 
 def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: Path) -> None:
@@ -1112,7 +1123,7 @@ def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: 
 
     assert result.rebased is True
     assert git.removed == [dispatched.worktree]
-    rows = graph.node_reviews_for_node(1)
+    rows = graph.runs.reviews_for_node(1)
     assert [(row["round"], row["verdict"]) for row in rows] == [(1, "approve")]
 
 
@@ -1124,7 +1135,7 @@ def test_approval_audit_failure_blocks_before_merge(
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node("audit failure")
     monkeypatch.setattr(
-        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+        graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject="warn"))
@@ -1147,7 +1158,7 @@ def test_rejection_audit_failure_blocks_before_merge(
     executor = _executor(graph, tmp_path, ralph, git)
     _ = graph.add_node(f"rejection audit failure {policy}")
     monkeypatch.setattr(
-        graph, "insert_node_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
+        graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
@@ -1164,7 +1175,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     db = tmp_path / "review.db"
     graph = MikadoGraph(db)
     node = graph.add_node("restart sequence")
-    assert graph.insert_node_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
+    assert graph.runs.insert_review(node.id, "reject", "old", "2026-01-01T00:00:00+00:00") == 1
     graph.close()
 
     reopened = MikadoGraph(db)
@@ -1174,15 +1185,21 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     )
 
     assert audit.audit_succeeded is True
-    assert [row["round"] for row in reopened.node_reviews_for_node(node.id)] == [1, 2]
+    assert [row["round"] for row in reopened.runs.reviews_for_node(node.id)] == [1, 2]
     reopened.close()
 
 
 class _MalformedReviewRalph(_ReviewRalph):
     def run_node_review(  # pyright: ignore[reportImplicitOverride]
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> ReviewVerdict:
-        _ = agent, prompt, worktree, project_root
+        _ = agent, prompt, worktree, project_root, timeout_seconds
         return _parse_review_verdict("progress only")
 
 
@@ -1206,6 +1223,6 @@ def test_invalid_review_blocks_without_worker_revision(
     assert len(ralph.created) == 1
     assert not git.rebases
     assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
-    rows = graph.node_reviews_for_node(1)
+    rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"

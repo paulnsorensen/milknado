@@ -186,7 +186,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> Response:
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        run = graph.get_run(run_id)
+        run = graph.runs.get(run_id)
         if run is None:
             raise ValueError(f"run {run_id!r} not found")
         node = graph.get_node(run["node_id"])
@@ -202,7 +202,7 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> Response:
             artifact_path=node.artifact_path,
         )
         verdict = verifier()
-        _ = graph.deposit_run_message(
+        _ = graph.runs.deposit_message(
             run_id,
             VERIFY_ROLE,
             json.dumps({"ok": verdict.ok, "feedback": verdict.feedback}),

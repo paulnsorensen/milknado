@@ -39,9 +39,9 @@ def _seed_run(
         )
         started_at = datetime.now(UTC).isoformat()
         log_path = str(root / ".milknado" / "runs" / f"{run_id}.log")
-        _ = graph.start_run(run_id, node_id, log_path, started_at, 10, None)
+        _ = graph.runs.start(run_id, node_id, log_path, started_at, 10, None)
         if status != "running":
-            _ = graph.finish_run(
+            _ = graph.runs.finish(
                 run_id,
                 RunResult(
                     status=status,
@@ -60,7 +60,7 @@ def _seed_run(
 def _has_terminal_marker(root: Path, run_id: str) -> bool:
     graph, _cfg = open_graph(root)
     try:
-        return graph.latest_run_message(run_id, "review_terminal") is not None
+        return graph.runs.latest_message(run_id, "review_terminal") is not None
     finally:
         graph.close()
 
@@ -89,7 +89,7 @@ class TestDepositReview:
             )
         graph, _cfg = open_graph(tmp_path)
         try:
-            assert graph.latest_run_message(run_id, "review_terminal") is None
+            assert graph.runs.latest_message(run_id, "review_terminal") is None
         finally:
             graph.close()
 
@@ -119,10 +119,10 @@ class TestDepositReview:
         assert result == {"run_id": run_id, "seq": 1}
         graph, _cfg = open_graph(tmp_path)
         try:
-            stored = graph.latest_run_message(run_id, "review")
+            stored = graph.runs.latest_message(run_id, "review")
             assert stored == "approve\n# Findings\nNo issues found."
-            assert graph.latest_run_message(run_id, "review_terminal") == "approve"
-            assert graph.latest_run_message(run_id, "result") is None
+            assert graph.runs.latest_message(run_id, "review_terminal") == "approve"
+            assert graph.runs.latest_message(run_id, "result") is None
         finally:
             graph.close()
 
@@ -139,8 +139,8 @@ class TestDepositReview:
         assert result["seq"] == 1
         graph, _cfg = open_graph(tmp_path)
         try:
-            assert graph.latest_run_message(run_id, "review") == "reject\nmissing test coverage"
-            assert graph.latest_run_message(run_id, "review_terminal") == "reject"
+            assert graph.runs.latest_message(run_id, "review") == "reject\nmissing test coverage"
+            assert graph.runs.latest_message(run_id, "review_terminal") == "reject"
         finally:
             graph.close()
 
@@ -156,7 +156,7 @@ class TestDepositReview:
         )
         graph, _cfg = open_graph(tmp_path)
         try:
-            assert graph.latest_run_message(run_id, "review_terminal") is None
+            assert graph.runs.latest_message(run_id, "review_terminal") is None
         finally:
             graph.close()
 

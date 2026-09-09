@@ -78,9 +78,9 @@ def seed_status_project(root: Path) -> dict[str, int]:
         graph.mark_done(nodes["done"].id)
 
         started_at = datetime.now(UTC).isoformat()
-        graph.start_run("run-running", nodes["running"].id, "running.log", started_at, 10)
-        graph.start_run("run-failed", nodes["failed"].id, "failed.log", started_at, 10)
-        _ = graph.finish_run(
+        graph.runs.start("run-running", nodes["running"].id, "running.log", started_at, 10)
+        graph.runs.start("run-failed", nodes["failed"].id, "failed.log", started_at, 10)
+        _ = graph.runs.finish(
             "run-failed",
             RunResult(
                 status=NodeStatus.FAILED.value,

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import GitPort, RunResult
+from milknado.domains.common import GitPort, RunFenceLostError, RunResult
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -111,7 +111,7 @@ def _run_worker_process(
             run_id=request.run_id,
             project_root=request.project_root,
             process=process,
-            on_started=lambda pid: graph.set_run_pid(request.run_id, pid),
+            on_started=lambda pid: graph.runs.set_pid(request.run_id, pid),
         )
     return _run_in_tmux_window(
         cwd,
@@ -172,7 +172,7 @@ def _run_in_tmux_window(
         window,
         timeout,
         rdir,
-        on_start=lambda pane_pid: graph.set_run_pid(run_id, pane_pid),
+        on_start=lambda pane_pid: graph.runs.set_pid(run_id, pane_pid),
     )
 
 
@@ -228,20 +228,16 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
         if cancelled:
-            if (
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=timed_out,
-                        ended_at=_now_iso(),
-                        error="cancelled",
-                    ),
-                )
-                is False
-            ):
-                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+            graph.runs.finish(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    error="cancelled",
+                ),
+            )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
             merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
@@ -253,21 +249,17 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # Persist a preserved (un-torn-down) worktree via the run row's `detail`
             # column so milknado_run_inline_poll surfaces `worktree_preserved`,
             # matching the sync dispatch path and milknado_run_cancel.
-            if (
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status=terminal,
-                        exit_code=exit_code,
-                        timed_out=timed_out,
-                        ended_at=_now_iso(),
-                        rebased=merge.rebased if merge is not None else None,
-                        detail=merge.worktree_preserved if merge is not None else None,
-                    ),
-                )
-                is False
-            ):
-                raise RuntimeError(f"terminal run write lost its fence for {run_id}")
+            graph.runs.finish(
+                run_id,
+                RunResult(
+                    status=terminal,
+                    exit_code=exit_code,
+                    timed_out=timed_out,
+                    ended_at=_now_iso(),
+                    rebased=merge.rebased if merge is not None else None,
+                    detail=merge.worktree_preserved if merge is not None else None,
+                ),
+            )
             _logger.info(
                 (
                     "async dispatch terminal: run_id=%s node_id=%d status=%s "
@@ -281,6 +273,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 cancelled,
                 merge.rebased if merge is not None else None,
             )
+    except RunFenceLostError:
+        _logger.info("async worker terminal write lost fence for run %s", run_id)
     except Exception as exc:
         original_detail = f"{type(exc).__name__}: {exc}"
         _logger.warning(
@@ -299,9 +293,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # deliberately ignored.
             pass
         if graph is not None:
-            terminal_detail = original_detail
             try:
-                written = graph.finish_run(
+                graph.runs.finish(
                     run_id,
                     RunResult(
                         status="failed",
@@ -311,13 +304,13 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                         error=original_detail,
                     ),
                 )
+            except RunFenceLostError:
+                _logger.info("async worker failure run already finalized: run_id=%s", run_id)
             except Exception as persist_exc:
-                written = False
                 terminal_detail = (
                     f"{original_detail}; terminal persistence raised: "
                     f"{type(persist_exc).__name__}: {persist_exc}"
                 )
-            if written is False:
                 with suppress(OSError):
                     _ = (rdir / f"{run_id}.terminal-error").write_text(
                         f"run_id={run_id}\n"
@@ -350,7 +343,7 @@ def start_headless_async(
     log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
-        graph.start_run(
+        graph.runs.start(
             request.run_id,
             request.node_id,
             str(log_path),
@@ -381,7 +374,7 @@ def start_headless_async(
 def poll_async_run(graph: MikadoGraph, project_root: Path, run_id: str) -> dict[str, object]:
     if not _RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")
-    if (record := graph.get_run(run_id)) is None:
+    if (record := graph.runs.get(run_id)) is None:
         raise ValueError(f"run {run_id!r} not found")
     state: dict[str, object] = dict(record)
     # Derive the log path from the validated run_id rather than trusting the

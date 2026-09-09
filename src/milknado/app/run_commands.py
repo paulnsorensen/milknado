@@ -21,6 +21,7 @@ class _ExecutionAppLike(Protocol):
     controller: ExecutionController
     feature_branch: str | None
     strict: bool
+    allow_protected: bool
     spec_text: str | None
     spec_path: Path | None
 
@@ -44,6 +45,7 @@ class ExecutionCommandsMixin:
         result = app.controller.run(
             feature_branch=app.feature_branch or "",
             strict=app.strict,
+            allow_protected=app.allow_protected,
             spec_text=app.spec_text,
             spec_path=app.spec_path,
         )

@@ -256,8 +256,8 @@ class TestStatus:
         root = graph.add_node("Root")
         a = graph.add_node("Node A", parent_id=root.id)
         b = graph.add_node("Node B", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
         graph.close()
 
         result = runner.invoke(app, ["status", str(project_dir)])
@@ -385,7 +385,7 @@ class TestAddNode:
 
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
-        files = graph.get_file_ownership(1)
+        files = graph.files.for_node(1)
         graph.close()
         assert set(files) == {"src/auth.py", "src/login.py"}
 
@@ -1464,8 +1464,8 @@ class TestRunCommand:
         root = graph.add_node("root")
         a = graph.add_node("leaf-a", parent_id=root.id)
         b = graph.add_node("leaf-b", parent_id=root.id)
-        graph.set_file_ownership(a.id, ["shared.py"])
-        graph.set_file_ownership(b.id, ["shared.py"])
+        graph.files.claim(a.id, ["shared.py"])
+        graph.files.claim(b.id, ["shared.py"])
         graph.close()
 
         _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)
@@ -1582,7 +1582,6 @@ class TestRunCommand:
         )
 
         assert result.exit_code == 2
-        assert "Starting execution loop" not in result.output
         assert "Refusing to run on protected branch" in result.output
         # No executor/worktree constructed: the adapter class is never instantiated.
         mock_ralph_cls.assert_not_called()
@@ -1735,6 +1734,7 @@ class TestRunRunnabilityGate:
             controller,
             feature_branch="feature/tui",
             strict=False,
+            allow_protected=False,
         )
         run_legacy.assert_not_called()
         print_result.assert_not_called()
@@ -1874,6 +1874,48 @@ class TestPrintRunResult:
             )
         )
         assert "Root goal achieved" in capsys.readouterr().out
+
+    def test_verification_gap_is_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.execution.run_loop._result import VerifyOutcome
+
+        _print_run_result(
+            RunLoopResult(
+                root_done=False,
+                dispatched_total=0,
+                completed_total=0,
+                failed_total=0,
+                verify_outcome=VerifyOutcome(
+                    done=False,
+                    goal_delta="verification unavailable: no agent configured",
+                ),
+            )
+        )
+
+        assert "Verification incomplete: verification unavailable: no agent configured" in (
+            capsys.readouterr().out
+        )
+
+    @pytest.mark.parametrize("delta", ["<b>literal</b>", "[not valid Rich markup"])
+    def test_verification_delta_is_rendered_literally(
+        self, delta: str, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
+        from milknado.domains.execution.run_loop import RunLoopResult
+        from milknado.domains.execution.run_loop._result import VerifyOutcome
+
+        _print_run_result(
+            RunLoopResult(
+                root_done=False,
+                dispatched_total=0,
+                completed_total=0,
+                failed_total=0,
+                verify_outcome=VerifyOutcome(done=False, goal_delta=delta),
+            )
+        )
+
+        assert f"Verification incomplete: {delta}" in capsys.readouterr().out
 
     def test_rebase_conflicts_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
         from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
@@ -2089,16 +2131,13 @@ def test_run_cli_reports_detached_head_refusal(
     import importlib
 
     cli_run = importlib.import_module("milknado.cli.run")
-    from milknado.app.run import ProtectedBranchRefusal
     from milknado.domains.common import default_config
 
     cfg = default_config(tmp_path)
     monkeypatch.setattr(cli_run, "_load_or_default", lambda _root: (cfg, None))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
     monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda _root: "HEAD")  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
-    monkeypatch.setattr(
-        "milknado.app.run.check_protected_branch",
-        lambda *_args: ProtectedBranchRefusal(branch="HEAD", reason="detached"),  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
-    )
+
     with pytest.raises(typer.Exit) as error:
         cli_run.run(tmp_path)  # pyright: ignore[reportAny]
     assert error.value.exit_code == 2
+    assert not cfg.db_path.exists()

@@ -48,8 +48,9 @@ Lifecycle semantics live in [[execution]]; the repo invariants live here:
 - **`start_run`** INSERTs a `status='running'` row; **`finish_run`** UPDATEs to
   terminal, gated `AND status = 'running'` — **first terminal write wins**
   (commit 2d0c833). A late terminal write (wedged worker recovering after
-  cancel's takeover) hits zero rows and is logged, never clobbers. This is the
-  run-level mirror of the node-level `mark_terminal` philosophy below.
+  cancel's takeover) raises `RunFenceLostError`, never clobbers the winner.
+  Dispatch callers treat that exception as an adopted terminal result. This is
+  the run-level mirror of the node-level `mark_terminal` philosophy below.
 - **`set_run_pid`** is gated on `status='running'` for the same reason — a
   runner that already wrote terminal state is never walked back toward running.
 - **`deposit_run_message`** assigns `seq` and inserts in **one statement**
@@ -72,9 +73,10 @@ Lifecycle semantics live in [[execution]]; the repo invariants live here:
   fix (issue #329, commit b1713c9). The constant lives here rather than
   importing `loop._run_types.RunStatus`, to avoid putting a `domains/` module
   behind a private symbol of the vendored loop engine (see [[review-lessons]]).
-- **`runs_for_node(run_id=…)`** pushes the fence into the SQL so
-  fence-before-latest holds: a stale run with a later `ended_at` cannot mask
-  the owning run.
+- **`runs_for_node()`** lists every run for a node and does not select an owner.
+  Callers that reconcile a claimed node use **`latest_terminal_run(node_id,
+  run_id)`**, which requires the owning fence in its SQL predicate. A stale run
+  cannot mask the owner's terminal row.
 - Connections are **not cross-thread**: the async worker thread and the
   detached runner each open their own graph for the terminal write.
 
@@ -139,7 +141,8 @@ which is correct across processes where an in-process mutex would not be.
 - **`run_id` is a fence**: every later ownership-gated write
   (`mark_terminal`, `release`, `set_pid`, `set_worktree`) carries
   `AND run_id = ?`. If the node was re-claimed under a new run, the stale
-  owner's write hits zero rows and is silently dropped.
+  owner's write hits zero rows; `set_pid` and `set_worktree` log a warning,
+  while terminal and release writes report their failed fence to callers.
 - The `AND status = 'running'` guard on `release` / `mark_terminal` prevents
   walking a `DONE` node backward (DONE keeps its run_id, so the fence alone
   isn't enough).

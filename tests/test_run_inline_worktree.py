@@ -36,6 +36,11 @@ def _call(tool: object, **kwargs: object) -> object:
     fn = getattr(tool, "fn", tool)
     if not callable(fn):
         raise TypeError(f"tool is not callable: {tool!r}")
+    if getattr(fn, "__name__", "") in ("milknado_run_inline", "milknado_run_inline_start"):
+        _ = kwargs.setdefault("allow_protected", True)
+        root = kwargs.get("project_root")
+        if root is not None and not (Path(str(root)) / ".git").exists():
+            _init_repo(Path(str(root)))
     return fn(**kwargs)
 
 
@@ -546,7 +551,7 @@ class TestMergeBackFailure:
         assert _node(root, task["id"]).status.value == "failed"
         graph, _cfg = open_graph(root)
         try:
-            latest = graph.recent_runs(1)[0]
+            latest = graph.runs.recent(1)[0]
         finally:
             graph.close()
         assert latest["status"] == "failed"
@@ -774,6 +779,10 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
         def resolve_ref(self, ref: str) -> str:
             return "base-before" if ref == "refs/heads/main" else "base-after"
 
+        def git_common_dir(self, worktree: Path) -> Path | None:
+            _ = worktree
+            return None
+
         def create_worktree(self, path: Path, _branch: str) -> None:
             path.mkdir(parents=True)
 
@@ -821,6 +830,10 @@ class TestMergeBackLock:
 
             def resolve_ref(self, ref: str) -> str:
                 return f"{ref}-oid"
+
+            def git_common_dir(self, worktree: Path) -> Path | None:
+                _ = worktree
+                return None
 
             def compare_and_swap_ref(self, _ref: str, _expected_oid: str, _new_oid: str) -> None:
                 return None
@@ -889,6 +902,7 @@ def test_async_start_reports_lost_terminal_fence(
                     merge_back=False,
                 ),
                 use_tmux=False,
+                allow_protected=True,
             )
     finally:
         graph.close()

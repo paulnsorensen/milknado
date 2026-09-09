@@ -21,6 +21,7 @@ lint:
     commands = [
         ["uv", "run", "ruff", "check", "src/", "tests/", "scripts/", "--preview"],
         ["uv", "run", "ruff", "format", "--check", "src/", "tests/", "scripts/"],
+        ["uv", "run", "lint-imports"],
     ]
     processes = [subprocess.Popen(command) for command in commands]
     if any(process.wait() for process in processes):

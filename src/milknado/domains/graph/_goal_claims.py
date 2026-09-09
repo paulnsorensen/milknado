@@ -162,8 +162,8 @@ def find_ancestor_goal_id(conn: sqlite3.Connection, node_id: int) -> int | None:
 def release_goal_claim_on_terminal(conn: sqlite3.Connection, node_id: int) -> None:
     """If node_id is a GOAL, unconditionally delete its claim on terminal transition.
 
-    Called after mark_done / mark_failed / mark_terminal so the completed
-    goal's claim does not permanently block re-dispatch under that goal.
+    Called by the terminal transition producer so the completed goal's claim
+    does not permanently block re-dispatch under that goal.
     """
     row = fetchone(conn, "SELECT kind FROM nodes WHERE id = ?", (node_id,))
     if row is not None and cast(str, _field(row, "kind")) == NodeKind.GOAL.value:

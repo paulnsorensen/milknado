@@ -97,7 +97,7 @@ def milknado_run_loop_poll(run_id: str, project_root: str = "") -> RunDict:
     rdir = runs_dir(root)
     graph, _cfg = open_graph(root)
     try:
-        state = graph.get_run(run_id)
+        state = graph.runs.get(run_id)
     finally:
         graph.close()
     if state is None:

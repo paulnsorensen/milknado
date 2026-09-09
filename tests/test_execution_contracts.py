@@ -161,6 +161,7 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         "stopped": int,
         "available": int,
         "event_lines": tuple[str, ...],
+        "listener_errors": tuple[str, ...],
     }
     assert isinstance(snapshot.active_runs, tuple)
     assert isinstance(snapshot.terminal_runs, tuple)

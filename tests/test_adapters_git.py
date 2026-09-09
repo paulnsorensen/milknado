@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
@@ -20,6 +21,10 @@ from milknado.domains.common.errors import (
 @pytest.fixture()
 def adapter(tmp_path: Path) -> GitAdapter:
     return GitAdapter(tmp_path)
+
+
+def test_git_common_dir_returns_none_outside_repository(adapter: GitAdapter) -> None:
+    assert adapter.git_common_dir(adapter._root) is None  # pyright: ignore[reportPrivateUsage]
 
 
 def _ok(stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
@@ -124,6 +129,31 @@ def _worktree_with_commit(repo: Path, name: str) -> Path:
     _ = _git(wt, "add", ".")
     _ = _git(wt, "commit", "-qm", f"work in {name}")
     return wt
+
+
+def test_git_common_dir_uses_the_shared_linked_worktree_directory(repo: Path) -> None:
+    worktree = _worktree_with_commit(repo, "common-dir")
+
+    assert GitAdapter(repo).git_common_dir(worktree) == (repo / ".git").resolve()
+
+
+def test_squash_unrelated_history_logs_merge_base_fallback(
+    repo: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    tree = _git(repo, "write-tree").strip()
+    unrelated = _git(repo, "commit-tree", tree, "-m", "unrelated").strip()
+    _ = (repo / "squashed.py").write_text("value = 1\n")
+
+    with caplog.at_level(logging.WARNING):
+        committed = GitAdapter(repo).squash_and_commit(repo, unrelated, "squash")
+
+    assert committed is True
+    assert _git(repo, "log", "-1", "--pretty=%s").strip() == "squash"
+    assert any(
+        "merge-base found no common ancestor" in record.getMessage()
+        and "stderr=" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 class TestRemoveWorktreeFailClosed:
@@ -432,6 +462,24 @@ class TestSquashAndCommit:
         # Should not raise; commit skipped because nothing staged
         calls = [c.args[0] for c in mock_run.call_args_list]
         assert not any("commit" in c for c in calls if isinstance(c, list))  # pyright: ignore[reportAny]
+
+    @patch("milknado.adapters.git.subprocess.run")
+    def test_unexpected_merge_base_failure_raises_git_error(
+        self, mock_run: MagicMock, adapter: GitAdapter, tmp_path: Path
+    ) -> None:
+        mock_run.side_effect = [
+            _ok(),
+            subprocess.CalledProcessError(
+                128,
+                ["git", "merge-base", "HEAD", "main"],
+                stderr="bad base",
+            ),
+        ]
+
+        with pytest.raises(GitOperationError, match="git merge-base main failed") as exc_info:
+            _ = adapter.squash_and_commit(tmp_path, "main", "msg")
+
+        assert exc_info.value.detail == "bad base"
 
 
 class TestBranchExists:

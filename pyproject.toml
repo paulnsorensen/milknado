@@ -39,6 +39,7 @@ markers = [
 
 [tool.importlinter]
 root_package = "milknado"
+include_external_packages = true
 
 # Domains are the pure core: they must never import a delivery or application layer.
 [[tool.importlinter.contracts]]
@@ -46,6 +47,13 @@ name = "domains must not import app, cli, or mcp"
 type = "forbidden"
 source_modules = ["milknado.domains"]
 forbidden_modules = ["milknado.app", "milknado.cli", "milknado.mcp"]
+
+# Domains are pure. Rich presentation belongs in app or cli.
+[[tool.importlinter.contracts]]
+name = "domains must not import Rich"
+type = "forbidden"
+source_modules = ["milknado.domains"]
+forbidden_modules = ["rich"]
 
 # The graph is a transactional state crust, never an execution-policy consumer.
 [[tool.importlinter.contracts]]
@@ -202,7 +210,6 @@ max-statements = 40
 "src/milknado/domains/dispatch/cancel.py" = ["ANN001", "PLR0913"]
 "src/milknado/domains/dispatch/tmux_run.py" = ["ANN001", "PLR0913"]
 "src/milknado/domains/execution/completion.py" = ["PLR0913"]
-"src/milknado/domains/execution/run_loop/display.py" = ["PLR0913"]
 "src/milknado/domains/execution/run_loop/_completion.py" = ["PLR0913", "PLR0915"]
 "src/milknado/domains/github/ports.py" = ["PLR0913"]
 "src/milknado/domains/graph/_creation.py" = ["PLR0913"]
@@ -299,7 +306,6 @@ allow = [
     "milknado.adapters.toolchain:SystemToolchainAdapter.home",
     "milknado.domains.batching.weights:_configure_tiktoken_cache",
     "milknado.domains.batching.weights:_get_encoder",
-    "milknado.domains.execution.executor:Executor.note_unconfirmed_stop",
     "milknado.domains.graph._analytics_facade:_AnalyticsFacade._conn",
     "milknado.domains.graph._edge_facade:_EdgeFacade._conn",
     "milknado.domains.graph._pipeline:StatusMiddleware.before_status_change",
@@ -313,15 +319,16 @@ allow = [
 max_file_lines = 300
 
 [tool.milknado.quality.file_exceptions]
-"src/milknado/adapters/loop.py" = { max_lines = 455, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split." }
+"src/milknado/adapters/loop.py" = { max_lines = 458, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
-"src/milknado/app/run.py" = { max_lines = 599, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 584 for the elapsed/attempt/ETA/progress fields added to the run read model." }
+"src/milknado/app/run.py" = { max_lines = 662, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 599 for listener failure reporting, centralized dispatch policy, and restored boundary documentation." }
 "src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
 "src/milknado/domains/common/agent_argv.py" = { max_lines = 365, reason = "Pre-existing agent command boundary; keep its measured ceiling until command builders are split." }
+"src/milknado/domains/common/flavor_codec.py" = { max_lines = 304, reason = "Pre-existing flavor codec boundary; keep its measured ceiling until codec concerns are split. Bumped from 300 for the review_timeout_seconds field mirroring review_max_rounds." }
 "src/milknado/domains/common/config.py" = { max_lines = 669, reason = "Pre-existing config boundary; keep its measured ceiling until serialization is split." }
 "src/milknado/domains/dispatch/async_run.py" = { max_lines = 396, reason = "Pre-existing async dispatch boundary; keep its measured ceiling until lifecycle is split." }
-"src/milknado/domains/execution/executor.py" = { max_lines = 1488, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split. Bumped from 1472 for the tenacity-based dispatch retry (replaced a hand-rolled backoff loop)." }
-"src/milknado/domains/execution/run_loop/__init__.py" = { max_lines = 574, reason = "Pre-existing run loop boundary; keep its measured ceiling until phases are split. Bumped from 569 for the vacuous-completion guard on an undecomposed root." }
+"src/milknado/domains/execution/executor.py" = { max_lines = 1490, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split. Bumped from 1488 for the configurable review_timeout_seconds deadline." }
+"src/milknado/domains/execution/run_loop/__init__.py" = { max_lines = 575, reason = "Pre-existing run loop boundary; keep its measured ceiling until phases are split. Bumped from 574 for the configurable review_timeout_seconds deadline." }
 "src/milknado/domains/graph/_mutations.py" = { max_lines = 321, reason = "Pre-existing graph mutation boundary; keep its measured ceiling until mutations are split." }
 "src/milknado/domains/graph/_persistence.py" = { max_lines = 759, reason = "Pre-existing graph persistence boundary; keep its measured ceiling until persistence concerns are split. Bumped from 757 for the single-owner runs.status constant (issue #329)." }
 "src/milknado/domains/graph/_status.py" = { max_lines = 342, reason = "Pre-existing graph status boundary; keep its measured ceiling until status transitions are split." }

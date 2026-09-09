@@ -126,13 +126,13 @@ def _provision_claim_run(
             )
             wt_path = isolated.worktree_path
             graph.set_worktree(node.id, run_id, str(wt_path), isolated.worker_branch)
-            graph.start_run(run_id, node.id, str(wt_path), now_iso(), None)
+            graph.runs.start(run_id, node.id, str(wt_path), now_iso(), None)
         else:
-            graph.start_run(run_id, node.id, str(root), now_iso(), None)
+            graph.runs.start(run_id, node.id, str(root), now_iso(), None)
         # Stamp the native-backend marker so the done-transition gate fires
         # for this run even before its first verify (fail-closed), while
         # leaving subprocess runs — which never carry it — exempt.
-        _ = graph.deposit_run_message(run_id, CLAIM_ROLE, "", now_iso())
+        _ = graph.runs.deposit_message(run_id, CLAIM_ROLE, "", now_iso())
     except Exception:
         # Claim succeeded but worktree/run setup failed: release the claim with a
         # fenced terminal write so the node is not stranded RUNNING.

@@ -25,8 +25,10 @@ from milknado.domains.common.errors import (
     InvalidContainment,
     InvalidTransition,
     MegaBatchAborted,
+    QualityGatesNotConfigured,
     RalphMarkdownWriteError,
     RebaseAbortError,
+    RunFenceLostError,
     UnlandedWorkError,
 )
 from milknado.domains.common.flavor_codec import FlavorOverride, Gate
@@ -83,8 +85,10 @@ __all__ = [
     "GraphReadPort",
     "InvalidContainment",
     "InvalidTransition",
+    "QualityGatesNotConfigured",
     "RalphMarkdownWriteError",
     "RebaseAbortError",
+    "RunFenceLostError",
     "MikadoEdge",
     "MikadoNode",
     "MilknadoConfig",

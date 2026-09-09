@@ -304,14 +304,17 @@ def test_execution_overview_accepts_graph_read_port(graph: MikadoGraph) -> None:
     node = graph.add_node("task", parent_id=goal.id)
     snapshot = graph.get_execution_snapshot([node.id])
 
+    class Files:
+        def for_node(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
+            raise NotImplementedError
+
     class ReadPort:
+        files: Files = Files()
+
         def get_node(self, node_id: int) -> MikadoNode | None:  # pyright: ignore[reportUnusedParameter]
             raise NotImplementedError
 
         def get_children(self, node_id: int) -> list[MikadoNode]:  # pyright: ignore[reportUnusedParameter]
-            raise NotImplementedError
-
-        def get_file_ownership(self, node_id: int) -> list[str]:  # pyright: ignore[reportUnusedParameter]
             raise NotImplementedError
 
         def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:

@@ -33,7 +33,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
     graph_with_node = getattr(graph, "get_node", None)
     node = cast(MikadoNode | None, graph_with_node(node_id)) if callable(graph_with_node) else None
     flipped: list[dict[str, object]] = []
-    for state in graph.runs_for_node(node_id):
+    for state in graph.runs.for_node(node_id):
         if state.get("status") != "running":
             continue
         run_id = state.get("run_id")
@@ -53,20 +53,16 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
                 continue
             error = "worker session gone"
             ended_at = _now_iso()
-            if (
-                graph.finish_run(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=False,
-                        ended_at=ended_at,
-                        error=error,
-                    ),
-                )
-                is False
-            ):
-                raise RuntimeError(f"stale terminal write lost its fence for {run_id}")
+            graph.runs.finish(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=ended_at,
+                    error=error,
+                ),
+            )
             flipped.append(
                 {
                     **state,
@@ -96,20 +92,16 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
             continue
         ended_at = _now_iso()
         error = "worker vanished before writing terminal state (stale running run)"
-        if (
-            graph.finish_run(
-                run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=ended_at,
-                    error=error,
-                ),
-            )
-            is False
-        ):
-            raise RuntimeError(f"stale terminal write lost its fence for {run_id}")
+        graph.runs.finish(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=ended_at,
+                error=error,
+            ),
+        )
         flipped.append(
             {
                 **state,
@@ -136,46 +128,12 @@ def reconcile_orphaned_runs(graph: object) -> list[RunRecord]:
         if node.status is not NodeStatus.RUNNING or node.run_id is None:
             continue
         _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id)
-        terminal = latest_terminal_run(
-            find_terminal_runs_for_node(typed_graph, node.id, run_id=node.run_id)
-        )
+        terminal = typed_graph.runs.latest_terminal(node.id, node.run_id)
         if terminal is None:
             continue
         reconcile_node_status(typed_graph, node.id, terminal["status"], run_id=node.run_id)
         reconciled.append(terminal)
     return reconciled
-
-
-def find_terminal_runs_for_node(
-    graph: MikadoGraph,
-    node_id: int,
-    run_id: str | None = None,
-) -> list[RunRecord]:
-    """Return this node's runs that reached a terminal status. Used by callers that
-    want to reconcile orphaned runs (started, worker finished, but never polled —
-    node still marked RUNNING).
-
-    When `run_id` is given, filter to that fence: only the node's current owner's
-    terminal run is returned, so a stale terminal run from an older run cannot be
-    selected. Callers must filter to the fence BEFORE picking the latest run —
-    otherwise a stale run with a later `ended_at` could mask the owner's run."""
-    return graph.runs_for_node(node_id, terminal_only=True, run_id=run_id)
-
-
-def latest_terminal_run(runs: list[RunRecord]) -> RunRecord | None:
-    """Return the most recent terminal run by ended_at, or None if runs is empty.
-
-    Deterministic selection for reconcile: when a node has multiple terminal
-    runs (e.g. a prior run finished after the node was reset and re-run), the
-    latest ended_at wins. Callers that fence on run_id must filter to the fence
-    first (see find_terminal_runs_for_node) so a stale run with a later ended_at
-    cannot mask the current owner's terminal file. Shared by the headless
-    (mcp/run.py) and detached-ralph (mcp/ralph.py) dispatch paths.
-    """
-    terminal = [r for r in runs if r.get("status") in ("done", "failed")]
-    if not terminal:
-        return None
-    return max(terminal, key=lambda r: r.get("ended_at") or "")
 
 
 def reconcile_node_status(

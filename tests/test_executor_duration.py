@@ -52,6 +52,10 @@ class _FakeGit:
         _ = branch
         return path
 
+    def git_common_dir(self, worktree: Path) -> Path | None:
+        _ = worktree
+        return None
+
     def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
         _ = (path, target)
 
@@ -178,9 +182,15 @@ class _FakeRalph:
         raise RuntimeError("not used")
 
     def run_node_review(
-        self, agent: str, prompt: str, worktree: Path, project_root: Path
+        self,
+        agent: str,
+        prompt: str,
+        worktree: Path,
+        project_root: Path,
+        *,
+        timeout_seconds: float,
     ) -> _FakeReview:
-        _ = (agent, prompt, worktree, project_root)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds)
         return _FakeReview()
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
