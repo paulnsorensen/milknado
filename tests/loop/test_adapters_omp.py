@@ -41,6 +41,17 @@ def test_deliver_prompt_uses_stdin_so_large_briefs_survive_argv_limits() -> None
     assert inv.stdin_text == prompt
 
 
+def test_deliver_prompt_keeps_large_prompt_out_of_argv() -> None:
+    """A prompt over Linux MAX_ARG_STRLEN (131072) must never be one argv
+    element, or ``execve`` fails with E2BIG before the process exists."""
+    adapter = OmpAdapter()
+    command = ["omp", "-p", "--mode", "json"]
+    prompt = "x" * 200_000
+    inv = adapter.deliver_prompt(command, prompt)
+    assert inv.stdin_text == prompt
+    assert all(len(arg.encode()) < 131072 for arg in inv.argv)
+
+
 def test_capabilities_match_json_event_output() -> None:
     adapter = OmpAdapter()
     assert (
