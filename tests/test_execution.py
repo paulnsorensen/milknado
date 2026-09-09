@@ -1555,7 +1555,7 @@ class TestExecutorFail:
         assert node is not None
         assert node.status == NodeStatus.FAILED, "the node must reach a terminal state"
         assert Path(result.worktree).exists(), "the unlanded worktree must be preserved"
-        run = graph.get_run(result.run_id)
+        run = graph.runs.get(result.run_id)
         assert run is not None
         assert run["status"] == "failed", "the run row must not zombie 'running'"
         assert run["detail"] == str(result.worktree), (

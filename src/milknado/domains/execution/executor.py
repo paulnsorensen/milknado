@@ -1385,23 +1385,34 @@ class Executor:
             node.id, node.run_id, status, preserve_recovery=preserve_recovery
         )
 
+    def _discard_worktree(self, node_id: int, node: MikadoNode, reason: str) -> str | None:
+        """Remove the node's worktree; on unlanded work, preserve it and return its path.
+
+        Absorbs ``UnlandedWorkError`` the way ``ensure_clean`` does so a teardown
+        never crashes the run loop, leaving the worktree on disk for recovery.
+        """
+        if not node.worktree_path:
+            return None
+        wt = Path(node.worktree_path)
+        if not wt.exists():
+            return None
+        try:
+            self._wt.remove(node_id, wt)
+        except UnlandedWorkError as exc:
+            _logger.warning(
+                "Preserving %s node %d worktree %s; recording for recovery: %s",
+                reason,
+                node_id,
+                wt,
+                exc,
+            )
+            return str(wt)
+        return None
+
     def fail(self, node_id: int, detail: str | None = None) -> None:
         self._wt.ensure_clean(node_id)
         node = self._graph.get_node(node_id)
-        preserved: str | None = None
-        if node and node.worktree_path:
-            wt = Path(node.worktree_path)
-            if wt.exists():
-                try:
-                    self._wt.remove(node_id, wt)
-                except UnlandedWorkError as exc:
-                    preserved = str(wt)
-                    _logger.warning(
-                        "Preserving failed node %d worktree %s; recording for recovery: %s",
-                        node_id,
-                        wt,
-                        exc,
-                    )
+        preserved = self._discard_worktree(node_id, node, "failed") if node else None
         self._graph.mark_failed(node_id)
         self._finish_node_worker_run(
             node_id,
@@ -1429,18 +1440,7 @@ class Executor:
                 error="cancelled",
             ),
         )
-        if node.worktree_path:
-            worktree = Path(node.worktree_path)
-            if worktree.exists():
-                try:
-                    self._wt.remove(node_id, worktree)
-                except UnlandedWorkError as exc:
-                    _logger.warning(
-                        "Preserving stopped node %d worktree %s; releasing graph claim: %s",
-                        node_id,
-                        worktree,
-                        exc,
-                    )
+        _ = self._discard_worktree(node_id, node, "stopped")
         if node.run_id:
             _ = self._graph.release(node_id, node.run_id)
         else:
