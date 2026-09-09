@@ -98,6 +98,9 @@ Outside text fields, the execution dashboard and read-only `milknado watch` view
 - Press Escape to close help or return to the run list.
 - Press `q` to quit. The observer exits without stopping runs.
 
+Ctrl+C and Ctrl+Q also request quit, including from text fields.
+Execution quit shortcuts use the same confirmation and wait for shutdown to complete.
+
 In the execution dashboard, press `g` to open guidance for a selected, available run.
 Force-stop and active execution quit requests require confirmation.
 Press `y` to confirm or `n` or Escape to cancel.

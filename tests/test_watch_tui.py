@@ -4,7 +4,6 @@ import inspect
 from dataclasses import replace
 from pathlib import Path
 from typing import cast, get_type_hints
-from unittest.mock import patch
 
 import pytest
 from rich.text import Text
@@ -60,13 +59,14 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         assert actions.isdisjoint({"focus_guidance", "cancel", "force"})
 
 
-def test_watch_quit_exits_without_controlling_the_observed_run() -> None:
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quit_key", ["q", "ctrl+c", "ctrl+q"])
+async def test_watch_quit_exits_without_controlling_the_observed_run(quit_key: str) -> None:
     app = watch_tui.WatchApp(FakeSource(snapshot()))
 
-    with patch.object(app, "exit") as exit_app:
-        app.action_quit_all()
-
-    exit_app.assert_called_once_with()
+    async with app.run_test() as pilot:
+        await pilot.press(quit_key)
+        assert not app.is_running
 
 
 def test_watch_tui_entry_builds_source_and_discards_app_result(

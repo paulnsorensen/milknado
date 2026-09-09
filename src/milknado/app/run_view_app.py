@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.reactive import Reactive
 from textual.widgets import DataTable, Footer, Header, Static
@@ -77,6 +77,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("?", "help", "Help"),
         ("q", "quit_all", "Quit"),
+        Binding("ctrl+c,ctrl+q", "quit_all", show=False, priority=True),
         ("enter", "open_detail", "Open"),
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),

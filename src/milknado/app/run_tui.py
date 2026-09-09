@@ -125,6 +125,8 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             _ = self._queue_guidance(run.run_id, text)
 
     def _set_confirmation(self, action: str, run_id: str | None) -> None:
+        if self._confirmation is not None:
+            return
         self._confirmation_focus = self.screen.focused
         self._confirmation = (action, run_id)
         self._confirmation_run_ids = frozenset(run.run_id for run in self.snapshot.active_runs)

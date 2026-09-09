@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Protocol, cast
 
 import pytest
@@ -12,6 +13,7 @@ from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import DataTable, Input, Static
+from typing_extensions import override
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -882,6 +884,50 @@ async def test_navigation_actions_and_resume_auto_follow() -> None:
         app.pause_auto_follow()
         app.action_resume_output()
         assert app.auto_follow is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quit_key", ["q", "ctrl+c", "ctrl+q"])
+async def test_quit_keys_wait_for_confirmed_execution_shutdown(quit_key: str) -> None:
+    class RunningController(FakeController):
+        started: Event = Event()
+        stopped: Event = Event()
+        release: Event = Event()
+
+        @override
+        def run(self, **kwargs: object) -> object:
+            self.started.set()
+            assert self.release.wait(timeout=10)
+            return super().run(**kwargs)
+
+        @override
+        def stop_scheduling(self) -> None:
+            super().stop_scheduling()
+            self.stopped.set()
+
+    controller = RunningController()
+    app = ExecutionApp(_as_execution_controller(controller), feature_branch="feature")
+    async with app.run_test() as pilot:
+        try:
+            assert await asyncio.to_thread(controller.started.wait, 2)
+            if quit_key != "q":
+                _ = _input(app, "#guidance").focus()
+            await pilot.press(quit_key)
+            assert app.screen.is_modal
+            await pilot.press(quit_key)
+            await pilot.press("n")
+            assert not app.screen.is_modal
+            assert controller.stop_requests == 0
+            await pilot.press(quit_key, "y")
+            assert await asyncio.to_thread(controller.stopped.wait, 2)
+            assert app.return_value is None
+        finally:
+            controller.release.set()
+        async with asyncio.timeout(2):
+            while app.return_value is None:
+                await asyncio.sleep(0.01)
+        assert app.return_value == controller.run_result
+        assert controller.stop_requests == 1
 
 
 @pytest.mark.asyncio
