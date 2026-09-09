@@ -1526,30 +1526,41 @@ class TestExecutorFail:
         assert node.run_id is None
         assert worktree.exists()
 
-    def test_refusal_propagates_and_aborts_the_transition(
+    def test_refusal_preserves_worktree_and_finalizes_the_run(
         self,
         graph: MikadoGraph,
-        tmp_path: Path,
+        config: ExecutionConfig,
     ) -> None:
-        """fail() tears down finished work through the fail-closed path: a
-        refusal hard-fails the operation before mark_failed, preserving both
-        the worktree and the node's RUNNING claim for later reconcile."""
+        """A dirty/unlanded worktree must not crash fail() (#420): the refusal
+        is absorbed like ensure_clean does, the worktree stays on disk, and the
+        node and its run still reach terminal 'failed' so the run loop keeps
+        going. The preserved path is recorded on the run row so poll surfaces
+        worktree_preserved."""
 
         class RefusingGit(FakeGit):
             @override
             def remove_worktree(self, path: Path, target: str = "HEAD") -> None:
                 raise UnlandedWorkError(path, "unlanded commits (not on main):\nabc123 wip")
 
-        ex = Executor(graph=graph, git=RefusingGit(), ralph=FakeRalph(), crg=FakeCrg())
+        ex = Executor(
+            graph=graph, git=RefusingGit(), ralph=FakeRalph(id_prefix="run"), crg=FakeCrg()
+        )
         _ = graph.add_node("task")
-        wt = tmp_path / "worktree"
-        wt.mkdir()
-        graph.mark_running(1, worktree_path=str(wt), branch_name="milknado/1-task")
-        with pytest.raises(UnlandedWorkError, match="unlanded commits"):
-            ex.fail(1)
+        result = ex.dispatch(1, config)
+        Path(result.worktree).mkdir(exist_ok=True)
+
+        ex.fail(1, detail="worker exited non-zero")
+
         node = graph.get_node(1)
         assert node is not None
-        assert node.status == NodeStatus.RUNNING, "transition must not land on refusal"
+        assert node.status == NodeStatus.FAILED, "the node must reach a terminal state"
+        assert Path(result.worktree).exists(), "the unlanded worktree must be preserved"
+        run = graph.runs.get(result.run_id)
+        assert run is not None
+        assert run["status"] == "failed", "the run row must not zombie 'running'"
+        assert run["detail"] == str(result.worktree), (
+            "the preserved worktree path is recorded so poll surfaces worktree_preserved"
+        )
 
 
 class TestBuildCommitMessage:
