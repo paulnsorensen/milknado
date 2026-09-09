@@ -14,7 +14,6 @@ from milknado.app.run import (
 )
 from milknado.app.run_view import (
     actions_text,
-    confirmation_text,
     events_text,
     format_attempt,
     format_duration,
@@ -226,26 +225,27 @@ def test_actions_text_active_run_lists_blocked_reasons() -> None:
 
 def test_help_text_compact_list_route() -> None:
     assert help_text(None, compact=True, route="list", auto_follow=True) == (
-        "Help\n↑/↓ select · h close help · q quit · enter open"
+        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit"
     )
 
 
 def test_help_text_compact_detail_route() -> None:
     assert help_text(None, compact=True, route="detail", auto_follow=True) == (
-        "Help\n↑/↓ select · h close help · q quit · escape back"
+        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit"
     )
 
 
 def test_help_text_wide_shows_available_run_actions() -> None:
     run = active_run(actions=RunActionAvailability())
     assert help_text(run, compact=False, route="list", auto_follow=True) == (
-        "Help\n↑/↓ select · h close help · q quit · g queue guidance · c cancel · f force stop"
+        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit\n"
+        "g queue guidance\nc cancel\nf force stop"
     )
 
 
 def test_help_text_paused_output_offers_resume() -> None:
     assert help_text(None, compact=False, route="list", auto_follow=False) == (
-        "Help\n↑/↓ select · h close help · q quit · r resume output"
+        "Help\n↑/↓ or j/k select\n?/F1/h toggle help\nq quit\nr resume output"
     )
 
 
@@ -340,19 +340,3 @@ def test_run_index_selected_absent() -> None:
 
 def test_run_index_empty_runs() -> None:
     assert run_index((), None) == 0
-
-
-def test_confirmation_text_force_stop() -> None:
-    assert confirmation_text("force", "run-9", 1) == "Force stop run-9? [y] confirm [n] cancel"
-
-
-def test_confirmation_text_quit_singular() -> None:
-    assert confirmation_text("quit", None, 1) == (
-        "Stop scheduling and gracefully stop 1 active run? [y] confirm [n] cancel"
-    )
-
-
-def test_confirmation_text_quit_plural() -> None:
-    assert confirmation_text("quit", None, 2) == (
-        "Stop scheduling and gracefully stop 2 active runs? [y] confirm [n] cancel"
-    )

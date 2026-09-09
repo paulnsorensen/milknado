@@ -15,7 +15,6 @@ from typing_extensions import override
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import (
     actions_text,
-    help_text,
     output_body,
     output_border_title,
     run_index,
@@ -186,10 +185,8 @@ class RunDetailPanel(VerticalScroll):
 
     DEFAULT_CSS = """
     RunDetailPanel { width: 1fr; height: 1fr; }
-    #output, #actions, #help, #confirmation { margin: 0 1; }
+    #output, #actions { margin: 0 1; }
     #output { height: 1fr; overflow-y: auto; border: round $primary; }
-    #confirmation { display: none; color: $warning; }
-    #help { display: none; }
     #guidance { margin: 0 1 1 1; }
     """
 
@@ -199,8 +196,6 @@ class RunDetailPanel(VerticalScroll):
         with VerticalScroll(id="output"):
             yield Static(id="output-text", markup=False)
         yield Static(id="actions", markup=False)
-        yield Static(id="help", markup=False)
-        yield Static(id="confirmation", markup=False)
         yield Input(placeholder="Queue guidance for the selected run", id="guidance")
 
     def on_mouse_scroll_up(self, _event: MouseScrollUp) -> None:
@@ -213,8 +208,6 @@ class RunDetailPanel(VerticalScroll):
         self,
         selected: RunSnapshot | None,
         *,
-        compact: bool,
-        route: str,
         auto_follow: bool,
     ) -> None:
         self.query_one("#summary", Static).update(summary_text(selected))
@@ -223,9 +216,6 @@ class RunDetailPanel(VerticalScroll):
         )
         self.query_one("#output-text", Static).update(output_body(selected))
         self.query_one("#actions", Static).update(actions_text(selected))
-        self.query_one("#help", Static).update(
-            help_text(selected, compact=compact, route=route, auto_follow=auto_follow)
-        )
         active = selected if isinstance(selected, ActiveRunSnapshot) else None
         self.query_one("#guidance", Input).disabled = (
             active is None or not active.actions.can_queue_guidance
@@ -238,11 +228,3 @@ class RunDetailPanel(VerticalScroll):
         output = self.query_one("#output", VerticalScroll)
         position = output.scroll_offset.y
         _ = self.call_after_refresh(output.scroll_to, y=position, animate=False)
-
-    def set_confirmation(self, message: str) -> None:
-        confirmation = self.query_one("#confirmation", Static)
-        confirmation.update(message)
-        _ = confirmation.add_class("visible")
-
-    def clear_confirmation(self) -> None:
-        _ = self.query_one("#confirmation", Static).remove_class("visible")

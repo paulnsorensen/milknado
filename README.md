@@ -88,6 +88,24 @@ cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 >   # or project-scoped: cp -r plugins/milknado/skills/ .claude/skills/
 >   ```
 
+## Terminal controls
+
+Outside text fields, the execution dashboard and read-only `milknado watch` view share these controls:
+
+- Press `?`, F1, or `h` to toggle help.
+- Use the arrow keys or `j`/`k` to select a run.
+- Press Enter to open the selected run in a narrow terminal.
+- Press Escape to close help or return to the run list.
+- Press `q` to quit. The observer exits without stopping runs.
+
+Ctrl+C and Ctrl+Q also request quit, including from text fields.
+Execution quit shortcuts use the same confirmation and wait for shutdown to complete.
+
+In the execution dashboard, press `g` to open guidance for a selected, available run.
+Force-stop and active execution quit requests require confirmation.
+Press `y` to confirm or `n` or Escape to cancel.
+The prompt closes without action if its target or active run set becomes invalid.
+
 ## Configuration
 
 ### quality_gates (required — fail-closed if absent)
