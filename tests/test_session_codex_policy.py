@@ -219,3 +219,61 @@ def test_unsupported_or_malformed_options_fail_closed(
 def test_conflicting_permission_options_fail_instead_of_broadening_access(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="conflicting Codex options"):
         _ = translate_argv(("codex", "--sandbox", "read-only", "--full-auto"), tmp_path)
+
+
+def test_inline_policy_values_and_passthrough_flags_preserve_wire_configuration(
+    tmp_path: Path,
+) -> None:
+    policy = translate_argv(
+        (
+            "codex",
+            "app-server",
+            "--model=gpt-5.6",
+            "--thread-source=cli",
+            "--image=prompt.png",
+            "--listen=stdio://",
+            "--json",
+            "--strict-config",
+            "--analytics-default-enabled",
+            "--config",
+            "profile.toml",
+            "--enable=feature",
+        ),
+        tmp_path,
+    )
+
+    assert policy.command == (
+        "codex",
+        "app-server",
+        "--strict-config",
+        "--analytics-default-enabled",
+        "--config",
+        "profile.toml",
+        "--enable=feature",
+    )
+    assert policy.thread == {
+        "cwd": str(tmp_path.resolve()),
+        "model": "gpt-5.6",
+        "threadSource": "cli",
+    }
+    assert policy.images == (str((tmp_path / "prompt.png").resolve()),)
+    assert policy.turn == {}
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    (
+        ((), "requires a codex executable"),
+        (("not-codex",), "requires a codex executable"),
+        (("codex", "fork"), "does not support exec fork"),
+        (("codex", "review"), "does not support exec review"),
+        (("codex", "--image="), "--image requires a value"),
+        (("codex", "--mystery"), "unsupported Codex app-server flag"),
+        (("codex", "prompt from start"), "receives the prompt through start"),
+    ),
+)
+def test_argv_shapes_that_cannot_be_translated_fail_closed(
+    tmp_path: Path, argv: tuple[str, ...], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _ = translate_argv(argv, tmp_path)

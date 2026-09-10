@@ -1013,3 +1013,143 @@ def test_message_frames_require_messages_and_supported_roles() -> None:
     assert event(unsupported, "error", "unsupported_message").text == (
         "Unsupported OMP message role: system"
     )
+
+
+def test_assistant_stream_updates_preserve_result_text_at_terminal_end() -> None:
+    session = OmpSession(("omp",), Path("/repo"))
+    _ = session.start("inspect")
+
+    thinking = session.receive(
+        frame(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_start"},
+            }
+        )
+    )
+    assert thinking.events == ()
+
+    delta = session.receive(
+        frame(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "delta": "partial"},
+            }
+        )
+    )
+    assert event(delta, "assistant", "streaming").text == "partial"
+
+    ended = session.receive(
+        frame(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_end", "content": "complete"},
+            }
+        )
+    )
+    assert event(ended, "assistant", "streaming").text == "complete"
+
+    done = session.receive(
+        frame(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {
+                    "type": "done",
+                    "message": {"role": "assistant", "content": "final"},
+                },
+            }
+        )
+    )
+    assert event(done, "status", "streaming").text == "OMP assistant done"
+
+    terminal = session.receive(frame({"type": "agent_end", "isTerminal": True}))
+    assert terminal.done is True
+    assert terminal.result_text == "final"
+
+
+def test_custom_and_tool_messages_emit_distinct_observable_events() -> None:
+    session = OmpSession(("omp",), Path("/repo"))
+    _ = session.start("inspect")
+
+    async_result = session.receive(
+        frame(
+            {
+                "type": "message_start",
+                "message": {
+                    "role": "custom",
+                    "customType": "async-result",
+                    "content": "tool output",
+                },
+            }
+        )
+    )
+    assert async_result.events == (
+        SessionEvent(kind="tool", text="tool output", event_id="custom-2", state="complete"),
+    )
+
+    status = session.receive(
+        frame(
+            {
+                "type": "message_start",
+                "message": {"role": "custom", "customType": "progress", "content": "working"},
+            }
+        )
+    )
+    assert status.events == (
+        SessionEvent(kind="status", text="working", event_id="custom-3", state="complete"),
+    )
+
+    ignored = session.receive(
+        frame(
+            {
+                "type": "message_end",
+                "message": {"role": "custom", "customType": "progress", "content": "working"},
+            }
+        )
+    )
+    assert ignored.events == ()
+
+    generated = session.receive(
+        frame({"type": "message_start", "message": {"role": "toolResult", "content": "reading"}})
+    )
+    assert generated.events == (
+        SessionEvent(kind="tool", text="reading", event_id="tool-4", state="streaming"),
+    )
+
+    completed = session.receive(
+        frame(
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call-7",
+                    "content": "done",
+                },
+            }
+        )
+    )
+    assert completed.events == (
+        SessionEvent(kind="tool", text="done", event_id="call-7", state="complete"),
+    )
+
+
+def test_agent_end_records_assistant_result_and_aborted_stop_reason() -> None:
+    session = OmpSession(("omp",), Path("/repo"))
+    _ = session.start("inspect")
+
+    terminal = session.receive(
+        frame(
+            {
+                "type": "agent_end",
+                "isTerminal": True,
+                "messages": [
+                    {"role": "user", "content": "ignored"},
+                    {"role": "assistant", "content": "aborted", "stopReason": "aborted"},
+                ],
+            }
+        )
+    )
+
+    assert terminal.done is True
+    assert terminal.failed is False
+    assert terminal.result_text == "aborted"

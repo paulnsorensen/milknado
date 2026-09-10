@@ -117,3 +117,129 @@ def test_failed_shutdown_preserves_unsent_input_until_its_receipt_is_saved() -> 
     ] == [
         ("unsent", "rejected"),
     ]
+
+
+def test_nonpositive_capacity_is_rejected() -> None:
+    with pytest.raises(ValueError, match="capacities must be positive"):
+        _ = SessionChannel(max_events=0)
+    with pytest.raises(ValueError, match="capacities must be positive"):
+        _ = SessionChannel(max_inputs=0)
+
+
+def test_active_channel_cannot_replace_its_context() -> None:
+    channel = SessionChannel()
+    channel.start(_CONTEXT, ("steer",))
+
+    with pytest.raises(RuntimeError, match="cannot replace an active session context"):
+        channel.start(SessionContext(family="codex", cwd="/repo", base_oid="base"), ("steer",))
+
+
+def test_submit_rejects_inactive_unsupported_and_unresolved_permission_inputs() -> None:
+    channel = SessionChannel()
+    assert not channel.submit(SessionInput(action="steer", text="inactive"))
+    assert channel.view().events[-1].state == "rejected"
+
+    channel.start(_CONTEXT, ("steer",))
+    assert not channel.submit(SessionInput(action="follow_up", text="unsupported"))
+    assert channel.view().events[-1].text == "unsupported"
+
+    channel.start(_CONTEXT, ("approve",))
+    assert not channel.submit(SessionInput(action="approve", request_id="missing"))
+    assert channel.view().events[-1].state == "rejected"
+
+
+def test_streaming_deltas_are_deferred_until_the_next_flush() -> None:
+    persisted: list[SessionEvent] = []
+    channel = SessionChannel(sink=persisted.append)
+    channel.start(_CONTEXT, ("steer",))
+    channel.publish(SessionEvent(kind="status", text="started", state="running"))
+    delta = SessionEvent(
+        kind="assistant",
+        text="chunk",
+        event_id="assistant-1",
+        state="streaming",
+        delta=True,
+    )
+    channel.publish(delta)
+
+    channel.publish(SessionEvent(kind="status", text="flush", state="running"))
+    assert [
+        (event.kind, event.text, event.event_id, event.state, event.delta) for event in persisted
+    ] == [
+        ("status", "started", "", "running", False),
+        ("assistant", "chunk", "1/assistant-1", "streaming", False),
+        ("status", "flush", "", "running", False),
+    ]
+
+
+def test_failed_deferred_persistence_is_retried_without_losing_the_event() -> None:
+    persisted: list[SessionEvent] = []
+    fail_delta = True
+
+    def sink(event: SessionEvent) -> None:
+        nonlocal fail_delta
+        if event.kind == "assistant" and fail_delta:
+            fail_delta = False
+            raise OSError("sink unavailable")
+        persisted.append(event)
+
+    channel = SessionChannel(sink=sink)
+    channel.start(_CONTEXT, ("steer",))
+    channel.publish(SessionEvent(kind="status", text="started", state="running"))
+    delta = SessionEvent(
+        kind="assistant",
+        text="chunk",
+        event_id="assistant-1",
+        state="streaming",
+        delta=True,
+    )
+    channel.publish(delta)
+    with pytest.raises(OSError, match="sink unavailable"):
+        channel.publish(SessionEvent(kind="status", text="flush", state="running"))
+
+    channel.publish(SessionEvent(kind="status", text="retry", state="running"))
+    assert [event.text for event in persisted] == ["started", "chunk", "retry"]
+
+
+def test_event_retention_evicts_the_oldest_indexed_event() -> None:
+    channel = SessionChannel(max_events=1)
+    channel.start(_CONTEXT, ("steer",))
+    channel.publish(SessionEvent(kind="status", text="first", event_id="one", state="running"))
+    channel.publish(SessionEvent(kind="status", text="second", event_id="two", state="running"))
+
+    assert [(event.event_id, event.text) for event in channel.view().events] == [
+        ("1/two", "second")
+    ]
+
+
+def test_permission_cancellation_failure_does_not_block_a_later_close() -> None:
+    persisted: list[SessionEvent] = []
+
+    def sink(event: SessionEvent) -> None:
+        if event.kind == "permission" and event.state == "cancelled":
+            raise OSError("permission save failed")
+        if event.kind == "status" and event.state == "stopped":
+            raise OSError("stop save failed")
+        persisted.append(event)
+
+    channel = SessionChannel(sink=sink)
+    channel.start(_CONTEXT, ("approve",))
+    channel.publish(
+        SessionEvent(
+            kind="permission",
+            text="write file",
+            event_id="permission-1",
+            state="requested",
+        )
+    )
+    with pytest.raises(OSError, match="permission save failed"):
+        channel.close()
+    assert channel.view().active is False
+
+    channel.set_sink(persisted.append)
+    channel.close()
+    assert [(event.kind, event.state) for event in persisted] == [
+        ("permission", "requested"),
+        ("permission", "cancelled"),
+        ("status", "stopped"),
+    ]
