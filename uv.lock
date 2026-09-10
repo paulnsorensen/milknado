@@ -149,6 +149,19 @@ wheels = [
 ]
 
 [[package]]
+name = "cattrs"
+version = "26.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/b2/42f4524e5479b090040b5fd8bb316dd8c65a079bb6492494ce2079dc91be/cattrs-26.2.0.tar.gz", hash = "sha256:3cf49f69df8326bcf17a3cb3d3d3ec4a856858fe3a7473746c9044c317d3ba55", size = 524993, upload-time = "2026-09-06T20:31:58.055Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f5/4d/6b8460462012a52075ba97932197f8c141be71b8e5f7e918af08ee73424b/cattrs-26.2.0-py3-none-any.whl", hash = "sha256:c680f17cd1df3a1c038ad1db8d90a9c595568cc54c4e8098e7ceb8d7b9bd826b", size = 74830, upload-time = "2026-09-06T20:31:56.327Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.5.20"
 source = { registry = "https://pypi.org/simple" }
@@ -603,6 +616,15 @@ wheels = [
 ]
 
 [[package]]
+name = "easy-cheese-schemas"
+version = "1.1.0"
+source = { git = "https://github.com/paulnsorensen/easy-cheese.git?rev=5d6bef021425bd902c95fc69b7677dc906fbb3ed#5d6bef021425bd902c95fc69b7677dc906fbb3ed" }
+dependencies = [
+    { name = "attrs" },
+    { name = "cattrs" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -877,7 +899,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp", marker = "python_full_version < '3.14'" },
+    { name = "zipp" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -1186,6 +1208,7 @@ version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "code-review-graph" },
+    { name = "easy-cheese-schemas" },
     { name = "fastmcp" },
     { name = "msgspec" },
     { name = "ortools" },
@@ -1216,6 +1239,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "code-review-graph", specifier = ">=2.3.3" },
+    { name = "easy-cheese-schemas", git = "https://github.com/paulnsorensen/easy-cheese.git?rev=5d6bef021425bd902c95fc69b7677dc906fbb3ed" },
     { name = "fastmcp", specifier = ">=3.3.1" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "ortools", specifier = ">=9.15.6755" },
@@ -2246,8 +2270,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
-    { name = "jeepney", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [

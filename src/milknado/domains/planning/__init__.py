@@ -1,5 +1,6 @@
 from milknado.domains.planning.batching_bridge import apply_batches_to_graph
 from milknado.domains.planning.context import build_planning_context
+from milknado.domains.planning.curd_admission import CurdAdmission, admit_curd_plan
 from milknado.domains.planning.manifest import (
     MANIFEST_VERSION,
     PlanChangeManifest,
@@ -22,6 +23,7 @@ from milknado.domains.planning.source_material import (
 from milknado.domains.planning.telemetry import record_batch_snapshot
 
 __all__ = [
+    "CurdAdmission",
     "MANIFEST_VERSION",
     "PlanChangeManifest",
     "PlanResult",
@@ -29,6 +31,7 @@ __all__ = [
     "PlanningPorts",
     "PlanningProcessPort",
     "PlanningProcessResult",
+    "admit_curd_plan",
     "apply_batches_to_graph",
     "build_planning_context",
     "decode_manifest",

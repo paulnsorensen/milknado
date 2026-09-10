@@ -127,8 +127,8 @@ def main() -> None:
     # the MCP server speaks stdio — logging must never write to stdout, only stderr/file.
     _ = configure_stderr_logging()
 
-    # Importing each tool module registers its @mcp.tool()s on the shared instance.
     from milknado.mcp import (  # noqa: V104
+        curd,
         github,
         node,
         ralph,
@@ -139,6 +139,5 @@ def main() -> None:
         wiki,
     )
 
-    _ = (github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
-
+    _ = (curd, github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
     _ = mcp.run()

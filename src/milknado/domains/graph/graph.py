@@ -230,6 +230,31 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def set_parent_id(self, node_id: int, parent_id: int | None) -> None:
         _creation.set_parent_id(self._conn, node_id, parent_id)
 
+    @synchronized
+    def record_curd_plan(
+        self, plan_id: str, revision: int, digest: str, canonical_bytes: bytes
+    ) -> None:
+        _persistence.record_curd_plan(self._conn, plan_id, revision, digest, canonical_bytes)
+
+    @synchronized
+    def get_curd_plan(self, plan_id: str, revision: int) -> _persistence.CurdPlanRecord | None:
+        return _persistence.get_curd_plan(self._conn, plan_id, revision)
+
+    @synchronized
+    def record_curd_node(
+        self,
+        node_id: int,
+        plan_id: str,
+        revision: int,
+        curd_id: str,
+        curd_digest: str,
+    ) -> None:
+        _persistence.record_curd_node(self._conn, node_id, plan_id, revision, curd_id, curd_digest)
+
+    @synchronized
+    def get_curd_node(self, node_id: int) -> _persistence.CurdNodeRecord | None:
+        return _persistence.get_curd_node(self._conn, node_id)
+
     # ── Mutations ────────────────────────────────────────────────────────────
 
     @synchronized
