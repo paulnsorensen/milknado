@@ -148,7 +148,10 @@ def test_submit_rejects_inactive_unsupported_and_unresolved_permission_inputs() 
     assert channel.view().events[-1].state == "rejected"
 
 
-def test_streaming_deltas_are_deferred_until_the_next_flush() -> None:
+def test_streaming_deltas_are_deferred_until_the_next_flush(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("milknado.loop.sessions._channel.time.monotonic", lambda: 1.0)
     persisted: list[SessionEvent] = []
     channel = SessionChannel(sink=persisted.append)
     channel.start(_CONTEXT, ("steer",))
@@ -172,7 +175,10 @@ def test_streaming_deltas_are_deferred_until_the_next_flush() -> None:
     ]
 
 
-def test_failed_deferred_persistence_is_retried_without_losing_the_event() -> None:
+def test_failed_deferred_persistence_is_retried_without_losing_the_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("milknado.loop.sessions._channel.time.monotonic", lambda: 1.0)
     persisted: list[SessionEvent] = []
     fail_delta = True
 
