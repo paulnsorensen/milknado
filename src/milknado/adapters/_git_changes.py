@@ -37,7 +37,7 @@ def _bounded_enumeration(args: list[str], root: Path, operation: str) -> str:
         subprocess.Popen,
         args,
         root,
-        (),
+        None,
     )
     if reason is not None:
         raise GitOperationError(
@@ -171,7 +171,7 @@ def session_diff(
         process_run,
         ["git", "diff", "--no-ext-diff", "--no-textconv", base, "--", *pathspecs],
         root,
-        (),
+        None,
     )
     if reason == "stdout":
         return bound_diff(stdout, path, truncated=True)

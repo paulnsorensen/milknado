@@ -153,7 +153,7 @@ def run_bounded_process(
     process_run: RunProcess,
     args: list[str],
     root: Path,
-    pass_fds: tuple[int, ...],
+    stdin: int | None,
 ) -> tuple[str, str, int, str | None]:
     try:
         process = process_run(
@@ -162,7 +162,7 @@ def run_bounded_process(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=False,
-            pass_fds=pass_fds,
+            stdin=stdin,
         )
         stdout, stderr, reason = _capture_process(process)
     except OSError as exc:
@@ -191,7 +191,7 @@ def untracked_diff(process_run: RunProcess, root: Path, path: str) -> str:
     descriptor = _open_regular(candidate)
     if descriptor is None:
         return f"Special file: {path} (changed during inspection; unified diff unavailable)."
-    fd_path = f"/dev/fd/{descriptor}"
+    # Stdin avoids Git treating Linux /dev/fd entries as symlinks.
     try:
         stdout, stderr, returncode, reason = run_bounded_process(
             process_run,
@@ -203,15 +203,17 @@ def untracked_diff(process_run: RunProcess, root: Path, path: str) -> str:
                 "--no-index",
                 "--",
                 "/dev/null",
-                fd_path,
+                "-",
             ],
             root,
-            (descriptor,),
+            descriptor,
         )
     finally:
         os.close(descriptor)
+    if info.st_mode & stat.S_IXUSR:
+        stdout = stdout.replace("new file mode 100644\n", "new file mode 100755\n", 1)
     stdout = "".join(
-        line.replace(fd_path, f"/{path}") if line.startswith(("diff --git ", "+++ ")) else line
+        line.replace("/-", f"/{path}") if line.startswith(("diff --git ", "+++ ")) else line
         for line in stdout.splitlines(keepends=True)
     )
     if reason == "stdout":

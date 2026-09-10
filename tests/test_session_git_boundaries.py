@@ -41,3 +41,16 @@ def test_disappearing_untracked_file_reports_inspection_failure(
     context = SessionContext(family="omp", cwd=str(repo), base_oid="HEAD")
     with pytest.raises(GitOperationError, match="cannot read untracked path: vanishing.txt"):
         _ = GitAdapter(repo).session_changes(context)
+
+
+def test_executable_untracked_diff_preserves_content_and_mode(repo: Path) -> None:
+    candidate = repo / "command"
+    _ = candidate.write_text("executable content\n", encoding="utf-8")
+    candidate.chmod(0o755)
+    context = SessionContext(family="omp", cwd=str(repo), base_oid="HEAD")
+
+    diff = GitAdapter(repo).session_diff(context, "command")
+
+    assert "new file mode 100755\n" in diff
+    assert "+++ b/command\n" in diff
+    assert "+executable content\n" in diff
