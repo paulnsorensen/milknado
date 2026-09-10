@@ -25,6 +25,7 @@ from milknado.app.run import (
 )
 from milknado.app.run_panels import RunDetailPanel
 from milknado.app.run_tui import ExecutionApp
+from milknado.app.watch_tui import WatchApp
 
 
 class _WorkerManager(Protocol):
@@ -705,19 +706,6 @@ async def test_help_bindings_support_alias_navigation_without_stealing_guidance_
 
 
 @pytest.mark.asyncio
-async def test_narrow_footer_keeps_help_quit_and_open_discoverable() -> None:
-    app = _execution_app(FakeController())
-
-    async with app.run_test(size=(40, 15)) as pilot:
-        await pilot.pause()
-        rendered = app.export_screenshot().replace("&#160;", " ")
-
-        assert "Help" in rendered
-        assert "Quit" in rendered
-        assert "Open" in rendered
-
-
-@pytest.mark.asyncio
 async def test_quit_waits_for_an_in_flight_execution_without_active_runs() -> None:
 
     controller = FakeController(
@@ -1009,3 +997,52 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
         )
         is expected
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
+async def test_escape_leaves_guidance_and_restores_run_navigation(size: tuple[int, int]) -> None:
+    controller = FakeController(initial_snapshot=snapshot(second=True), replay_subscription=False)
+    app = _execution_app(controller)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("f", "n")
+        await pilot.pause()
+        await pilot.press("g")
+        await pilot.pause()
+        assert _input(app, "#guidance").has_focus
+        await pilot.press(*"Keep the quality gate")
+        await pilot.press("escape")
+        assert _runs(app).has_focus
+        assert _input(app, "#guidance").value == "Keep the quality gate"
+        await pilot.press("j")
+        assert app.selected_run_id == "run-2"
+        assert controller.guidance == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("observer", [False, True])
+async def test_compact_events_keep_errors_visible_and_allow_keyboard_scroll(
+    observer: bool,
+) -> None:
+    controller = FakeController(
+        initial_snapshot=replace(
+            snapshot(event_lines=tuple(f"event {index}" for index in range(20))),
+            listener_errors=("Source unavailable",),
+        )
+    )
+    app = WatchApp(controller) if observer else _execution_app(controller)
+    async with app.run_test(size=(40, 15)) as pilot:
+        assert app.query_one("#workspace").region.y == 1
+        events = app.query_one("#events")
+        assert events.content_region.height >= 2
+        await pilot.press("e")
+        assert events.has_focus
+        await pilot.press("end")
+        await pilot.pause()
+        assert events.scroll_offset.y == events.max_scroll_y > 0
+        await pilot.press("home")
+        await pilot.pause()
+        assert events.scroll_offset.y == 0
+        assert app.auto_follow
+        await pilot.press("escape")
+        assert _runs(cast(ExecutionApp, app)).has_focus

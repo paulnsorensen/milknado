@@ -38,6 +38,19 @@ Never substitute a pipeline- or framework-generic gate set (e.g. bare `pytest` +
 orchestration (skills, sub-agents, CI scaffolding) asks "what are the quality gates", the
 answer is `just check-llm`, matching `quality_gates` in `milknado.toml`.
 
+## TUI Pull Request Evidence
+
+Open a pull request for TUI changes after `just check-llm` passes.
+Include before and after captures in the pull request description.
+Use the same terminal dimensions, theme, data, and interaction state for each pair.
+Capture both `milknado watch` and `milknado run` when shared presentation or controls change.
+Include compact and standard layouts, plus each changed error, confirmation, or human-intervention state.
+Open every capture and check clipping, focus, key hints, and visible status.
+Provide reviewer-accessible capture links and the command or deterministic tape that reproduces each pair.
+Do not use local-only paths as pull request evidence.
+Remove secrets from capture data.
+State fixture limits when a capture does not exercise a live worker.
+
 ## Key Recipes
 
 ```bash

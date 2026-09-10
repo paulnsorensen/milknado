@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar
 from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal
+from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import Reactive
 from textual.widgets import DataTable, Footer, Header, Static
 from typing_extensions import override
@@ -39,11 +39,16 @@ class _RunFooter(Footer):
 class ExecutionSnapshotApp(App[RunLoopResult | None]):
     """Responsive presentation that depends only on immutable snapshots."""
 
+    AUTO_FOCUS: ClassVar[str | None] = "#runs"  # noqa: V107 - Textual reads initial focus
+
     CSS: ClassVar[str] = """
     Screen { layers: base overlay; }
     #workspace { height: 1fr; layer: base; }
-    #events { height: auto; max-height: 25%; margin: 0 1; border: round $secondary; layer: base; }
-    Footer { layer: base; }
+    #events {
+        height: auto; min-height: 4; max-height: 5;
+        margin: 0 1; border: round $secondary; layer: base;
+    }
+    Header, Footer { layer: base; }
     #open-hint {
         display: none;
         dock: right;
@@ -57,7 +62,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         display: none;
         position: absolute;
         offset: 0 1;
-        margin: 0 1;
+        margin: 0 1 2 1;
         width: 1fr;
         max-height: 1fr;
         padding: 1 2;
@@ -78,6 +83,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         ("?", "help", "Help"),
         ("q", "quit_all", "Quit"),
         Binding("ctrl+c,ctrl+q", "quit_all", show=False, priority=True),
+        ("e", "focus_events", "Events"),
         ("enter", "open_detail", "Open"),
         ("up", "previous_run", "Previous run"),
         ("down", "next_run", "Next run"),
@@ -109,7 +115,9 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         with Horizontal(id="workspace"):
             yield RunListPanel(id="run-panel")
             yield RunDetailPanel(id="detail")
-        yield Static(id="events", markup=False)
+        with VerticalScroll(id="events") as events:
+            events.border_title = "Events"
+            yield Static(id="events-text", markup=False)
         yield Static(id="help-overlay", markup=False)
         yield _RunFooter()
 
@@ -178,7 +186,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
                 auto_follow=self.auto_follow,
             )
         )
-        self.query_one("#events", Static).update(
+        self.query_one("#events-text", Static).update(
             events_text(self.snapshot.event_lines, self.snapshot.listener_errors)
         )
 
@@ -200,10 +208,9 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     @on(DataTable.RowSelected, "#runs")
     def select_row(self, event: DataTable.RowSelected) -> None:
         self.selected_run_id = str(event.row_key.value)
-        self._refresh_view()
         if self.compact:
-            self.route = "detail"
-            self._set_layout(True)
+            self.action_open_detail()
+        else:
             self._refresh_view()
 
     def action_previous_run(self) -> None:
@@ -221,6 +228,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
 
     def action_open_detail(self) -> None:
         if self.compact and self._selected_run() is not None:
+            self.set_focus(None)
             self.route = "detail"
             self._set_layout(True)
             self._refresh_view()
@@ -231,10 +239,15 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         if help_overlay.has_class("visible"):
             _ = help_overlay.remove_class("visible")
             return
+        self.set_focus(None)
         if self.compact and self.route == "detail":
             self.route = "list"
             self._set_layout(True)
             self._refresh_view()
+        _ = self.call_after_refresh(self.query_one("#runs", DataTable).focus)
+
+    def action_focus_events(self) -> None:
+        _ = self.query_one("#events", VerticalScroll).focus()
 
     def action_resume_output(self) -> None:
         self.auto_follow = True
@@ -251,5 +264,8 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         self._refresh_view()
 
     def on_key(self, event: Key) -> None:
-        if event.key in {"home", "end", "pageup", "pagedown"}:
+        if (
+            event.key in {"home", "end", "pageup", "pagedown"}
+            and not self.query_one("#events", VerticalScroll).has_focus
+        ):
             self.pause_auto_follow()

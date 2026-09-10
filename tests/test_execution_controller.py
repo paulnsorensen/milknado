@@ -339,7 +339,7 @@ def test_controller_listener_failure_is_visible_to_other_listeners(
     from milknado.app.run_view import events_text
 
     rendered = events_text(received[-1].event_lines, listener_errors)
-    assert rendered.splitlines()[1] == f"Listener error: {listener_errors[0]}"
+    assert rendered.splitlines()[0] == f"Listener error: {listener_errors[0]}"
 
 
 def test_controller_reraises_execution_failure() -> None:
