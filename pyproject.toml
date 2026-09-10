@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "code-review-graph>=2.3.3",
+    "easy-cheese-schemas @ git+https://github.com/paulnsorensen/easy-cheese.git@5d6bef021425bd902c95fc69b7677dc906fbb3ed",
     "fastmcp>=3.3.1",
     "typer>=0.25.1",
     "rich>=15.0.0",
@@ -27,6 +28,9 @@ dependencies = [
 milknado = "milknado.cli:app"
 milknado-mcp = "milknado.mcp.server:main"
 
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/milknado"]

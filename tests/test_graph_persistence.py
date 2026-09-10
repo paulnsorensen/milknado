@@ -547,7 +547,7 @@ class TestArchiveSeed:
 
         graph = MikadoGraph(db)
         version = cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0])
-        assert version == 3
+        assert version == _persistence.SCHEMA_VERSION
         node = graph.add_node("migrated task")
         assert node.archived_at is None
         graph.close()
@@ -569,7 +569,13 @@ class TestArchiveSeed:
 
         graph = MikadoGraph(db)
         try:
-            assert cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0]) == 3
+            assert (
+                cast(
+                    int,
+                    graph_conn(graph).execute("PRAGMA user_version").fetchone()[0],
+                )
+                == _persistence.SCHEMA_VERSION
+            )
             node = graph.get_node(1)
             assert node is not None
             assert node.description == "pre-v3 done task"

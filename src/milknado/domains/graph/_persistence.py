@@ -8,6 +8,7 @@ import logging
 import re
 import sqlite3
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
@@ -27,11 +28,17 @@ from milknado.domains.graph._sqlite_rows import as_tuple as _as_tuple
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 __all__ = [
+    "CurdNodeRecord",
+    "CurdPlanRecord",
     "deposit_review_verdict",
     "finish_run",
+    "get_curd_node",
+    "get_curd_plan",
     "get_run",
     "insert_node_review",
     "latest_run_message",
+    "record_curd_node",
+    "record_curd_plan",
     "recent_runs",
     "runs_for_node",
     "set_run_pid",
@@ -72,6 +79,23 @@ class GithubBindAttempt(TypedDict):
     marker: str
     issue_url: str | None
     created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class CurdPlanRecord:
+    plan_id: str
+    revision: int
+    digest: str
+    canonical_bytes: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class CurdNodeRecord:
+    node_id: int
+    plan_id: str
+    revision: int
+    curd_id: str
+    curd_digest: str
 
 
 class BatchPlanRecord(TypedDict):
@@ -126,6 +150,26 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "PRIMARY KEY (node_id, round))",
     ),
     (3, "ALTER TABLE nodes ADD COLUMN archived_at TEXT"),
+    (
+        4,
+        "CREATE TABLE IF NOT EXISTS curd_plans ("
+        + "plan_id TEXT NOT NULL, revision INTEGER NOT NULL, "
+        + "digest TEXT NOT NULL, "
+        + "canonical_bytes BLOB NOT NULL, "
+        + "PRIMARY KEY (plan_id, revision))",
+    ),
+    (
+        5,
+        "CREATE TABLE IF NOT EXISTS curd_nodes ("
+        + "node_id INTEGER PRIMARY KEY REFERENCES nodes(id), "
+        + "plan_id TEXT NOT NULL, "
+        + "revision INTEGER NOT NULL, "
+        + "curd_id TEXT NOT NULL, "
+        + "curd_digest TEXT NOT NULL, "
+        + "FOREIGN KEY (plan_id, revision) "
+        + "REFERENCES curd_plans(plan_id, revision), "
+        + "UNIQUE (plan_id, revision, curd_id))",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -176,6 +220,88 @@ def migrate(conn: sqlite3.Connection) -> None:
         )
         raise
     _logger.info("migrated database user_version %d -> %d", current, SCHEMA_VERSION)
+
+
+def record_curd_plan(
+    conn: sqlite3.Connection,
+    plan_id: str,
+    revision: int,
+    digest: str,
+    canonical_bytes: bytes,
+) -> None:
+    existing = fetchone(
+        conn,
+        "SELECT digest, canonical_bytes FROM curd_plans " + "WHERE plan_id = ? AND revision = ?",
+        (plan_id, revision),
+    )
+    if existing is not None:
+        digest_value, payload = _as_tuple(existing)
+        if digest_value != digest or cast(bytes, payload) != canonical_bytes:
+            raise ValueError(
+                f"Curd plan {plan_id!r} revision {revision} is already recorded "
+                + "with different content"
+            )
+        return
+    _ = conn.execute(
+        "INSERT INTO curd_plans "
+        + "(plan_id, revision, digest, canonical_bytes) VALUES (?, ?, ?, ?)",
+        (plan_id, revision, digest, canonical_bytes),
+    )
+    conn.commit()
+
+
+def get_curd_plan(conn: sqlite3.Connection, plan_id: str, revision: int) -> CurdPlanRecord | None:
+    row = fetchone(
+        conn,
+        "SELECT plan_id, revision, digest, canonical_bytes FROM curd_plans "
+        + "WHERE plan_id = ? AND revision = ?",
+        (plan_id, revision),
+    )
+    if row is None:
+        return None
+    plan_id_value, revision_value, digest_value, payload = _as_tuple(row)
+    return CurdPlanRecord(
+        plan_id=cast(str, plan_id_value),
+        revision=cast(int, revision_value),
+        digest=cast(str, digest_value),
+        canonical_bytes=cast(bytes, payload),
+    )
+
+
+def record_curd_node(
+    conn: sqlite3.Connection,
+    node_id: int,
+    plan_id: str,
+    revision: int,
+    curd_id: str,
+    curd_digest: str,
+) -> None:
+    _ = conn.execute(
+        "INSERT INTO curd_nodes "
+        + "(node_id, plan_id, revision, curd_id, curd_digest) "
+        + "VALUES (?, ?, ?, ?, ?)",
+        (node_id, plan_id, revision, curd_id, curd_digest),
+    )
+    conn.commit()
+
+
+def get_curd_node(conn: sqlite3.Connection, node_id: int) -> CurdNodeRecord | None:
+    row = fetchone(
+        conn,
+        "SELECT node_id, plan_id, revision, curd_id, curd_digest "
+        + "FROM curd_nodes WHERE node_id = ?",
+        (node_id,),
+    )
+    if row is None:
+        return None
+    node_id_value, plan_id, revision, curd_id, curd_digest = _as_tuple(row)
+    return CurdNodeRecord(
+        node_id=cast(int, node_id_value),
+        plan_id=cast(str, plan_id),
+        revision=cast(int, revision),
+        curd_id=cast(str, curd_id),
+        curd_digest=cast(str, curd_digest),
+    )
 
 
 def _validate_schema(conn: sqlite3.Connection) -> None:
