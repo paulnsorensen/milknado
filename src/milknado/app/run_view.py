@@ -8,6 +8,8 @@ from milknado.app.run import (
     ExecutionSnapshot,
     TerminalRunSnapshot,
 )
+from milknado.app.session_view import action_label, full_brief, short_title
+from milknado.domains.common import SessionView
 
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
@@ -63,10 +65,35 @@ def subtitle_text(snapshot: ExecutionSnapshot) -> str:
     )
 
 
-def summary_text(run: RunSnapshot | None) -> str:
+def session_view(run: RunSnapshot | None) -> SessionView:
+    """Read the optional structured-session projection from a run snapshot."""
+    if run is None:
+        return SessionView()
+    value = getattr(run, "session", None)
+    return value if isinstance(value, SessionView) else SessionView()
+
+
+def details_text(run: RunSnapshot | None) -> tuple[str, str]:
+    """Return full brief and stable run metadata for the Details tab."""
+    if run is None:
+        return ("No run selected.", "")
+    session = session_view(run)
+    context = session.context
+    metadata = (
+        f"Node {run.node_id} · run {run.run_id}\n"
+        f"Status: {run.status.value}\n"
+        f"Family: {context.family if context else 'legacy'}\n"
+        f"Worktree: {context.cwd if context else 'unavailable'}"
+    )
+    return (full_brief(run.description), metadata)
+
+
+def summary_text(run: RunSnapshot | None, *, compact: bool = False) -> str:
     """Describe the selected run; the header already carries goal and totals."""
     if run is None:
         return "No runs."
+    if compact:
+        return f"node {run.node_id} · {run.status.value}\n{short_title(run.description, limit=35)}"
     guidance = (
         "unavailable"
         if run.pending_guidance is None
@@ -89,14 +116,17 @@ def summary_text(run: RunSnapshot | None) -> str:
         status = f"{run.status.value} · ran {format_duration(run.duration_seconds)}"
         guidance_label = "Undelivered guidance"
     return (
-        f"node {run.node_id} · {run.run_id}\n{run.description}\n"
+        f"node {run.node_id} · {run.run_id}\n{short_title(run.description)}\n"
         f"{status}\n{guidance_label}: {guidance}"
     )
 
 
-def actions_text(run: RunSnapshot | None) -> str:
+def actions_text(run: RunSnapshot | None, session: SessionView | None = None) -> str:
     if run is None:
         return "Actions\nNo run selected."
+    if session is not None and session.actions:
+        labels = ", ".join(action_label(action) for action in session.actions)
+        return f"Session actions\n{labels}"
     if not isinstance(run, ActiveRunSnapshot):
         return "Actions\nRun has stopped; output retained for inspection."
     labeled = (
@@ -110,13 +140,20 @@ def actions_text(run: RunSnapshot | None) -> str:
     return "Actions\n" + "\n".join(blocked)
 
 
+def session_help_text(session: SessionView) -> str:
+    if not session.actions:
+        return ""
+    labels = ", ".join(action_label(action) for action in session.actions)
+    return f"Session actions: {labels}"
+
+
 def help_text(run: RunSnapshot | None, *, compact: bool, route: str, auto_follow: bool) -> str:
     actions = ["↑/↓ or j/k select", "?/F1/h toggle help", "q quit"]
     actions.append("e events; ↑/↓ Home/End scroll")
     if compact and run is not None:
         actions.append("enter open" if route == "list" else "escape back")
     if isinstance(run, ActiveRunSnapshot):
-        if run.actions.can_queue_guidance:
+        if run.actions.can_queue_guidance and not session_view(run).actions:
             actions.append("g queue guidance")
         if run.actions.can_cancel:
             actions.append("c cancel")
@@ -141,7 +178,7 @@ def events_text(event_lines: tuple[str, ...], listener_errors: tuple[str, ...]) 
     return "\n".join(lines) or "No events yet."
 
 
-def run_row(run: RunSnapshot) -> tuple[str, str, Text, str, str]:
+def run_row(run: RunSnapshot, *, color: bool = True) -> tuple[str, str, Text, str, str]:
     """Build the five run-table cells; retries ride in the status cell, ETA in the summary."""
     if isinstance(run, ActiveRunSnapshot):
         progress = format_progress(run.progress_pct, run.stalled)
@@ -152,8 +189,14 @@ def run_row(run: RunSnapshot) -> tuple[str, str, Text, str, str]:
         elapsed = format_duration(run.duration_seconds)
         retry = ""
     label = f"{run.status.value} {retry}" if retry else run.status.value
-    style = "bold red" if retry else status_style(run.status)
-    return (str(run.node_id), run.description, Text(label, style=style), progress, elapsed)
+    style = ("bold red" if retry else status_style(run.status)) if color else "bold"
+    return (
+        str(run.node_id),
+        short_title(run.description),
+        Text(label, style=style),
+        progress,
+        elapsed,
+    )
 
 
 def run_index(runs: tuple[RunSnapshot, ...], selected_run_id: str | None) -> int:

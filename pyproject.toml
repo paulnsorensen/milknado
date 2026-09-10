@@ -284,6 +284,7 @@ ignore_decorators = ["@*.command", "@mcp.tool", "@on", "@work"]
 # solver parameters, ctypes structure fields) rather than a class's own declared base.
 ignore_names = [
     "disabled",             # Textual Widget attribute set via query_one(...).disabled
+    "display",              # Textual Widget visibility set via query_one(...).display
     "border_title",         # Textual Widget attribute set via query_one(...).border_title
     "row_factory",          # sqlite3.Connection knob
     "max_time_in_seconds",  # ortools CpSolver parameter

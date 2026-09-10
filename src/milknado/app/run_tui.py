@@ -14,7 +14,7 @@ from typing_extensions import override
 
 from milknado.app.run import ExecutionController, ExecutionSnapshot
 from milknado.app.run_commands import ExecutionCommandsMixin
-from milknado.app.run_view import confirmation_text
+from milknado.app.run_view import confirmation_text, session_view
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
 
@@ -68,20 +68,9 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     """Controller-backed operator view for one execution."""
 
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
-        ("?", "help", "Help"),
-        ("q", "quit_all", "Quit"),
-        ("enter", "open_detail", "Open"),
-        ("up", "previous_run", "Previous run"),
-        ("down", "next_run", "Next run"),
-        ("j", "next_run", "Next run"),
-        ("k", "previous_run", "Previous run"),
-        ("escape", "back", "Back"),
         ("g", "focus_guidance", "Queue guidance"),
         ("c", "cancel", "Cancel"),
         ("f", "force", "Force stop"),
-        ("r", "resume_output", "Resume output"),
-        ("f1", "help", "Help"),
-        ("h", "help", "Help"),
     ]
 
     def __init__(
@@ -108,7 +97,6 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
 
     @override
     def on_mount(self) -> None:
-        super().on_mount()
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()
 
@@ -133,7 +121,6 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self._confirmation = (action, run_id)
         self._confirmation_run_ids = frozenset(run.run_id for run in self.snapshot.active_runs)
         message = confirmation_text(action, run_id, len(self.snapshot.active_runs))
-        _ = self.query_one("#help-overlay", Static).remove_class("visible")
         _ = self.push_screen(_ConfirmationOverlay(message), self._finish_confirmation)
 
     def _clear_confirmation(self) -> None:
@@ -160,17 +147,13 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self._confirmation_focus = None
         if isinstance(focus, Input) and self.compact and not focus.disabled:
             self.action_open_detail()
-        _ = self.call_after_refresh(self._restore_confirmation_focus, focus)
+        _ = self.call_after_refresh(self._restore_focus, focus)
         if valid and request is not None:
             action, run_id = request
             if action == "force" and run_id is not None:
                 _ = self._force_stop(run_id)
             elif action == "quit":
                 _ = self._stop_scheduling()
-
-    def _restore_confirmation_focus(self, focus: Widget | None) -> None:
-        if not self.screen.is_modal:
-            self.set_focus(focus if focus and focus.region.area and not focus.disabled else None)
 
     @override
     async def action_back(self) -> None:
@@ -180,6 +163,10 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             await super().action_back()
 
     def action_focus_guidance(self) -> None:  # noqa: V105 - Textual binding action
+        selected = self.selected_run()
+        if session_view(selected).actions:
+            self.action_focus_session()
+            return
         run = self._selected_active_run()
         if run is not None and run.actions.can_queue_guidance:
             self.action_open_detail()

@@ -90,24 +90,52 @@ cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 
 ## Terminal controls
 
-Outside text fields, the execution dashboard and read-only `milknado watch` view share these controls:
+Outside text fields and help, the execution dashboard and read-only `milknado watch` view share these controls:
 
-- Press `?`, F1, or `h` to toggle help.
+- Press `?`, F1, or `h` to open help. Use arrow keys or Home/End to scroll; Escape or F1 closes it.
 - Use the arrow keys or `j`/`k` to select a run.
 - Press Enter to open the selected run in a narrow terminal.
 - Press Escape to close help or return to the run list.
 - Press `e` to focus Events. Use arrow keys or Home/End to scroll; Escape returns to the run list.
 - Press `q` to quit. The observer exits without stopping runs.
 
+Each run has Session, Changes, and Details tabs.
+Session displays decoded OMP, Claude, or Codex messages and delivery receipts.
+Press `i` to enter session input in the execution dashboard.
+Select an available action, then use Enter or Send.
+Permission replies require the exact pending request.
+Queued input is not delivered input; the worker acknowledgement determines its receipt.
+Press `x` to browse changed files and their bounded diffs against the run's recorded base commit.
+Details retains the full task brief.
+Watch shows the same transcript and changes without worker controls.
+Other workers retain the raw-output view.
+
 Ctrl+C and Ctrl+Q also request quit, including from text fields.
 Execution quit shortcuts use the same confirmation and wait for shutdown to complete.
 
-In the execution dashboard, press `g` to open guidance for a selected, available run.
+For workers without structured session controls, press `g` to open guidance for an available run.
 Guidance reaches the next iteration, not the current worker prompt.
 Escape leaves the guidance field without sending or clearing its draft.
 Force-stop and active execution quit requests require confirmation.
 Press `y` to confirm or `n` or Escape to cancel.
 The prompt closes without action if its target or active run set becomes invalid.
+
+### Reproduce the session demo
+
+The VHS tapes are in `docs/tui-captures/structured-sessions/`.
+Link this checkout at `/tmp/milknado-structured-demo`.
+Link a clean checkout of commit `1daea50` at `/tmp/milknado-structured-baseline`.
+Run both tapes from this checkout:
+
+```console
+vhs docs/tui-captures/structured-sessions/before.tape
+vhs docs/tui-captures/structured-sessions/after.tape
+```
+
+The tapes use 1200×720 pixels, Catppuccin Mocha, and a fixed clock.
+They write GIFs and PNGs under `.cheese/tui-demo/structured-sessions/`.
+The fixture creates `/tmp/milknado-session-demo` and removes it on normal exit.
+It refuses an existing directory, including one left by an interrupted recording.
 
 ## Configuration
 
