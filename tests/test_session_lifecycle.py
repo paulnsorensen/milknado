@@ -149,10 +149,11 @@ def test_process_group_cleanup_kills_descendants(tmp_path: Path, mode: str) -> N
     scenario = _Scenario(
         mode=mode,
         marker=child_pid_path,
-        timeout=0.2 if mode == "timeout-child" else 2.0,
         force_stop_event=force_stop,
         on_output_line=(
-            lambda _line, _stream: force_stop.set() if force_stop is not None else None
+            lambda line, _stream: (
+                force_stop.set() if force_stop is not None and "working" in line else None
+            )
         ),
     )
     result = run_session(_spec(worker, tmp_path, scenario), SessionChannel())
