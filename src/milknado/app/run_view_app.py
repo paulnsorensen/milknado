@@ -6,25 +6,33 @@ from collections.abc import Callable
 from threading import get_ident
 from typing import TYPE_CHECKING, ClassVar
 
-from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import Reactive
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.screen import ModalScreen
+from textual.widgets import Footer, Header, Static
 from typing_extensions import override
 
-from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
+from milknado.app.run import ExecutionSnapshot
 from milknado.app.run_panels import RunDetailPanel, RunListPanel
 from milknado.app.run_source import ExecutionSnapshotSource
-from milknado.app.run_view import events_text, help_text, subtitle_text
+from milknado.app.run_view import (
+    events_text,
+    help_text,
+    session_help_text,
+    session_view,
+    subtitle_text,
+)
+from milknado.app.session_commands import SessionCommandsMixin
+from milknado.app.session_navigation import RunNavigationMixin
 from milknado.domains.execution import RunLoopResult
 
 if TYPE_CHECKING:
-    from textual.events import Key, Resize
+    from textual.events import Resize
+    from textual.widget import Widget
 
 WIDE_MIN_COLUMNS = 116
-RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
 
 
 class _RunFooter(Footer):
@@ -36,8 +44,37 @@ class _RunFooter(Footer):
         yield Static("Enter Open", id="open-hint", markup=False)
 
 
-class ExecutionSnapshotApp(App[RunLoopResult | None]):
-    """Responsive presentation that depends only on immutable snapshots."""
+class _HelpScreen(ModalScreen[None]):
+    SCOPED_CSS: ClassVar[bool] = False  # noqa: V107 - Textual class configuration
+    AUTO_FOCUS: ClassVar[str | None] = "#help-scroll"  # noqa: V107 - Textual initial focus
+    BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual key bindings
+        (key, "close_help", "Close") for key in ("escape", "f1", "?", "h", "q")
+    ]
+    DEFAULT_CSS: ClassVar[str] = """
+    #session-help { align: center middle; background: $background 75%; }
+    #help-scroll {
+        width: 90%; max-width: 96; height: 90%; max-height: 32;
+        border: round $accent; padding: 1 2; background: $surface;
+    }
+    #help-close { dock: bottom; height: 1; text-align: center; background: $surface; }
+    """
+
+    def __init__(self, body: str) -> None:
+        super().__init__(id="session-help")
+        self._body: str = body
+
+    @override
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="help-scroll"):
+            yield Static(self._body, id="help-overlay", markup=False)
+        yield Static("↑/↓ scroll · Esc/F1 close", id="help-close", markup=False)
+
+    def action_close_help(self) -> None:  # noqa: V105 - Textual binding action
+        _ = self.dismiss(None)
+
+
+class ExecutionSnapshotApp(SessionCommandsMixin, RunNavigationMixin, App[RunLoopResult | None]):
+    """Responsive presentation for immutable execution and session snapshots."""
 
     AUTO_FOCUS: ClassVar[str | None] = "#runs"  # noqa: V107 - Textual reads initial focus
 
@@ -57,27 +94,14 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         padding: 0 1;
         background: $footer-background;
     }
-    .compact #open-hint { display: block; }
-    #help-overlay {
-        display: none;
-        position: absolute;
-        offset: 0 1;
-        margin: 0 1 2 1;
-        width: 1fr;
-        max-height: 1fr;
-        padding: 1 2;
-        border: round $accent;
-        background: $surface;
-        layer: overlay;
-        overflow-y: auto;
-    }
-    #help-overlay.visible { display: block; }
+    .compact.list #open-hint { display: block; }
     #detail #help { display: none; }
     .compact #workspace { display: block; }
     .compact #totals { display: block; }
     .compact #run-panel { width: 1fr; }
     .compact.list #detail { display: none; }
     .compact.detail #run-panel { display: none; }
+    .compact.detail #events, .compact #session-state { display: none; }
     """
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("?", "help", "Help"),
@@ -85,10 +109,10 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         Binding("ctrl+c,ctrl+q", "quit_all", show=False, priority=True),
         ("e", "focus_events", "Events"),
         ("enter", "open_detail", "Open"),
-        ("up", "previous_run", "Previous run"),
-        ("down", "next_run", "Next run"),
-        ("j", "next_run", "Next run"),
-        ("k", "previous_run", "Previous run"),
+        ("i", "focus_session", "Session input"),
+        ("x", "focus_changes", "Changes"),
+        Binding("up,k", "previous_run", show=False),
+        Binding("down,j", "next_run", show=False),
         ("escape", "back", "Back"),
         ("r", "resume_output", "Resume output"),
         ("f1", "help", "Help"),
@@ -97,7 +121,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
     title: Reactive[str]
     sub_title: Reactive[str]
 
-    def __init__(self, source: ExecutionSnapshotSource) -> None:
+    def __init__(self, source: ExecutionSnapshotSource, *, read_only: bool = False) -> None:
         super().__init__()
         self.source: ExecutionSnapshotSource = source
         self.snapshot: ExecutionSnapshot = source.snapshot()
@@ -108,6 +132,7 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         self.auto_follow: bool = True
         self._ui_thread_id: int | None = None
         self._unsubscribe: Callable[[], None] | None = None
+        self._init_session_ui(read_only=read_only)
 
     @override
     def compose(self) -> ComposeResult:
@@ -118,14 +143,14 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         with VerticalScroll(id="events") as events:
             events.border_title = "Events"
             yield Static(id="events-text", markup=False)
-        yield Static(id="help-overlay", markup=False)
         yield _RunFooter()
 
     def on_mount(self) -> None:
         self._ui_thread_id = get_ident()
         self._unsubscribe = self.source.subscribe(self._receive_snapshot)
-        self._set_layout(self.size.width < WIDE_MIN_COLUMNS)
-        self.show_snapshot(self.snapshot)
+        self.set_layout(self.size.width < WIDE_MIN_COLUMNS)
+        self.refresh_view()
+        _ = self.set_interval(1.0, self.refresh_session_changes)
 
     def on_unmount(self) -> None:
         if self._unsubscribe is not None:
@@ -133,7 +158,41 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
             self._unsubscribe = None
 
     def on_resize(self, event: Resize) -> None:
-        self._set_layout(event.size.width < WIDE_MIN_COLUMNS)
+        compact = event.size.width < WIDE_MIN_COLUMNS
+        changed = compact != self.compact
+        self.set_layout(compact)
+        if changed and self.screen.is_mounted:
+            self.refresh_view()
+
+    @override
+    async def action_quit(self) -> None:
+        self.action_quit_all()
+
+    def action_help(self) -> None:  # noqa: V105 - Textual binding action
+        selected = self.selected_run()
+        focus = self.screen.focused
+        body = help_text(
+            selected,
+            compact=self.compact,
+            route=self.route,
+            auto_follow=self.auto_follow,
+        )
+        session = session_view(selected)
+        if session.context is not None:
+            body += "\nx changed files"
+        if not self.read_only and session.actions:
+            body += f"\ni session input\n{session_help_text(session)}"
+        _ = self.push_screen(
+            _HelpScreen(body),
+            lambda _: self._restore_focus_after_help(focus),
+        )
+
+    def _restore_focus_after_help(self, focus: Widget | None) -> None:
+        _ = self.call_after_refresh(self._restore_focus, focus)
+
+    def _restore_focus(self, focus: Widget | None) -> None:
+        if not self.screen.is_modal:
+            self.set_focus(focus if focus and focus.region.area and not focus.disabled else None)
 
     def show_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         """Apply a replacement snapshot from the presentation source."""
@@ -151,14 +210,23 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         runs = self._runs()
         if self.selected_run_id not in {run.run_id for run in runs}:
             self.selected_run_id = runs[0].run_id if runs else None
-        self._refresh_view()
+        if not self.screen.is_mounted:
+            return
+        self.refresh_view()
 
     def _sync_compact_route_to_focus(self) -> None:
         focused = self.screen.focused
-        if focused is not None and focused.id == "guidance":
+        if focused is not None and focused.id in {
+            "guidance",
+            "session-input",
+            "session-action",
+            "session-permission",
+            "session-submit",
+            "changes-files",
+        }:
             self.route = "detail"
 
-    def _set_layout(self, compact: bool) -> None:
+    def set_layout(self, compact: bool) -> None:
         if compact:
             self._sync_compact_route_to_focus()
         self.compact = compact
@@ -168,104 +236,18 @@ class ExecutionSnapshotApp(App[RunLoopResult | None]):
         if not self.auto_follow:
             self.query_one("#detail", RunDetailPanel).preserve_output_offset()
 
-    def _refresh_view(self) -> None:
+    def refresh_view(self) -> None:
         self.title = self.snapshot.goal
         self.sub_title = subtitle_text(self.snapshot)
+        selected = self.selected_run()
         self.query_one("#run-panel", RunListPanel).update(
             self.snapshot, self._runs(), self.selected_run_id
         )
         self.query_one("#detail", RunDetailPanel).update(
-            self._selected_run(),
+            selected,
             auto_follow=self.auto_follow,
-        )
-        self.query_one("#help-overlay", Static).update(
-            help_text(
-                self._selected_run(),
-                compact=self.compact,
-                route=self.route,
-                auto_follow=self.auto_follow,
-            )
         )
         self.query_one("#events-text", Static).update(
             events_text(self.snapshot.event_lines, self.snapshot.listener_errors)
         )
-
-    def _runs(self) -> tuple[RunSnapshot, ...]:
-        return (*self.snapshot.active_runs, *reversed(self.snapshot.terminal_runs))
-
-    def _selected_run(self) -> RunSnapshot | None:
-        return next((run for run in self._runs() if run.run_id == self.selected_run_id), None)
-
-    def _selected_active_run(self) -> ActiveRunSnapshot | None:
-        run = self._selected_run()
-        return run if isinstance(run, ActiveRunSnapshot) else None
-
-    def _run_index(self) -> int:
-        runs = self._runs()
-        ids = [run.run_id for run in runs]
-        return ids.index(self.selected_run_id) if self.selected_run_id in ids else 0
-
-    @on(DataTable.RowSelected, "#runs")
-    def select_row(self, event: DataTable.RowSelected) -> None:
-        self.selected_run_id = str(event.row_key.value)
-        if self.compact:
-            self.action_open_detail()
-        else:
-            self._refresh_view()
-
-    def action_previous_run(self) -> None:
-        self._move_selection(-1)
-
-    def action_next_run(self) -> None:
-        self._move_selection(1)
-
-    def _move_selection(self, offset: int) -> None:
-        runs = self._runs()
-        if not runs:
-            return
-        self.selected_run_id = runs[(self._run_index() + offset) % len(runs)].run_id
-        self._refresh_view()
-
-    def action_open_detail(self) -> None:
-        if self.compact and self._selected_run() is not None:
-            self.set_focus(None)
-            self.route = "detail"
-            self._set_layout(True)
-            self._refresh_view()
-
-    @override
-    async def action_back(self) -> None:
-        help_overlay = self.query_one("#help-overlay", Static)
-        if help_overlay.has_class("visible"):
-            _ = help_overlay.remove_class("visible")
-            return
-        self.set_focus(None)
-        if self.compact and self.route == "detail":
-            self.route = "list"
-            self._set_layout(True)
-            self._refresh_view()
-        _ = self.call_after_refresh(self.query_one("#runs", DataTable).focus)
-
-    def action_focus_events(self) -> None:
-        _ = self.query_one("#events", VerticalScroll).focus()
-
-    def action_resume_output(self) -> None:
-        self.auto_follow = True
-        self._refresh_view()
-
-    def action_help(self) -> None:
-        _ = self.query_one("#help-overlay", Static).toggle_class("visible")
-
-    def action_quit_all(self) -> None:
-        self.exit()
-
-    def pause_auto_follow(self) -> None:
-        self.auto_follow = False
-        self._refresh_view()
-
-    def on_key(self, event: Key) -> None:
-        if (
-            event.key in {"home", "end", "pageup", "pagedown"}
-            and not self.query_one("#events", VerticalScroll).has_focus
-        ):
-            self.pause_auto_follow()
+        self.refresh_session_changes()

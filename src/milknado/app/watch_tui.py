@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar, Protocol
+from typing import Protocol
 
-from textual.binding import BindingType
 from typing_extensions import override
 
 from milknado.app.run import ExecutionSnapshot
@@ -40,20 +39,6 @@ class _WatchController:
 class WatchApp(ExecutionSnapshotApp):
     """Read-only execution view refreshed from durable state."""
 
-    BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
-        ("?", "help", "Help"),
-        ("q", "quit_all", "Quit"),
-        ("enter", "open_detail", "Open"),
-        ("up", "previous_run", "Previous run"),
-        ("down", "next_run", "Next run"),
-        ("j", "next_run", "Next run"),
-        ("k", "previous_run", "Previous run"),
-        ("escape", "back", "Back"),
-        ("r", "resume_output", "Resume output"),
-        ("f1", "help", "Help"),
-        ("h", "help", "Help"),
-    ]
-
     def __init__(
         self,
         source: SnapshotSource,
@@ -61,12 +46,10 @@ class WatchApp(ExecutionSnapshotApp):
         poll_interval: float = POLL_INTERVAL_SECONDS,
     ) -> None:
         self.poll_interval: float = poll_interval
-        super().__init__(_WatchController(source))
+        super().__init__(_WatchController(source), read_only=True)
 
     @override
     def on_mount(self) -> None:  # noqa: V105 - Textual lifecycle handler
-        super().on_mount()
-        self.show_snapshot(self.snapshot)
         _ = self.set_interval(self.poll_interval, self.poll)
 
     def poll(self) -> None:

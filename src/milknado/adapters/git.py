@@ -8,10 +8,23 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
+from milknado.adapters._git_changes import (
+    ChangedFile,
+)
+from milknado.adapters._git_changes import (
+    diff_for_review as _diff_for_review,
+)
+from milknado.adapters._git_changes import (
+    session_changes as _session_changes,
+)
+from milknado.adapters._git_changes import (
+    session_diff as _session_diff,
+)
 from milknado.domains.common import (
     GitOperationError,
     RebaseAbortError,
     RebaseResult,
+    SessionContext,
     UnlandedWorkError,
 )
 
@@ -228,32 +241,13 @@ class GitAdapter:
         return self._run(["rev-parse", "--verify", ref]).stdout.strip()
 
     def diff_for_review(self, worktree: Path, base_oid: str) -> str:
-        """Return the full base-to-worktree patch, including untracked files."""
-        try:
-            tracked = self._run(
-                ["diff", "--no-ext-diff", base_oid, "--"],
-                cwd=worktree,
-            ).stdout
-            untracked = self._run(
-                ["ls-files", "--others", "--exclude-standard"],
-                cwd=worktree,
-            ).stdout.splitlines()
-            parts = [tracked]
-            for path in untracked:
-                result = subprocess.run(
-                    ["git", "diff", "--no-ext-diff", "--no-index", "--", "/dev/null", path],
-                    cwd=worktree,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if result.returncode not in (0, 1):
-                    detail = (result.stderr or result.stdout).strip()
-                    raise GitOperationError("diff --no-index", detail)
-                parts.append(result.stdout)
-            return "\n".join(part.rstrip("\n") for part in parts if part)
-        except OSError as exc:
-            raise GitOperationError("diff for review", str(exc)) from exc
+        return _diff_for_review(self._run, worktree, base_oid, process_run=subprocess.run)
+
+    def session_changes(self, context: SessionContext) -> tuple[ChangedFile, ...]:
+        return _session_changes(self._run, context)
+
+    def session_diff(self, context: SessionContext, path: str) -> str:
+        return _session_diff(self._run, context, path, process_run=subprocess.Popen)
 
     def compare_and_swap_ref(
         self,

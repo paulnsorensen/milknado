@@ -465,8 +465,9 @@ async def test_help_and_quit_confirmation_only_show_current_actions() -> None:
 
     async with app.run_test(size=(120, 36)) as pilot:
         await pilot.press("h")
-        assert "g queue guidance" in _plain(app, "#help-overlay")
-        assert "f force stop" in _plain(app, "#help-overlay")
+        help_body = cast(Text, app.screen.query_one("#help-overlay", Static).render()).plain
+        assert "g queue guidance" in help_body
+        assert "f force stop" in help_body
         await pilot.press("escape", "q")
         assert "Stop scheduling and gracefully stop 1 active run?" in (_confirmation_text(app))
         await pilot.press("y")
@@ -652,21 +653,24 @@ async def test_compact_help_overlay_is_visible_and_escape_preserves_state() -> N
 
     async with app.run_test(size=(40, 15)) as pilot:
         await pilot.pause()
-        focused_id = app.screen.focused.id if app.screen.focused is not None else None
-        await pilot.press("h")
-
-        overlay = _static(app, "#help-overlay")
-        assert overlay.has_class("visible")
-        assert "Help" in app.export_screenshot().replace("&#160;", " ")
-        assert app.screen.region.contains_region(overlay.region)
-        assert app.query_one("#detail").display is False
-
+        base_screen = app.screen
         route = app.route
         selected = app.selected_run_id
         auto_follow = app.auto_follow
+        focused_id = app.screen.focused.id if app.screen.focused is not None else None
+        await pilot.press("h")
+
+        overlay = app.screen.query_one("#help-scroll", VerticalScroll)
+        assert overlay.has_focus
+        assert "Help" in app.export_screenshot().replace("&#160;", " ")
+        assert app.screen.region.contains_region(overlay.region)
+        assert app.query_one("#detail").display is False
+        await pilot.press("end")
+        assert overlay.scroll_y > 0
+
         await pilot.press("escape")
 
-        assert not overlay.has_class("visible")
+        assert app.screen is base_screen
         assert app.route == route
         assert app.selected_run_id == selected
         assert app.auto_follow is auto_follow
@@ -676,10 +680,9 @@ async def test_compact_help_overlay_is_visible_and_escape_preserves_state() -> N
         detail_focused_id = getattr(app.screen.focused, "id", None)
         await pilot.press("f1")
         assert app.route == "detail"
-        assert "escape back" in cast(Text, overlay.render()).plain
 
         await pilot.press("escape")
-        assert not overlay.has_class("visible")
+        assert app.screen is base_screen
         assert app.route == "detail"
         assert app.selected_run_id == selected
         assert app.auto_follow is auto_follow

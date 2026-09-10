@@ -121,8 +121,7 @@ async def test_watch_help_overlay_is_visible_and_excludes_operator_actions() -> 
         await pilot.pause()
         await pilot.press("f1")
 
-        overlay = app.query_one("#help-overlay", Static)
-        assert overlay.has_class("visible")
+        overlay = app.screen.query_one("#help-overlay", Static)
         assert "Help" in app.export_screenshot().replace("&#160;", " ")
         help_text = cast(Text, overlay.render()).plain
         assert all(label not in help_text for label in ("g queue guidance", "c cancel", "f force"))

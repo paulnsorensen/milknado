@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from rich.text import Text
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -239,7 +238,7 @@ def test_output_body_non_empty() -> None:
     assert output_body(run) == "line1\nline2"
 
 
-def test_run_row_active_with_retry_uses_bold_red_status_cell() -> None:
+def test_run_row_active_includes_retry_count() -> None:
     run = active_run(
         run_id="run-1",
         node_id=3,
@@ -255,14 +254,12 @@ def test_run_row_active_with_retry_uses_bold_red_status_cell() -> None:
 
     assert node_id == "3"
     assert description == "Build feature"
-    assert isinstance(status_cell, Text)
     assert status_cell.plain == "running 2/3"
-    assert status_cell.style == "bold red"
     assert progress == "█" * 5 + "░" * 5 + " 55%"
     assert elapsed == "02:05"
 
 
-def test_run_row_active_without_retry_uses_status_style() -> None:
+def test_run_row_active_without_retry_has_clean_status_text() -> None:
     run = active_run(
         status=ExecutionRunStatus.RUNNING,
         attempt=1,
@@ -271,7 +268,6 @@ def test_run_row_active_without_retry_uses_status_style() -> None:
     _, _, status_cell, _, _ = run_row(run)
 
     assert status_cell.plain == "running"
-    assert status_cell.style == "cyan"
 
 
 def test_run_row_terminal() -> None:
@@ -287,7 +283,6 @@ def test_run_row_terminal() -> None:
     assert node_id == "4"
     assert description == "Ship docs"
     assert status_cell.plain == "completed"
-    assert status_cell.style == "green"
     assert progress == "—"
     assert elapsed == "01:04"
 

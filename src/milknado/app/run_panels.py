@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from os import environ
 from typing import Protocol, cast, final
 
 from rich.console import RenderableType
@@ -9,18 +10,26 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp, Resize
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Static, TabbedContent, TabPane
 from typing_extensions import override
 
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import (
     actions_text,
+    details_text,
     output_body,
     output_border_title,
     run_index,
     run_row,
+    session_view,
     subtitle_text,
     summary_text,
+)
+from milknado.app.session_panels import (
+    ChangesPanel,
+    DetailsPanel,
+    SessionPanel,
+    SessionPanelState,
 )
 
 
@@ -61,7 +70,7 @@ class RunListPanel(Vertical):
     """List pane owning the totals line and the run table."""
 
     DEFAULT_CSS = """
-    RunListPanel { width: 68; height: 1fr; }
+    RunListPanel { width: 40; height: 1fr; }
     #totals { height: auto; margin: 0 1; display: none; }
     #empty { display: none; height: 1fr; margin: 1 2; content-align: center middle; }
     #empty.visible { display: block; }
@@ -121,12 +130,12 @@ class RunListPanel(Vertical):
 
     def _render_table(self) -> None:
         table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
-        had_focus = table.has_focus
         cursor_column = self._cursor_column if self._cursor_run_id else table.cursor_column
         _ = table.clear(columns=False)
         visible_indexes = tuple(_COLUMN_INDEX[label] for label, _ in self._column_layout)
+        color = "NO_COLOR" not in environ
         for run in self._runs:
-            cells = run_row(run)
+            cells = run_row(run, color=color)
             description = Text(cells[1], overflow="ellipsis", no_wrap=True)
             visible_cells = (cells[0], description, *cells[2:])
             _ = table.add_row(
@@ -139,8 +148,6 @@ class RunListPanel(Vertical):
                 column=min(cursor_column, len(self._column_layout) - 1),
                 animate=False,
             )
-        if had_focus:
-            _ = table.focus()
         self._cursor_run_id = None
 
     def _update_empty_state(self) -> None:
@@ -181,22 +188,24 @@ class RunListPanel(Vertical):
 
 @final
 class RunDetailPanel(VerticalScroll):
-    """Detail pane that pauses output following before consuming wheel input."""
+    """Selected node's Session, Changes, and Details panes."""
 
     DEFAULT_CSS = """
     RunDetailPanel { width: 1fr; height: 1fr; }
-    #output, #actions { margin: 0 1; }
-    #output { height: 1fr; overflow-y: auto; border: round $primary; }
-    #guidance { margin: 0 1 1 1; }
+    #summary { height: auto; margin: 0 1; }
+    #run-tabs { height: 1fr; }
     """
 
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="summary", markup=False)
-        with VerticalScroll(id="output"):
-            yield Static(id="output-text", markup=False)
-        yield Static(id="actions", markup=False)
-        yield Input(placeholder="Queue guidance for the selected run", id="guidance")
+        with TabbedContent(initial="session", id="run-tabs"):
+            with TabPane("Session", id="session"):
+                yield SessionPanel(id="session-panel")
+            with TabPane("Changes", id="changes"):
+                yield ChangesPanel(id="changes-panel")
+            with TabPane("Details", id="details"):
+                yield DetailsPanel(id="details-panel")
 
     def on_mouse_scroll_up(self, _event: MouseScrollUp) -> None:
         cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
@@ -204,27 +213,41 @@ class RunDetailPanel(VerticalScroll):
     def on_mouse_scroll_down(self, _event: MouseScrollDown) -> None:
         cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
 
-    def update(
-        self,
-        selected: RunSnapshot | None,
-        *,
-        auto_follow: bool,
-    ) -> None:
-        self.query_one("#summary", Static).update(summary_text(selected))
+    def update(self, selected: RunSnapshot | None, *, auto_follow: bool) -> None:
+        session = session_view(selected)
+        app = cast(_ExecutionAppLike, cast(object, self.app))
+        self.query_one("#summary", Static).update(summary_text(selected, compact=app.compact))
         self.query_one("#output", VerticalScroll).border_title = output_border_title(
             auto_follow=auto_follow
         )
-        self.query_one("#output-text", Static).update(output_body(selected))
-        self.query_one("#actions", Static).update(actions_text(selected))
-        active = selected if isinstance(selected, ActiveRunSnapshot) else None
-        self.query_one("#guidance", Input).disabled = (
-            active is None or not active.actions.can_queue_guidance
+        session_panel = self.query_one("#session-panel", SessionPanel)
+        session_panel.update(
+            SessionPanelState(
+                view=session,
+                run_id=selected.run_id if selected else None,
+                read_only=getattr(app, "read_only", False),
+                draft=getattr(app, "session_draft", ""),
+                legacy_guidance=(
+                    isinstance(selected, ActiveRunSnapshot)
+                    and not session.actions
+                    and not getattr(app, "read_only", False)
+                ),
+                action=getattr(app, "session_action", None),
+                permission_id=getattr(app, "session_permission", ""),
+            )
         )
+        if selected is not None and not session.events:
+            session_panel.show_legacy_output(output_body(selected))
+        self.query_one("#actions", Static).update(
+            actions_text(selected, None if getattr(app, "read_only", False) else session)
+        )
+        brief, metadata = details_text(selected)
+        self.query_one("#details-panel", DetailsPanel).update(brief, metadata)
         if auto_follow:
             self.query_one("#output", VerticalScroll).scroll_end(animate=False)
 
     def preserve_output_offset(self) -> None:
-        """Re-apply the paused output position: a relayout otherwise scrolls it to the top."""
+        """Re-apply the paused output position after a relayout."""
         output = self.query_one("#output", VerticalScroll)
         position = output.scroll_offset.y
         _ = self.call_after_refresh(output.scroll_to, y=position, animate=False)
