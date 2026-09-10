@@ -20,6 +20,7 @@ from milknado.loop._agent import (
     _setup_wind_down,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.loop._output import warn
 from milknado.loop.adapters import select_adapter
 from milknado.loop.sessions._protocol import SessionProtocol
 
@@ -30,6 +31,7 @@ TERMINATE_GRACE = 0.5
 READ_CHUNK_SIZE = 4096
 MAX_FRAME_SIZE = 1024 * 1024
 MAX_STDERR_LINE_SIZE = CAPTURE_LIMIT
+_THREAD_JOIN_TIMEOUT = 1.0
 
 _PROCESS_GROUP_IDS: WeakKeyDictionary[subprocess.Popen[bytes], int] = WeakKeyDictionary()
 
@@ -201,8 +203,18 @@ def finish_process(proc: subprocess.Popen[bytes], *, graceful: bool) -> None:
 
 def close_pipes(proc: subprocess.Popen[bytes], threads: tuple[threading.Thread, ...]) -> None:
     for thread in threads:
-        thread.join(timeout=1.0)
-    for pipe in (proc.stdin, proc.stdout, proc.stderr):
+        thread.join(timeout=_THREAD_JOIN_TIMEOUT)
+        if thread.is_alive():
+            warn(
+                f"reader thread {thread.name!r} did not exit within"
+                + f" {_THREAD_JOIN_TIMEOUT}s — log output may be incomplete"
+            )
+    if proc.stdin is not None:
+        with suppress(OSError, ValueError):
+            proc.stdin.close()
+    if any(thread.is_alive() for thread in threads):
+        return
+    for pipe in (proc.stdout, proc.stderr):
         if pipe is not None:
             with suppress(OSError, ValueError):
                 pipe.close()

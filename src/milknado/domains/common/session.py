@@ -53,7 +53,7 @@ def normalize_session_event(
         elif event.kind == "user" and not text:
             text = previous.text
         action = action or previous.action
-    if event.kind not in {"user", "permission"} and len(text) > 8192:
+    if len(text) > 8192:
         marker = "[Earlier text omitted]\n"
         text = marker + text[-(8192 - len(marker)) :]
     return msgspec.structs.replace(event, text=text, action=action, state=state, delta=False)

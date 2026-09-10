@@ -15,6 +15,8 @@ from milknado.domains.common import (
     SessionEvent,
 )
 from milknado.domains.graph import MikadoGraph, read_observer_snapshot
+from milknado.loop._agent import AgentRunSpec
+from milknado.loop.sessions import SessionChannel, run_session
 from tests.graph_helpers import graph_conn
 
 
@@ -66,6 +68,57 @@ def test_session_start_append_and_view_normalize_input_trace(tmp_path: Path) -> 
     assert [event.state for event in persisted[:3]] == ["queued", "submitted", "delivered"]
     assert all(event.delta is False for event in persisted)
     graph.close()
+
+
+_LARGE_PROMPT_WORKER = """#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+for line in sys.stdin:
+    frame = json.loads(line)
+    if frame.get('type') == 'user':
+        Path('received.txt').write_text(frame['message']['content'], encoding='utf-8')
+        result = {'type': 'result', 'subtype': 'success', 'result': 'complete'}
+        print(json.dumps(result), flush=True)
+        break
+"""
+
+
+def test_large_prompt_reaches_worker_with_bounded_durable_transcript(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "large-prompt.db")
+    _ = _run(graph)
+    graph.sessions.start("run-1", SessionContext(family="claude", cwd=str(tmp_path)))
+    worker = tmp_path / "claude"
+    _ = worker.write_text(
+        _LARGE_PROMPT_WORKER,
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+    prompt = "prefix" + "\n界\\" * 70000
+    channel = SessionChannel(lambda event: graph.sessions.append("run-1", event))
+    try:
+        result = run_session(
+            AgentRunSpec(
+                cmd=[str(worker)],
+                prompt=prompt,
+                timeout=5.0,
+                cwd=tmp_path,
+                log_dir=None,
+                iteration=1,
+                capture_result_text=True,
+            ),
+            channel,
+        )
+        assert result.returncode == 0
+        assert result.result_text == "complete"
+        assert (tmp_path / "received.txt").read_text(encoding="utf-8") == prompt
+        recorded = next(
+            event for event in graph.sessions.view("run-1").events if event.kind == "user"
+        )
+        assert len(recorded.text) <= 8192
+        assert recorded.text.endswith(prompt[-100:])
+    finally:
+        graph.close()
 
 
 def test_session_append_sequences_across_graph_connections(tmp_path: Path) -> None:

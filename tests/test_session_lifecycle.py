@@ -40,9 +40,13 @@ for _ in range(2):
 if mode.endswith("-child"):
     child_pid = os.fork()
     if child_pid == 0:
+        if mode == "detached-pipe-child":
+            os.setsid()
+            marker.write_text(str(os.getpid()), encoding="utf-8")
         time.sleep(30)
         os._exit(0)
-    marker.write_text(str(child_pid), encoding="utf-8")
+    if mode != "detached-pipe-child":
+        marker.write_text(str(child_pid), encoding="utf-8")
 if mode == "success-child":
     emit({"type": "result", "subtype": "success", "result": "done", "session_id": "sid"})
 elif mode == "timeout-child":
@@ -50,6 +54,10 @@ elif mode == "timeout-child":
 elif mode == "force-child":
     assistant([{"type": "text", "text": "working"}])
     time.sleep(30)
+elif mode == "detached-pipe-child":
+    while not marker.exists():
+        time.sleep(0.01)
+    emit({"type": "result", "subtype": "success", "result": "done", "session_id": "sid"})
 elif mode == "stderr-cancel":
     marker.write_text(str(os.getpid()), encoding="utf-8")
     print("stderr cancellation", file=sys.stderr, flush=True)
@@ -192,6 +200,21 @@ def test_process_group_cleanup_consumes_identity_after_first_cleanup(
     assert signals.count(signal.SIGKILL) <= 1
 
 
+@pytest.mark.skipif(os.name == "nt", reason="detached POSIX descendants are not supported")
+def test_detached_pipe_holder_does_not_block_session_cleanup(tmp_path: Path) -> None:
+    worker, marker = _worker(tmp_path), tmp_path / "detached-child.pid"
+    spec = _spec(worker, tmp_path, _Scenario("detached-pipe-child", marker))
+    thread = threading.Thread(target=run_session, args=(spec, SessionChannel()), daemon=True)
+    thread.start()
+    pid = _wait_for_pid(marker)
+    thread.join(timeout=3.0)
+    finished = not thread.is_alive()
+    os.kill(pid, signal.SIGKILL)
+    thread.join(timeout=3.0)
+    _assert_dead(pid)
+    assert finished, "session cleanup blocked on inherited pipe"
+
+
 def test_stderr_output_callback_can_stop_runtime(tmp_path: Path) -> None:
     worker = _worker(tmp_path)
     marker = tmp_path / "stderr-cancel.pid"
@@ -252,12 +275,7 @@ def test_max_turns_grace_uses_the_existing_soft_hook_and_hard_cap(tmp_path: Path
         _spec(
             worker,
             tmp_path,
-            _Scenario(
-                mode="soft-hook",
-                marker=marker,
-                max_turns=2,
-                max_turns_grace=1,
-            ),
+            _Scenario(mode="soft-hook", marker=marker, max_turns=2, max_turns_grace=1),
         ),
         SessionChannel(),
     )
@@ -273,11 +291,7 @@ def test_max_turns_grace_uses_the_existing_soft_hook_and_hard_cap(tmp_path: Path
 def test_structured_session_hard_cap_stops_at_the_tool_boundary(tmp_path: Path) -> None:
     worker = _worker(tmp_path)
     result = run_session(
-        _spec(
-            worker,
-            tmp_path,
-            _Scenario(mode="tool-cap", marker=tmp_path / "unused", max_turns=1),
-        ),
+        _spec(worker, tmp_path, _Scenario("tool-cap", tmp_path / "unused", max_turns=1)),
         SessionChannel(),
     )
 

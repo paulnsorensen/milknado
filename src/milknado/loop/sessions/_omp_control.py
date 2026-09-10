@@ -62,7 +62,13 @@ class OmpControlMixin(OmpEventMixin):
         event = SessionEvent(
             kind="permission", text=request.title, event_id=request_id, state="submitted"
         )
-        return ProtocolStep(commands=(encode(payload),), events=(event,))
+        state = "approved" if command.action == "approve" else "denied"
+        decision = SessionEvent(
+            kind="permission", text=request.title, event_id=request_id, state=state
+        )
+        return ProtocolStep(
+            commands=(encode(payload),), events=(event,), after_write_events=(decision,)
+        )
 
     def _response(self, frame: OmpFrame) -> ProtocolStep:
         request_id = frame.id
