@@ -10,7 +10,8 @@ from typing import Protocol
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._run_persistence as _run_persistence
-from milknado.domains.common import RunResult
+import milknado.domains.graph._session_persistence as _session_persistence
+from milknado.domains.common import RunResult, SessionContext, SessionEvent, SessionView
 from milknado.domains.graph._analytics_facade import synchronized
 
 
@@ -103,6 +104,20 @@ class _RunFacade(_SubFacade):
         return _run_persistence.node_reviews_for_node(self._conn, node_id)
 
 
+class _SessionFacade(_SubFacade):
+    @synchronized
+    def start(self, run_id: str, context: SessionContext) -> None:
+        _session_persistence.start_session(self._conn, run_id, context)
+
+    @synchronized
+    def append(self, run_id: str, event: SessionEvent) -> None:
+        _ = _session_persistence.append_session_event(self._conn, run_id, event)
+
+    @synchronized
+    def view(self, run_id: str, limit: int = 500) -> SessionView:
+        return _session_persistence.view_session(self._conn, run_id, limit)
+
+
 class _FileFacade(_SubFacade):
     @synchronized
     def claim(self, node_id: int, files: list[str]) -> None:
@@ -131,4 +146,4 @@ class _GithubFacade(_SubFacade):
         _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
 
-__all__ = ["_FileFacade", "_GithubFacade", "_RunFacade"]
+__all__ = ["_FileFacade", "_GithubFacade", "_RunFacade", "_SessionFacade"]

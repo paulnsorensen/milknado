@@ -5,9 +5,11 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
+from milknado.domains.common import SessionInput, SessionView
 from milknado.loop._events import EventEmitter, QueueEmitter
 from milknado.loop._run_types import RunConfig, RunState, generate_run_id
 from milknado.loop.engine import run_loop
+from milknado.loop.sessions import SessionChannel
 
 
 @dataclass(slots=True)
@@ -47,7 +49,12 @@ class RunManager:
         run_id: str | None = None,
     ) -> ManagedRun:
         """Create and register a run."""
-        state = RunState(run_id=run_id or generate_run_id())
+        session = (
+            SessionChannel(sink=config.session_sink)
+            if config.session_context is not None or config.session_sink is not None
+            else None
+        )
+        state = RunState(run_id=run_id or generate_run_id(), session=session)
         managed = ManagedRun(
             config=config,
             state=state,
@@ -63,6 +70,8 @@ class RunManager:
             managed = self._lookup(run_id)
             if managed.thread is not None:
                 raise RuntimeError(f"Run '{run_id}' has already been started")
+            if managed.state.session is not None and managed.config.session_context is not None:
+                managed.state.session.start(managed.config.session_context, ())
             managed.thread = threading.Thread(
                 target=run_loop,
                 args=(managed.config, managed.state, managed.emitter),
@@ -74,6 +83,20 @@ class RunManager:
     def queue_guidance(self, run_id: str, text: str) -> bool:
         """Queue operator guidance for the run's next prompt."""
         return self._require_run(run_id).state.queue_guidance(text)
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        """Admit one structured command when the run exposes a session."""
+        managed = self._require_run(run_id)
+        if managed.state.session is None:
+            return False
+        return managed.state.session.submit(command)
+
+    def get_run_session(self, run_id: str) -> SessionView:
+        """Return a stable session snapshot for a run."""
+        managed = self._require_run(run_id)
+        if managed.state.session is None:
+            return SessionView()
+        return managed.state.session.view()
 
     def stop_run(self, run_id: str) -> None:
         """Signal the run to stop after the current iteration finishes."""
@@ -108,3 +131,8 @@ class RunManager:
         """Look up a run by ID."""
         with self._lock:
             return self._runs.get(run_id)
+
+    def get_run_session_id(self, run_id: str) -> str | None:
+        """Return the latest vendor session ID for a run, when available."""
+        managed = self.get_run(run_id)
+        return None if managed is None else managed.state.last_session_id

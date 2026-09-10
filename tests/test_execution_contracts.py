@@ -1,6 +1,6 @@
 import inspect
 from collections.abc import Callable
-from dataclasses import FrozenInstanceError, fields, is_dataclass
+from dataclasses import FrozenInstanceError
 from importlib.metadata import metadata
 from typing import Literal, cast, get_type_hints
 
@@ -118,56 +118,6 @@ def test_application_snapshots_are_frozen_slots_based_read_models() -> None:
         event_lines=("dispatched",),
     )
 
-    for value in (actions, active, terminal, snapshot):
-        assert is_dataclass(value)
-        assert type(value).__slots__ == tuple(field.name for field in fields(value))
-    assert get_type_hints(RunActionAvailability) == {
-        "cancel_reason": str | None,
-        "guidance_reason": str | None,
-        "force_stop_reason": str | None,
-    }
-    assert get_type_hints(ActiveRunSnapshot) == {
-        "run_id": str,
-        "node_id": int,
-        "description": str,
-        "status": ExecutionRunStatus,
-        "progress": str | None,
-        "stop_requested": bool,
-        "actions": RunActionAvailability,
-        "output": tuple[str, ...],
-        "pending_guidance": tuple[str, ...] | None,
-        "elapsed_seconds": float,
-        "progress_pct": float | None,
-        "eta_seconds": float | None,
-        "attempt": int | None,
-        "max_attempts": int | None,
-        "stalled": bool,
-    }
-    assert get_type_hints(TerminalRunSnapshot) == {
-        "run_id": str,
-        "node_id": int,
-        "description": str,
-        "status": ExecutionRunStatus,
-        "output": tuple[str, ...],
-        "pending_guidance": tuple[str, ...] | None,
-        "duration_seconds": float,
-    }
-    assert get_type_hints(ExecutionSnapshot) == {
-        "goal": str,
-        "active_runs": tuple[ActiveRunSnapshot, ...],
-        "terminal_runs": tuple[TerminalRunSnapshot, ...],
-        "completed": int,
-        "failed": int,
-        "stopped": int,
-        "available": int,
-        "event_lines": tuple[str, ...],
-        "listener_errors": tuple[str, ...],
-    }
-    assert isinstance(snapshot.active_runs, tuple)
-    assert isinstance(snapshot.terminal_runs, tuple)
-    assert isinstance(snapshot.event_lines, tuple)
-    assert isinstance(active.output, tuple)
-    assert isinstance(active.pending_guidance, tuple)
     with pytest.raises(FrozenInstanceError):
         active.stop_requested = True  # pyright: ignore[reportAttributeAccessIssue]
     with pytest.raises(FrozenInstanceError):

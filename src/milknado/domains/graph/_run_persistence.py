@@ -177,12 +177,14 @@ def _prune_run_messages(conn: sqlite3.Connection, created_at: str) -> None:
     cutoff_at = datetime.fromtimestamp(cutoff, UTC).isoformat()
     terminal = "SELECT run_id FROM runs WHERE status != ?"
     _ = conn.execute(
-        f"DELETE FROM run_messages WHERE run_id IN ({terminal}) AND created_at < ?",
+        f"DELETE FROM run_messages WHERE run_id IN ({terminal}) "
+        + "AND role != 'session' AND created_at < ?",
         (_RUN_STATUS_RUNNING, cutoff_at),
     )
     _ = conn.execute(
         "DELETE FROM run_messages WHERE (run_id, seq) IN ("
         + f"SELECT run_id, seq FROM run_messages WHERE run_id IN ({terminal}) "
+        + "AND role != 'session' "
         + "ORDER BY created_at DESC, seq DESC LIMIT -1 OFFSET ?)",
         (_RUN_STATUS_RUNNING, _MAX_RETAINED_RUN_MESSAGES),
     )

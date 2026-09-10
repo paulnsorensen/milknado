@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from milknado.domains.common import ProgressEvent
+from milknado.domains.common import ProgressEvent, SessionView
 from milknado.loop import RunStatus
 
 _US_PREFIX_RE = re.compile(r"^US-\d+:\s*")
@@ -73,6 +73,7 @@ class ActiveRunState:
     attempt: int
     max_attempts: int
     stalled: bool
+    session: SessionView = SessionView()
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +85,7 @@ class TerminalRunState:
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...]
     duration_seconds: float
+    session: SessionView = SessionView()
 
 
 @dataclass(frozen=True, slots=True)

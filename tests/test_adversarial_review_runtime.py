@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import queue
 from collections import deque
 from collections.abc import Callable, Iterator, Sequence
@@ -10,6 +9,7 @@ from types import SimpleNamespace
 from typing import Protocol, TypedDict, Unpack, cast
 from unittest.mock import MagicMock
 
+import msgspec
 import pytest
 
 from milknado.adapters._loop_types import ReviewVerdict
@@ -23,6 +23,9 @@ from milknado.domains.common import (
     GitPort,
     MikadoNode,
     ProgressEvent,
+    SessionContext,
+    SessionInput,
+    SessionView,
     TerminalRunOutcome,
     VerifySpecResult,
 )
@@ -132,7 +135,7 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
         _stopped_nodes=set(),
         _stopped=0,
         _terminal_runs=deque(),
-        _ralph=SimpleNamespace(),
+        _ralph=_ReviewRalph([]),
     )
     # The test double implements only the fields used by the completion handler.
     return cast(RunLoop, cast(object, loop))
@@ -148,6 +151,8 @@ class _ReviewRalph:
         self.ralph_md_calls: list[dict[str, object]] = []
         self.timeout_seconds_seen: list[float] = []
         self._next_id: int = 0
+        self.session_context: SessionContext | None = None
+        self.session_id: str | None = None
 
     def create_run(
         self,
@@ -220,6 +225,18 @@ class _ReviewRalph:
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         _ = run_id, max_lines
         return []
+
+    def get_run_session(self, run_id: str) -> SessionView:
+        _ = run_id
+        return SessionView(context=self.session_context)
+
+    def get_run_session_id(self, run_id: str) -> str | None:
+        _ = run_id
+        return self.session_id
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        _ = run_id, command
+        return False
 
     def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
         _ = run_id
@@ -349,10 +366,32 @@ def test_reject_redispatches_pinned_worktree_and_resumes_session(
     assert node is not None
     assert node.status.value == "done"
     session_file = tmp_path / ".milknado" / "sessions" / "node-1.json"
-    assert json.loads(session_file.read_text())["session_id"] == "session-1"
+    assert (
+        msgspec.json.decode(session_file.read_bytes(), type=dict[str, object])["session_id"]
+        == "session-1"
+    )
     assert (
         first.worktree / ".cheese" / "age" / "reviewed-change.md"
     ).read_text() == "[P1][correctness] finding\n"
+
+
+def test_review_resume_uses_protocol_identity_instead_of_raw_output(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    ralph = _ReviewRalph([False])
+    ralph.session_context = SessionContext(family="omp", cwd=str(tmp_path))
+    ralph.session_id = "rpc-session"
+    executor = _executor(graph, tmp_path, ralph)
+    _ = graph.add_node("preserve RPC session")
+
+    _ = executor.dispatch(1, _config(tmp_path, execution_agent="omp -p --model luna"))
+    result = executor.complete(1, "main")
+
+    assert result.redispatch is not None
+    session_file = tmp_path / ".milknado" / "sessions" / "node-1.json"
+    saved = msgspec.json.decode(session_file.read_bytes(), type=dict[str, object])
+    assert (saved["family"], saved["session_id"]) == ("omp", "rpc-session")
+    assert ralph.stdout_requests == []
 
 
 def test_review_timeout_seconds_reaches_the_reviewer_port(

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypedDict, cast
 
@@ -842,6 +843,21 @@ class Executor:
             raise ValueError("review=true requires a non-empty review_agent")
         return config.review_max_rounds > 0
 
+    def _session_identity(self, run_id: str, family: str) -> tuple[str, str | None]:
+        context = self._ralph.get_run_session(run_id).context
+        if context is not None:
+            family = context.family
+        session_id = self._ralph.get_run_session_id(run_id)
+        if session_id is not None:
+            return family, session_id
+        lines = self._ralph.get_run_stdout(run_id)
+        for output in chain(("\n".join(lines),), reversed(lines)):
+            try:
+                return family, capture_session_id(family, output)
+            except ValueError:
+                continue
+        return family, None
+
     def _capture_session(
         self,
         node: MikadoNode,
@@ -855,18 +871,7 @@ class Executor:
         worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
         if not worker_run_id:
             raise ValueError(f"node {node.id} has no worker run id to resume")
-        lines = self._ralph.get_run_stdout(worker_run_id)
-        output = "\n".join(lines)
-        session_id: str | None = None
-        try:
-            session_id = capture_session_id(config.agent_family, output)
-        except ValueError:
-            for line in reversed(lines):
-                try:
-                    session_id = capture_session_id(config.agent_family, line)
-                    break
-                except ValueError:
-                    continue
+        family, session_id = self._session_identity(worker_run_id, config.agent_family)
         if session_id is None:
             raise ValueError(
                 f"node {node.id} worker output did not contain a resumable session id"
@@ -874,7 +879,7 @@ class Executor:
         worktree = Path(node.worktree_path or config.project_root).resolve()
         session = NodeAgentSession(
             node_id=node.id,
-            family=config.agent_family,
+            family=family,
             session_id=session_id,
             worktree_path=str(worktree),
             created_at=datetime.now(UTC).isoformat(),

@@ -80,6 +80,7 @@ class WatchSnapshotSource:
             pending_guidance=None,
             elapsed_seconds=self._duration(run.started_at, None),
             progress_pct=None,
+            session=run.session,
             eta_seconds=None,
             attempt=None,
             max_attempts=None,
@@ -97,6 +98,7 @@ class WatchSnapshotSource:
             status=status,
             output=self._output(run),
             pending_guidance=None,
+            session=run.session,
             duration_seconds=self._duration(run.started_at, run.ended_at),
         )
 

@@ -493,10 +493,14 @@ class AgentResult(ProcessResult):
     elapsed: float = 0.0
     log_file: Path | None = None
     result_text: str | None = None
+    session_id: str | None = None
     captured_stdout: str | None = None
     completion_detected: bool = False
     captured_stderr: str | None = None
     force_stopped: bool = False
+    # True when the current worker turn was intentionally interrupted without
+    # cancelling the enclosing Milknado run.
+    interrupted: bool = False
     # Tool-use events the adapter reported for this iteration; ``0`` when
     # no adapter was active or the adapter's ``counts_what != "tool_use"``.
     tool_use_count: int = 0

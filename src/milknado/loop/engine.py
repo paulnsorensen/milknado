@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
+from milknado.domains.common import SessionContext, SessionEvent
 from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.loop._agent import (
     AgentResult,
@@ -51,6 +52,7 @@ from milknado.loop._run_types import (
 )
 from milknado.loop._runner import run_command
 from milknado.loop.adapters import CLIAdapter, select_adapter
+from milknado.loop.sessions import SessionChannel, is_supported, run_session
 
 _RELATIVE_CMD_PREFIX = "./"  # commands starting with this run from the ralph directory
 
@@ -192,46 +194,52 @@ def _launch_agent(
     config: RunConfig,
     state: RunState,
 ) -> AgentResult:
-    # Capture full stdout only when somebody downstream actually needs the
-    # bytes — log writing, or promise detection for adapters that cannot
-    # work from ``agent.result_text`` alone.  Without this gate every
-    # iteration would buffer the entire transcript even for verbose
-    # streaming agents, regressing memory vs the prior tail-scan path.
     capture_stdout_for_promise = (
         config.stop_on_completion_signal and adapter.requires_full_stdout_for_completion
     )
     capture_stdout = config.log_dir is not None or capture_stdout_for_promise
-
+    spec = AgentRunSpec(
+        cmd,
+        prompt,
+        timeout=config.timeout,
+        log_dir=config.log_dir,
+        iteration=state.iteration,
+        adapter=adapter,
+        capture_result_text=True,
+        capture_stdout=capture_stdout,
+        completion_signal=(config.completion_signal if config.stop_on_completion_signal else None),
+        max_turns=config.max_turns,
+        max_turns_grace=config.max_turns_grace,
+        force_stop_event=state.force_stop_event,
+        cwd=config.project_root,
+    )
     try:
-        return execute_agent(
-            AgentRunSpec(
-                cmd,
-                prompt,
-                timeout=config.timeout,
-                log_dir=config.log_dir,
-                iteration=state.iteration,
-                adapter=adapter,
-                capture_result_text=True,
-                capture_stdout=capture_stdout,
-                completion_signal=(
-                    config.completion_signal if config.stop_on_completion_signal else None
-                ),
-                max_turns=config.max_turns,
-                max_turns_grace=config.max_turns_grace,
-                force_stop_event=state.force_stop_event,
-                cwd=config.project_root,
+        if is_supported(tuple(cmd)):
+            session = state.session
+            if session is None:
+                session = SessionChannel(sink=config.session_sink)
+                state.session = session
+            context = config.session_context or SessionContext(
+                family=Path(cmd[0]).stem,
+                cwd=str(config.project_root),
             )
-        )
+            session.start(context, ())
+            return run_session(spec, session)
+        return execute_agent(spec)
     except FileNotFoundError as exc:
         raise FileNotFoundError(
             f"Agent command not found: {config.agent!r}. {_field_hint(FIELD_AGENT)}"
         ) from exc
 
 
-def _promise_completed(agent: AgentResult, adapter: CLIAdapter, config: RunConfig) -> bool:
+def _promise_completed(
+    agent: AgentResult, adapter: CLIAdapter, config: RunConfig, native_session: bool
+) -> bool:
     """Return whether the agent's exit + output satisfy the completion signal."""
-    if not agent.success:
+    if agent.interrupted or not agent.success:
         return False
+    if native_session:
+        return agent.completion_detected
     if config.stop_on_completion_signal and agent.completion_detected:
         return True
     return bool(
@@ -259,7 +267,10 @@ def _classify_iteration_outcome(
     completion_signal: str,
     duration: str,
 ) -> tuple[EventType, str]:
-    """Mark the state counter for this outcome and derive its (event_type, detail)."""
+    """Mark the state counter for this outcome and derive its event type."""
+    if agent.interrupted:
+        state.mark_interrupted()
+        return EventType.ITERATION_INTERRUPTED, f"interrupted ({duration})"
     if agent.timed_out:
         state.mark_timed_out()
         return EventType.ITERATION_TIMED_OUT, f"timed out after {duration}"
@@ -295,6 +306,8 @@ def _build_ended_data(
         log_file=str(agent.log_file) if agent.log_file else None,
         result_text=agent.result_text,
     )
+    if agent.interrupted:
+        ended_data["interrupted"] = True
     needs_echo = config.log_dir is not None or (
         agent.result_text is None and agent.captured_stdout is not None
     )
@@ -311,21 +324,31 @@ def _run_agent_phase(
 ) -> tuple[bool, bool]:
     """Run the agent subprocess, update state counters, and emit the result event.
 
-    Returns ``(agent_succeeded, stop_for_completion_signal)``.
+    Returns ``(continue_loop, stop_for_completion_signal)``. An intentional
+    interruption continues the enclosing loop without becoming a success.
     """
     cmd, adapter = _resolve_agent_command(config)
     agent = _launch_agent(cmd, adapter, prompt, config, state)
     state.last_result_text = agent.result_text
+    if agent.session_id is not None:
+        state.last_session_id = agent.session_id
     state.last_captured_stdout = agent.captured_stdout
     state.last_captured_stderr = agent.captured_stderr
     if getattr(agent, "force_stopped", False):
         state.status = RunStatus.STOPPED
         return False, False
+    if agent.interrupted and state.session is not None:
+        state.session.publish(
+            SessionEvent(kind="status", text="worker turn interrupted", state="interrupted")
+        )
 
     duration = format_duration(agent.elapsed)
-    promise_completed = _promise_completed(agent, adapter, config)
+    promise_completed = _promise_completed(agent, adapter, config, state.session is not None)
     probe_completed = bool(
-        agent.success and config.completion_probe is not None and config.completion_probe()
+        not agent.interrupted
+        and agent.success
+        and config.completion_probe is not None
+        and config.completion_probe()
     )
     completion_detected = promise_completed or probe_completed
     if completion_detected:
@@ -339,15 +362,14 @@ def _run_agent_phase(
     ended_data = _build_ended_data(agent, state, config, state_detail)
     emit(event_type, ended_data)
 
-    # Derive the stop_on_error signal from the authoritative classification so
-    # it always agrees with _classify_iteration_outcome: only ITERATION_COMPLETED
-    # is a success. This treats a graceful turn cap as success (the streaming
-    # path SIGKILLs the child, so agent.success is False) without masking a real
-    # timeout — the blocking path can report timed_out and turn_capped together
-    # (post-hoc cap counting runs after a timeout), and that classifies as
-    # ITERATION_TIMED_OUT, so stop_on_error still fires.
+    # Derive completion and stop-on-error from the authoritative event
+    # classification. An interrupted turn is neither success nor failure, but
+    # must not make stop_on_error terminate the enclosing run.
     iteration_succeeded = event_type == EventType.ITERATION_COMPLETED
-    return iteration_succeeded, completion_detected and config.stop_on_completion_signal
+    continue_loop = iteration_succeeded or (
+        agent.interrupted and event_type == EventType.ITERATION_INTERRUPTED
+    )
+    return continue_loop, completion_detected and config.stop_on_completion_signal
 
 
 def _run_iteration(
@@ -505,6 +527,13 @@ def run_loop(
             tb = traceback.format_exc()
             emit.log_error(f"Run crashed: {exc}", traceback=tb)
 
+    if state.session is not None:
+        try:
+            state.session.close()
+        except Exception as exc:
+            if state.status == RunStatus.RUNNING:
+                state.status = RunStatus.FAILED
+            emit.log_error(f"Session persistence failed: {exc}")
     if state.status == RunStatus.RUNNING:
         _ = state.try_commit_completion()
     state.close_guidance()
@@ -516,6 +545,7 @@ def run_loop(
             total=state.total,
             completed=state.completed,
             failed=state.failed,
+            interrupted=state.interrupted,
             timed_out_count=state.timed_out_count,
         ),
     )

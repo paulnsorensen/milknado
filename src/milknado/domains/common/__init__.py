@@ -56,6 +56,14 @@ from milknado.domains.common.protocols import (
     TerminalRunOutcome,
     VerifySpecResult,
 )
+from milknado.domains.common.session import (
+    SessionAction,
+    SessionContext,
+    SessionEvent,
+    SessionInput,
+    SessionView,
+    normalize_session_event,
+)
 from milknado.domains.common.subprocess_options import PlanningSubprocessOptions
 from milknado.domains.common.toolchain import get_required_tool_status, install_missing_rust_tools
 from milknado.domains.common.types import (
@@ -73,6 +81,12 @@ from milknado.domains.common.types import (
 )
 
 __all__ = [
+    "SessionAction",
+    "SessionContext",
+    "SessionEvent",
+    "SessionInput",
+    "SessionView",
+    "normalize_session_event",
     "resolve_planning_agent_command",
     "ArchiveIneligible",
     "BUILTIN_FLAVORS",

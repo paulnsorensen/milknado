@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from milknado.domains.common import SessionView
 from milknado.domains.common.protocols import LoopPort, ProgressEvent
 from milknado.domains.common.types import MikadoNode, NodeStatus
 from milknado.domains.execution import RunLoop
@@ -67,6 +68,9 @@ class _FakeRalph:
 
     def get_run_guidance(self, _run_id: str) -> tuple[str, ...]:
         return ()
+
+    def get_run_session(self, _run_id: str) -> SessionView:
+        return SessionView()
 
 
 class _FakeLoop:

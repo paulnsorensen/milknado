@@ -48,7 +48,7 @@ class EventType(Enum):
 
     **Iteration lifecycle** — emitted once per iteration:
     ``ITERATION_STARTED``, ``ITERATION_COMPLETED``, ``ITERATION_FAILED``,
-    ``ITERATION_TIMED_OUT``.
+    ``ITERATION_TIMED_OUT``, ``ITERATION_INTERRUPTED``.
 
     **Commands** — emitted around command execution:
     ``COMMANDS_STARTED``, ``COMMANDS_COMPLETED``.
@@ -70,6 +70,7 @@ class EventType(Enum):
     ITERATION_COMPLETED = "iteration_completed"
     ITERATION_FAILED = "iteration_failed"
     ITERATION_TIMED_OUT = "iteration_timed_out"
+    ITERATION_INTERRUPTED = "iteration_interrupted"
 
     # ── Commands ────────────────────────────────────────────────
     COMMANDS_STARTED = "commands_started"
@@ -101,6 +102,7 @@ class RunStoppedData(TypedDict):
     total: int
     completed: int
     failed: int
+    interrupted: int
     timed_out_count: int
 
 
@@ -115,6 +117,7 @@ class IterationEndedData(TypedDict):
     detail: str
     log_file: str | None
     result_text: str | None
+    interrupted: NotRequired[bool]
     echo_stdout: NotRequired[str | None]
 
 

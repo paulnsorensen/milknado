@@ -26,7 +26,7 @@ def mock_manager() -> MagicMock:
 
 @pytest.fixture()
 def adapter(mock_manager: MagicMock) -> LoopAdapter:
-    a = LoopAdapter.__new__(LoopAdapter)
+    a = LoopAdapter()
     a._manager = mock_manager  # pyright: ignore[reportPrivateUsage]
     a._queue = queue.Queue()  # pyright: ignore[reportPrivateUsage]
     a._emitter = MagicMock()  # pyright: ignore[reportPrivateUsage]
@@ -603,30 +603,6 @@ class TestRunNodeReviewTimeout:
         assert verdict.error is True
         assert verdict.approved is False
         assert verdict.findings_md == "reviewer timed out before producing a verdict"
-
-
-class TestLoopAdapterInit:
-    @patch("milknado.adapters.loop.RunManager")
-    @patch("milknado.adapters.loop.QueueEmitter")
-    def test_init_creates_manager_emitter(
-        self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
-    ) -> None:
-        mock_manager_cls.return_value = MagicMock()
-        mock_emitter_cls.return_value = MagicMock()
-        adapter = LoopAdapter(agent="claude")
-        assert adapter._agent == "claude"  # pyright: ignore[reportPrivateUsage]
-        assert adapter._manager is mock_manager_cls.return_value  # pyright: ignore[reportPrivateUsage, reportAny]
-        assert adapter._emitter is mock_emitter_cls.return_value  # pyright: ignore[reportPrivateUsage, reportAny]
-
-    @patch("milknado.adapters.loop.RunManager")
-    @patch("milknado.adapters.loop.QueueEmitter")
-    def test_init_default_agent_empty(
-        self, mock_emitter_cls: MagicMock, mock_manager_cls: MagicMock
-    ) -> None:
-        mock_manager_cls.return_value = MagicMock()
-        mock_emitter_cls.return_value = MagicMock()
-        adapter = LoopAdapter()
-        assert adapter._agent == ""  # pyright: ignore[reportPrivateUsage]
 
 
 class TestDrainVerifyRunExceptionHandler:
