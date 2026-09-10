@@ -14,7 +14,12 @@ from rich.text import Text
 from textual.widgets import Button, DataTable, Input, Select, Static
 
 from milknado.adapters import ChangedFile, GitAdapter
-from milknado.app.run import ExecutionController, ExecutionSnapshot
+from milknado.app.run import (
+    ExecutionController,
+    ExecutionRunStatus,
+    ExecutionSnapshot,
+    TerminalRunSnapshot,
+)
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.session_view import session_state_text
 from milknado.app.watch_tui import WatchApp
@@ -474,6 +479,58 @@ async def test_watch_session_controls_are_read_only() -> None:
         assert not app.query_one("#session-input-row").display
         assert not app.query_one("#structured-controls").display
         assert not app.query_one("#actions", Static).display
+
+
+@pytest.mark.asyncio
+async def test_terminal_session_hides_controls_and_rejects_direct_dispatch() -> None:
+    current = snapshot()
+    context = SessionContext(family="omp", cwd="/repo", base_oid="base")
+    session = SessionView(context=context, actions=("steer",), active=True)
+    selected = replace(current.active_runs[0], session=session)
+    source = SnapshotController(
+        initial_snapshot=replace(current, active_runs=(selected,)),
+        replay_subscription=False,
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, source)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        app.query_one("#session-action", Select).value = "steer"
+        app.query_one("#session-input", Input).value = "keep this draft"
+        await pilot.pause()
+
+        terminal = TerminalRunSnapshot(
+            run_id=selected.run_id,
+            node_id=selected.node_id,
+            description=selected.description,
+            status=ExecutionRunStatus.COMPLETED,
+            output=selected.output,
+            pending_guidance=None,
+            duration_seconds=selected.elapsed_seconds,
+            session=replace(session, active=False),
+        )
+        source.publish(
+            replace(
+                current,
+                active_runs=(),
+                terminal_runs=(terminal,),
+                completed=1,
+            )
+        )
+        await pilot.pause()
+
+        assert app.query_one("#session-input", Input).value == "keep this draft"
+        assert not app.query_one("#session-input-row").display
+        assert not app.query_one("#structured-controls").display
+        assert app.query_one("#session-submit", Button).disabled
+
+        app.set_focus(app.query_one("#runs", DataTable))
+        app.action_focus_session()
+        await pilot.pause()
+        assert app.query_one("#runs", DataTable).has_focus
+
+        app._send_session_input()
+        assert source.submissions == []
 
 
 @pytest.mark.asyncio

@@ -127,7 +127,10 @@ class SessionCommandsMixin(SessionChangesMixin):
         selected = host.selected_run()
         if selected is None:
             return
-        actions = session_view(selected).actions
+        session = session_view(selected)
+        if not session.active:
+            return
+        actions = session.actions
         action = self._selected_action(actions)
         if action is None:
             return

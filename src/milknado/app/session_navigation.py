@@ -115,7 +115,8 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     def action_focus_session(self) -> None:
         host = _navigation_host(self)
-        if host.read_only or not session_view(self.selected_run()).actions:
+        session = session_view(self.selected_run())
+        if host.read_only or not session.active or not session.actions:
             return
         self.action_open_detail()
         host.query_one("#run-tabs", TabbedContent).active = "session"

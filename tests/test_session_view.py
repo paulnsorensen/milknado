@@ -47,6 +47,18 @@ def test_permission_choices_keep_exact_request_ids() -> None:
             SessionEvent(
                 kind="permission", text="old request", event_id="request-2", state="approved"
             ),
+            SessionEvent(
+                kind="permission",
+                text="submitted request",
+                event_id="request-3",
+                state="submitted",
+            ),
+            SessionEvent(
+                kind="permission",
+                text="cancelled request",
+                event_id="request-4",
+                state="cancelled",
+            ),
         ),
     )
 

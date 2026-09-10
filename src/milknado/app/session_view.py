@@ -106,7 +106,7 @@ def permission_options(view: SessionView) -> tuple[tuple[str, str], ...]:
     """Return exact request-id choices; never infer a request from its text."""
     options: list[tuple[str, str]] = []
     for event in view.permissions:
-        if event.event_id and event.state not in {"approved", "denied"}:
+        if event.event_id and event.state == "requested":
             text = " ".join(event.text.split())
             label = f"{event.event_id}: {text}" if text else event.event_id
             options.append((label, event.event_id))

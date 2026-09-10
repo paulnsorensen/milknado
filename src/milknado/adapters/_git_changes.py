@@ -32,6 +32,31 @@ class ChangedFile:
 RunGit: TypeAlias = Callable[[list[str], Path | None], subprocess.CompletedProcess[str]]
 
 
+def _bounded_enumeration(args: list[str], root: Path, operation: str) -> str:
+    stdout, stderr, returncode, reason = run_bounded_process(
+        subprocess.Popen,
+        args,
+        root,
+        (),
+    )
+    if reason is not None:
+        raise GitOperationError(
+            operation, f"{reason} output truncated before complete enumeration"
+        )
+    if returncode != 0:
+        detail = (stderr or stdout).strip() or f"exit status {returncode}"
+        raise GitOperationError(operation, detail)
+    return stdout
+
+
+def _bounded_diff_enumeration(root: Path, base: str, option: str, operation: str) -> str:
+    return _bounded_enumeration(
+        ["git", "diff", "--no-ext-diff", "--no-textconv", option, "-z", base, "--"],
+        root,
+        operation,
+    )
+
+
 def _session_root(context: SessionContext) -> Path:
     root = Path(context.cwd).expanduser()
     try:
@@ -104,31 +129,19 @@ def session_changes(run_git: RunGit, context: SessionContext) -> tuple[ChangedFi
     """List base-to-worktree changes without touching the index."""
     root = _session_root(context)
     base = _session_base(run_git, root, context)
-    names = run_git(
-        ["diff", "--no-ext-diff", "--no-textconv", "--name-status", "-z", base, "--"], root
-    ).stdout
-    stats = _parse_numstat(
-        run_git(
-            [
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--numstat",
-                "-z",
-                base,
-                "--",
-            ],
-            root,
-        ).stdout
-    )
+    names = _bounded_diff_enumeration(root, base, "--name-status", "diff --name-status")
+    stats = _parse_numstat(_bounded_diff_enumeration(root, base, "--numstat", "diff --numstat"))
     changes = [
         ChangedFile(path, status, *stats.get(path, (None, None)), old_path)
         for path, status, old_path in _parse_name_status(names)
     ]
     tracked = {change.path for change in changes}
-    for path in run_git(["ls-files", "--others", "--exclude-standard", "-z"], root).stdout.split(
-        "\0"
-    ):
+    untracked = _bounded_enumeration(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+        root,
+        "ls-files",
+    ).split("\0")
+    for path in untracked:
         if path and path not in tracked:
             changes.append(ChangedFile(path, "??", *untracked_counts(root, path)))
     return tuple(sorted(changes, key=lambda change: change.path))
@@ -151,9 +164,12 @@ def session_diff(
     base = context.base_oid.strip()
     if not base:
         raise GitOperationError("session diff", "session base commit is unavailable")
+    pathspecs = [path]
+    if change.old_path is not None:
+        pathspecs.insert(0, change.old_path)
     stdout, stderr, returncode, reason = run_bounded_process(
         process_run,
-        ["git", "diff", "--no-ext-diff", "--no-textconv", base, "--", path],
+        ["git", "diff", "--no-ext-diff", "--no-textconv", base, "--", *pathspecs],
         root,
         (),
     )

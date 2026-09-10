@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -12,6 +11,7 @@ import pytest
 
 from milknado.adapters import GitAdapter
 from milknado.domains.common import GitOperationError, SessionContext
+from tests._session_git_helpers import install_git_producer
 
 
 def _git(root: Path, *args: str) -> str:
@@ -53,29 +53,6 @@ def _run_isolated(root: Path, source: str) -> tuple[str, str]:
     if child.returncode != 0:
         raise AssertionError(f"isolated Git inspection failed: {stderr}")
     return stdout, stderr
-
-
-def _install_git_producer(root: Path, marker: Path, stream: int) -> None:
-    real_git = shutil.which("git")
-    assert real_git is not None
-    fake_git = root / "git"
-    _ = fake_git.write_text(
-        f"""#!{sys.executable}
-import os
-import sys
-from pathlib import Path
-
-args = sys.argv[1:]
-if "diff" in args and "--name-status" not in args and "--numstat" not in args:
-    chunk = chr(0x1D11E).encode() * 16384
-    for _ in range(100):
-        os.write({stream}, chunk)
-    Path({str(marker)!r}).write_text("complete")
-    raise SystemExit(0)
-os.execv({real_git!r}, [{real_git!r}, *sys.argv[1:]])
-"""
-    )
-    _ = fake_git.chmod(0o755)
 
 
 @pytest.fixture()
@@ -141,7 +118,7 @@ def test_session_diff_stops_large_stdout_producer(
     base = _git(repo, "rev-parse", "HEAD").strip()
     _ = (repo / "tracked.txt").write_text("after\n")
     marker = repo / "stdout-complete"
-    _install_git_producer(repo, marker, 1)
+    install_git_producer(repo, marker, 1)
     monkeypatch.setenv("PATH", f"{repo}{os.pathsep}{os.environ.get('PATH', '')}")
     context = SessionContext(family="omp", cwd=str(repo), base_oid=base)
 
@@ -158,7 +135,7 @@ def test_session_diff_stops_large_stderr_producer(
     base = _git(repo, "rev-parse", "HEAD").strip()
     _ = (repo / "tracked.txt").write_text("after\n")
     marker = repo / "stderr-complete"
-    _install_git_producer(repo, marker, 2)
+    install_git_producer(repo, marker, 2)
     monkeypatch.setenv("PATH", f"{repo}{os.pathsep}{os.environ.get('PATH', '')}")
     context = SessionContext(family="omp", cwd=str(repo), base_oid=base)
 
@@ -167,6 +144,21 @@ def test_session_diff_stops_large_stderr_producer(
 
     assert not marker.exists()
     assert len(error.value.detail.encode()) <= 128 * 1024
+
+
+def test_session_changes_rejects_truncated_enumeration(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    marker = repo / "enumeration-complete"
+    install_git_producer(repo, marker, 1, enumeration=True)
+    monkeypatch.setenv("PATH", f"{repo}{os.pathsep}{os.environ.get('PATH', '')}")
+    context = SessionContext(family="omp", cwd=str(repo), base_oid=base)
+
+    with pytest.raises(GitOperationError, match="output truncated before complete enumeration"):
+        _ = GitAdapter(repo).session_changes(context)
+
+    assert not marker.exists()
 
 
 def test_session_changes_reports_missing_base_and_worktree() -> None:
@@ -215,6 +207,9 @@ def test_session_changes_preserves_rename_delete_binary_and_untracked_records(
     assert (changes["untracked.txt"].added, changes["untracked.txt"].removed) == (1, 0)
 
     adapter = GitAdapter(repo)
+    rename_diff = adapter.session_diff(context, "rename-target.txt")
+    assert "rename from rename-source.txt" in rename_diff
+    assert "rename to rename-target.txt" in rename_diff
     assert "-gone" in adapter.session_diff(context, "deleted.txt")
     assert adapter.session_diff(context, "binary.dat") == (
         "Binary file: binary.dat (unified diff unavailable)."

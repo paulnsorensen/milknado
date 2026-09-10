@@ -96,7 +96,7 @@ class SessionPanel(VerticalScroll):
         self.query_one("#output-text", Static).update(transcript_text(view))
         self._update_errors(view)
         self.query_one("#actions", Static).display = not state.read_only and view.context is None
-        structured = bool(state.run_id and view.actions and not state.read_only)
+        structured = bool(state.run_id and view.active and view.actions and not state.read_only)
         with self.prevent(Input.Changed, Select.Changed):
             self._update_selectors(state, structured)
             self._update_inputs(state, structured)
@@ -109,10 +109,11 @@ class SessionPanel(VerticalScroll):
 
     def _update_selectors(self, state: SessionPanelState, structured: bool) -> None:
         view = state.view
+        permissions = permission_options(view) if structured else ()
         available: tuple[SessionAction, ...] = tuple(
             action
             for action in view.actions
-            if structured and (action not in ("approve", "deny") or view.permissions)
+            if structured and (action not in ("approve", "deny") or permissions)
         )
         controls = self.query_one("#structured-controls", Vertical)
         _ = controls.set_class(not structured, "hidden")
@@ -129,7 +130,6 @@ class SessionPanel(VerticalScroll):
             else Select.NULL
         )
         permission_select = cast(Select[str], self.query_one("#session-permission", Select))
-        permissions = permission_options(view) if structured else ()
         if permissions != self._permission_choices:
             permission_select.set_options(permissions)
             self._permission_choices = permissions
