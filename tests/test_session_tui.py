@@ -16,6 +16,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 from milknado.adapters import ChangedFile, GitAdapter
 from milknado.app.run import ExecutionController, ExecutionSnapshot
 from milknado.app.run_tui import ExecutionApp
+from milknado.app.session_view import session_state_text
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.common import (
     SessionAction,
@@ -473,3 +474,60 @@ async def test_watch_session_controls_are_read_only() -> None:
         assert not app.query_one("#session-input-row").display
         assert not app.query_one("#structured-controls").display
         assert not app.query_one("#actions", Static).display
+
+
+@pytest.mark.asyncio
+async def test_session_submit_button_dispatches_the_current_draft(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        app.query_one("#session-action", Select).value = "steer"
+        await pilot.pause()
+        app.query_one("#session-input", Input).value = "button draft"
+        await pilot.pause()
+        _ = await pilot.click("#session-submit")
+        await pilot.pause()
+        await _wait_for_workers(app).wait_for_complete()
+
+        inputs = [event for event in controller.channel.view().events if event.kind == "user"]
+        assert [(event.text, event.action, event.state) for event in inputs] == [
+            ("button draft", "steer", "queued"),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_session_submit_rejects_an_empty_message(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("i", "enter")
+        await pilot.pause()
+
+        assert not any(event.kind == "user" for event in controller.channel.view().events)
+
+
+@pytest.mark.asyncio
+async def test_session_submit_requires_an_exact_permission(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("i")
+        app.query_one("#session-action", Select).value = "approve"
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert not any(event.kind == "user" for event in controller.channel.view().events)
+
+
+def test_session_state_label_is_explicit() -> None:
+    assert (
+        session_state_text(
+            SessionView(events=(SessionEvent(kind="status", text="done", state="stopped"),))
+        )
+        == "stopped"
+    )
