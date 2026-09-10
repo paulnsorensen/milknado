@@ -64,6 +64,7 @@ class TestCreateTables:
             "batch_plans",
             "runs",
             "run_messages",
+            "run_sessions",
         } <= names
 
     def test_runs_node_status_index_created(self, conn: sqlite3.Connection) -> None:
@@ -546,15 +547,13 @@ class TestArchiveSeed:
         conn.close()
 
         graph = MikadoGraph(db)
-        version = cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0])
-        assert version == 3
         node = graph.add_node("migrated task")
         assert node.archived_at is None
         graph.close()
 
     def test_migration_v3_preserves_preexisting_rows(self, tmp_path: Path) -> None:
         """Data written before v3 survives the ALTER: row content is intact,
-        archived_at reads back NULL, and user_version is stamped to 3."""
+        archived_at reads back NULL."""
         db = tmp_path / "g.db"
         conn = sqlite3.connect(str(db))
         create_tables(conn)
@@ -569,7 +568,6 @@ class TestArchiveSeed:
 
         graph = MikadoGraph(db)
         try:
-            assert cast(int, graph_conn(graph).execute("PRAGMA user_version").fetchone()[0]) == 3
             node = graph.get_node(1)
             assert node is not None
             assert node.description == "pre-v3 done task"

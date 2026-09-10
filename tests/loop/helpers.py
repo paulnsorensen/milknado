@@ -89,7 +89,7 @@ def make_config(
     tmp_path: Path,
     ralph_content: str = "test prompt",
     *,
-    agent: str = "omp",
+    agent: str = "cursor-agent",
     commands: list[Command] | None = None,
     args: dict[str, str] | None = None,
     max_iterations: int | None = 1,

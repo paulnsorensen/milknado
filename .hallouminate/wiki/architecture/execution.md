@@ -261,6 +261,29 @@ Later finalization can close an unrelated descriptor after the operating system 
 
 [^pipe-ownership]: `src/milknado/loop/_agent.py:878-899,927-976`; `tests/loop/test_agent.py:1835-1884`
 
+## Native worker sessions
+
+Native worker sessions separate decoded protocol events from raw diagnostic output.
+`LoopSessionMixin` selects supported worker commands and attaches durable session storage
+(`src/milknado/adapters/_loop_session.py:23`).
+
+- OMP uses RPC, Claude uses bidirectional stream-json, and Codex uses app-server messages.
+- `SessionChannel` persists input admission before it accepts a command.
+- `queued` means Milknado accepts the input. `submitted` means the channel releases it to the protocol.
+- `delivered` requires a vendor receipt. A queued or submitted input does not prove delivery.
+- Event IDs include an invocation prefix. Reused vendor IDs cannot overwrite an earlier iteration's transcript.
+- Permission decisions become approved or denied only after their command write succeeds.
+- Shutdown rejects unsent input. It marks submitted input without a receipt as unconfirmed and cancels pending permissions.
+
+Native completion uses decoded result text, never raw stdout. A replayed prompt can contain the completion tag.
+The engine trusts the native completion flag and still runs its completion verifier
+(`src/milknado/loop/sessions/_runtime.py:215`; `src/milknado/loop/engine.py:235`).
+The verifier requires a committed or stageable change and the configured quality gates.
+A completion promise alone does not complete a task (`src/milknado/domains/execution/completion.py:22`).
+
+The runtime bounds protocol frames and retained output. It retains the process group after the leader exits.
+Normal completion, timeout, and force stop all clean up descendants (`src/milknado/loop/sessions/_process.py:70`).
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives
@@ -496,3 +519,5 @@ sentinel.
 - `src/milknado/mcp/run.py` — `milknado_run_inline*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
 - `src/milknado/mcp/ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
 - `src/milknado/mcp/_core.py` — `RunDict` unified run-result schema, the shared `FastMCP` instance, and the `resolve_project_root` / `open_graph` / status-kind-flavor parsers. (The goal-claim fencing this module once held now lives on `MikadoGraph.claim_ancestor_goal_for_dispatch`; see `domains/graph/`.)
+
+_Source: native-session implementation and real-pipe regressions · Updated: 2026-09-09 · Supersedes: raw-stdout completion for native worker sessions._

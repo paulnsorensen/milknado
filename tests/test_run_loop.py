@@ -11,7 +11,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from milknado.adapters.loop import LoopAdapter
-from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpecResult
+from milknado.domains.common import (
+    ProgressEvent,
+    SessionInput,
+    SessionView,
+    TerminalRunOutcome,
+    VerifySpecResult,
+)
 from milknado.domains.common.config import Gate, MilknadoConfig
 from milknado.domains.common.types import NodeSpec, NodeStatus, RebaseResult
 from milknado.domains.execution import (
@@ -356,6 +362,18 @@ class FakeRalph:
 
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         return self._seeded(self.output, run_id, [])[-max_lines:]
+
+    def get_run_session(self, run_id: str) -> SessionView:
+        _ = run_id
+        return SessionView()
+
+    def get_run_session_id(self, run_id: str) -> str | None:
+        _ = run_id
+        return None
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        _ = run_id, command
+        return False
 
     def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
         return self._seeded(self.guidance, run_id, ())
@@ -884,6 +902,32 @@ def test_stop_latched_before_run_skips_terminal_spec_verification(
     root_node = graph.get_node(root.id)
     assert root_node is not None
     assert root_node.status == NodeStatus.PENDING
+
+
+def test_full_brief_remains_available_after_worker_completion(
+    run_loop: RunLoop, graph: MikadoGraph, config: ExecutionConfig
+) -> None:
+    root = graph.add_node("Ship session views")
+    brief = (
+        "US-12: Preserve the complete task brief while the node list uses a short title\n\n"
+        "Acceptance: Keep the selected worktree, input history, and verification rules visible."
+    )
+    node = graph.add_node(brief, parent_id=root.id)
+    observed: list[RunLoopState] = []
+    run_loop.set_state_listener(observed.append)
+
+    result = run_loop.run(config, "main")
+
+    assert result.completed_total == 1
+    assert brief in [
+        active.description for snapshot in observed for active in snapshot.active_runs
+    ]
+    terminal = run_loop.state().terminal_runs[0]
+    assert (terminal.node_id, terminal.description, terminal.status) == (
+        node.id,
+        brief,
+        RunStatus.COMPLETED,
+    )
 
 
 class TestRunLoopSingleNode:

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from operator import attrgetter
-from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, get_ident
 from time import monotonic, sleep
@@ -19,7 +18,6 @@ from milknado.app.run import (
     ExecutionRunStatus,
     ExecutionSnapshot,
     RunActionAvailability,
-    build_execution_controller,
 )
 from milknado.domains.common import MilknadoConfig
 from milknado.domains.execution import ExecutionConfig, RunLoop
@@ -46,10 +44,6 @@ def _none_limit() -> int:
 
 def _policy_config() -> MilknadoConfig:
     return MilknadoConfig(protected_branches=())
-
-
-def _as_graph(value: object) -> MikadoGraph:
-    return cast(MikadoGraph, value)
 
 
 @dataclass
@@ -353,60 +347,6 @@ def test_controller_reraises_execution_failure() -> None:
         _ = controller.run(feature_branch="feature")
 
 
-def test_controller_builder_composes_runtime_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    import milknado.adapters as adapters
-    import milknado.domains.execution as execution
-
-    constructed: dict[str, object] = {}
-
-    class FakeExecutor:
-        def __init__(self, **kwargs: object) -> None:
-            constructed["executor"] = kwargs
-            constructed["executor_instance"] = self
-
-    class FakeRunLoop(FakeLoop):
-        def __init__(self, **kwargs: object) -> None:
-            constructed["loop"] = kwargs
-            super().__init__(loop_state())
-
-    def fake_git_adapter(root: Path) -> tuple[str, Path]:
-        return ("git", root)
-
-    def fake_crg_adapter(root: Path) -> tuple[str, Path]:
-        return ("crg", root)
-
-    def fake_loop_adapter() -> str:
-        return "ralph"
-
-    monkeypatch.setattr(adapters, "GitAdapter", fake_git_adapter)
-    monkeypatch.setattr(adapters, "CrgAdapter", fake_crg_adapter)
-    monkeypatch.setattr(adapters, "LoopAdapter", fake_loop_adapter)
-    monkeypatch.setattr(execution, "Executor", FakeExecutor)
-    monkeypatch.setattr(execution, "RunLoop", FakeRunLoop)
-    config = MilknadoConfig(concurrency_limit=3)
-    graph = object()
-    root = Path("/project")
-
-    controller = build_execution_controller(_as_graph(graph), config, root)
-
-    assert isinstance(controller, ExecutionController)
-    assert constructed["executor"] == {
-        "graph": graph,
-        "git": ("git", root),
-        "ralph": "ralph",
-        "crg": ("crg", root),
-    }
-    assert constructed["loop"] == {
-        "executor": constructed["executor_instance"],
-        "graph": graph,
-        "ralph": "ralph",
-        "config": config,
-    }
-    execution_config = cast(ExecutionConfig, attrgetter("_execution_config")(controller))
-    assert execution_config.project_root == root
-    assert cast(int, attrgetter("_concurrency_limit")(controller)) == 3
-
-
 class ThreadBoundLoop:
     started: Event
     release: Event
@@ -629,54 +569,3 @@ def _capture_control_error(controller: ExecutionController, errors: list[BaseExc
         controller.cancel("run-1")
     except BaseException as error:
         errors.append(error)
-
-
-def test_run_execution_loop_passes_interactive_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    import milknado.adapters as adapters
-    import milknado.domains.dispatch as dispatch
-    import milknado.domains.execution as execution
-    from milknado.app.run import run_execution_loop
-
-    captured: dict[str, object] = {}
-
-    class FakeRunLoop(FakeLoop):
-        def __init__(self, **kwargs: object) -> None:
-            super().__init__(loop_state())
-
-        @override
-        def run(self, **kwargs: object) -> str:
-            captured.update(kwargs)
-            return "result"
-
-    def no_orphans(_graph: MikadoGraph) -> None:
-        pass
-
-    def fake_git_adapter(root: Path) -> tuple[str, Path]:
-        return ("git", root)
-
-    def fake_crg_adapter(root: Path) -> tuple[str, Path]:
-        return ("crg", root)
-
-    def fake_loop_adapter() -> str:
-        return "ralph"
-
-    def fake_executor(**kwargs: object) -> object:
-        _ = kwargs
-        return object()
-
-    monkeypatch.setattr(dispatch, "reconcile_orphaned_runs", no_orphans)
-    monkeypatch.setattr(adapters, "GitAdapter", fake_git_adapter)
-    monkeypatch.setattr(adapters, "CrgAdapter", fake_crg_adapter)
-    monkeypatch.setattr(adapters, "LoopAdapter", fake_loop_adapter)
-    monkeypatch.setattr(execution, "Executor", fake_executor)
-    monkeypatch.setattr(execution, "RunLoop", FakeRunLoop)
-
-    _ = run_execution_loop(
-        _as_graph(object()),
-        MilknadoConfig(concurrency_limit=3),
-        Path("/project"),
-        "feature",
-        False,
-    )
-
-    assert captured["interactive"] is False

@@ -50,7 +50,7 @@ from tests.loop.helpers import (
 def _delivered_prompt(subprocess_mock: MagicMock) -> str:
     """Return the prompt the engine handed the agent.
 
-    The default ``omp`` agent pipes the prompt through stdin (never as an
+    The default generic worker pipes the prompt through stdin (never as an
     argv element, or a prompt over MAX_ARG_STRLEN fails with E2BIG), so it
     is captured by ``proc.stdin.write`` rather than appended to the command.
     """
@@ -287,31 +287,12 @@ class TestPromiseCompletionSignals:
         assert state.failed == 0
         assert state.status == RunStatus.COMPLETED
         assert state.promise_completed is False
-        assert [call.args[0].on_output_line for call in mock_execute_agent.call_args_list] == [  # pyright: ignore[reportAny]
-            None,
-            None,
-            None,
-        ]
-        assert [
-            call.args[0].capture_result_text  # pyright: ignore[reportAny]
-            for call in mock_execute_agent.call_args_list
-        ] == [True, True, True]
-        # Generic adapter requires full stdout, but the user didn't opt in
-        # and no log dir is set — capture should stay off to avoid
-        # buffering verbose agent output.
-        assert [call.args[0].capture_stdout for call in mock_execute_agent.call_args_list] == [  # pyright: ignore[reportAny]
-            False,
-            False,
-            False,
-        ]
 
-    @patch("milknado.loop.engine.execute_agent")
-    def test_capture_stdout_off_for_streaming_adapter_without_logging(
-        self, mock_execute_agent: MagicMock, tmp_path: Path
+    @patch("milknado.loop.engine.run_session")
+    def test_streaming_adapter_result_text_stops_on_promise(
+        self, mock_run_session: MagicMock, tmp_path: Path
     ):
-        """Claude exposes ``result_text`` directly; the engine must not
-        force-buffer the full stdout transcript even when the user opts
-        into ``stop_on_completion_signal``."""
+        """A streaming adapter's structured result text can complete the run."""
         config = make_config(
             tmp_path,
             agent="claude",
@@ -320,60 +301,16 @@ class TestPromiseCompletionSignals:
         )
         state = make_state()
 
-        mock_execute_agent.return_value = AgentResult(
+        mock_run_session.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
             result_text="<promise>RALPH_PROMISE_COMPLETE</promise>",
+            completion_detected=True,
         )
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_execute_agent.call_args.args[0].capture_stdout is False  # pyright: ignore[reportAny]
         assert state.promise_completed is True
-
-    @patch("milknado.loop.engine.execute_agent")
-    def test_capture_stdout_on_for_blocking_adapter_with_opt_in(
-        self, mock_execute_agent: MagicMock, tmp_path: Path
-    ):
-        """Generic / Copilot adapters need the full stdout buffer to
-        scan for the promise tag — engine must opt in when the user
-        opts into completion signalling."""
-        config = make_config(
-            tmp_path,
-            max_iterations=1,
-            stop_on_completion_signal=True,
-        )
-        state = make_state()
-
-        mock_execute_agent.return_value = AgentResult(
-            returncode=0,
-            elapsed=0.01,
-            captured_stdout="<promise>RALPH_PROMISE_COMPLETE</promise>\n",
-        )
-
-        run_loop(config, state, NullEmitter())
-
-        assert mock_execute_agent.call_args.args[0].capture_stdout is True  # pyright: ignore[reportAny]
-        assert state.promise_completed is True
-
-    @patch("milknado.loop.engine.execute_agent")
-    def test_capture_stdout_on_when_log_dir_set(
-        self, mock_execute_agent: MagicMock, tmp_path: Path
-    ):
-        """Logging always needs the buffer regardless of completion signal."""
-        log_dir = tmp_path / "logs"
-        config = make_config(tmp_path, max_iterations=1, log_dir=log_dir)
-        state = make_state()
-
-        mock_execute_agent.return_value = AgentResult(
-            returncode=0,
-            elapsed=0.01,
-            captured_stdout="anything\n",
-        )
-
-        run_loop(config, state, NullEmitter())
-
-        assert mock_execute_agent.call_args.args[0].capture_stdout is True  # pyright: ignore[reportAny]
 
     @patch("milknado.loop.engine.execute_agent")
     def test_tagged_promise_stops_early_when_enabled(
@@ -395,7 +332,6 @@ class TestPromiseCompletionSignals:
         run_loop(config, state, emitter)
 
         mock_execute_agent.assert_called_once()
-        assert mock_execute_agent.call_args.args[0].capture_result_text is True  # pyright: ignore[reportAny]
         assert state.iteration == 1
         assert state.completed == 1
         assert state.failed == 0
@@ -525,22 +461,21 @@ class TestPromiseCompletionSignals:
         assert state.status == RunStatus.COMPLETED
         assert state.promise_completed is False
 
-    @patch("milknado.loop.engine.execute_agent")
+    @pytest.mark.parametrize("agent_command", ("claude", "omp", "codex"))
+    @patch("milknado.loop.engine.run_session")
     def test_structured_agents_ignore_raw_stdout_for_promise_detection(
-        self, mock_execute_agent: MagicMock, tmp_path: Path
+        self, mock_run_session: MagicMock, tmp_path: Path, agent_command: str
     ):
-        """ClaudeAdapter only looks at ``result`` events — embedded
-        promise tags inside ``status`` or ``assistant`` JSON messages
-        must not trigger early completion."""
+        """Only decoded native completion can stop a structured worker."""
         config = make_config(
             tmp_path,
-            agent="claude",
+            agent=agent_command,
             max_iterations=2,
             stop_on_completion_signal=True,
         )
         state = make_state()
 
-        mock_execute_agent.return_value = AgentResult(
+        mock_run_session.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
             result_text="done without promise tag",
@@ -549,7 +484,7 @@ class TestPromiseCompletionSignals:
 
         run_loop(config, state, NullEmitter())
 
-        assert mock_execute_agent.call_count == 2
+        assert mock_run_session.call_count == 2
         assert state.completed == 2
         assert state.failed == 0
         assert state.status == RunStatus.COMPLETED
@@ -1085,7 +1020,7 @@ class TestAgentCommandParsing:
     ):
         """FileNotFoundError from the agent subprocess is re-raised with a helpful message."""
         mock_run.side_effect = FileNotFoundError("No such file or directory: 'nonexistent'")
-        config = make_config(tmp_path, max_iterations=1, agent="omp")
+        config = make_config(tmp_path, max_iterations=1, agent="cursor-agent")
         q = QueueEmitter()
         state = make_state()
 
@@ -1641,7 +1576,7 @@ class TestInMemoryPrompt:
 
     def test_assemble_uses_prompt_body_without_reading_file(self, tmp_path: Path):
         config = RunConfig(
-            agent="omp",
+            agent="cursor-agent",
             ralph_dir=tmp_path,
             prompt="Search {{ args.dir }} now",
             args={"dir": "./src"},
@@ -1660,7 +1595,7 @@ class TestInMemoryPrompt:
         # A leading '---' block stays verbatim — it is the body, not frontmatter.
         body = "---\nnot: parsed\n---\nreal prompt"
         config = RunConfig(
-            agent="omp",
+            agent="cursor-agent",
             ralph_dir=tmp_path,
             prompt=body,
             max_iterations=1,
@@ -1673,7 +1608,7 @@ class TestInMemoryPrompt:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_run_loop_with_in_memory_prompt(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         config = RunConfig(
-            agent="omp",
+            agent="cursor-agent",
             ralph_dir=tmp_path,
             prompt="do work",
             max_iterations=1,

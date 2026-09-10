@@ -13,7 +13,13 @@ import pytest
 from typing_extensions import override
 
 import milknado.domains.execution.executor as _executor_module
-from milknado.domains.common import ProgressEvent, TerminalRunOutcome, VerifySpecResult
+from milknado.domains.common import (
+    ProgressEvent,
+    SessionInput,
+    SessionView,
+    TerminalRunOutcome,
+    VerifySpecResult,
+)
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
     GitOperationError,
@@ -333,6 +339,18 @@ class FakeRalph:
     def get_run_output_tail(self, run_id: str, max_lines: int) -> list[str]:
         _ = (run_id, max_lines)
         return []
+
+    def get_run_session(self, run_id: str) -> SessionView:
+        _ = run_id
+        return SessionView()
+
+    def get_run_session_id(self, run_id: str) -> str | None:
+        _ = run_id
+        return None
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        _ = run_id, command
+        return False
 
     def get_run_guidance(self, run_id: str) -> tuple[str, ...]:
         _ = run_id

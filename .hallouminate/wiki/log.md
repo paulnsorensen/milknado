@@ -10,3 +10,7 @@
 2026-09-02 · 46add5e19285db9b · merged · history/loop-vendor-in-decision.md · Recorded the transition from initial verbatim import to owned and trimmed loop source.
 
 2026-09-07 · ecad750e2367fe79 · merged · architecture/adapters.md · Recorded semantic verifier availability and RunLoop ownership of replanning policy.
+
+2026-09-09 · 9cfb496463a903b4 · merged · architecture/execution.md · Recorded native session receipts, decoded completion, and descendant cleanup.
+2026-09-09 · 9cfb496463a903b4 · merged · architecture/omp-json-streaming.md · Distinguished native RPC sessions from one-shot JSON execution.
+

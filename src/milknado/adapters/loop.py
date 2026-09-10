@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
+from milknado.adapters._loop_session import LoopSessionMixin
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
@@ -38,13 +39,7 @@ MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3  # Stop after three launch failur
 _logger = logging.getLogger(__name__)
 
 
-class LoopAdapter:
-    def __init__(self, agent: str = "") -> None:
-        self._manager: RunManager = RunManager()
-        self._queue: queue.Queue[Event[EventData]] = queue.Queue()
-        self._emitter: QueueEmitter = QueueEmitter(self._queue)
-        self._agent: str = agent
-
+class LoopAdapter(LoopSessionMixin):
     def create_run(
         self,
         agent: str,
@@ -70,11 +65,13 @@ class LoopAdapter:
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
+        project_root = project_root or ralph_dir
+        context = self._session_context(agent_cmd, project_root, base_oid)
         config = RunConfig(
             agent=agent_cmd,
             ralph_dir=ralph_dir,
             ralph_file=ralph_file,
-            project_root=project_root or ralph_dir,
+            project_root=project_root,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             stop_on_error=True,
@@ -82,16 +79,18 @@ class LoopAdapter:
             commit_footer=commit_footer,
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
         )
+        if context is not None:
+            config.session_context = context
         if completion_probe is not None:
             config.completion_probe = completion_probe
         if completion_probe is None:
             config.completion_verifier = build_completion_verifier(
                 ralph_dir, quality_gates, base_oid=base_oid
             )
-        return self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
-
-    def start_run(self, run_id: str) -> None:
-        self._manager.start_run(run_id)
+        run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
+        if context is not None:
+            self._attach_session_sink(run)
+        return run
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
         return self._manager.queue_guidance(run_id, text)

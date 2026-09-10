@@ -7,7 +7,7 @@ from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop._protocols import RunLoopState
-from milknado.domains.execution.run_loop.state import TerminalRunState, summarize_description
+from milknado.domains.execution.run_loop.state import TerminalRunState
 from milknado.loop import RunStatus
 
 _logger = logging.getLogger("milknado")
@@ -33,9 +33,22 @@ def handle_completion(
     if input_state.overlay_state == run_id:
         input_state.overlay_state = None
     node = graph.get_node(node_id)
-    desc = summarize_description(node.description) if node else str(node_id)
+    desc = node.description if node else str(node_id)
     start = dispatched_at.pop(run_id, time.monotonic())
     duration = time.monotonic() - start
+    ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
+    loop._terminal_runs.append(  # pyright: ignore[reportPrivateUsage]
+        TerminalRunState(
+            run_id=run_id,
+            node_id=node_id,
+            description=desc,
+            status=RunStatus(outcome),
+            output=tuple(ralph.get_run_output_tail(run_id, 30)),
+            pending_guidance=tuple(ralph.get_run_guidance(run_id)),
+            duration_seconds=duration,
+            session=ralph.get_run_session(run_id),
+        )
+    )
 
     if outcome == "completed":
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
@@ -86,28 +99,13 @@ def handle_completion(
             logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
     elif outcome == "stopped":
-        ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
         stopped_nodes = loop._stopped_nodes  # pyright: ignore[reportPrivateUsage]
         stopped = loop._stopped  # pyright: ignore[reportPrivateUsage]
-        terminal_runs = loop._terminal_runs  # pyright: ignore[reportPrivateUsage]
-        output = tuple(ralph.get_run_output_tail(run_id, 30))
-        pending_guidance = tuple(ralph.get_run_guidance(run_id))
         executor.cancel(node_id)
         stopped_nodes.add(node_id)
         stopped += 1
         loop._stopped = stopped  # pyright: ignore[reportPrivateUsage]
-        terminal_runs.append(
-            TerminalRunState(
-                run_id=run_id,
-                node_id=node_id,
-                description=desc,
-                status=RunStatus.STOPPED,
-                output=output,
-                pending_guidance=pending_guidance,
-                duration_seconds=duration,
-            )
-        )
         _logger.info(
             "node_stopped node_id=%d run_id=%s duration=%.1fs",
             node_id,
@@ -116,7 +114,6 @@ def handle_completion(
         )
         logs.append(f"[{ts()}] ■ node {node_id} stopped")
     else:
-        ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
         attempts = loop._attempts  # pyright: ignore[reportPrivateUsage]
         strict = loop._strict  # pyright: ignore[reportPrivateUsage]

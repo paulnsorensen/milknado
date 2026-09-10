@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
         git = GitAdapter(root)
-        ralph = LoopAdapter()
+        ralph = LoopAdapter(graph=graph)
         executor = Executor(graph=graph, git=git, ralph=ralph, crg=CrgAdapter(root))
         exec_config = ExecutionConfig(
             execution_agent=profile.execution_agent,

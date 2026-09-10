@@ -9,7 +9,9 @@ from typing import Literal, cast
 
 import msgspec
 
+from milknado.domains.common import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
+from milknado.domains.graph._session_persistence import view_session
 
 _READY_COUNT_SQL = """
 WITH ready(id) AS (
@@ -61,6 +63,7 @@ class DurableRun(msgspec.Struct, frozen=True):
     timeout_seconds: int | None
     detail: str | None
     rebased: bool | None
+    session: SessionView = SessionView()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,20 +82,39 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
+    record = run_row_to_dict(row)
+    session = view_session(
+        conn,
+        record["run_id"],
+        active=record["status"] == "running",
+    )
+    return DurableRun(
+        run_id=record["run_id"],
+        node_id=record["node_id"],
+        description=cast(str, row["description"]),
+        status=cast(Literal["running", "done", "failed"], record["status"]),
+        pid=record["pid"],
+        log_path=record["log_path"],
+        started_at=record["started_at"],
+        ended_at=record["ended_at"],
+        timed_out=record["timed_out"],
+        exit_code=record["exit_code"],
+        error=record["error"],
+        timeout_seconds=record["timeout_seconds"],
+        detail=record["detail"],
+        rebased=record["rebased"],
+        session=session,
+    )
+
+
 def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...]:
     rows: list[sqlite3.Row] = conn.execute(
         "SELECT r.*, n.description FROM runs r JOIN nodes n ON n.id = r.node_id "
         + "ORDER BY r.started_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
-    return tuple(
-        msgspec.convert(
-            run_row_to_dict(row) | {"description": row["description"]},
-            type=DurableRun,
-            strict=True,
-        )
-        for row in rows
-    )
+    return tuple(_durable_run(conn, row) for row in rows)
 
 
 def _goal_description(conn: sqlite3.Connection) -> str:

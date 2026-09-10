@@ -9,6 +9,7 @@ Public API:
 from milknado.loop._events import EventType, QueueEmitter
 from milknado.loop._run_types import CompletionVerdict, RunConfig, RunStatus
 from milknado.loop.manager import RunManager
+from milknado.loop.sessions import SessionChannel, create_protocol, run_session
 
 __all__ = [
     "CompletionVerdict",
@@ -17,4 +18,7 @@ __all__ = [
     "RunConfig",
     "RunManager",
     "RunStatus",
+    "SessionChannel",
+    "create_protocol",
+    "run_session",
 ]

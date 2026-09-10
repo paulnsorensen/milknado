@@ -26,6 +26,8 @@ from milknado.domains.common import (
     MilknadoConfig,
     NodeKind,
     NodeStatus,
+    SessionInput,
+    SessionView,
     WorktreeMode,
     resolve_flavor_profile,
 )
@@ -81,6 +83,7 @@ class ActiveRunSnapshot:
     attempt: int | None
     max_attempts: int | None
     stalled: bool
+    session: SessionView = SessionView()
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +95,7 @@ class TerminalRunSnapshot:
     output: tuple[str, ...]
     pending_guidance: tuple[str, ...] | None
     duration_seconds: float
+    session: SessionView = SessionView()
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,6 +314,7 @@ class ExecutionController:
                 attempt=run.attempt,
                 max_attempts=run.max_attempts,
                 stalled=run.stalled,
+                session=run.session,
             )
             for run in state.active_runs
         )
@@ -322,6 +327,7 @@ class ExecutionController:
                 output=run.output,
                 pending_guidance=run.pending_guidance,
                 duration_seconds=run.duration_seconds,
+                session=run.session,
             )
             for run in state.terminal_runs
         )
@@ -338,6 +344,9 @@ class ExecutionController:
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
         return bool(self._control("queue_guidance", run_id, text))
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        return bool(self._control("session_input", run_id, command))
 
     def cancel(self, run_id: str) -> None:
         _ = self._control("cancel", run_id)
@@ -393,7 +402,7 @@ def build_execution_controller(
     from milknado.domains.execution import Executor, RunLoop
 
     _ = reconcile_orphaned_runs(graph)
-    ralph = LoopAdapter()
+    ralph = LoopAdapter(graph=graph)
     executor = Executor(
         graph=graph,
         git=GitAdapter(project_root),
@@ -425,7 +434,7 @@ def run_execution_loop(
 
     _ = reconcile_orphaned_runs(graph)
     git = GitAdapter(project_root)
-    ralph = LoopAdapter()
+    ralph = LoopAdapter(graph=graph)
     crg = CrgAdapter(project_root)
     executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
     loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)

@@ -126,6 +126,14 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "PRIMARY KEY (node_id, round))",
     ),
     (3, "ALTER TABLE nodes ADD COLUMN archived_at TEXT"),
+    (
+        4,
+        "CREATE TABLE IF NOT EXISTS run_sessions ("
+        + "run_id TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE, "
+        + "family TEXT NOT NULL, "
+        + "cwd TEXT NOT NULL, "
+        + "base_oid TEXT NOT NULL)",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -301,6 +309,12 @@ def create_tables(conn: sqlite3.Connection) -> None:
             timeout_seconds INTEGER,
             detail          TEXT,
             rebased         INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS run_sessions (
+            run_id      TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
+            family      TEXT NOT NULL,
+            cwd         TEXT NOT NULL,
+            base_oid    TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_runs_node_status ON runs(node_id, status);
         CREATE TABLE IF NOT EXISTS run_messages (
@@ -557,6 +571,7 @@ def drop_all(conn: sqlite3.Connection) -> int:
     count = cast(int, _as_tuple(count_row)[0])
     for statement in (
         "DELETE FROM run_messages",
+        "DELETE FROM run_sessions",
         "DELETE FROM runs",
         "DELETE FROM file_ownership",
         "DELETE FROM edges",

@@ -10,7 +10,12 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import ProgressEvent, TerminalRunOutcome, resolve_flavor_profile
+from milknado.domains.common import (
+    ProgressEvent,
+    SessionInput,
+    TerminalRunOutcome,
+    resolve_flavor_profile,
+)
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution.executor import (
@@ -140,7 +145,7 @@ class RunLoop:
         return ActiveRunState(
             run_id=run_id,
             node_id=node_id,
-            description=summarize_description(description),
+            description=description,
             status=status,
             progress=progress,
             stop_requested=stop_requested,
@@ -157,6 +162,7 @@ class RunLoop:
             attempt=self._attempts.get(node_id, 0) + 1,
             max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
             stalled=stalled,
+            session=self._ralph.get_run_session(run_id),
         )
 
     def _publish_state(self) -> None:
@@ -173,6 +179,13 @@ class RunLoop:
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
         accepted = self._ralph.queue_guidance(run_id, text)
+        self._publish_state()
+        return accepted
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        if run_id not in self._active:
+            return False
+        accepted = self._ralph.session_input(run_id, command)
         self._publish_state()
         return accepted
 

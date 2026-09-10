@@ -184,7 +184,7 @@ class TestDepositReview:
         _ = ralph_file.write_text("review", encoding="utf-8")
         adapter = LoopAdapter()
         _ = adapter.create_run(
-            agent="claude",
+            agent="cursor-agent",
             ralph_dir=tmp_path,
             ralph_file=ralph_file,
             quality_gates=(),
