@@ -524,12 +524,12 @@ async def test_terminal_session_hides_controls_and_rejects_direct_dispatch() -> 
         assert not app.query_one("#structured-controls").display
         assert app.query_one("#session-submit", Button).disabled
 
-        app.set_focus(app.query_one("#runs", DataTable))
+        app.set_focus(cast(DataTable[RenderableType], app.query_one("#runs", DataTable)))
         app.action_focus_session()
         await pilot.pause()
         assert app.query_one("#runs", DataTable).has_focus
 
-        app._send_session_input()
+        app.click_session_submit(Button.Pressed(app.query_one("#session-submit", Button)))
         assert source.submissions == []
 
 
