@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from threading import Event, Thread
@@ -11,6 +10,7 @@ import pytest
 from milknado.app.run import ExecutionController, ExecutionSnapshot, build_execution_controller
 from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig
 from milknado.domains.graph import MikadoGraph
+from tests.attached_owner_delivery_fixtures import AttachedCommand, admit_from_process
 from tests.execution_session_fixtures import build_graph as _build_graph
 from tests.execution_session_fixtures import init_repo as _init_repo
 from tests.test_execution_sessions import (
@@ -20,53 +20,6 @@ from tests.test_execution_sessions import (
     _WORKER_SOURCE,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.worker_fixtures import install_worker_command
-
-_ATTACHED_SOURCE = """\
-from pathlib import Path
-import sys
-
-from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource, graph_command_admitter
-from milknado.domains.common import SessionInput
-from milknado.domains.graph import MikadoGraph
-
-repo = Path(sys.argv[1])
-db_path = Path(sys.argv[2])
-run_id, request_id, text = sys.argv[3:]
-graph = MikadoGraph(db_path)
-try:
-    source = AttachedWatchSource(
-        WatchSnapshotSource(repo, db_path),
-        graph_command_admitter(graph),
-    )
-    accepted = source.session_input(
-        run_id, SessionInput(action="follow_up", text=text, request_id=request_id)
-    )
-    print("accepted" if accepted else "rejected", flush=True)
-    raise SystemExit(0 if accepted else 1)
-finally:
-    graph.close()
-"""
-
-
-def _admit_from_process(  # noqa: PLR0913
-    repo: Path, db_path: Path, run_id: str, request_id: str, text: str
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            _ATTACHED_SOURCE,
-            str(repo),
-            str(db_path),
-            run_id,
-            request_id,
-            text,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=10,
-    )
 
 
 def _delivery_diagnostic(
@@ -136,8 +89,8 @@ def test_attached_process_delivers_once_to_existing_owner(  # noqa: PLR0915
         assert ready.wait(10)
         run_id = run_ids[0]
         request_id = "attached-1"
-        child = _admit_from_process(
-            repo, repo / ".milknado" / "graph.db", run_id, request_id, _FOLLOW_UP
+        child = admit_from_process(
+            AttachedCommand(repo, repo / ".milknado" / "graph.db", run_id, request_id, _FOLLOW_UP)
         )
         assert child.returncode == 0, child.stderr
         assert child.stdout.strip() == "accepted"
