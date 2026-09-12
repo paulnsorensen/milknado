@@ -20,7 +20,7 @@ from milknado.app.run import (
 from milknado.app.run_source import ExecutionSnapshotSource, NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
-from milknado.app.watch import WatchSnapshotSource
+from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource
 from milknado.domains.graph import NodeDetailResponse
 
 
@@ -99,6 +99,23 @@ def test_watch_tui_entry_builds_source_and_discards_app_result(
     monkeypatch.setattr(watch_tui, "WatchApp", FakeApp)
 
     assert watch_tui.run_watch_tui(tmp_path, tmp_path / "milknado.db") is None
+
+
+def test_attached_watch_tui_runs_writable_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    expected = object()
+
+    class FakeApp:
+        def __init__(self, source: object, *, read_only: bool) -> None:
+            assert source is expected
+            assert read_only is False
+
+        def run(self) -> object:
+            return expected
+
+    monkeypatch.setattr(watch_tui, "WatchApp", FakeApp)
+
+    source = cast(AttachedWatchSource, expected)
+    assert watch_tui.run_attached_watch_tui(source) is None
 
 
 def test_snapshot_view_has_no_execution_controller_contract() -> None:

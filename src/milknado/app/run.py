@@ -10,6 +10,7 @@ import logging
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from importlib import import_module
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock, Thread
@@ -172,8 +173,9 @@ class ExecutionController:
             raise outcome
         return outcome
 
-    def snapshot(self) -> ExecutionSnapshot:
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
         """Return the controller's current immutable presentation snapshot."""
+        del request
         with self._state_lock:
             return self._snapshot
 
@@ -189,6 +191,11 @@ class ExecutionController:
             limit=request.limit,
             session_event_page=request.session_event_page,
         )
+
+    def attached_watch_source(self) -> object:
+        """Return an attached watch source with owner-side command admission."""
+        watch_module = import_module("milknado.app.watch")
+        return watch_module.AttachedWatchSource(self, self.session_input)  # pyright: ignore[reportAny]
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         """Subscribe to future snapshots and replay the current state once."""

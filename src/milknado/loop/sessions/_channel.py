@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from collections import deque
 from collections.abc import Callable
-from contextlib import suppress
 from threading import RLock
+from typing import final
 
 import msgspec
 
@@ -14,32 +14,30 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
     SessionView,
-    normalize_session_event,
+)
+from milknado.loop.sessions._capabilities import CapabilitySink, refresh
+from milknado.loop.sessions._channel_indexes import (
+    normalize_event,
+    normalize_input,
+    receipt_state,
+    remember,
+    terminal_command,
+    update_indexes,
 )
 
 SessionSink = Callable[[SessionEvent], None]
 _STREAM_FLUSH_INTERVAL = 0.05
-_RECEIPT_KINDS = frozenset({"user", "permission"})
-_RECEIPT_STATE_RANK = {
-    "queued": 0,
-    "requested": 0,
-    "submitted": 1,
-    "delivered": 2,
-    "rejected": 2,
-    "approved": 2,
-    "denied": 2,
-    "cancelled": 2,
-    "unconfirmed": 2,
-}
 
 
+@final
 class SessionChannel:
-    """Thread-safe bounded state and input admission for one worker session."""
-
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         sink: SessionSink | None = None,
         *,
+        command_state_sink: Callable[[SessionInput, str], None] | None = None,
+        durable_drain: Callable[[], tuple[SessionInput, ...]] | None = None,
+        capability_sink: CapabilitySink | None = None,
         max_events: int = 500,
         max_inputs: int = 64,
     ) -> None:
@@ -47,31 +45,43 @@ class SessionChannel:
             raise ValueError("SessionChannel capacities must be positive")
         self._lock: RLock = RLock()
         self._sink: SessionSink | None = sink
-        self._max_events: int = max_events
-        self._max_inputs: int = max_inputs
+        self._command_state_sink: Callable[[SessionInput, str], None] | None = command_state_sink
+        self._durable_drain: Callable[[], tuple[SessionInput, ...]] | None = durable_drain
+        self._capability_sink: CapabilitySink | None = capability_sink
+        self._close_sink: Callable[[str], None] | None = None
+        self._max_events, self._max_inputs = max_events, max_inputs
         self._events: deque[SessionEvent] = deque()
         self._event_index: dict[tuple[str, str], SessionEvent] = {}
         self._permissions: dict[tuple[str, str], SessionEvent] = {}
         self._inputs: deque[int] = deque()
         self._pending: dict[int, SessionInput] = {}
-        self._next_token: int = 0
-        self._epoch: int = 0
-        self._prefix: str = ""
+        self._inflight: dict[str, SessionInput] = {}
+        self._next_token, self._epoch = 0, 0
+        self._last_sink_at, self._prefix = 0.0, ""
         self._deferred: dict[tuple[str, str], SessionEvent] = {}
-        self._last_sink_at: float = 0.0
         self._context: SessionContext | None = None
         self._actions: tuple[SessionAction, ...] = ()
-        self._active: bool = False
-        self._closed: bool = False
-        self._stopped_published: bool = False
+        self._invocation_id = ""
+        self._active, self._closed, self._stopped_published = False, False, False
 
     def set_sink(self, sink: SessionSink | None) -> None:
-        """Replace the durable sink used for subsequent state changes."""
         with self._lock:
             self._sink = sink
 
-    def start(self, context: SessionContext, actions: tuple[SessionAction, ...]) -> None:
-        """Open or reopen the channel with the protocol's truthful actions."""
+    def set_capability_sink(
+        self, sink: CapabilitySink | None, *, on_close: Callable[[str], None] | None = None
+    ) -> None:
+        with self._lock:
+            self._capability_sink = sink
+            self._close_sink = on_close
+
+    def start(
+        self,
+        context: SessionContext,
+        actions: tuple[SessionAction, ...],
+        *,
+        invocation_id: str = "",
+    ) -> None:
         with self._lock:
             if self._closed and (self._pending or self._deferred or self._permissions):
                 raise RuntimeError("cannot restart a session with unpersisted terminal events")
@@ -83,8 +93,20 @@ class SessionChannel:
             self._closed = False
             self._context = context
             self._actions = tuple(dict.fromkeys(actions))
+            self._invocation_id = invocation_id or self._invocation_id
             self._active = True
             self._stopped_published = False
+        refresh(self._capability_sink, self._capability_state(context, invocation_id))
+
+    def _capability_state(
+        self, context: SessionContext | None, invocation_id: str = ""
+    ) -> tuple[SessionContext | None, tuple[SessionAction, ...], str, tuple[str, ...]]:
+        return (
+            context,
+            self._actions,
+            invocation_id or self._invocation_id,
+            tuple(event.event_id for event in self._permissions.values()),
+        )
 
     def view(self) -> SessionView:
         with self._lock:
@@ -97,12 +119,15 @@ class SessionChannel:
             )
 
     def submit(self, command: SessionInput) -> bool:
-        """Admit a command only after its queued claim is durably recorded."""
         with self._lock:
             if not self._active or self._closed:
                 self._record_user(command, "rejected")
                 return False
-            if command.action not in self._actions or not self._permission_is_pending(command):
+            permission = self._permissions.get(("permission", command.request_id))
+            if command.action not in self._actions or (
+                command.action in {"approve", "deny"}
+                and (permission is None or permission.state != "requested")
+            ):
                 self._record_user(command, "rejected")
                 return False
             if len(self._pending) >= self._max_inputs:
@@ -110,20 +135,26 @@ class SessionChannel:
                 return False
             token = self._next_token
             self._next_token += 1
-            if command.action in {"approve", "deny"}:
-                command = msgspec.structs.replace(
-                    command, request_id=command.request_id.removeprefix(self._prefix)
-                )
-            elif not command.request_id:
-                command = msgspec.structs.replace(command, request_id=f"input-{token}")
+            command = normalize_input(command, self._prefix, token)
             self._record_user(command, "queued")
             self._pending[token] = command
             self._inputs.append(token)
             return True
 
     def drain(self) -> tuple[SessionInput, ...]:
-        """Move admitted commands to submitted state and return them once."""
         submitted: list[SessionInput] = []
+        if self._durable_drain is not None:
+            durable = self._durable_drain()
+            with self._lock:
+                for command in durable:
+                    if command.action in {"approve", "deny"}:
+                        command = msgspec.structs.replace(
+                            command, request_id=command.request_id.removeprefix(self._prefix)
+                        )
+                    key = command.command_id or command.request_id
+                    if key:
+                        self._inflight[key] = command
+                    submitted.append(command)
         with self._lock:
             while self._inputs:
                 token = self._inputs[0]
@@ -133,12 +164,15 @@ class SessionChannel:
                 submitted.append(command)
         return tuple(submitted)
 
+    def confirm(self, command: SessionInput, state: str) -> None:
+        with self._lock:
+            self._record_user(command, state)
+
     def publish(self, event: SessionEvent) -> None:
-        """Persist and coalesce one protocol event before exposing it in memory."""
         with self._lock:
             if event.event_id:
                 event = msgspec.structs.replace(event, event_id=self._prefix + event.event_id)
-            normalized = self._normalize(event)
+            normalized = normalize_event(event, self._event_index)
             key = (normalized.kind, normalized.event_id)
             previous = self._event_index.get(key) if normalized.event_id else None
             if normalized == previous:
@@ -148,11 +182,24 @@ class SessionChannel:
             else:
                 self._flush_deferred()
                 self._persist(normalized)
-            self._remember(normalized)
-            self._update_indexes(normalized)
+            remember(normalized, self._events, self._event_index, self._max_events)
+            command = terminal_command(normalized, self._prefix, self._inflight)
+            if command is not None and self._command_state_sink is not None:
+                state = receipt_state(normalized)
+                self._command_state_sink(command, state)
+            update_indexes(
+                normalized,
+                self._event_index,
+                self._permissions,
+                self._pending,
+                self._inputs,
+                self._inflight,
+                self._prefix,
+            )
+            if not self._closed or self._close_sink is None:
+                refresh(self._capability_sink, self._capability_state(self._context))
 
     def close(self) -> None:
-        """Reject unsent inputs and mark inputs without receipts as unconfirmed."""
         first_error: Exception | None = None
         with self._lock:
             self._active = False
@@ -170,6 +217,13 @@ class SessionChannel:
                     first_error = first_error or exc
                     continue
                 _ = self._pending.pop(token, None)
+            for key, command in tuple(self._inflight.items()):
+                try:
+                    self._record_user(command, "unconfirmed")
+                except Exception as exc:  # noqa: BLE001 - Finish cleanup before re-raising.
+                    first_error = first_error or exc
+                finally:
+                    _ = self._inflight.pop(key, None)
             for permission in tuple(self._permissions.values()):
                 try:
                     self.publish(
@@ -181,9 +235,12 @@ class SessionChannel:
                     )
                 except Exception as exc:  # noqa: BLE001 - Finish cleanup before re-raising.
                     first_error = first_error or exc
+            self._actions = ()
             if not self._stopped_published:
                 stopped = SessionEvent(kind="status", text="session stopped", state="stopped")
                 try:
+                    if self._close_sink is not None and self._invocation_id:
+                        self._close_sink(self._invocation_id)
                     self.publish(stopped)
                 except Exception as exc:  # noqa: BLE001 - Finish cleanup before re-raising.
                     first_error = first_error or exc
@@ -192,40 +249,21 @@ class SessionChannel:
         if first_error is not None:
             raise first_error
 
-    def _permission_is_pending(self, command: SessionInput) -> bool:
-        if command.action not in {"approve", "deny"}:
-            return True
-        if not command.request_id:
-            return False
-        permission = self._permissions.get(("permission", command.request_id))
-        return permission is not None and permission.state == "requested"
-
     def _record_user(self, command: SessionInput, state: str) -> None:
+        durable = command in self._inflight.values()
+        if self._command_state_sink is not None and not (
+            durable and state in {"delivered", "rejected", "unconfirmed"}
+        ):
+            self._command_state_sink(command, state)
         self.publish(
             SessionEvent(
                 kind="user",
                 text=command.text,
-                event_id=command.request_id,
+                event_id=command.command_id or command.request_id,
                 state=state,
                 action=command.action,
             )
         )
-
-    def _normalize(self, event: SessionEvent) -> SessionEvent:
-        key = (event.kind, event.event_id)
-        previous = self._event_index.get(key) if event.event_id else None
-        normalized = normalize_session_event(event, previous)
-        if previous is None or event.kind not in _RECEIPT_KINDS:
-            return normalized
-        previous_rank = _RECEIPT_STATE_RANK.get(previous.state)
-        current_rank = _RECEIPT_STATE_RANK.get(normalized.state)
-        if previous_rank is None or current_rank is None:
-            return normalized
-        if current_rank < previous_rank or (
-            previous_rank == current_rank == 2 and normalized.state != previous.state
-        ):
-            return previous
-        return normalized
 
     def _should_defer(self, event: SessionEvent) -> bool:
         return bool(
@@ -252,44 +290,3 @@ class SessionChannel:
         if self._sink is not None:
             self._sink(event)
             self._last_sink_at = time.monotonic()
-
-    def _remember(self, event: SessionEvent) -> None:
-        key = (event.kind, event.event_id)
-        previous = self._event_index.get(key) if event.event_id else None
-        if previous is None:
-            self._events.append(event)
-            if len(self._events) > self._max_events:
-                evicted = self._events.popleft()
-                evicted_key = (evicted.kind, evicted.event_id)
-                if self._event_index.get(evicted_key) == evicted:
-                    _ = self._event_index.pop(evicted_key, None)
-            return
-        for index, current in enumerate(self._events):
-            if current == previous:
-                self._events[index] = event
-                break
-
-    def _update_indexes(self, event: SessionEvent) -> None:
-        key = (event.kind, event.event_id)
-        if event.event_id:
-            self._event_index[key] = event
-        if event.kind == "permission":
-            if event.state in {"requested", "submitted"}:
-                self._permissions[key] = event
-            elif event.state in {"approved", "denied", "cancelled"}:
-                _ = self._permissions.pop(key, None)
-                if event.state in {"approved", "denied"} and event.event_id:
-                    self._acknowledge(event.event_id)
-        if event.kind == "user" and event.event_id and event.state in {"delivered", "rejected"}:
-            self._acknowledge(event.event_id)
-
-    def _acknowledge(self, request_id: str) -> None:
-        tokens = tuple(
-            token
-            for token, command in self._pending.items()
-            if self._prefix + command.request_id == request_id
-        )
-        for token in tokens:
-            with suppress(ValueError):
-                _ = self._inputs.remove(token)
-            _ = self._pending.pop(token, None)

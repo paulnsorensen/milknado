@@ -114,6 +114,22 @@ class ClaudeControlMixin(ClaudeState):
         if response and response.subtype != "success":
             if action == "interrupt":
                 self._interrupt_requested = False
+                event = SessionEvent(
+                    kind="error",
+                    text=response.error or "Claude control request failed",
+                    event_id=request_id,
+                    state="running",
+                )
+                if self._interrupt_command_id:
+                    receipt = SessionEvent(
+                        kind="user",
+                        text="",
+                        event_id=self._interrupt_command_id,
+                        state="rejected",
+                        action="interrupt",
+                    )
+                    return ProtocolStep(events=(receipt, event))
+                return ProtocolStep(events=(event,))
             event = SessionEvent(
                 kind="error",
                 text=response.error or "Claude control request failed",
@@ -123,7 +139,19 @@ class ClaudeControlMixin(ClaudeState):
             return ProtocolStep(events=(event,))
         if action == "interrupt":
             self._interrupt_acknowledged = True
-        text = "Claude session initialized" if action == "initialize" else "Interrupt acknowledged"
+            text = "Interrupt acknowledged"
+            status = SessionEvent(kind="status", text=text, event_id=request_id, state="running")
+            if self._interrupt_command_id:
+                receipt = SessionEvent(
+                    kind="user",
+                    text="",
+                    event_id=self._interrupt_command_id,
+                    state="delivered",
+                    action="interrupt",
+                )
+                return ProtocolStep(events=(status, receipt))
+            return ProtocolStep(events=(status,))
+        text = "Claude session initialized"
         return ProtocolStep(
             events=(SessionEvent(kind="status", text=text, event_id=request_id, state="running"),)
         )

@@ -38,6 +38,7 @@ class ClaudeSession(ClaudeEventsMixin, ClaudeControlMixin):
     actions: tuple[SessionAction, ...] = ("follow_up", "interrupt", "approve", "deny")
     _active: bool
     _interrupt_requested: bool
+    _interrupt_command_id: str
 
     def __init__(self, argv: tuple[str, ...], cwd: Path) -> None:
         if not argv:
@@ -100,7 +101,7 @@ class ClaudeSession(ClaudeEventsMixin, ClaudeControlMixin):
         if command.action == "follow_up":
             return self._follow_up(command)
         if command.action == "interrupt":
-            return self._interrupt()
+            return self._interrupt(command)
         if command.action in ("approve", "deny"):
             return self._permission(command)
         raise ValueError(f"Unsupported Claude session action: {command.action}")
@@ -117,10 +118,11 @@ class ClaudeSession(ClaudeEventsMixin, ClaudeControlMixin):
         self._pending_users.append(turn)
         return ProtocolStep(commands=(self._user(command.text),))
 
-    def _interrupt(self) -> ProtocolStep:
+    def _interrupt(self, command: SessionInput) -> ProtocolStep:
         if self._interrupt_requested:
             raise ValueError("Claude interrupt is already pending")
         request_id = self._id("interrupt")
+        self._interrupt_command_id = command.request_id
         self._controls[request_id] = "interrupt"
         self._interrupt_requested = True
         event = SessionEvent(

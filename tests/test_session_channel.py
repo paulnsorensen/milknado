@@ -10,6 +10,41 @@ from milknado.loop.sessions import SessionChannel
 _CONTEXT = SessionContext(family="omp", cwd="/repo", base_oid="base")
 
 
+def test_capability_publication_follows_permission_indexing() -> None:
+    publications: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    channel = SessionChannel(
+        capability_sink=lambda _context, actions, _invocation, permissions: publications.append(
+            (actions, permissions)
+        )
+    )
+    channel.start(_CONTEXT, ("approve",), invocation_id="invocation-1")
+    channel.publish(
+        SessionEvent(kind="permission", text="confirm", event_id="request-1", state="requested")
+    )
+
+    assert publications[-1] == (("approve",), ("1/request-1",))
+
+
+def test_durable_permission_identity_stays_separate_from_provider_id() -> None:
+    channel = SessionChannel()
+    channel.start(_CONTEXT, ("approve",))
+    channel.publish(
+        SessionEvent(kind="permission", text="confirm", event_id="request-1", state="requested")
+    )
+
+    assert channel.submit(
+        SessionInput(action="approve", request_id="1/request-1", command_id="command-1")
+    )
+    (submitted,) = channel.drain()
+
+    assert submitted.request_id == "request-1"
+    assert submitted.command_id == "command-1"
+    user_events = [event for event in channel.view().events if event.kind == "user"]
+    assert [(event.event_id, event.state) for event in user_events] == [
+        ("1/command-1", "submitted")
+    ]
+
+
 def test_capacity_includes_inputs_waiting_for_vendor_receipts() -> None:
     channel = SessionChannel(max_inputs=1)
     channel.start(_CONTEXT, ("steer",))

@@ -47,3 +47,19 @@ def test_watch_command_maps_missing_database_to_cli_error(tmp_path: Path) -> Non
         watch_command(tmp_path)
 
     assert exc.value.exit_code == 1
+
+
+def test_watch_command_attached_selects_owner_fenced_source(tmp_path: Path) -> None:
+    config = SimpleNamespace(db_path=tmp_path / "milknado.db")
+    graph = SimpleNamespace(close=lambda: None)
+    controller = object()
+    with (
+        patch("milknado.cli.run._is_interactive_terminal", return_value=True),
+        patch("milknado.cli.run._load_or_default", return_value=(config, [])),
+        patch("milknado.cli.run._ensure_db", return_value=graph),
+        patch("milknado.app.run.build_execution_controller", return_value=controller),
+        patch("milknado.app.watch_tui.run_attached_watch_tui") as run_attached,
+    ):
+        watch_command(tmp_path, attached=True)
+
+    run_attached.assert_called_once()

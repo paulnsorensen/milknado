@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shlex
-import subprocess
 import sys
 from pathlib import Path
 from threading import Event, Thread
@@ -14,6 +13,8 @@ from milknado.app.run import ExecutionController, ExecutionSnapshot, build_execu
 from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig, SessionInput
 from milknado.domains.execution import RunLoopResult
 from milknado.domains.graph import MikadoGraph
+from tests.execution_session_fixtures import build_graph as _build_graph
+from tests.execution_session_fixtures import init_repo as _init_repo
 from tests.worker_fixtures import install_worker_command
 
 _SESSION_ID = "fixture-session-42"
@@ -72,31 +73,6 @@ for raw in sys.stdin:
         })
         break
 """
-
-
-def _git(repo: Path, *args: str) -> None:
-    _ = subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-
-
-def _init_repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _git(repo, "init", "-q", "-b", "feature")
-    _git(repo, "config", "user.email", "test@milknado.test")
-    _git(repo, "config", "user.name", "Milknado Test")
-    _ = (repo / "README.md").write_text("# session test\n", encoding="utf-8")
-    _git(repo, "add", "README.md")
-    _git(repo, "commit", "-q", "-m", "seed")
-    return repo
-
-
-def _build_graph(repo: Path) -> MikadoGraph:
-    db_path = repo / ".milknado" / "graph.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    graph = MikadoGraph(db_path)
-    root = graph.add_node("Interactive session goal")
-    _ = graph.add_node("Accept human guidance", parent_id=root.id)
-    return graph
 
 
 def _install_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:

@@ -13,6 +13,9 @@ class SessionInput(msgspec.Struct, frozen=True, kw_only=True):
     action: SessionAction
     text: str = ""
     request_id: str = ""
+    command_id: str = ""
+    owner_incarnation: str = ""
+    invocation_id: str = ""
 
 
 class SessionEvent(msgspec.Struct, frozen=True, kw_only=True):
@@ -37,6 +40,8 @@ class SessionView:
     actions: tuple[SessionAction, ...] = ()
     active: bool = False
     permissions: tuple[SessionEvent, ...] = ()
+    owner_incarnation: str = ""
+    invocation_id: str = ""
 
 
 def normalize_session_event(

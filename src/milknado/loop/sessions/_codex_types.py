@@ -32,6 +32,7 @@ class ApprovalRequest:
     method: str
     params: dict[str, object]
     action: str = ""
+    command_id: str = ""
 
 
 def encode_line(payload: dict[str, object]) -> bytes:

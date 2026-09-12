@@ -145,14 +145,18 @@ class CodexEventMixin(CodexState, metaclass=ABCMeta):
                 interrupted=interrupted,
                 session_id=self._session_id or None,
             )
-        if pending.stage == "steer":
-            if not self._active or self._turn_id != pending.turn_id:
+        if pending.stage in {"steer", "interrupt"}:
+            if pending.stage == "steer" and (not self._active or self._turn_id != pending.turn_id):
                 event = SessionEvent(
                     kind="user", text=pending.text, event_id=pending.event_id, state="rejected"
                 )
                 return ProtocolStep(events=(event,), session_id=self._session_id or None)
             event = SessionEvent(
-                kind="user", text=pending.text, event_id=pending.event_id, state="delivered"
+                kind="user",
+                text=pending.text,
+                event_id=pending.event_id,
+                state="delivered",
+                action="steer" if pending.stage == "steer" else "interrupt",
             )
             return ProtocolStep(events=(event,), session_id=self._session_id or None)
         return ProtocolStep(session_id=self._session_id or None)

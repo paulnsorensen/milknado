@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import pytest
 
-from milknado.app.run import ExecutionRunStatus
+from milknado.app.run import ExecutionController, ExecutionRunStatus, ExecutionSnapshot
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_view import summary_text
 from milknado.app.watch import (
+    AttachedWatchSource,
     WatchSnapshotSource,
     _tail_open_file,  # pyright: ignore[reportPrivateUsage] -- wrapping the tail helper directly to assert its cache-hit count
 )
@@ -20,8 +23,9 @@ from milknado.domains.common import (
     RunResult,
     SessionContext,
     SessionEvent,
+    SessionInput,
 )
-from milknado.domains.graph import MikadoGraph, read_observer_snapshot
+from milknado.domains.graph import MikadoGraph, NodeDetailResponse, read_observer_snapshot
 
 
 def _finish(graph: MikadoGraph, run_id: str, node_id: int) -> None:
@@ -221,3 +225,50 @@ def test_watch_source_forwards_session_event_page(tmp_path: Path) -> None:
     sessions = snapshot.node.detail.sessions.items
     assert sessions is not None and sessions[0].event_history.items is not None
     assert tuple(event.text for event in sessions[0].event_history.items) == ("first",)
+
+
+def test_attached_watch_source_forwards_snapshots_and_admission() -> None:
+    snapshot_marker = object()
+    detail_marker = object()
+    listeners: list[Callable[[ExecutionSnapshot], None]] = []
+    commands: list[tuple[str, SessionInput]] = []
+
+    class Source:
+        def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+            del request
+            return cast(ExecutionSnapshot, snapshot_marker)
+
+        def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+            del request
+            return cast(NodeDetailResponse, detail_marker)
+
+        def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+            listeners.append(listener)
+            return lambda: None
+
+    source = AttachedWatchSource(
+        Source(), lambda run_id, command: commands.append((run_id, command)) or True
+    )
+    request = NodeSnapshotRequest(1, request_generation=1)
+    command = SessionInput(action="steer", text="redirect")
+
+    assert source.snapshot() is snapshot_marker
+    assert source.node_snapshot(request) is detail_marker
+
+    def listener(snapshot: ExecutionSnapshot) -> None:
+        del snapshot
+
+    assert source.subscribe(listener) is not None
+    assert source.session_input("run-1", command) is True
+    assert listeners == [listener]
+    assert commands == [("run-1", command)]
+
+    class Controller(Source):
+        def session_input(self, run_id: str, value: SessionInput) -> bool:
+            return run_id == "run-2" and value.action == "steer"
+
+    fake_controller = cast(ExecutionController, cast(object, Controller()))
+    attached = cast(
+        AttachedWatchSource, ExecutionController.attached_watch_source(fake_controller)
+    )
+    assert attached.session_input("run-2", command) is True

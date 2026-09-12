@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Protocol
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -17,12 +18,24 @@ from milknado.app.run import (
     TerminalRunSnapshot,
 )
 from milknado.app.run_source import NodeSnapshotRequest
+from milknado.domains.common import SessionInput
 from milknado.domains.graph import (
     DurableRun,
+    MikadoGraph,
     NodeDetailResponse,
+    admit_session_command,
     read_observer_node_snapshot,
     read_observer_snapshot,
 )
+
+
+class _AttachedSnapshotSource(Protocol):
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot: ...
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse: ...
+
+    def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]: ...
+
 
 _OBSERVER_ACTIONS = RunActionAvailability(
     cancel_reason="Observer mode is read-only.",
@@ -94,6 +107,12 @@ class WatchSnapshotSource:
             request.limit,
             request.session_event_page,
         )
+
+    @staticmethod
+    def subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        """Keep the observer source detached from writer notifications."""
+        del listener
+        return lambda: None
 
     def _active_snapshot(self, run: DurableRun, description: str) -> ActiveRunSnapshot:
         return ActiveRunSnapshot(
@@ -180,3 +199,32 @@ class WatchSnapshotSource:
         started = datetime.fromisoformat(started_at)
         ended = datetime.fromisoformat(ended_at) if ended_at else datetime.now(UTC)
         return max(0.0, (ended - started).total_seconds())
+
+
+def graph_command_admitter(graph: MikadoGraph) -> Callable[[str, SessionInput], bool]:
+    """Admit attached-watch input against the current owner capability snapshot."""
+
+    def admit(run_id: str, command: SessionInput) -> bool:
+        return admit_session_command(graph, run_id, command) is not None
+
+    return admit
+
+
+@dataclass(slots=True)
+class AttachedWatchSource:
+    """Add an explicit owner admission seam to an observer snapshot source."""
+
+    source: _AttachedSnapshotSource
+    admit: Callable[[str, SessionInput], bool]
+
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+        return self.source.snapshot(request)
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return self.source.node_snapshot(request)
+
+    def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        return self.source.subscribe(listener)
+
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        return self.admit(run_id, command)
