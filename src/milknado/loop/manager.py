@@ -50,7 +50,19 @@ class RunManager:
     ) -> ManagedRun:
         """Create and register a run."""
         session = (
-            SessionChannel(sink=config.session_sink)
+            SessionChannel(
+                sink=config.session_sink,
+                command_state_sink=lambda command, state: (
+                    config.session_state_sink(command, state)
+                    if config.session_state_sink is not None
+                    else None
+                ),
+                durable_drain=lambda: (
+                    config.session_durable_drain()
+                    if config.session_durable_drain is not None
+                    else ()
+                ),
+            )
             if config.session_context is not None or config.session_sink is not None
             else None
         )
@@ -89,7 +101,13 @@ class RunManager:
         managed = self._require_run(run_id)
         if managed.state.session is None:
             return False
-        return managed.state.session.submit(command)
+        admit = managed.config.session_admitter
+        admitted = admit(command) if admit is not None else command
+        if admitted is None:
+            return False
+        if admit is not None:
+            return True
+        return managed.state.session.submit(admitted)
 
     def get_run_session(self, run_id: str) -> SessionView:
         """Return a stable session snapshot for a run."""

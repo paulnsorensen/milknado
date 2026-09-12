@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import SessionContext, SessionEvent
+from milknado.domains.common import SessionContext, SessionEvent, SessionInput
 from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
 
 if TYPE_CHECKING:
@@ -138,9 +138,11 @@ class RunConfig:
     # promise tag when an external system commits the terminal signal.
     completion_probe: Callable[[], bool] | None = None
     # Structured session context and durable event sink, when this run is
-    # backed by one of the supported interactive worker protocols.
     session_context: SessionContext | None = None
     session_sink: Callable[[SessionEvent], None] | None = None
+    session_admitter: Callable[[SessionInput], SessionInput | None] | None = None
+    session_state_sink: Callable[[SessionInput, str], None] | None = None
+    session_durable_drain: Callable[[], tuple[SessionInput, ...]] | None = None
 
     def __post_init__(self) -> None:
         if (self.prompt is None) == (self.ralph_file is None):
@@ -290,11 +292,9 @@ class RunState:
         self.consecutive_failures += 1
 
     def mark_interrupted(self) -> None:
-        """Record an intentionally interrupted turn without a failure streak."""
         self.interrupted += 1
         self.consecutive_failures = 0
 
     def mark_timed_out(self) -> None:
-        """Record a timed-out iteration (also counts as failed)."""
         self.timed_out_count += 1
         self.mark_failed()

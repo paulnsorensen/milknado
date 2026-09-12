@@ -4,11 +4,12 @@ import queue
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
-from milknado.domains.common import SessionContext, SessionEvent, SessionInput
+from milknado.domains.common import SessionContext, SessionEvent
 from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
@@ -52,15 +53,8 @@ class _SessionOutcome:
     reader_failed: bool = False
 
 
-def _publish_after_write_events(channel: SessionChannel, step: ProtocolStep) -> None:
-    for event in step.after_write_events:
-        channel.publish(event)
-
-
-def _publish_rejected(channel: SessionChannel, command: SessionInput) -> None:
-    text = command.text
-    request_id = command.request_id
-    channel.publish(SessionEvent(kind="user", text=text, event_id=request_id, state="rejected"))
+def _publish_events(channel: SessionChannel, events: tuple[SessionEvent, ...]) -> None:
+    _ = tuple(map(channel.publish, events))
 
 
 @dataclass(slots=True)
@@ -68,6 +62,7 @@ class _SessionExecution:
     spec: AgentRunSpec
     channel: SessionChannel
     protocol: SessionProtocol
+    process_invocation_id: str
     start_step: ProtocolStep
     outcome: _SessionOutcome
     started_at: float
@@ -100,12 +95,15 @@ class _SessionExecution:
             on_reader_error=self.mark_reader_error,
         )
         write_commands(proc, self.start_step.commands)
-        _publish_after_write_events(self.channel, self.start_step)
+        _publish_events(self.channel, self.start_step.after_write_events)
 
-    def remember_step(self, step: ProtocolStep) -> None:
+    def remember_step(self, step: ProtocolStep, *, publish_events: bool = True) -> None:
         channel, outcome, wind_down = self.channel, self.outcome, self.wind_down
+        if step.session_id is not None:
+            outcome.session_id = step.session_id
         for event in step.events:
-            channel.publish(event)
+            if publish_events:
+                channel.publish(event)
             if event.kind == "tool":
                 key = event.event_id or f"tool:{outcome.tool_count}:{event.text}"
                 if key not in outcome.tool_ids:
@@ -115,30 +113,31 @@ class _SessionExecution:
             outcome.interrupted = outcome.interrupted or event.state in {"interrupted", "aborted"}
         if step.result_text is not None:
             outcome.result_text = step.result_text
-        if step.session_id is not None:
-            outcome.session_id = step.session_id
-        outcome.done = outcome.done or step.done
-        outcome.failed = outcome.failed or step.failed
+        outcome.done, outcome.failed = outcome.done or step.done, outcome.failed or step.failed
         outcome.interrupted = outcome.interrupted or step.interrupted
         context = channel.view().context
         if context is not None:
-            channel.start(context, tuple(self.protocol.actions))
+            channel.start(
+                context,
+                tuple(self.protocol.actions),
+                invocation_id=self.process_invocation_id,
+            )
 
     def apply_step(self, step: ProtocolStep) -> None:
         assert self.proc is not None
         self.remember_step(step)
         write_commands(self.proc, step.commands)
-        _publish_after_write_events(self.channel, step)
+        _publish_events(self.channel, step.after_write_events)
 
     def receive_line(self, text: str) -> None:
         self.apply_step(self.protocol.receive(text.encode("utf-8")))
 
     def mark_reader_error(self, text: str) -> None:
-        self.outcome.failed = True
-        self.outcome.reader_failed = True
+        self.outcome.failed, self.outcome.reader_failed = True, True
         self.channel.publish(SessionEvent(kind="error", text=text, event_id="reader", delta=True))
 
     def submit_inputs(self) -> bool:
+        assert self.proc is not None
         commands = self.channel.drain()
         if not commands:
             return False
@@ -148,14 +147,20 @@ class _SessionExecution:
                 self.outcome.interrupt_requested = True
             try:
                 self.outcome.done = False
-                self.apply_step(self.protocol.submit(command))
+                step = self.protocol.submit(command)
+                _publish_events(self.channel, step.events)
+                write_commands(self.proc, step.commands)
+                if command.action in {"approve", "deny"} and step.after_write_events:
+                    self.channel.confirm(command, "delivered")
+                _publish_events(self.channel, step.after_write_events)
+                self.remember_step(step, publish_events=False)
             except ValueError:
                 self.outcome.done = was_done
-                _publish_rejected(self.channel, command)
+                self.channel.confirm(command, "rejected")
             except BrokenPipeError:
                 self.outcome.done = was_done
                 self.outcome.failed = True
-                _publish_rejected(self.channel, command)
+                self.channel.confirm(command, "unconfirmed")
         return True
 
     def run(self) -> None:
@@ -257,13 +262,15 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
     if protocol is None:
         raise ValueError(f"unsupported structured session command: {spec.cmd!r}")
     context = channel.view().context or SessionContext(family=Path(spec.cmd[0]).stem, cwd=str(cwd))
-    channel.start(context, tuple(protocol.actions))
+    process_invocation_id = uuid.uuid4().hex
+    channel.start(context, tuple(protocol.actions), invocation_id=process_invocation_id)
     started_at = time.monotonic()
     start_step = protocol.start(spec.prompt)
     execution = _SessionExecution(
         spec=spec,
         channel=channel,
         protocol=protocol,
+        process_invocation_id=process_invocation_id,
         start_step=start_step,
         outcome=_SessionOutcome(),
         started_at=started_at,

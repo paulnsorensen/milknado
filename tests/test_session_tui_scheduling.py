@@ -13,6 +13,7 @@ from typing_extensions import override
 from milknado.adapters import ChangedFile, GitAdapter
 from milknado.app.run import ExecutionController
 from milknado.app.run_tui import ExecutionApp
+from milknado.app.watch import WatchSnapshotSource
 from milknado.domains.common import SessionContext, SessionInput
 from tests.test_session_tui import (
     SnapshotController,
@@ -148,9 +149,13 @@ async def test_accepted_response_does_not_clear_newer_identical_draft_revision(
             controller.release_first.set()
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
-        assert controller.submissions == [
-            ("run-1", SessionInput(action="steer", text="same draft"))
-        ]
+        assert len(controller.submissions) == 1
+        run_id, submission = controller.submissions[0]
+        assert run_id == "run-1"
+        assert submission.action == "steer"
+        assert submission.text == "same draft"
+        assert submission.request_id == ""
+        assert submission.command_id
         assert app.query_one("#session-input", Input).value == "same draft"
 
 
@@ -254,8 +259,7 @@ async def test_file_change_clears_previous_diff_until_selected_file_loads(
     monkeypatch.setattr(GitAdapter, "session_diff", delayed)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_workers(app).wait_for_complete()
-        await pilot.pause()
+        await _wait_for_change_pipeline(app, pilot)
         assert "+first-only" in plain(app, "#diff-text")
         await pilot.press("x", "down", "enter")
         assert await asyncio.to_thread(entered.wait, 3)
@@ -263,8 +267,7 @@ async def test_file_change_clears_previous_diff_until_selected_file_loads(
             assert "first-only" not in plain(app, "#diff-text")
         finally:
             release.set()
-        await _wait_for_workers(app).wait_for_complete()
-        await pilot.pause()
+        await _wait_for_change_pipeline(app, pilot)
         assert "+second-only" in plain(app, "#diff-text")
 
 
@@ -299,3 +302,8 @@ async def test_periodic_refresh_preserves_keyboard_file_choice(
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
         assert "+second-only" in plain(app, "#diff-text")
+
+
+def test_detached_watch_subscription_is_a_noop() -> None:
+    unsubscribe = WatchSnapshotSource.subscribe(lambda _snapshot: None)
+    assert unsubscribe() is None

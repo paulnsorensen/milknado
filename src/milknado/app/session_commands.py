@@ -15,6 +15,7 @@ from milknado.app.run_view import session_view
 from milknado.app.session_changes import SessionChangesMixin
 from milknado.app.session_navigation import RunSnapshot
 from milknado.domains.common import SessionAction, SessionInput
+from milknado.domains.graph import new_command_id
 
 
 class _SessionController(Protocol):
@@ -143,7 +144,14 @@ class SessionCommandsMixin(SessionChangesMixin):
             _ = host.notify("Select the exact permission request first.", severity="warning")
             return
         text = draft if action != "interrupt" else ""
-        command = SessionInput(action=action, text=text, request_id=request_id)
+        command = SessionInput(
+            action=action,
+            text=text,
+            request_id=request_id,
+            command_id=new_command_id(),
+            owner_incarnation=session.owner_incarnation,
+            invocation_id=session.invocation_id,
+        )
         run_id = selected.run_id
         submission_id = self._session_submission_ids.get(run_id, 0) + 1
         self._session_submission_ids[run_id] = submission_id

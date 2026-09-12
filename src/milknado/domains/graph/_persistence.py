@@ -134,6 +134,54 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "cwd TEXT NOT NULL, "
         + "base_oid TEXT NOT NULL)",
     ),
+    (
+        5,
+        "CREATE TABLE IF NOT EXISTS owner_capabilities ("
+        + "run_id TEXT PRIMARY KEY, "
+        + "node_id INTEGER NOT NULL, "
+        + "invocation_id TEXT NOT NULL, "
+        + "owner_incarnation TEXT NOT NULL, "
+        + "actions_json TEXT NOT NULL, "
+        + "permission_ids_json TEXT NOT NULL, "
+        + "published_at TEXT NOT NULL)",
+    ),
+    (
+        6,
+        "CREATE TABLE IF NOT EXISTS session_commands ("
+        + "admission_seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+        + "command_id TEXT NOT NULL UNIQUE, "
+        + "node_id INTEGER NOT NULL, "
+        + "run_id TEXT NOT NULL, "
+        + "invocation_id TEXT NOT NULL, "
+        + "owner_incarnation TEXT NOT NULL, "
+        + "action TEXT NOT NULL, "
+        + "text TEXT NOT NULL, "
+        + "permission_id TEXT, "
+        + "expires_at TEXT NOT NULL, "
+        + "status TEXT NOT NULL CHECK (status IN "
+        + "('queued', 'submitted', 'delivered', 'rejected', 'expired', 'unconfirmed')), "
+        + "admitted_at TEXT NOT NULL, "
+        + "updated_at TEXT NOT NULL, "
+        + "detail TEXT)",
+    ),
+    (
+        7,
+        "CREATE TABLE IF NOT EXISTS command_receipts ("
+        + "receipt_seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+        + "command_id TEXT NOT NULL, "
+        + "status TEXT NOT NULL CHECK (status IN "
+        + "('queued', 'submitted', 'delivered', 'rejected', 'expired', 'unconfirmed')), "
+        + "recorded_at TEXT NOT NULL, "
+        + "detail TEXT)",
+    ),
+    (
+        8,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_session_commands_pending_permission "
+        + "ON session_commands(run_id, invocation_id, owner_incarnation, permission_id) "
+        + "WHERE action IN ('approve', 'deny') "
+        + "AND status IN ('queued', 'submitted') "
+        + "AND permission_id IS NOT NULL",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -218,6 +266,19 @@ def _ensure_indexes(conn: sqlite3.Connection) -> None:
             issue_url TEXT,
             created_at TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_session_commands_queue
+            ON session_commands(status, admission_seq);
+        CREATE INDEX IF NOT EXISTS idx_session_commands_run
+            ON session_commands(run_id, status, admission_seq);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_session_commands_pending_permission
+            ON session_commands(run_id, invocation_id, owner_incarnation, permission_id)
+            WHERE action IN ('approve', 'deny')
+              AND status IN ('queued', 'submitted')
+              AND permission_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_command_receipts_command
+            ON command_receipts(command_id, receipt_seq DESC);
+        CREATE INDEX IF NOT EXISTS idx_owner_capabilities_node
+            ON owner_capabilities(node_id, run_id);
         CREATE INDEX IF NOT EXISTS idx_github_bind_attempts_marker
             ON github_bind_attempts(marker);
         """
@@ -571,6 +632,9 @@ def drop_all(conn: sqlite3.Connection) -> int:
     count = cast(int, _as_tuple(count_row)[0])
     for statement in (
         "DELETE FROM run_messages",
+        "DELETE FROM command_receipts",
+        "DELETE FROM session_commands",
+        "DELETE FROM owner_capabilities",
         "DELETE FROM run_sessions",
         "DELETE FROM runs",
         "DELETE FROM file_ownership",

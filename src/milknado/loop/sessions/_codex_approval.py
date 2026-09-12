@@ -69,7 +69,10 @@ class CodexApprovalMixin(CodexState, metaclass=ABCMeta):
 
     @override
     def _approval_resolved(self, params: dict[str, object]) -> ProtocolStep:
-        request_id = text_value(params.get("requestId") or params.get("id"))
+        raw_id = params.get("requestId", params.get("id"))
+        if not isinstance(raw_id, (int, str)) or isinstance(raw_id, bool):
+            return ProtocolStep()
+        request_id = str(raw_id)
         approval = self._approvals.pop(request_id, None)
         if approval is None:
             return ProtocolStep()
@@ -80,4 +83,13 @@ class CodexApprovalMixin(CodexState, metaclass=ABCMeta):
             event_id=request_id,
             state=state,
         )
+        if approval.command_id:
+            receipt = SessionEvent(
+                kind="user",
+                text="",
+                event_id=approval.command_id,
+                state="delivered",
+                action="approve" if approval.action == "approve" else "deny",
+            )
+            return ProtocolStep(events=(event, receipt), session_id=self._session_id or None)
         return ProtocolStep(events=(event,), session_id=self._session_id or None)

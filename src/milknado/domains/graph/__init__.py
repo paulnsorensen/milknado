@@ -1,5 +1,14 @@
 from milknado.domains.common.errors import RunFenceLostError
+from milknado.domains.graph._command_admission import admit_session_command
 from milknado.domains.graph._run_persistence import RunRecord
+from milknado.domains.graph.commands import (
+    CommandFenceError,
+    CommandReceipt,
+    CommandStatus,
+    GraphCommand,
+    OwnerCapabilities,
+    new_command_id,
+)
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import (
     DurableRun,
@@ -38,6 +47,13 @@ from milknado.domains.graph.status_flow import (
 from milknado.domains.graph.traversals import walk_ancestors
 
 __all__ = [
+    "admit_session_command",
+    "CommandFenceError",
+    "CommandReceipt",
+    "CommandStatus",
+    "GraphCommand",
+    "OwnerCapabilities",
+    "new_command_id",
     "ArtifactSnapshot",
     "GraphSnapshot",
     "NodeDetailResponse",

@@ -61,7 +61,6 @@ class LoopAdapter(LoopSessionMixin):
         )
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
-        # Only Claude supports --mcp-config; other CLIs reject it at launch.
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
@@ -81,6 +80,8 @@ class LoopAdapter(LoopSessionMixin):
         )
         if context is not None:
             config.session_context = context
+            if run_id is not None:
+                self._configure_session_commands(config, run_id)
         if completion_probe is not None:
             config.completion_probe = completion_probe
         if completion_probe is None:

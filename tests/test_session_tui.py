@@ -12,6 +12,7 @@ import pytest
 from rich.console import RenderableType
 from rich.text import Text
 from textual.widgets import Button, DataTable, Input, Select, Static
+from typing_extensions import override
 
 from milknado.adapters import ChangedFile, GitAdapter
 from milknado.app.run import (
@@ -52,6 +53,19 @@ class SnapshotController(FakeController):
         return self.accepted
 
 
+@dataclass(kw_only=True)
+class _FenceController(SnapshotController):
+    started: Event = field(default_factory=Event)
+    release: Event = field(default_factory=Event)
+
+    @override
+    def session_input(self, run_id: str, command: SessionInput) -> bool:
+        self.started.set()
+        assert self.release.wait(5), "Fenced input was not released"
+        self.submissions.append((run_id, command))
+        return command.invocation_id == "invoke-2"
+
+
 def plain(app: ExecutionApp | WatchApp, selector: str) -> str:
     renderable = app.query_one(selector, Static).render()
     return renderable.plain if isinstance(renderable, Text) else str(renderable)
@@ -81,6 +95,8 @@ def _session_view(context: SessionContext, request_id: str, prompt: str) -> Sess
         context=context,
         actions=("steer", "follow_up", "approve", "deny"),
         active=True,
+        owner_incarnation="owner-1",
+        invocation_id="invoke-1",
         permissions=(
             SessionEvent(kind="permission", event_id=request_id, text=prompt, state="requested"),
         ),
@@ -138,6 +154,34 @@ def controller() -> _SessionController:
     return _SessionController(
         channel=channel, initial_snapshot=replace(current, active_runs=(selected,))
     )
+
+
+@pytest.mark.asyncio
+async def test_queued_input_keeps_displayed_fence_and_draft_after_rejection(
+    tmp_path: Path,
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    controller = _FenceController(
+        initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
+    )
+    displayed = controller.snapshot().active_runs[0].session
+    assert displayed is not None
+    assert (displayed.owner_incarnation, displayed.invocation_id) == ("owner-1", "invoke-1")
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i", *"keep this input", "enter")
+        assert await asyncio.to_thread(controller.started.wait, 3)
+        current = controller.snapshot()
+        stale = replace(current.active_runs[0].session, invocation_id="invoke-2")
+        controller.publish(
+            replace(current, active_runs=(replace(current.active_runs[0], session=stale),))
+        )
+        controller.release.set()
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert controller.submissions[0][1].invocation_id == "invoke-1"
+        assert app.query_one("#session-input", Input).value == "keep this input"
 
 
 @pytest.mark.asyncio
@@ -203,9 +247,15 @@ async def test_permission_choice_survives_refresh_and_preserves_reply_text(
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
         inputs = [event for event in controller.channel.view().events if event.kind == "user"]
-        assert [(event.event_id, event.text, event.action, event.state) for event in inputs] == [
-            (request_id, "beta", "approve", "queued"),
-        ]
+        assert len(inputs) == 1
+        submitted = inputs[0]
+        assert submitted.event_id.startswith("1/")
+        assert submitted.event_id != request_id
+        assert (submitted.text, submitted.action, submitted.state) == (
+            "beta",
+            "approve",
+            "queued",
+        )
 
 
 @pytest.mark.asyncio
@@ -280,9 +330,13 @@ async def test_rejected_session_input_retains_exact_draft() -> None:
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
 
-        assert controller.submissions == [
-            ("run-1", SessionInput(action="steer", text="keep this draft"))
-        ]
+        assert len(controller.submissions) == 1
+        run_id, submission = controller.submissions[0]
+        assert run_id == "run-1"
+        assert submission.action == "steer"
+        assert submission.text == "keep this draft"
+        assert submission.request_id == ""
+        assert submission.command_id
         assert app.query_one("#session-input", Input).value == "keep this draft"
 
 

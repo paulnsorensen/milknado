@@ -8,6 +8,7 @@ from typing import cast
 
 import msgspec
 
+import milknado.domains.graph._command_records as _command_records
 import milknado.domains.graph._run_persistence as _run_persistence
 from milknado.domains.common import (
     SessionContext,
@@ -182,10 +183,15 @@ def view_session(
         row = fetchone(conn, "SELECT status FROM runs WHERE run_id = ?", (run_id,))
         active = row is not None and cast(str, row[0]) == "running"
     events = _events(conn, run_id, limit)
+    is_active = bool(context is not None and active)
+    capabilities = _command_records.get_capabilities(conn, run_id) if is_active else None
     return SessionView(
         context=context,
         events=events,
-        active=bool(context is not None and active),
+        actions=capabilities.actions if capabilities is not None else (),
+        active=is_active,
+        owner_incarnation=capabilities.owner_incarnation if capabilities is not None else "",
+        invocation_id=capabilities.invocation_id if capabilities is not None else "",
         permissions=tuple(
             event for event in events if event.kind == "permission" and event.state == "requested"
         ),
