@@ -7,10 +7,11 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import TypeVar, cast
 
+from milknado.domains.common.session import SessionEvent
 from milknado.domains.common.types import MikadoNode, NodeKind
 from milknado.domains.graph._goal_claims import GoalClaim
 from milknado.domains.graph._run_persistence import NodeReviewRecord
-from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph._session_persistence import event_page, view_session
 from milknado.domains.graph.snapshot_models import (
     ArtifactSnapshot,
     NodeSessionSnapshot,
@@ -23,24 +24,32 @@ _T = TypeVar("_T")
 
 
 def validate(page: int, limit: int) -> None:
-    if page < 0 or not 0 <= limit <= 100:
-        raise ValueError("page must be non-negative and limit must be between 0 and 100")
+    if page < 0 or not 1 <= limit <= 100:
+        raise ValueError("page must be non-negative and limit must be between 1 and 100")
+
+
+def _make_page(
+    items: tuple[_T, ...],
+    offset: int,
+    limit: int,
+    total: int | None,
+) -> SnapshotPage[_T]:
+    return SnapshotPage(
+        items,
+        offset,
+        limit,
+        total,
+        bool(total is not None and offset + len(items) < total),
+    )
 
 
 def values_page(  # noqa: PLR0913 - page metadata is one immutable contract
     items: list[_T], page: int, limit: int, total: int | None, state: SnapshotState = "loaded"
 ) -> SnapshotPage[_T]:
-    offset = page * limit if limit else 0
+    offset = page * limit
     if state != "loaded":
         return SnapshotPage(None, offset, limit, None, False, state)
-    page_items = items[offset : offset + limit]
-    return SnapshotPage(
-        tuple(page_items),
-        offset,
-        limit,
-        total,
-        bool(total is not None and offset + len(page_items) < total),
-    )
+    return _make_page(tuple(items[offset : offset + limit]), offset, limit, total)
 
 
 def table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -95,15 +104,12 @@ def page(  # noqa: PLR0913 - one bounded SQL page contract
     stored: bool = True,
 ) -> SnapshotPage[object]:
     validate(page_number, limit)
+    offset = page_number * limit
     if not stored:
-        return values_page([], page_number, limit, None, "not_stored")
+        return SnapshotPage(None, offset, limit, None, False, "not_stored")
     total = cast(int, conn.execute(count_sql, (node_id,)).fetchone()[0])
-    offset = page_number * limit if limit else 0
-    rows = cast(
-        list[sqlite3.Row],
-        [] if limit == 0 else conn.execute(rows_sql, (node_id, limit, offset)).fetchall(),
-    )
-    return values_page([mapper(row) for row in rows], page_number, limit, total)
+    rows = cast(list[sqlite3.Row], conn.execute(rows_sql, (node_id, limit, offset)).fetchall())
+    return _make_page(tuple(mapper(row) for row in rows), offset, limit, total)
 
 
 def nodes(  # noqa: PLR0913 - node relation page carries SQL and window
@@ -116,13 +122,10 @@ def nodes(  # noqa: PLR0913 - node relation page carries SQL and window
 ) -> SnapshotPage[MikadoNode]:
     validate(page_number, limit)
     total = cast(int, conn.execute(count_sql, (node_id,)).fetchone()[0])
-    offset = page_number * limit if limit else 0
-    rows = cast(
-        list[sqlite3.Row],
-        [] if limit == 0 else conn.execute(rows_sql, (node_id, limit, offset)).fetchall(),
-    )
+    offset = page_number * limit
+    rows = cast(list[sqlite3.Row], conn.execute(rows_sql, (node_id, limit, offset)).fetchall())
     items = hydrate(conn, rows)
-    return SnapshotPage(items, offset, limit, total, bool(offset + len(items) < total))
+    return _make_page(items, offset, limit, total)
 
 
 def reviews(
@@ -148,8 +151,12 @@ def reviews(
     return cast(SnapshotPage[NodeReviewRecord], result)
 
 
-def sessions(
-    conn: sqlite3.Connection, node_id: int, page_number: int, limit: int
+def sessions(  # noqa: PLR0913 - node and event pages share one read
+    conn: sqlite3.Connection,
+    node_id: int,
+    page_number: int,
+    limit: int,
+    event_page_number: int,
 ) -> SnapshotPage[NodeSessionSnapshot]:
     stored = table_exists(conn, "run_sessions") and table_exists(conn, "run_messages")
     result = page(
@@ -160,22 +167,38 @@ def sessions(
         node_id,
         page_number,
         limit,
-        lambda row: _session(conn, cast(str, row["run_id"]), stored),
+        lambda row: _session(conn, cast(str, row["run_id"]), stored, event_page_number, limit),
         stored,
     )
     return cast(SnapshotPage[NodeSessionSnapshot], result)
 
 
-def _session(conn: sqlite3.Connection, run_id: str, stored: bool) -> NodeSessionSnapshot:
+def _empty_event_page(limit: int, state: SnapshotState = "loaded") -> SnapshotPage[SessionEvent]:
+    items = None if state != "loaded" else ()
+    total = None if state != "loaded" else 0
+    return SnapshotPage(items, 0, limit, total, False, state)
+
+
+def _session(  # noqa: PLR0913 - session identity and page bounds share one read
+    conn: sqlite3.Connection,
+    run_id: str,
+    stored: bool,
+    event_page_number: int,
+    event_limit: int,
+) -> NodeSessionSnapshot:
     if not stored:
-        return NodeSessionSnapshot(run_id, None, "not_stored")
+        return NodeSessionSnapshot(
+            run_id, None, "not_stored", _empty_event_page(event_limit, "not_stored")
+        )
     row = cast(
         sqlite3.Row | None,
         conn.execute("SELECT 1 FROM run_sessions WHERE run_id = ?", (run_id,)).fetchone(),
     )
     if row is None:
-        return NodeSessionSnapshot(run_id, None, "not_stored")
-    return NodeSessionSnapshot(run_id, view_session(conn, run_id), "loaded")
+        return NodeSessionSnapshot(run_id, None, "loaded", _empty_event_page(event_limit))
+    session = view_session(conn, run_id)
+    history = event_page(conn, run_id, event_page_number, event_limit)
+    return NodeSessionSnapshot(run_id, session, "loaded", history)
 
 
 _ANCESTOR_CTE = """
@@ -194,19 +217,6 @@ WITH RECURSIVE ancestor(id, depth, path) AS (
 """
 
 
-def ancestors(conn: sqlite3.Connection, node_value: MikadoNode) -> list[MikadoNode]:
-    rows = cast(
-        list[sqlite3.Row],
-        conn.execute(
-            _ANCESTOR_CTE
-            + "SELECT n.* FROM ancestor JOIN nodes n ON n.id = ancestor.id "
-            + "WHERE n.archived_at IS NULL ORDER BY ancestor.depth",
-            (node_value.id,),
-        ).fetchall(),
-    )
-    return list(hydrate(conn, rows))
-
-
 def ancestor_page(
     conn: sqlite3.Connection, node_value: MikadoNode, page_number: int, limit: int
 ) -> SnapshotPage[MikadoNode]:
@@ -220,12 +230,10 @@ def ancestor_page(
             (node_value.id,),
         ).fetchone()[0],
     )
-    offset = page_number * limit if limit else 0
+    offset = page_number * limit
     rows = cast(
         list[sqlite3.Row],
-        []
-        if limit == 0
-        else conn.execute(
+        conn.execute(
             _ANCESTOR_CTE
             + "SELECT n.* FROM ancestor JOIN nodes n ON n.id = ancestor.id "
             + "WHERE n.archived_at IS NULL ORDER BY ancestor.depth LIMIT ? OFFSET ?",
@@ -233,7 +241,7 @@ def ancestor_page(
         ).fetchall(),
     )
     items = hydrate(conn, rows)
-    return SnapshotPage(items, offset, limit, total, bool(offset + len(items) < total))
+    return _make_page(items, offset, limit, total)
 
 
 def claim(conn: sqlite3.Connection, node_value: MikadoNode) -> SnapshotValue[GoalClaim]:
@@ -271,15 +279,3 @@ def artifacts(
         limit,
         1,
     )
-
-
-__all__ = [
-    "ancestors",
-    "artifacts",
-    "claim",
-    "node",
-    "nodes",
-    "page",
-    "reviews",
-    "sessions",
-]

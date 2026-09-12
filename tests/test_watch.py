@@ -13,7 +13,14 @@ from milknado.app.watch import (
     WatchSnapshotSource,
     _tail_open_file,  # pyright: ignore[reportPrivateUsage] -- wrapping the tail helper directly to assert its cache-hit count
 )
-from milknado.domains.common import NodeKind, NodeSpec, NodeStatus, RunResult
+from milknado.domains.common import (
+    NodeKind,
+    NodeSpec,
+    NodeStatus,
+    RunResult,
+    SessionContext,
+    SessionEvent,
+)
 from milknado.domains.graph import MikadoGraph, read_observer_snapshot
 
 
@@ -186,4 +193,31 @@ def test_watch_source_assembles_requested_detail_with_graph(tmp_path: Path) -> N
     assert snapshot.node.matches(node.id, 7)
     assert snapshot.node.detail is not None
     assert snapshot.node.detail.description == "Observe detail"
-    assert source.node_snapshot(request) == snapshot.node
+    with patch("milknado.app.watch.read_observer_snapshot", side_effect=AssertionError):
+        assert source.node_snapshot(request) == snapshot.node
+
+
+def test_watch_source_forwards_session_event_page(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    writer = MikadoGraph(db_path)
+    node = writer.add_node("Watch session detail")
+    _ = writer.runs.start(
+        "watch-run",
+        node.id,
+        str(tmp_path / "run.log"),
+        "2026-09-12T00:00:00+00:00",
+        60,
+    )
+    _ = writer.sessions.start("watch-run", SessionContext(family="codex", cwd=str(tmp_path)))
+    _ = writer.sessions.append("watch-run", SessionEvent(kind="status", text="first"))
+    _ = writer.sessions.append("watch-run", SessionEvent(kind="status", text="second"))
+    writer.close()
+    source = WatchSnapshotSource(tmp_path, db_path)
+
+    request = NodeSnapshotRequest(node.id, request_generation=8, limit=1, session_event_page=1)
+    snapshot = source.snapshot(request)
+
+    assert snapshot.node is not None and snapshot.node.detail is not None
+    sessions = snapshot.node.detail.sessions.items
+    assert sessions is not None and sessions[0].event_history.items is not None
+    assert tuple(event.text for event in sessions[0].event_history.items) == ("first",)

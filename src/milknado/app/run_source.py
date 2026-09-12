@@ -90,6 +90,7 @@ class NodeSnapshotRequest:
     request_generation: int
     page: int = 0
     limit: int = 50
+    session_event_page: int = 0
 
 
 class ExecutionSnapshotSource(Protocol):

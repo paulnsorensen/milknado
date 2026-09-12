@@ -20,7 +20,7 @@ from milknado.app.run import (
     RunActionAvailability,
 )
 from milknado.app.run_source import NodeSnapshotRequest
-from milknado.domains.common import MilknadoConfig
+from milknado.domains.common import MilknadoConfig, SessionContext, SessionEvent
 from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
     ActiveRunState,
@@ -462,6 +462,38 @@ def test_controller_exposes_node_snapshot_through_shared_source_contract(
     assert response.matches(node.id, 9)
     assert response.detail is not None
     assert response.detail.description == "Controller detail"
+
+
+def test_controller_forwards_session_event_page(
+    graph: MikadoGraph,
+) -> None:
+    node = graph.add_node("Controller session detail")
+    _ = graph.runs.start(
+        "controller-run",
+        node.id,
+        "controller.log",
+        "2026-09-12T00:00:00+00:00",
+        60,
+    )
+    _ = graph.sessions.start("controller-run", SessionContext(family="codex", cwd="."))
+    _ = graph.sessions.append("controller-run", SessionEvent(kind="status", text="first"))
+    _ = graph.sessions.append("controller-run", SessionEvent(kind="status", text="second"))
+    controller = ExecutionController(
+        _as_run_loop(FakeLoop(loop_state())),
+        _none_config(),
+        _none_limit(),
+        _policy_config(),
+        graph=graph,
+    )
+
+    response = controller.node_snapshot(
+        NodeSnapshotRequest(node.id, request_generation=9, limit=1, session_event_page=1)
+    )
+
+    assert response.detail is not None
+    sessions = response.detail.sessions.items
+    assert sessions is not None and sessions[0].event_history.items is not None
+    assert tuple(event.text for event in sessions[0].event_history.items) == ("first",)
 
 
 def test_controller_rejects_a_second_concurrent_run(graph: MikadoGraph) -> None:

@@ -19,6 +19,8 @@ from milknado.domains.graph.snapshot import (
 )
 from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
+_NODE_DETAIL_DEFAULT_LIMIT = 50
+
 _READY_COUNT_SQL = """
 WITH ready(id) AS (
     SELECT n.id
@@ -124,6 +126,25 @@ def _goal_description(conn: sqlite3.Connection) -> str:
     return row[0] if row is not None else ""
 
 
+def read_observer_node_snapshot(  # noqa: PLR0913 - node response fence and page share one read
+    db_path: Path,
+    node_id: int,
+    request_generation: int = 0,
+    page: int = 0,
+    limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
+    session_event_page: int = 0,
+) -> NodeDetailResponse:
+    conn = connect_readonly(db_path)
+    try:
+        _ = conn.execute("BEGIN")
+        return read_node_detail_connection(
+            conn, node_id, request_generation, page, limit, session_event_page
+        )
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share one transaction
     db_path: Path,
     limit: int = 50,
@@ -131,7 +152,8 @@ def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share 
     node_id: int | None = None,
     request_generation: int = 0,
     page: int = 0,
-    node_limit: int | None = None,
+    node_limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
+    session_event_page: int = 0,
 ) -> ObserverSnapshot:
     """Read bounded observer facts in one transaction without writer maintenance."""
     if not 0 <= limit <= 100:
@@ -152,7 +174,8 @@ def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share 
                     node_id,
                     request_generation,
                     page,
-                    limit if node_limit is None else node_limit,
+                    node_limit,
+                    session_event_page,
                 )
                 if node_id is not None
                 else None
@@ -168,5 +191,6 @@ __all__ = [
     "GraphSnapshot",
     "NodeDetailResponse",
     "ObserverSnapshot",
+    "read_observer_node_snapshot",
     "read_observer_snapshot",
 ]
