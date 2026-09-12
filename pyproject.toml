@@ -290,11 +290,6 @@ ignore_names = [
     "max_time_in_seconds",  # ortools CpSolver parameter
     "LimitFlags",           # Windows ctypes JOBOBJECT field
     "__getattr__",          # PEP 562 module hook called by the interpreter
-    "get_node_detail_snapshot",  # public graph read contract consumed by clients
-    "node_snapshot",          # shared app source contract consumed by clients
-    "has_more",             # paged snapshot metadata consumed by clients
-    "root_ids",             # graph snapshot roots consumed by clients
-    "goal_claim",           # node detail snapshot relation consumed by clients
 ]
 
 # Allowlist for scripts/check_dead_code_coverage.py: whole-symbol zero-hit code

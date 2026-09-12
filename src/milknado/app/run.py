@@ -22,6 +22,7 @@ from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
     ExecutionSnapshot,
+    NodeSnapshotRequest,
     RunActionAvailability,
     TerminalRunSnapshot,
 )
@@ -40,8 +41,7 @@ from milknado.domains.common import (
 if TYPE_CHECKING:
     from milknado.domains.dispatch import IsolateContext
     from milknado.domains.execution import ExecutionConfig, RunLoop, RunLoopResult, RunLoopState
-    from milknado.domains.graph import MikadoGraph
-
+    from milknado.domains.graph import MikadoGraph, NodeDetailResponse
 _logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -176,6 +176,18 @@ class ExecutionController:
         """Return the controller's current immutable presentation snapshot."""
         with self._state_lock:
             return self._snapshot
+
+    def node_snapshot(  # noqa: V105 - shared source contract consumed by the run view
+        self, request: NodeSnapshotRequest
+    ) -> NodeDetailResponse:
+        if self._graph is None:
+            raise RuntimeError("node snapshots require a graph")
+        return self._graph.get_node_detail_snapshot(
+            request.node_id,
+            request_generation=request.request_generation,
+            page=request.page,
+            limit=request.limit,
+        )
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         """Subscribe to future snapshots and replay the current state once."""

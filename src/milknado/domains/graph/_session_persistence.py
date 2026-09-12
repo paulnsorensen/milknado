@@ -9,7 +9,7 @@ from typing import cast
 import msgspec
 
 import milknado.domains.graph._run_persistence as _run_persistence
-from milknado.domains.common.session import (
+from milknado.domains.common import (
     SessionContext,
     SessionEvent,
     SessionView,

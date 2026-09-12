@@ -20,7 +20,6 @@ from milknado.app.run_source import NodeSnapshotRequest
 from milknado.domains.graph import (
     DurableRun,
     NodeDetailResponse,
-    read_node_detail_snapshot,
     read_observer_snapshot,
 )
 
@@ -51,8 +50,15 @@ class WatchSnapshotSource:
         default_factory=dict, init=False
     )
 
-    def snapshot(self) -> ExecutionSnapshot:
-        observed = read_observer_snapshot(self.db_path, self.limit)
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+        observed = read_observer_snapshot(
+            self.db_path,
+            self.limit,
+            node_id=request.node_id if request is not None else None,
+            request_generation=request.request_generation if request is not None else 0,
+            page=request.page if request is not None else 0,
+            node_limit=request.limit if request is not None else None,
+        )
         runs = observed.runs
         active = tuple(
             self._active_snapshot(run, run.description) for run in runs if run.status == "running"
@@ -72,16 +78,16 @@ class WatchSnapshotSource:
             available=observed.available,
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
             graph=observed.graph,
+            node=observed.node,
         )
 
-    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
-        return read_node_detail_snapshot(
-            self.db_path,
-            request.node_id,
-            request.request_generation,
-            request.page,
-            request.limit,
-        )
+    def node_snapshot(  # noqa: V105 - shared source contract consumed by the watch view
+        self, request: NodeSnapshotRequest
+    ) -> NodeDetailResponse:
+        snapshot = self.snapshot(request)
+        if snapshot.node is None:
+            raise RuntimeError("node snapshot response was not assembled")
+        return snapshot.node
 
     def _active_snapshot(self, run: DurableRun, description: str) -> ActiveRunSnapshot:
         return ActiveRunSnapshot(

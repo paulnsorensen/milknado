@@ -20,7 +20,6 @@ import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
 import milknado.domains.graph._status as _status
-import milknado.domains.graph.observer as _observer
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
     GraphExecutionSnapshot,
@@ -37,6 +36,11 @@ from milknado.domains.graph._pipeline import (
     StatusPipeline,
     _PluginAsMiddleware,
 )
+from milknado.domains.graph.snapshot import (
+    read_graph_snapshot_connection,
+    read_node_detail_connection,
+)
+from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
@@ -65,8 +69,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _raw_conn: sqlite3.Connection | None
     _pipeline: StatusPipeline
     _dispatch_exclusions: set[int]
-    runs: _RunFacade
-    sessions: _SessionFacade
+    _graph_snapshot_cache: GraphSnapshot | None
+    _graph_snapshot_revision: tuple[int, int] | None
     files: _FileFacade
     github: _GithubFacade
 
@@ -89,8 +93,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
         )
         self._dispatch_exclusions = set()
-        self.runs = _RunFacade(self)
-        self.sessions = _SessionFacade(self)
+        self._graph_snapshot_cache = None
+        self._graph_snapshot_revision = None
+        self.runs: _RunFacade = _RunFacade(self)
+        self.sessions: _SessionFacade = _SessionFacade(self)
         self.files = _FileFacade(self)
         self.github = _GithubFacade(self)
 
@@ -195,6 +201,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             "".join(heal_stack),
         )
         self._raw_conn = self._open(self._db_path)
+        self._graph_snapshot_cache = None
+        self._graph_snapshot_revision = None
         self._closed = False
 
     @property
@@ -390,8 +398,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _reads.get_roots(self._conn, include_archived=include_archived)
 
     @synchronized
-    def get_graph_snapshot(self) -> _observer.GraphSnapshot:
-        return _observer.read_graph_snapshot_connection(self._conn)
+    def get_graph_snapshot(self) -> GraphSnapshot:
+        conn = self._conn
+        revision = (
+            conn.total_changes,
+            cast(int, conn.execute("PRAGMA data_version").fetchone()[0]),
+        )
+        cached = self._graph_snapshot_cache
+        if cached is not None and revision == self._graph_snapshot_revision:
+            return cached
+        snapshot = read_graph_snapshot_connection(conn)
+        self._graph_snapshot_cache = snapshot
+        self._graph_snapshot_revision = revision
+        return snapshot
 
     @synchronized
     def get_node_detail_snapshot(
@@ -401,10 +420,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         request_generation: int = 0,
         page: int = 0,
         limit: int = 50,
-    ) -> _observer.NodeDetailResponse:
-        return _observer.read_node_detail_connection(
-            self._conn, node_id, request_generation, page, limit
-        )
+    ) -> NodeDetailResponse:
+        return read_node_detail_connection(self._conn, node_id, request_generation, page, limit)
 
     @synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:

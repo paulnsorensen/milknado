@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
-from milknado.domains.common.types import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._run_persistence import (
     deposit_review_verdict,
     finish_run,
@@ -39,7 +39,7 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from milknado.domains.batching.change import BatchPlan
+    from milknado.domains.batching import BatchPlan
 
 _logger = logging.getLogger(__name__)
 

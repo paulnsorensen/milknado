@@ -7,8 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import TypedDict, cast
 
-from milknado.domains.common.errors import RunFenceLostError
-from milknado.domains.common.types import RunResult
+from milknado.domains.common import RunFenceLostError, RunResult
 from milknado.domains.graph._sqlite_rows import as_tuple as _as_tuple
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 

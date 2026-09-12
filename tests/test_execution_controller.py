@@ -19,6 +19,7 @@ from milknado.app.run import (
     ExecutionSnapshot,
     RunActionAvailability,
 )
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.domains.common import MilknadoConfig
 from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
@@ -441,6 +442,26 @@ def test_controller_propagates_control_failure_from_execution_thread(
     loop.release.set()
     runner.join(timeout=1)
     assert not runner.is_alive()
+
+
+def test_controller_exposes_node_snapshot_through_shared_source_contract(
+    graph: MikadoGraph,
+) -> None:
+    node = graph.add_node("Controller detail")
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop),
+        _none_config(),
+        _none_limit(),
+        _policy_config(),
+        graph=graph,
+    )
+
+    response = controller.node_snapshot(NodeSnapshotRequest(node.id, request_generation=9))
+
+    assert response.matches(node.id, 9)
+    assert response.detail is not None
+    assert response.detail.description == "Controller detail"
 
 
 def test_controller_rejects_a_second_concurrent_run(graph: MikadoGraph) -> None:
