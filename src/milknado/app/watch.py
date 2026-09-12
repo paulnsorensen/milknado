@@ -16,7 +16,13 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.domains.graph import DurableRun, read_observer_snapshot
+from milknado.app.run_source import NodeSnapshotRequest
+from milknado.domains.graph import (
+    DurableRun,
+    NodeDetailResponse,
+    read_node_detail_snapshot,
+    read_observer_snapshot,
+)
 
 _OBSERVER_ACTIONS = RunActionAvailability(
     cancel_reason="Observer mode is read-only.",
@@ -65,6 +71,16 @@ class WatchSnapshotSource:
             stopped=0,
             available=observed.available,
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
+            graph=observed.graph,
+        )
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return read_node_detail_snapshot(
+            self.db_path,
+            request.node_id,
+            request.request_generation,
+            request.page,
+            request.limit,
         )
 
     def _active_snapshot(self, run: DurableRun, description: str) -> ActiveRunSnapshot:
