@@ -41,15 +41,19 @@ def read_graph_snapshot_connection(conn: sqlite3.Connection) -> GraphSnapshot:
         for row in edge_rows
         if cast(int, row["parent_id"]) in node_ids and cast(int, row["child_id"]) in node_ids
     )
-    children = {edge.child_id for edge in edges}
-    return GraphSnapshot(nodes, edges, tuple(node.id for node in nodes if node.id not in children))
+    root_ids = tuple(node.id for node in nodes if node.parent_id is None)
+    return GraphSnapshot(nodes, edges, root_ids)
 
 
-def _detail(
-    conn: sqlite3.Connection, node_id: int, page: int, limit: int
+def _detail(  # noqa: PLR0913 - detail reads share one bounded snapshot
+    conn: sqlite3.Connection,
+    node_id: int,
+    page: int,
+    limit: int,
+    session_event_page: int,
 ) -> NodeDetailSnapshot | None:
     node = _history.node(conn, node_id)
-    if node is None:
+    if node is None or node.archived_at is not None:
         return None
     ancestors_page = _history.ancestor_page(conn, node, page, limit)
     parent = None if node.parent_id is None else _history.node(conn, node.parent_id)
@@ -57,10 +61,9 @@ def _detail(
         parent = None
     children = _history.nodes(
         conn,
-        "SELECT n.* FROM nodes n JOIN edges e ON e.child_id = n.id WHERE e.parent_id = ? "
-        + "AND n.archived_at IS NULL ORDER BY n.id LIMIT ? OFFSET ?",
-        "SELECT COUNT(*) FROM edges e JOIN nodes n ON n.id = e.child_id "
-        + "WHERE e.parent_id = ? AND n.archived_at IS NULL",
+        "SELECT n.* FROM nodes n WHERE n.parent_id = ? AND n.archived_at IS NULL "
+        + "ORDER BY n.id LIMIT ? OFFSET ?",
+        "SELECT COUNT(*) FROM nodes n WHERE n.parent_id = ? AND n.archived_at IS NULL",
         node_id,
         page,
         limit,
@@ -132,7 +135,7 @@ def _detail(
         owned_files=cast(SnapshotPage[str], owned_files),
         runs=cast(SnapshotPage[RunRecord], runs),
         reviews=_history.reviews(conn, node_id, page, limit),
-        sessions=_history.sessions(conn, node_id, page, limit),
+        sessions=_history.sessions(conn, node_id, page, limit, session_event_page),
         goal_claim=_history.claim(conn, node),
         artifacts=_history.artifacts(node, page, limit),
     )
@@ -144,6 +147,13 @@ def read_node_detail_connection(  # noqa: PLR0913 - response fence and page are 
     request_generation: int = 0,
     page: int = 0,
     limit: int = 50,
+    session_event_page: int = 0,
 ) -> NodeDetailResponse:
     _history.validate(page, limit)
-    return NodeDetailResponse(node_id, request_generation, _detail(conn, node_id, page, limit))
+    if session_event_page < 0:
+        raise ValueError("session_event_page must be non-negative")
+    return NodeDetailResponse(
+        node_id,
+        request_generation,
+        _detail(conn, node_id, page, limit, session_event_page),
+    )

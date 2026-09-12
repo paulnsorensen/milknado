@@ -187,6 +187,7 @@ class ExecutionController:
             request_generation=request.request_generation,
             page=request.page,
             limit=request.limit,
+            session_event_page=request.session_event_page,
         )
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:

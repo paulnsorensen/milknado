@@ -4,6 +4,7 @@ from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import (
     DurableRun,
     ObserverSnapshot,
+    read_observer_node_snapshot,
     read_observer_snapshot,
 )
 from milknado.domains.graph.rebalance import (
@@ -60,6 +61,7 @@ __all__ = [
     "StructureReport",
     "render_dot",
     "render_report",
+    "read_observer_node_snapshot",
     "read_observer_snapshot",
     "subtree_post_order",
     "invalid_subtree_node_ids",

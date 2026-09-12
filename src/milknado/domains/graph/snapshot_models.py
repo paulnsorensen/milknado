@@ -5,13 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, Literal, TypeVar
 
-from milknado.domains.common.session import SessionView
+from milknado.domains.common.session import SessionEvent, SessionView
 from milknado.domains.common.types import MikadoEdge, MikadoNode
 from milknado.domains.graph._goal_claims import GoalClaim
 from milknado.domains.graph._run_persistence import NodeReviewRecord, RunRecord
 
 _T = TypeVar("_T")
-SnapshotState = Literal["loaded", "not_loaded", "not_stored", "not_retained"]
+SnapshotState = Literal["loaded", "not_loaded", "not_stored"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +42,7 @@ class NodeSessionSnapshot:
     run_id: str
     session: SessionView | None
     state: SnapshotState
+    event_history: SnapshotPage[SessionEvent]  # noqa: V107 - consumed by detail clients
 
 
 @dataclass(frozen=True, slots=True)

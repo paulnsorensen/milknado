@@ -71,6 +71,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _dispatch_exclusions: set[int]
     _graph_snapshot_cache: GraphSnapshot | None
     _graph_snapshot_revision: tuple[int, int] | None
+    runs: _RunFacade
+    sessions: _SessionFacade
     files: _FileFacade
     github: _GithubFacade
 
@@ -95,8 +97,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         self._dispatch_exclusions = set()
         self._graph_snapshot_cache = None
         self._graph_snapshot_revision = None
-        self.runs: _RunFacade = _RunFacade(self)
-        self.sessions: _SessionFacade = _SessionFacade(self)
+        self.runs = _RunFacade(self)
+        self.sessions = _SessionFacade(self)
         self.files = _FileFacade(self)
         self.github = _GithubFacade(self)
 
@@ -400,17 +402,21 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def get_graph_snapshot(self) -> GraphSnapshot:
         conn = self._conn
-        revision = (
-            conn.total_changes,
-            cast(int, conn.execute("PRAGMA data_version").fetchone()[0]),
-        )
-        cached = self._graph_snapshot_cache
-        if cached is not None and revision == self._graph_snapshot_revision:
-            return cached
-        snapshot = read_graph_snapshot_connection(conn)
-        self._graph_snapshot_cache = snapshot
-        self._graph_snapshot_revision = revision
-        return snapshot
+        _ = conn.execute("SAVEPOINT graph_snapshot")
+        try:
+            revision = (
+                conn.total_changes,
+                cast(int, conn.execute("PRAGMA data_version").fetchone()[0]),
+            )
+            cached = self._graph_snapshot_cache
+            if cached is not None and revision == self._graph_snapshot_revision:
+                return cached
+            snapshot = read_graph_snapshot_connection(conn)
+            self._graph_snapshot_cache = snapshot
+            self._graph_snapshot_revision = revision
+            return snapshot
+        finally:
+            _ = conn.execute("RELEASE SAVEPOINT graph_snapshot")
 
     @synchronized
     def get_node_detail_snapshot(
@@ -420,8 +426,21 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         request_generation: int = 0,
         page: int = 0,
         limit: int = 50,
+        session_event_page: int = 0,
     ) -> NodeDetailResponse:
-        return read_node_detail_connection(self._conn, node_id, request_generation, page, limit)
+        conn = self._conn
+        _ = conn.execute("SAVEPOINT node_detail_snapshot")
+        try:
+            return read_node_detail_connection(
+                conn,
+                node_id,
+                request_generation,
+                page,
+                limit,
+                session_event_page,
+            )
+        finally:
+            _ = conn.execute("RELEASE SAVEPOINT node_detail_snapshot")
 
     @synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:
