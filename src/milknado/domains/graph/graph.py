@@ -20,6 +20,7 @@ import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
 import milknado.domains.graph._status as _status
+import milknado.domains.graph.observer as _observer
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
     GraphExecutionSnapshot,
@@ -387,6 +388,23 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def get_roots(self, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_roots(self._conn, include_archived=include_archived)
+
+    @synchronized
+    def get_graph_snapshot(self) -> _observer.GraphSnapshot:
+        return _observer.read_graph_snapshot_connection(self._conn)
+
+    @synchronized
+    def get_node_detail_snapshot(
+        self,
+        node_id: int,
+        *,
+        request_generation: int = 0,
+        page: int = 0,
+        limit: int = 50,
+    ) -> _observer.NodeDetailResponse:
+        return _observer.read_node_detail_connection(
+            self._conn, node_id, request_generation, page, limit
+        )
 
     @synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:

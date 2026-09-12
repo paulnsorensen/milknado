@@ -10,7 +10,6 @@ import logging
 import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from enum import StrEnum
 from pathlib import Path
 from queue import Queue
 from threading import Event, Lock, Thread
@@ -19,6 +18,13 @@ from typing import TYPE_CHECKING, cast, final
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
+from milknado.app.run_source import (
+    ActiveRunSnapshot,
+    ExecutionRunStatus,
+    ExecutionSnapshot,
+    RunActionAvailability,
+    TerminalRunSnapshot,
+)
 from milknado.domains.common import (
     GitOperationError,
     GitPort,
@@ -27,7 +33,6 @@ from milknado.domains.common import (
     NodeKind,
     NodeStatus,
     SessionInput,
-    SessionView,
     WorktreeMode,
     resolve_flavor_profile,
 )
@@ -39,76 +44,13 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
-
-class ExecutionRunStatus(StrEnum):
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    STOPPED = "stopped"
-
-
-@dataclass(frozen=True, slots=True)
-class RunActionAvailability:
-    cancel_reason: str | None = None
-    guidance_reason: str | None = None
-    force_stop_reason: str | None = None
-
-    @property
-    def can_cancel(self) -> bool:
-        return self.cancel_reason is None
-
-    @property
-    def can_queue_guidance(self) -> bool:
-        return self.guidance_reason is None
-
-    @property
-    def can_force_stop(self) -> bool:
-        return self.force_stop_reason is None
-
-
-@dataclass(frozen=True, slots=True)
-class ActiveRunSnapshot:
-    run_id: str
-    node_id: int
-    description: str
-    status: ExecutionRunStatus
-    progress: str | None
-    stop_requested: bool
-    actions: RunActionAvailability
-    output: tuple[str, ...]
-    pending_guidance: tuple[str, ...] | None
-    elapsed_seconds: float
-    progress_pct: float | None
-    eta_seconds: float | None
-    attempt: int | None
-    max_attempts: int | None
-    stalled: bool
-    session: SessionView = SessionView()
-
-
-@dataclass(frozen=True, slots=True)
-class TerminalRunSnapshot:
-    run_id: str
-    node_id: int
-    description: str
-    status: ExecutionRunStatus
-    output: tuple[str, ...]
-    pending_guidance: tuple[str, ...] | None
-    duration_seconds: float
-    session: SessionView = SessionView()
-
-
-@dataclass(frozen=True, slots=True)
-class ExecutionSnapshot:
-    goal: str
-    active_runs: tuple[ActiveRunSnapshot, ...]
-    terminal_runs: tuple[TerminalRunSnapshot, ...]
-    completed: int
-    failed: int
-    stopped: int
-    available: int
-    event_lines: tuple[str, ...]
-    listener_errors: tuple[str, ...] = ()
+__all__ = [
+    "ActiveRunSnapshot",
+    "ExecutionRunStatus",
+    "ExecutionSnapshot",
+    "RunActionAvailability",
+    "TerminalRunSnapshot",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,16 +112,18 @@ class ExecutionController:
         execution_config: ExecutionConfig,
         concurrency_limit: int,
         config: MilknadoConfig,
+        graph: MikadoGraph | None = None,
     ) -> None:
         self._loop = loop
         self._execution_config = execution_config
         self._concurrency_limit = concurrency_limit
         self._config = config
+        self._graph = graph
         self._controls: Queue[_ControlRequest] = Queue()
         self._state_lock = Lock()
         self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
         self._listener_errors: dict[int, str] = {}
-        self._snapshot = self._project_snapshot(loop.state())
+        self._snapshot = self._project_snapshot(loop.state(), graph)
         self._running = False
         loop.set_state_listener(self._receive_state)
 
@@ -255,7 +199,7 @@ class ExecutionController:
         return unsubscribe
 
     def _receive_state(self, state: RunLoopState) -> None:
-        snapshot = self._project_snapshot(state)
+        snapshot = self._project_snapshot(state, self._graph)
         with self._state_lock:
             snapshot = replace(snapshot, listener_errors=tuple(self._listener_errors.values()))
             self._snapshot = snapshot
@@ -292,7 +236,9 @@ class ExecutionController:
                 )
 
     @staticmethod
-    def _project_snapshot(state: RunLoopState) -> ExecutionSnapshot:
+    def _project_snapshot(
+        state: RunLoopState, graph: MikadoGraph | None = None
+    ) -> ExecutionSnapshot:
         active_runs = tuple(
             ActiveRunSnapshot(
                 run_id=run.run_id,
@@ -340,6 +286,7 @@ class ExecutionController:
             stopped=state.stopped,
             available=state.available,
             event_lines=state.event_lines,
+            graph=graph.get_graph_snapshot() if graph is not None else None,
         )
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
@@ -415,6 +362,7 @@ def build_execution_controller(
         execution_config=build_exec_config(config, project_root),
         concurrency_limit=config.concurrency_limit,
         config=config,
+        graph=graph,
     )
 
 

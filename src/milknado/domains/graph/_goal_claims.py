@@ -9,7 +9,8 @@ from __future__ import annotations
 import sqlite3
 from typing import Protocol, TypedDict, cast
 
-from milknado.domains.common import NodeKind, pid_alive
+from milknado.domains.common.process import pid_alive
+from milknado.domains.common.types import NodeKind
 from milknado.domains.graph._sqlite_rows import fetchone
 
 GoalClaim = TypedDict(  # noqa: UP013
