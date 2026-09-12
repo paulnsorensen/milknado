@@ -4,7 +4,6 @@ from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import (
     DurableRun,
     ObserverSnapshot,
-    read_node_detail_snapshot,
     read_observer_snapshot,
 )
 from milknado.domains.graph.rebalance import (
@@ -26,6 +25,7 @@ from milknado.domains.graph.snapshot_models import (
     NodeDetailSnapshot,
     NodeSessionSnapshot,
     SnapshotPage,
+    SnapshotState,
     SnapshotValue,
 )
 from milknado.domains.graph.status_flow import (
@@ -43,6 +43,7 @@ __all__ = [
     "NodeDetailSnapshot",
     "NodeSessionSnapshot",
     "SnapshotPage",
+    "SnapshotState",
     "SnapshotValue",
     "CLAIM_ROLE",
     "INBOX_DESCRIPTION",
@@ -59,7 +60,6 @@ __all__ = [
     "StructureReport",
     "render_dot",
     "render_report",
-    "read_node_detail_snapshot",
     "read_observer_snapshot",
     "subtree_post_order",
     "invalid_subtree_node_ids",

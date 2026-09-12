@@ -9,14 +9,18 @@ from typing import Protocol
 from typing_extensions import override
 
 from milknado.app.run import ExecutionSnapshot
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.app.watch import WatchSnapshotSource
+from milknado.domains.graph import NodeDetailResponse
 
 POLL_INTERVAL_SECONDS = 1.0
 
 
 class SnapshotSource(Protocol):
     def snapshot(self) -> ExecutionSnapshot: ...
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse: ...
 
 
 class _WatchController:
@@ -27,6 +31,9 @@ class _WatchController:
 
     def snapshot(self) -> ExecutionSnapshot:
         return self.source.snapshot()
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return self.source.node_snapshot(request)
 
     @staticmethod
     def subscribe(

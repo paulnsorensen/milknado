@@ -51,7 +51,10 @@ def _detail(
     node = _history.node(conn, node_id)
     if node is None:
         return None
-    ancestors = _history.ancestors(conn, node)
+    ancestors_page = _history.ancestor_page(conn, node, page, limit)
+    parent = None if node.parent_id is None else _history.node(conn, node.parent_id)
+    if parent is not None and parent.archived_at is not None:
+        parent = None
     children = _history.nodes(
         conn,
         "SELECT n.* FROM nodes n JOIN edges e ON e.child_id = n.id WHERE e.parent_id = ? "
@@ -64,8 +67,11 @@ def _detail(
     )
     prerequisite_ids = _history.page(
         conn,
-        "SELECT child_id AS id FROM edges WHERE parent_id = ? ORDER BY child_id LIMIT ? OFFSET ?",
-        "SELECT COUNT(*) FROM edges WHERE parent_id = ?",
+        "SELECT e.child_id AS id FROM edges e JOIN nodes n ON n.id = e.child_id "
+        + "WHERE e.parent_id = ? AND n.archived_at IS NULL "
+        + "ORDER BY e.child_id LIMIT ? OFFSET ?",
+        "SELECT COUNT(*) FROM edges e JOIN nodes n ON n.id = e.child_id "
+        + "WHERE e.parent_id = ? AND n.archived_at IS NULL",
         node_id,
         page,
         limit,
@@ -73,8 +79,11 @@ def _detail(
     )
     dependent_ids = _history.page(
         conn,
-        "SELECT parent_id AS id FROM edges WHERE child_id = ? ORDER BY parent_id LIMIT ? OFFSET ?",
-        "SELECT COUNT(*) FROM edges WHERE child_id = ?",
+        "SELECT e.parent_id AS id FROM edges e JOIN nodes n ON n.id = e.parent_id "
+        + "WHERE e.child_id = ? AND n.archived_at IS NULL "
+        + "ORDER BY e.parent_id LIMIT ? OFFSET ?",
+        "SELECT COUNT(*) FROM edges e JOIN nodes n ON n.id = e.parent_id "
+        + "WHERE e.child_id = ? AND n.archived_at IS NULL",
         node_id,
         page,
         limit,
@@ -114,9 +123,9 @@ def _detail(
     return NodeDetailSnapshot(
         node=node,
         description=node.description,
-        parent=None if node.parent_id is None else _history.node(conn, node.parent_id),
+        parent=parent,
         children=children,
-        ancestors=_history.values_page(ancestors, page, limit, len(ancestors)),
+        ancestors=ancestors_page,
         prerequisite_ids=cast(SnapshotPage[int], prerequisite_ids),
         dependent_ids=cast(SnapshotPage[int], dependent_ids),
         reverse_dependents=reverse_dependents,
@@ -138,19 +147,3 @@ def read_node_detail_connection(  # noqa: PLR0913 - response fence and page are 
 ) -> NodeDetailResponse:
     _history.validate(page, limit)
     return NodeDetailResponse(node_id, request_generation, _detail(conn, node_id, page, limit))
-
-
-def read_node_detail_snapshot(  # noqa: PLR0913 - read contract carries response fence
-    db_path: Path,
-    node_id: int,
-    request_generation: int = 0,
-    page: int = 0,
-    limit: int = 50,
-) -> NodeDetailResponse:
-    conn = connect_readonly(db_path)
-    try:
-        _ = conn.execute("BEGIN")
-        return read_node_detail_connection(conn, node_id, request_generation, page, limit)
-    finally:
-        conn.rollback()
-        conn.close()

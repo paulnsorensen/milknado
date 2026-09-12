@@ -20,7 +20,7 @@ class SnapshotPage(Generic[_T]):
     offset: int
     limit: int
     total: int | None
-    has_more: bool
+    has_more: bool  # noqa: V107 - consumed by paged snapshot clients
     state: SnapshotState = "loaded"
 
 
@@ -34,7 +34,7 @@ class SnapshotValue(Generic[_T]):
 class GraphSnapshot:
     nodes: tuple[MikadoNode, ...]
     edges: tuple[MikadoEdge, ...]
-    root_ids: tuple[int, ...]
+    root_ids: tuple[int, ...]  # noqa: V107 - consumed by graph tree clients
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ class NodeDetailSnapshot:
     runs: SnapshotPage[RunRecord]
     reviews: SnapshotPage[NodeReviewRecord]
     sessions: SnapshotPage[NodeSessionSnapshot]
-    goal_claim: SnapshotValue[GoalClaim]
+    goal_claim: SnapshotValue[GoalClaim]  # noqa: V107 - consumed by detail clients
     artifacts: SnapshotPage[ArtifactSnapshot]
 
 

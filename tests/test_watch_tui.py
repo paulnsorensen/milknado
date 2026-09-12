@@ -17,10 +17,11 @@ from milknado.app.run import (
     ExecutionSnapshot,
     RunActionAvailability,
 )
-from milknado.app.run_source import ExecutionSnapshotSource
+from milknado.app.run_source import ExecutionSnapshotSource, NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.app.watch import WatchSnapshotSource
+from milknado.domains.graph import NodeDetailResponse
 
 
 class FakeSource:
@@ -29,6 +30,9 @@ class FakeSource:
 
     def snapshot(self) -> ExecutionSnapshot:
         return self.current
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return NodeDetailResponse(request.node_id, request.request_generation, None)
 
 
 def snapshot(goal: str = "Initial goal") -> ExecutionSnapshot:
@@ -57,6 +61,16 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         assert app.sub_title.endswith("2 available")
         actions = {active.binding.action for active in app.screen.active_bindings.values()}
         assert actions.isdisjoint({"focus_guidance", "cancel", "force"})
+
+
+def test_watch_controller_forwards_node_snapshot() -> None:
+    controller = watch_tui._WatchController(  # pyright: ignore[reportPrivateUsage]
+        FakeSource(snapshot())
+    )
+    response = controller.node_snapshot(NodeSnapshotRequest(5, request_generation=9))
+
+    assert response.matches(5, 9)
+    assert response.detail is None
 
 
 @pytest.mark.asyncio

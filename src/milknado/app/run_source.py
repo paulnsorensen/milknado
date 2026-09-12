@@ -5,12 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from milknado.domains.common import SessionView
-
-if TYPE_CHECKING:
-    from milknado.domains.graph import GraphSnapshot
+from milknado.domains.graph import GraphSnapshot, NodeDetailResponse
 
 
 class ExecutionRunStatus(StrEnum):
@@ -83,6 +81,7 @@ class ExecutionSnapshot:
     event_lines: tuple[str, ...]
     listener_errors: tuple[str, ...] = ()
     graph: GraphSnapshot | None = None
+    node: NodeDetailResponse | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,3 +96,6 @@ class ExecutionSnapshotSource(Protocol):
     def snapshot(self) -> ExecutionSnapshot: ...
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]: ...
+    def node_snapshot(  # noqa: V105 - shared source contract consumed by run and watch clients
+        self, request: NodeSnapshotRequest
+    ) -> NodeDetailResponse: ...

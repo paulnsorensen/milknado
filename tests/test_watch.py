@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from milknado.app.run import ExecutionRunStatus
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_view import summary_text
 from milknado.app.watch import (
     WatchSnapshotSource,
@@ -168,3 +169,21 @@ def test_observer_counts_exact_dispatch_availability_without_conflict_pairs(
     assert observed.goal == "Observe availability"
     assert observed.available == 2
     graph.close()
+
+
+def test_watch_source_assembles_requested_detail_with_graph(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    writer = MikadoGraph(db_path)
+    node = writer.add_node("Observe detail")
+    writer.close()
+
+    source = WatchSnapshotSource(tmp_path, db_path)
+    request = NodeSnapshotRequest(node.id, request_generation=7, limit=1)
+    snapshot = source.snapshot(request)
+
+    assert snapshot.graph is not None
+    assert snapshot.node is not None
+    assert snapshot.node.matches(node.id, 7)
+    assert snapshot.node.detail is not None
+    assert snapshot.node.detail.description == "Observe detail"
+    assert source.node_snapshot(request) == snapshot.node
