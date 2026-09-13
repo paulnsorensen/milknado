@@ -494,6 +494,13 @@ def test_goal_review_cli_decides_from_confirmed_human_boundary(
     graph, nodes = _hierarchy(tmp_path, project_db=True)
     review = _request(graph, nodes["goal_a"])
     graph.close()
+    from milknado.app.controller_capability import (
+        CONTROLLER_MASTER_ENV,
+        register_controller_master,
+    )
+
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
+    register_controller_master(tmp_path)
 
     import milknado.cli.graph as cli_graph
 

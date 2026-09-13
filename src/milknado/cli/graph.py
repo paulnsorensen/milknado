@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 
 import typer
 
+from milknado.app.controller_capability import consume_controller_capability
 from milknado.cli._helpers import (
     DEFAULT_PROJECT_ROOT,
     console,
@@ -61,6 +62,9 @@ def review(
         )
         if not typer.confirm(f"Record {decision} for this review?"):
             console.print("Decision cancelled.")
+            raise typer.Exit(code=1)
+        if not consume_controller_capability(project_root, review_id, decision):
+            console.print("[red]A controller capability is required for this decision.[/red]")
             raise typer.Exit(code=1)
         identity = getpass.getuser().strip() or "human"
         decided = graph.decide_goal_review(

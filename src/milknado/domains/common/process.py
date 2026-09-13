@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 
+CONTROLLER_MASTER_ENV = "MILKNADO_CONTROLLER_MASTER"
+
 
 def pid_alive(pid: object) -> bool:
     """True if a process with this pid exists on the local machine.

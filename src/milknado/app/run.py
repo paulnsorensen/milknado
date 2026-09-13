@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, cast, final
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
+from milknado.app.controller_capability import register_controller_master
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -364,6 +365,7 @@ def build_execution_controller(
     project_root: Path,
 ) -> ExecutionController:
     """Compose the sole UI-facing execution API from application dependencies."""
+    register_controller_master(project_root)
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
@@ -396,6 +398,7 @@ def run_execution_loop(
 ) -> RunLoopResult:
     """Wire the executor + run loop and drive it to completion."""
     ensure_dispatch_allowed(config, feature_branch, allow_protected)
+    register_controller_master(project_root)
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
