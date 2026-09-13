@@ -16,6 +16,7 @@ from typing_extensions import override
 import milknado.domains.graph._creation as _creation
 import milknado.domains.graph._follow_up as _follow_up
 import milknado.domains.graph._goal_claims as _goal_claims
+import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
@@ -42,6 +43,12 @@ from milknado.domains.graph._pipeline import (
     StatusMiddleware,
     StatusPipeline,
     _PluginAsMiddleware,
+)
+from milknado.domains.graph.goal_review import (
+    GoalAdmission,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
 )
 from milknado.domains.graph.snapshot import (
     read_graph_snapshot_connection,
@@ -382,7 +389,11 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         include_archived: bool = False,
     ) -> list[MikadoNode]:
         return _reads.get_ready_nodes(
-            self._conn, kind=kind, flavor=flavor, limit=limit, include_archived=include_archived
+            self._conn,
+            kind=kind,
+            flavor=flavor,
+            limit=limit,
+            include_archived=include_archived,
         )
 
     @synchronized
@@ -515,7 +526,24 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _status.complete_root(self._pipeline, self._conn)
 
     @synchronized
+    def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
+        return _goal_review.request_goal_review(self._conn, request)
+
+    @synchronized
+    def decide_goal_review(self, request: GoalReviewDecisionRequest) -> GoalReviewRecord:
+        return _goal_review.decide_goal_review(self._conn, request)
+
+    @synchronized
+    def goal_admission(self, node_id: int) -> GoalAdmission:
+        return _goal_review.goal_admission(self._conn, node_id)
+
+    @synchronized
+    def goal_review_interruption_targets(self, review_id: int) -> tuple[int, ...]:
+        return _goal_review.interruption_targets(self._conn, review_id)
+
+    @synchronized
     def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
+        _goal_review.assert_admitted(self._conn, node_id)
         return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now, pid=pid)
 
     @synchronized
@@ -561,6 +589,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         pid: int | None = None,
     ) -> None:
         """Enforce and claim the ancestor-goal subtree fence before dispatch."""
+        _goal_review.assert_admitted(self._conn, node_id)
         owner_pid = os.getpid() if pid is None else pid
         claim = self.ancestor_goal_claimed_by_other(node_id)
         if claim is not None and claim["pid"] != owner_pid:

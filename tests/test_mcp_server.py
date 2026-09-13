@@ -2625,7 +2625,7 @@ def test_main_imports_all_tool_modules() -> None:
 
 
 def test_mcp_tool_modules_register_expected_tool_names() -> None:
-    """The eight main()-imported tool modules plus mcp_server must register the expected tool set.
+    """The nine main()-imported tool modules plus mcp_server register the expected tool set.
 
     Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
     module from main()) is caught: the count and the names both fail.
@@ -2633,10 +2633,20 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    from milknado.mcp import github, node, ralph, rebalance, run, todo, todo_mutate, wiki
+    from milknado.mcp import (
+        github,
+        goal_review,
+        node,
+        ralph,
+        rebalance,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
+    )
     from milknado.mcp._core import mcp
 
-    _ = (github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (github, goal_review, node, ralph, rebalance, run, todo, todo_mutate, wiki)
 
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
@@ -2650,8 +2660,11 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_github_roadmap_bind",
         "milknado_github_roadmap_export",
         "milknado_github_roadmap_import",
+        "milknado_goal_admission",
         "milknado_goal_claim",
         "milknado_goal_release",
+        "milknado_goal_review_decide",
+        "milknado_goal_review_request",
         "milknado_graph_summary",
         "milknado_move_node",
         "milknado_node_verify",
