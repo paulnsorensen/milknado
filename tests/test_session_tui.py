@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -24,6 +23,7 @@ from milknado.app.run_tui import ExecutionApp
 from milknado.app.session_view import session_state_text
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.common import (
+    GitOperationError,
     SessionAction,
     SessionContext,
     SessionEvent,
@@ -325,16 +325,13 @@ async def test_failed_git_diff_is_visible_after_changed_files_load(
         initial_snapshot=replace(current, active_runs=(selected,)),
         replay_subscription=False,
     )
-    original_changes = GitAdapter.session_changes
 
-    def remove_worktree_after_changes(
-        adapter: GitAdapter, loaded_context: SessionContext
-    ) -> tuple[ChangedFile, ...]:
-        result = original_changes(adapter, loaded_context)
-        shutil.rmtree(loaded_context.cwd)
-        return result
+    def fail_diff(_adapter: GitAdapter, loaded_context: SessionContext, _path: str) -> str:
+        raise GitOperationError(
+            "session changes", f"worktree is unavailable: {loaded_context.cwd}"
+        )
 
-    monkeypatch.setattr(GitAdapter, "session_changes", remove_worktree_after_changes)
+    monkeypatch.setattr(GitAdapter, "session_diff", fail_diff)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
 
     async with app.run_test(size=(120, 40)) as pilot:
