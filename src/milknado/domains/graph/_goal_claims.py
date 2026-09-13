@@ -229,6 +229,23 @@ def claim_or_reclaim_goal(
         raise
 
 
+def release_new_goal_claim(
+    conn: sqlite3.Connection,
+    goal_id: int | None,
+    run_id: str,
+    prior: GoalClaim | None,
+) -> None:
+    if goal_id is None:
+        return
+    current = get_goal_claim(conn, goal_id)
+    if (
+        current is not None
+        and current["run_id"] == run_id
+        and (prior is None or prior["run_id"] != run_id)
+    ):
+        _ = release_goal_row(conn, goal_id, run_id)
+
+
 def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:
     """Free a claim only when its non-null PID is provably dead."""
     _ = now

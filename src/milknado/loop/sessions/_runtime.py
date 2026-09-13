@@ -103,15 +103,12 @@ class _SessionExecution:
 
     def remember_step(self, step: ProtocolStep, *, publish_events: bool = True) -> None:
         channel, outcome, wind_down = self.channel, self.outcome, self.wind_down
+        actions = tuple(self.protocol.actions)
         if step.session_id is not None:
             outcome.session_id = step.session_id
         context = channel.view().context
         if context is not None and step.done:
-            channel.start(
-                context,
-                tuple(self.protocol.actions),
-                invocation_id=self.process_invocation_id,
-            )
+            channel.start(context, actions, invocation_id=self.process_invocation_id)
         for event in step.events:
             if publish_events:
                 channel.publish(event)
@@ -128,11 +125,7 @@ class _SessionExecution:
         outcome.interrupted = outcome.interrupted or step.interrupted
         context = channel.view().context
         if context is not None:
-            channel.start(
-                context,
-                tuple(self.protocol.actions),
-                invocation_id=self.process_invocation_id,
-            )
+            channel.start(context, actions, invocation_id=self.process_invocation_id)
 
     def apply_step(self, step: ProtocolStep) -> None:
         assert self.proc is not None

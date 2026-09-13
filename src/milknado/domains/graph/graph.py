@@ -6,7 +6,6 @@ import sqlite3
 import traceback
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -529,11 +528,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
-        record = _goal_review.request_goal_review(self._conn, request)
-        receipts = _review_interrupts.enqueue_goal_review_interrupts(
-            self._conn, record.review_id, now=record.assessed_at
-        )
-        return replace(record, interruption_receipts=receipts)
+        return _review_interrupts.request_with_interrupts(self._conn, request)
 
     @synchronized
     def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:
@@ -630,13 +625,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
                     f"node {node_id} is already {status}; set status back to pending to retry"
                 )
         except Exception:
-            current = _goal_claims.get_goal_claim(self._conn, goal_id) if goal_id else None
-            if (
-                current is not None
-                and current["run_id"] == run_id
-                and (prior is None or prior["run_id"] != run_id)
-            ):
-                _ = _goal_claims.release_goal_row(self._conn, goal_id, run_id)
+            _goal_claims.release_new_goal_claim(self._conn, goal_id, run_id, prior)
             raise
 
     # ── Node fields (refs, pid, worktree) ────────────────────────────────────
