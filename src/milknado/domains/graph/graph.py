@@ -285,22 +285,18 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def archive_subtree(self, node_id: int) -> int:
-        """Soft-hide an all-DONE subtree; returns nodes archived. Fail-loud on live work."""
         return _mutations.archive_subtree(self._conn, node_id)
 
     @synchronized
     def unarchive_subtree(self, node_id: int) -> int:
-        """Cascade-restore an archived subtree; refuses under an archived ancestor."""
         return _mutations.unarchive_subtree(self._conn, node_id)
 
     @synchronized
     def set_todo_status(self, node_id: int, target: NodeStatus) -> bool:
-        """Apply one todo status request after complete preflight."""
         return _status.set_todo_status(self._pipeline, self._conn, node_id, target)
 
     @synchronized
     def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
-        """Set status across root_id's live (non-archived) subtree, children first."""
         return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
 
     @synchronized
@@ -477,7 +473,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
                 for node in _reads.get_all_nodes(self._conn)
                 if node.status is NodeStatus.RUNNING
             )
-            conflicts = _persistence.check_parallel_safety(self._conn, [*running, *ready_ids])
+            conflicts = _dispatch_readiness.conflicts(self._conn, [*running, *ready_ids])
             return GraphExecutionSnapshot(
                 root=_reads.get_root(self._conn),
                 nodes=tuple(_reads.get_nodes(self._conn, node_ids)),
@@ -674,7 +670,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
-        return _persistence.check_parallel_safety(self._conn, node_ids)
+        return _dispatch_readiness.conflicts(self._conn, node_ids)
 
     @synchronized
     def drop_all(self) -> int:
