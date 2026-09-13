@@ -10,6 +10,15 @@ from milknado.domains.graph.commands import (
     OwnerCapabilities,
     new_command_id,
 )
+from milknado.domains.graph.goal_review import (
+    GoalAdmission,
+    GoalAdmissionDenied,
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    GoalReviewSubjectError,
+)
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import (
     DurableRun,
@@ -58,6 +67,13 @@ __all__ = [
     "OwnerCapabilities",
     "FollowUpRequest",
     "FollowUpSource",
+    "GoalAdmission",
+    "GoalAdmissionDenied",
+    "GoalReviewDecision",
+    "GoalReviewDecisionRequest",
+    "GoalReviewRecord",
+    "GoalReviewRequest",
+    "GoalReviewSubjectError",
     "new_command_id",
     "ArtifactSnapshot",
     "GraphSnapshot",

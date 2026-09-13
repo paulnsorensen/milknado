@@ -131,6 +131,7 @@ def main() -> None:
     from milknado.mcp import (  # noqa: V104
         follow_up,
         github,
+        goal_review,
         node,
         ralph,
         rebalance,
@@ -140,6 +141,17 @@ def main() -> None:
         wiki,
     )
 
-    _ = (follow_up, github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (
+        follow_up,
+        github,
+        goal_review,
+        node,
+        ralph,
+        rebalance,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
+    )
 
     _ = mcp.run()

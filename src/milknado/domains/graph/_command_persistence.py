@@ -26,6 +26,7 @@ from milknado.domains.graph._command_records import (
     validate_command,
     validate_identifier,
 )
+from milknado.domains.graph._goal_review import assert_admitted
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 from milknado.domains.graph.commands import (
     CommandFenceError,
@@ -108,6 +109,8 @@ def admit_command(
     expires_at = validate_command(command_value)
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
+        if command_value.action in {"steer", "follow_up"}:
+            assert_admitted(conn, command_value.node_id)
         existing = get_command(conn, command_value.command_id)
         if existing is not None:
             if not same_command(existing, command_value, expires_at):

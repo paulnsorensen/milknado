@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import milknado.domains.graph._goal_review_schema as _goal_review_schema
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._run_persistence import (
     deposit_review_verdict,
@@ -214,6 +215,8 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "created_at TEXT NOT NULL, "
         + "PRIMARY KEY (source_run_id, source_invocation_id, request_id))",
     ),
+    (20, _goal_review_schema.CREATE_GOAL_REVIEWS),
+    (21, _goal_review_schema.CREATE_PENDING_GOAL_REVIEW_INDEX),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
