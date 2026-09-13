@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV
+from milknado.domains.common import CONTROLLER_MASTER_ENV
 
 _LEDGER_NAME = "controller-capability.db"
 _BINDING_PREFIX = b"milknado:goal-review:v1:"
