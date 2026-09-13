@@ -232,18 +232,11 @@ def get_ready_nodes(
 
 
 def get_ready_node_ids(conn: sqlite3.Connection) -> list[int]:
-    sql = (
-        READY_NODE_ADMISSION_CTE
-        + """
-        SELECT n.id FROM nodes n WHERE """
-    )
-    sql += (
-        READY_NODE_ADMISSION_FILTER
-        + """
-        AND n.status = ? AND n.archived_at IS NULL AND n.id IN (SELECT child_id FROM edges)
+    sql = f"""{READY_NODE_ADMISSION_CTE}SELECT n.id FROM nodes n WHERE
+        {READY_NODE_ADMISSION_FILTER} AND n.status = ? AND n.archived_at IS NULL
+        AND n.id IN (SELECT child_id FROM edges)
         AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id
         WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id"""
-    )
     return [cast(int, row[0]) for row in fetchall(conn, sql, (NodeStatus.PENDING.value,))]
 
 
