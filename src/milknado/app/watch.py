@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,9 +22,11 @@ from milknado.app.run_source import NodeSnapshotRequest
 from milknado.domains.common import SessionInput
 from milknado.domains.graph import (
     DurableRun,
+    GraphSnapshot,
     MikadoGraph,
     NodeDetailResponse,
     admit_session_command,
+    connect_readonly,
     read_observer_node_snapshot,
     read_observer_snapshot,
 )
@@ -63,8 +66,13 @@ class WatchSnapshotSource:
     _tail_cache: dict[Path, tuple[tuple[int, int, int], tuple[str, ...]]] = field(
         default_factory=dict, init=False
     )
+    _graph_connection: sqlite3.Connection | None = field(default=None, init=False)
+    _graph_cache: GraphSnapshot | None = field(default=None, init=False)
+    _graph_revision: int | None = field(default=None, init=False)
 
     def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+        if self._graph_connection is None:
+            self._graph_connection = connect_readonly(self.db_path)
         observed = read_observer_snapshot(
             self.db_path,
             self.limit,
@@ -73,7 +81,12 @@ class WatchSnapshotSource:
             page=request.page if request is not None else 0,
             node_limit=request.limit if request is not None else 50,
             session_event_page=request.session_event_page if request is not None else 0,
+            cached_graph=self._graph_cache,
+            cached_graph_revision=self._graph_revision,
+            connection=self._graph_connection,
         )
+        self._graph_cache = observed.graph
+        self._graph_revision = observed.graph_revision
         runs = observed.runs
         active = tuple(
             self._active_snapshot(run, run.description) for run in runs if run.status == "running"
@@ -107,6 +120,11 @@ class WatchSnapshotSource:
             request.limit,
             request.session_event_page,
         )
+
+    def close(self) -> None:
+        if self._graph_connection is not None:
+            self._graph_connection.close()
+            self._graph_connection = None
 
     @staticmethod
     def subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
@@ -225,6 +243,11 @@ class AttachedWatchSource:
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         return self.source.subscribe(listener)
+
+    def close(self) -> None:
+        close = getattr(self.source, "close", None)
+        if callable(close):
+            _ = close()
 
     def session_input(self, run_id: str, command: SessionInput) -> bool:
         return self.admit(run_id, command)

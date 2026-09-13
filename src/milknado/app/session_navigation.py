@@ -9,7 +9,7 @@ from textual import on
 from textual.message_pump import MessagePump
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import DataTable, Input, TabbedContent
+from textual.widgets import DataTable, Input, TabbedContent, Tree
 
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import session_view
@@ -24,7 +24,9 @@ _WidgetT = TypeVar("_WidgetT", bound=Widget)
 class _NavigationHost(Protocol):
     snapshot: ExecutionSnapshot
     selected_run_id: str | None
+    selected_node_id: int | None
     compact: bool
+    minimum: bool
     route: str
     read_only: bool
     auto_follow: bool
@@ -35,6 +37,8 @@ class _NavigationHost(Protocol):
     def call_after_refresh(self, callback: Callable[..., object], *args: object) -> object: ...
 
     def set_focus(self, _widget: Widget | None, /) -> object: ...
+
+    def select_node(self, node_id: int) -> None: ...
 
     def refresh_view(self) -> None: ...
 
@@ -72,10 +76,19 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
     def select_row(self, event: DataTable.RowSelected) -> None:
         host = _navigation_host(self)
         host.selected_run_id = str(event.row_key.value)
+        run = host.selected_run_id
+        selected = next((item for item in self._runs() if item.run_id == run), None)
+        host.selected_node_id = selected.node_id if selected is not None else None
         if host.compact:
             self.action_open_detail()
         else:
             host.refresh_view()
+
+    @on(Tree.NodeHighlighted, "#graph-tree")
+    def select_tree_node(self, event: Tree.NodeHighlighted[object]) -> None:
+        node_id = getattr(event.node.data, "node_id", None)
+        if isinstance(node_id, int):
+            _navigation_host(self).select_node(node_id)
 
     def _editor_focused(self) -> bool:
         focused = _navigation_host(self).screen.focused
@@ -95,19 +108,36 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     def _move_selection(self, offset: int) -> None:
         host = _navigation_host(self)
+        if host.minimum:
+            return
         if self._editor_focused():
+            return
+        graph = host.snapshot.graph
+        if graph is not None:
+            if graph.nodes:
+                node_ids = tuple(node.id for node in graph.nodes)
+                current_index = (
+                    node_ids.index(host.selected_node_id)
+                    if host.selected_node_id in node_ids
+                    else 0
+                )
+                host.select_node(node_ids[(current_index + offset) % len(node_ids)])
             return
         runs = self._runs()
         if not runs:
             return
-        host.selected_run_id = runs[(self._run_index() + offset) % len(runs)].run_id
+        selected = runs[(self._run_index() + offset) % len(runs)]
+        host.selected_run_id = selected.run_id
+        host.selected_node_id = selected.node_id
         host.refresh_view()
 
     def action_open_detail(self) -> None:
         host = _navigation_host(self)
+        if host.minimum:
+            return
         if self._editor_focused():
             return
-        if host.compact and self.selected_run() is not None:
+        if host.compact and (self.selected_run() is not None or host.selected_node_id is not None):
             _ = host.set_focus(None)
             host.route = "detail"
             host.set_layout(True)
@@ -116,6 +146,8 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
     def action_focus_session(self) -> None:
         host = _navigation_host(self)
         session = session_view(self.selected_run())
+        if host.minimum:
+            return
         if host.read_only or not session.active or not session.actions:
             return
         self.action_open_detail()
@@ -124,6 +156,8 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     def action_focus_changes(self) -> None:  # noqa: V105 - Textual binding action
         host = _navigation_host(self)
+        if host.minimum:
+            return
         if session_view(self.selected_run()).context is None:
             return
         self.action_open_detail()
@@ -132,15 +166,20 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     async def action_back(self) -> None:
         host = _navigation_host(self)
+        if host.minimum:
+            return
         _ = host.set_focus(None)
         if host.compact and host.route == "detail":
             host.route = "list"
             host.set_layout(True)
             host.refresh_view()
-        _ = host.call_after_refresh(host.query_one("#runs", DataTable).focus)
+        selector = "#graph-tree" if host.snapshot.graph is not None else "#runs"
+        _ = host.call_after_refresh(host.query_one(selector, Widget).focus)
 
     def action_focus_events(self) -> None:  # noqa: V105 - Textual binding action
         host = _navigation_host(self)
+        if host.minimum:
+            return
         if host.compact and host.route == "detail":
             host.route = "list"
             host.set_layout(True)
@@ -149,6 +188,8 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     def action_resume_output(self) -> None:  # noqa: V105 - Textual binding action
         host = _navigation_host(self)
+        if host.minimum:
+            return
         host.auto_follow = True
         host.refresh_view()
 

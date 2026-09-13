@@ -9,9 +9,10 @@ from milknado.domains.common.session import SessionEvent, SessionView
 from milknado.domains.common.types import MikadoEdge, MikadoNode
 from milknado.domains.graph._goal_claims import GoalClaim
 from milknado.domains.graph._run_persistence import NodeReviewRecord, RunRecord
+from milknado.domains.graph.commands import CommandReceipt
 
 _T = TypeVar("_T")
-SnapshotState = Literal["loaded", "not_loaded", "not_stored"]
+SnapshotState = Literal["loaded", "missing", "not_loaded", "not_stored"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,7 @@ class NodeDetailSnapshot:
     runs: SnapshotPage[RunRecord]
     reviews: SnapshotPage[NodeReviewRecord]
     sessions: SnapshotPage[NodeSessionSnapshot]
+    receipts: SnapshotPage[CommandReceipt]
     goal_claim: SnapshotValue[GoalClaim]  # noqa: V107 - consumed by detail clients
     artifacts: SnapshotPage[ArtifactSnapshot]
 

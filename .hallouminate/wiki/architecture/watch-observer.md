@@ -12,6 +12,9 @@ The graph slice owns `DurableRun` and `ObserverSnapshot`. It returns bounded run
 
 One bounded SQL query applies ready-node rules and file ownership precedence. It does not build the graph conflict-pair projection.[^3]
 
+
+Graph cache invalidation uses a persisted `graph_revision` row. Triggers increment it for nodes, edges, and goal claims, while run and session writes leave it unchanged. Read-only observers compare this scalar before graph hydration, so unrelated durable writes reuse the cached graph.
+
 ## Durable-state limits
 
 The runs table stores only `running`, `done`, and `failed`. It does not store a separate stopped state.

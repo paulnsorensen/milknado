@@ -114,6 +114,13 @@ _REQUIRED_NODE_COLUMNS = frozenset(
 # v1 is the create_tables schema; entries start at 2. Each statement must be a
 # single SQL statement — migrate() executes them inside one transaction, and
 # executescript() would COMMIT behind its back.
+def _revision_trigger(name: str, event: str, table: str) -> str:
+    return (
+        f"CREATE TRIGGER IF NOT EXISTS {name} AFTER {event} ON {table} "
+        + "BEGIN UPDATE graph_revision SET revision = revision + 1 WHERE id = 1; END"
+    )
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (
         2,
@@ -182,6 +189,20 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "AND status IN ('queued', 'submitted') "
         + "AND permission_id IS NOT NULL",
     ),
+    (
+        9,
+        "CREATE TABLE IF NOT EXISTS graph_revision ("
+        + "id INTEGER PRIMARY KEY CHECK (id = 1), revision INTEGER NOT NULL)",
+    ),
+    (10, "INSERT OR IGNORE INTO graph_revision (id, revision) VALUES (1, 0)"),
+    (11, _revision_trigger("graph_revision_nodes_insert", "INSERT", "nodes")),
+    (12, _revision_trigger("graph_revision_nodes_update", "UPDATE", "nodes")),
+    (13, _revision_trigger("graph_revision_nodes_delete", "DELETE", "nodes")),
+    (14, _revision_trigger("graph_revision_edges_insert", "INSERT", "edges")),
+    (15, _revision_trigger("graph_revision_edges_delete", "DELETE", "edges")),
+    (16, _revision_trigger("graph_revision_claims_insert", "INSERT", "goal_claims")),
+    (17, _revision_trigger("graph_revision_claims_update", "UPDATE", "goal_claims")),
+    (18, _revision_trigger("graph_revision_claims_delete", "DELETE", "goal_claims")),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -212,6 +233,17 @@ def migrate(conn: sqlite3.Connection) -> None:
     if current_row is None:
         raise RuntimeError("PRAGMA user_version returned no row")
     current = cast(int, _as_tuple(current_row)[0])
+    base_tables = {"nodes", "edges", "file_ownership", "runs", "goal_claims"}
+    existing_tables = {
+        cast(str, _as_tuple(row)[0])
+        for row in fetchall(
+            conn,
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+            + "('nodes', 'edges', 'file_ownership', 'runs', 'goal_claims')",
+        )
+    }
+    if existing_tables != base_tables:
+        _validate_schema(conn)
     pending = [(v, sql) for v, sql in MIGRATIONS if v > current]
     if not pending:
         return

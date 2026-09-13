@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import sys
 import textwrap
 import threading
 import time
@@ -102,14 +103,15 @@ for raw in sys.stdin:
 
 def _worker(tmp_path: Path, mode: str) -> Path:
     worker = tmp_path / "claude"
-    _ = worker.write_text(_SCRIPT_HEADER + textwrap.dedent(_SCRIPTS[mode]), encoding="utf-8")
-    _ = worker.chmod(0o755)
+    script_path = tmp_path / "claude.py"
+    _ = script_path.write_text(_SCRIPT_HEADER + textwrap.dedent(_SCRIPTS[mode]), encoding="utf-8")
+    worker.symlink_to(sys.executable)
     return worker
 
 
 def _spec(worker: Path, tmp_path: Path, args: tuple[str, ...]) -> AgentRunSpec:
     return AgentRunSpec(
-        cmd=[str(worker), *args],
+        cmd=[str(worker), str(worker.with_suffix(".py")), *args],
         prompt="initial prompt",
         timeout=5.0,
         log_dir=None,
@@ -261,7 +263,7 @@ def test_interrupted_iteration_does_not_stop_on_error(
 
     channel.set_sink(sink)
     config = RunConfig(
-        agent=shlex.join(("claude", "engine", str(counter))),
+        agent=shlex.join(("claude", "claude.py", "engine", str(counter))),
         ralph_dir=tmp_path,
         prompt="initial prompt",
         max_iterations=2,

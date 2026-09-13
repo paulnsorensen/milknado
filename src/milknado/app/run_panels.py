@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from os import environ
-from typing import Protocol, cast, final
+from typing import ClassVar, Protocol, cast, final
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -13,6 +13,7 @@ from textual.events import MouseScrollDown, MouseScrollUp, Resize
 from textual.widgets import DataTable, Static, TabbedContent, TabPane
 from typing_extensions import override
 
+from milknado.app.graph_panels import GraphTree
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import (
     actions_text,
@@ -31,6 +32,8 @@ from milknado.app.session_panels import (
     SessionPanel,
     SessionPanelState,
 )
+from milknado.domains.common import MikadoNode
+from milknado.domains.graph import NodeDetailSnapshot
 
 
 class _ExecutionAppLike(Protocol):
@@ -74,6 +77,9 @@ class RunListPanel(Vertical):
     #totals { height: auto; margin: 0 1; display: none; }
     #empty { display: none; height: 1fr; margin: 1 2; content-align: center middle; }
     #empty.visible { display: block; }
+    #graph-tree { display: none; height: 1fr; }
+    .graph #graph-tree { display: block; }
+    .graph #runs, .graph #empty { display: none; }
     #runs { height: 1fr; text-overflow: ellipsis; }
     #runs.hidden { display: none; }
     """
@@ -83,11 +89,13 @@ class RunListPanel(Vertical):
     _cursor_run_id: str | None = None
     _cursor_column = 0
     _column_layout: tuple[tuple[str, int], ...] = ()
+    _has_graph = False
 
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="totals", markup=False)
         yield Static(id="empty", markup=False)
+        yield GraphTree()
         yield RunTable(id="runs", cursor_type="row")
 
     def on_mount(self) -> None:
@@ -154,7 +162,10 @@ class RunListPanel(Vertical):
         empty = self.query_one("#empty", Static)
         table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
         empty.update(_EMPTY_RUN_MESSAGE)
-        if self._runs:
+        if self._has_graph:
+            _ = empty.remove_class("visible")
+            _ = table.add_class("hidden")
+        elif self._runs:
             _ = empty.remove_class("visible")
             _ = table.remove_class("hidden")
         else:
@@ -166,9 +177,17 @@ class RunListPanel(Vertical):
         snapshot: ExecutionSnapshot,
         runs: tuple[RunSnapshot, ...],
         selected_run_id: str | None,
+        selected_node_id: int | None = None,
     ) -> None:
         self.query_one("#totals", Static).update(subtitle_text(snapshot))
+        self._has_graph = snapshot.graph is not None
+        _ = self.set_class(self._has_graph, "graph")
+        graph_tree = self.query_one("#graph-tree", GraphTree)
+        graph_tree.display = self._has_graph
         table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
+        table.display = not self._has_graph
+        if snapshot.graph is not None:
+            graph_tree.update_graph(snapshot.graph, selected_node_id)
         cursor_run_id = None
         if selected_run_id == self._selected_run_id and table.is_valid_row_index(table.cursor_row):
             cursor_run_id = self._runs[table.cursor_row].run_id
@@ -186,11 +205,10 @@ class RunListPanel(Vertical):
         _ = self.call_after_refresh(self._resize_columns)
 
 
-@final
 class RunDetailPanel(VerticalScroll):
     """Selected node's Session, Changes, and Details panes."""
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     RunDetailPanel { width: 1fr; height: 1fr; }
     #summary { height: auto; margin: 0 1; }
     #run-tabs { height: 1fr; }
@@ -213,24 +231,31 @@ class RunDetailPanel(VerticalScroll):
     def on_mouse_scroll_down(self, _event: MouseScrollDown) -> None:
         cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
 
-    def update(self, selected: RunSnapshot | None, *, auto_follow: bool) -> None:
-        session = session_view(selected)
+    def update(
+        self,
+        selected: RunSnapshot | None,
+        *,
+        node: MikadoNode | None = None,
+        node_detail: NodeDetailSnapshot | None = None,
+        auto_follow: bool,
+    ) -> None:
         app = cast(_ExecutionAppLike, cast(object, self.app))
-        self.query_one("#summary", Static).update(summary_text(selected, compact=app.compact))
+        self.query_one("#summary", Static).update(summary_text(selected))
         self.query_one("#output", VerticalScroll).border_title = output_border_title(
             auto_follow=auto_follow
         )
+        session = session_view(selected)
         session_panel = self.query_one("#session-panel", SessionPanel)
         session_panel.update(
             SessionPanelState(
                 view=session,
-                run_id=selected.run_id if selected else None,
+                run_id=selected.run_id if selected is not None else None,
                 read_only=getattr(app, "read_only", False),
                 draft=getattr(app, "session_draft", ""),
                 legacy_guidance=(
-                    isinstance(selected, ActiveRunSnapshot)
-                    and not session.actions
-                    and not getattr(app, "read_only", False)
+                    selected is not None
+                    and isinstance(selected, ActiveRunSnapshot)
+                    and not session.events
                 ),
                 action=getattr(app, "session_action", None),
                 permission_id=getattr(app, "session_permission", ""),
@@ -242,7 +267,9 @@ class RunDetailPanel(VerticalScroll):
             actions_text(selected, None if getattr(app, "read_only", False) else session)
         )
         brief, metadata = details_text(selected)
-        self.query_one("#details-panel", DetailsPanel).update(brief, metadata)
+        self.query_one("#details-panel", DetailsPanel).update(
+            brief, metadata, node=node, detail=node_detail
+        )
         if auto_follow:
             self.query_one("#output", VerticalScroll).scroll_end(animate=False)
 
