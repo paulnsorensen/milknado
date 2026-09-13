@@ -40,14 +40,19 @@ def register_controller_master(project_root: Path) -> None:
         _ = conn.executescript(_SCHEMA)
         _ = conn.execute(
             """
-            INSERT INTO controller_master(singleton, master_hash, registered_at)
+            INSERT OR IGNORE INTO controller_master(singleton, master_hash, registered_at)
             VALUES (1, ?, ?)
-            ON CONFLICT(singleton) DO UPDATE SET
-                master_hash = excluded.master_hash,
-                registered_at = excluded.registered_at
             """,
             (master_hash, _now()),
         )
+        row = cast(
+            tuple[str] | None,
+            conn.execute(
+                "SELECT master_hash FROM controller_master WHERE singleton = 1"
+            ).fetchone(),
+        )
+        if row is None or not hmac.compare_digest(row[0], master_hash):
+            raise RuntimeError("a different controller master is already registered")
         _ = conn.commit()
     ledger.chmod(0o600)
 

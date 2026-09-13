@@ -252,7 +252,7 @@ def test_observer_available_matches_execution_admission(
     graph.files.claim(first.id, ["shared.py"])
     graph.files.claim(later.id, ["shared.py"])
     affected = None if review_scope == "unbounded" else (first.id, later.id)
-    graph.request_goal_review(
+    _ = graph.request_goal_review(
         GoalReviewRequest(
             goal_id=goal.id,
             goal_revision="sha256:goal",

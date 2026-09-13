@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import os
 import select
 import sqlite3
@@ -11,22 +12,20 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
-from milknado.app.controller_capability import (
-    CONTROLLER_MASTER_ENV,
-    consume_controller_capability,
-    register_controller_master,
-)
 from milknado.cli import app
-from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.common import CONTROLLER_MASTER_ENV, NodeKind, NodeSpec
 from milknado.domains.dispatch import build_worker_env
 from milknado.domains.graph import (
     GoalReviewDecision,
     GoalReviewRequest,
     MikadoGraph,
+    consume_controller_capability,
+    register_controller_master,
 )
-from milknado.loop._agent import _build_spawn_env
+from milknado.loop._agent import _build_spawn_env  # pyright: ignore[reportPrivateUsage]
 from milknado.loop.sessions._process import start_process
 from milknado.loop.sessions._protocol import SessionProtocol
 
@@ -53,6 +52,10 @@ def _pending_review(project_root: Path) -> int:
         graph.close()
 
 
+def _confirm(*_args: object, **_kwargs: object) -> bool:
+    return True
+
+
 def _invoke_human(
     project_root: Path, review_id: int, decision: str, monkeypatch: pytest.MonkeyPatch
 ):
@@ -66,8 +69,8 @@ def _invoke_human(
             stdout=SimpleNamespace(isatty=lambda: True),
         ),
     )
-    monkeypatch.setattr(cli_graph.typer, "confirm", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(cli_graph.getpass, "getuser", lambda: "human-controller")
+    monkeypatch.setattr(typer, "confirm", _confirm)
+    monkeypatch.setattr(getpass, "getuser", lambda: "human-controller")
     return cli_runner.invoke(
         app,
         [
@@ -122,7 +125,10 @@ def test_controller_capability_authorizes_one_exact_decision(
     ledger = tmp_path / ".milknado" / "controller-capability.db"
     assert b"external-controller-master" not in ledger.read_bytes()
     with sqlite3.connect(ledger) as conn:
-        consumed = conn.execute("SELECT COUNT(*) FROM consumed_capability").fetchone()
+        consumed = cast(
+            tuple[int] | None,
+            conn.execute("SELECT COUNT(*) FROM consumed_capability").fetchone(),
+        )
     assert consumed == (1,)
 
 
@@ -227,15 +233,17 @@ def test_session_environment_strips_controller_master(
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     protocol = cast(
         SessionProtocol,
-        SimpleNamespace(
-            command=(
-                sys.executable,
-                "-c",
-                "import os; print(os.environ.get('MILKNADO_CONTROLLER_MASTER', ''))",
-            )
+        cast(
+            object,
+            SimpleNamespace(
+                command=(
+                    sys.executable,
+                    "-c",
+                    "import os; print(os.environ.get('MILKNADO_CONTROLLER_MASTER', ''))",
+                )
+            ),
         ),
     )
-
     proc = start_process(protocol, tmp_path)
     stdout, _ = proc.communicate(timeout=10)
 
@@ -249,6 +257,8 @@ def test_controller_capability_rejects_missing_and_wrong_master(
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
     register_controller_master(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "different-master")
+    with pytest.raises(RuntimeError, match="different controller master"):
+        register_controller_master(tmp_path)
 
     assert not consume_controller_capability(tmp_path, 1, "accepted")
 
@@ -272,6 +282,6 @@ def test_controller_capability_rejects_corrupt_ledger(
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
     ledger = tmp_path / ".milknado" / "controller-capability.db"
     ledger.parent.mkdir()
-    ledger.write_text("not sqlite", encoding="utf-8")
+    _ = ledger.write_text("not sqlite", encoding="utf-8")
 
     assert not consume_controller_capability(tmp_path, 1, "accepted")

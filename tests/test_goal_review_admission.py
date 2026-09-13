@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -8,10 +9,11 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.domains.common import NodeKind, NodeSpec, SessionAction
+from milknado.domains.common import CONTROLLER_MASTER_ENV, NodeKind, NodeSpec, SessionAction
 from milknado.domains.graph import (
     GoalAdmissionDenied,
     GoalReviewDecision,
@@ -22,8 +24,10 @@ from milknado.domains.graph import (
     GraphCommand,
     MikadoGraph,
     OwnerCapabilities,
+    register_controller_master,
 )
 from milknado.domains.graph._command_records import get_capabilities
+from milknado.domains.graph._pipeline import StatusPipeline
 from milknado.mcp.goal_review import (
     milknado_goal_admission,
     milknado_goal_review_request,
@@ -33,6 +37,15 @@ from tests.graph_helpers import graph_conn
 NOW = "2026-09-13T12:00:00+00:00"
 LATER = "2026-09-13T12:05:00+00:00"
 cli_runner = CliRunner()
+
+
+def _confirm(*_args: object, **_kwargs: object) -> bool:
+    return True
+
+
+def _register_controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
+    register_controller_master(tmp_path)
 
 
 def _hierarchy(path: Path, *, project_db: bool = False) -> tuple[MikadoGraph, dict[str, int]]:
@@ -151,10 +164,18 @@ def test_review_wins_direct_claim_race_across_connections(
 
     original = status.claim_node
 
-    def delayed(*args: object, **kwargs: object) -> bool:
+    def delayed(  # noqa: PLR0913 - exact monkeypatched claim signature
+        pipeline: StatusPipeline,
+        conn: sqlite3.Connection,
+        node_id: int,
+        run_id: str,
+        *,
+        now: str,
+        pid: int | None = None,
+    ) -> bool:
         entered.set()
         assert release.wait(5)
-        return original(*args, **kwargs)
+        return original(pipeline, conn, node_id, run_id, now=now, pid=pid)
 
     monkeypatch.setattr(status, "claim_node", delayed)
     worker = Thread(
@@ -167,7 +188,9 @@ def test_review_wins_direct_claim_race_across_connections(
     worker.join(5)
     try:
         assert result == [False]
-        assert graph.get_node(nodes["a1"]).status.value == "pending"
+        node = graph.get_node(nodes["a1"])
+        assert node is not None
+        assert node.status.value == "pending"
     finally:
         contender.close()
         graph.close()
@@ -184,10 +207,25 @@ def test_review_wins_dispatch_goal_claim_race_across_connections(
 
     original = goal_claims.claim_goal_row
 
-    def delayed(*args: object, **kwargs: object) -> bool:
+    def delayed(  # noqa: PLR0913 - exact monkeypatched claim signature
+        conn: goal_claims._ClaimConn,  # pyright: ignore[reportPrivateUsage]
+        goal_id: int,
+        run_id: str,
+        now: str,
+        *,
+        pid: int | None,
+        admission_node_id: int | None = None,
+    ) -> bool:
         entered.set()
         assert release.wait(5)
-        return original(*args, **kwargs)
+        return original(
+            conn,
+            goal_id,
+            run_id,
+            now,
+            pid=pid,
+            admission_node_id=admission_node_id,
+        )
 
     monkeypatch.setattr(goal_claims, "claim_goal_row", delayed)
     worker = Thread(
@@ -248,9 +286,10 @@ def test_unbounded_review_pauses_one_execution_goal(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("decision", [GoalReviewDecision.ACCEPTED, GoalReviewDecision.REJECTED])
 def test_terminal_review_decision_resumes_original_goal(
-    tmp_path: Path, decision: GoalReviewDecision
+    tmp_path: Path, decision: GoalReviewDecision, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph, nodes = _hierarchy(tmp_path)
+    _register_controller(tmp_path, monkeypatch)
     try:
         review = _request(graph, nodes["goal_a"])
         decided = graph.decide_goal_review(
@@ -275,8 +314,11 @@ def test_blocked_status_does_not_bypass_pending_review(tmp_path: Path) -> None:
         graph.close()
 
 
-def test_review_gates_continuation_but_allows_safe_interrupt(tmp_path: Path) -> None:
+def test_review_gates_continuation_but_allows_safe_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     graph, nodes = _hierarchy(tmp_path)
+    _register_controller(tmp_path, monkeypatch)
     try:
         assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
         graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
@@ -352,9 +394,12 @@ def test_review_request_rolls_back_when_interrupt_inbox_is_full(tmp_path: Path) 
             _ = _request(graph, nodes["goal_a"], (nodes["a1"],))
 
         assert graph.get_goal_review(1) is None
-        count_row = graph_conn(graph).execute("SELECT COUNT(*) FROM session_commands").fetchone()
+        count_row = cast(
+            tuple[int] | None,
+            graph_conn(graph).execute("SELECT COUNT(*) FROM session_commands").fetchone(),
+        )
         assert count_row is not None
-        assert cast(int, count_row[0]) == 64
+        assert count_row[0] == 64
     finally:
         graph.close()
 
@@ -488,10 +533,6 @@ def test_goal_review_cli_decides_from_confirmed_human_boundary(
     graph, nodes = _hierarchy(tmp_path, project_db=True)
     review = _request(graph, nodes["goal_a"])
     graph.close()
-    from milknado.app.controller_capability import (
-        CONTROLLER_MASTER_ENV,
-        register_controller_master,
-    )
 
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     register_controller_master(tmp_path)
@@ -506,8 +547,8 @@ def test_goal_review_cli_decides_from_confirmed_human_boundary(
             stdout=SimpleNamespace(isatty=lambda: True),
         ),
     )
-    monkeypatch.setattr(cli_graph.typer, "confirm", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr(cli_graph.getpass, "getuser", lambda: "human-1")
+    monkeypatch.setattr(typer, "confirm", _confirm)
+    monkeypatch.setattr(getpass, "getuser", lambda: "human-1")
     result = cli_runner.invoke(
         app,
         ["graph", "review", str(review.review_id), "accepted", "--project-root", str(tmp_path)],

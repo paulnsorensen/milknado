@@ -14,6 +14,7 @@ import milknado.domains.graph._reads as _reads
 from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph._sqlite_rows import fetchall
 from milknado.domains.graph.snapshot import (
     connect_readonly,
     read_graph_snapshot_connection,
@@ -101,7 +102,7 @@ def _available_count(conn: sqlite3.Connection) -> int:
         return 0
     running_ids = [
         cast(int, row[0])
-        for row in conn.execute("SELECT id FROM nodes WHERE status = 'running'").fetchall()
+        for row in fetchall(conn, "SELECT id FROM nodes WHERE status = 'running'")
     ]
     conflicts = _persistence.check_parallel_safety(conn, [*running_ids, *ready_ids])
     ready_set = set(ready_ids)

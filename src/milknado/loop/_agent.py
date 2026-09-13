@@ -1217,10 +1217,10 @@ def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str] | None:
     if not overrides and CONTROLLER_MASTER_ENV not in os.environ:
         return None
     merged = os.environ.copy()
-    merged.pop(CONTROLLER_MASTER_ENV, None)
+    _ = merged.pop(CONTROLLER_MASTER_ENV, None)
     if overrides:
         merged.update(overrides)
-        merged.pop(CONTROLLER_MASTER_ENV, None)
+        _ = merged.pop(CONTROLLER_MASTER_ENV, None)
     return merged
 
 

@@ -121,7 +121,7 @@ def build_worker_env(
     if extra:
         env.update(extra)
     # The broad MILKNADO_* rule must not carry the controller master to workers.
-    env.pop(CONTROLLER_MASTER_ENV, None)
+    _ = env.pop(CONTROLLER_MASTER_ENV, None)
     return env
 
 

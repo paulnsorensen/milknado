@@ -260,10 +260,10 @@ def start_process(
     spawn_env: dict[str, str] | None = None
     if env or CONTROLLER_MASTER_ENV in os.environ:
         spawn_env = os.environ.copy()
-        spawn_env.pop(CONTROLLER_MASTER_ENV, None)
+        _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
         if env:
             spawn_env.update(env)
-            spawn_env.pop(CONTROLLER_MASTER_ENV, None)
+            _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
     if os.name == "nt":
         proc = subprocess.Popen(
             protocol.command,

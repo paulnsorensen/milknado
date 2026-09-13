@@ -134,7 +134,7 @@ def _worker(tmp_path: Path, mode: str) -> Path:
 def _terminal_worker(tmp_path: Path, family: str) -> Path:
     worker = tmp_path / family
     script_path = tmp_path / f"{family}.py"
-    payload = (
+    payload: dict[str, object] = (
         {
             "type": "result",
             "subtype": "success",
@@ -217,7 +217,7 @@ def test_terminal_frame_rejects_attached_admission_before_channel_close(
         invocation_id: str,
         permission_ids: tuple[str, ...],
     ) -> None:
-        graph.commands.publish_capabilities(
+        _ = graph.commands.publish_capabilities(
             "run-1", node_id, invocation_id, "owner-1", actions, permission_ids
         )
         if terminal_seen and not attempts:

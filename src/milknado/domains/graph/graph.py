@@ -23,6 +23,7 @@ import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
 import milknado.domains.graph._review_interrupts as _review_interrupts
 import milknado.domains.graph._status as _status
+import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
     GraphExecutionSnapshot,
@@ -537,6 +538,13 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def decide_goal_review(
         self, request: GoalReviewDecisionRequest, *, decided_by: str
     ) -> GoalReviewRecord:
+        parent = self._db_path.resolve().parent
+        project_root = parent.parent if parent.name == ".milknado" else parent
+        decision = request.decision.value
+        if not _controller_capability.consume_controller_capability(
+            project_root, request.review_id, decision
+        ):
+            raise PermissionError("a controller capability is required for this decision")
         return _goal_review.decide_goal_review(self._conn, request, decided_by=decided_by)
 
     @synchronized

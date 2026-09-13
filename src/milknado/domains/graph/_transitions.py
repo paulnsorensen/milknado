@@ -141,16 +141,16 @@ def claim_node(
     conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
-    conn.execute(
+    _ = conn.execute(
         READY_NODE_ADMISSION_CTE
         + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
         + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
         + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
         (run_id, now, pid, node_id),
     )
-    changed = conn.execute("SELECT changes()").fetchone()
+    row = cast(tuple[int] | None, conn.execute("SELECT changes()").fetchone())
     conn.commit()
-    return changed is not None and cast(int, changed[0]) == 1
+    return row is not None and row[0] == 1
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:

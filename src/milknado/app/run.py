@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, cast, final
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
-from milknado.app.controller_capability import register_controller_master
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -39,6 +38,7 @@ from milknado.domains.common import (
     WorktreeMode,
     resolve_flavor_profile,
 )
+from milknado.domains.graph import register_controller_master
 
 if TYPE_CHECKING:
     from milknado.domains.dispatch import IsolateContext
