@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from milknado.app.controller_capability import (
     CONTROLLER_MASTER_ENV,
+    consume_controller_capability,
     register_controller_master,
 )
 from milknado.cli import app
@@ -239,3 +240,38 @@ def test_session_environment_strips_controller_master(
     stdout, _ = proc.communicate(timeout=10)
 
     assert stdout == b"\n"
+
+
+def test_controller_capability_rejects_missing_and_wrong_master(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not consume_controller_capability(tmp_path, 1, "accepted")
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
+    register_controller_master(tmp_path)
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "different-master")
+
+    assert not consume_controller_capability(tmp_path, 1, "accepted")
+
+
+def test_controller_registration_repairs_ledger_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
+    register_controller_master(tmp_path)
+    ledger = tmp_path / ".milknado" / "controller-capability.db"
+    ledger.chmod(0o644)
+
+    register_controller_master(tmp_path)
+
+    assert ledger.stat().st_mode & 0o777 == 0o600
+
+
+def test_controller_capability_rejects_corrupt_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
+    ledger = tmp_path / ".milknado" / "controller-capability.db"
+    ledger.parent.mkdir()
+    ledger.write_text("not sqlite", encoding="utf-8")
+
+    assert not consume_controller_capability(tmp_path, 1, "accepted")
