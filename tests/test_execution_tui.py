@@ -24,8 +24,10 @@ from milknado.app.run import (
     TerminalRunSnapshot,
 )
 from milknado.app.run_panels import RunDetailPanel
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
+from milknado.domains.graph import NodeDetailResponse
 
 
 class _WorkerManager(Protocol):
@@ -138,6 +140,9 @@ class FakeController:
         if self.control_error is not None:
             raise self.control_error
         return True
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return NodeDetailResponse(request.node_id, request.request_generation, None)
 
 
 def snapshot(

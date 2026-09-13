@@ -36,6 +36,11 @@ from milknado.domains.graph._pipeline import (
     StatusPipeline,
     _PluginAsMiddleware,
 )
+from milknado.domains.graph.snapshot import (
+    read_graph_snapshot_connection,
+    read_node_detail_connection,
+)
+from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 if TYPE_CHECKING:
     from milknado.domains.common import PluginHook
@@ -64,6 +69,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _raw_conn: sqlite3.Connection | None
     _pipeline: StatusPipeline
     _dispatch_exclusions: set[int]
+    _graph_snapshot_cache: GraphSnapshot | None
+    _graph_snapshot_revision: tuple[int, int] | None
     runs: _RunFacade
     sessions: _SessionFacade
     files: _FileFacade
@@ -88,6 +95,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
         )
         self._dispatch_exclusions = set()
+        self._graph_snapshot_cache = None
+        self._graph_snapshot_revision = None
         self.runs = _RunFacade(self)
         self.sessions = _SessionFacade(self)
         self.files = _FileFacade(self)
@@ -194,6 +203,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             "".join(heal_stack),
         )
         self._raw_conn = self._open(self._db_path)
+        self._graph_snapshot_cache = None
+        self._graph_snapshot_revision = None
         self._closed = False
 
     @property
@@ -387,6 +398,49 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def get_roots(self, *, include_archived: bool = False) -> list[MikadoNode]:
         return _reads.get_roots(self._conn, include_archived=include_archived)
+
+    @synchronized
+    def get_graph_snapshot(self) -> GraphSnapshot:
+        conn = self._conn
+        _ = conn.execute("SAVEPOINT graph_snapshot")
+        try:
+            revision = (
+                conn.total_changes,
+                cast(int, conn.execute("PRAGMA data_version").fetchone()[0]),
+            )
+            cached = self._graph_snapshot_cache
+            if cached is not None and revision == self._graph_snapshot_revision:
+                return cached
+            snapshot = read_graph_snapshot_connection(conn)
+            self._graph_snapshot_cache = snapshot
+            self._graph_snapshot_revision = revision
+            return snapshot
+        finally:
+            _ = conn.execute("RELEASE SAVEPOINT graph_snapshot")
+
+    @synchronized
+    def get_node_detail_snapshot(
+        self,
+        node_id: int,
+        *,
+        request_generation: int = 0,
+        page: int = 0,
+        limit: int = 50,
+        session_event_page: int = 0,
+    ) -> NodeDetailResponse:
+        conn = self._conn
+        _ = conn.execute("SAVEPOINT node_detail_snapshot")
+        try:
+            return read_node_detail_connection(
+                conn,
+                node_id,
+                request_generation,
+                page,
+                limit,
+                session_event_page,
+            )
+        finally:
+            _ = conn.execute("RELEASE SAVEPOINT node_detail_snapshot")
 
     @synchronized
     def get_execution_snapshot(self, node_ids: list[int]) -> GraphExecutionSnapshot:

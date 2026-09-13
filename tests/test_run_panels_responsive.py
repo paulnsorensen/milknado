@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import cast
+from typing import NoReturn, cast
 from xml.etree import ElementTree
 
 import pytest
@@ -15,6 +15,7 @@ from milknado.app.run import (
     RunActionAvailability,
 )
 from milknado.app.run_panels import RunListPanel
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_view_app import ExecutionSnapshotApp
 
 
@@ -29,6 +30,10 @@ class _Source:
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         self.listener = listener
         return lambda: None
+
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NoReturn:
+        del request
+        raise NotImplementedError
 
     def emit(self, snapshot: ExecutionSnapshot) -> None:
         self.current = snapshot

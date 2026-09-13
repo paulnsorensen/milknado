@@ -16,12 +16,13 @@ from milknado.domains.common import (
     normalize_session_event,
 )
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+from milknado.domains.graph.snapshot_models import SnapshotPage
 
 _SESSION_ROLE = "session"
 _MAX_SESSION_VIEW = 500
 _MAX_EVENT_BYTES = 64 * 1024
 
-_LATEST_EVENT_ROWS_SQL = """
+_CANDIDATE_EVENT_CTE = """
 WITH valid AS (
     SELECT seq, body,
            ROW_NUMBER() OVER (
@@ -40,13 +41,17 @@ candidates AS (
     SELECT seq, body FROM run_messages
     WHERE run_id = ? AND role = ? AND NOT json_valid(body)
 )
-SELECT seq, body FROM candidates ORDER BY seq DESC LIMIT ?
 """
+
+_LATEST_EVENT_ROWS_SQL = (
+    _CANDIDATE_EVENT_CTE + "SELECT seq, body FROM candidates ORDER BY seq DESC LIMIT ?"
+)
+_EVENT_COUNT_SQL = _CANDIDATE_EVENT_CTE + "SELECT COUNT(*) FROM candidates"
 
 
 def _validate_limit(limit: int) -> None:
-    if not 0 <= limit <= _MAX_SESSION_VIEW:
-        raise ValueError(f"limit must be between 0 and {_MAX_SESSION_VIEW}")
+    if not 1 <= limit <= _MAX_SESSION_VIEW:
+        raise ValueError(f"limit must be between 1 and {_MAX_SESSION_VIEW}")
 
 
 def _decode_event(body: str, seq: int) -> SessionEvent:
@@ -131,15 +136,36 @@ def _context(conn: sqlite3.Connection, run_id: str) -> SessionContext | None:
     )
 
 
+def _candidate_params(run_id: str) -> tuple[str, str, str, str]:
+    return run_id, _SESSION_ROLE, run_id, _SESSION_ROLE
+
+
 def _events(conn: sqlite3.Connection, run_id: str, limit: int) -> tuple[SessionEvent, ...]:
-    if limit == 0:
-        return ()
     rows = fetchall(
         conn,
         _LATEST_EVENT_ROWS_SQL,
-        (run_id, _SESSION_ROLE, run_id, _SESSION_ROLE, limit),
+        (*_candidate_params(run_id), limit),
     )
     return tuple(_decode_event(cast(str, row[1]), cast(int, row[0])) for row in reversed(rows))
+
+
+def event_page(
+    conn: sqlite3.Connection, run_id: str, page: int, limit: int
+) -> SnapshotPage[SessionEvent]:
+    if page < 0 or not 1 <= limit <= _MAX_SESSION_VIEW:
+        raise ValueError(
+            "session event page must be non-negative and limit must be between 1 and 500"
+        )
+    offset = page * limit
+    total_row = cast(sqlite3.Row, fetchone(conn, _EVENT_COUNT_SQL, _candidate_params(run_id)))
+    total = cast(int, total_row[0])
+    rows = fetchall(
+        conn,
+        _LATEST_EVENT_ROWS_SQL + " OFFSET ?",
+        (*_candidate_params(run_id), limit, offset),
+    )
+    events = tuple(_decode_event(cast(str, row[1]), cast(int, row[0])) for row in reversed(rows))
+    return SnapshotPage(events, offset, limit, total, offset + len(events) < total)
 
 
 def view_session(
@@ -166,4 +192,4 @@ def view_session(
     )
 
 
-__all__ = ["append_session_event", "start_session", "view_session"]
+__all__ = ["append_session_event", "event_page", "start_session", "view_session"]

@@ -9,9 +9,17 @@ from typing import Literal, cast
 
 import msgspec
 
-from milknado.domains.common import SessionView
+from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph.snapshot import (
+    connect_readonly,
+    read_graph_snapshot_connection,
+    read_node_detail_connection,
+)
+from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
+
+_NODE_DETAIL_DEFAULT_LIMIT = 50
 
 _READY_COUNT_SQL = """
 WITH ready(id) AS (
@@ -71,24 +79,13 @@ class ObserverSnapshot:
     runs: tuple[DurableRun, ...]
     goal: str
     available: int
-
-
-def _connect(db_path: Path) -> sqlite3.Connection:
-    uri = f"{db_path.resolve().as_uri()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    _ = conn.execute("PRAGMA query_only=ON")
-    _ = conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    graph: GraphSnapshot | None = None
+    node: NodeDetailResponse | None = None
 
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
     record = run_row_to_dict(row)
-    session = view_session(
-        conn,
-        record["run_id"],
-        active=record["status"] == "running",
-    )
+    session = view_session(conn, record["run_id"], active=record["status"] == "running")
     return DurableRun(
         run_id=record["run_id"],
         node_id=record["node_id"],
@@ -129,11 +126,40 @@ def _goal_description(conn: sqlite3.Connection) -> str:
     return row[0] if row is not None else ""
 
 
-def read_observer_snapshot(db_path: Path, limit: int = 50) -> ObserverSnapshot:
+def read_observer_node_snapshot(  # noqa: PLR0913 - node response fence and page share one read
+    db_path: Path,
+    node_id: int,
+    request_generation: int = 0,
+    page: int = 0,
+    limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
+    session_event_page: int = 0,
+) -> NodeDetailResponse:
+    conn = connect_readonly(db_path)
+    try:
+        _ = conn.execute("BEGIN")
+        return read_node_detail_connection(
+            conn, node_id, request_generation, page, limit, session_event_page
+        )
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share one transaction
+    db_path: Path,
+    limit: int = 50,
+    *,
+    node_id: int | None = None,
+    request_generation: int = 0,
+    page: int = 0,
+    node_limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
+    session_event_page: int = 0,
+) -> ObserverSnapshot:
     """Read bounded observer facts in one transaction without writer maintenance."""
     if not 0 <= limit <= 100:
         raise ValueError("limit must be between 0 and 100")
-    conn = _connect(db_path)
+
+    conn = connect_readonly(db_path)
     try:
         _ = conn.execute("BEGIN")
         ready_row = cast("sqlite3.Row", conn.execute(_READY_COUNT_SQL).fetchone())
@@ -141,7 +167,30 @@ def read_observer_snapshot(db_path: Path, limit: int = 50) -> ObserverSnapshot:
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
             available=cast(int, ready_row[0]),
+            graph=read_graph_snapshot_connection(conn),
+            node=(
+                read_node_detail_connection(
+                    conn,
+                    node_id,
+                    request_generation,
+                    page,
+                    node_limit,
+                    session_event_page,
+                )
+                if node_id is not None
+                else None
+            ),
         )
     finally:
         conn.rollback()
         conn.close()
+
+
+__all__ = [
+    "DurableRun",
+    "GraphSnapshot",
+    "NodeDetailResponse",
+    "ObserverSnapshot",
+    "read_observer_node_snapshot",
+    "read_observer_snapshot",
+]

@@ -30,6 +30,17 @@ def _wait_for_workers(app: ExecutionApp) -> _WorkerManager:
     return cast(_WorkerManager, app.workers)
 
 
+class _Pilot(Protocol):
+    async def pause(self) -> None: ...
+
+
+async def _wait_for_change_pipeline(app: ExecutionApp, pilot: _Pilot) -> None:
+    """Wait for changes and the diff worker scheduled by its completion callback."""
+    await _wait_for_workers(app).wait_for_complete()
+    await pilot.pause()
+    await _wait_for_workers(app).wait_for_complete()
+
+
 @dataclass(kw_only=True)
 class _OrderedController(SnapshotController):
     first_started: Event = field(default_factory=Event)
@@ -217,8 +228,7 @@ async def test_context_change_clears_old_diff_and_bounds_streaming_refreshes(
             assert app.query_one("#changes-files", DataTable).row_count == 0
         finally:
             release.set()
-        await _wait_for_workers(app).wait_for_complete()
-        await pilot.pause()
+        await _wait_for_change_pipeline(app, pilot)
         assert "+second-only" in plain(app, "#diff-text")
         assert peak == 1
 

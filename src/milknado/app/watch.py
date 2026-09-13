@@ -16,7 +16,13 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.domains.graph import DurableRun, read_observer_snapshot
+from milknado.app.run_source import NodeSnapshotRequest
+from milknado.domains.graph import (
+    DurableRun,
+    NodeDetailResponse,
+    read_observer_node_snapshot,
+    read_observer_snapshot,
+)
 
 _OBSERVER_ACTIONS = RunActionAvailability(
     cancel_reason="Observer mode is read-only.",
@@ -45,8 +51,16 @@ class WatchSnapshotSource:
         default_factory=dict, init=False
     )
 
-    def snapshot(self) -> ExecutionSnapshot:
-        observed = read_observer_snapshot(self.db_path, self.limit)
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+        observed = read_observer_snapshot(
+            self.db_path,
+            self.limit,
+            node_id=request.node_id if request is not None else None,
+            request_generation=request.request_generation if request is not None else 0,
+            page=request.page if request is not None else 0,
+            node_limit=request.limit if request is not None else 50,
+            session_event_page=request.session_event_page if request is not None else 0,
+        )
         runs = observed.runs
         active = tuple(
             self._active_snapshot(run, run.description) for run in runs if run.status == "running"
@@ -65,6 +79,20 @@ class WatchSnapshotSource:
             stopped=0,
             available=observed.available,
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
+            graph=observed.graph,
+            node=observed.node,
+        )
+
+    def node_snapshot(  # noqa: V105 - shared source contract consumed by the watch view
+        self, request: NodeSnapshotRequest
+    ) -> NodeDetailResponse:
+        return read_observer_node_snapshot(
+            self.db_path,
+            request.node_id,
+            request.request_generation,
+            request.page,
+            request.limit,
+            request.session_event_page,
         )
 
     def _active_snapshot(self, run: DurableRun, description: str) -> ActiveRunSnapshot:
