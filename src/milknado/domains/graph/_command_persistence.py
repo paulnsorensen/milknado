@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import nullcontext
 from datetime import datetime
 from typing import cast
 
@@ -100,14 +101,16 @@ def admit_command(
     *,
     now: str | None = None,
     max_pending: int = _MAX_PENDING_COMMANDS,
+    _in_transaction: bool = False,
 ) -> CommandReceipt:
     """Atomically admit one command or persist its rejection/expiry receipt."""
     if max_pending < 1:
         raise ValueError("max_pending must be positive")
     timestamp = utc_iso(now)
     expires_at = validate_command(command_value)
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with (conn if not _in_transaction else nullcontext()):
         if command_value.action in {"steer", "follow_up", "approve"}:
             assert_admitted(conn, command_value.node_id)
         existing = get_command(conn, command_value.command_id)

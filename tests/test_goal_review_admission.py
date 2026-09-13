@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 from threading import Event, Thread
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from typer.testing import CliRunner
@@ -19,11 +21,14 @@ from milknado.domains.graph import (
     GoalReviewSubjectError,
     GraphCommand,
     MikadoGraph,
+    OwnerCapabilities,
 )
+from milknado.domains.graph._command_records import get_capabilities
 from milknado.mcp.goal_review import (
     milknado_goal_admission,
     milknado_goal_review_request,
 )
+from tests.graph_helpers import graph_conn
 
 NOW = "2026-09-13T12:00:00+00:00"
 LATER = "2026-09-13T12:05:00+00:00"
@@ -329,11 +334,116 @@ def test_pending_review_blocks_approval_but_allows_deny_and_interrupt(
         graph.close()
 
 
+def test_review_request_rolls_back_when_interrupt_inbox_is_full(tmp_path: Path) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+        graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
+        _ = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", ("interrupt",), published_at=NOW
+        )
+        for index in range(64):
+            receipt = graph.commands.admit(
+                _command(nodes["a1"], "interrupt", command_id=f"filler-{index}"), now=NOW
+            )
+            assert receipt.status == "queued"
+
+        with pytest.raises(ValueError, match="command inbox is full"):
+            _ = _request(graph, nodes["goal_a"], (nodes["a1"],))
+
+        assert graph.get_goal_review(1) is None
+        count_row = graph_conn(graph).execute(
+            "SELECT COUNT(*) FROM session_commands"
+        ).fetchone()
+        assert count_row is not None
+        assert cast(int, count_row[0]) == 64
+    finally:
+        graph.close()
+
+
+def test_review_interrupt_admission_serializes_owner_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    contender = MikadoGraph(tmp_path / "graph.db")
+    release = Event()
+    try:
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+        graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
+        _ = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", ("interrupt",), published_at=NOW
+        )
+        import milknado.domains.graph._review_interrupts as review_interrupts
+
+        entered, replacement_started = Event(), Event()
+        original = get_capabilities
+
+        def delayed(
+            conn: sqlite3.Connection, run_id: str
+        ) -> OwnerCapabilities | None:
+            capabilities = original(conn, run_id)
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError("review admission did not resume")
+            return capabilities
+
+        monkeypatch.setattr(review_interrupts, "get_capabilities", delayed)
+        request_result: list[object] = []
+        worker = Thread(
+            target=lambda: _capture(
+                request_result, lambda: _request(graph, nodes["goal_a"], (nodes["a1"],))
+            )
+        )
+        worker.start()
+        assert entered.wait(5)
+
+        replacement_result: list[object] = []
+
+        def publish_replacement() -> object:
+            replacement_started.set()
+            return contender.commands.publish_capabilities(
+                "run-a1",
+                nodes["a1"],
+                "invocation-new",
+                "owner-new",
+                ("interrupt",),
+                published_at=NOW,
+            )
+
+        replacement = Thread(
+            target=lambda: _capture(replacement_result, publish_replacement)
+        )
+        replacement.start()
+        assert replacement_started.wait(5)
+        release.set()
+        worker.join(5)
+        replacement.join(5)
+
+        assert not worker.is_alive()
+        assert not replacement.is_alive()
+        assert len(request_result) == 1
+        assert isinstance(request_result[0], GoalReviewRecord)
+        assert request_result[0].interruption_receipts[0].owner_incarnation == "owner"
+        assert len(replacement_result) == 1
+        assert not isinstance(replacement_result[0], BaseException)
+        capabilities = contender.commands.capabilities("run-a1")
+        assert capabilities is not None
+        assert capabilities.owner_incarnation == "owner-new"
+    finally:
+        release.set()
+        contender.close()
+        graph.close()
+
+
 def _command(
-    node_id: int, action: SessionAction, permission_id: str | None = None
+    node_id: int,
+    action: SessionAction,
+    permission_id: str | None = None,
+    *,
+    command_id: str | None = None,
 ) -> GraphCommand:
     return GraphCommand(
-        command_id=f"command-{action}",
+        command_id=command_id or f"command-{action}",
         node_id=node_id,
         run_id="run-a1",
         invocation_id="invocation",

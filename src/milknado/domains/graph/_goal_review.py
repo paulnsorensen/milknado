@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Mapping
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import cast
 
@@ -138,9 +139,12 @@ def _record(row: object) -> GoalReviewRecord:
     )
 
 
-def request_goal_review(conn: sqlite3.Connection, request: GoalReviewRequest) -> GoalReviewRecord:
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+def request_goal_review(
+    conn: sqlite3.Connection, request: GoalReviewRequest, *, _in_transaction: bool = False
+) -> GoalReviewRecord:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with (conn if not _in_transaction else nullcontext()):
         goal_id = _top_level_goal(conn, request.goal_id)
         revision = _text(request.goal_revision, "goal_revision")
         evidence = _text(request.evidence, "evidence")
