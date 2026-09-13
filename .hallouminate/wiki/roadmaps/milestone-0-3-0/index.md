@@ -33,4 +33,15 @@ first (no prereqs), interactive steering follows it, and zero-token supervision
 follows worker↔coordinator messaging.
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [broaden-ultracode-e2e](./broaden-ultracode-e2e.md) — Broaden ultracode end-to-end coverage
+- [calibrate-batching-heuristics](./calibrate-batching-heuristics.md) — Calibrate the batching heuristics from telemetry
+- [coordinator-run-entity](./coordinator-run-entity.md) — Introduce a real coordinator-run identity
+- [fail-closed-worktree-teardown](./fail-closed-worktree-teardown.md) — Fail-closed worktree teardown
+- [golden-path-walkthrough](./golden-path-walkthrough.md) — Golden-path walkthrough in the README
+- [interactive-run-steering](./interactive-run-steering.md) — Non-headless agents: steer a running run mid-flight
+- [lock-distribution-layout](./lock-distribution-layout.md) — Lock the portable plugin layout
+- [tmux-run-primitive](./tmux-run-primitive.md) — tmux as a first-class run primitive
+- [ultracode-install-ergonomics](./ultracode-install-ergonomics.md) — Make ultracode installable in one step
+- [worker-coordinator-messaging](./worker-coordinator-messaging.md) — Build worker↔coordinator messaging on run_messages
+- [zero-token-run-supervision](./zero-token-run-supervision.md) — Zero-token event-driven supervision of ralph runs
 <!-- HALLOUMINATE:INDEX-END -->

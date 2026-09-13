@@ -284,6 +284,47 @@ A completion promise alone does not complete a task (`src/milknado/domains/execu
 The runtime bounds protocol frames and retained output. It retains the process group after the leader exits.
 Normal completion, timeout, and force stop all clean up descendants (`src/milknado/loop/sessions/_process.py:70`).
 
+
+
+### Synthetic worker interpreter
+
+Run Python worker fixtures with the test interpreter, not an interpreter selected through `env python3`.
+The lifecycle fixture has a two-second execution deadline.
+On 2026-09-13, the environment selects `/opt/homebrew/bin/python3` and delays the first frame beyond that deadline.
+Five fresh-directory measurements range from 0.583 to 3.288 seconds without the session runtime.
+The current virtual-environment interpreter takes 0.020 to 0.028 seconds for the same script.
+An in-memory shebang correction makes all ten lifecycle tests pass without changing deadlines or runtime code.[^fixture-interpreter]
+This explains the reproduced no-frame startup timeout; it does not prove that every historical lifecycle failure has the same cause.
+
+[^fixture-interpreter]: `tests/test_session_lifecycle.py`, `_SCRIPT`, `_Scenario`, and `_worker`; coordinator diagnostic sessions `77586`, `91636`, and `58094` on 2026-09-13 UTC. Session `91636` measures the same fake tool-cap worker in fresh temporary directories with real pipes and process groups.
+
+
+
+Later measurements show that the interpreter-header correction is insufficient on this host.
+The first direct execution of one generated script takes 2.113 seconds; repeated executions take 0.032–0.040 seconds.
+Explicit interpreter execution takes about 0.02–0.03 seconds for the same script.
+Neither sandbox removal nor a resolved interpreter path removes the direct-execution delay.
+The host mechanism remains unproven; these measurements do not identify a production runtime defect.[^fixture-cold-launch]
+
+A fixture-only experiment uses a `claude` symlink to the current interpreter and passes `claude.py` as its first argument.
+All ten lifecycle tests pass with unchanged deadlines and assertions.
+Review confirms that this preserves Claude adapter selection, protocol flags, argument positions, and real process behavior.
+The fixture no longer tests shebang resolution, which is outside the lifecycle contract.
+This experiment remains uncommitted and does not prove a green full gate.[^fixture-explicit-launch]
+
+[^fixture-cold-launch]: Parent diagnostic sessions `14490`, `25288`, `67378`, and `51691` on 2026-09-13.
+[^fixture-explicit-launch]: Parent in-memory diagnostic `70356`: 10 passed in 5.56 seconds; read-only review by `task38_recovery_review` confirms `cmd[0]` basename selection and appended Claude flags.
+
+
+
+The explicit-interpreter fixture correction now exists in the preserved task #38 worktree.
+The lifecycle, failure-path, and runtime suites pass all 24 tests in 7.54 seconds.
+Severity review approves the implemented callers, including the reader subprocess and engine command.
+Fresh taste-test round 1 passes all seven lenses.
+The full gate remains pending behind the selection-writer freeze barrier.[^fixture-implemented]
+
+[^fixture-implemented]: `task38_explicit_fixture_cure`, `task38_recovery_review`, and `task38_explicit_fixture_taste` handbacks on 2026-09-13; `tests/test_session_lifecycle.py`, `tests/test_session_failure_paths.py`, and `tests/test_session_runtime.py` in `milknado-38-tree-left-shared-workspace-and-2`.
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives
