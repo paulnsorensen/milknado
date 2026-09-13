@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import milknado.domains.graph._creation as _creation
+import milknado.domains.graph._follow_up as _follow_up
 import milknado.domains.graph._goal_claims as _goal_claims
 import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
@@ -242,6 +243,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
     ) -> MikadoNode:
         return _creation.add_node(self._conn, description, parent_id, spec or NodeSpec())
+
+    @synchronized
+    def add_follow_up(self, request: _follow_up.FollowUpRequest) -> tuple[MikadoNode, bool]:
+        return _follow_up.create_follow_up(self._conn, request)
 
     @synchronized
     def set_batch_metadata(self, node_id: int, oversized: bool, batch_index: int | None) -> None:

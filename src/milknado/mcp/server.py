@@ -129,6 +129,7 @@ def main() -> None:
 
     # Importing each tool module registers its @mcp.tool()s on the shared instance.
     from milknado.mcp import (  # noqa: V104
+        follow_up,
         github,
         node,
         ralph,
@@ -139,6 +140,6 @@ def main() -> None:
         wiki,
     )
 
-    _ = (github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (follow_up, github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
 
     _ = mcp.run()

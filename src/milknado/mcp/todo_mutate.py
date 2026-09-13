@@ -5,56 +5,14 @@ from __future__ import annotations
 # Keep this import surface compact; the module has a strict source-size budget.
 # ruff: noqa: I001
 import logging
-from dataclasses import dataclass
-from pathlib import Path
-
-from milknado.domains.common import MilknadoConfig, NodeSpec
 from milknado.domains.common import normalize_hint_paths, validate_hint_path
-from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import Flavor, Kind, NodeSummary, Response, TodoStatus
 from milknado.mcp._core import mcp, open_graph, parse_flavor, parse_kind, parse_todo_status
 from milknado.mcp._core import resolve_project_root
-from milknado.mcp.todo import follow_up_parent_id, node_to_summary
+from milknado.mcp._todo_creation import TodoRequest, create_todo
+from milknado.mcp.todo import node_to_summary
 
 _logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _CreateTodo:
-    description: str
-    kind: Kind
-    files: list[str] | None
-    flavor: Flavor | None
-    artifact: str | None
-    prereqs: tuple[int, ...] | None
-    root: Path
-
-
-def _create_todo(
-    graph: MikadoGraph, cfg: MilknadoConfig, parent_id: int | None, request: _CreateTodo
-) -> NodeSummary:
-    if request.artifact is not None:
-        validate_hint_path(request.artifact, request.root, label="artifact")
-    files = (
-        normalize_hint_paths(request.files, request.root) if request.files is not None else None
-    )
-    flavor = (
-        parse_flavor(request.flavor, cfg.flavor_registry) if request.flavor is not None else None
-    )
-    node = graph.add_node(
-        request.description,
-        parent_id=parent_id,
-        spec=NodeSpec(
-            kind=parse_kind(request.kind),
-            flavor=flavor,
-            artifact_path=request.artifact,
-            prereqs=request.prereqs or (),
-            flavor_registry=cfg.flavor_registry,
-        ),
-    )
-    if files is not None:
-        graph.files.claim(node.id, files)
-    return node_to_summary(node)
 
 
 @mcp.tool()
@@ -78,7 +36,7 @@ def milknado_todo_add(
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
     try:
-        request = _CreateTodo(
+        request = TodoRequest(
             description=description,
             kind=kind,
             files=files,
@@ -87,7 +45,7 @@ def milknado_todo_add(
             prereqs=tuple(prereqs) if prereqs is not None else None,
             root=root,
         )
-        return _create_todo(graph, cfg, parent_id, request)
+        return create_todo(graph, cfg, parent_id, request)
     finally:
         graph.close()
 
@@ -174,40 +132,6 @@ def milknado_unarchive_node(node_id: int, project_root: str = "") -> Response:
         unarchived = graph.unarchive_subtree(node_id)
         _logger.info("milknado_unarchive_node: node=%d unarchived=%d", node_id, unarchived)
         return {"unarchived": unarchived}
-    finally:
-        graph.close()
-
-
-@mcp.tool()
-def milknado_track_follow_up(
-    description: str,
-    kind: Kind = "task",
-    parent_id: int | None = None,
-    project_root: str = "",
-    files: list[str] | None = None,
-    flavor: Flavor | None = None,
-    artifact: str | None = None,
-    prereqs: list[int] | None = None,
-) -> NodeSummary:
-    """Register discovered follow-up work as a new node.
-    Without parent_id, attaches beside the worker's current node; without worker
-    context, creates a root node. Flavor accepts a built-in or a registry name
-    declared in milknado.toml and is valid only for task nodes.
-    """
-    root = resolve_project_root(project_root or None)
-    graph, cfg = open_graph(root)
-    try:
-        resolved_parent = parent_id if parent_id is not None else follow_up_parent_id(graph)
-        request = _CreateTodo(
-            description=description,
-            kind=kind,
-            files=files,
-            flavor=flavor,
-            artifact=artifact,
-            prereqs=tuple(prereqs) if prereqs is not None else None,
-            root=root,
-        )
-        return _create_todo(graph, cfg, resolved_parent, request)
     finally:
         graph.close()
 
