@@ -304,7 +304,8 @@ class Source:
         self.state: str = state
         self.read_only: bool = read_only
 
-    def snapshot(self) -> ExecutionSnapshot:
+    def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
+        del request
         active = ActiveRunSnapshot(
             run_id="run-12",
             node_id=12,
@@ -314,7 +315,7 @@ class Source:
             stop_requested=False,
             actions=_actions(self.state, self.read_only),
             output=("Provider capability snapshot loaded.",),
-            pending_guidance=None,
+            pending_guidance=None if self.state == "owner-unavailable" else (),
             elapsed_seconds=125.0,
             progress_pct=45.0,
             eta_seconds=150.0,
@@ -360,6 +361,9 @@ class Source:
             request.request_generation,
             _detail(node, self.state) if node is not None else None,
         )
+
+    def attached_watch_source(self) -> Source:
+        return self
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         del listener

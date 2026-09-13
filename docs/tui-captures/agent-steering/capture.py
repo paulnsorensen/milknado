@@ -17,7 +17,7 @@ from typing import cast
 from unittest.mock import patch
 
 from rich.text import Text
-from textual.widgets import Static
+from textual.widgets import Select, Static
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -159,6 +159,10 @@ async def capture(
         if state in {"session", "permission"} and surface in {"run", "attached-watch"}:
             await pilot.press("i")
             await _settle(pilot)
+            if state == "permission":
+                app.query_one("#session-action", Select).value = "approve"
+                app.query_one("#session-permission", Select).value = "perm-1"
+                await _settle(pilot)
         overlay_visible = False
         if state == "confirmation" and surface == "run":
             app._set_confirmation("force", "run-12")  # type: ignore[attr-defined]

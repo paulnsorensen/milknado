@@ -1,16 +1,14 @@
 {
-  "command": "uv run python docs/tui-captures/agent-steering/capture.py --output docs/tui-captures/agent-steering/captures-after",
+  "command": "uv run python docs/tui-captures/agent-steering/capture.py --output docs/tui-captures/agent-steering/captures-after --capture-set final --source-revision c52bf371d052bdc7f313cba0a9ca500ae6c4d410",
+  "capture_set": "final",
+  "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410",
+  "source_revision_argument": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410",
   "theme": "Textual default theme with fixed 12:00:00 clock",
   "fixture_contract": {
     "graph": "GraphSnapshot with five nodes and two diamond dependency edges",
     "detail": "NodeDetailSnapshot with every MikadoNode field and populated related pages",
     "provider": "claude",
-    "provider_actions": [
-      "follow_up",
-      "interrupt",
-      "approve",
-      "deny"
-    ],
+    "provider_actions": [],
     "mode": "synthetic fake-vendor fixture; no live worker"
   },
   "states": [
@@ -23,7 +21,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-session-120x40.svg",
@@ -34,7 +35,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-permission-120x40.svg",
@@ -45,7 +49,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-owner-unavailable-120x40.svg",
@@ -56,7 +63,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-error-120x40.svg",
@@ -67,7 +77,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-review-120x40.svg",
@@ -78,7 +91,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-confirmation-120x40.svg",
@@ -89,7 +105,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": true,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-main-120x40.svg",
@@ -100,7 +119,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-session-120x40.svg",
@@ -111,7 +133,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-permission-120x40.svg",
@@ -122,7 +147,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-owner-unavailable-120x40.svg",
@@ -133,7 +161,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-error-120x40.svg",
@@ -144,7 +175,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-review-120x40.svg",
@@ -155,7 +189,10 @@
       "svg_width": "1482",
       "svg_height": "1026.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-main-80x24.svg",
@@ -166,7 +203,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-session-80x24.svg",
@@ -177,7 +217,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-permission-80x24.svg",
@@ -188,7 +231,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-owner-unavailable-80x24.svg",
@@ -199,7 +245,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-error-80x24.svg",
@@ -210,7 +259,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-review-80x24.svg",
@@ -221,7 +273,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-confirmation-80x24.svg",
@@ -232,7 +287,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": true,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-main-80x24.svg",
@@ -243,7 +301,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-session-80x24.svg",
@@ -254,7 +315,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-permission-80x24.svg",
@@ -265,7 +329,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-owner-unavailable-80x24.svg",
@@ -276,7 +343,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-error-80x24.svg",
@@ -287,7 +357,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-review-80x24.svg",
@@ -298,7 +371,10 @@
       "svg_width": "994",
       "svg_height": "635.5999999999999",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-main-40x15.svg",
@@ -309,7 +385,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-session-40x15.svg",
@@ -320,7 +399,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-permission-40x15.svg",
@@ -331,7 +413,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-owner-unavailable-40x15.svg",
@@ -342,7 +427,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-error-40x15.svg",
@@ -353,7 +441,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-review-40x15.svg",
@@ -364,7 +455,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "run-confirmation-40x15.svg",
@@ -375,7 +469,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": true,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-main-40x15.svg",
@@ -386,7 +483,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-session-40x15.svg",
@@ -397,7 +497,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-permission-40x15.svg",
@@ -408,7 +511,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-owner-unavailable-40x15.svg",
@@ -419,7 +525,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-error-40x15.svg",
@@ -430,7 +539,10 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     },
     {
       "file": "watch-review-40x15.svg",
@@ -441,7 +553,122 @@
       "svg_width": "506",
       "svg_height": "416.0",
       "confirmation_visible": false,
-      "fixture": "synthetic fake-vendor fixture; no live worker"
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": null,
+      "owner_synthetic": false,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-session-120x40.svg",
+      "surface": "attached-watch",
+      "state": "session",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-permission-120x40.svg",
+      "surface": "attached-watch",
+      "state": "permission",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-owner-unavailable-120x40.svg",
+      "surface": "attached-watch",
+      "state": "owner-unavailable",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-error-120x40.svg",
+      "surface": "attached-watch",
+      "state": "error",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-session-80x24.svg",
+      "surface": "attached-watch",
+      "state": "session",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-permission-80x24.svg",
+      "surface": "attached-watch",
+      "state": "permission",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-owner-unavailable-80x24.svg",
+      "surface": "attached-watch",
+      "state": "owner-unavailable",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
+    },
+    {
+      "file": "attached-watch-error-80x24.svg",
+      "surface": "attached-watch",
+      "state": "error",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic fake-vendor fixture; no live worker",
+      "owner_mode": "synthetic-attached-owner",
+      "owner_synthetic": true,
+      "source_revision": "c52bf371d052bdc7f313cba0a9ca500ae6c4d410"
     }
   ],
   "absent": [
@@ -449,13 +676,15 @@
       "surface": "watch",
       "state": "confirmation",
       "reason": "view-only UI has no confirmation control"
-    },
-    {
-      "surface": "run/watch",
-      "state": "attached-watch",
-      "reason": "requires a live owner process"
     }
   ],
+  "process_boundary_evidence": {
+    "status": "missing",
+    "owner_process": "not recorded",
+    "watch_process": "not recorded",
+    "boundary": "No committed capture starts a worker owner and a separately launched attached-watch process or records their live session handoff.",
+    "synthetic_surface": "attached-watch records use an in-process synthetic owner adapter; they do not prove a live process boundary."
+  },
   "provider_evidence": [
     {
       "provider": "codex",
@@ -487,12 +716,14 @@
       "mode": "fake-vendor protocol tests"
     }
   ],
+  "provider_evidence_scope": "One-shot fake-vendor protocol probes do not establish live mid-session compatibility.",
   "fixture_limits": [
     "synthetic snapshot",
     "fake-vendor session semantics",
     "no live worker",
     "no database",
     "no agent process",
-    "no live compatibility claim"
+    "no live attached-watch owner",
+    "no live mid-session compatibility claim"
   ]
 }
