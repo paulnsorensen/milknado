@@ -81,6 +81,7 @@ class ObserverSnapshot:
     available: int
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
+    graph_revision: int | None = None
 
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
@@ -145,6 +146,55 @@ def read_observer_node_snapshot(  # noqa: PLR0913 - node response fence and page
         conn.close()
 
 
+def _graph_revision(conn: sqlite3.Connection) -> int:
+    row = cast(
+        sqlite3.Row, conn.execute("SELECT revision FROM graph_revision WHERE id = 1").fetchone()
+    )
+    return cast(int, row[0])
+
+
+def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fences share one transaction
+    conn: sqlite3.Connection,
+    limit: int = 50,
+    *,
+    node_id: int | None = None,
+    request_generation: int = 0,
+    page: int = 0,
+    node_limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
+    session_event_page: int = 0,
+    cached_graph: GraphSnapshot | None = None,
+    cached_graph_revision: int | None = None,
+) -> ObserverSnapshot:
+    if not 0 <= limit <= 100:
+        raise ValueError("limit must be between 0 and 100")
+    _ = conn.execute("BEGIN")
+    try:
+        ready_row = cast("sqlite3.Row", conn.execute(_READY_COUNT_SQL).fetchone())
+        revision = _graph_revision(conn)
+        graph = (
+            cached_graph
+            if cached_graph is not None and revision == cached_graph_revision
+            else read_graph_snapshot_connection(conn)
+        )
+        node = (
+            read_node_detail_connection(
+                conn, node_id, request_generation, page, node_limit, session_event_page
+            )
+            if node_id is not None
+            else None
+        )
+        return ObserverSnapshot(
+            runs=_durable_runs(conn, limit),
+            goal=_goal_description(conn),
+            available=cast(int, ready_row[0]),
+            graph=graph,
+            node=node,
+            graph_revision=revision,
+        )
+    finally:
+        conn.rollback()
+
+
 def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share one transaction
     db_path: Path,
     limit: int = 50,
@@ -154,36 +204,26 @@ def read_observer_snapshot(  # noqa: PLR0913 - observer and detail fences share 
     page: int = 0,
     node_limit: int = _NODE_DETAIL_DEFAULT_LIMIT,
     session_event_page: int = 0,
+    cached_graph: GraphSnapshot | None = None,
+    cached_graph_revision: int | None = None,
+    connection: sqlite3.Connection | None = None,
 ) -> ObserverSnapshot:
-    """Read bounded observer facts in one transaction without writer maintenance."""
-    if not 0 <= limit <= 100:
-        raise ValueError("limit must be between 0 and 100")
-
-    conn = connect_readonly(db_path)
+    conn = connection or connect_readonly(db_path)
     try:
-        _ = conn.execute("BEGIN")
-        ready_row = cast("sqlite3.Row", conn.execute(_READY_COUNT_SQL).fetchone())
-        return ObserverSnapshot(
-            runs=_durable_runs(conn, limit),
-            goal=_goal_description(conn),
-            available=cast(int, ready_row[0]),
-            graph=read_graph_snapshot_connection(conn),
-            node=(
-                read_node_detail_connection(
-                    conn,
-                    node_id,
-                    request_generation,
-                    page,
-                    node_limit,
-                    session_event_page,
-                )
-                if node_id is not None
-                else None
-            ),
+        return read_observer_snapshot_connection(
+            conn,
+            limit,
+            node_id=node_id,
+            request_generation=request_generation,
+            page=page,
+            node_limit=node_limit,
+            session_event_page=session_event_page,
+            cached_graph=cached_graph,
+            cached_graph_revision=cached_graph_revision,
         )
     finally:
-        conn.rollback()
-        conn.close()
+        if connection is None:
+            conn.close()
 
 
 __all__ = [
@@ -193,4 +233,5 @@ __all__ = [
     "ObserverSnapshot",
     "read_observer_node_snapshot",
     "read_observer_snapshot",
+    "read_observer_snapshot_connection",
 ]

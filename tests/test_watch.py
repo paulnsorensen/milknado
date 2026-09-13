@@ -26,6 +26,7 @@ from milknado.domains.common import (
     SessionInput,
 )
 from milknado.domains.graph import MikadoGraph, NodeDetailResponse, read_observer_snapshot
+from milknado.domains.graph import snapshot as graph_snapshot
 
 
 def _finish(graph: MikadoGraph, run_id: str, node_id: int) -> None:
@@ -63,6 +64,54 @@ def _observed_runs(tmp_path: Path) -> tuple[Path, Path]:
     _finish(graph, "done-run", terminal.id)
     graph.close()
     return project_root, db_path
+
+
+def test_watch_reuses_graph_snapshot_until_graph_revision_changes(tmp_path: Path) -> None:
+    _, db_path = _observed_runs(tmp_path)
+    source = WatchSnapshotSource(tmp_path, db_path)
+    with patch(
+        "milknado.domains.graph.observer.read_graph_snapshot_connection",
+        wraps=graph_snapshot.read_graph_snapshot_connection,
+    ) as read_graph:
+        first = source.snapshot()
+        second = source.snapshot()
+        assert first.graph is second.graph
+        assert read_graph.call_count == 1
+
+    writer = MikadoGraph(db_path)
+    _ = writer.add_node("new graph node")
+    writer.close()
+    with patch(
+        "milknado.domains.graph.observer.read_graph_snapshot_connection",
+        wraps=graph_snapshot.read_graph_snapshot_connection,
+    ) as read_graph:
+        changed = source.snapshot()
+        assert read_graph.call_count == 1
+    assert changed.graph is not first.graph
+    assert changed.graph is not None
+    assert any(node.description == "new graph node" for node in changed.graph.nodes)
+    source.close()
+
+
+def test_watch_does_not_rehydrate_large_unchanged_graph(tmp_path: Path) -> None:
+    db_path = tmp_path / "large.db"
+    graph = MikadoGraph(db_path)
+    root = graph.add_node("large graph")
+    for index in range(200):
+        _ = graph.add_node(f"node {index}", parent_id=root.id)
+    graph.close()
+    source = WatchSnapshotSource(tmp_path, db_path)
+    with patch(
+        "milknado.domains.graph.observer.read_graph_snapshot_connection",
+        wraps=graph_snapshot.read_graph_snapshot_connection,
+    ) as read_graph:
+        first = source.snapshot()
+        second = source.snapshot()
+        assert first.graph is not None
+        assert len(first.graph.nodes) == 201
+        assert second.graph is first.graph
+        assert read_graph.call_count == 1
+    source.close()
 
 
 def test_watch_snapshot_projects_safe_cached_durable_state(tmp_path: Path) -> None:

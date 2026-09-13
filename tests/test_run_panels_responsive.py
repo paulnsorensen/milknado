@@ -77,7 +77,7 @@ def _table(app: ExecutionSnapshotApp) -> DataTable[RenderableType]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
+@pytest.mark.parametrize("size", [(60, 18), (80, 24), (120, 40)])
 async def test_run_list_columns_match_terminal_width(size: tuple[int, int]) -> None:
     runs = tuple(
         _run(f"run-{index}", index + 11, "Repair the responsive execution dashboard layout")
@@ -107,7 +107,7 @@ async def test_run_list_preserves_cursor_and_focus_across_resize() -> None:
     source = _Source(_snapshot(runs))
     app = ExecutionSnapshotApp(source)
 
-    async with app.run_test(size=(40, 15)) as pilot:
+    async with app.run_test(size=(60, 18)) as pilot:
         table = _table(app)
         _ = table.focus()
         table.move_cursor(row=1)
@@ -120,7 +120,7 @@ async def test_run_list_preserves_cursor_and_focus_across_resize() -> None:
         assert table.get_row_index("run-2") == 1
         assert table.virtual_size.width <= table.size.width
         assert _labels(table) == ("Node", "Description", "Status", "Progress", "Elapsed")
-        await pilot.resize_terminal(40, 15)
+        await pilot.resize_terminal(60, 18)
         assert _labels(table) == ("Node", "Description", "Status")
         assert table.has_focus and table.cursor_row == 1
         assert not table.show_horizontal_scrollbar

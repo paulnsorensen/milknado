@@ -15,6 +15,7 @@ from milknado.domains.graph.snapshot_models import (
     NodeDetailSnapshot,
     SnapshotPage,
 )
+from milknado.domains.graph.snapshot_receipts import receipts
 
 
 def connect_readonly(db_path: Path) -> sqlite3.Connection:
@@ -136,6 +137,7 @@ def _detail(  # noqa: PLR0913 - detail reads share one bounded snapshot
         runs=cast(SnapshotPage[RunRecord], runs),
         reviews=_history.reviews(conn, node_id, page, limit),
         sessions=_history.sessions(conn, node_id, page, limit, session_event_page),
+        receipts=receipts(conn, node_id, page, limit),
         goal_claim=_history.claim(conn, node),
         artifacts=_history.artifacts(node, page, limit),
     )

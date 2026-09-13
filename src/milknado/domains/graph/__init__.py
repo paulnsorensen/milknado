@@ -28,6 +28,7 @@ from milknado.domains.graph.rebalance import (
 )
 from milknado.domains.graph.render_dot import render_dot
 from milknado.domains.graph.runnability import invalid_subtree_node_ids, validate_runnable_roots
+from milknado.domains.graph.snapshot import connect_readonly
 from milknado.domains.graph.snapshot_models import (
     ArtifactSnapshot,
     GraphSnapshot,
@@ -48,6 +49,7 @@ from milknado.domains.graph.traversals import walk_ancestors
 
 __all__ = [
     "admit_session_command",
+    "connect_readonly",
     "CommandFenceError",
     "CommandReceipt",
     "CommandStatus",

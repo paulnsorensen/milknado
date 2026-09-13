@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import subprocess
+import sys
 import textwrap
 import threading
 import time
@@ -64,8 +65,10 @@ time.sleep(0.2)
 
 def _worker(tmp_path: Path, mode: str) -> Path:
     worker = tmp_path / "claude"
-    _ = worker.write_text(_SCRIPT_HEADER + textwrap.dedent(_SCRIPTS[mode]), encoding="utf-8")
-    worker.chmod(0o755)
+    script_path = tmp_path / "claude.py"
+    script = _SCRIPT_HEADER + textwrap.dedent(_SCRIPTS[mode])
+    _ = script_path.write_text(script, encoding="utf-8")
+    worker.symlink_to(sys.executable)
     return worker
 
 
@@ -77,7 +80,7 @@ def _spec(
     iteration: int = 1,
 ) -> AgentRunSpec:
     return AgentRunSpec(
-        cmd=[str(worker), *args],
+        cmd=[str(worker), str(worker.with_suffix(".py")), *args],
         prompt="initial prompt",
         timeout=2.0,
         log_dir=None,

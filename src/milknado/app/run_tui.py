@@ -100,6 +100,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
 
     @override
     def on_mount(self) -> None:
+        super().on_mount()
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()
 
