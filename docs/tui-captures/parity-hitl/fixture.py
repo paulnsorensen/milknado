@@ -19,8 +19,10 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
+from milknado.domains.graph import NodeDetailResponse
 
 
 class Source:
@@ -76,6 +78,13 @@ class Source:
 
     def snapshot(self) -> ExecutionSnapshot:
         return self.current
+
+    def attached_watch_source(self) -> Source:
+        return self
+
+    @staticmethod
+    def node_snapshot(request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return NodeDetailResponse(request.node_id, request.request_generation, None)
 
     @staticmethod
     def subscribe(_listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:

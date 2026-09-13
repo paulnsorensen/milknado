@@ -6,6 +6,7 @@ import pytest
 from textual.pilot import Pilot
 from textual.widgets import Input, TabbedContent
 
+from milknado.app.graph_pagination import related_pages
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
 from tests.graph_navigation_fixtures import (
@@ -16,6 +17,10 @@ from tests.graph_navigation_fixtures import (
     source,
     wait_for_requests,
 )
+
+
+def test_missing_detail_has_no_related_pages() -> None:
+    assert related_pages(None) == ()
 
 
 class _WorkerWaiter(Protocol):

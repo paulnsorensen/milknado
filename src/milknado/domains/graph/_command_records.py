@@ -199,6 +199,12 @@ def fence_reason(conn: sqlite3.Connection, command_value: GraphCommand) -> str |
         return "run/node fence does not match"
     if cast(str, run[1]) != "running":
         return "run is not running"
+    if command_value.action in {"steer", "follow_up", "approve"}:
+        from milknado.domains.graph._goal_review import goal_admission
+
+        admission = goal_admission(conn, command_value.node_id)
+        if not admission.allowed:
+            return admission.reason or "goal review pending; execution paused"
     caps = get_capabilities(conn, command_value.run_id)
     if caps is None:
         return "owner capabilities are not published"

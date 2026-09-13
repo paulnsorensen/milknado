@@ -213,6 +213,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
     assert finished.done is True
     assert finished.failed is False
     assert finished.result_text == "<promise>RALPH_PROMISE_COMPLETE</promise>"
+    assert session.actions == ()
 
 
 def test_follow_up_is_not_dropped_before_follow_up_echo() -> None:

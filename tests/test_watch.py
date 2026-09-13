@@ -25,7 +25,13 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
 )
-from milknado.domains.graph import MikadoGraph, NodeDetailResponse, read_observer_snapshot
+from milknado.domains.execution import get_execution_overview
+from milknado.domains.graph import (
+    GoalReviewRequest,
+    MikadoGraph,
+    NodeDetailResponse,
+    read_observer_snapshot,
+)
 from milknado.domains.graph import snapshot as graph_snapshot
 
 
@@ -197,9 +203,7 @@ def test_watch_snapshot_refresh_uses_read_only_observer_query(tmp_path: Path) ->
     writer.close()
 
 
-def test_observer_counts_exact_dispatch_availability_without_conflict_pairs(
-    tmp_path: Path,
-) -> None:
+def test_observer_counts_exact_dispatch_availability(tmp_path: Path) -> None:
     db_path = tmp_path / "milknado.db"
     graph = MikadoGraph(db_path)
     goal = graph.add_node("Observe availability", spec=NodeSpec(kind=NodeKind.GOAL))
@@ -214,20 +218,56 @@ def test_observer_counts_exact_dispatch_availability_without_conflict_pairs(
     graph.files.claim(later.id, ["shared.py"])
     graph.mark_running(active.id)
 
-    with (
-        patch(
-            "milknado.domains.graph._reads.get_ready_nodes",
-            side_effect=AssertionError("materialized ready nodes"),
-        ),
-        patch(
-            "milknado.domains.graph._persistence.check_parallel_safety",
-            side_effect=AssertionError("materialized conflict pairs"),
-        ),
-    ):
-        observed = read_observer_snapshot(db_path)
+    observed = read_observer_snapshot(db_path)
+    _, _, run_available = get_execution_overview(graph, [])
 
     assert observed.goal == "Observe availability"
-    assert observed.available == 2
+    assert observed.available == run_available == 2
+    graph.close()
+
+
+def test_observer_counts_beyond_ready_page_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    goal = graph.add_node("Large queue", spec=NodeSpec(kind=NodeKind.GOAL))
+    for index in range(1001):
+        _ = graph.add_node(f"candidate-{index}", parent_id=goal.id)
+
+    observed = read_observer_snapshot(db_path)
+    _, _, run_available = get_execution_overview(graph, [])
+    assert observed.available == run_available == 1001
+    graph.close()
+
+
+@pytest.mark.parametrize(("review_scope", "expected"), [("unbounded", 0), ("bounded", 1)])
+def test_observer_available_matches_execution_admission(
+    tmp_path: Path, review_scope: str, expected: int
+) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    goal = graph.add_node("Observe review availability", spec=NodeSpec(kind=NodeKind.GOAL))
+    first = graph.add_node("first candidate", parent_id=goal.id)
+    later = graph.add_node("later candidate", parent_id=goal.id)
+    _ = graph.add_node("unowned candidate", parent_id=goal.id)
+    graph.files.claim(first.id, ["shared.py"])
+    graph.files.claim(later.id, ["shared.py"])
+    affected = None if review_scope == "unbounded" else (first.id, later.id)
+    _ = graph.request_goal_review(
+        GoalReviewRequest(
+            goal_id=goal.id,
+            goal_revision="sha256:goal",
+            evidence="Review evidence",
+            proposed_change="Review proposed change",
+            affected_node_ids=affected,
+            reviewer="worker",
+            assessed_at="2026-09-13T12:00:00+00:00",
+        )
+    )
+
+    observed = read_observer_snapshot(db_path)
+    _, _, run_available = get_execution_overview(graph, [])
+
+    assert observed.available == run_available == expected
     graph.close()
 
 

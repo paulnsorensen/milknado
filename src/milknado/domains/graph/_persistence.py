@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import re
@@ -12,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
+import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._run_persistence import (
     deposit_review_verdict,
@@ -217,6 +217,8 @@ MIGRATIONS: list[tuple[int, str]] = [
     ),
     (20, _goal_review_schema.CREATE_GOAL_REVIEWS),
     (21, _goal_review_schema.CREATE_PENDING_GOAL_REVIEW_INDEX),
+    (22, _controller_capability.CREATE_CONTROLLER_MASTER),
+    (23, _controller_capability.CREATE_CONSUMED_CAPABILITY),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -582,31 +584,6 @@ def clear_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> None:
     conn.commit()
 
 
-def check_parallel_safety(
-    conn: sqlite3.Connection, node_ids: list[int]
-) -> list[tuple[int, int, list[str]]]:
-    if not node_ids:
-        return []
-    placeholders = ",".join("?" for _ in node_ids)
-    rows = fetchall(
-        conn,
-        f"SELECT node_id, file_path FROM file_ownership WHERE node_id IN ({placeholders})",
-        node_ids,
-    )
-    ownership = {node_id: set[str]() for node_id in node_ids}
-    for row in rows:
-        values = _as_tuple(row)
-        node_id = cast(int, values[0])
-        file_path = cast(str, values[1])
-        ownership[node_id].add(file_path)
-    conflicts: list[tuple[int, int, list[str]]] = []
-    for left_id, right_id in itertools.combinations(node_ids, 2):
-        overlap = ownership[left_id] & ownership[right_id]
-        if overlap:
-            conflicts.append((left_id, right_id, sorted(overlap)))
-    return conflicts
-
-
 def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
     spread_payload = [
         {"symbol_name": item.symbol.name, "symbol_file": item.symbol.file, "spread": item.spread}
@@ -687,6 +664,9 @@ def drop_all(conn: sqlite3.Connection) -> int:
         "DELETE FROM edges",
         "DELETE FROM goal_claims",
         "DELETE FROM node_reviews",
+        "DELETE FROM goal_reviews",
+        "DELETE FROM consumed_controller_capabilities",
+        "DELETE FROM controller_master",
         "DELETE FROM nodes",
         "DELETE FROM plan_state",
         "DELETE FROM batch_plans",

@@ -31,13 +31,11 @@ def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
 def _isolate_worker_identity(  # pyright: ignore[reportUnusedFunction]
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Remove ambient MILKNADO_* worker identity from the test process.
-
-    Subprocesses inherit the cleaned environment.
-    """
+    """Remove ambient worker identity and provision the test controller."""
     for name in tuple(os.environ):
         if name.startswith("MILKNADO_"):
             monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MILKNADO_CONTROLLER_MASTER", "test-controller-master")
 
 
 @pytest.fixture()

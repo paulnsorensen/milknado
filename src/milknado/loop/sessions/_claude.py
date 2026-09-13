@@ -35,10 +35,15 @@ def _flag(args: list[str], flag: str) -> None:
 class ClaudeSession(ClaudeEventsMixin, ClaudeControlMixin):
     """Claude Code's persistent stream-json input/output protocol."""
 
-    actions: tuple[SessionAction, ...] = ("follow_up", "interrupt", "approve", "deny")
     _active: bool
     _interrupt_requested: bool
     _interrupt_command_id: str
+
+    @property
+    def actions(self) -> tuple[SessionAction, ...]:
+        if not self._active:
+            return ()
+        return ("follow_up", "interrupt", "approve", "deny")
 
     def __init__(self, argv: tuple[str, ...], cwd: Path) -> None:
         if not argv:

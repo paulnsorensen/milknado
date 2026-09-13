@@ -33,6 +33,7 @@ async def test_minimum_layout_replaces_workspace_and_restores_visible_controls(k
         await wait_for_requests(pilot, source_value, 1)
         fallback = app.query_one("#minimum-fallback", Static)
         assert fallback.region.area > 0
+        assert fallback.region.x + fallback.region.width <= app.size.width
         assert cast(Text, fallback.render()).plain == (
             "Terminal too small for session controls. Resize to at least 60x18.\nq quit · ? help"
         )
@@ -124,6 +125,8 @@ async def test_minimum_run_quit_keeps_confirmation_and_cancel_behavior() -> None
         await pilot.pause()
         assert app.screen.id == "confirmation-screen"
         assert app.screen.query_one("#confirmation-overlay").region.area > 0
+        overlay = app.screen.query_one("#confirmation-overlay")
+        assert overlay.region.x + overlay.region.width <= app.screen.size.width
         await pilot.press("n")
         await pilot.pause()
         assert not app.screen.is_modal

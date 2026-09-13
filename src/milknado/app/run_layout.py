@@ -17,7 +17,7 @@ Screen { layers: base overlay; }
     layer: overlay;
     width: 1fr;
     height: auto;
-    margin: 1 1;
+    margin: 1 0;
     padding: 0 1;
     border: round $warning;
     content-align: center middle;

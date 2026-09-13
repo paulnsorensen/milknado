@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import getpass
+import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -22,10 +24,58 @@ from milknado.cli._helpers import (
 from milknado.cli._helpers import (
     load_or_default as _load_or_default,
 )
-from milknado.domains.graph import render_dot
+from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    render_dot,
+)
 
 edge_app = typer.Typer(name="edge", help="Direct edge operations on the Mikado graph")
 graph_app = typer.Typer(name="graph", help="Archive lifecycle operations on the Mikado graph")
+
+
+@graph_app.command("review")
+def review(
+    review_id: Annotated[int, typer_argument(help="Pending review ID")],
+    decision: Annotated[
+        Literal["accepted", "rejected"], typer_argument(help="Decision to record")
+    ],
+    project_root: Annotated[
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
+) -> None:
+    """Record a goal-review decision from an interactive human terminal."""
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        console.print("[red]Goal-review decisions require an interactive terminal.[/red]")
+        raise typer.Exit(code=1)
+    project_root = project_root.resolve()
+    config, plugins = _load_or_default(project_root)
+    graph = _ensure_db(config, plugins)
+    try:
+        record = graph.get_goal_review(review_id)
+        if record is None:
+            console.print(f"[red]Goal review {review_id} does not exist.[/red]")
+            raise typer.Exit(code=1)
+        console.print(
+            f"Review {record.review_id} for goal {record.goal_id}: {record.proposed_change}"
+        )
+        if not typer.confirm(f"Record {decision} for this review?"):
+            console.print("Decision cancelled.")
+            raise typer.Exit(code=1)
+        identity = getpass.getuser().strip() or "human"
+        decided = graph.decide_goal_review(
+            GoalReviewDecisionRequest(
+                review_id=review_id,
+                decision=GoalReviewDecision(decision),
+            ),
+            decided_by=identity,
+        )
+        console.print(f"Review {decided.review_id} {decided.decision.value} by {identity}.")
+    except (PermissionError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    finally:
+        graph.close()
 
 
 @graph_app.command("archive")

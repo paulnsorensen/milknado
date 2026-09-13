@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import nullcontext
 from datetime import datetime
 from typing import cast
 
 from milknado.domains.common.session import SessionAction
-from milknado.domains.graph._command_claim import expire_commands_in_transaction
+from milknado.domains.graph._command_claim import expire_commands, expire_commands_in_transaction
 from milknado.domains.graph._command_records import (
     _ACTIONS,
     _MAX_PENDING_COMMANDS,
@@ -47,6 +48,7 @@ def publish_capabilities(  # noqa: PLR0913
     permission_ids: tuple[str, ...] = (),
     *,
     published_at: str | None = None,
+    _in_transaction: bool = False,
 ) -> OwnerCapabilities:
     """Replace the current owner snapshot without deriving it from events."""
     validate_identifier(run_id, "run_id")
@@ -59,7 +61,9 @@ def publish_capabilities(  # noqa: PLR0913
     for permission_id in permission_ids:
         validate_identifier(permission_id, "permission_id")
     timestamp = utc_iso(published_at)
-    with conn:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with conn if not _in_transaction else nullcontext():
         run = fetchone(conn, "SELECT node_id, status FROM runs WHERE run_id = ?", (run_id,))
         if run is None or cast(int, run[0]) != node_id:
             raise ValueError("owner capabilities do not match the run node")
@@ -101,14 +105,16 @@ def admit_command(
     *,
     now: str | None = None,
     max_pending: int = _MAX_PENDING_COMMANDS,
+    _in_transaction: bool = False,
 ) -> CommandReceipt:
     """Atomically admit one command or persist its rejection/expiry receipt."""
     if max_pending < 1:
         raise ValueError("max_pending must be positive")
     timestamp = utc_iso(now)
     expires_at = validate_command(command_value)
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with conn if not _in_transaction else nullcontext():
         existing = get_command(conn, command_value.command_id)
         if existing is not None:
             if not same_command(existing, command_value, expires_at):
@@ -117,7 +123,7 @@ def admit_command(
             if stored_receipt is None:
                 raise RuntimeError("stored command has no receipt")
             return stored_receipt
-        if command_value.action in {"steer", "follow_up"}:
+        if command_value.action in {"steer", "follow_up", "approve"}:
             assert_admitted(conn, command_value.node_id)
         status: CommandStatus = "queued"
         detail: str | None = None
@@ -130,6 +136,7 @@ def admit_command(
             if detail is not None:
                 status = "rejected"
             else:
+                _ = expire_commands_in_transaction(conn, timestamp)
                 queued = fetchone(
                     conn, "SELECT COUNT(*) FROM session_commands WHERE status = 'queued'"
                 )
@@ -269,17 +276,6 @@ def transition_command(  # noqa: PLR0913
     if stored_receipt is None:
         raise RuntimeError("command transition returned no receipt")
     return stored_receipt
-
-
-def expire_commands(
-    conn: sqlite3.Connection,
-    *,
-    now: str | None = None,
-) -> tuple[CommandReceipt, ...]:
-    timestamp = utc_iso(now)
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
-        return expire_commands_in_transaction(conn, timestamp)
 
 
 __all__ = [

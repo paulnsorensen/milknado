@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import milknado.domains.graph._creation as _creation
+import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 import milknado.domains.graph._follow_up as _follow_up
 import milknado.domains.graph._goal_claims as _goal_claims
 import milknado.domains.graph._goal_review as _goal_review
@@ -21,7 +22,9 @@ import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
+import milknado.domains.graph._review_interrupts as _review_interrupts
 import milknado.domains.graph._status as _status
+import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
     GraphExecutionSnapshot,
@@ -120,7 +123,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:
-        """Open a migrated in-memory copy without writing to the project database."""
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
         source = sqlite3.connect(uri, uri=True, check_same_thread=False)
         snapshot = sqlite3.connect(":memory:", check_same_thread=False)
@@ -145,7 +147,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @staticmethod
     def _quarantine(db_path: Path) -> list[Path]:
-        """Move db + -wal/-shm sidecars aside to *.corrupt-<ts>; return moved paths."""
         # Microsecond resolution: two quarantines of the same db within one
         # second must not collide and silently overwrite forensic evidence.
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%f")
@@ -159,7 +160,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return moved
 
     def _open(self, db_path: Path) -> sqlite3.Connection:
-        """Open the database, quarantining a corrupt file and healing schema drift."""
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:
             quick_check = _quick_check(conn)
@@ -291,22 +291,18 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def archive_subtree(self, node_id: int) -> int:
-        """Soft-hide an all-DONE subtree; returns nodes archived. Fail-loud on live work."""
         return _mutations.archive_subtree(self._conn, node_id)
 
     @synchronized
     def unarchive_subtree(self, node_id: int) -> int:
-        """Cascade-restore an archived subtree; refuses under an archived ancestor."""
         return _mutations.unarchive_subtree(self._conn, node_id)
 
     @synchronized
     def set_todo_status(self, node_id: int, target: NodeStatus) -> bool:
-        """Apply one todo status request after complete preflight."""
         return _status.set_todo_status(self._pipeline, self._conn, node_id, target)
 
     @synchronized
     def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
-        """Set status across root_id's live (non-archived) subtree, children first."""
         return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
 
     @synchronized
@@ -477,14 +473,13 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         """Return one lock-held snapshot of graph facts for execution policy."""
         _ = self._conn.execute("SAVEPOINT execution_snapshot")
         try:
-            ready = _reads.get_ready_nodes(self._conn)
+            ready_ids = tuple(_dispatch_readiness.ready_node_ids(self._conn))
             running = tuple(
                 node.id
                 for node in _reads.get_all_nodes(self._conn)
                 if node.status is NodeStatus.RUNNING
             )
-            ready_ids = tuple(node.id for node in ready)
-            conflicts = _persistence.check_parallel_safety(self._conn, [*running, *ready_ids])
+            conflicts = _dispatch_readiness.conflicts(self._conn, [*running, *ready_ids])
             return GraphExecutionSnapshot(
                 root=_reads.get_root(self._conn),
                 nodes=tuple(_reads.get_nodes(self._conn, node_ids)),
@@ -533,19 +528,33 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
-        return _goal_review.request_goal_review(self._conn, request)
+        return _review_interrupts.request_with_interrupts(self._conn, request)
 
     @synchronized
-    def decide_goal_review(self, request: GoalReviewDecisionRequest) -> GoalReviewRecord:
-        return _goal_review.decide_goal_review(self._conn, request)
+    def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:
+        return _goal_review.get_goal_review(self._conn, review_id)
+
+    @synchronized
+    def register_controller_master(self) -> None:
+        _controller_capability.register_controller_master(self._conn)
+
+    @synchronized
+    def decide_goal_review(
+        self, request: GoalReviewDecisionRequest, *, decided_by: str
+    ) -> GoalReviewRecord:
+        _ = self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            if not _controller_capability.consume_controller_capability(
+                self._conn, request.review_id, request.decision.value
+            ):
+                raise PermissionError("a controller capability is required for this decision")
+            return _goal_review.decide_goal_review(
+                self._conn, request, decided_by=decided_by, _in_transaction=True
+            )
 
     @synchronized
     def goal_admission(self, node_id: int) -> GoalAdmission:
         return _goal_review.goal_admission(self._conn, node_id)
-
-    @synchronized
-    def goal_review_interruption_targets(self, review_id: int) -> tuple[int, ...]:
-        return _goal_review.interruption_targets(self._conn, review_id)
 
     @synchronized
     def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
@@ -613,13 +622,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     ) -> None:
         """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING."""
         owner_pid = os.getpid() if pid is None else pid
-        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now, pid=owner_pid)
-        if not self.claim_node(node_id, run_id, now=now, pid=owner_pid):
-            current = self.get_node(node_id)
-            status = current.status.value if current is not None else "gone"
-            raise ValueError(
-                f"node {node_id} is already {status}; set status back to pending to retry"
-            )
+        goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
+        prior = _goal_claims.get_goal_claim(self._conn, goal_id) if goal_id else None
+        try:
+            self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now, pid=owner_pid)
+            if not self.claim_node(node_id, run_id, now=now, pid=owner_pid):
+                current = self.get_node(node_id)
+                status = current.status.value if current is not None else "gone"
+                raise ValueError(
+                    f"node {node_id} is already {status}; set status back to pending to retry"
+                )
+        except Exception:
+            _goal_claims.release_new_goal_claim(self._conn, goal_id, run_id, prior)
+            raise
 
     # ── Node fields (refs, pid, worktree) ────────────────────────────────────
 
@@ -634,12 +649,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def set_wiki_ref(self, node_id: int, wiki_ref: str) -> None:
-        """Set the deterministic wiki key so an orphan goal node round-trips on export."""
         self._update_node_field("wiki_ref", wiki_ref, node_id)
 
     @synchronized
     def set_github_ref(self, node_id: int, github_ref: str) -> None:
-        """Bind the GitHub Projects node id recorded when this goal is linked/bound."""
         self._update_node_field("github_ref", github_ref, node_id)
 
     @synchronized
@@ -664,7 +677,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def check_parallel_safety(self, node_ids: list[int]) -> list[tuple[int, int, list[str]]]:
-        return _persistence.check_parallel_safety(self._conn, node_ids)
+        return _dispatch_readiness.conflicts(self._conn, node_ids)
 
     @synchronized
     def drop_all(self) -> int:
@@ -695,7 +708,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
         if goal_id is None:
             return None
-        if not _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid):
+        if not _goal_claims.claim_goal_row(
+            self._conn, goal_id, run_id, now, pid=pid, admission_node_id=node_id
+        ):
             existing = _goal_claims.get_goal_claim(self._conn, goal_id)
             if existing is None or existing["pid"] != pid:
                 raise ValueError(f"ancestor goal {goal_id} is already claimed; dispatch refused")

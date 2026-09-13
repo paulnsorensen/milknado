@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import cast
 
@@ -72,9 +73,12 @@ def _record(row: object) -> GoalReviewRecord:
     )
 
 
-def request_goal_review(conn: sqlite3.Connection, request: GoalReviewRequest) -> GoalReviewRecord:
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+def request_goal_review(
+    conn: sqlite3.Connection, request: GoalReviewRequest, *, _in_transaction: bool = False
+) -> GoalReviewRecord:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with conn if not _in_transaction else nullcontext():
         goal_id = top_level_goal(conn, request.goal_id)
         revision = _text(request.goal_revision, "goal_revision")
         evidence = _text(request.evidence, "evidence")
@@ -125,14 +129,19 @@ def latest_goal_review(conn: sqlite3.Connection, goal_id: int) -> GoalReviewReco
 
 
 def decide_goal_review(
-    conn: sqlite3.Connection, request: GoalReviewDecisionRequest
+    conn: sqlite3.Connection,
+    request: GoalReviewDecisionRequest,
+    *,
+    decided_by: str,
+    _in_transaction: bool = False,
 ) -> GoalReviewRecord:
     decision = GoalReviewDecision(request.decision)
     if decision is GoalReviewDecision.PENDING:
         raise ValueError("review decision must be accepted or rejected")
-    reviewer = _text(request.reviewer, "reviewer")
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+    identity = _text(decided_by, "decided_by")
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with nullcontext() if _in_transaction else conn:
         current = get_goal_review(conn, request.review_id)
         if current is None:
             raise ValueError(f"goal review {request.review_id} not found")
@@ -144,7 +153,7 @@ def decide_goal_review(
         updated = conn.execute(
             "UPDATE goal_reviews SET decision = ?, decided_at = ?, decided_by = ? "
             + "WHERE review_id = ? AND decision = 'pending'",
-            (decision.value, decided_at, reviewer, request.review_id),
+            (decision.value, decided_at, identity, request.review_id),
         )
         if updated.rowcount != 1:
             raise ValueError(f"goal review {request.review_id} changed before decision")

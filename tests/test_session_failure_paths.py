@@ -155,7 +155,7 @@ def test_pending_input_after_terminal_result_is_rejected(tmp_path: Path) -> None
     def sink(event: SessionEvent) -> None:
         events.append(event)
         if event.kind == "assistant" and event.state == "complete":
-            assert channel.submit(
+            assert not channel.submit(
                 SessionInput(action="follow_up", request_id="late-1", text="late input")
             )
 

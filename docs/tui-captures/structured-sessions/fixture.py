@@ -20,8 +20,10 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
+from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
+from milknado.domains.graph import NodeDetailResponse
 
 if TYPE_CHECKING:
     from milknado.domains.common import SessionInput
@@ -172,6 +174,13 @@ class Source:
         )
         self._publish()
         return True
+
+    def attached_watch_source(self) -> Source:
+        return self
+
+    @staticmethod
+    def node_snapshot(request: NodeSnapshotRequest) -> NodeDetailResponse:
+        return NodeDetailResponse(request.node_id, request.request_generation, None)
 
     def stop_scheduling(self) -> None:
         self.current = replace(self.current, active_runs=(), stopped=1)

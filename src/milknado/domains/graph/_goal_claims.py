@@ -10,6 +10,7 @@ import sqlite3
 from typing import Protocol, TypedDict, cast
 
 from milknado.domains.common import NodeKind, pid_alive
+from milknado.domains.graph._goal_review import assert_admitted
 from milknado.domains.graph._sqlite_rows import fetchone
 
 GoalClaim = TypedDict(  # noqa: UP013
@@ -40,7 +41,13 @@ def _field(row: object, name: str) -> object:
 
 
 def claim_goal_row(
-    conn: _ClaimConn, goal_id: int, run_id: str, now: str, *, pid: int | None
+    conn: _ClaimConn,
+    goal_id: int,
+    run_id: str,
+    now: str,
+    *,
+    pid: int | None,
+    admission_node_id: int | None = None,
 ) -> bool:
     """Acquire a goal claim with a non-null PID in one conditional write.
 
@@ -50,9 +57,10 @@ def claim_goal_row(
     """
     if pid is None:
         return False
-
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        if admission_node_id is not None:
+            assert_admitted(cast(sqlite3.Connection, conn), admission_node_id)
         inserted = conn.execute(
             "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) "
             + "VALUES (?, ?, ?, ?)",
@@ -91,11 +99,13 @@ def claim_goal_row(
 
 def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> bool:
     """Delete a goal claim gated on the owning run_id. Returns True iff deleted."""
+    owns_transaction = not conn.in_transaction
     cur = conn.execute(
         "DELETE FROM goal_claims WHERE goal_id = ? AND run_id = ?",
         (goal_id, run_id),
     )
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     return cur.rowcount == 1
 
 
@@ -106,8 +116,10 @@ def release_goal_row_unconditional(conn: sqlite3.Connection, goal_id: int) -> No
     complete so the fence owner is moot — the claim must be cleared regardless
     of which run held it.
     """
+    owns_transaction = not conn.in_transaction
     _ = conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
 
 
 def get_goal_claim(conn: sqlite3.Connection, goal_id: int) -> GoalClaim | None:
@@ -178,6 +190,7 @@ def claim_or_reclaim_goal(
         return False
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        assert_admitted(cast(sqlite3.Connection, conn), goal_id)
         row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
         if row is None:
             raise ValueError(f"node {goal_id} not found")
@@ -218,6 +231,23 @@ def claim_or_reclaim_goal(
     except Exception:
         conn.rollback()
         raise
+
+
+def release_new_goal_claim(
+    conn: sqlite3.Connection,
+    goal_id: int | None,
+    run_id: str,
+    prior: GoalClaim | None,
+) -> None:
+    if goal_id is None:
+        return
+    current = get_goal_claim(conn, goal_id)
+    if (
+        current is not None
+        and current["run_id"] == run_id
+        and (prior is None or prior["run_id"] != run_id)
+    ):
+        _ = release_goal_row(conn, goal_id, run_id)
 
 
 def try_reclaim_goal(conn: sqlite3.Connection, goal_id: int, *, now: str) -> bool:

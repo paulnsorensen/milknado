@@ -214,6 +214,7 @@ def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str,
     Owns the adapter composition (git, process, tmux) and the claim/spawn policy
     so the MCP tool never constructs an adapter or holds this policy inline.
     """
+    graph.register_controller_master()
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)

@@ -14,11 +14,13 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import SessionContext, SessionEvent, SessionInput
+from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentResult, AgentRunSpec
 from milknado.loop._events import OutputStream
 from milknado.loop._run_types import RunConfig, RunState, RunStatus
 from milknado.loop.engine import run_loop
 from milknado.loop.sessions import SessionChannel, run_session
+from tests.attached_owner_delivery_fixtures import AttachedCommand, admit_from_process
 
 _SCRIPT_HEADER = """#!/usr/bin/env python3
 import json
@@ -124,6 +126,33 @@ def _worker(tmp_path: Path, mode: str) -> Path:
     worker = tmp_path / "claude"
     script_path = tmp_path / "claude.py"
     _ = script_path.write_text(_SCRIPT_HEADER + textwrap.dedent(_SCRIPTS[mode]), encoding="utf-8")
+
+    worker.symlink_to(sys.executable)
+    return worker
+
+
+def _terminal_worker(tmp_path: Path, family: str) -> Path:
+    worker = tmp_path / family
+    script_path = tmp_path / f"{family}.py"
+    payload: dict[str, object] = (
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "terminal",
+            "session_id": family,
+        }
+        if family == "claude"
+        else {"type": "agent_end", "isTerminal": True, "messages": []}
+    )
+    trigger = "user" if family == "claude" else "prompt"
+    script = f"""
+for raw in sys.stdin:
+    if json.loads(raw).get("type") == {trigger!r}:
+        emit({payload!r})
+        break
+"""
+    _ = script_path.write_text(_SCRIPT_HEADER + textwrap.dedent(script), encoding="utf-8")
     worker.symlink_to(sys.executable)
     return worker
 
@@ -148,6 +177,14 @@ def _wait_for_pid(pid_path: Path) -> int:
     return int(pid_path.read_text(encoding="utf-8"))
 
 
+def _running_graph(tmp_path: Path) -> tuple[MikadoGraph, int]:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("terminal session")
+    now = "2026-09-12T12:00:00+00:00"
+    graph.runs.start("run-1", node.id, "run.log", now, 60)
+    return graph, node.id
+
+
 def _assert_dead(pid: int) -> None:
     deadline = time.monotonic() + 3.0
     while time.monotonic() < deadline:
@@ -157,6 +194,51 @@ def _assert_dead(pid: int) -> None:
             return
         time.sleep(0.02)
     pytest.fail(f"worker process {pid} survived cleanup")
+
+
+@pytest.mark.parametrize("family", ("claude", "omp"))
+def test_terminal_frame_rejects_attached_admission_before_channel_close(
+    tmp_path: Path, family: str
+) -> None:
+    worker = _terminal_worker(tmp_path, family)
+    graph, node_id = _running_graph(tmp_path)
+    terminal_seen = False
+    closed = False
+    attempts: list[tuple[int, bool, tuple[str, ...], str]] = []
+
+    def event_sink(event: SessionEvent) -> None:
+        nonlocal terminal_seen
+        if event.state == "complete":
+            terminal_seen = True
+
+    def capability_sink(
+        _context: SessionContext,
+        actions: tuple[str, ...],
+        invocation_id: str,
+        permission_ids: tuple[str, ...],
+    ) -> None:
+        _ = graph.commands.publish_capabilities(
+            "run-1", node_id, invocation_id, "owner-1", actions, permission_ids
+        )
+        if terminal_seen and not attempts:
+            probe = admit_from_process(
+                AttachedCommand(tmp_path, tmp_path / "graph.db", "run-1", "late", "late input")
+            )
+            attempts.append((probe.returncode, closed, actions, probe.stdout.strip()))
+
+    def close_sink(_invocation_id: str) -> None:
+        nonlocal closed
+        closed = True
+
+    channel = SessionChannel(event_sink)
+    channel.set_capability_sink(capability_sink, on_close=close_sink)
+    try:
+        result = run_session(_spec(worker, tmp_path, ()), channel)
+    finally:
+        graph.close()
+
+    assert result.returncode == 0
+    assert attempts == [(1, False, (), "rejected")]
 
 
 def test_run_session_drains_stdout_and_stderr(tmp_path: Path) -> None:
