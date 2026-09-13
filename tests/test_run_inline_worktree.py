@@ -184,6 +184,48 @@ class TestIsolateDefault:
         assert node.worktree_path is not None
         assert not Path(node.worktree_path).exists()
 
+    @pytest.mark.parametrize(
+        "description",
+        (
+            "long task " * 100,
+            "multibyte café task " * 100,
+        ),
+    )
+    def test_bounded_slug_preserves_description(
+        self,
+        tmp_path: Path,
+        worker_writes_pwd: str,
+        description: str,
+    ) -> None:
+        root = tmp_path / "repo"
+        _init_repo(root)
+        task = cast(
+            NodeSummary,
+            _call(milknado_todo_add, description=description, kind="task", project_root=str(root)),
+        )
+
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                project_root=str(root),
+            ),
+        )
+
+        assert result["status"] == "done"
+        node = _node(root, task["id"])
+        assert node.description == description
+        assert node.branch_name is not None
+        branch_prefix = f"milknado/{task['id']}-"
+        assert node.branch_name.startswith(branch_prefix)
+        slug = node.branch_name.removeprefix(branch_prefix)
+        assert len(slug.encode("utf-8")) <= 30
+        assert node.worktree_path is not None
+        assert Path(node.worktree_path).name == f"milknado-{task['id']}-{slug}"
+        assert not Path(node.worktree_path).exists()
+
 
 class TestIsolateNoMergeBack:
     """Criterion 3: ISOLATE + merge_back=False leaves the branch/worktree in place."""
