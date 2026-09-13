@@ -545,10 +545,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _goal_review.goal_admission(self._conn, node_id)
 
     @synchronized
-    def goal_review_interruption_targets(self, review_id: int) -> tuple[int, ...]:
-        return _goal_review.interruption_targets(self._conn, review_id)
-
-    @synchronized
     def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
         _goal_review.assert_admitted(self._conn, node_id)
         return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now, pid=pid)

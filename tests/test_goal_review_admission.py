@@ -114,7 +114,7 @@ def test_bounded_review_pauses_only_affected_work(tmp_path: Path) -> None:
             is None
         )
         assert graph.claim_node(nodes["a2"], "run-a2", now=NOW)
-        assert graph.goal_review_interruption_targets(review.review_id) == ()
+        assert review.interruption_receipts == ()
     finally:
         graph.close()
 
@@ -285,7 +285,9 @@ def test_review_gates_continuation_but_allows_safe_interrupt(tmp_path: Path) -> 
             published_at=NOW,
         )
         review = _request(graph, nodes["goal_a"], (nodes["a1"],))
-        assert graph.goal_review_interruption_targets(review.review_id) == (nodes["a1"],)
+        assert [(item.node_id, item.action) for item in review.interruption_receipts] == [
+            (nodes["a1"], "interrupt")
+        ]
         with pytest.raises(GoalAdmissionDenied):
             _ = graph.commands.admit(_command(nodes["a1"], "steer"), now=NOW)
         receipt = graph.commands.admit(_command(nodes["a1"], "interrupt"), now=NOW)
@@ -294,7 +296,6 @@ def test_review_gates_continuation_but_allows_safe_interrupt(tmp_path: Path) -> 
             GoalReviewDecisionRequest(review.review_id, GoalReviewDecision.ACCEPTED, LATER),
             decided_by="human",
         )
-        assert graph.goal_review_interruption_targets(review.review_id) == ()
     finally:
         graph.close()
 

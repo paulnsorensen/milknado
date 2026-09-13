@@ -10,8 +10,8 @@ from milknado.domains.graph.commands import CommandReceipt
 
 class GoalReviewDecision(StrEnum):
     PENDING = "pending"
-    ACCEPTED = "accepted"
-    REJECTED = "rejected"
+    ACCEPTED = "accepted"  # noqa: V107 - serialized protocol value
+    REJECTED = "rejected"  # noqa: V107 - serialized protocol value
 
 
 @dataclass(frozen=True, slots=True)
