@@ -219,6 +219,7 @@ class TestIsolateDefault:
         assert node.description == description
         assert node.branch_name is not None
         branch_prefix = f"milknado/{task['id']}-"
+        assert node.branch_name.startswith(branch_prefix)
         slug = node.branch_name.removeprefix(branch_prefix)
         assert len(slug.encode("utf-8")) <= 30
         assert node.worktree_path is not None
