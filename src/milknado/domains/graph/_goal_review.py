@@ -144,7 +144,7 @@ def request_goal_review(
 ) -> GoalReviewRecord:
     if not _in_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
-    with (conn if not _in_transaction else nullcontext()):
+    with conn if not _in_transaction else nullcontext():
         goal_id = _top_level_goal(conn, request.goal_id)
         revision = _text(request.goal_revision, "goal_revision")
         evidence = _text(request.evidence, "evidence")

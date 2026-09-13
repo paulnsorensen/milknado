@@ -37,7 +37,7 @@ def enqueue_goal_review_interrupts(
 ) -> tuple[CommandReceipt, ...]:
     if not _in_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
-    with (conn if not _in_transaction else nullcontext()):
+    with conn if not _in_transaction else nullcontext():
         review = _goal_review.get_goal_review(conn, review_id)
         if review is None:
             raise ValueError(f"goal review {review_id} not found")

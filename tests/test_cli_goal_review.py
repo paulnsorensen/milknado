@@ -133,7 +133,7 @@ def test_worker_environment_strips_controller_master(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY worker test requires POSIX")
-def test_worker_cannot_self_approve_from_a_pty(
+def test_worker_cannot_self_approve_from_a_pty(  # noqa: PLR0915 - real PTY boundary
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     review_id = _pending_review(tmp_path)
@@ -206,6 +206,7 @@ def test_worker_cannot_self_approve_from_a_pty(
         assert record.decision is GoalReviewDecision.PENDING
     finally:
         graph.close()
+
 
 def test_loop_agent_environment_strips_controller_master(
     monkeypatch: pytest.MonkeyPatch,

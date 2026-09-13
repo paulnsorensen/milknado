@@ -239,9 +239,7 @@ def test_observer_counts_beyond_ready_page_limit(tmp_path: Path) -> None:
     graph.close()
 
 
-@pytest.mark.parametrize(
-    ("review_scope", "expected"), [("unbounded", 0), ("bounded", 1)]
-)
+@pytest.mark.parametrize(("review_scope", "expected"), [("unbounded", 0), ("bounded", 1)])
 def test_observer_available_matches_execution_admission(
     tmp_path: Path, review_scope: str, expected: int
 ) -> None:

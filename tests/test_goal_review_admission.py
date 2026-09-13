@@ -352,16 +352,14 @@ def test_review_request_rolls_back_when_interrupt_inbox_is_full(tmp_path: Path) 
             _ = _request(graph, nodes["goal_a"], (nodes["a1"],))
 
         assert graph.get_goal_review(1) is None
-        count_row = graph_conn(graph).execute(
-            "SELECT COUNT(*) FROM session_commands"
-        ).fetchone()
+        count_row = graph_conn(graph).execute("SELECT COUNT(*) FROM session_commands").fetchone()
         assert count_row is not None
         assert cast(int, count_row[0]) == 64
     finally:
         graph.close()
 
 
-def test_review_interrupt_admission_serializes_owner_replacement(
+def test_review_interrupt_admission_serializes_owner_replacement(  # noqa: PLR0915
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph, nodes = _hierarchy(tmp_path)
@@ -378,9 +376,7 @@ def test_review_interrupt_admission_serializes_owner_replacement(
         entered, replacement_started = Event(), Event()
         original = get_capabilities
 
-        def delayed(
-            conn: sqlite3.Connection, run_id: str
-        ) -> OwnerCapabilities | None:
+        def delayed(conn: sqlite3.Connection, run_id: str) -> OwnerCapabilities | None:
             capabilities = original(conn, run_id)
             entered.set()
             if not release.wait(5):
@@ -410,9 +406,7 @@ def test_review_interrupt_admission_serializes_owner_replacement(
                 published_at=NOW,
             )
 
-        replacement = Thread(
-            target=lambda: _capture(replacement_result, publish_replacement)
-        )
+        replacement = Thread(target=lambda: _capture(replacement_result, publish_replacement))
         replacement.start()
         assert replacement_started.wait(5)
         release.set()
