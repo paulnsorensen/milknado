@@ -9,6 +9,9 @@ from typing import Literal, cast
 
 import msgspec
 
+import milknado.domains.graph._persistence as _persistence
+import milknado.domains.graph._reads as _reads
+from milknado.domains.common import NodeStatus
 from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
@@ -20,40 +23,6 @@ from milknado.domains.graph.snapshot import (
 from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 _NODE_DETAIL_DEFAULT_LIMIT = 50
-
-_READY_COUNT_SQL = """
-WITH ready(id) AS (
-    SELECT n.id
-    FROM nodes n
-    WHERE n.status = 'pending'
-      AND n.archived_at IS NULL
-      AND EXISTS (SELECT 1 FROM edges incoming WHERE incoming.child_id = n.id)
-      AND NOT EXISTS (
-          SELECT 1
-          FROM edges outgoing
-          JOIN nodes child ON child.id = outgoing.child_id
-          WHERE outgoing.parent_id = n.id AND child.status != 'done'
-      )
-    ORDER BY n.id
-    LIMIT 100
-)
-SELECT COUNT(*)
-FROM ready candidate
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM file_ownership candidate_file
-    JOIN file_ownership blocker_file ON blocker_file.file_path = candidate_file.file_path
-    JOIN nodes blocker ON blocker.id = blocker_file.node_id
-    WHERE candidate_file.node_id = candidate.id
-      AND blocker.archived_at IS NULL
-      AND (
-          blocker.status = 'running'
-          OR blocker_file.node_id IN (
-              SELECT prior.id FROM ready prior WHERE prior.id < candidate.id
-          )
-      )
-)
-"""
 
 
 class DurableRun(msgspec.Struct, frozen=True):
@@ -127,6 +96,24 @@ def _goal_description(conn: sqlite3.Connection) -> str:
     return row[0] if row is not None else ""
 
 
+def _available_count(conn: sqlite3.Connection) -> int:
+    ready_ids = [node.id for node in _reads.get_ready_nodes(conn)]
+    if not ready_ids:
+        return 0
+    running_ids = [
+        node.id for node in _reads.get_all_nodes(conn) if node.status is NodeStatus.RUNNING
+    ]
+    conflicts = _persistence.check_parallel_safety(conn, [*running_ids, *ready_ids])
+    ready_set = set(ready_ids)
+    running_set = set(running_ids)
+    blocked_ids = {
+        right_id
+        for left_id, right_id, _ in conflicts
+        if right_id in ready_set and (left_id in running_set or left_id in ready_set)
+    }
+    return len(ready_ids) - len(blocked_ids)
+
+
 def read_observer_node_snapshot(  # noqa: PLR0913 - node response fence and page share one read
     db_path: Path,
     node_id: int,
@@ -169,7 +156,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
         raise ValueError("limit must be between 0 and 100")
     _ = conn.execute("BEGIN")
     try:
-        ready_row = cast("sqlite3.Row", conn.execute(_READY_COUNT_SQL).fetchone())
+        available = _available_count(conn)
         revision = _graph_revision(conn)
         graph = (
             cached_graph
@@ -186,7 +173,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
         return ObserverSnapshot(
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
-            available=cast(int, ready_row[0]),
+            available=available,
             graph=graph,
             node=node,
             graph_revision=revision,

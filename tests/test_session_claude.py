@@ -69,6 +69,8 @@ def test_command_enables_streaming_without_dropping_cli_flags(tmp_path: Path) ->
     assert "--verbose" in session.command
     assert "--include-partial-messages" in session.command
     assert "--replay-user-messages" in session.command
+    assert session.actions == ()
+    _ = session.start("go")
     assert session.actions == ("follow_up", "interrupt", "approve", "deny")
 
 
@@ -250,6 +252,7 @@ def test_interrupt_is_controlled_and_terminal_only_when_vendor_aborts(tmp_path: 
     assert stopped.done is True
     assert stopped.failed is False
     assert stopped.interrupted is True
+    assert session.actions == ()
 
 
 def test_result_and_control_errors_preserve_real_text(tmp_path: Path) -> None:
@@ -281,6 +284,7 @@ def test_result_and_control_errors_preserve_real_text(tmp_path: Path) -> None:
     assert failed.failed is True
     assert failed.result_text == "turn cap reached"
     assert failed.events[0].text == "turn cap reached"
+    assert session.actions == ()
 
 
 def test_native_steer_is_not_claimed(tmp_path: Path) -> None:

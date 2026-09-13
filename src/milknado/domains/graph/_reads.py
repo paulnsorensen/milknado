@@ -11,7 +11,10 @@ from collections.abc import Iterable
 from dataclasses import replace
 from typing import cast
 
-import milknado.domains.graph._goal_review as _goal_review
+from milknado.domains.graph._goal_review_sql import (
+    READY_NODE_ADMISSION_CTE,
+    READY_NODE_ADMISSION_FILTER,
+)
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._persistence import children_id_map, row_to_node
@@ -216,9 +219,9 @@ def get_ready_nodes(
     params.append(limit)
     rows = fetchall(
         conn,
-        _goal_review.READY_NODE_ADMISSION_CTE
+        READY_NODE_ADMISSION_CTE
         + "SELECT n.* FROM nodes n WHERE "
-        + _goal_review.READY_NODE_ADMISSION_FILTER
+        + READY_NODE_ADMISSION_FILTER
         + " AND "
         + " AND ".join(filters)
         + " AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "

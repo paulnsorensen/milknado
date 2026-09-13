@@ -15,6 +15,10 @@ from typing import cast
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
+from milknado.domains.graph._goal_review_sql import (
+    READY_NODE_ADMISSION_CTE,
+    READY_NODE_ADMISSION_FILTER,
+)
 from milknado.domains.graph._sqlite_rows import fetchone
 
 
@@ -137,13 +141,16 @@ def claim_node(
     conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
-    cur = conn.execute(
-        "UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
-        + f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
+    conn.execute(
+        READY_NODE_ADMISSION_CTE
+        + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
+        + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
+        + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
         (run_id, now, pid, node_id),
     )
+    changed = conn.execute("SELECT changes()").fetchone()
     conn.commit()
-    return cur.rowcount == 1
+    return changed is not None and cast(int, changed[0]) == 1
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:

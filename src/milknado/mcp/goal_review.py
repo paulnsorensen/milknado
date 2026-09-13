@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
-from milknado.domains.graph import (
-    GoalReviewDecision,
-    GoalReviewDecisionRequest,
-    GoalReviewRecord,
-    GoalReviewRequest,
-)
+from milknado.domains.graph import CommandReceipt, GoalReviewRecord, GoalReviewRequest
 from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
 
-ReviewDecision = Literal["accepted", "rejected"]
+
+def _receipt_response(receipt: CommandReceipt) -> dict[str, object]:
+    return {
+        "command_id": receipt.command_id,
+        "status": receipt.status,
+        "node_id": receipt.node_id,
+        "run_id": receipt.run_id,
+        "invocation_id": receipt.invocation_id,
+        "owner_incarnation": receipt.owner_incarnation,
+        "action": receipt.action,
+        "expires_at": receipt.expires_at,
+        "admitted_at": receipt.admitted_at,
+        "recorded_at": receipt.recorded_at,
+        "detail": receipt.detail,
+    }
 
 
 def _record_response(record: GoalReviewRecord) -> Response:
@@ -29,6 +36,9 @@ def _record_response(record: GoalReviewRecord) -> Response:
         "assessed_at": record.assessed_at,
         "decided_at": record.decided_at,
         "decided_by": record.decided_by,
+        "interrupt_receipts": tuple(
+            _receipt_response(receipt) for receipt in record.interruption_receipts
+        ),
     }
 
 
@@ -55,37 +65,6 @@ def milknado_goal_review_request(  # noqa: PLR0913 - MCP boundary schema
                 affected_node_ids=(
                     tuple(affected_node_ids) if affected_node_ids is not None else None
                 ),
-                reviewer=reviewer,
-            )
-        )
-        targets = graph.goal_review_interruption_targets(record.review_id)
-        response = _record_response(record)
-        response["links"] = {
-            "goal": {"kind": "node", "node_id": record.goal_id},
-            "safe_interruption_targets": tuple(
-                {"kind": "node", "node_id": node_id} for node_id in targets
-            ),
-        }
-        return response
-    finally:
-        graph.close()
-
-
-@mcp.tool()
-def milknado_goal_review_decide(
-    review_id: int,
-    decision: ReviewDecision,
-    reviewer: str,
-    project_root: str = "",
-) -> Response:
-    """Accept or reject one pending top-level goal change review."""
-    root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
-    try:
-        record = graph.decide_goal_review(
-            GoalReviewDecisionRequest(
-                review_id=review_id,
-                decision=GoalReviewDecision(decision),
                 reviewer=reviewer,
             )
         )

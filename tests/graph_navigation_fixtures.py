@@ -65,6 +65,9 @@ class PagedSource:
     def snapshot(self) -> ExecutionSnapshot:
         return self.current
 
+    def attached_watch_source(self) -> PagedSource:
+        return self
+
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         self.listener = listener
         return lambda: None

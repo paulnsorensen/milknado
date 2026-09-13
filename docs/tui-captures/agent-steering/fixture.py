@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import fields
 from datetime import UTC, datetime
 from typing import TypeVar, cast
+
+try:
+    from milknado.domains.graph import CommandReceipt
+except ImportError:
+    CommandReceipt = None  # type: ignore[assignment,misc]
+
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -24,7 +31,6 @@ from milknado.domains.common import (
 )
 from milknado.domains.graph import (
     ArtifactSnapshot,
-    CommandReceipt,
     GraphSnapshot,
     NodeDetailResponse,
     NodeDetailSnapshot,
@@ -153,15 +159,18 @@ def _session(state: str) -> SessionView:
     if state == "review":
         events += (SessionEvent(kind="status", text="Human review pending for top-level goal #12"),)
     actions = () if state == "owner-unavailable" else PROVIDER_ACTIONS["claude"]
-    return SessionView(
-        context=SessionContext(family="claude", cwd="/fixture/project"),
-        events=events,
-        actions=actions,
-        active=True,
-        permissions=(permission,),
-        owner_incarnation="claude-owner-1" if actions else "",
-        invocation_id="invoke-12" if actions else "",
-    )
+    session_data = {
+        "events": events,
+        "actions": actions,
+        "active": True,
+        "permissions": (permission,),
+    }
+    session_fields = {item.name for item in fields(SessionView)}
+    if "owner_incarnation" in session_fields:
+        session_data["owner_incarnation"] = "claude-owner-1" if actions else ""
+    if "invocation_id" in session_fields:
+        session_data["invocation_id"] = "invoke-12" if actions else ""
+    return SessionView(**session_data)
 
 
 def _actions(state: str, read_only: bool) -> RunActionAvailability:
@@ -224,20 +233,24 @@ def _detail(node: MikadoNode, state: str) -> NodeDetailSnapshot:
             },
         ),
     )
-    receipt = CommandReceipt(
-        command_id="fixture-command-1",
-        status="queued" if state != "owner-unavailable" else "unconfirmed",
-        node_id=12,
-        run_id="run-12",
-        invocation_id="invoke-12",
-        owner_incarnation="claude-owner-1",
-        action="follow_up",
-        text="Keep the change bounded.",
-        permission_id=None,
-        expires_at="2026-09-12T12:05:00+00:00",
-        admitted_at="2026-09-12T12:01:00+00:00",
-        recorded_at="2026-09-12T12:01:01+00:00",
-        detail="synthetic receipt",
+    receipt = (
+        CommandReceipt(
+            command_id="fixture-command-1",
+            status="queued" if state != "owner-unavailable" else "unconfirmed",
+            node_id=12,
+            run_id="run-12",
+            invocation_id="invoke-12",
+            owner_incarnation="claude-owner-1",
+            action="follow_up",
+            text="Keep the change bounded.",
+            permission_id=None,
+            expires_at="2026-09-12T12:05:00+00:00",
+            admitted_at="2026-09-12T12:01:00+00:00",
+            recorded_at="2026-09-12T12:01:01+00:00",
+            detail="synthetic receipt",
+        )
+        if CommandReceipt is not None
+        else None
     )
     session_snapshot = NodeSessionSnapshot(
         run_id=run_id,
@@ -257,25 +270,24 @@ def _detail(node: MikadoNode, state: str) -> NodeDetailSnapshot:
             },
         ),
     )
-    return NodeDetailSnapshot(
-        node=node,
-        description=node.description,
-        parent=parent,
-        children=_page(children),
-        ancestors=_page(tuple(ancestors)),
-        prerequisite_ids=_page(prereqs),
-        dependent_ids=_page(dependents),
-        reverse_dependents=_page(tuple(NODE_BY_ID[item] for item in dependents)),
-        owned_files=_page((node.artifact_path,) if node.artifact_path else ()),
-        runs=_page((run,)),
-        reviews=_page((review,)),
-        sessions=_page((session_snapshot,)),
-        receipts=_page((receipt,)),
-        goal_claim=SnapshotValue(
+    detail = {
+        "node": node,
+        "description": node.description,
+        "parent": parent,
+        "children": _page(children),
+        "ancestors": _page(tuple(ancestors)),
+        "prerequisite_ids": _page(prereqs),
+        "dependent_ids": _page(dependents),
+        "reverse_dependents": _page(tuple(NODE_BY_ID[item] for item in dependents)),
+        "owned_files": _page((node.artifact_path,) if node.artifact_path else ()),
+        "runs": _page((run,)),
+        "reviews": _page((review,)),
+        "sessions": _page((session_snapshot,)),
+        "goal_claim": SnapshotValue(
             goal_claim if node.id == 12 else None,
             "loaded" if node.id == 12 else "not_stored",
         ),
-        artifacts=_page(
+        "artifacts": _page(
             (
                 ArtifactSnapshot(
                     node.artifact_path or f"docs/node-{node.id}.md",
@@ -283,9 +295,10 @@ def _detail(node: MikadoNode, state: str) -> NodeDetailSnapshot:
                 ),
             )
         ),
-    )
-
-
+    }
+    if receipt is not None and "receipts" in {item.name for item in fields(NodeDetailSnapshot)}:
+        detail["receipts"] = _page((receipt,))
+    return NodeDetailSnapshot(**detail)
 class Source:
     def __init__(self, state: str = "main", read_only: bool = False) -> None:
         self.state: str = state

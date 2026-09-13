@@ -6,6 +6,7 @@ import sqlite3
 import traceback
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -21,6 +22,7 @@ import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
+import milknado.domains.graph._review_interrupts as _review_interrupts
 import milknado.domains.graph._status as _status
 from milknado.domains.common import (
     BUILTIN_FLAVORS,
@@ -527,11 +529,21 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
-        return _goal_review.request_goal_review(self._conn, request)
+        record = _goal_review.request_goal_review(self._conn, request)
+        receipts = _review_interrupts.enqueue_goal_review_interrupts(
+            self._conn, record.review_id, now=record.assessed_at
+        )
+        return replace(record, interruption_receipts=receipts)
 
     @synchronized
-    def decide_goal_review(self, request: GoalReviewDecisionRequest) -> GoalReviewRecord:
-        return _goal_review.decide_goal_review(self._conn, request)
+    def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:
+        return _goal_review.get_goal_review(self._conn, review_id)
+
+    @synchronized
+    def decide_goal_review(
+        self, request: GoalReviewDecisionRequest, *, decided_by: str
+    ) -> GoalReviewRecord:
+        return _goal_review.decide_goal_review(self._conn, request, decided_by=decided_by)
 
     @synchronized
     def goal_admission(self, node_id: int) -> GoalAdmission:
@@ -607,13 +619,25 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     ) -> None:
         """Fence the ancestor-goal subtree, then atomically claim node_id as RUNNING."""
         owner_pid = os.getpid() if pid is None else pid
-        self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now, pid=owner_pid)
-        if not self.claim_node(node_id, run_id, now=now, pid=owner_pid):
-            current = self.get_node(node_id)
-            status = current.status.value if current is not None else "gone"
-            raise ValueError(
-                f"node {node_id} is already {status}; set status back to pending to retry"
-            )
+        goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
+        prior = _goal_claims.get_goal_claim(self._conn, goal_id) if goal_id else None
+        try:
+            self.claim_ancestor_goal_for_dispatch(node_id, run_id, now=now, pid=owner_pid)
+            if not self.claim_node(node_id, run_id, now=now, pid=owner_pid):
+                current = self.get_node(node_id)
+                status = current.status.value if current is not None else "gone"
+                raise ValueError(
+                    f"node {node_id} is already {status}; set status back to pending to retry"
+                )
+        except Exception:
+            current = _goal_claims.get_goal_claim(self._conn, goal_id) if goal_id else None
+            if (
+                current is not None
+                and current["run_id"] == run_id
+                and (prior is None or prior["run_id"] != run_id)
+            ):
+                _ = _goal_claims.release_goal_row(self._conn, goal_id, run_id)
+            raise
 
     # ── Node fields (refs, pid, worktree) ────────────────────────────────────
 
@@ -689,7 +713,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         goal_id = _goal_claims.find_ancestor_goal_id(self._conn, node_id)
         if goal_id is None:
             return None
-        if not _goal_claims.claim_goal_row(self._conn, goal_id, run_id, now, pid=pid):
+        if not _goal_claims.claim_goal_row(
+            self._conn, goal_id, run_id, now, pid=pid, admission_node_id=node_id
+        ):
             existing = _goal_claims.get_goal_claim(self._conn, goal_id)
             if existing is None or existing["pid"] != pid:
                 raise ValueError(f"ancestor goal {goal_id} is already claimed; dispatch refused")

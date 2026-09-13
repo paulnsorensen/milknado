@@ -108,7 +108,7 @@ def admit_command(
     expires_at = validate_command(command_value)
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        if command_value.action in {"steer", "follow_up"}:
+        if command_value.action in {"steer", "follow_up", "approve"}:
             assert_admitted(conn, command_value.node_id)
         existing = get_command(conn, command_value.command_id)
         if existing is not None:

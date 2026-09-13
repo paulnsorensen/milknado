@@ -20,26 +20,6 @@ from milknado.domains.graph.goal_review import (
     GoalReviewSubjectError,
 )
 
-READY_NODE_ADMISSION_CTE = """
-WITH RECURSIVE unbounded_review_nodes(id) AS (
-    SELECT goal_id FROM goal_reviews
-    WHERE decision = 'pending' AND affected_node_ids IS NULL
-    UNION
-    SELECT nodes.id
-    FROM nodes
-    JOIN unbounded_review_nodes ON nodes.parent_id = unbounded_review_nodes.id
-),
-paused_review_nodes(id) AS (
-    SELECT id FROM unbounded_review_nodes
-    UNION
-    SELECT CAST(scope.value AS INTEGER)
-    FROM goal_reviews
-    JOIN json_each(goal_reviews.affected_node_ids) AS scope
-    WHERE goal_reviews.decision = 'pending'
-)
-"""
-READY_NODE_ADMISSION_FILTER = "n.id NOT IN (SELECT id FROM paused_review_nodes)"
-
 
 def _value(row: object, name: str) -> object:
     if isinstance(row, sqlite3.Row):
@@ -115,6 +95,13 @@ def _scope_ids(conn: sqlite3.Connection, goal_id: int) -> set[int]:
             continue
         scope.add(node_id)
         stack.extend(children.get(node_id, ()))
+    return scope
+
+
+def _expanded_scope_ids(conn: sqlite3.Connection, roots: tuple[int, ...]) -> set[int]:
+    scope: set[int] = set()
+    for root_id in roots:
+        scope.update(_scope_ids(conn, root_id))
     return scope
 
 
@@ -204,12 +191,12 @@ def latest_goal_review(conn: sqlite3.Connection, goal_id: int) -> GoalReviewReco
 
 
 def decide_goal_review(
-    conn: sqlite3.Connection, request: GoalReviewDecisionRequest
+    conn: sqlite3.Connection, request: GoalReviewDecisionRequest, *, decided_by: str
 ) -> GoalReviewRecord:
     decision = GoalReviewDecision(request.decision)
     if decision is GoalReviewDecision.PENDING:
         raise ValueError("review decision must be accepted or rejected")
-    reviewer = _text(request.reviewer, "reviewer")
+    identity = _text(decided_by, "decided_by")
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
         current = get_goal_review(conn, request.review_id)
@@ -223,13 +210,14 @@ def decide_goal_review(
         updated = conn.execute(
             "UPDATE goal_reviews SET decision = ?, decided_at = ?, decided_by = ? "
             + "WHERE review_id = ? AND decision = 'pending'",
-            (decision.value, decided_at, reviewer, request.review_id),
+            (decision.value, decided_at, identity, request.review_id),
         )
         if updated.rowcount != 1:
             raise ValueError(f"goal review {request.review_id} changed before decision")
     result = get_goal_review(conn, request.review_id)
     if result is None:
         raise RuntimeError("goal review disappeared after decision")
+
     return result
 
 
@@ -248,7 +236,9 @@ def goal_admission(conn: sqlite3.Connection, node_id: int) -> GoalAdmission:
             review.decision if review else None,
             review.affected_node_ids if review else None,
         )
-    blocked = review.affected_node_ids is None or node_id in review.affected_node_ids
+    blocked = review.affected_node_ids is None or node_id in _expanded_scope_ids(
+        conn, review.affected_node_ids
+    )
     if not blocked:
         return GoalAdmission(
             True,
@@ -285,9 +275,9 @@ def interruption_targets(conn: sqlite3.Connection, review_id: int) -> tuple[int,
     ):
         return ()
     ids = (
-        _scope_ids(conn, review.goal_id)
+        _expanded_scope_ids(conn, (review.goal_id,))
         if review.unbounded
-        else set(review.affected_node_ids or ())
+        else _expanded_scope_ids(conn, review.affected_node_ids or ())
     )
     if not ids:
         return ()

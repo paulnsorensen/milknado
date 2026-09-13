@@ -105,6 +105,13 @@ class _SessionExecution:
         channel, outcome, wind_down = self.channel, self.outcome, self.wind_down
         if step.session_id is not None:
             outcome.session_id = step.session_id
+        context = channel.view().context
+        if context is not None and step.done:
+            channel.start(
+                context,
+                tuple(self.protocol.actions),
+                invocation_id=self.process_invocation_id,
+            )
         for event in step.events:
             if publish_events:
                 channel.publish(event)
@@ -267,9 +274,9 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         raise ValueError(f"unsupported structured session command: {spec.cmd!r}")
     context = channel.view().context or SessionContext(family=Path(spec.cmd[0]).stem, cwd=str(cwd))
     process_invocation_id = uuid.uuid4().hex
-    channel.start(context, tuple(protocol.actions), invocation_id=process_invocation_id)
     started_at = time.monotonic()
     start_step = protocol.start(spec.prompt)
+    channel.start(context, tuple(protocol.actions), invocation_id=process_invocation_id)
     execution = _SessionExecution(
         spec=spec,
         channel=channel,

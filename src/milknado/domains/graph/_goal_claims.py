@@ -10,6 +10,7 @@ import sqlite3
 from typing import Protocol, TypedDict, cast
 
 from milknado.domains.common import NodeKind, pid_alive
+from milknado.domains.graph._goal_review import assert_admitted
 from milknado.domains.graph._sqlite_rows import fetchone
 
 GoalClaim = TypedDict(  # noqa: UP013
@@ -40,7 +41,13 @@ def _field(row: object, name: str) -> object:
 
 
 def claim_goal_row(
-    conn: _ClaimConn, goal_id: int, run_id: str, now: str, *, pid: int | None
+    conn: _ClaimConn,
+    goal_id: int,
+    run_id: str,
+    now: str,
+    *,
+    pid: int | None,
+    admission_node_id: int | None = None,
 ) -> bool:
     """Acquire a goal claim with a non-null PID in one conditional write.
 
@@ -50,9 +57,10 @@ def claim_goal_row(
     """
     if pid is None:
         return False
-
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        if admission_node_id is not None:
+            assert_admitted(cast(sqlite3.Connection, conn), admission_node_id)
         inserted = conn.execute(
             "INSERT OR IGNORE INTO goal_claims (goal_id, run_id, pid, claimed_at) "
             + "VALUES (?, ?, ?, ?)",
@@ -178,6 +186,7 @@ def claim_or_reclaim_goal(
         return False
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        assert_admitted(cast(sqlite3.Connection, conn), goal_id)
         row = conn.execute("SELECT kind FROM nodes WHERE id = ?", (goal_id,)).fetchone()
         if row is None:
             raise ValueError(f"node {goal_id} not found")

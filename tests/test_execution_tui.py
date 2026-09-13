@@ -42,6 +42,11 @@ def _execution_app(controller: object) -> ExecutionApp:
     return ExecutionApp(_as_execution_controller(controller))
 
 
+def test_execution_app_requires_attached_watch_source() -> None:
+    with pytest.raises(AttributeError, match="attached_watch_source"):
+        _ = ExecutionApp(cast(ExecutionController, object()))
+
+
 def _input(app: ExecutionApp, widget_id: str) -> Input:
     return app.query_one(widget_id, Input)
 
@@ -96,6 +101,9 @@ class FakeController:
 
     def snapshot(self) -> ExecutionSnapshot:
         return self.initial_snapshot or snapshot()
+
+    def attached_watch_source(self) -> FakeController:
+        return self
 
     def run(self, **kwargs: object) -> object:
         self.run_calls.append(kwargs)

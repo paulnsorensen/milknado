@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from threading import Event, Thread
+from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
+from milknado.cli import app
 from milknado.domains.common import NodeKind, NodeSpec, SessionAction
 from milknado.domains.graph import (
     GoalAdmissionDenied,
@@ -17,12 +22,12 @@ from milknado.domains.graph import (
 )
 from milknado.mcp.goal_review import (
     milknado_goal_admission,
-    milknado_goal_review_decide,
     milknado_goal_review_request,
 )
 
 NOW = "2026-09-13T12:00:00+00:00"
 LATER = "2026-09-13T12:05:00+00:00"
+cli_runner = CliRunner()
 
 
 def _hierarchy(path: Path, *, project_db: bool = False) -> tuple[MikadoGraph, dict[str, int]]:
@@ -114,6 +119,100 @@ def test_bounded_review_pauses_only_affected_work(tmp_path: Path) -> None:
         graph.close()
 
 
+def test_bounded_review_expands_nonleaf_affected_scope(tmp_path: Path) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        _ = _request(graph, nodes["goal_a"], (nodes["nested"],))
+        assert graph.goal_admission(nodes["nested"]).allowed is False
+        assert graph.goal_admission(nodes["nested_task"]).allowed is False
+        ready = {node.id for node in graph.get_ready_nodes()}
+        assert nodes["a1"] in ready
+        assert nodes["nested_task"] not in ready
+        with pytest.raises(GoalAdmissionDenied):
+            _ = graph.claim_node(nodes["nested_task"], "run-nested", now=NOW)
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+    finally:
+        graph.close()
+
+
+def test_review_wins_direct_claim_race_across_connections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    contender = MikadoGraph(tmp_path / "graph.db")
+    entered, release = Event(), Event()
+    result: list[object] = []
+    import milknado.domains.graph._status as status
+
+    original = status.claim_node
+
+    def delayed(*args: object, **kwargs: object) -> bool:
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(status, "claim_node", delayed)
+    worker = Thread(
+        target=lambda: result.append(graph.claim_node(nodes["a1"], "run-race", now=NOW))
+    )
+    worker.start()
+    assert entered.wait(5)
+    _ = _request(contender, nodes["goal_a"], (nodes["a1"],))
+    release.set()
+    worker.join(5)
+    try:
+        assert result == [False]
+        assert graph.get_node(nodes["a1"]).status.value == "pending"
+    finally:
+        contender.close()
+        graph.close()
+
+
+def test_review_wins_dispatch_goal_claim_race_across_connections(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    contender = MikadoGraph(tmp_path / "graph.db")
+    entered, release = Event(), Event()
+    result: list[object] = []
+    import milknado.domains.graph._goal_claims as goal_claims
+
+    original = goal_claims.claim_goal_row
+
+    def delayed(*args: object, **kwargs: object) -> bool:
+        entered.set()
+        assert release.wait(5)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(goal_claims, "claim_goal_row", delayed)
+    worker = Thread(
+        target=lambda: _capture(
+            result,
+            lambda: graph.claim_ancestor_goal_for_dispatch(
+                nodes["a1"], "dispatch-race", now=NOW, pid=123
+            ),
+        )
+    )
+    worker.start()
+    assert entered.wait(5)
+    _ = _request(contender, nodes["goal_a"], (nodes["a1"],))
+    release.set()
+    worker.join(5)
+    try:
+        assert len(result) == 1
+        assert isinstance(result[0], GoalAdmissionDenied)
+    finally:
+        contender.close()
+        graph.close()
+
+
+def _capture(results: list[object], operation: Callable[[], object]) -> None:
+    try:
+        results.append(operation())
+    except BaseException as exc:
+        results.append(exc)
+
+
 def test_ready_limit_is_applied_after_review_exclusion(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
@@ -150,7 +249,8 @@ def test_terminal_review_decision_resumes_original_goal(
     try:
         review = _request(graph, nodes["goal_a"])
         decided = graph.decide_goal_review(
-            GoalReviewDecisionRequest(review.review_id, decision, "human", LATER)
+            GoalReviewDecisionRequest(review.review_id, decision, LATER),
+            decided_by="human",
         )
         assert decided.decision is decision
         assert decided.decided_by == "human"
@@ -191,16 +291,46 @@ def test_review_gates_continuation_but_allows_safe_interrupt(tmp_path: Path) -> 
         receipt = graph.commands.admit(_command(nodes["a1"], "interrupt"), now=NOW)
         assert receipt.status == "queued"
         _ = graph.decide_goal_review(
-            GoalReviewDecisionRequest(
-                review.review_id, GoalReviewDecision.ACCEPTED, "human", LATER
-            )
+            GoalReviewDecisionRequest(review.review_id, GoalReviewDecision.ACCEPTED, LATER),
+            decided_by="human",
         )
         assert graph.goal_review_interruption_targets(review.review_id) == ()
     finally:
         graph.close()
 
 
-def _command(node_id: int, action: SessionAction) -> GraphCommand:
+def test_pending_review_blocks_approval_but_allows_deny_and_interrupt(
+    tmp_path: Path,
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+        graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
+        _ = graph.commands.publish_capabilities(
+            "run-a1",
+            nodes["a1"],
+            "invocation",
+            "owner",
+            ("approve", "deny", "interrupt"),
+            ("permission-1",),
+            published_at=NOW,
+        )
+        review = _request(graph, nodes["goal_a"], (nodes["a1"],))
+        assert len(review.interruption_receipts) == 1
+        with pytest.raises(GoalAdmissionDenied):
+            _ = graph.commands.admit(_command(nodes["a1"], "approve", "permission-1"), now=NOW)
+        assert (
+            graph.commands.admit(_command(nodes["a1"], "deny", "permission-1"), now=NOW).status
+            == "queued"
+        )
+        assert graph.commands.admit(_command(nodes["a1"], "interrupt"), now=NOW).status == "queued"
+    finally:
+        graph.close()
+
+
+def _command(
+    node_id: int, action: SessionAction, permission_id: str | None = None
+) -> GraphCommand:
     return GraphCommand(
         command_id=f"command-{action}",
         node_id=node_id,
@@ -208,11 +338,12 @@ def _command(node_id: int, action: SessionAction) -> GraphCommand:
         invocation_id="invocation",
         owner_incarnation="owner",
         action=action,
+        permission_id=permission_id,
         expires_at=LATER,
     )
 
 
-def test_goal_review_mcp_publishes_structured_links_and_admission(tmp_path: Path) -> None:
+def test_goal_review_mcp_publishes_receipts_and_admission(tmp_path: Path) -> None:
     graph, nodes = _hierarchy(tmp_path, project_db=True)
     graph.close()
     root = str(tmp_path)
@@ -228,13 +359,55 @@ def test_goal_review_mcp_publishes_structured_links_and_admission(tmp_path: Path
     )
 
     assert requested["decision"] == "pending"
-    assert requested["links"] == {
-        "goal": {"kind": "node", "node_id": nodes["goal_a"]},
-        "safe_interruption_targets": (),
-    }
+    assert requested["interrupt_receipts"] == ()
     assert milknado_goal_admission(nodes["a1"], root)["allowed"] is False
-    review_id = requested["review_id"]
-    assert isinstance(review_id, int)
-    decided = milknado_goal_review_decide(review_id, "accepted", "human-1", root)
-    assert decided["decision"] == "accepted"
-    assert milknado_goal_admission(nodes["a1"], root)["allowed"] is True
+
+
+def test_goal_review_cli_refuses_noninteractive_decision(tmp_path: Path) -> None:
+    graph, nodes = _hierarchy(tmp_path, project_db=True)
+    review = _request(graph, nodes["goal_a"])
+    graph.close()
+
+    result = cli_runner.invoke(
+        app,
+        ["graph", "review", str(review.review_id), "accepted", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code != 0
+    assert "interactive terminal" in result.output
+
+
+def test_goal_review_cli_decides_from_confirmed_human_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, nodes = _hierarchy(tmp_path, project_db=True)
+    review = _request(graph, nodes["goal_a"])
+    graph.close()
+
+    import milknado.cli.graph as cli_graph
+
+    monkeypatch.setattr(
+        cli_graph,
+        "sys",
+        SimpleNamespace(
+            stdin=SimpleNamespace(isatty=lambda: True),
+            stdout=SimpleNamespace(isatty=lambda: True),
+        ),
+    )
+    monkeypatch.setattr(cli_graph.typer, "confirm", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(cli_graph.getpass, "getuser", lambda: "human-1")
+    result = cli_runner.invoke(
+        app,
+        ["graph", "review", str(review.review_id), "accepted", "--project-root", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "human-1" in result.output
+    graph = MikadoGraph(tmp_path / ".milknado" / "milknado.db")
+    try:
+        decided = graph.get_goal_review(review.review_id)
+        assert decided is not None
+        assert decided.decision is GoalReviewDecision.ACCEPTED
+        assert decided.decided_by == "human-1"
+    finally:
+        graph.close()
