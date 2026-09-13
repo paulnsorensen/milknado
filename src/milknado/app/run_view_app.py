@@ -55,14 +55,14 @@ class ExecutionSnapshotApp(
         ("x", "focus_changes", "Changes"),
         Binding("up,k", "previous_run", show=False),
         Binding("down,j", "next_run", show=False),
-        ("[", "previous_detail_page", "Previous related page"),
-        ("]", "next_detail_page", "Next related page"),
-        ("(", "previous_history_page", "Previous history page"),
-        (")", "next_history_page", "Next history page"),
+        Binding("[", "previous_detail_page", show=False),
+        Binding("]", "next_detail_page", show=False),
+        Binding("(", "previous_history_page", show=False),
+        Binding(")", "next_history_page", show=False),
         ("escape", "back", "Back"),
-        ("r", "resume_output", "Resume output"),
+        Binding("r", "resume_output", show=False),
         ("f1", "help", "Help"),
-        ("h", "help", "Help"),
+        Binding("h", "help", show=False),
     ]
     title: Reactive[str]
     sub_title: Reactive[str]

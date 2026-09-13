@@ -38,7 +38,7 @@ class _ConfirmationOverlay(ModalScreen[bool]):
     DEFAULT_CSS: ClassVar[str] = """
     #confirmation-screen { align: center middle; }
     #confirmation-overlay {
-        margin: 0 1;
+        margin: 0;
         width: 1fr;
         height: auto;
         max-height: 100%;

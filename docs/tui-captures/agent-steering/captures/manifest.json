@@ -1,0 +1,327 @@
+{
+  "command": "uv run python .cheese/steering-evidence/capture.py --output .cheese/steering-evidence/captures",
+  "theme": "Textual default theme with fixed 12:00:00 clock",
+  "data": "shared synthetic steering snapshot",
+  "states": [
+    {
+      "file": "run-main-120x40.svg",
+      "surface": "run",
+      "state": "main",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-session-120x40.svg",
+      "surface": "run",
+      "state": "session",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-permission-120x40.svg",
+      "surface": "run",
+      "state": "permission",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-error-120x40.svg",
+      "surface": "run",
+      "state": "error",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-confirmation-120x40.svg",
+      "surface": "run",
+      "state": "confirmation",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": true,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-main-120x40.svg",
+      "surface": "watch",
+      "state": "main",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-session-120x40.svg",
+      "surface": "watch",
+      "state": "session",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-permission-120x40.svg",
+      "surface": "watch",
+      "state": "permission",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-error-120x40.svg",
+      "surface": "watch",
+      "state": "error",
+      "columns": 120,
+      "rows": 40,
+      "svg_width": "1482",
+      "svg_height": "1026.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-main-80x24.svg",
+      "surface": "run",
+      "state": "main",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-session-80x24.svg",
+      "surface": "run",
+      "state": "session",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-permission-80x24.svg",
+      "surface": "run",
+      "state": "permission",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-error-80x24.svg",
+      "surface": "run",
+      "state": "error",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-confirmation-80x24.svg",
+      "surface": "run",
+      "state": "confirmation",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": true,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-main-80x24.svg",
+      "surface": "watch",
+      "state": "main",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-session-80x24.svg",
+      "surface": "watch",
+      "state": "session",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-permission-80x24.svg",
+      "surface": "watch",
+      "state": "permission",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-error-80x24.svg",
+      "surface": "watch",
+      "state": "error",
+      "columns": 80,
+      "rows": 24,
+      "svg_width": "994",
+      "svg_height": "635.5999999999999",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-main-40x15.svg",
+      "surface": "run",
+      "state": "main",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-session-40x15.svg",
+      "surface": "run",
+      "state": "session",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-permission-40x15.svg",
+      "surface": "run",
+      "state": "permission",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-error-40x15.svg",
+      "surface": "run",
+      "state": "error",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "run-confirmation-40x15.svg",
+      "surface": "run",
+      "state": "confirmation",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": true,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-main-40x15.svg",
+      "surface": "watch",
+      "state": "main",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-session-40x15.svg",
+      "surface": "watch",
+      "state": "session",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-permission-40x15.svg",
+      "surface": "watch",
+      "state": "permission",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    },
+    {
+      "file": "watch-error-40x15.svg",
+      "surface": "watch",
+      "state": "error",
+      "columns": 40,
+      "rows": 15,
+      "svg_width": "506",
+      "svg_height": "416.0",
+      "confirmation_visible": false,
+      "fixture": "synthetic; no live worker"
+    }
+  ],
+  "absent": [
+    {
+      "surface": "watch",
+      "state": "confirmation",
+      "reason": "view-only UI has no confirmation control"
+    },
+    {
+      "surface": "run/watch",
+      "state": "attached-watch",
+      "reason": "not implemented in current baseline"
+    },
+    {
+      "surface": "run/watch",
+      "state": "goal-review",
+      "reason": "not implemented in current baseline"
+    }
+  ],
+  "fixture_limits": [
+    "synthetic snapshot",
+    "no live worker",
+    "no database",
+    "no agent process"
+  ]
+}
