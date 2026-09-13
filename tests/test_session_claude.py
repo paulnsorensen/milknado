@@ -252,6 +252,53 @@ def test_interrupt_is_controlled_and_terminal_only_when_vendor_aborts(tmp_path: 
     assert stopped.interrupted is True
 
 
+def test_interrupt_failure_emits_rejected_durable_receipt(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    _ = session.start("stop")
+    submitted = session.submit(SessionInput(action="interrupt", request_id="cmd-1"))
+    interrupt_id = _string(_wire(submitted.commands[0])["request_id"])
+    failed = session.receive(
+        _frame(
+            {
+                "type": "control_response",
+                "response": {"subtype": "error", "request_id": interrupt_id},
+            }
+        )
+    )
+    assert failed.events == (
+        SessionEvent(kind="user", text="", event_id="cmd-1", state="rejected", action="interrupt"),
+        SessionEvent(
+            kind="error",
+            text="Claude control request failed",
+            event_id=interrupt_id,
+            state="running",
+        ),
+    )
+
+
+def test_interrupt_acknowledgement_emits_delivered_durable_receipt(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    _ = session.start("stop")
+    submitted = session.submit(SessionInput(action="interrupt", request_id="cmd-1"))
+    interrupt_id = _string(_wire(submitted.commands[0])["request_id"])
+    ack = session.receive(
+        _frame(
+            {
+                "type": "control_response",
+                "response": {"subtype": "success", "request_id": interrupt_id, "response": {}},
+            }
+        )
+    )
+    assert ack.events == (
+        SessionEvent(
+            kind="status", text="Interrupt acknowledged", event_id=interrupt_id, state="running"
+        ),
+        SessionEvent(
+            kind="user", text="", event_id="cmd-1", state="delivered", action="interrupt"
+        ),
+    )
+
+
 def test_result_and_control_errors_preserve_real_text(tmp_path: Path) -> None:
     session = _session(tmp_path)
     started = session.start("go")

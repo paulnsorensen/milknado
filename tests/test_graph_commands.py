@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from milknado.app.watch import graph_command_admitter
-from milknado.domains.common import SessionInput
+from milknado.domains.common import RunResult, SessionInput
 from milknado.domains.graph import (
     CommandFenceError,
     MikadoGraph,
@@ -263,3 +263,63 @@ def test_command_rejection_transition_and_id_generation(graph: MikadoGraph) -> N
     rejected = graph.commands.reject(command, now=_NOW, detail="worker refused")
     assert rejected.status == "rejected"
     assert len(new_command_id()) == 32
+
+
+def test_admission_rejects_when_run_is_not_running(graph: MikadoGraph) -> None:
+    node_id = _owned_graph(graph)
+    graph.runs.finish(
+        "run-1",
+        RunResult(status="succeeded", exit_code=0, timed_out=False, ended_at=_NOW),
+    )
+
+    rejected = graph.commands.admit(_command(node_id), now=_NOW)
+
+    assert rejected.status == "rejected"
+    assert rejected.detail == "run is not running"
+
+
+def test_admission_rejects_when_owner_capabilities_are_not_published(
+    graph: MikadoGraph,
+) -> None:
+    node = graph.add_node("steerable")
+    assert graph.claim_node(node.id, "run-1", now=_NOW)
+    graph.runs.start("run-1", node.id, "run.log", _NOW, 60)
+
+    rejected = graph.commands.admit(_command(node.id), now=_NOW)
+
+    assert rejected.status == "rejected"
+    assert rejected.detail == "owner capabilities are not published"
+
+
+def test_admission_rejects_permission_id_on_non_approval_action(graph: MikadoGraph) -> None:
+    node_id = _owned_graph(graph)
+
+    rejected = graph.commands.admit(
+        _command(node_id, action="steer", permission_id="permission-1"),
+        now=_NOW,
+    )
+
+    assert rejected.status == "rejected"
+    assert rejected.detail == "permission ID is valid only for approval commands"
+
+
+def test_capabilities_rejects_corrupted_actions_json(graph: MikadoGraph) -> None:
+    _ = _owned_graph(graph)
+    _ = graph_conn(graph).execute(
+        "UPDATE owner_capabilities SET actions_json = 'not-json' WHERE run_id = 'run-1'"
+    )
+    graph_conn(graph).commit()
+
+    with pytest.raises(ValueError, match="stored owner actions is invalid JSON"):
+        _ = graph.commands.capabilities("run-1")
+
+
+def test_capabilities_rejects_non_string_permission_ids(graph: MikadoGraph) -> None:
+    _ = _owned_graph(graph)
+    _ = graph_conn(graph).execute(
+        "UPDATE owner_capabilities SET permission_ids_json = '[1,2]' WHERE run_id = 'run-1'"
+    )
+    graph_conn(graph).commit()
+
+    with pytest.raises(ValueError, match="stored permission IDs must be a string list"):
+        _ = graph.commands.capabilities("run-1")

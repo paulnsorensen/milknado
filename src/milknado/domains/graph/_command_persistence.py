@@ -218,6 +218,7 @@ def transition_command(  # noqa: PLR0913
     if status not in _TERMINAL | {"submitted"}:
         raise ValueError(f"invalid command transition: {status!r}")
     timestamp = utc_iso(now)
+    _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
         command_value = get_command(conn, command_id)
         if command_value is None:
@@ -272,6 +273,7 @@ def expire_commands(
     now: str | None = None,
 ) -> tuple[CommandReceipt, ...]:
     timestamp = utc_iso(now)
+    _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
         return expire_commands_in_transaction(conn, timestamp)
 
