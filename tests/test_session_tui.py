@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-
 import subprocess
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -327,9 +326,7 @@ async def test_failed_git_diff_is_visible_after_changed_files_load(
         replay_subscription=False,
     )
 
-    def fail_diff(
-        _adapter: GitAdapter, loaded_context: SessionContext, _path: str
-    ) -> str:
+    def fail_diff(_adapter: GitAdapter, loaded_context: SessionContext, _path: str) -> str:
         raise GitOperationError(
             "session changes", f"worktree is unavailable: {loaded_context.cwd}"
         )
