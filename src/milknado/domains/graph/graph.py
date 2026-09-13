@@ -535,17 +535,24 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return _goal_review.get_goal_review(self._conn, review_id)
 
     @synchronized
+    def register_controller_master(self) -> None:
+        _controller_capability.register_controller_master(self._controller_root())
+
+    @synchronized
     def decide_goal_review(
         self, request: GoalReviewDecisionRequest, *, decided_by: str
     ) -> GoalReviewRecord:
-        parent = self._db_path.resolve().parent
-        project_root = parent.parent if parent.name == ".milknado" else parent
+        project_root = self._controller_root()
         decision = request.decision.value
         if not _controller_capability.consume_controller_capability(
             project_root, request.review_id, decision
         ):
             raise PermissionError("a controller capability is required for this decision")
         return _goal_review.decide_goal_review(self._conn, request, decided_by=decided_by)
+
+    def _controller_root(self) -> Path:
+        parent = self._db_path.resolve().parent
+        return parent.parent if parent.name == ".milknado" else parent
 
     @synchronized
     def goal_admission(self, node_id: int) -> GoalAdmission:

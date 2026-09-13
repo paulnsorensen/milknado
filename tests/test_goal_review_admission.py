@@ -468,6 +468,8 @@ def test_review_interrupt_admission_serializes_owner_replacement(  # noqa: PLR09
         capabilities = contender.commands.capabilities("run-a1")
         assert capabilities is not None
         assert capabilities.owner_incarnation == "owner-new"
+        queued = contender.commands.pending("run-a1", now=NOW)
+        assert any(command.owner_incarnation == "owner-new" for command in queued)
     finally:
         release.set()
         contender.close()

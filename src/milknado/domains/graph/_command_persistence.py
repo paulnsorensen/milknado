@@ -48,6 +48,7 @@ def publish_capabilities(  # noqa: PLR0913
     permission_ids: tuple[str, ...] = (),
     *,
     published_at: str | None = None,
+    _in_transaction: bool = False,
 ) -> OwnerCapabilities:
     """Replace the current owner snapshot without deriving it from events."""
     validate_identifier(run_id, "run_id")
@@ -59,7 +60,9 @@ def publish_capabilities(  # noqa: PLR0913
     for permission_id in permission_ids:
         validate_identifier(permission_id, "permission_id")
     timestamp = utc_iso(published_at)
-    with conn:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with conn if not _in_transaction else nullcontext():
         run = fetchone(conn, "SELECT node_id, status FROM runs WHERE run_id = ?", (run_id,))
         if run is None or cast(int, run[0]) != node_id:
             raise ValueError("owner capabilities do not match the run node")
