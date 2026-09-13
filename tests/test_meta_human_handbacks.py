@@ -2,19 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TypedDict, cast
 
 import pytest
+from fastmcp import Context
 
 from milknado.mcp._core import GraphSummaryResponse, NodeSummary
+from milknado.mcp.follow_up import milknado_track_follow_up
 from milknado.mcp.node import milknado_todo_claim
 from milknado.mcp.server import milknado_graph_summary, open_graph
 from milknado.mcp.todo import milknado_todo_next
-from milknado.mcp.todo_mutate import (
-    milknado_todo_add,
-    milknado_todo_set_status,
-    milknado_track_follow_up,
-)
+from milknado.mcp.todo_mutate import milknado_todo_add, milknado_todo_set_status
 
 
 class _ClaimPayload(TypedDict):
@@ -139,13 +138,33 @@ def test_worker_follow_up_is_sibling_and_ready_after_worker_completes(
     root = str(tmp_path)
     goal = _add("goal", root, kind="goal")
     worker = _add("current worker", root, parent_id=goal["id"])
+    graph, _config = open_graph(tmp_path)
+    try:
+        graph.runs.start("worker-run", worker["id"], "", "2026-09-13T00:00:00+00:00", None)
+        _ = graph.commands.publish_capabilities(
+            "worker-run",
+            worker["id"],
+            "worker-invocation",
+            "owner",
+            (),
+            published_at="2026-09-13T00:00:00+00:00",
+        )
+    finally:
+        graph.close()
     monkeypatch.setenv("MILKNADO_NODE_ID", str(worker["id"]))
     monkeypatch.setenv("MILKNADO_RUN_ID", "worker-run")
+    monkeypatch.setenv("MILKNADO_INVOCATION_ID", "worker-invocation")
     monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
+    ctx = cast(Context, cast(object, SimpleNamespace(request_id="follow-up-request")))
 
     follow_up = cast(
         NodeSummary,
-        _call(milknado_track_follow_up, description="discovered follow-up", project_root=root),
+        _call(
+            milknado_track_follow_up,
+            description="discovered follow-up",
+            project_root=root,
+            ctx=ctx,
+        ),
     )
 
     graph, _config = open_graph(tmp_path)

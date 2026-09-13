@@ -78,10 +78,14 @@ class _SessionExecution:
 
     def launch(self) -> None:
         self.wind_down = prepare_wind_down(self.spec)
+        env = {
+            **(self.wind_down.env_overrides if self.wind_down is not None else {}),
+            "MILKNADO_INVOCATION_ID": self.process_invocation_id,
+        }
         proc = start_process(
             self.protocol,
             self.spec.cwd or Path.cwd(),
-            env=self.wind_down.env_overrides if self.wind_down is not None else None,
+            env=env,
         )
         self.proc = proc
         self.threads = start_readers(proc, self.lines, self.stop, self.spec.iteration)

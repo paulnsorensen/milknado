@@ -203,6 +203,17 @@ MIGRATIONS: list[tuple[int, str]] = [
     (16, _revision_trigger("graph_revision_claims_insert", "INSERT", "goal_claims")),
     (17, _revision_trigger("graph_revision_claims_update", "UPDATE", "goal_claims")),
     (18, _revision_trigger("graph_revision_claims_delete", "DELETE", "goal_claims")),
+    (
+        19,
+        "CREATE TABLE IF NOT EXISTS follow_up_provenance ("
+        + "node_id INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE, "
+        + "source_node_id INTEGER NOT NULL, "
+        + "source_run_id TEXT NOT NULL, "
+        + "source_invocation_id TEXT NOT NULL, "
+        + "request_id TEXT NOT NULL, "
+        + "created_at TEXT NOT NULL, "
+        + "PRIMARY KEY (source_run_id, source_invocation_id, request_id))",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

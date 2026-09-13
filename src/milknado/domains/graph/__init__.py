@@ -1,5 +1,6 @@
 from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._command_admission import admit_session_command
+from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph.commands import (
     CommandFenceError,
@@ -55,6 +56,8 @@ __all__ = [
     "CommandStatus",
     "GraphCommand",
     "OwnerCapabilities",
+    "FollowUpRequest",
+    "FollowUpSource",
     "new_command_id",
     "ArtifactSnapshot",
     "GraphSnapshot",
