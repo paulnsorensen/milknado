@@ -2,24 +2,10 @@
 
 from __future__ import annotations
 
-from milknado.domains.graph import CommandReceipt, GoalReviewRecord, GoalReviewRequest
+import msgspec
+
+from milknado.domains.graph import GoalReviewRecord, GoalReviewRequest
 from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
-
-
-def _receipt_response(receipt: CommandReceipt) -> dict[str, object]:
-    return {
-        "command_id": receipt.command_id,
-        "status": receipt.status,
-        "node_id": receipt.node_id,
-        "run_id": receipt.run_id,
-        "invocation_id": receipt.invocation_id,
-        "owner_incarnation": receipt.owner_incarnation,
-        "action": receipt.action,
-        "expires_at": receipt.expires_at,
-        "admitted_at": receipt.admitted_at,
-        "recorded_at": receipt.recorded_at,
-        "detail": receipt.detail,
-    }
 
 
 def _record_response(record: GoalReviewRecord) -> Response:
@@ -37,7 +23,7 @@ def _record_response(record: GoalReviewRecord) -> Response:
         "decided_at": record.decided_at,
         "decided_by": record.decided_by,
         "interrupt_receipts": tuple(
-            _receipt_response(receipt) for receipt in record.interruption_receipts
+            msgspec.to_builtins(receipt) for receipt in record.interruption_receipts
         ),
     }
 
