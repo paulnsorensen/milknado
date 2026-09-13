@@ -67,18 +67,20 @@ def _enqueue_node_interrupt(
     capabilities = get_capabilities(conn, run_id)
     if capabilities is None:
         return None
+    if "interrupt" not in capabilities.actions:
+        return None
     text = f"goal review {review_id} pending"
     existing = fetchone(
         conn,
         "SELECT command_id FROM session_commands "
         + "WHERE run_id = ? AND invocation_id = ? AND owner_incarnation = ? "
-        + "AND action = 'interrupt' AND text = ? AND status = 'queued'",
+        + "AND action = 'interrupt' AND text = ? LIMIT 1",
         (run_id, capabilities.invocation_id, capabilities.owner_incarnation, text),
     )
     if existing is not None:
         receipt = get_receipt(conn, cast(str, existing[0]))
         if receipt is None:
-            raise RuntimeError("queued review interrupt has no receipt")
+            raise RuntimeError("recorded review interrupt has no receipt")
         return receipt
     expires_at = (datetime.fromisoformat(timestamp) + timedelta(hours=1)).isoformat()
     receipt = admit_command(

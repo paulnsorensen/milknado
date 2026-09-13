@@ -99,11 +99,13 @@ def claim_goal_row(
 
 def release_goal_row(conn: sqlite3.Connection, goal_id: int, run_id: str) -> bool:
     """Delete a goal claim gated on the owning run_id. Returns True iff deleted."""
+    owns_transaction = not conn.in_transaction
     cur = conn.execute(
         "DELETE FROM goal_claims WHERE goal_id = ? AND run_id = ?",
         (goal_id, run_id),
     )
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     return cur.rowcount == 1
 
 
@@ -114,8 +116,10 @@ def release_goal_row_unconditional(conn: sqlite3.Connection, goal_id: int) -> No
     complete so the fence owner is moot — the claim must be cleared regardless
     of which run held it.
     """
+    owns_transaction = not conn.in_transaction
     _ = conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (goal_id,))
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
 
 
 def get_goal_claim(conn: sqlite3.Connection, goal_id: int) -> GoalClaim | None:

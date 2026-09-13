@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import re
@@ -12,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
+import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._run_persistence import (
     deposit_review_verdict,
@@ -217,6 +217,8 @@ MIGRATIONS: list[tuple[int, str]] = [
     ),
     (20, _goal_review_schema.CREATE_GOAL_REVIEWS),
     (21, _goal_review_schema.CREATE_PENDING_GOAL_REVIEW_INDEX),
+    (22, _controller_capability.CREATE_CONTROLLER_MASTER),
+    (23, _controller_capability.CREATE_CONSUMED_CAPABILITY),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
@@ -585,26 +587,29 @@ def clear_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> None:
 def check_parallel_safety(
     conn: sqlite3.Connection, node_ids: list[int]
 ) -> list[tuple[int, int, list[str]]]:
-    if not node_ids:
+    ordered_ids = list(dict.fromkeys(node_ids))
+    if not ordered_ids:
         return []
-    placeholders = ",".join("?" for _ in node_ids)
     rows = fetchall(
         conn,
-        f"SELECT node_id, file_path FROM file_ownership WHERE node_id IN ({placeholders})",
-        node_ids,
+        "WITH requested AS ("
+        + "SELECT CAST(value AS INTEGER) AS node_id, CAST(key AS INTEGER) AS ordinal "
+        + "FROM json_each(?)) "
+        + "SELECT left_request.node_id, right_request.node_id, owned.file_path "
+        + "FROM requested left_request "
+        + "JOIN file_ownership owned ON owned.node_id = left_request.node_id "
+        + "JOIN file_ownership rival ON rival.file_path = owned.file_path "
+        + "JOIN requested right_request ON right_request.node_id = rival.node_id "
+        + "AND left_request.ordinal < right_request.ordinal "
+        + "ORDER BY left_request.ordinal, right_request.ordinal, owned.file_path",
+        (json.dumps(ordered_ids),),
     )
-    ownership = {node_id: set[str]() for node_id in node_ids}
+    overlaps: dict[tuple[int, int], list[str]] = {}
     for row in rows:
-        values = _as_tuple(row)
-        node_id = cast(int, values[0])
-        file_path = cast(str, values[1])
-        ownership[node_id].add(file_path)
-    conflicts: list[tuple[int, int, list[str]]] = []
-    for left_id, right_id in itertools.combinations(node_ids, 2):
-        overlap = ownership[left_id] & ownership[right_id]
-        if overlap:
-            conflicts.append((left_id, right_id, sorted(overlap)))
-    return conflicts
+        left_id, right_id, file_path = _as_tuple(row)
+        pair = (cast(int, left_id), cast(int, right_id))
+        overlaps.setdefault(pair, []).append(cast(str, file_path))
+    return [(left, right, paths) for (left, right), paths in overlaps.items()]
 
 
 def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:

@@ -22,8 +22,6 @@ from milknado.domains.graph import (
     GoalReviewDecision,
     GoalReviewRequest,
     MikadoGraph,
-    consume_controller_capability,
-    register_controller_master,
 )
 from milknado.loop._agent import _build_spawn_env  # pyright: ignore[reportPrivateUsage]
 from milknado.loop.sessions._process import start_process
@@ -48,6 +46,15 @@ def _pending_review(project_root: Path) -> int:
             )
         )
         return review.review_id
+    finally:
+        graph.close()
+
+
+def _register_controller(project_root: Path) -> None:
+    (project_root / ".milknado").mkdir(exist_ok=True)
+    graph = MikadoGraph(project_root / ".milknado" / "milknado.db")
+    try:
+        graph.register_controller_master()
     finally:
         graph.close()
 
@@ -103,7 +110,7 @@ def test_controller_capability_authorizes_one_exact_decision(
 ) -> None:
     review_id = _pending_review(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
-    register_controller_master(tmp_path)
+    _register_controller(tmp_path)
 
     first = _invoke_human(tmp_path, review_id, decision, monkeypatch)
     second = _invoke_human(tmp_path, review_id, decision, monkeypatch)
@@ -122,12 +129,12 @@ def test_controller_capability_authorizes_one_exact_decision(
     finally:
         graph.close()
 
-    ledger = tmp_path / ".milknado" / "controller-capability.db"
-    assert b"external-controller-master" not in ledger.read_bytes()
-    with sqlite3.connect(ledger) as conn:
+    db_path = tmp_path / ".milknado" / "milknado.db"
+    assert b"external-controller-master" not in db_path.read_bytes()
+    with sqlite3.connect(db_path) as conn:
         consumed = cast(
             tuple[int] | None,
-            conn.execute("SELECT COUNT(*) FROM consumed_capability").fetchone(),
+            conn.execute("SELECT COUNT(*) FROM consumed_controller_capabilities").fetchone(),
         )
     assert consumed == (1,)
 
@@ -145,7 +152,7 @@ def test_worker_cannot_self_approve_from_a_pty(  # noqa: PLR0915 - real PTY boun
 ) -> None:
     review_id = _pending_review(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
-    register_controller_master(tmp_path)
+    _register_controller(tmp_path)
     env = build_worker_env(
         {
             "MILKNADO_NODE_ID": "1",
@@ -250,38 +257,14 @@ def test_session_environment_strips_controller_master(
     assert stdout == b"\n"
 
 
-def test_controller_capability_rejects_missing_and_wrong_master(
+def test_controller_registration_rejects_missing_and_wrong_master(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert not consume_controller_capability(tmp_path, 1, "accepted")
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV)
+    with pytest.raises(RuntimeError, match=CONTROLLER_MASTER_ENV):
+        _register_controller(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
-    register_controller_master(tmp_path)
+    _register_controller(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "different-master")
     with pytest.raises(RuntimeError, match="different controller master"):
-        register_controller_master(tmp_path)
-
-    assert not consume_controller_capability(tmp_path, 1, "accepted")
-
-
-def test_controller_registration_repairs_ledger_permissions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
-    register_controller_master(tmp_path)
-    ledger = tmp_path / ".milknado" / "controller-capability.db"
-    ledger.chmod(0o644)
-
-    register_controller_master(tmp_path)
-
-    assert ledger.stat().st_mode & 0o777 == 0o600
-
-
-def test_controller_capability_rejects_corrupt_ledger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
-    ledger = tmp_path / ".milknado" / "controller-capability.db"
-    ledger.parent.mkdir()
-    _ = ledger.write_text("not sqlite", encoding="utf-8")
-
-    assert not consume_controller_capability(tmp_path, 1, "accepted")
+        _register_controller(tmp_path)

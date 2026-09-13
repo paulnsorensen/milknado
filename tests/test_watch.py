@@ -230,12 +230,12 @@ def test_observer_counts_beyond_ready_page_limit(tmp_path: Path) -> None:
     db_path = tmp_path / "milknado.db"
     graph = MikadoGraph(db_path)
     goal = graph.add_node("Large queue", spec=NodeSpec(kind=NodeKind.GOAL))
-    for index in range(101):
+    for index in range(1001):
         _ = graph.add_node(f"candidate-{index}", parent_id=goal.id)
 
     observed = read_observer_snapshot(db_path)
     _, _, run_available = get_execution_overview(graph, [])
-    assert observed.available == run_available == 101
+    assert observed.available == run_available == 1001
     graph.close()
 
 

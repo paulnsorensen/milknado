@@ -343,6 +343,7 @@ def start_headless_async(
     log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
+        graph.register_controller_master()
         graph.runs.start(
             request.run_id,
             request.node_id,

@@ -10,10 +10,6 @@ from milknado.domains.graph.commands import (
     OwnerCapabilities,
     new_command_id,
 )
-from milknado.domains.graph.controller_capability import (
-    consume_controller_capability,
-    register_controller_master,
-)
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
     GoalAdmissionDenied,
@@ -78,8 +74,6 @@ __all__ = [
     "GoalReviewRecord",
     "GoalReviewRequest",
     "GoalReviewSubjectError",
-    "consume_controller_capability",
-    "register_controller_master",
     "new_command_id",
     "ArtifactSnapshot",
     "GraphSnapshot",

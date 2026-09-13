@@ -195,14 +195,19 @@ def latest_goal_review(conn: sqlite3.Connection, goal_id: int) -> GoalReviewReco
 
 
 def decide_goal_review(
-    conn: sqlite3.Connection, request: GoalReviewDecisionRequest, *, decided_by: str
+    conn: sqlite3.Connection,
+    request: GoalReviewDecisionRequest,
+    *,
+    decided_by: str,
+    _in_transaction: bool = False,
 ) -> GoalReviewRecord:
     decision = GoalReviewDecision(request.decision)
     if decision is GoalReviewDecision.PENDING:
         raise ValueError("review decision must be accepted or rejected")
     identity = _text(decided_by, "decided_by")
-    _ = conn.execute("BEGIN IMMEDIATE")
-    with conn:
+    if not _in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with nullcontext() if _in_transaction else conn:
         current = get_goal_review(conn, request.review_id)
         if current is None:
             raise ValueError(f"goal review {request.review_id} not found")
@@ -221,7 +226,6 @@ def decide_goal_review(
     result = get_goal_review(conn, request.review_id)
     if result is None:
         raise RuntimeError("goal review disappeared after decision")
-
     return result
 
 

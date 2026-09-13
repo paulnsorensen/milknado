@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from typing_extensions import override
 
 import milknado.domains.graph._creation as _creation
+import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 import milknado.domains.graph._follow_up as _follow_up
 import milknado.domains.graph._goal_claims as _goal_claims
 import milknado.domains.graph._goal_review as _goal_review
@@ -122,7 +123,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:
-        """Open a migrated in-memory copy without writing to the project database."""
         uri = f"{db_path.resolve().as_uri()}?mode=ro"
         source = sqlite3.connect(uri, uri=True, check_same_thread=False)
         snapshot = sqlite3.connect(":memory:", check_same_thread=False)
@@ -147,7 +147,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @staticmethod
     def _quarantine(db_path: Path) -> list[Path]:
-        """Move db + -wal/-shm sidecars aside to *.corrupt-<ts>; return moved paths."""
         # Microsecond resolution: two quarantines of the same db within one
         # second must not collide and silently overwrite forensic evidence.
         ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%f")
@@ -161,7 +160,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         return moved
 
     def _open(self, db_path: Path) -> sqlite3.Connection:
-        """Open the database, quarantining a corrupt file and healing schema drift."""
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:
             quick_check = _quick_check(conn)
@@ -473,7 +471,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         """Return one lock-held snapshot of graph facts for execution policy."""
         _ = self._conn.execute("SAVEPOINT execution_snapshot")
         try:
-            ready_ids = tuple(_reads.get_ready_node_ids(self._conn))
+            ready_ids = tuple(_dispatch_readiness.ready_node_ids(self._conn))
             running = tuple(
                 node.id
                 for node in _reads.get_all_nodes(self._conn)
@@ -534,25 +532,22 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:
         return _goal_review.get_goal_review(self._conn, review_id)
 
-    @synchronized
     def register_controller_master(self) -> None:
-        _controller_capability.register_controller_master(self._controller_root())
+        _controller_capability.register_controller_master(self._conn)
 
     @synchronized
     def decide_goal_review(
         self, request: GoalReviewDecisionRequest, *, decided_by: str
     ) -> GoalReviewRecord:
-        project_root = self._controller_root()
-        decision = request.decision.value
-        if not _controller_capability.consume_controller_capability(
-            project_root, request.review_id, decision
-        ):
-            raise PermissionError("a controller capability is required for this decision")
-        return _goal_review.decide_goal_review(self._conn, request, decided_by=decided_by)
-
-    def _controller_root(self) -> Path:
-        parent = self._db_path.resolve().parent
-        return parent.parent if parent.name == ".milknado" else parent
+        _ = self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            if not _controller_capability.consume_controller_capability(
+                self._conn, request.review_id, request.decision.value
+            ):
+                raise PermissionError("a controller capability is required for this decision")
+            return _goal_review.decide_goal_review(
+                self._conn, request, decided_by=decided_by, _in_transaction=True
+            )
 
     @synchronized
     def goal_admission(self, node_id: int) -> GoalAdmission:
@@ -651,12 +646,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def set_wiki_ref(self, node_id: int, wiki_ref: str) -> None:
-        """Set the deterministic wiki key so an orphan goal node round-trips on export."""
         self._update_node_field("wiki_ref", wiki_ref, node_id)
 
     @synchronized
     def set_github_ref(self, node_id: int, github_ref: str) -> None:
-        """Bind the GitHub Projects node id recorded when this goal is linked/bound."""
         self._update_node_field("github_ref", github_ref, node_id)
 
     @synchronized

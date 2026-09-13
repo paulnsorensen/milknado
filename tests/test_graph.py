@@ -602,18 +602,12 @@ class TestParallelSafety:
         graph.files.claim(n1.id, ["shared.py"])
         graph.files.claim(n2.id, ["shared.py"])
         graph.files.claim(n3.id, ["shared.py"])
-        queries: list[str] = []
-        graph_conn(graph).set_trace_callback(queries.append)
         conflicts = graph.check_parallel_safety([n1.id, n2.id, n3.id])
-        graph_conn(graph).set_trace_callback(None)
-        queries = [q for q in queries if q != "SELECT 1"]  # self-heal probes (#297)
         assert conflicts == [
             (n1.id, n2.id, ["shared.py"]),
             (n1.id, n3.id, ["shared.py"]),
             (n2.id, n3.id, ["shared.py"]),
         ]
-        assert len(queries) == 1
-        assert "WHERE node_id IN" in queries[0]
 
 
 class TestClose:

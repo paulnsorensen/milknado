@@ -1,4 +1,4 @@
-"""Out-of-band controller capability registration and one-use consumption."""
+"""Graph-local controller registration and one-use review capabilities."""
 
 from __future__ import annotations
 
@@ -7,92 +7,58 @@ import hmac
 import os
 import sqlite3
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import cast
 
-from milknado.domains.common import CONTROLLER_MASTER_ENV
+from milknado.domains.common.process import CONTROLLER_MASTER_ENV
+from milknado.domains.graph._sqlite_rows import fetchone
 
-_LEDGER_NAME = "controller-capability.db"
+CREATE_CONTROLLER_MASTER = (
+    "CREATE TABLE IF NOT EXISTS controller_master ("
+    "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+    "master_hash TEXT NOT NULL, registered_at TEXT NOT NULL)"
+)
+CREATE_CONSUMED_CAPABILITY = (
+    "CREATE TABLE IF NOT EXISTS consumed_controller_capabilities ("
+    "capability_hash TEXT PRIMARY KEY, consumed_at TEXT NOT NULL)"
+)
 _BINDING_PREFIX = b"milknado:goal-review:v1:"
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS controller_master (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    master_hash TEXT NOT NULL,
-    registered_at TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS consumed_capability (
-    capability_hash TEXT PRIMARY KEY,
-    consumed_at TEXT NOT NULL
-);
-"""
 
 
-def register_controller_master(project_root: Path) -> None:
+def register_controller_master(conn: sqlite3.Connection) -> None:
     """Register the externally provisioned controller master before dispatch."""
     master_hash = _master_hash()
     if master_hash is None:
-        return
-    ledger = _ledger_path(project_root)
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    if ledger.exists():
-        ledger.chmod(0o600)
-    with sqlite3.connect(ledger) as conn:
-        _ = conn.executescript(_SCHEMA)
-        _ = conn.execute(
-            """
-            INSERT OR IGNORE INTO controller_master(singleton, master_hash, registered_at)
-            VALUES (1, ?, ?)
-            """,
-            (master_hash, _now()),
-        )
-        row = cast(
-            tuple[str] | None,
-            conn.execute(
-                "SELECT master_hash FROM controller_master WHERE singleton = 1"
-            ).fetchone(),
-        )
-        if row is None or not hmac.compare_digest(row[0], master_hash):
-            raise RuntimeError("a different controller master is already registered")
-        _ = conn.commit()
-    ledger.chmod(0o600)
+        raise RuntimeError(f"{CONTROLLER_MASTER_ENV} is required before dispatch")
+    _ = conn.execute(
+        "INSERT OR IGNORE INTO controller_master (singleton, master_hash, registered_at) "
+        + "VALUES (1, ?, ?)",
+        (master_hash, _now()),
+    )
+    row = fetchone(conn, "SELECT master_hash FROM controller_master WHERE singleton = 1")
+    if row is None or not hmac.compare_digest(cast(str, row[0]), master_hash):
+        conn.rollback()
+        raise RuntimeError("a different controller master is already registered")
+    conn.commit()
 
 
-def consume_controller_capability(project_root: Path, review_id: int, decision: str) -> bool:
-    """Atomically consume the controller capability for one review decision."""
+def consume_controller_capability(conn: sqlite3.Connection, review_id: int, decision: str) -> bool:
+    """Consume one review-bound capability inside the caller's graph transaction."""
     master = _master_bytes()
-    ledger = _ledger_path(project_root)
-    if master is None or not ledger.exists():
+    row = fetchone(conn, "SELECT master_hash FROM controller_master WHERE singleton = 1")
+    if master is None or row is None:
+        return False
+    if not hmac.compare_digest(cast(str, row[0]), _hash(master)):
         return False
     capability_hash = _capability_hash(master, review_id, decision)
     try:
-        with sqlite3.connect(ledger, timeout=5.0, isolation_level=None) as conn:
-            _ = conn.execute("PRAGMA busy_timeout = 5000")
-            _ = conn.execute("BEGIN IMMEDIATE")
-            row = cast(
-                tuple[str] | None,
-                conn.execute(
-                    "SELECT master_hash FROM controller_master WHERE singleton = 1"
-                ).fetchone(),
-            )
-            if row is None or not hmac.compare_digest(row[0], _hash(master)):
-                _ = conn.rollback()
-                return False
-            try:
-                _ = conn.execute(
-                    "INSERT INTO consumed_capability(capability_hash, consumed_at) VALUES (?, ?)",
-                    (capability_hash, _now()),
-                )
-            except sqlite3.IntegrityError:
-                _ = conn.rollback()
-                return False
-            _ = conn.commit()
-            return True
-    except sqlite3.Error:
+        _ = conn.execute(
+            "INSERT INTO consumed_controller_capabilities (capability_hash, consumed_at) "
+            + "VALUES (?, ?)",
+            (capability_hash, _now()),
+        )
+    except sqlite3.IntegrityError:
         return False
-
-
-def _ledger_path(project_root: Path) -> Path:
-    return project_root.resolve() / ".milknado" / _LEDGER_NAME
+    return True
 
 
 def _master_bytes() -> bytes | None:
@@ -111,9 +77,16 @@ def _hash(value: bytes) -> str:
 
 def _capability_hash(master: bytes, review_id: int, decision: str) -> str:
     binding = _BINDING_PREFIX + f"{review_id}:{decision}".encode()
-    derived = hmac.new(master, binding, hashlib.sha256).digest()
-    return _hash(derived)
+    return _hash(hmac.new(master, binding, hashlib.sha256).digest())
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+__all__ = [
+    "CREATE_CONSUMED_CAPABILITY",
+    "CREATE_CONTROLLER_MASTER",
+    "consume_controller_capability",
+    "register_controller_master",
+]

@@ -1395,6 +1395,7 @@ class TestRunCommand:
         self,
         mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
         project_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
@@ -1408,6 +1409,14 @@ class TestRunCommand:
         root = graph.add_node("root goal")
         _ = graph.add_node("leaf task", parent_id=root.id)
         graph.close()
+        monkeypatch.delenv("MILKNADO_CONTROLLER_MASTER")
+        missing_master = runner.invoke(
+            app,
+            ["run", "--project-root", str(project_dir)],
+        )
+        assert missing_master.exit_code == 2
+        assert "MILKNADO_CONTROLLER_MASTER is required before dispatch" in missing_master.output
+        monkeypatch.setenv("MILKNADO_CONTROLLER_MASTER", "test-controller-master")
 
         _configure_ralph_mocks(mock_ralph_cls, project_dir)
 

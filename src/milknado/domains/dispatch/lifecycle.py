@@ -115,6 +115,7 @@ def dispatch_node_sync(
     git: GitPort,
     request: SyncDispatchRequest,
 ) -> dict[str, object]:
+    graph.register_controller_master()
     node = graph.get_node(request.node_id)
     if node is None:
         raise ValueError(f"node {request.node_id} not found")

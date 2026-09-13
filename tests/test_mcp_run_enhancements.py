@@ -733,6 +733,9 @@ class TestDispatchLifecycleGuards:
         from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync
 
         class Graph:
+            def register_controller_master(self) -> None:
+                pass
+
             def get_node(self, node_id: int) -> object | None:  # pyright: ignore[reportUnusedParameter]
                 return node
 
@@ -760,6 +763,9 @@ class TestDispatchLifecycleGuards:
         node = type("TaskNode", (), {"kind": NodeKind.TASK})()
 
         class Graph:
+            def register_controller_master(self) -> None:
+                pass
+
             def __init__(self) -> None:
                 self.reads: int = 0
                 self.runs: Graph = self
@@ -1898,6 +1904,9 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
+        def register_controller_master(self) -> None:
+            pass
+
         def __init__(self) -> None:
             self.runs: Graph = self
 
@@ -2090,6 +2099,9 @@ def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
     from milknado.domains.dispatch import lifecycle
 
     class Graph:
+        def register_controller_master(self) -> None:
+            pass
+
         def __init__(self) -> None:
             self.runs: Graph = self
 

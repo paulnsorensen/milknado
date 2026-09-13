@@ -13,7 +13,13 @@ import typer
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.domains.common import CONTROLLER_MASTER_ENV, NodeKind, NodeSpec, SessionAction
+from milknado.domains.common import (
+    CONTROLLER_MASTER_ENV,
+    NodeKind,
+    NodeSpec,
+    NodeStatus,
+    SessionAction,
+)
 from milknado.domains.graph import (
     GoalAdmissionDenied,
     GoalReviewDecision,
@@ -24,7 +30,6 @@ from milknado.domains.graph import (
     GraphCommand,
     MikadoGraph,
     OwnerCapabilities,
-    register_controller_master,
 )
 from milknado.domains.graph._command_records import get_capabilities
 from milknado.domains.graph._pipeline import StatusPipeline
@@ -43,9 +48,9 @@ def _confirm(*_args: object, **_kwargs: object) -> bool:
     return True
 
 
-def _register_controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _register_controller(graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
-    register_controller_master(tmp_path)
+    graph.register_controller_master()
 
 
 def _hierarchy(path: Path, *, project_db: bool = False) -> tuple[MikadoGraph, dict[str, int]]:
@@ -122,7 +127,16 @@ def test_bounded_review_pauses_only_affected_work(tmp_path: Path) -> None:
         review = _request(graph, nodes["goal_a"], (nodes["a1"],))
         ready = {node.id for node in graph.get_ready_nodes()}
         assert nodes["a1"] not in ready
+        with pytest.raises(GoalAdmissionDenied):
+            graph.mark_running(nodes["a1"])
         assert {nodes["a2"], nodes["b1"]} <= ready
+        with pytest.raises(GoalAdmissionDenied):
+            _ = graph.set_todo_status(nodes["a1"], NodeStatus.RUNNING)
+        with pytest.raises(GoalAdmissionDenied):
+            _ = graph.set_subtree_status(nodes["goal_a"], NodeStatus.RUNNING)
+        unaffected = graph.get_node(nodes["a2"])
+        assert unaffected is not None
+        assert unaffected.status is NodeStatus.PENDING
         with pytest.raises(GoalAdmissionDenied, match="execution paused"):
             _ = graph.claim_node(nodes["a1"], "run-a1", now=NOW)
         with pytest.raises(GoalAdmissionDenied, match="execution paused"):
@@ -289,7 +303,7 @@ def test_terminal_review_decision_resumes_original_goal(
     tmp_path: Path, decision: GoalReviewDecision, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph, nodes = _hierarchy(tmp_path)
-    _register_controller(tmp_path, monkeypatch)
+    _register_controller(graph, monkeypatch)
     try:
         review = _request(graph, nodes["goal_a"])
         decided = graph.decide_goal_review(
@@ -318,7 +332,7 @@ def test_review_gates_continuation_but_allows_safe_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     graph, nodes = _hierarchy(tmp_path)
-    _register_controller(tmp_path, monkeypatch)
+    _register_controller(graph, monkeypatch)
     try:
         assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
         graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
@@ -343,6 +357,36 @@ def test_review_gates_continuation_but_allows_safe_interrupt(
             GoalReviewDecisionRequest(review.review_id, GoalReviewDecision.ACCEPTED, LATER),
             decided_by="human",
         )
+    finally:
+        graph.close()
+
+
+def test_terminal_capabilities_do_not_requeue_delivered_review_interrupt(tmp_path: Path) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+        graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
+        _ = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", ("interrupt",), published_at=NOW
+        )
+        _ = _request(graph, nodes["goal_a"], (nodes["a1"],))
+        claimed = graph.commands.claim_pending("run-a1", "owner", now=NOW)
+        assert len(claimed) == 1
+        _ = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", ("interrupt",), published_at=LATER
+        )
+        count_row = cast(
+            tuple[int] | None,
+            graph_conn(graph).execute("SELECT COUNT(*) FROM session_commands").fetchone(),
+        )
+        assert count_row is not None
+        assert count_row[0] == 1
+
+        terminal = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", (), published_at=LATER
+        )
+
+        assert terminal.actions == ()
     finally:
         graph.close()
 
@@ -537,7 +581,7 @@ def test_goal_review_cli_decides_from_confirmed_human_boundary(
     graph.close()
 
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
-    register_controller_master(tmp_path)
+    graph.register_controller_master()
 
     import milknado.cli.graph as cli_graph
 

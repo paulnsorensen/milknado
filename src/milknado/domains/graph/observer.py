@@ -9,12 +9,10 @@ from typing import Literal, cast
 
 import msgspec
 
-import milknado.domains.graph._persistence as _persistence
-import milknado.domains.graph._reads as _reads
+import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
-from milknado.domains.graph._sqlite_rows import fetchall
 from milknado.domains.graph.snapshot import (
     connect_readonly,
     read_graph_snapshot_connection,
@@ -97,22 +95,7 @@ def _goal_description(conn: sqlite3.Connection) -> str:
 
 
 def _available_count(conn: sqlite3.Connection) -> int:
-    ready_ids = _reads.get_ready_node_ids(conn)
-    if not ready_ids:
-        return 0
-    running_ids = [
-        cast(int, row[0])
-        for row in fetchall(conn, "SELECT id FROM nodes WHERE status = 'running'")
-    ]
-    conflicts = _persistence.check_parallel_safety(conn, [*running_ids, *ready_ids])
-    ready_set = set(ready_ids)
-    running_set = set(running_ids)
-    blocked_ids = {
-        right_id
-        for left_id, right_id, _ in conflicts
-        if right_id in ready_set and (left_id in running_set or left_id in ready_set)
-    }
-    return len(ready_ids) - len(blocked_ids)
+    return _dispatch_readiness.dispatchable_count(conn)
 
 
 def read_observer_node_snapshot(  # noqa: PLR0913 - node response fence and page share one read
