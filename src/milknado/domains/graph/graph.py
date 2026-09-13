@@ -472,13 +472,12 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         """Return one lock-held snapshot of graph facts for execution policy."""
         _ = self._conn.execute("SAVEPOINT execution_snapshot")
         try:
-            ready = _reads.get_ready_nodes(self._conn)
+            ready_ids = tuple(_reads.get_ready_node_ids(self._conn))
             running = tuple(
                 node.id
                 for node in _reads.get_all_nodes(self._conn)
                 if node.status is NodeStatus.RUNNING
             )
-            ready_ids = tuple(node.id for node in ready)
             conflicts = _persistence.check_parallel_safety(self._conn, [*running, *ready_ids])
             return GraphExecutionSnapshot(
                 root=_reads.get_root(self._conn),
