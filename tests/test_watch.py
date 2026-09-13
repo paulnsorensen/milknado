@@ -226,6 +226,19 @@ def test_observer_counts_exact_dispatch_availability(tmp_path: Path) -> None:
     graph.close()
 
 
+def test_observer_counts_beyond_ready_page_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    goal = graph.add_node("Large queue", spec=NodeSpec(kind=NodeKind.GOAL))
+    for index in range(101):
+        _ = graph.add_node(f"candidate-{index}", parent_id=goal.id)
+
+    observed = read_observer_snapshot(db_path)
+
+    assert observed.available == 101
+    graph.close()
+
+
 @pytest.mark.parametrize("review_scope", ["unbounded", "bounded"])
 def test_observer_available_matches_execution_admission(tmp_path: Path, review_scope: str) -> None:
     db_path = tmp_path / "milknado.db"

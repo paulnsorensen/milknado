@@ -234,15 +234,22 @@ def test_goal_claim_or_reclaim_handles_invalid_and_missing_claims(graph: MikadoG
         _ = _goal_claims.claim_or_reclaim_goal(graph_conn(graph), task.id, "run", 123, now="now")
 
     class Cursor:
-        def __init__(self, rowcount: int = 0, row: dict[str, str] | None = None) -> None:
+        def __init__(self, rowcount: int = 0, row: dict[str, object] | None = None) -> None:
             self.rowcount: int = rowcount
-            self._row: dict[str, str] | None = row
+            self._row: dict[str, object] | None = row
 
-        def fetchone(self) -> dict[str, str] | None:
+        def fetchone(self) -> dict[str, object] | None:
             return self._row
+
+        def fetchall(self) -> list[dict[str, object]]:
+            return [self._row] if self._row is not None else []
 
     class Connection:
         def execute(self, sql: str, _params: tuple[object, ...] = ()) -> Cursor:
+            if sql.startswith("SELECT id FROM nodes"):
+                return Cursor(row={"id": "1"})
+            if sql.startswith("SELECT id, parent_id, kind"):
+                return Cursor(row={"id": 1, "parent_id": None, "kind": "goal"})
             if sql.startswith("SELECT kind"):
                 return Cursor(row={"kind": "goal"})
             if sql.startswith("SELECT run_id"):

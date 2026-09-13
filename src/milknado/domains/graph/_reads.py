@@ -231,6 +231,21 @@ def get_ready_nodes(
     return [row_to_node(row) for row in rows]
 
 
+def get_ready_node_ids(conn: sqlite3.Connection) -> list[int]:
+    rows = fetchall(
+        conn,
+        READY_NODE_ADMISSION_CTE
+        + "SELECT n.id FROM nodes n WHERE "
+        + READY_NODE_ADMISSION_FILTER
+        + " AND n.status = ? AND n.archived_at IS NULL "
+        + "AND EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id) "
+        + "AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "
+        + "WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id",
+        (NodeStatus.PENDING.value,),
+    )
+    return [cast(int, row[0]) for row in rows]
+
+
 def get_node_summaries(
     conn: sqlite3.Connection,
     *,
