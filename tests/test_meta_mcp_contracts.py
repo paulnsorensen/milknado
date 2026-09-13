@@ -30,7 +30,8 @@ def test_worker_identity_is_cleared_before_each_test(
     _ = inner.write_text(
         "import os\n"
         + "def test_clean():\n"
-        + "    assert [k for k in os.environ if k.startswith('MILKNADO_')] == []\n",
+        + "    keys = sorted(k for k in os.environ if k.startswith('MILKNADO_'))\n"
+        + "    assert keys == ['MILKNADO_CONTROLLER_MASTER']\n",
         encoding="utf-8",
     )
     result = subprocess.run(

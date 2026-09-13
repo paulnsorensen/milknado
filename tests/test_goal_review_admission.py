@@ -328,6 +328,25 @@ def test_blocked_status_does_not_bypass_pending_review(tmp_path: Path) -> None:
         graph.close()
 
 
+def test_drop_all_resets_reviews_and_controller_registration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        _register_controller(graph, monkeypatch)
+        review = _request(graph, nodes["goal_a"])
+        _ = graph.decide_goal_review(
+            GoalReviewDecisionRequest(review.review_id, GoalReviewDecision.ACCEPTED, LATER),
+            decided_by="human",
+        )
+        _ = graph.drop_all()
+        monkeypatch.setenv(CONTROLLER_MASTER_ENV, "replacement-controller-master")
+        graph.register_controller_master()
+        assert graph.get_goal_review(review.review_id) is None
+    finally:
+        graph.close()
+
+
 def test_review_gates_continuation_but_allows_safe_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

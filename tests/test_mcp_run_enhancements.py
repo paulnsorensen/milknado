@@ -1934,6 +1934,9 @@ def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
+        def register_controller_master(self) -> None:
+            pass
+
         def __init__(self) -> None:
             self.runs: Graph = self
 
@@ -2129,6 +2132,9 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
     from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
 
     class Graph:
+        def register_controller_master(self) -> None:
+            pass
+
         def __init__(self) -> None:
             self.runs: Graph = self
 
