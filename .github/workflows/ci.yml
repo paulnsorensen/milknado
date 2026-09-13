@@ -37,12 +37,15 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install just and tmux
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+
+      - name: Install tmux
         # tmux: the real-tmux adapter integration test is skip-marked without
         # the binary; installing it keeps the adapter's diff coverage honest.
         run: |
           sudo apt-get update
-          sudo apt-get install -y just tmux
+          sudo apt-get install -y tmux
 
       - name: Run full build
         run: just build-ci
