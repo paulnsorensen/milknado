@@ -237,6 +237,8 @@ class ExecutionSnapshotApp(SessionCommandsMixin, RunNavigationMixin, App[RunLoop
             self.query_one("#detail", RunDetailPanel).preserve_output_offset()
 
     def refresh_view(self) -> None:
+        if not self.query("#run-panel"):
+            return  # a poll tick can outlive the panels during app shutdown
         self.title = self.snapshot.goal
         self.sub_title = subtitle_text(self.snapshot)
         selected = self.selected_run()
