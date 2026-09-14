@@ -76,6 +76,18 @@ def test_capability_validation_preserves_current_snapshot(graph: MikadoGraph) ->
         assert graph.commands.capabilities("run-1") == original
 
 
+def test_capability_publication_rejects_empty_owner_incarnation(graph: MikadoGraph) -> None:
+    node_id = owned_graph(graph)
+    original = graph.commands.capabilities("run-1")
+
+    with pytest.raises(ValueError, match="owner_incarnation"):
+        _ = graph.commands.publish_capabilities(
+            "run-1", node_id, "invoke-2", "", ("steer",), published_at=LATER
+        )
+
+    assert graph.commands.capabilities("run-1") == original
+
+
 def test_capability_publication_rejects_terminal_run(graph: MikadoGraph) -> None:
     node_id = owned_graph(graph)
     original = graph.commands.capabilities("run-1")

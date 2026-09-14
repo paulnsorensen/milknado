@@ -50,6 +50,7 @@ def publish_capabilities(  # noqa: PLR0913
     """Replace the current owner snapshot without deriving it from events."""
     validate_identifier(run_id, "run_id")
     validate_identifier(invocation_id, "invocation_id")
+    validate_identifier(owner_incarnation, "owner_incarnation")
     if node_id < 1 or any(action not in _ACTIONS for action in actions):
         raise ValueError("owner capabilities contain an invalid node or action")
     if len(set(actions)) != len(actions) or len(set(permission_ids)) != len(permission_ids):

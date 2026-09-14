@@ -26,7 +26,8 @@ def _worker(tmp_path: Path) -> Path:
     worker = tmp_path / "claude"
     _ = worker.write_text(
         textwrap.dedent(
-            """#!/usr/bin/env python3
+            """\
+            #!/usr/bin/env python3
             import json
             import sys
 

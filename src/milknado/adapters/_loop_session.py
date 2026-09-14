@@ -182,6 +182,7 @@ class LoopSessionMixin:
         if record["status"] != "running":
             return replace(
                 view,
+                actions=(),
                 owner_incarnation=capabilities.owner_incarnation,
                 invocation_id=capabilities.invocation_id,
             )
