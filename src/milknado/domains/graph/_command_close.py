@@ -1,6 +1,7 @@
 """Atomic revocation of a session owner and its unclaimed commands."""
 
 import sqlite3
+from typing import cast
 
 from milknado.domains.graph._command_records import record_receipt, utc_iso
 from milknado.domains.graph._sqlite_rows import fetchall
@@ -22,17 +23,12 @@ def close_owner(
         )
         rows = fetchall(
             conn,
-            """SELECT command_id FROM session_commands
-               WHERE run_id = ? AND owner_incarnation = ? AND invocation_id = ?
-                 AND status = 'queued'""",
-            fence,
-        )
-        _ = conn.execute(
             """UPDATE session_commands
                SET status = 'rejected', updated_at = ?, detail = ?
                WHERE run_id = ? AND owner_incarnation = ? AND invocation_id = ?
-                 AND status = 'queued'""",
+                 AND status = 'queued'
+               RETURNING command_id""",
             (timestamp, detail, *fence),
         )
         for row in rows:
-            record_receipt(conn, row[0], "rejected", timestamp, detail)
+            record_receipt(conn, cast(str, row[0]), "rejected", timestamp, detail)
