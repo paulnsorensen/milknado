@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 from typing import Protocol, TypeVar, cast
 
 from textual import on, work
+from textual.css.query import NoMatches
 from textual.message_pump import MessagePump
 from textual.widget import Widget
 from textual.widgets import DataTable
@@ -198,16 +200,19 @@ class SessionChangesMixin(metaclass=type(MessagePump)):
 
     def _render_changes(self) -> None:
         host = self._changes_host()
+        # A worker callback can land while the panel is absent from the tree
+        # (compose in progress or teardown after the view unmounts); render only when present.
         if host.is_mounted:
-            host.query_one("#changes-panel", ChangesPanel).update(
-                ChangesPanelState(
-                    files=self._changes_files,
-                    selected_path=self.selected_file_path,
-                    diff=self._changes_diff,
-                    error=self._changes_error,
-                    loading=self._changes_loading,
+            with suppress(NoMatches):
+                host.query_one("#changes-panel", ChangesPanel).update(
+                    ChangesPanelState(
+                        files=self._changes_files,
+                        selected_path=self.selected_file_path,
+                        diff=self._changes_diff,
+                        error=self._changes_error,
+                        loading=self._changes_loading,
+                    )
                 )
-            )
 
     @on(DataTable.RowSelected, "#changes-files")
     def select_changed_file(self, event: DataTable.RowSelected) -> None:
