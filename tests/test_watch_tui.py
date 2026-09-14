@@ -165,8 +165,19 @@ async def test_refresh_view_is_a_noop_after_panels_unmount() -> None:
     async with app.run_test(size=(40, 15)) as pilot:
         await pilot.pause()
         await app.query_one("#run-panel").remove()
-        source.current = replace(source.current, goal="Shutting down")
+        app.snapshot = replace(app.snapshot, goal="Shutting down")
 
         app.refresh_view()
 
-        assert app.title != "Shutting down"  # guard bails before mutating any state
+        assert app.title == "Initial goal"  # guard bails before mutating any state
+
+
+@pytest.mark.asyncio
+async def test_render_changes_is_a_noop_after_changes_table_unmount() -> None:
+    source = FakeSource(snapshot())
+    app = watch_tui.WatchApp(source, poll_interval=60.0)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await app.query_one("#changes-files").remove()
+
+        app._render_changes()  # pyright: ignore[reportPrivateUsage] -- worker-callback path must not raise

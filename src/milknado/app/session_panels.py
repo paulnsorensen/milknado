@@ -186,7 +186,11 @@ class ChangesPanel(Vertical):
         _ = table.add_column("+/-", width=8, key="counts")
 
     def update(self, state: ChangesPanelState) -> None:
-        table = cast(DataTable[RenderableType], self.query_one("#changes-files", DataTable))
+        tables = self.query("#changes-files")
+        if not tables:
+            # Mid-teardown: child already unmounted while a worker callback fires.
+            return
+        table = cast(DataTable[RenderableType], tables.first())
         self._update_files(table, state)
         if state.files:
             _ = table.remove_class("hidden")
