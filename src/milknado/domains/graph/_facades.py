@@ -1,11 +1,6 @@
-"""Narrow synchronized sub-facades for MikadoGraph persistence clusters."""
-
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable
-from contextlib import AbstractContextManager
-from typing import Protocol
 
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
@@ -13,27 +8,8 @@ import milknado.domains.graph._run_persistence as _run_persistence
 import milknado.domains.graph._session_persistence as _session_persistence
 from milknado.domains.common import RunResult, SessionContext, SessionEvent, SessionView
 from milknado.domains.graph._analytics_facade import synchronized
-
-
-class _GraphHandle(Protocol):
-    @property
-    def synchronization_lock(self) -> AbstractContextManager[object]: ...
-
-    @property
-    def _conn(self) -> sqlite3.Connection: ...
-
-
-class _SubFacade:
-    def __init__(self, graph: _GraphHandle) -> None:
-        self._graph: _GraphHandle = graph
-
-    @property
-    def synchronization_lock(self) -> AbstractContextManager[object]:
-        return self._graph.synchronization_lock
-
-    @property
-    def _conn(self) -> sqlite3.Connection:
-        return self._graph._conn  # pyright: ignore[reportPrivateUsage]
+from milknado.domains.graph._command_facade import _CommandFacade
+from milknado.domains.graph._facade_base import SubFacade as _SubFacade
 
 
 class _RunFacade(_SubFacade):
@@ -146,4 +122,4 @@ class _GithubFacade(_SubFacade):
         _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
 
-__all__ = ["_FileFacade", "_GithubFacade", "_RunFacade", "_SessionFacade"]
+__all__ = ["_CommandFacade", "_FileFacade", "_GithubFacade", "_RunFacade", "_SessionFacade"]

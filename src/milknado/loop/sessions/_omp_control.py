@@ -127,6 +127,13 @@ class OmpControlMixin(OmpEventMixin):
             return ProtocolStep()
         if pending.action == "interrupt":
             self._interrupt_accepted = True
+            receipt = SessionEvent(
+                kind="user",
+                text=pending.text,
+                event_id=request_id,
+                state="delivered",
+                action="interrupt",
+            )
             event = SessionEvent(
                 kind="status", text="interrupt accepted", event_id=request_id, state="queued"
             )
@@ -144,12 +151,20 @@ class OmpControlMixin(OmpEventMixin):
                 self._queued[request_id] = (pending.action, pending.text)
             return ProtocolStep()
         if pending.acknowledged:
-            return ProtocolStep()
-        return ProtocolStep(events=(event,))
+            return ProtocolStep(events=(receipt,))
+        return ProtocolStep(events=(receipt, event))
 
     def _reject_pending(self, request_id: str, pending: Pending, text: str) -> ProtocolStep:
-        kind = "status" if pending.action == "interrupt" else "user"
-        event = SessionEvent(kind=kind, text=text, event_id=request_id, state="rejected")
+        if pending.action == "interrupt":
+            event = SessionEvent(
+                kind="user",
+                text=pending.text,
+                event_id=request_id,
+                state="rejected",
+                action="interrupt",
+            )
+        else:
+            event = SessionEvent(kind="user", text=text, event_id=request_id, state="rejected")
         return ProtocolStep(events=(event, self._error(text, "rejected", request_id)), failed=True)
 
     def _reject(self, frame: OmpFrame, text: str, state: str) -> ProtocolStep:

@@ -114,6 +114,7 @@ class ClaudeState:
     _active: bool
     _interrupt_requested: bool
     _interrupt_acknowledged: bool
+    _interrupt_command_id: str
 
     def __init__(self) -> None:
         self._sequence: int = 0
@@ -128,6 +129,7 @@ class ClaudeState:
         self._active = False
         self._interrupt_requested = False
         self._interrupt_acknowledged = False
+        self._interrupt_command_id = ""
 
     def _id(self, prefix: str) -> str:
         self._sequence += 1

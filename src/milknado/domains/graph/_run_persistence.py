@@ -195,17 +195,19 @@ def deposit_run_message(
 ) -> int:
     """Append a bounded run message and prune terminal history."""
     body = body.encode()[:_MAX_RUN_MESSAGE_BYTES].decode(errors="ignore")
-    _prune_run_messages(conn, created_at)
-    row = fetchone(
-        conn,
-        "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
-        + "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages "
-        + "WHERE run_id = ? RETURNING seq",
-        (run_id, role, body, created_at, run_id),
-    )
-    if row is None:
-        raise RuntimeError("deposit_run_message INSERT returned no sequence")
-    conn.commit()
+    if not conn.in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        _prune_run_messages(conn, created_at)
+        _ = conn.execute(
+            "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
+            + "SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ? FROM run_messages "
+            + "WHERE run_id = ?",
+            (run_id, role, body, created_at, run_id),
+        )
+        row = fetchone(conn, "SELECT MAX(seq) FROM run_messages WHERE run_id = ?", (run_id,))
+        if row is None or row[0] is None:
+            raise RuntimeError("deposit_run_message INSERT returned no sequence")
     return cast(int, _as_tuple(row)[0])
 
 
@@ -213,15 +215,17 @@ def deposit_review_verdict(
     conn: sqlite3.Connection, run_id: str, verdict: str, findings: str, created_at: str
 ) -> int:
     """Persist a verdict and atomically mark it terminal only for an active review run."""
+    if not conn.in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        row = fetchone(
-            conn,
+        _ = conn.execute(
             "INSERT INTO run_messages (run_id, seq, role, body, created_at) "
             + "SELECT ?, COALESCE(MAX(seq), 0) + 1, 'review', ?, ? "
-            + "FROM run_messages WHERE run_id = ? RETURNING seq",
+            + "FROM run_messages WHERE run_id = ?",
             (run_id, f"{verdict}\n{findings}", created_at, run_id),
         )
-        if row is None:
+        row = fetchone(conn, "SELECT MAX(seq) FROM run_messages WHERE run_id = ?", (run_id,))
+        if row is None or row[0] is None:
             raise RuntimeError("deposit_review_verdict INSERT returned no sequence")
         terminal = fetchone(
             conn,
@@ -250,12 +254,15 @@ def insert_node_review(
     sql = (
         "INSERT INTO node_reviews (node_id, round, verdict, findings, created_at) "
         "SELECT ?, COALESCE(MAX(round), 0) + 1, ?, ?, ? "
-        "FROM node_reviews WHERE node_id = ? RETURNING round"
+        "FROM node_reviews WHERE node_id = ?"
     )
+    if not conn.in_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        row = fetchone(conn, sql, (node_id, verdict, findings, created_at, node_id))
-    if row is None:
-        raise RuntimeError("node review insert returned no row")
+        _ = conn.execute(sql, (node_id, verdict, findings, created_at, node_id))
+        row = fetchone(conn, "SELECT MAX(round) FROM node_reviews WHERE node_id = ?", (node_id,))
+        if row is None or row[0] is None:
+            raise RuntimeError("node review insert returned no row")
     return cast(int, _as_tuple(row)[0])
 
 

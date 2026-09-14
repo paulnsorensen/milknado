@@ -42,6 +42,10 @@ AllowProtectedOption = Annotated[
         help="Permit execution on a protected branch (e.g. main).",
     ),
 ]
+AttachedWatchOption = Annotated[
+    bool,
+    typer_option("--attached", help="Enable owner-fenced session input; read-only by default."),
+]
 
 
 def _print_run_result(result: RunLoopResult) -> None:
@@ -113,21 +117,40 @@ def watch(
     project_root: Annotated[
         Path, typer_option("--project-root", help="Project root directory")
     ] = DEFAULT_PROJECT_ROOT,
+    attached: AttachedWatchOption = False,
 ) -> None:
-    """Observe durable run state in a live, read-only TUI."""
+    """Observe durable run state; enable owner-fenced input only with --attached."""
     if not _is_interactive_terminal():
         console.print("[red]milknado watch requires an interactive terminal.[/red]")
         raise typer.Exit(code=2)
 
     project_root = project_root.resolve()
-    config, _plugins = _load_or_default(project_root)
-    from milknado.app.watch_tui import run_watch_tui
-
+    config, plugins = _load_or_default(project_root)
+    graph = None
     try:
-        run_watch_tui(project_root, config.db_path)
+        if attached:
+            from milknado.app.watch import (
+                AttachedWatchSource,
+                WatchSnapshotSource,
+                graph_command_admitter,
+            )
+            from milknado.app.watch_tui import run_attached_watch_tui
+
+            graph = _ensure_db(config, plugins)
+            source = AttachedWatchSource(
+                WatchSnapshotSource(project_root, config.db_path), graph_command_admitter(graph)
+            )
+            run_attached_watch_tui(source)
+        else:
+            from milknado.app.watch_tui import run_watch_tui
+
+            run_watch_tui(project_root, config.db_path)
     except (OSError, sqlite3.Error) as exc:
         console.print(f"[red]Cannot watch {project_root}: {exc}[/red]")
         raise typer.Exit(code=1) from None
+    finally:
+        if graph is not None:
+            graph.close()
 
 
 def run(

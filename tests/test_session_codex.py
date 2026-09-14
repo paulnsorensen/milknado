@@ -63,6 +63,22 @@ def bootstrap(session: CodexSession) -> tuple[dict[str, object], str, dict[str, 
     return turn, "turn-1", thread
 
 
+def test_codex_advertises_steer_only_for_an_active_turn(tmp_path: Path) -> None:
+    session = CodexSession(("codex",), tmp_path)
+    assert "steer" not in session.actions
+    _ = bootstrap(session)
+    assert "steer" in session.actions
+    _ = session.receive(
+        frame(
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-1", "status": "completed", "items": []}},
+            }
+        )
+    )
+    assert "steer" not in session.actions
+
+
 def test_initialize_starts_thread_and_turn_with_schema_fields(tmp_path: Path) -> None:
     session = CodexSession(("codex", "--model", "gpt-5.6"), tmp_path)
 

@@ -30,7 +30,13 @@ from milknado.domains.common import (
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, synchronized
 from milknado.domains.graph._edge_facade import _EdgeFacade
-from milknado.domains.graph._facades import _FileFacade, _GithubFacade, _RunFacade, _SessionFacade
+from milknado.domains.graph._facades import (
+    _CommandFacade,
+    _FileFacade,
+    _GithubFacade,
+    _RunFacade,
+    _SessionFacade,
+)
 from milknado.domains.graph._pipeline import (
     StatusMiddleware,
     StatusPipeline,
@@ -73,6 +79,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _graph_snapshot_revision: tuple[int, int] | None
     runs: _RunFacade
     sessions: _SessionFacade
+    commands: _CommandFacade
     files: _FileFacade
     github: _GithubFacade
 
@@ -99,6 +106,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         self._graph_snapshot_revision = None
         self.runs = _RunFacade(self)
         self.sessions = _SessionFacade(self)
+        self.commands = _CommandFacade(self)
         self.files = _FileFacade(self)
         self.github = _GithubFacade(self)
 

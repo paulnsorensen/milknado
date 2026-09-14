@@ -14,6 +14,7 @@ from typing_extensions import override
 
 from milknado.app.run import ExecutionController, ExecutionSnapshot
 from milknado.app.run_commands import ExecutionCommandsMixin
+from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.app.run_view import confirmation_text, session_view
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
@@ -84,6 +85,8 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         allow_protected: bool = False,
     ) -> None:
         self.controller: ExecutionController = controller
+        factory = getattr(controller, "attached_watch_source", None)
+        self.attached_source: object = factory() if factory is not None else controller
         self.feature_branch: str | None = feature_branch
         self.strict: bool = strict
         self.spec_text: str | None = spec_text
@@ -93,7 +96,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self._confirmation: tuple[str, str | None] | None = None
         self._confirmation_run_ids: frozenset[str] = frozenset()
         self._confirmation_focus: Widget | None = None
-        super().__init__(controller)
+        super().__init__(cast(ExecutionSnapshotSource, self.attached_source))
 
     @override
     def on_mount(self) -> None:

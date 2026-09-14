@@ -382,6 +382,60 @@ def test_interrupt_reports_only_actual_aborted_terminal_turn() -> None:
     assert finished.failed is False
 
 
+def test_acknowledged_interrupt_receipt_is_delivered_without_status_event() -> None:
+    session = OmpSession(("omp",), Path("/repo"))
+    started = session.start("long task")
+    prompt_id = msgspec.json.decode(started.commands[0], type=dict[str, object])["id"]
+    _ = session.receive(
+        frame({"id": prompt_id, "type": "response", "command": "prompt", "success": True})
+    )
+    submitted = session.submit(SessionInput(action="interrupt", request_id="interrupt-1"))
+    assert event(submitted, "status", "submitted").event_id == "interrupt-1"
+    session._pending[  # pyright: ignore[reportPrivateUsage]
+        "interrupt-1"
+    ].acknowledged = True
+
+    accepted = session.receive(
+        frame({"id": "interrupt-1", "type": "response", "command": "abort", "success": True})
+    )
+
+    assert [item.kind for item in accepted.events] == ["user"]
+    receipt = event(accepted, "user", "delivered")
+    assert receipt.event_id == "interrupt-1"
+    assert receipt.action == "interrupt"
+
+
+def test_interrupt_rejection_emits_rejected_durable_receipt() -> None:
+    session = OmpSession(("omp",), Path("/repo"))
+    started = session.start("long task")
+    prompt_id = msgspec.json.decode(started.commands[0], type=dict[str, object])["id"]
+    _ = session.receive(
+        frame({"id": prompt_id, "type": "response", "command": "prompt", "success": True})
+    )
+    submitted = session.submit(SessionInput(action="interrupt", request_id="interrupt-1"))
+    assert event(submitted, "status", "submitted").event_id == "interrupt-1"
+
+    rejected = session.receive(
+        frame(
+            {
+                "id": "interrupt-1",
+                "type": "response",
+                "command": "abort",
+                "success": False,
+                "error": "cannot abort",
+            }
+        )
+    )
+
+    assert rejected.failed is True
+    receipt = event(rejected, "user", "rejected")
+    assert receipt.event_id == "interrupt-1"
+    assert receipt.action == "interrupt"
+    assert receipt.text == ""
+    error = event(rejected, "error", "rejected")
+    assert error.text == "cannot abort"
+
+
 def test_duplicate_start_and_inactive_submit_are_rejected() -> None:
     session = OmpSession(("omp",), Path("/repo"))
     _ = session.start("first")

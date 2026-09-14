@@ -25,7 +25,13 @@ from milknado.loop.sessions._protocol import ProtocolStep
 class CodexSession(CodexEventMixin, CodexApprovalMixin, CodexStreamMixin):
     """Drive Codex 0.153.x's app-server JSON-RPC protocol over stdio."""
 
-    actions: tuple[SessionAction, ...] = ("steer", "interrupt", "approve", "deny")
+    @property
+    def actions(self) -> tuple[SessionAction, ...]:
+        actions: tuple[SessionAction, ...] = ("approve", "deny")
+        if self._active and self._turn_id:
+            actions = ("steer", "interrupt", *actions)
+        return actions
+
     command: tuple[str, ...]
     _policy: CodexPolicy
     _next_id: int
@@ -128,7 +134,7 @@ class CodexSession(CodexEventMixin, CodexApprovalMixin, CodexStreamMixin):
         if command.action == "steer":
             return self._submit_steer(command)
         if command.action == "interrupt":
-            return self._submit_interrupt()
+            return self._submit_interrupt(command)
         if command.action in {"approve", "deny"}:
             return self._submit_approval(command)
         raise ValueError(f"Codex does not support session action {command.action!r}")
@@ -153,17 +159,29 @@ class CodexSession(CodexEventMixin, CodexApprovalMixin, CodexStreamMixin):
             ),
             params,
         )
-        return ProtocolStep(commands=(payload,), session_id=self._session_id or None)
+        return ProtocolStep(
+            commands=(payload,),
+            session_id=self._session_id or None,
+        )
 
-    def _submit_interrupt(self) -> ProtocolStep:
+    def _submit_interrupt(self, command: SessionInput) -> ProtocolStep:
         if not self._active or not self._turn_id:
             raise ValueError("Codex turn is not active")
         params = {"threadId": self._thread_id, "turnId": self._turn_id}
         _request_id, payload = self._request(
-            PendingRequest("turn/interrupt", "interrupt", turn_id=self._turn_id),
+            PendingRequest(
+                "turn/interrupt",
+                "interrupt",
+                event_id=command.request_id,
+                text=command.text,
+                turn_id=self._turn_id,
+            ),
             params,
         )
-        return ProtocolStep(commands=(payload,), session_id=self._session_id or None)
+        return ProtocolStep(
+            commands=(payload,),
+            session_id=self._session_id or None,
+        )
 
     def _submit_approval(self, command: SessionInput) -> ProtocolStep:
         approval = self._approvals.get(command.request_id)
@@ -171,6 +189,7 @@ class CodexSession(CodexEventMixin, CodexApprovalMixin, CodexStreamMixin):
             raise ValueError("unknown or already resolved Codex approval request")
         result = approval_result(approval, command)
         approval.action = command.action
+        approval.command_id = command.command_id
         return ProtocolStep(
             commands=(encode_line({"id": approval.raw_id, "result": result}),),
             session_id=self._session_id or None,

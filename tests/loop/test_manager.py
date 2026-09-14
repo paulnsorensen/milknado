@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
+from milknado.domains.common import SessionInput
 from milknado.loop._events import (
     EventType,
     QueueEmitter,
@@ -319,6 +320,36 @@ class TestRunManagerForceStop:
                 break
             time.sleep(0.01)
         assert stopped.read_text(encoding="utf-8") == "stopped"
+
+
+class TestRunManagerSessionInput:
+    def test_session_input_returns_false_when_durable_admitter_rejects(self, tmp_path: Path):
+        manager = RunManager()
+        config = make_config(tmp_path)
+        config.session_sink = lambda _event: None
+        config.session_admitter = lambda _command: None
+        managed = manager.create_run(config)
+        command = SessionInput(action="steer", text="redirect", command_id="cmd-1")
+
+        result = manager.session_input(managed.state.run_id, command)
+
+        assert result is False
+        assert managed.state.session is not None
+        assert managed.state.session.view().events == ()
+
+    def test_session_input_submits_directly_without_admitter(self, tmp_path: Path):
+        manager = RunManager()
+        config = make_config(tmp_path)
+        config.session_sink = lambda _event: None
+        managed = manager.create_run(config)
+        command = SessionInput(action="steer", text="redirect", command_id="cmd-1")
+
+        result = manager.session_input(managed.state.run_id, command)
+
+        assert result is False
+        assert managed.state.session is not None
+        events = managed.state.session.view().events
+        assert [(event.event_id, event.state) for event in events] == [("cmd-1", "rejected")]
 
 
 class TestRunManagerListAndGet:

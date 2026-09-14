@@ -12,10 +12,12 @@ from milknado.adapters.loop import (
     _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
     _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.domains.common import RunResult, SessionView
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
+from milknado.domains.graph import MikadoGraph
 from milknado.loop import EventType
 
 
@@ -128,6 +130,31 @@ class TestListAndGetRuns:
     def test_get_run_not_found(self, adapter: LoopAdapter, mock_manager: MagicMock) -> None:
         mock_manager.get_run.return_value = None  # pyright: ignore[reportAny]
         assert adapter.get_run("missing") is None
+
+    def test_terminal_session_clears_actions_and_preserves_fence(
+        self, adapter: LoopAdapter, mock_manager: MagicMock, graph: MikadoGraph
+    ) -> None:
+        node = graph.add_node("terminal session")
+        graph.runs.start("run-1", node.id, "run.log", "2026-09-12T12:00:00+00:00", 60)
+        _ = graph.commands.publish_capabilities(
+            "run-1", node.id, "invoke-1", "owner-1", ("steer",)
+        )
+        graph.runs.finish(
+            "run-1",
+            RunResult(
+                status="done",
+                exit_code=0,
+                timed_out=False,
+                ended_at="2026-09-12T12:05:00+00:00",
+            ),
+        )
+        adapter._graph = graph  # pyright: ignore[reportPrivateUsage]
+        mock_manager.get_run_session.return_value = SessionView(actions=("steer",))  # pyright: ignore[reportAny]
+
+        view = adapter.get_run_session("run-1")
+
+        assert view.actions == ()
+        assert (view.owner_incarnation, view.invocation_id) == ("owner-1", "invoke-1")
 
     def test_is_run_alive_reports_thread_liveness(
         self, adapter: LoopAdapter, mock_manager: MagicMock
