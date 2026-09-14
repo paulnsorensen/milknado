@@ -156,3 +156,17 @@ async def test_watch_help_overlay_is_visible_and_excludes_operator_actions() -> 
         assert "Help" in app.export_screenshot().replace("&#160;", " ")
         help_text = cast(Text, overlay.render()).plain
         assert all(label not in help_text for label in ("g queue guidance", "c cancel", "f force"))
+
+
+@pytest.mark.asyncio
+async def test_refresh_view_is_a_noop_after_panels_unmount() -> None:
+    source = FakeSource(snapshot())
+    app = watch_tui.WatchApp(source, poll_interval=60.0)
+    async with app.run_test(size=(40, 15)) as pilot:
+        await pilot.pause()
+        await app.query_one("#run-panel").remove()
+        source.current = replace(source.current, goal="Shutting down")
+
+        app.refresh_view()
+
+        assert app.title != "Shutting down"  # guard bails before mutating any state
