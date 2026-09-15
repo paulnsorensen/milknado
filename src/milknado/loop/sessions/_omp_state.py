@@ -49,6 +49,8 @@ class OmpState:
 
     @property
     def actions(self) -> tuple[SessionAction, ...]:
+        if not self._active:
+            return ()
         if self._ui_requests:
             return (*self._BASE_ACTIONS, "approve", "deny")
         return self._BASE_ACTIONS

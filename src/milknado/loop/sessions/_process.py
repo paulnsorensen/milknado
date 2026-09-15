@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import IO
 from weakref import WeakKeyDictionary
 
+from milknado.domains.common.process import CONTROLLER_MASTER_ENV
 from milknado.loop._agent import (
     AgentRunSpec,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
@@ -256,7 +257,13 @@ def start_process(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
-    spawn_env = {**os.environ, **env} if env else None
+    spawn_env: dict[str, str] | None = None
+    if env or CONTROLLER_MASTER_ENV in os.environ:
+        spawn_env = os.environ.copy()
+        _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
+        if env:
+            spawn_env.update(env)
+            _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
     if os.name == "nt":
         proc = subprocess.Popen(
             protocol.command,

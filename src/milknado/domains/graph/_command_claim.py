@@ -52,6 +52,17 @@ def expire_commands_in_transaction(
     return tuple(receipts)
 
 
+def expire_commands(
+    conn: sqlite3.Connection,
+    *,
+    now: str | None = None,
+) -> tuple[CommandReceipt, ...]:
+    timestamp = utc_iso(now)
+    _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        return expire_commands_in_transaction(conn, timestamp)
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimRequest:
     run_id: str
@@ -129,4 +140,4 @@ def claim_queued_commands(
     return tuple(claimed)
 
 
-__all__ = ["ClaimRequest", "claim_queued_commands"]
+__all__ = ["ClaimRequest", "claim_queued_commands", "expire_commands"]

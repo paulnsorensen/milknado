@@ -12,9 +12,14 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
+import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.graph._goal_claims import release_goal_claim_on_terminal
+from milknado.domains.graph._goal_review_sql import (
+    READY_NODE_ADMISSION_CTE,
+    READY_NODE_ADMISSION_FILTER,
+)
 from milknado.domains.graph._sqlite_rows import fetchone
 
 
@@ -47,13 +52,18 @@ def _apply_transition(
     params: Sequence[object],
     *,
     lost_fence_is_noop: bool = False,
+    admission_guard: bool = False,
 ) -> bool:
     """Apply a status write and release terminal goal claims at the producer."""
+    owns_transaction = not conn.in_transaction
     cur = conn.execute(sql, params)
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     if cur.rowcount == 0:
         if lost_fence_is_noop:
             return False
+        if admission_guard:
+            _goal_review.assert_admitted(conn, node_id)
         row = fetchone(conn, "SELECT status FROM nodes WHERE id = ?", (node_id,))
         if row is None:
             raise ValueError(f"Node {node_id} not found")
@@ -106,9 +116,12 @@ def mark_running(
         conn,
         node_id,
         NodeStatus.RUNNING,
-        "UPDATE nodes SET status = ?, completed_at = NULL, "
-        + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ?",
+        READY_NODE_ADMISSION_CTE
+        + "UPDATE nodes AS n SET status = ?, completed_at = NULL, "
+        + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ? AND "
+        + READY_NODE_ADMISSION_FILTER,
         (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
+        admission_guard=True,
     )
 
 
@@ -137,13 +150,16 @@ def claim_node(
     conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
-    cur = conn.execute(
-        "UPDATE nodes SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
-        + f"worktree_path = NULL, branch_name = NULL WHERE id = ? AND status IN {_CLAIMABLE}",
+    _ = conn.execute(
+        READY_NODE_ADMISSION_CTE
+        + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
+        + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
+        + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
         (run_id, now, pid, node_id),
     )
+    row = cast(tuple[int] | None, conn.execute("SELECT changes()").fetchone())
     conn.commit()
-    return cur.rowcount == 1
+    return row is not None and row[0] == 1
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:

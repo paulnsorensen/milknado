@@ -88,6 +88,19 @@ cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 >   # or project-scoped: cp -r plugins/milknado/skills/ .claude/skills/
 >   ```
 
+## Controller authorization
+
+```sh
+export MILKNADO_CONTROLLER_MASTER="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+```
+
+Set `MILKNADO_CONTROLLER_MASTER` before you start `milknado-mcp` or any dispatch command.
+Use one random secret for the life of the graph database.
+The execution controller stores only its SHA-256 hash in the graph database.
+It removes the secret from every worker environment.
+Use the same secret when a separate terminal submits a goal-review decision.
+Milknado refuses dispatch without the secret and rejects a different secret after registration.
+
 ## Terminal controls
 
 Outside text fields and help, the execution dashboard and read-only `milknado watch` view share these controls:

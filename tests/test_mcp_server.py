@@ -2663,7 +2663,6 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_goal_admission",
         "milknado_goal_claim",
         "milknado_goal_release",
-        "milknado_goal_review_decide",
         "milknado_goal_review_request",
         "milknado_graph_summary",
         "milknado_move_node",

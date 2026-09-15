@@ -11,6 +11,7 @@ import logging
 import sqlite3
 from typing import cast
 
+import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._transitions as _transitions
 from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
@@ -34,6 +35,13 @@ def _reject_archived(conn: sqlite3.Connection, node_id: int) -> None:
         raise ValueError(f"Node {node_id} is archived; unarchive it first.")
 
 
+def _assert_execution_admitted(
+    conn: sqlite3.Connection, node: MikadoNode, target: NodeStatus
+) -> None:
+    if NodeStatus.RUNNING in todo_status_steps(node.status, target):
+        _goal_review.assert_admitted(conn, node.id)
+
+
 def _apply_subtree_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node: MikadoNode, target: NodeStatus
 ) -> bool:
@@ -50,12 +58,16 @@ def _apply_subtree_status(
 def transition_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
 ) -> None:
+    if target is NodeStatus.RUNNING:
+        _goal_review.assert_admitted(conn, node_id)
     _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
-        _transitions.transition_status(conn, node_id, target)
-        _logger.debug("node %d: %s → %s", node_id, old.value if old else "?", target.value)
+        if target is NodeStatus.RUNNING:
+            _transitions.mark_running(conn, node_id)
+        else:
+            _transitions.transition_status(conn, node_id, target)
         return True
 
     _ = pipeline.run(lambda nid: _reads.get_node(conn, nid), node_id, old, target, mutate)
@@ -86,6 +98,7 @@ def mark_running(
     branch_name: str | None = None,
     run_id: str | None = None,
 ) -> None:
+    _goal_review.assert_admitted(conn, node_id)
     _reject_archived(conn, node_id)
     old = _reads.node_status(conn, node_id)
 
@@ -119,33 +132,39 @@ def set_todo_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
 ) -> bool:
     """Validate verification and transition before applying one facade request."""
-    node = _reads.get_node(conn, node_id)
-    if node is None:
-        raise ValueError(f"Node {node_id} not found")
-    _reject_archived(conn, node_id)
-    if target is NodeStatus.DONE:
-        validate_done_verification(conn, node_id, [node])
-    validate_todo_status(node, target)
-    return _apply_subtree_status(pipeline, conn, node, target)
+    _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        node = _reads.get_node(conn, node_id)
+        if node is None:
+            raise ValueError(f"Node {node_id} not found")
+        _reject_archived(conn, node_id)
+        if target is NodeStatus.DONE:
+            validate_done_verification(conn, node_id, [node])
+        validate_todo_status(node, target)
+        _assert_execution_admitted(conn, node, target)
+        return _apply_subtree_status(pipeline, conn, node, target)
 
 
 def set_subtree_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, root_id: int, target: NodeStatus
 ) -> int:
-    """Validate once, then update each live subtree node children-first."""
-    root = _reads.get_node(conn, root_id)
-    if root is None:
-        raise ValueError(f"Node {root_id} not found")
-    ordered = subtree_post_order(
-        _reads.get_children_map(conn, include_archived=True),
-        root,
-    )
-    live = [node for node in ordered if node.archived_at is None]
-    if target is NodeStatus.DONE:
-        validate_done_verification(conn, root_id, live)
-    for node in live:
-        validate_todo_status(node, target)
-    return sum(_apply_subtree_status(pipeline, conn, node, target) for node in live)
+    """Validate once, then atomically update each live subtree node children-first."""
+    _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        root = _reads.get_node(conn, root_id)
+        if root is None:
+            raise ValueError(f"Node {root_id} not found")
+        ordered = subtree_post_order(
+            _reads.get_children_map(conn, include_archived=True),
+            root,
+        )
+        live = [node for node in ordered if node.archived_at is None]
+        if target is NodeStatus.DONE:
+            validate_done_verification(conn, root_id, live)
+        for node in live:
+            validate_todo_status(node, target)
+            _assert_execution_admitted(conn, node, target)
+        return sum(_apply_subtree_status(pipeline, conn, node, target) for node in live)
 
 
 def reconcile_completed_goals(pipeline: StatusPipeline, conn: sqlite3.Connection) -> int:
@@ -179,16 +198,19 @@ def complete_root(pipeline: StatusPipeline, conn: sqlite3.Connection) -> bool:
 
     Returns True if root was completed.
     """
-    root = _reads.get_root(conn)
-    if root is None or root.status != NodeStatus.PENDING:
-        return False
-    all_nodes = _reads.get_all_nodes(conn)
-    non_root = [n for n in all_nodes if n.id != root.id]
-    if not all(n.status == NodeStatus.DONE for n in non_root):
-        return False
-    mark_running(pipeline, conn, root.id)
-    mark_done(pipeline, conn, root.id)
-    return True
+    _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        root = _reads.get_root(conn)
+        if root is None or root.status != NodeStatus.PENDING:
+            return False
+        all_nodes = _reads.get_all_nodes(conn)
+        non_root = [n for n in all_nodes if n.id != root.id]
+        if not all(n.status == NodeStatus.DONE for n in non_root):
+            return False
+        _goal_review.assert_admitted(conn, root.id)
+        mark_running(pipeline, conn, root.id)
+        mark_done(pipeline, conn, root.id)
+        return True
 
 
 def claim_node(

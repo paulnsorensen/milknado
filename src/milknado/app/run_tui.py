@@ -38,7 +38,7 @@ class _ConfirmationOverlay(ModalScreen[bool]):
     DEFAULT_CSS: ClassVar[str] = """
     #confirmation-screen { align: center middle; }
     #confirmation-overlay {
-        margin: 0 1;
+        margin: 0;
         width: 1fr;
         height: auto;
         max-height: 100%;
@@ -85,8 +85,9 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         allow_protected: bool = False,
     ) -> None:
         self.controller: ExecutionController = controller
-        factory = getattr(controller, "attached_watch_source", None)
-        self.attached_source: object = factory() if factory is not None else controller
+        self.attached_source: ExecutionSnapshotSource = cast(
+            ExecutionSnapshotSource, controller.attached_watch_source()
+        )
         self.feature_branch: str | None = feature_branch
         self.strict: bool = strict
         self.spec_text: str | None = spec_text
@@ -96,7 +97,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self._confirmation: tuple[str, str | None] | None = None
         self._confirmation_run_ids: frozenset[str] = frozenset()
         self._confirmation_focus: Widget | None = None
-        super().__init__(cast(ExecutionSnapshotSource, self.attached_source))
+        super().__init__(self.attached_source)
 
     @override
     def on_mount(self) -> None:

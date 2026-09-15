@@ -19,6 +19,7 @@ from milknado.domains.common.agent_argv import (
     POSITIONAL_BRIEF_EXECUTABLES,
     validate_worker_argv,
 )
+from milknado.domains.common.process import CONTROLLER_MASTER_ENV
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
@@ -107,13 +108,9 @@ def build_worker_env(
 ) -> dict[str, str]:
     """Return a filtered environment for worker subprocesses.
 
-    Passes only allowlisted system vars plus MILKNADO_* config vars from the
-    parent env. Secrets (API keys, tokens, DB URLs) stay in the parent only,
-    except the OMP OpenRouter credential an omp worker needs to authenticate.
+    Passes only allowlisted system vars plus safe MILKNADO_* config vars from
+    the parent env. Controller authorization stays in the parent only.
     """
-    # INVARIANT: no MILKNADO_* var may hold a secret — every one is forwarded to
-    # workers verbatim. Keep API keys, tokens, and DB URLs out of that namespace
-    # (they belong to the parent only); a new MILKNADO_SECRET_* would leak here.
     env = {
         k: v
         for k, v in os.environ.items()
@@ -123,6 +120,8 @@ def build_worker_env(
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     if extra:
         env.update(extra)
+    # The broad MILKNADO_* rule must not carry the controller master to workers.
+    _ = env.pop(CONTROLLER_MASTER_ENV, None)
     return env
 
 

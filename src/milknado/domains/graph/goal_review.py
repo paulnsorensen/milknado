@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from milknado.domains.graph.commands import CommandReceipt
+
 
 class GoalReviewDecision(StrEnum):
     PENDING = "pending"
-    ACCEPTED = "accepted"  # noqa: V107 - accepted through the MCP decision value
-    REJECTED = "rejected"  # noqa: V107 - accepted through the MCP decision value
+    ACCEPTED = "accepted"  # noqa: V107 - serialized protocol value
+    REJECTED = "rejected"  # noqa: V107 - serialized protocol value
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +29,6 @@ class GoalReviewRequest:
 class GoalReviewDecisionRequest:
     review_id: int
     decision: GoalReviewDecision
-    reviewer: str
     decided_at: str | None = None
 
 
@@ -44,6 +45,7 @@ class GoalReviewRecord:
     assessed_at: str
     decided_at: str | None
     decided_by: str | None
+    interruption_receipts: tuple[CommandReceipt, ...] = ()
 
     @property
     def unbounded(self) -> bool:

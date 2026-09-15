@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import milknado.domains.graph._command_persistence as _command_persistence
+import milknado.domains.graph._review_interrupts as _review_interrupts
 from milknado.domains.graph._analytics_facade import synchronized
 from milknado.domains.graph._command_claim import ClaimRequest, claim_queued_commands
 from milknado.domains.graph._command_close import close_owner
@@ -26,16 +27,23 @@ class _CommandFacade(SubFacade):
         *,
         published_at: str | None = None,
     ) -> OwnerCapabilities:
-        return _command_persistence.publish_capabilities(
-            self._conn,
-            run_id,
-            node_id,
-            invocation_id,
-            owner_incarnation,
-            actions,
-            permission_ids,
-            published_at=published_at,
-        )
+        _ = self._conn.execute("BEGIN IMMEDIATE")
+        with self._conn:
+            capabilities = _command_persistence.publish_capabilities(
+                self._conn,
+                run_id,
+                node_id,
+                invocation_id,
+                owner_incarnation,
+                actions,
+                permission_ids,
+                published_at=published_at,
+                _in_transaction=True,
+            )
+            _ = _review_interrupts.enqueue_pending_node_interrupt(
+                self._conn, node_id, now=published_at
+            )
+            return capabilities
 
     @synchronized
     def capabilities(self, run_id: str) -> OwnerCapabilities | None:
