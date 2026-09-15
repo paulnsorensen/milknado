@@ -7,15 +7,18 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TypedDict, cast
 
 import pytest
+from fastmcp import Context
 
 from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import GraphNodeSummary, mcp
+from milknado.mcp.follow_up import milknado_track_follow_up
 from milknado.mcp.run import (
     milknado_run_inline,
     milknado_run_inline_poll,
@@ -39,7 +42,6 @@ from milknado.mcp.todo_mutate import (
     milknado_set_subtree_status,
     milknado_todo_add,
     milknado_todo_set_status,
-    milknado_track_follow_up,
 )
 
 
@@ -59,6 +61,8 @@ class _McpResponse(TypedDict):
     run_id: str
     status: str
     kind: str
+    created: bool
+    links: dict[str, object]
     description: str
     children: list[_TreeNode]
     brief: str
@@ -108,6 +112,29 @@ def _call(tool: object, **kwargs: object) -> _McpResponse:
     """Invoke a FastMCP tool through its underlying Python callable."""
     fn = cast(Callable[..., _McpResponse], getattr(tool, "fn", tool))
     return fn(**kwargs)
+
+
+def _bind_follow_up_worker(
+    graph: MikadoGraph,
+    node_id: int,
+    run_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Context:
+    if graph.runs.get(run_id) is None:
+        graph.runs.start(run_id, node_id, "", "2026-09-13T00:00:00+00:00", None)
+    invocation_id = f"invocation-{node_id}"
+    _ = graph.commands.publish_capabilities(
+        run_id,
+        node_id,
+        invocation_id,
+        "owner",
+        (),
+        published_at="2026-09-13T00:00:00+00:00",
+    )
+    monkeypatch.setenv("MILKNADO_NODE_ID", str(node_id))
+    monkeypatch.setenv("MILKNADO_RUN_ID", run_id)
+    monkeypatch.setenv("MILKNADO_INVOCATION_ID", invocation_id)
+    return cast(Context, cast(object, SimpleNamespace(request_id=f"request-{node_id}")))
 
 
 def _call_tree(tool: object, **kwargs: object) -> list[_TreeNode]:
@@ -1338,6 +1365,111 @@ class TestTrackFollowUp:
         tree = _call_tree(milknado_todo_tree, project_root=root)
         assert any(n["description"] == "add retry" for n in tree)
 
+    def test_worker_follow_up_is_idempotent_and_returns_structured_links(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = str(tmp_path)
+        monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
+        goal = _call(milknado_todo_add, description="goal", kind="goal", project_root=root)
+        task = _call(
+            milknado_todo_add,
+            description="task",
+            parent_id=goal["id"],
+            project_root=root,
+        )
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-idempotent", monkeypatch)
+        finally:
+            graph.close()
+
+        first = _call(
+            milknado_track_follow_up,
+            description="discovered once",
+            project_root=root,
+            ctx=ctx,
+        )
+        second = _call(
+            milknado_track_follow_up,
+            description="ignored duplicate payload",
+            project_root=root,
+            ctx=ctx,
+        )
+
+        assert first["created"] is True
+        assert second["created"] is False
+        assert second["id"] == first["id"]
+        assert first["links"] == {
+            "discovered_node": {"kind": "node", "node_id": first["id"]},
+            "source": {
+                "kind": "worker_invocation",
+                "node_id": task["id"],
+                "run_id": "run-idempotent",
+                "invocation_id": f"invocation-{task['id']}",
+                "request_id": f"request-{task['id']}",
+            },
+        }
+        children = _call_tree(milknado_todo_tree, project_root=root, root_id=goal["id"])[0][
+            "children"
+        ]
+        discovered = [node for node in children if node["description"] == "discovered once"]
+        assert [node["id"] for node in discovered] == [first["id"]]
+
+    def test_worker_follow_up_rolls_back_invalid_creation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = str(tmp_path)
+        monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
+        task = _call(milknado_todo_add, description="source", project_root=root)
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-rollback", monkeypatch)
+        finally:
+            graph.close()
+
+        with pytest.raises(ValueError, match="prereq 9999 not found"):
+            _ = _call(
+                milknado_track_follow_up,
+                description="must roll back",
+                prereqs=[9999],
+                project_root=root,
+                ctx=ctx,
+            )
+
+        roots = _call_tree(milknado_todo_tree, project_root=root)
+        assert [node["description"] for node in roots] == ["source"]
+
+    def test_worker_follow_up_rejects_terminal_source_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = str(tmp_path)
+        monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
+        task = _call(milknado_todo_add, description="source", project_root=root)
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-finished", monkeypatch)
+            _ = graph.runs.finish(
+                "run-finished",
+                RunResult(
+                    status="done",
+                    exit_code=0,
+                    timed_out=False,
+                    ended_at="2026-09-13T00:01:00+00:00",
+                ),
+            )
+        finally:
+            graph.close()
+
+        with pytest.raises(ValueError, match="is not active"):
+            _ = _call(
+                milknado_track_follow_up,
+                description="too late",
+                project_root=root,
+                ctx=ctx,
+            )
+        roots = _call_tree(milknado_todo_tree, project_root=root)
+        assert [node["description"] for node in roots] == ["source"]
+
     def test_defaults_parent_to_worker_nodes_parent_as_sibling(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1351,9 +1483,16 @@ class TestTrackFollowUp:
         task = _call(
             milknado_todo_add, description="task", parent_id=goal["id"], project_root=root
         )
-        monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-sibling", monkeypatch)
+        finally:
+            graph.close()
         follow_up = _call(
-            milknado_track_follow_up, description="discovered work", project_root=root
+            milknado_track_follow_up,
+            description="discovered work",
+            project_root=root,
+            ctx=ctx,
         )
         detail = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
         assert detail["parent_id"] == goal["id"]
@@ -1368,9 +1507,16 @@ class TestTrackFollowUp:
         root = str(tmp_path)
         monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
         task = _call(milknado_todo_add, description="rootless task", project_root=root)
-        monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-root", monkeypatch)
+        finally:
+            graph.close()
         follow_up = _call(
-            milknado_track_follow_up, description="discovered work", project_root=root
+            milknado_track_follow_up,
+            description="discovered work",
+            project_root=root,
+            ctx=ctx,
         )
         detail = _call(milknado_get_node, node_id=follow_up["id"], project_root=root)
         assert detail["parent_id"] is None
@@ -1392,11 +1538,12 @@ class TestTrackFollowUp:
         graph, _cfg = open_graph(resolve_project_root(root))
         try:
             assert graph.claim_node(task["id"], "run-124", now="2026-06-03T00:00:00+00:00")
-            monkeypatch.setenv("MILKNADO_NODE_ID", str(task["id"]))
+            ctx = _bind_follow_up_worker(graph, task["id"], "run-124", monkeypatch)
             follow_up = _call(
                 milknado_track_follow_up,
                 description="discovered apply-work",
                 project_root=root,
+                ctx=ctx,
             )
             reconcile_node_status(graph, task["id"], "done", "run-124")
         finally:
@@ -1431,12 +1578,17 @@ class TestTrackFollowUp:
         monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
         env_parent = _call(milknado_todo_add, description="env parent", project_root=root)
         explicit = _call(milknado_todo_add, description="explicit parent", project_root=root)
-        monkeypatch.setenv("MILKNADO_NODE_ID", str(env_parent["id"]))
+        graph, _cfg = open_graph(resolve_project_root(root))
+        try:
+            ctx = _bind_follow_up_worker(graph, env_parent["id"], "run-explicit", monkeypatch)
+        finally:
+            graph.close()
         child = _call(
             milknado_track_follow_up,
             description="discovered",
             parent_id=explicit["id"],
             project_root=root,
+            ctx=ctx,
         )
         under_explicit = _call_tree(milknado_todo_tree, project_root=root, root_id=explicit["id"])[
             0
@@ -1455,8 +1607,16 @@ class TestTrackFollowUp:
         root = str(tmp_path)
         monkeypatch.setenv("MILKNADO_PROJECT_ROOT", root)
         monkeypatch.setenv("MILKNADO_NODE_ID", "not-an-int")
-        with pytest.raises(ValueError, match="invalid literal for int"):
-            _ = _call(milknado_track_follow_up, description="orphan", project_root=root)
+        monkeypatch.setenv("MILKNADO_RUN_ID", "run-invalid")
+        monkeypatch.setenv("MILKNADO_INVOCATION_ID", "invocation-invalid")
+        ctx = cast(Context, cast(object, SimpleNamespace(request_id="request-invalid")))
+        with pytest.raises(ValueError, match="invalid MILKNADO_NODE_ID"):
+            _ = _call(
+                milknado_track_follow_up,
+                description="orphan",
+                project_root=root,
+                ctx=ctx,
+            )
 
     def test_stale_valid_node_id_env_raises_and_persists_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1469,8 +1629,16 @@ class TestTrackFollowUp:
         gone = _call(milknado_todo_add, description="will be deleted", project_root=root)
         _ = _call(milknado_delete_node, node_id=gone["id"], project_root=root)
         monkeypatch.setenv("MILKNADO_NODE_ID", str(gone["id"]))
-        with pytest.raises(ValueError, match="not found"):
-            _ = _call(milknado_track_follow_up, description="orphan", project_root=root)
+        monkeypatch.setenv("MILKNADO_RUN_ID", "run-stale")
+        monkeypatch.setenv("MILKNADO_INVOCATION_ID", "invocation-stale")
+        ctx = cast(Context, cast(object, SimpleNamespace(request_id="request-stale")))
+        with pytest.raises(ValueError, match="source run 'run-stale' not found"):
+            _ = _call(
+                milknado_track_follow_up,
+                description="orphan",
+                project_root=root,
+                ctx=ctx,
+            )
         assert _call_tree(milknado_todo_tree, project_root=root) == []
 
     def test_invalid_kind_raises(self, tmp_path: Path) -> None:
@@ -2457,7 +2625,7 @@ def test_main_imports_all_tool_modules() -> None:
 
 
 def test_mcp_tool_modules_register_expected_tool_names() -> None:
-    """The eight main()-imported tool modules plus mcp_server must register the expected tool set.
+    """The nine main()-imported tool modules plus mcp_server register the expected tool set.
 
     Pins the sorted name list so silently dropping mcp_todo_mutate (or any other
     module from main()) is caught: the count and the names both fail.
@@ -2465,10 +2633,20 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     tools (milknado_graph_summary, milknado_plan_batches) are registered at import
     time of mcp_server which the test suite itself imports, so they appear here too.
     """
-    from milknado.mcp import github, node, ralph, rebalance, run, todo, todo_mutate, wiki
+    from milknado.mcp import (
+        github,
+        goal_review,
+        node,
+        ralph,
+        rebalance,
+        run,
+        todo,
+        todo_mutate,
+        wiki,
+    )
     from milknado.mcp._core import mcp
 
-    _ = (github, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (github, goal_review, node, ralph, rebalance, run, todo, todo_mutate, wiki)
 
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
@@ -2482,8 +2660,11 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
         "milknado_github_roadmap_bind",
         "milknado_github_roadmap_export",
         "milknado_github_roadmap_import",
+        "milknado_goal_admission",
         "milknado_goal_claim",
         "milknado_goal_release",
+        "milknado_goal_review_decide",
+        "milknado_goal_review_request",
         "milknado_graph_summary",
         "milknado_move_node",
         "milknado_node_verify",

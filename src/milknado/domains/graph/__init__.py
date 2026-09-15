@@ -1,5 +1,6 @@
 from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._command_admission import admit_session_command
+from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph.commands import (
     CommandFenceError,
@@ -8,6 +9,15 @@ from milknado.domains.graph.commands import (
     GraphCommand,
     OwnerCapabilities,
     new_command_id,
+)
+from milknado.domains.graph.goal_review import (
+    GoalAdmission,
+    GoalAdmissionDenied,
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    GoalReviewSubjectError,
 )
 from milknado.domains.graph.graph import MikadoGraph
 from milknado.domains.graph.observer import (
@@ -55,6 +65,15 @@ __all__ = [
     "CommandStatus",
     "GraphCommand",
     "OwnerCapabilities",
+    "FollowUpRequest",
+    "FollowUpSource",
+    "GoalAdmission",
+    "GoalAdmissionDenied",
+    "GoalReviewDecision",
+    "GoalReviewDecisionRequest",
+    "GoalReviewRecord",
+    "GoalReviewRequest",
+    "GoalReviewSubjectError",
     "new_command_id",
     "ArtifactSnapshot",
     "GraphSnapshot",

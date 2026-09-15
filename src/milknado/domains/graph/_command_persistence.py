@@ -26,6 +26,7 @@ from milknado.domains.graph._command_records import (
     validate_command,
     validate_identifier,
 )
+from milknado.domains.graph._goal_review import assert_admitted
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 from milknado.domains.graph.commands import (
     CommandFenceError,
@@ -116,6 +117,8 @@ def admit_command(
             if stored_receipt is None:
                 raise RuntimeError("stored command has no receipt")
             return stored_receipt
+        if command_value.action in {"steer", "follow_up"}:
+            assert_admitted(conn, command_value.node_id)
         status: CommandStatus = "queued"
         detail: str | None = None
         if datetime.fromisoformat(expires_at) <= datetime.fromisoformat(timestamp):

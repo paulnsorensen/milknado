@@ -7,7 +7,7 @@ import os
 
 from milknado.domains.common import MikadoNode, resolve_flavor_profile
 from milknado.domains.dispatch import render_brief
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import FollowUpSource
 from milknado.mcp._core import (
     Flavor,
     Kind,
@@ -152,26 +152,25 @@ def milknado_get_node(node_id: int, project_root: str = "") -> Response:
         graph.close()
 
 
-def _worker_node_id() -> int | None:
-    """Read the worker's current node id from MILKNADO_NODE_ID, or None if unset."""
-    raw = os.environ.get("MILKNADO_NODE_ID", "").strip()
-    return int(raw) if raw else None
-
-
-def follow_up_parent_id(graph: MikadoGraph) -> int | None:
-    """Parent for an auto-parented follow-up: the worker node's own parent.
-
-    The worker's exit-0 reconcile drives MILKNADO_NODE_ID's node to done, and
-    children are prerequisites — so parenting the follow-up under the worker
-    node would leave a done node holding unmet work (#124). Attaching it to
-    the node's parent keeps it a sibling: it still gates the same goal but
-    never gates the completing node. Fails loud on a stale MILKNADO_NODE_ID
-    before anything is inserted.
-    """
-    worker_id = _worker_node_id()
-    if worker_id is None:
+def follow_up_source(request_id: str | int) -> FollowUpSource | None:
+    """Read one complete worker identity from the inherited process context."""
+    names = (
+        "MILKNADO_NODE_ID",
+        "MILKNADO_RUN_ID",
+        "MILKNADO_INVOCATION_ID",
+    )
+    node_id, run_id, invocation_id = (os.environ.get(name, "").strip() for name in names)
+    if not any((node_id, run_id, invocation_id)):
         return None
-    node = graph.get_node(worker_id)
-    if node is None:
-        raise ValueError(f"MILKNADO_NODE_ID {worker_id} not found")
-    return node.parent_id
+    missing = [
+        name
+        for name, value in zip(names, (node_id, run_id, invocation_id), strict=True)
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"incomplete follow-up worker context: missing {', '.join(missing)}")
+    try:
+        parsed_node_id = int(node_id)
+    except ValueError as exc:
+        raise ValueError(f"invalid MILKNADO_NODE_ID {node_id!r}") from exc
+    return FollowUpSource(parsed_node_id, run_id, invocation_id, str(request_id))

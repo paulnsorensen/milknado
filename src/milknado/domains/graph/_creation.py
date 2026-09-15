@@ -41,7 +41,7 @@ def _get_active_parent(conn: sqlite3.Connection, parent_id: int) -> MikadoNode:
     return parent
 
 
-def _validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: NodeKind) -> None:
+def validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: NodeKind) -> None:
     if parent_id is None:
         return
     parent = _get_active_parent(conn, parent_id)
@@ -49,7 +49,7 @@ def _validate_parent(conn: sqlite3.Connection, parent_id: int | None, kind: Node
         raise InvalidContainment(parent.kind, kind)
 
 
-def _validate_prereqs(
+def validate_prereqs(
     conn: sqlite3.Connection, prereqs: Sequence[int], parent_id: int | None
 ) -> None:
     if len(prereqs) != len(set(prereqs)):
@@ -61,7 +61,7 @@ def _validate_prereqs(
             raise ValueError(f"prereq {prereq_id} duplicates parent_id {parent_id}")
 
 
-def _validate_flavor(
+def validate_flavor(
     kind: NodeKind, flavor: str | None, flavor_registry: frozenset[str]
 ) -> str | None:
     # flavor validation: TASK defaults to IMPLEMENT, non-TASK must be None
@@ -75,7 +75,7 @@ def _validate_flavor(
     return flavor_value
 
 
-def _insert_node(
+def insert_node(
     conn: sqlite3.Connection,
     description: str,
     parent_id: int | None,
@@ -112,16 +112,17 @@ def add_node(
     description: str,
     parent_id: int | None,
     spec: NodeSpec,
+    files: tuple[str, ...] = (),
 ) -> MikadoNode:
     kind = cast(object, spec.kind)
     if not isinstance(kind, NodeKind):
         raise ValueError(f"invalid kind: {kind!r}")
     _ = conn.execute("BEGIN IMMEDIATE")
     try:
-        _validate_parent(conn, parent_id, kind)
-        _validate_prereqs(conn, spec.prereqs, parent_id)
-        flavor = _validate_flavor(kind, spec.flavor, spec.flavor_registry)
-        node_id = _insert_node(conn, description, parent_id, spec, flavor)
+        validate_parent(conn, parent_id, kind)
+        validate_prereqs(conn, spec.prereqs, parent_id)
+        flavor = validate_flavor(kind, spec.flavor, spec.flavor_registry)
+        node_id = insert_node(conn, description, parent_id, spec, flavor)
         if parent_id is not None:
             _ = conn.execute(
                 "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
@@ -133,6 +134,10 @@ def add_node(
         _ = conn.executemany(
             "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
             [(node_id, prereq_id) for prereq_id in spec.prereqs],
+        )
+        _ = conn.executemany(
+            "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
+            [(node_id, path) for path in files],
         )
     except Exception:
         conn.rollback()

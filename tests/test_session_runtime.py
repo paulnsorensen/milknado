@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import sys
@@ -8,6 +9,7 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -98,6 +100,23 @@ for raw in sys.stdin:
         })
         break
 """,
+    "identity": """
+for raw in sys.stdin:
+    if json.loads(raw).get("type") == "user":
+        keys = (
+            "MILKNADO_PROJECT_ROOT",
+            "MILKNADO_NODE_ID",
+            "MILKNADO_RUN_ID",
+            "MILKNADO_INVOCATION_ID",
+        )
+        emit({
+            "type": "result",
+            "subtype": "success",
+            "result": json.dumps({key: os.environ.get(key) for key in keys}),
+            "session_id": "identity",
+        })
+        break
+""",
 }
 
 
@@ -165,6 +184,25 @@ def test_run_session_drains_stdout_and_stderr(tmp_path: Path) -> None:
     assert stderr_lines == ["stderr message\n"]
     assert any(event.text == "Claude ready" for event in events)
     assert any(event.state == "stopped" for event in events)
+
+
+def test_run_session_provides_complete_worker_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MILKNADO_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("MILKNADO_NODE_ID", "17")
+    monkeypatch.setenv("MILKNADO_RUN_ID", "run-17")
+    worker = _worker(tmp_path, "identity")
+
+    result = run_session(_spec(worker, tmp_path, ("identity",)), SessionChannel())
+
+    identity = cast(dict[str, str | None], json.loads(result.result_text or ""))
+    assert identity["MILKNADO_PROJECT_ROOT"] == str(tmp_path)
+    assert identity["MILKNADO_NODE_ID"] == "17"
+    assert identity["MILKNADO_RUN_ID"] == "run-17"
+    invocation_id = identity["MILKNADO_INVOCATION_ID"]
+    assert isinstance(invocation_id, str)
+    assert len(invocation_id) == 32
 
 
 def test_run_session_sends_follow_up_before_first_terminal_result(tmp_path: Path) -> None:

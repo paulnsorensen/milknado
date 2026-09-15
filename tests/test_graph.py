@@ -50,6 +50,15 @@ class TestAddNode:
             _ = graph.add_node("orphan", parent_id=999)
         assert graph.get_all_nodes() == []
 
+    def test_add_node_files_failure_rolls_back_whole_node(self, graph: MikadoGraph) -> None:
+        # Node, edges, and file_ownership must commit atomically: a failure
+        # inserting file_ownership must not leave an orphaned node behind.
+        # Duplicate paths violate the file_ownership PK (node_id, file_path)
+        # mid-transaction, forcing the whole add_node to roll back.
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = graph.add_node("orphan", files=("src/a.py", "src/a.py"))
+        assert graph.get_all_nodes() == []
+
 
 class TestDeleteNode:
     def test_delete_leaf_removes_it(self, graph: MikadoGraph) -> None:
