@@ -12,6 +12,7 @@ from textual.widgets import Button, DataTable, Input, Select, Static
 from typing_extensions import override
 
 from milknado.adapters import ChangedFile
+from milknado.app.graph_view import detail_navigation_text, node_inspector_text
 from milknado.app.session_view import (
     action_options,
     error_text,
@@ -19,7 +20,8 @@ from milknado.app.session_view import (
     session_state_text,
     transcript_text,
 )
-from milknado.domains.common import SessionAction, SessionView
+from milknado.domains.common import MikadoNode, SessionAction, SessionView
+from milknado.domains.graph import NodeDetailSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,13 +249,29 @@ class DetailsPanel(VerticalScroll):
     DetailsPanel { height: 1fr; padding: 0 1; }
     #brief { height: auto; margin: 0 0 1 0; }
     #metadata { height: auto; }
+    #detail-navigation { height: auto; margin: 0 0 1 0; color: $text-muted; }
     """
 
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="brief", markup=False)
+        yield Static(id="detail-navigation", markup=False)
         yield Static(id="metadata", markup=False)
 
-    def update(self, brief: str, metadata: str) -> None:
-        self.query_one("#brief", Static).update(brief)
-        self.query_one("#metadata", Static).update(metadata)
+    def update(
+        self,
+        brief: str,
+        metadata: str,
+        *,
+        node: MikadoNode | None = None,
+        detail: NodeDetailSnapshot | None = None,
+    ) -> None:
+        offset = self.scroll_offset
+        self.query_one("#brief", Static).update(
+            node_inspector_text(node, detail) if node is not None else brief
+        )
+        self.query_one("#detail-navigation", Static).update(
+            detail_navigation_text(detail) if node is not None else ""
+        )
+        self.query_one("#metadata", Static).update("" if node is not None else metadata)
+        _ = self.call_after_refresh(self.scroll_to, x=offset.x, y=offset.y, animate=False)

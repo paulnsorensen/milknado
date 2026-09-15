@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -107,15 +108,16 @@ class _Scenario:
 
 def _worker(tmp_path: Path) -> Path:
     worker = tmp_path / "claude"
+    script_path = tmp_path / "claude.py"
     script = _SCRIPT.replace("FRAME_LIMIT", str(MAX_FRAME_SIZE))
-    _ = worker.write_text(script, encoding="utf-8")
-    _ = worker.chmod(0o755)
+    _ = script_path.write_text(script, encoding="utf-8")
+    worker.symlink_to(sys.executable)
     return worker
 
 
 def _spec(worker: Path, tmp_path: Path, scenario: _Scenario) -> AgentRunSpec:
     return AgentRunSpec(
-        cmd=[str(worker), scenario.mode, str(scenario.marker)],
+        cmd=[str(worker), str(worker.with_suffix(".py")), scenario.mode, str(scenario.marker)],
         prompt="initial prompt",
         timeout=scenario.timeout,
         log_dir=None,

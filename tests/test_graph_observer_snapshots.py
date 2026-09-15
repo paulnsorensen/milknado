@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from milknado.app.watch import WatchSnapshotSource
 from milknado.domains.common import (
     MikadoNode,
     NodeKind,
@@ -221,8 +224,9 @@ def test_snapshot_states_distinguish_missing_session_rows_from_missing_storage(
     detail = graph.get_node_detail_snapshot(node.id, limit=1).detail
     assert detail is not None
     assert detail.sessions.items is not None
-    assert detail.sessions.items[0].state == "loaded"
+    assert detail.sessions.items[0].state == "missing"
     assert detail.sessions.items[0].session is None
+    assert detail.sessions.items[0].event_history.state == "missing"
     assert detail.goal_claim.state == "loaded"
     assert detail.goal_claim.value is None
     assert detail.artifacts.items is not None
@@ -421,3 +425,54 @@ def test_node_detail_snapshot_reads_one_cross_connection_snapshot(
     finally:
         reader.close()
         writer.close()
+
+
+def test_watch_graph_cache_ignores_run_writes_and_refreshes_claims(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "graph.db"
+    writer = MikadoGraph(db_path)
+    goal = writer.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    for index in range(100):
+        _ = writer.add_node(f"child-{index}", parent_id=goal.id)
+    traces: list[str] = []
+
+    def connect_with_trace(path: Path) -> sqlite3.Connection:
+        connection = connect_readonly(path)
+        connection.set_trace_callback(traces.append)
+        return connection
+
+    with patch("milknado.app.watch.connect_readonly", connect_with_trace):
+        source = WatchSnapshotSource(tmp_path, db_path)
+        first = source.snapshot()
+        assert first.graph is not None
+        traces.clear()
+        for _ in range(3):
+            _ = source.snapshot()
+        writer.runs.start(
+            "unrelated-run",
+            goal.id,
+            str(tmp_path / "run.log"),
+            "2026-09-12T00:00:00+00:00",
+            60,
+        )
+        unchanged = source.snapshot()
+        hydration_reads = [
+            sql
+            for sql in traces
+            if "SELECT * FROM nodes WHERE archived_at IS NULL" in sql
+            or "SELECT parent_id, child_id FROM edges" in sql
+        ]
+        assert unchanged.graph is first.graph
+        assert hydration_reads == []
+
+        _ = writer.claim_or_reclaim_goal(
+            goal.id, "goal-run", os.getpid(), now="2026-09-12T00:00:01+00:00"
+        )
+        refreshed = source.snapshot()
+        assert refreshed.graph is not unchanged.graph
+        assert refreshed.graph is not None
+        assert refreshed.graph.nodes[0].goal_run_id == "goal-run"
+        assert any("SELECT * FROM nodes WHERE archived_at IS NULL" in sql for sql in traces)
+        source.close()
+    writer.close()

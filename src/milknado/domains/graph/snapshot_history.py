@@ -195,7 +195,9 @@ def _session(  # noqa: PLR0913 - session identity and page bounds share one read
         conn.execute("SELECT 1 FROM run_sessions WHERE run_id = ?", (run_id,)).fetchone(),
     )
     if row is None:
-        return NodeSessionSnapshot(run_id, None, "loaded", _empty_event_page(event_limit))
+        return NodeSessionSnapshot(
+            run_id, None, "missing", _empty_event_page(event_limit, "missing")
+        )
     session = view_session(conn, run_id)
     history = event_page(conn, run_id, event_page_number, event_limit)
     return NodeSessionSnapshot(run_id, session, "loaded", history)

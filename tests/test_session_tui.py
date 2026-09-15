@@ -10,6 +10,7 @@ from typing import Protocol, cast, final
 import pytest
 from rich.console import RenderableType
 from rich.text import Text
+from textual.css.query import NoMatches
 from textual.widgets import Button, DataTable, Input, Select, Static
 from typing_extensions import override
 
@@ -363,6 +364,49 @@ async def test_failed_git_inspection_is_visible_in_changes_panel(tmp_path: Path)
         expected = f"git session changes failed: worktree is unavailable: {missing}"
         assert plain(app, "#changes-state") == expected
         assert plain(app, "#diff-text") == expected
+
+
+@pytest.mark.asyncio
+async def test_changes_worker_callback_survives_panel_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    current = snapshot()
+    selected = replace(
+        current.active_runs[0],
+        session=SessionView(context=context, active=True),
+    )
+    controller = SnapshotController(
+        initial_snapshot=replace(current, active_runs=(selected,)),
+        replay_subscription=False,
+    )
+    started = Event()
+    release = Event()
+    original_changes = GitAdapter.session_changes
+
+    def gated_changes(
+        adapter: GitAdapter, loaded_context: SessionContext
+    ) -> tuple[ChangedFile, ...]:
+        started.set()
+        if not release.wait(timeout=5):
+            raise AssertionError("gated Git response did not get released")
+        return original_changes(adapter, loaded_context)
+
+    monkeypatch.setattr(GitAdapter, "session_changes", gated_changes)
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("x")
+        assert await asyncio.to_thread(started.wait, 5)
+        await app.query_one("#detail").remove()
+        await pilot.pause()
+        assert app.is_mounted
+        with pytest.raises(NoMatches):
+            _ = app.query_one("#changes-panel")
+        release.set()
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+        assert app.is_mounted
 
 
 @pytest.mark.asyncio
