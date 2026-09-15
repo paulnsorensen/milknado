@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import cast
 
-from milknado.domains.common import NodeKind, NodeStatus
+from milknado.domains.common import NodeStatus
+from milknado.domains.graph._goal_review_scope import (
+    ancestor_chain,
+    nearest_execution_goal,
+    scope_ids,
+    top_level_goal,
+    validate_scope,
+)
+from milknado.domains.graph._goal_review_scope import value as _value
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
@@ -17,7 +24,6 @@ from milknado.domains.graph.goal_review import (
     GoalReviewDecisionRequest,
     GoalReviewRecord,
     GoalReviewRequest,
-    GoalReviewSubjectError,
 )
 
 READY_NODE_ADMISSION_CTE = """
@@ -41,96 +47,11 @@ paused_review_nodes(id) AS (
 READY_NODE_ADMISSION_FILTER = "n.id NOT IN (SELECT id FROM paused_review_nodes)"
 
 
-def _value(row: object, name: str) -> object:
-    if isinstance(row, sqlite3.Row):
-        return cast(object, row[name])
-    return cast(Mapping[str, object], row)[name]
-
-
 def _text(value: str, label: str) -> str:
     result = value.strip()
     if not result:
         raise ValueError(f"{label} must not be empty")
     return result
-
-
-def _nodes(conn: sqlite3.Connection) -> dict[int, tuple[int | None, str]]:
-    return {
-        cast(int, _value(row, "id")): (
-            cast(int | None, _value(row, "parent_id")),
-            cast(str, _value(row, "kind")),
-        )
-        for row in fetchall(conn, "SELECT id, parent_id, kind FROM nodes")
-    }
-
-
-def _is_execution_goal(nodes: Mapping[int, tuple[int | None, str]], node_id: int) -> bool:
-    parent_id, kind = nodes[node_id]
-    if kind != NodeKind.GOAL.value or parent_id is None:
-        return kind == NodeKind.GOAL.value
-    parent_parent_id, parent_kind = nodes.get(parent_id, (None, ""))
-    return parent_kind == NodeKind.ROADMAP.value or (
-        parent_kind == NodeKind.GOAL.value and parent_parent_id is None
-    )
-
-
-def _top_level_goal(conn: sqlite3.Connection, node_id: int) -> int:
-    nodes = _nodes(conn)
-    if node_id not in nodes:
-        raise GoalReviewSubjectError(f"review subject {node_id} not found")
-    if _is_execution_goal(nodes, node_id):
-        return node_id
-    kind = nodes[node_id][1]
-    subject = "nested GOAL" if kind == NodeKind.GOAL.value else kind.upper()
-    raise GoalReviewSubjectError(
-        f"review subject {node_id} must be an explicit execution GOAL, not {subject}"
-    )
-
-
-def _execution_goal(conn: sqlite3.Connection, node_id: int) -> int | None:
-    nodes = _nodes(conn)
-    current, seen = node_id, set[int]()
-    while current not in seen and current in nodes:
-        seen.add(current)
-        if _is_execution_goal(nodes, current):
-            return current
-        parent_id = nodes[current][0]
-        if parent_id is None:
-            return None
-        current = parent_id
-    return None
-
-
-def _scope_ids(conn: sqlite3.Connection, goal_id: int) -> set[int]:
-    rows = fetchall(conn, "SELECT id, parent_id FROM nodes")
-    children: dict[int, list[int]] = {}
-    for row in rows:
-        parent_id = cast(int | None, _value(row, "parent_id"))
-        if parent_id is not None:
-            children.setdefault(parent_id, []).append(cast(int, _value(row, "id")))
-    scope, stack = set[int](), [goal_id]
-    while stack:
-        node_id = stack.pop()
-        if node_id in scope:
-            continue
-        scope.add(node_id)
-        stack.extend(children.get(node_id, ()))
-    return scope
-
-
-def _validate_scope(
-    conn: sqlite3.Connection, goal_id: int, affected_node_ids: tuple[int, ...] | None
-) -> tuple[int, ...] | None:
-    if affected_node_ids is None:
-        return None
-    if any(type(node_id) is not int for node_id in affected_node_ids):
-        raise ValueError("affected_node_ids must contain integers")
-    if len(set(affected_node_ids)) != len(affected_node_ids):
-        raise ValueError("affected_node_ids contains duplicates")
-    outside = sorted(set(affected_node_ids) - _scope_ids(conn, goal_id))
-    if outside:
-        raise ValueError(f"affected nodes are outside goal {goal_id}: {outside}")
-    return tuple(affected_node_ids)
 
 
 def _record(row: object) -> GoalReviewRecord:
@@ -154,12 +75,12 @@ def _record(row: object) -> GoalReviewRecord:
 def request_goal_review(conn: sqlite3.Connection, request: GoalReviewRequest) -> GoalReviewRecord:
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        goal_id = _top_level_goal(conn, request.goal_id)
+        goal_id = top_level_goal(conn, request.goal_id)
         revision = _text(request.goal_revision, "goal_revision")
         evidence = _text(request.evidence, "evidence")
         proposed_change = _text(request.proposed_change, "proposed_change")
         reviewer = _text(request.reviewer, "reviewer")
-        affected = _validate_scope(conn, goal_id, request.affected_node_ids)
+        affected = validate_scope(conn, goal_id, request.affected_node_ids)
         latest = latest_goal_review(conn, goal_id)
         if latest is not None and latest.decision is GoalReviewDecision.PENDING:
             raise ValueError(f"goal {goal_id} already has a pending review")
@@ -194,7 +115,7 @@ def get_goal_review(conn: sqlite3.Connection, review_id: int) -> GoalReviewRecor
 
 
 def latest_goal_review(conn: sqlite3.Connection, goal_id: int) -> GoalReviewRecord | None:
-    goal_id = _top_level_goal(conn, goal_id)
+    goal_id = top_level_goal(conn, goal_id)
     row = fetchone(
         conn,
         "SELECT * FROM goal_reviews WHERE goal_id = ? ORDER BY review_id DESC LIMIT 1",
@@ -233,37 +154,54 @@ def decide_goal_review(
     return result
 
 
+def _blocking_pending_review(
+    conn: sqlite3.Connection, node_id: int, ancestor_ids: tuple[int, ...]
+) -> GoalReviewRecord | None:
+    """Find a pending review, on any ancestor, whose scope covers node_id.
+
+    Mirrors READY_NODE_ADMISSION_CTE's ancestor semantics: an unbounded review
+    covers every descendant of its goal, and a bounded review covers exactly
+    its recorded affected_node_ids (validated to lie within the goal's scope).
+    """
+    if not ancestor_ids:
+        return None
+    placeholders = ",".join("?" for _ in ancestor_ids)
+    rows = fetchall(
+        conn,
+        "SELECT * FROM goal_reviews WHERE decision = 'pending' AND goal_id IN ("
+        + placeholders
+        + ")",
+        ancestor_ids,
+    )
+    for row in rows:
+        record = _record(row)
+        if record.affected_node_ids is None or node_id in record.affected_node_ids:
+            return record
+    return None
+
+
 def goal_admission(conn: sqlite3.Connection, node_id: int) -> GoalAdmission:
     if fetchone(conn, "SELECT id FROM nodes WHERE id = ?", (node_id,)) is None:
         return GoalAdmission(False, None, None, None, None, f"node {node_id} not found")
-    goal_id = _execution_goal(conn, node_id)
-    if goal_id is None:
-        return GoalAdmission(True, None, None, None, None)
-    review = latest_goal_review(conn, goal_id)
-    if review is None or review.decision is not GoalReviewDecision.PENDING:
+    chain = ancestor_chain(conn, node_id)
+    goal_id = nearest_execution_goal(chain, node_id)
+    review = latest_goal_review(conn, goal_id) if goal_id is not None else None
+    blocking = _blocking_pending_review(conn, node_id, tuple(chain))
+    if blocking is not None:
         return GoalAdmission(
-            True,
-            goal_id,
-            review.review_id if review else None,
-            review.decision if review else None,
-            review.affected_node_ids if review else None,
-        )
-    blocked = review.affected_node_ids is None or node_id in review.affected_node_ids
-    if not blocked:
-        return GoalAdmission(
-            True,
-            goal_id,
-            review.review_id,
-            review.decision,
-            review.affected_node_ids,
+            False,
+            blocking.goal_id,
+            blocking.review_id,
+            blocking.decision,
+            blocking.affected_node_ids,
+            f"goal {blocking.goal_id} review pending; execution paused",
         )
     return GoalAdmission(
-        False,
+        True,
         goal_id,
-        review.review_id,
-        review.decision,
-        review.affected_node_ids,
-        f"goal {goal_id} review pending; execution paused",
+        review.review_id if review else None,
+        review.decision if review else None,
+        review.affected_node_ids if review else None,
     )
 
 
@@ -285,7 +223,7 @@ def interruption_targets(conn: sqlite3.Connection, review_id: int) -> tuple[int,
     ):
         return ()
     ids = (
-        _scope_ids(conn, review.goal_id)
+        scope_ids(conn, review.goal_id)
         if review.unbounded
         else set(review.affected_node_ids or ())
     )

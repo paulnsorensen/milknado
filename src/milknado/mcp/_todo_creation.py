@@ -54,7 +54,5 @@ def create_todo(
     graph: MikadoGraph, cfg: MilknadoConfig, parent_id: int | None, request: TodoRequest
 ) -> NodeSummary:
     spec, files = node_inputs(cfg, request)
-    node = graph.add_node(request.description, parent_id=parent_id, spec=spec)
-    if files is not None:
-        graph.files.claim(node.id, list(files))
+    node = graph.add_node(request.description, parent_id=parent_id, spec=spec, files=files)
     return node_to_summary(node)

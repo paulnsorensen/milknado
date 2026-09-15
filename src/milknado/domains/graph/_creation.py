@@ -112,6 +112,7 @@ def add_node(
     description: str,
     parent_id: int | None,
     spec: NodeSpec,
+    files: tuple[str, ...] = (),
 ) -> MikadoNode:
     kind = cast(object, spec.kind)
     if not isinstance(kind, NodeKind):
@@ -133,6 +134,10 @@ def add_node(
         _ = conn.executemany(
             "INSERT INTO edges (parent_id, child_id) VALUES (?, ?)",
             [(node_id, prereq_id) for prereq_id in spec.prereqs],
+        )
+        _ = conn.executemany(
+            "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
+            [(node_id, path) for path in files],
         )
     except Exception:
         conn.rollback()

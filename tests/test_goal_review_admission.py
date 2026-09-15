@@ -238,3 +238,56 @@ def test_goal_review_mcp_publishes_structured_links_and_admission(tmp_path: Path
     decided = milknado_goal_review_decide(review_id, "accepted", "human-1", root)
     assert decided["decision"] == "accepted"
     assert milknado_goal_admission(nodes["a1"], root)["allowed"] is True
+
+
+def test_review_on_ancestor_execution_goal_denies_nested_execution_goal_descendant(
+    tmp_path: Path,
+) -> None:
+    # root and goal_a both qualify as "execution goals"; nested_task's nearest
+    # execution goal is goal_a, not root. A pending review on the ANCESTOR
+    # (root) must still gate nested_task -- goal_admission must not stop at
+    # the nearest execution goal only.
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        _ = _request(graph, nodes["root"])
+        with pytest.raises(GoalAdmissionDenied, match="execution paused"):
+            _ = graph.claim_node(nodes["nested_task"], "run-nested", now=NOW)
+        ready = {node.id for node in graph.get_ready_nodes()}
+        assert nodes["nested_task"] not in ready
+    finally:
+        graph.close()
+
+
+def test_admit_command_retry_returns_stored_receipt_under_pending_review(
+    tmp_path: Path,
+) -> None:
+    graph, nodes = _hierarchy(tmp_path)
+    try:
+        assert graph.claim_node(nodes["a1"], "run-a1", now=NOW)
+        graph.runs.start("run-a1", nodes["a1"], "", NOW, None)
+        _ = graph.commands.publish_capabilities(
+            "run-a1", nodes["a1"], "invocation", "owner", ("steer",), (), published_at=NOW
+        )
+        cmd = _command(nodes["a1"], "steer")
+        receipt = graph.commands.admit(cmd, now=NOW)
+        assert receipt.status == "queued"
+
+        _ = _request(graph, nodes["goal_a"], (nodes["a1"],))
+
+        retried = graph.commands.admit(cmd, now=NOW)
+        assert retried == receipt
+
+        conflicting = GraphCommand(
+            command_id=cmd.command_id,
+            node_id=nodes["a1"],
+            run_id="run-a1",
+            invocation_id="invocation",
+            owner_incarnation="owner",
+            action="steer",
+            expires_at=LATER,
+            text="different",
+        )
+        with pytest.raises(ValueError, match="already names a different command"):
+            _ = graph.commands.admit(conflicting, now=NOW)
+    finally:
+        graph.close()

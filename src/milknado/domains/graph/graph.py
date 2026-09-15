@@ -247,9 +247,15 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def add_node(
-        self, description: str, parent_id: int | None = None, spec: NodeSpec | None = None
+        self,
+        description: str,
+        parent_id: int | None = None,
+        spec: NodeSpec | None = None,
+        files: tuple[str, ...] | None = None,
     ) -> MikadoNode:
-        return _creation.add_node(self._conn, description, parent_id, spec or NodeSpec())
+        return _creation.add_node(
+            self._conn, description, parent_id, spec or NodeSpec(), files or ()
+        )
 
     @synchronized
     def add_follow_up(self, request: _follow_up.FollowUpRequest) -> tuple[MikadoNode, bool]:

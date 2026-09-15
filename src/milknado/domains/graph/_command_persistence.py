@@ -109,8 +109,6 @@ def admit_command(
     expires_at = validate_command(command_value)
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        if command_value.action in {"steer", "follow_up"}:
-            assert_admitted(conn, command_value.node_id)
         existing = get_command(conn, command_value.command_id)
         if existing is not None:
             if not same_command(existing, command_value, expires_at):
@@ -119,6 +117,8 @@ def admit_command(
             if stored_receipt is None:
                 raise RuntimeError("stored command has no receipt")
             return stored_receipt
+        if command_value.action in {"steer", "follow_up"}:
+            assert_admitted(conn, command_value.node_id)
         status: CommandStatus = "queued"
         detail: str | None = None
         if datetime.fromisoformat(expires_at) <= datetime.fromisoformat(timestamp):
