@@ -171,7 +171,8 @@ def wait_for_shutdown(
             sleeper(0.1)
         except KeyboardInterrupt:
             if not controller_thread.is_alive():
-                controller.stop_scheduling()
+                if not scheduling_stopped:
+                    controller.stop_scheduling()
                 return 1
             interrupts += 1
             if interrupts == 1 and not scheduling_stopped:
