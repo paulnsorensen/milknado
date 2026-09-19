@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -101,3 +102,48 @@ def test_owner_capabilities_resolves_requested_run_with_concurrent_runs() -> Non
     )
     actual = _owner_capabilities(cast(_Controller, controller), cast(MikadoGraph, graph), "run-2")
     assert actual is capabilities["run-2"]
+
+
+def test_apply_runnable_root_exclusions_excludes_invalid_subgoal(tmp_path: Path) -> None:
+    from rich.console import Console
+
+    from milknado.cli._helpers import apply_runnable_root_exclusions
+    from milknado.domains.common import NodeKind, NodeSpec
+
+    graph = MikadoGraph(tmp_path / "graph.db")
+    root = graph.add_node("root goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    stub = graph.add_node("sub-goal", parent_id=root.id, spec=NodeSpec(kind=NodeKind.GOAL))
+
+    result = apply_runnable_root_exclusions(graph, Console())
+
+    assert result.has_errors is True
+    assert stub.id in result.excluded
+    assert stub.id in graph.dispatch_exclusions()
+    graph.close()
+
+
+def test_run_owner_web_applies_runnable_root_exclusions(tmp_path: Path) -> None:
+    from milknado.cli.web import OwnerWebContext, run_owner_web
+    from milknado.domains.common import default_config
+
+    _ = runner.invoke(app, ["init", str(tmp_path)])
+    config = default_config(tmp_path)
+
+    class _StopAfterExclusions(Exception):
+        pass
+
+    graph = SimpleNamespace(reconcile_completed_goals=lambda: 0, close=lambda: None)
+    with (
+        patch("milknado.cli.web.ensure_db", return_value=graph),
+        patch("milknado.cli._helpers.apply_runnable_root_exclusions") as apply_exclusions,
+        patch(
+            "milknado.app.run.build_execution_controller",
+            side_effect=_StopAfterExclusions,
+        ) as build_controller,
+    ):
+        with pytest.raises(_StopAfterExclusions):
+            _ = run_owner_web(OwnerWebContext(tmp_path, config, []))
+
+    apply_exclusions.assert_called_once()
+    assert apply_exclusions.call_args.args[0] is graph
+    build_controller.assert_called_once()

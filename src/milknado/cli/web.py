@@ -157,7 +157,10 @@ def run_owner_web(
     """Run an execution controller beside its owner web host."""
     options = options or OwnerWebOptions()
     services = services or OwnerWebServices()
+    from rich.console import Console
+
     from milknado.app.run import build_execution_controller
+    from milknado.cli._helpers import apply_runnable_root_exclusions
 
     graph = ensure_db(context.config, context.plugins)
     controller: _Controller | None = None
@@ -165,6 +168,8 @@ def run_owner_web(
     interrupts = 0
     errors: list[BaseException] = []
     try:
+        _ = graph.reconcile_completed_goals()
+        _ = apply_runnable_root_exclusions(graph, Console())
         controller = build_execution_controller(graph, context.config, context.project_root)
         login = LaunchToken()
 

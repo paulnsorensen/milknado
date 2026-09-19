@@ -24,7 +24,7 @@ async def cancel_route(request: Request) -> Response:
         return _unavailable("Cancel is unavailable.")
     try:
         result = await run_in_threadpool(handler, cast(str, request.path_params["run_id"]))
-    except ValueError as exc:
+    except (ValueError, KeyError) as exc:
         return json_response({"reason": str(exc)}, status_code=404)
     return json_response(result)
 
@@ -34,7 +34,10 @@ async def force_stop_route(request: Request) -> Response:
     handler = context.commands.force_stop
     if handler is None:
         return _unavailable("Force stop is unavailable.")
-    result = await run_in_threadpool(handler, cast(str, request.path_params["run_id"]))
+    try:
+        result = await run_in_threadpool(handler, cast(str, request.path_params["run_id"]))
+    except KeyError as exc:
+        return json_response({"reason": str(exc)}, status_code=404)
     return json_response(result)
 
 

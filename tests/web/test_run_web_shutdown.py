@@ -10,6 +10,7 @@ from typing import cast
 
 import pytest
 
+from milknado.cli._helpers import RunnableRootExclusions
 from milknado.cli.web import OwnerWebContext, OwnerWebOptions, OwnerWebServices
 from milknado.domains.common import MilknadoConfig
 
@@ -25,6 +26,9 @@ class Graph:
 
     def decide_goal_review(self, request: object, *, decided_by: str) -> object:
         return object()
+
+    def reconcile_completed_goals(self) -> int:
+        return 0
 
 
 class Controller:
@@ -49,6 +53,10 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
     controller = BlockingController()
     graph = Graph()
     monkeypatch.setattr(web_module, "ensure_db", lambda config, plugins: graph)
+    monkeypatch.setattr(
+        "milknado.cli._helpers.apply_runnable_root_exclusions",
+        lambda graph, console: RunnableRootExclusions(False, frozenset()),
+    )
     monkeypatch.setattr(
         "milknado.app.run.build_execution_controller",
         lambda graph, config, root: controller,
@@ -100,6 +108,10 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
 
 def _configure(monkeypatch, graph: Graph, controller: Controller) -> None:
     monkeypatch.setattr(web_module, "ensure_db", lambda config, plugins: graph)
+    monkeypatch.setattr(
+        "milknado.cli._helpers.apply_runnable_root_exclusions",
+        lambda graph, console: RunnableRootExclusions(False, frozenset()),
+    )
     monkeypatch.setattr(
         "milknado.app.run.build_execution_controller",
         lambda graph, config, root: controller,

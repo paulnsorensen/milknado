@@ -25,3 +25,25 @@ def test_cancel_unknown_run_returns_not_found() -> None:
     )
     assert response.status_code == 404
     assert "not found" in response.json()["reason"]
+
+
+def test_cancel_unknown_run_key_error_returns_not_found() -> None:
+    def cancel(run_id: str) -> dict[str, object]:
+        raise KeyError(f"run {run_id!r} not found")
+
+    response = client(commands=WebCommands(cancel=cancel))[0].post(
+        "/api/runs/missing/cancel", headers=headers()
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["reason"]
+
+
+def test_force_stop_unknown_run_returns_not_found() -> None:
+    def force_stop(run_id: str) -> dict[str, object]:
+        raise KeyError(f"run {run_id!r} not found")
+
+    response = client(commands=WebCommands(force_stop=force_stop))[0].post(
+        "/api/runs/missing/force-stop", headers=headers()
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["reason"]
