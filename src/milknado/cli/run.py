@@ -47,6 +47,9 @@ AttachedWatchOption = Annotated[
     bool,
     typer_option("--attached", help="Enable owner-fenced session input; read-only by default."),
 ]
+WebOption = Annotated[bool, typer_option("--web", help="Serve the owner web view")]
+RunPortOption = Annotated[int, typer_option("--port", min=1, max=65535, help="HTTP port")]
+NoOpenOption = Annotated[bool, typer_option("--no-open", help="Do not open a browser")]
 
 
 def _print_run_result(result: RunLoopResult) -> None:
@@ -154,14 +157,25 @@ def watch(
             graph.close()
 
 
-def run(
+def run(  # noqa: PLR0913
     project_root: Annotated[
         Path, typer_option("--project-root", help="Project root directory")
     ] = DEFAULT_PROJECT_ROOT,
     strict: StrictOption = False,
     allow_protected: AllowProtectedOption = False,
+    web: WebOption = False,
+    port: RunPortOption = 8000,
+    no_open: NoOpenOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
+    if web:
+        from milknado.cli.web import run_owner_web
+
+        config, plugins = _load_or_default(project_root.resolve())
+        run_owner_web(
+            project_root.resolve(), config, plugins, strict, allow_protected, port, no_open
+        )
+        return
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,

@@ -33,6 +33,7 @@ from milknado.cli.tools import (
     tools_app,
     write_worker_hooks,
 )
+from milknado.cli.web import web
 from milknado.domains.common import (
     MikadoNode,
     NodeKind,
@@ -61,9 +62,8 @@ _ = app.add_typer(tools_app)
 _ = app.add_typer(roadmap_app)
 _ = app.add_typer(github_roadmap_app)
 _ = app.command()(plan)
-_ = app.command()(run)
-_ = app.command()(attach)
-_ = app.command()(watch)
+for _command in (run, attach, watch, web):
+    _ = app.command()(_command)
 
 
 @app.command()
