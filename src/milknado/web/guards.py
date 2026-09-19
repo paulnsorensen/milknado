@@ -52,5 +52,9 @@ class RequestGuards:
 
 def _cookie_valid(headers: dict[bytes, bytes], login: LaunchToken) -> bool:
     raw = headers.get(b"cookie", b"").decode()
-    expected = f"{login.cookie_name}={login.value}"
-    return any(part.strip() == expected for part in raw.split(";"))
+    prefix = f"{login.cookie_name}="
+    for part in raw.split(";"):
+        candidate = part.strip()
+        if candidate.startswith(prefix):
+            return login.verify(candidate[len(prefix) :])
+    return False

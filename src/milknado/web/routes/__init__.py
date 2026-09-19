@@ -15,9 +15,7 @@ class RouteModule(Protocol):
 
 
 def discover_routes() -> list[BaseRoute]:
-    modules = sorted(
-        info.name for info in pkgutil.iter_modules(__path__) if info.name != "__init__"
-    )
+    modules = sorted(info.name for info in pkgutil.iter_modules(__path__))
     routes: list[BaseRoute] = []
     for name in modules:
         module = cast(RouteModule, cast(object, importlib.import_module(f"{__package__}.{name}")))

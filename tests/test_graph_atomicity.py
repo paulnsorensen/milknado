@@ -416,10 +416,13 @@ def test_edit_node_rolls_back_fields_when_file_claim_fails(
     node = graph.add_node("original")
     graph.files.claim(node.id, ["kept.md"])
 
-    def boom(*_args: object, **_kwargs: object) -> NoReturn:
+    def delete_then_fail(
+        conn: sqlite3.Connection, node_id: int, _files: list[str], *, _in_transaction: bool = False
+    ) -> NoReturn:
+        _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
         raise RuntimeError("claim failed")
 
-    monkeypatch.setattr(_mutations, "set_file_ownership", boom)
+    monkeypatch.setattr(_mutations, "set_file_ownership", delete_then_fail)
     with pytest.raises(RuntimeError, match="claim failed"):
         _ = graph.edit_node(node.id, description="edited", files=("new.md",))
 
