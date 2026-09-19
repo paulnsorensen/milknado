@@ -231,4 +231,7 @@ def finish_shutdown(
         controller.stop_scheduling()
     controller_thread.join(timeout=1.0)
     if controller_thread.is_alive():
-        raise RuntimeError("controller did not stop before shutdown deadline")
+        deadline_error = RuntimeError("controller did not stop before shutdown deadline")
+        if errors:
+            raise errors[0] from deadline_error
+        raise deadline_error

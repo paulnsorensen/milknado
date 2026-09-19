@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Callable
+from typing import Protocol, cast
 
 import pytest
 from starlette.requests import Request
@@ -14,6 +15,10 @@ from milknado.web import WebCommands, create_app
 from milknado.web.fanout import SnapshotFanout, _encode  # pyright: ignore[reportPrivateUsage]
 from milknado.web.routes.stream import stream_route
 from tests.web.support import client_with_source
+
+
+class _AppState(Protocol):
+    snapshot_fanout: SnapshotFanout
 
 
 def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
@@ -86,12 +91,33 @@ def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
 
 def test_stream_route_concurrent_requests_share_one_fanout() -> None:
     _, login, source = client_with_source()
+    subscribe_count = 0
+    original_subscribe = source.subscribe
+
+    def counted_subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        nonlocal subscribe_count
+        subscribe_count += 1
+        return original_subscribe(listener)
+
+    source.subscribe = counted_subscribe  # type: ignore[method-assign]
     app = create_app(source, WebCommands(), login)
     request = Request({"type": "http", "app": app})
 
     async def exercise() -> None:
         _ = await asyncio.gather(stream_route(request), stream_route(request))
-        assert app.state.snapshot_fanout is not None  # pyright: ignore[reportAny]
+        state = cast(_AppState, cast(object, app.state))
+        fanout = state.snapshot_fanout
+        first = fanout.events()
+        second = fanout.events()
+        first_pending = asyncio.create_task(first.__anext__())
+        second_pending = asyncio.create_task(second.__anext__())
+        await asyncio.sleep(0)
+        assert subscribe_count == 1
+        _ = first_pending.cancel()
+        _ = second_pending.cancel()
+        _ = await asyncio.gather(first_pending, second_pending, return_exceptions=True)
+        await first.aclose()
+        await second.aclose()
 
     asyncio.run(exercise())
 

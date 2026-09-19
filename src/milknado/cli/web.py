@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from time import sleep
@@ -11,13 +12,16 @@ from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from milknado.app.run_source import ExecutionSnapshot, ExecutionSnapshotSource
 from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, ensure_db, load_or_default, typer_option
-from milknado.web import LaunchToken, create_app, observer_commands, owner_commands
-from milknado.web.hosts import HostDependencies
-from milknado.web.polling import PolledSnapshotSource
-from milknado.web.server import (
+from milknado.web import (
+    HostDependencies,
+    LaunchToken,
     OwnerLaunch,
+    PolledSnapshotSource,
     ServerOptions,
+    create_app,
     finish_shutdown,
+    observer_commands,
+    owner_commands,
     run_server,
     start_owner_tasks,
     wait_for_shutdown,
@@ -33,9 +37,11 @@ PortOption = Annotated[int, typer_option("--port", min=1, max=65535, help="HTTP 
 NoOpenOption = Annotated[bool, typer_option("--no-open", help="Do not open a browser")]
 
 
-class _Controller(Protocol):
+class _SnapshotReader(Protocol):
     def snapshot(self) -> ExecutionSnapshot: ...
 
+
+class _Controller(_SnapshotReader, Protocol):
     run: Callable[..., RunLoopResult]
 
     def stop_scheduling(self) -> None: ...
@@ -81,11 +87,11 @@ def _host_dependencies(
 
 
 def _owner_capabilities(
-    controller: _Controller, graph: MikadoGraph, run_id: str | None = None
+    source: _SnapshotReader, graph: MikadoGraph, run_id: str | None = None
 ) -> OwnerCapabilities | None:
     if run_id is not None:
         return graph.commands.capabilities(run_id)
-    active_runs = controller.snapshot().active_runs
+    active_runs = source.snapshot().active_runs
     if len(active_runs) != 1:
         return None
     return graph.commands.capabilities(active_runs[0].run_id)
@@ -106,7 +112,10 @@ def web(
     login = LaunchToken()
     try:
         source.start()
-        commands = observer_commands(dependencies=_host_dependencies(graph, config, project_root))
+        owner = partial(_owner_capabilities, source, graph)
+        commands = observer_commands(
+            dependencies=_host_dependencies(graph, config, project_root, owner)
+        )
         app = create_app(source, commands, login)
         run_server(app, login, ServerOptions(port=port, no_open=no_open))
     finally:

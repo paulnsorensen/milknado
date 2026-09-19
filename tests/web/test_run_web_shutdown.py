@@ -188,6 +188,24 @@ def test_owner_host_preserves_graph_when_controller_misses_shutdown_deadline(
     controller.release.set()
 
 
+class StuckThread:
+    def is_alive(self) -> bool:
+        return True
+
+    def join(self, timeout: float | None = None) -> None:
+        _ = timeout
+
+
+def test_shutdown_deadline_keeps_primary_server_error() -> None:
+    primary = RuntimeError("bind failed")
+    with pytest.raises(RuntimeError, match="bind failed") as caught:
+        web_module.finish_shutdown(Controller(), StuckThread(), 0, [primary])
+
+    assert caught.value is primary
+    assert isinstance(caught.value.__cause__, RuntimeError)
+    assert str(caught.value.__cause__) == "controller did not stop before shutdown deadline"
+
+
 def test_owner_host_exits_on_first_interrupt_after_controller_completes(
     monkeypatch, tmp_path: Path
 ) -> None:
