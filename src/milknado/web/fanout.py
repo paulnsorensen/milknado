@@ -27,6 +27,8 @@ class SnapshotFanout:
         self._unsubscribe: Callable[[], None] | None = None
         self._latest: ExecutionSnapshot | None = None
         self._subscribing: bool = False
+        self._subscribing_clients: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
+        self._replayed_during_subscription: bool = False
         self._lock: threading.RLock = threading.RLock()
 
     async def events(self) -> AsyncGenerator[dict[str, str], None]:
@@ -46,22 +48,37 @@ class SnapshotFanout:
         subscribe = False
         with self._lock:
             self._clients[queue] = loop
-            if self._latest is not None:
+            if self._subscribing:
+                self._subscribing_clients.add(queue)
+                if self._replayed_during_subscription and self._latest is not None:
+                    queue.put_nowait(self._latest)
+            elif self._unsubscribe is not None and self._latest is not None:
                 queue.put_nowait(self._latest)
             if self._unsubscribe is None and not self._subscribing:
                 self._subscribing = True
+                self._subscribing_clients = {queue}
+                self._replayed_during_subscription = False
                 subscribe = True
         if not subscribe:
             return
         try:
             unsubscribe = self._source.subscribe(self._publish)
-        except BaseException:
+        except BaseException as error:
             with self._lock:
                 self._subscribing = False
-                _ = self._clients.pop(queue, None)
-            raise
+                failed_clients = tuple(self._subscribing_clients)
+                self._subscribing_clients.clear()
+                for client in failed_clients:
+                    self._terminate(client)
+            if not isinstance(error, Exception):
+                raise
+            return
         with self._lock:
             self._subscribing = False
+            self._subscribing_clients.clear()
+            if not self._replayed_during_subscription and self._latest is not None:
+                for client in self._clients:
+                    client.put_nowait(self._latest)
             if self._clients:
                 self._unsubscribe = unsubscribe
             else:
@@ -70,6 +87,7 @@ class SnapshotFanout:
     def _remove(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
         with self._lock:
             _ = self._clients.pop(queue, None)
+            self._subscribing_clients.discard(queue)
             _ = self._pending.pop(queue, None)
             self._scheduled.discard(queue)
             if not self._clients and not self._subscribing:
@@ -84,6 +102,8 @@ class SnapshotFanout:
         ] = []
         with self._lock:
             self._latest = snapshot
+            if self._subscribing:
+                self._replayed_during_subscription = True
             for queue, loop in self._clients.items():
                 self._pending[queue] = snapshot
                 if queue not in self._scheduled:
@@ -113,9 +133,24 @@ class SnapshotFanout:
         try:
             queue.put_nowait(snapshot)
         except asyncio.QueueFull:
-            _ = queue.get_nowait()
+            while True:
+                try:
+                    _ = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
             queue.put_nowait(None)
             self._remove(queue)
+
+    def _terminate(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
+        if queue not in self._clients:
+            return
+        while True:
+            try:
+                _ = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        queue.put_nowait(None)
+        self._remove(queue)
 
 
 def _encode(snapshot: ExecutionSnapshot) -> str:

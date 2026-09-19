@@ -265,8 +265,7 @@ def test_stream_coalesces_threadsafe_callbacks_and_overflow_disconnects() -> Non
         assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
         await pending
         with pytest.raises(StopAsyncIteration):
-            while True:
-                _ = await stream.__anext__()
+            _ = await stream.__anext__()
         await stream.aclose()
 
     asyncio.run(exercise())
@@ -321,3 +320,23 @@ def test_stream_reconnect_waits_for_old_unsubscribe_before_replacement() -> None
 
     asyncio.run(exercise())
     assert subscribe_count == 2
+
+
+def test_stream_terminates_clients_when_subscription_fails() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+
+    def fail(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        _ = listener
+        raise RuntimeError("subscription failed")
+
+    source.subscribe = fail  # type: ignore[method-assign]
+
+    async def exercise() -> None:
+        stream = fanout.events()
+        with pytest.raises(StopAsyncIteration):
+            _ = await stream.__anext__()
+        await stream.aclose()
+
+    asyncio.run(exercise())
+    assert not fanout._clients  # pyright: ignore[reportPrivateUsage]
