@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import cast
 
 import msgspec
@@ -22,11 +22,13 @@ class SnapshotFanout:
         self._clients: dict[
             asyncio.Queue[ExecutionSnapshot | None], asyncio.AbstractEventLoop
         ] = {}
+        self._pending: dict[asyncio.Queue[ExecutionSnapshot | None], ExecutionSnapshot] = {}
+        self._scheduled: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
         self._unsubscribe: Callable[[], None] | None = None
-        self._subscribing = False
+        self._subscribing: bool = False
         self._lock: threading.Lock = threading.Lock()
 
-    async def events(self) -> AsyncIterator[dict[str, str]]:
+    async def events(self) -> AsyncGenerator[dict[str, str], None]:
         queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue(_QUEUE_SIZE)
         self._add(queue, asyncio.get_running_loop())
         try:
@@ -53,7 +55,7 @@ class SnapshotFanout:
         except BaseException:
             with self._lock:
                 self._subscribing = False
-                self._clients.pop(queue, None)
+                _ = self._clients.pop(queue, None)
             raise
         remove_subscription = False
         with self._lock:
@@ -69,6 +71,8 @@ class SnapshotFanout:
         unsubscribe: Callable[[], None] | None = None
         with self._lock:
             _ = self._clients.pop(queue, None)
+            _ = self._pending.pop(queue, None)
+            self._scheduled.discard(queue)
             if not self._clients and not self._subscribing:
                 unsubscribe = self._unsubscribe
                 self._unsubscribe = None
@@ -76,10 +80,27 @@ class SnapshotFanout:
             unsubscribe()
 
     def _publish(self, snapshot: ExecutionSnapshot) -> None:
+        callbacks: list[
+            tuple[asyncio.AbstractEventLoop, asyncio.Queue[ExecutionSnapshot | None]]
+        ] = []
         with self._lock:
-            clients = tuple(self._clients.items())
-        for queue, loop in clients:
-            loop.call_soon_threadsafe(self._enqueue, queue, snapshot)
+            for queue, loop in self._clients.items():
+                self._pending[queue] = snapshot
+                if queue not in self._scheduled:
+                    self._scheduled.add(queue)
+                    callbacks.append((loop, queue))
+        for loop, queue in callbacks:
+            _ = loop.call_soon_threadsafe(self._deliver, queue)
+
+    def _deliver(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
+        with self._lock:
+            if queue not in self._clients:
+                return
+            snapshot = self._pending.pop(queue, None)
+            self._scheduled.discard(queue)
+        if snapshot is None:
+            return
+        self._enqueue(queue, snapshot)
 
     def _enqueue(
         self,
