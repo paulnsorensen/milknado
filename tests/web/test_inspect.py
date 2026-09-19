@@ -22,6 +22,7 @@ from milknado.web import LaunchToken, WebCommands, create_app
 class InspectionSource:
     detail: NodeDetailResponse
     run: TerminalRunSnapshot
+    last_request: NodeSnapshotRequest | None = None
 
     def snapshot(self) -> ExecutionSnapshot:
         return ExecutionSnapshot(
@@ -40,8 +41,19 @@ class InspectionSource:
         return lambda: None
 
     def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
+        self.last_request = request
         assert request.node_id == self.detail.node_id
         return self.detail
+
+
+class LookupErrorSource(InspectionSource):
+    last_request: NodeSnapshotRequest | None
+
+    def node_snapshot(  # pyright: ignore[reportImplicitOverride]
+        self, request: NodeSnapshotRequest
+    ) -> NodeDetailResponse:
+        self.last_request = request
+        raise LookupError("snapshot source failed")
 
 
 class InspectionGit:
@@ -107,13 +119,25 @@ def client(
     git: InspectionGit | FailingGit | InvalidPathGit | None = None,
     include_git: bool = True,
 ) -> TestClient:
-    source = InspectionSource(
-        detail=detail or _detail(),
-        run=run or _run(),
-    )
+    source = InspectionSource(detail=detail or _detail(), run=run or _run())
     login = LaunchToken("test-token")
     commands = WebCommands(git=git if include_git else None)
     result = TestClient(create_app(source, commands, login), base_url="http://127.0.0.1")
+    result.cookies.set(  # pyright: ignore[reportUnknownMemberType]
+        login.cookie_name, login.value
+    )
+    return result
+
+
+def client_from_source(
+    source: InspectionSource, *, raise_server_exceptions: bool = True
+) -> TestClient:
+    login = LaunchToken("test-token")
+    result = TestClient(
+        create_app(source, WebCommands(), login),
+        base_url="http://127.0.0.1",
+        raise_server_exceptions=raise_server_exceptions,
+    )
     result.cookies.set(  # pyright: ignore[reportUnknownMemberType]
         login.cookie_name, login.value
     )
@@ -125,11 +149,25 @@ def headers() -> dict[str, str]:
 
 
 def test_inspection_routes_return_fixture_data() -> None:
-    response = client(git=InspectionGit()).get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    source = InspectionSource(detail=_detail(), run=_run())
+    response = client_from_source(source).get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         "/api/nodes/7?page=1&limit=10&session_event_page=2", headers=headers()
     )
     assert response.status_code == 200  # pyright: ignore[reportUnknownMemberType]
-    assert response.json() == {  # pyright: ignore[reportUnknownMemberType]
+    assert source.last_request == NodeSnapshotRequest(
+        node_id=7,
+        request_generation=0,
+        page=1,
+        limit=10,
+        session_event_page=2,
+    )
+
+    default_source = InspectionSource(detail=_detail(), run=_run())
+    response = request(client_from_source(default_source), "/api/nodes/7")
+    assert response.status_code == 200
+    assert default_source.last_request == NodeSnapshotRequest(node_id=7, request_generation=0)
+
+    assert response.json() == {
         "node_id": 7,
         "request_generation": 2,
         "detail": {},
@@ -211,3 +249,14 @@ def test_diff_rejects_invalid_path() -> None:
     response = request(client(git=InvalidPathGit()), "/api/runs/run-1/diff?path=../secret")
     assert response.status_code == 409
     assert response.json() == {"error": "invalid diff path: ../secret"}
+
+
+def test_node_detail_does_not_mislabel_snapshot_source_failure() -> None:
+    response = request(
+        client_from_source(
+            LookupErrorSource(detail=_detail(), run=_run()),
+            raise_server_exceptions=False,
+        ),
+        "/api/nodes/7",
+    )
+    assert response.status_code == 500

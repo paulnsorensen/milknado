@@ -36,9 +36,9 @@ def node_detail_route(request: Request) -> Response:
             limit=_query_int(request, "limit", 50),
             session_event_page=_query_int(request, "session_event_page", 0),
         )
-        result = context.source.node_snapshot(query)
-    except (LookupError, ValueError) as exc:
+    except ValueError as exc:
         return json_response({"error": str(exc)}, status_code=400)
+    result = context.source.node_snapshot(query)
     if result.detail is None:
         return json_response({"error": f"Node {query.node_id} was not found."}, status_code=404)
     return json_response(result)
