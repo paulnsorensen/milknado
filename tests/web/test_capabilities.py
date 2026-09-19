@@ -86,6 +86,53 @@ def test_snapshot_reads_live_owner_capabilities_after_app_construction() -> None
     assert second_response.json()["capabilities"]["owner"]["permission_ids"] == ["permission-2"]  # pyright: ignore[reportUnknownMemberType]
 
 
+def test_observer_session_input_reads_new_owner_fence_per_request(
+    graph: MikadoGraph,
+) -> None:
+    node = graph.add_node("steerable")
+    assert graph.claim_node(node.id, "run-1", now="2026-09-12T12:00:00+00:00")
+    graph.runs.start("run-1", node.id, "run.log", "2026-09-12T12:00:00+00:00", 60)
+    first = OwnerCapabilities(
+        run_id="run-1",
+        node_id=node.id,
+        invocation_id="inv-1",
+        owner_incarnation="owner-1",
+        actions=("steer",),
+        permission_ids=(),
+        published_at="first",
+    )
+    second = OwnerCapabilities(
+        run_id="run-1",
+        node_id=node.id,
+        invocation_id="inv-2",
+        owner_incarnation="owner-2",
+        actions=("steer",),
+        permission_ids=(),
+        published_at="second",
+    )
+    current = [first]
+    commands = observer_commands(
+        dependencies=HostDependencies(graph=graph, owner_capabilities=lambda: current[0])
+    )
+    assert commands.session_input is not None
+    current[0] = second
+    _ = graph.commands.publish_capabilities(
+        "run-1",
+        node.id,
+        "inv-2",
+        "owner-2",
+        ("steer",),
+        (),
+        published_at="2026-09-12T12:00:01+00:00",
+    )
+    command = SessionInput(action="steer", request_id="request-1")
+
+    admitted = commands.session_input("run-1", command)
+
+    assert admitted is not None
+    assert admitted.command_id == "request-1"
+
+
 def test_observer_builder_reports_owner_only_commands_unavailable() -> None:
     owner = OwnerCapabilities(
         run_id="run-1",

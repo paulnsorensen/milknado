@@ -131,11 +131,16 @@ def observer_commands(
     dependencies = dependencies or HostDependencies()
     if handlers.session_input is None and dependencies.graph is not None:
         graph = dependencies.graph
-        owner = _current_owner_capabilities(dependencies)
-        owner_incarnation = None if owner is None else owner.owner_incarnation
         handlers = ObserverHandlers(
             session_input=lambda run_id, request: admit_session_command(
-                graph, run_id, request, owner_incarnation=owner_incarnation
+                graph,
+                run_id,
+                request,
+                owner_incarnation=(
+                    owner.owner_incarnation
+                    if (owner := _current_owner_capabilities(dependencies)) is not None
+                    else None
+                ),
             ),
             cancel=handlers.cancel,
         )

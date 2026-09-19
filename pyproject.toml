@@ -152,7 +152,6 @@ max-statements = 40
 # Tests exercise dynamic fixtures, subprocess doubles, and platform paths rather than
 # production annotation and portability policy.
 "tests/**" = ["ANN", "ARG", "BLE", "B008", "B017", "PTH", "SIM"]
-"src/milknado/web/**" = ["ANN401"]
 
 # These production exceptions are the measured baseline for issue #331. Each rule
 # remains selected globally; remove an entry when its owning module is simplified.
