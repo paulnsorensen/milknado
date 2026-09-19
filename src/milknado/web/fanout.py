@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import AsyncGenerator, Callable
 from typing import cast
@@ -12,6 +13,7 @@ import msgspec
 from milknado.app.run_source import ExecutionSnapshot, ExecutionSnapshotSource
 
 _QUEUE_SIZE = 32
+_logger = logging.getLogger(__name__)
 
 
 class SnapshotFanout:
@@ -29,6 +31,7 @@ class SnapshotFanout:
         self._subscribing: bool = False
         self._subscribing_clients: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
         self._replayed_during_subscription: bool = False
+        self._generation: int = 0
         self._lock: threading.RLock = threading.RLock()
 
     async def events(self) -> AsyncGenerator[dict[str, str], None]:
@@ -46,6 +49,7 @@ class SnapshotFanout:
         loop: asyncio.AbstractEventLoop,
     ) -> None:
         subscribe = False
+        generation = 0
         with self._lock:
             self._clients[queue] = loop
             if self._subscribing:
@@ -58,12 +62,17 @@ class SnapshotFanout:
                 self._subscribing = True
                 self._subscribing_clients = {queue}
                 self._replayed_during_subscription = False
+                self._generation += 1
+                generation = self._generation
                 subscribe = True
         if not subscribe:
             return
         try:
-            unsubscribe = self._source.subscribe(self._publish)
+            unsubscribe = self._source.subscribe(
+                lambda snapshot: self._publish(snapshot, generation)
+            )
         except BaseException as error:
+            _logger.exception("snapshot subscription failed")
             with self._lock:
                 self._subscribing = False
                 failed_clients = tuple(self._subscribing_clients)
@@ -94,9 +103,13 @@ class SnapshotFanout:
                 unsubscribe = self._unsubscribe
                 self._unsubscribe = None
                 if unsubscribe is not None:
+                    self._generation += 1
                     unsubscribe()
 
-    def _publish(self, snapshot: ExecutionSnapshot) -> None:
+    def _publish(self, snapshot: ExecutionSnapshot, generation: int) -> None:
+        with self._lock:
+            if generation != self._generation:
+                return
         callbacks: list[
             tuple[asyncio.AbstractEventLoop, asyncio.Queue[ExecutionSnapshot | None]]
         ] = []

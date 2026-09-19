@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Callable
 
@@ -322,7 +323,9 @@ def test_stream_reconnect_waits_for_old_unsubscribe_before_replacement() -> None
     assert subscribe_count == 2
 
 
-def test_stream_terminates_clients_when_subscription_fails() -> None:
+def test_stream_terminates_clients_when_subscription_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     _, _, source = client_with_source()
     fanout = SnapshotFanout(source)
 
@@ -338,5 +341,38 @@ def test_stream_terminates_clients_when_subscription_fails() -> None:
             _ = await stream.__anext__()
         await stream.aclose()
 
-    asyncio.run(exercise())
+    with caplog.at_level(logging.ERROR, logger="milknado.web.fanout"):
+        asyncio.run(exercise())
+
     assert not fanout._clients  # pyright: ignore[reportPrivateUsage]
+    assert caplog.records[0].getMessage() == "snapshot subscription failed"
+    assert caplog.records[0].exc_info is not None
+
+
+def test_stream_ignores_callback_from_previous_subscription_generation() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+    listeners: list[Callable[[ExecutionSnapshot], None]] = []
+
+    def subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        listeners.append(listener)
+        return lambda: None
+
+    source.subscribe = subscribe  # type: ignore[method-assign]
+
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        first: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
+        second: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
+        fanout._add(first, loop)  # pyright: ignore[reportPrivateUsage]
+        old_listener = listeners[0]
+        fanout._remove(first)  # pyright: ignore[reportPrivateUsage]
+        fanout._add(second, loop)  # pyright: ignore[reportPrivateUsage]
+
+        old_listener(source.snapshot())
+        await asyncio.sleep(0)
+        assert second.empty()
+
+        fanout._remove(second)  # pyright: ignore[reportPrivateUsage]
+
+    asyncio.run(exercise())
