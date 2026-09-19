@@ -18,6 +18,9 @@ class Graph:
     def close(self) -> None:
         pass
 
+    def decide_goal_review(self, request: object, *, decided_by: str) -> object:
+        return object()
+
 
 class Controller:
     def __init__(self) -> None:
@@ -27,6 +30,9 @@ class Controller:
     def run(self, **kwargs):
         self.called.set()
         return SimpleNamespace(strict_exit=False)
+
+    def snapshot(self):
+        return SimpleNamespace(active_runs=())
 
     def stop_scheduling(self) -> None:
         self.stopped += 1
@@ -42,7 +48,13 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
     )
     monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda root: "feature")
     monkeypatch.setattr(web_module, "create_app", lambda *args: object())
-    monkeypatch.setattr(web_module, "owner_commands", lambda *args: object())
+
+    def owner_commands_stub(controller, dependencies):
+        assert dependencies.owner_capabilities is not None
+        assert dependencies.owner_capabilities() is None
+        return object()
+
+    monkeypatch.setattr(web_module, "owner_commands", owner_commands_stub)
     interrupts = iter((KeyboardInterrupt(), KeyboardInterrupt()))
 
     def interrupting_sleep(_seconds: float) -> None:

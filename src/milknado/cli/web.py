@@ -5,28 +5,86 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from time import sleep
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
-from milknado.app.run_source import ExecutionSnapshotSource
+from milknado.app.run_source import ExecutionSnapshot, ExecutionSnapshotSource
 from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, ensure_db, load_or_default, typer_option
-from milknado.web import (
-    HostDependencies,
-    LaunchToken,
-    create_app,
-    observer_commands,
-    owner_commands,
-)
+from milknado.web import LaunchToken, create_app, observer_commands, owner_commands
+from milknado.web.hosts import HostDependencies
 from milknado.web.polling import PolledSnapshotSource
 from milknado.web.server import ServerOptions, run_server
 
 if TYPE_CHECKING:
-    from milknado.domains.common import MilknadoConfig, PluginHook
+    from milknado.adapters import ChangedFile, GitAdapter
+    from milknado.domains.common import GitPort, MilknadoConfig, PluginHook, SessionContext
     from milknado.domains.execution import RunLoopResult
+    from milknado.domains.graph import MikadoGraph, OwnerCapabilities
 
 PortOption = Annotated[int, typer_option("--port", min=1, max=65535, help="HTTP port")]
 NoOpenOption = Annotated[bool, typer_option("--no-open", help="Do not open a browser")]
+
+
+class _Controller(Protocol):
+    def snapshot(self) -> ExecutionSnapshot: ...
+
+    run: Callable[..., RunLoopResult]
+
+    def stop_scheduling(self) -> None: ...
+
+
+class _ProjectGitInspection:
+    def __init__(self, graph: MikadoGraph, project_root: Path) -> None:
+        from milknado.adapters import GitAdapter
+
+        self._graph: MikadoGraph = graph
+        self._git: GitAdapter = GitAdapter(project_root)
+
+    @property
+    def port(self) -> GitPort:
+        return self._git
+
+    def _context(self, run_id: str) -> SessionContext:
+        context = self._graph.sessions.view(run_id).context
+        if context is None:
+            raise ValueError(f"run {run_id!r} has no session context")
+        return context
+
+    def changes(self, run_id: str) -> tuple[ChangedFile, ...]:
+        return self._git.session_changes(self._context(run_id))
+
+    def diff(self, run_id: str, path: str) -> str:
+        return self._git.session_diff(self._context(run_id), path)
+
+
+def _host_dependencies(
+    graph: MikadoGraph,
+    config: MilknadoConfig,
+    project_root: Path,
+    owner: Callable[[], OwnerCapabilities | None] | None = None,
+) -> HostDependencies:
+    from milknado.adapters import ProcessAdapter
+
+    git = _ProjectGitInspection(graph, project_root)
+
+    return HostDependencies(
+        graph=graph,
+        flavor_registry=getattr(config, "flavor_registry", frozenset()),
+        project_root=project_root,
+        git_port=git.port,
+        process=ProcessAdapter(),
+        review_decision=graph.decide_goal_review,
+        git=git,
+        owner_capabilities=owner,
+    )
+
+
+def _owner_capabilities(controller: _Controller, graph: MikadoGraph) -> OwnerCapabilities | None:
+    snapshot = controller.snapshot()
+    if not snapshot.active_runs:
+        return None
+    return graph.commands.capabilities(snapshot.active_runs[0].run_id)
 
 
 def web(
@@ -44,7 +102,7 @@ def web(
     login = LaunchToken()
     try:
         source.start()
-        commands = observer_commands(dependencies=HostDependencies(graph=graph))
+        commands = observer_commands(dependencies=_host_dependencies(graph, config, project_root))
         app = create_app(source, commands, login)
         run_server(app, login, ServerOptions(port=port, no_open=no_open))
     finally:
@@ -78,6 +136,122 @@ class OwnerWebServices:
     server: Callable[..., None] = run_server
 
 
+@dataclass(slots=True)
+class _ServerTask:
+    server: Callable[..., None]
+    app: object
+    login: LaunchToken
+    options: ServerOptions
+    errors: list[BaseException]
+    ready: Event
+    done: Event
+
+
+@dataclass(slots=True)
+class _ControllerTask:
+    controller: _Controller
+    root: Path
+    options: OwnerWebOptions
+    results: list[object]
+
+
+def _serve(task: _ServerTask) -> None:
+    task.ready.set()
+    try:
+        task.server(task.app, task.login, options=task.options)
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        task.errors.append(exc)
+    finally:
+        task.done.set()
+
+
+def _run_controller(task: _ControllerTask) -> None:
+    from milknado.app.run import resolve_feature_branch
+
+    try:
+        task.results.append(
+            task.controller.run(
+                feature_branch=resolve_feature_branch(task.root),
+                strict=task.options.strict,
+                allow_protected=task.options.allow_protected,
+            )
+        )
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        task.results.append(exc)
+
+
+def _wait_for_shutdown(
+    controller: _Controller,
+    server_thread: Thread,
+    controller_thread: Thread,
+) -> int:
+    interrupts = 0
+    scheduling_stopped = False
+    while server_thread.is_alive():
+        try:
+            sleep(0.1)
+        except KeyboardInterrupt:
+            interrupts += 1
+            if interrupts == 1 and not scheduling_stopped:
+                controller.stop_scheduling()
+                scheduling_stopped = True
+            elif interrupts >= 2:
+                break
+        if not controller_thread.is_alive() and interrupts == 0:
+            continue
+
+    return interrupts
+
+
+@dataclass(slots=True)
+class _OwnerLaunch:
+    controller: _Controller
+    context: OwnerWebContext
+    options: OwnerWebOptions
+    services: OwnerWebServices
+    app: object
+    login: LaunchToken
+
+
+def _start_owner_tasks(
+    launch: _OwnerLaunch,
+) -> tuple[list[BaseException], list[object], Thread, Thread]:
+    errors: list[BaseException] = []
+    server_ready = Event()
+    server_done = Event()
+    server_thread = Thread(
+        target=_serve,
+        args=(
+            _ServerTask(
+                launch.services.server,
+                launch.app,
+                launch.login,
+                ServerOptions(port=launch.options.port, no_open=launch.options.no_open),
+                errors,
+                server_ready,
+                server_done,
+            ),
+        ),
+        daemon=True,
+    )
+    server_thread.start()
+    _ = server_ready.wait(timeout=1.0)
+    if server_done.is_set() and errors:
+        raise errors[0]
+    results: list[object] = []
+    controller_thread = Thread(
+        target=_run_controller,
+        args=(
+            _ControllerTask(
+                launch.controller, launch.context.project_root, launch.options, results
+            ),
+        ),
+        daemon=True,
+    )
+    controller_thread.start()
+    return errors, results, server_thread, controller_thread
+
+
 def run_owner_web(
     context: OwnerWebContext,
     options: OwnerWebOptions | None = None,
@@ -86,46 +260,33 @@ def run_owner_web(
     """Run an execution controller beside its owner web host."""
     options = options or OwnerWebOptions()
     services = services or OwnerWebServices()
-    from milknado.app.run import build_execution_controller, resolve_feature_branch
+    from milknado.app.run import build_execution_controller
 
     graph = ensure_db(context.config, context.plugins)
     controller = build_execution_controller(graph, context.config, context.project_root)
     login = LaunchToken()
-    app = create_app(controller, owner_commands(controller, HostDependencies(graph=graph)), login)
-    server_thread = Thread(
-        target=services.server,
-        args=(app, login),
-        kwargs={"options": ServerOptions(port=options.port, no_open=options.no_open)},
-        daemon=True,
+
+    def owner() -> OwnerCapabilities | None:
+        return _owner_capabilities(controller, graph)
+
+    dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
+    app = create_app(controller, owner_commands(controller, dependencies), login)
+    errors, results, server_thread, controller_thread = _start_owner_tasks(
+        _OwnerLaunch(controller, context, options, services, app, login)
     )
-    server_thread.start()
-    result: RunLoopResult | None = None
-    interrupts = 0
-    scheduling_stopped = False
     try:
-        try:
-            result = controller.run(
-                feature_branch=resolve_feature_branch(context.project_root),
-                strict=options.strict,
-                allow_protected=options.allow_protected,
-            )
-        except KeyboardInterrupt:
-            interrupts += 1
-            controller.stop_scheduling()
-            scheduling_stopped = True
-        while server_thread.is_alive():
-            try:
-                sleep(0.1)
-            except KeyboardInterrupt:
-                interrupts += 1
-            if interrupts == 1 and not scheduling_stopped:
-                controller.stop_scheduling()
-                scheduling_stopped = True
-            elif interrupts >= 2:
-                break
+        interrupts = _wait_for_shutdown(controller, server_thread, controller_thread)
+        if interrupts >= 2:
+            if results and not isinstance(results[0], BaseException):
+                return cast("RunLoopResult", results[0])
+            return None
+        if errors:
+            raise errors[0]
+        if results and isinstance(results[0], BaseException):
+            raise results[0]
+        return cast("RunLoopResult", results[0]) if results else None
     finally:
         graph.close()
-    return result
 
 
 __all__ = [

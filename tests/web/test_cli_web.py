@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
+from milknado.cli.web import _Controller, _owner_capabilities, _ProjectGitInspection
+from milknado.domains.common import SessionContext
+from milknado.domains.graph import MikadoGraph
 from milknado.web.login import LaunchToken
 
 runner = CliRunner()
@@ -59,3 +64,39 @@ def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
     assert options.port == 8124
     assert options.no_open is True
     print_result.assert_called_once_with(host.return_value)
+
+
+def test_project_git_inspection_delegates_session_context(tmp_path: Path) -> None:
+    context = SessionContext(family="ralph", cwd=str(tmp_path), base_oid="base")
+    graph = SimpleNamespace(
+        sessions=SimpleNamespace(view=lambda run_id: SimpleNamespace(context=context))
+    )
+    with patch("milknado.adapters.GitAdapter") as adapter_type:
+        adapter = adapter_type.return_value
+        adapter.session_changes.return_value = ("changed",)
+        adapter.session_diff.return_value = "diff"
+        inspection = _ProjectGitInspection(cast(MikadoGraph, graph), tmp_path)
+        assert inspection.changes("run") == ("changed",)
+        assert inspection.diff("run", "file") == "diff"
+        adapter.session_changes.assert_called_once_with(context)
+        adapter.session_diff.assert_called_once_with(context, "file")
+
+
+def test_project_git_inspection_rejects_missing_context(tmp_path: Path) -> None:
+    graph = SimpleNamespace(
+        sessions=SimpleNamespace(view=lambda run_id: SimpleNamespace(context=None))
+    )
+    inspection = _ProjectGitInspection(cast(MikadoGraph, graph), tmp_path)
+    with pytest.raises(ValueError, match="no session context"):
+        inspection.changes("run")
+
+
+def test_owner_capabilities_reads_active_run() -> None:
+    controller = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(active_runs=(SimpleNamespace(run_id="run"),))
+    )
+    capability = object()
+    graph = SimpleNamespace(commands=SimpleNamespace(capabilities=lambda run_id: capability))
+    assert (
+        _owner_capabilities(cast(_Controller, controller), cast(MikadoGraph, graph)) is capability
+    )

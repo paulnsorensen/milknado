@@ -41,6 +41,43 @@ class Source:
         self.closed = True
 
 
+class FailingSource(Source):
+    def snapshot(self) -> ExecutionSnapshot:
+        if self.count > 0:
+            raise RuntimeError("poll failed")
+        return super().snapshot()
+
+
+def test_polling_reports_poll_and_listener_failures_without_stopping() -> None:
+    source = FailingSource()
+    polled = PolledSnapshotSource(source, interval=0.01)
+    events: list[ExecutionSnapshot] = []
+
+    def failing_listener(snapshot: ExecutionSnapshot) -> None:
+        raise RuntimeError("listener failed")
+
+    polled.subscribe(events.append)
+    polled.subscribe(failing_listener)
+    polled.start()
+    deadline = monotonic() + 1
+    while monotonic() < deadline and not polled.snapshot().listener_errors:
+        ready = Event()
+        ready.wait(0.02)
+    snapshot = polled.snapshot()
+    polled.close()
+    assert snapshot.listener_errors
+    assert events
+
+
+def test_polling_start_is_idempotent_and_snapshot_starts_lazily() -> None:
+    polled = PolledSnapshotSource(Source(), interval=0.01)
+    assert polled.snapshot().goal == "1"
+    polled.start()
+    polled.start()
+    polled.subscribe(lambda snapshot: None)
+    polled.close()
+
+
 def test_polling_caches_and_publishes_one_snapshot_per_tick() -> None:
     source = Source()
     polled = PolledSnapshotSource(source, interval=0.01)

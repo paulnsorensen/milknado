@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Event, Lock, Thread, current_thread
 
 from milknado.app.run_source import (
@@ -12,6 +13,8 @@ from milknado.app.run_source import (
     NodeSnapshotRequest,
 )
 from milknado.domains.graph import NodeDetailResponse
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -73,12 +76,56 @@ class PolledSnapshotSource:
 
     def _poll(self) -> None:
         while not self._stop.wait(self.interval):
-            snapshot = self.source.snapshot()
+            try:
+                snapshot = self.source.snapshot()
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                self._publish_error("poll", exc)
+                continue
             with self._lock:
                 self._snapshot = snapshot
                 listeners = tuple(self._listeners)
-            for listener in listeners:
+            self._notify(listeners, snapshot)
+
+    def _publish_error(self, operation: str, error: BaseException) -> None:
+        message = f"Web snapshot {operation} failed: {type(error).__name__}: {error}"
+        _logger.exception(message)
+        with self._lock:
+            if self._snapshot is None:
+                return
+            self._snapshot = replace(
+                self._snapshot,
+                listener_errors=(*self._snapshot.listener_errors, message),
+            )
+            snapshot = self._snapshot
+            listeners = tuple(self._listeners)
+        self._notify(listeners, snapshot)
+
+    def _notify(
+        self,
+        listeners: tuple[Callable[[ExecutionSnapshot], None], ...],
+        snapshot: ExecutionSnapshot,
+    ) -> None:
+        failures: list[str] = []
+        for listener in listeners:
+            try:
                 listener(snapshot)
+            except BaseException as exc:
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
+                name = getattr(listener, "__qualname__", type(listener).__qualname__)
+                failures.append(f"{name}: {type(exc).__name__}: {exc}")
+        if failures:
+            _logger.exception("Web snapshot listener failed: %s", "; ".join(failures))
+            with self._lock:
+                self._snapshot = replace(
+                    self._snapshot or snapshot,
+                    listener_errors=(
+                        *(self._snapshot.listener_errors if self._snapshot else ()),
+                        *failures,
+                    ),
+                )
 
 
 __all__ = ["PolledSnapshotSource"]
