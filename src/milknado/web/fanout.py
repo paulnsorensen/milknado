@@ -25,6 +25,7 @@ class SnapshotFanout:
         self._pending: dict[asyncio.Queue[ExecutionSnapshot | None], ExecutionSnapshot] = {}
         self._scheduled: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
         self._unsubscribe: Callable[[], None] | None = None
+        self._latest: ExecutionSnapshot | None = None
         self._subscribing: bool = False
         self._lock: threading.Lock = threading.Lock()
 
@@ -45,6 +46,8 @@ class SnapshotFanout:
         subscribe = False
         with self._lock:
             self._clients[queue] = loop
+            if self._latest is not None and self._unsubscribe is not None:
+                queue.put_nowait(self._latest)
             if self._unsubscribe is None and not self._subscribing:
                 self._subscribing = True
                 subscribe = True
@@ -84,6 +87,7 @@ class SnapshotFanout:
             tuple[asyncio.AbstractEventLoop, asyncio.Queue[ExecutionSnapshot | None]]
         ] = []
         with self._lock:
+            self._latest = snapshot
             for queue, loop in self._clients.items():
                 self._pending[queue] = snapshot
                 if queue not in self._scheduled:

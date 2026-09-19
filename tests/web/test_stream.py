@@ -97,6 +97,30 @@ def test_stream_publishes_exact_frames_to_two_clients_and_unsubscribes() -> None
     assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
 
 
+def test_stream_replays_latest_snapshot_to_staggered_client() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+
+    async def exercise() -> tuple[dict[str, str], dict[str, str]]:
+        first_stream = fanout.events()
+        first_task = asyncio.create_task(first_stream.__anext__())
+        await asyncio.sleep(0)
+        await asyncio.to_thread(source.publish, source.snapshot())
+        first_event = await asyncio.wait_for(first_task, 2)
+
+        second_stream = fanout.events()
+        try:
+            second_event = await asyncio.wait_for(second_stream.__anext__(), 2)
+            return first_event, second_event
+        finally:
+            await first_stream.aclose()
+            await second_stream.aclose()
+
+    first, second = asyncio.run(exercise())
+
+    assert second == first
+
+
 def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
     _, login, source = client_with_source()
     app = create_app(source, WebCommands(), login)
