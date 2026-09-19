@@ -6,7 +6,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 if TYPE_CHECKING:
     from milknado.domains.execution import RunLoopResult
@@ -157,7 +157,16 @@ def watch(
             graph.close()
 
 
-def run(  # noqa: PLR0913
+class RunCommandOptions(NamedTuple):
+    project_root: Path
+    strict: bool
+    allow_protected: bool
+    web: bool
+    port: int
+    no_open: bool
+
+
+def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this boundary.
     project_root: Annotated[
         Path, typer_option("--project-root", help="Project root directory")
     ] = DEFAULT_PROJECT_ROOT,
@@ -168,6 +177,11 @@ def run(  # noqa: PLR0913
     no_open: NoOpenOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
+    _run(RunCommandOptions(project_root, strict, allow_protected, web, port, no_open))
+
+
+def _run(options: RunCommandOptions) -> None:
+    project_root, strict, allow_protected, web, port, no_open = options
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
