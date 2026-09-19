@@ -1,25 +1,42 @@
-# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUnnecessaryCast=false, reportUnnecessaryIsInstance=false
 """Command capabilities exposed by the web adapter."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
 from milknado.domains.graph.commands import OwnerCapabilities
 
-CommandFn = Callable[..., object]
+SessionInputHandler = Callable[[], object]
+RunHandler = Callable[[], object]
+SchedulingHandler = Callable[[], object]
+ReviewHandler = Callable[[], object]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphEditCommands:
+    graph: object
+    flavor_registry: frozenset[str]
+    project_root: Path
+
+
+class GitInspection(Protocol):
+    def changes(self, run_id: str) -> object: ...
+
+    def diff(self, run_id: str, path: str) -> object: ...
 
 
 @dataclass(frozen=True, slots=True)
 class WebCommands:
-    session_input: CommandFn | None = None
-    cancel: CommandFn | None = None
-    force_stop: CommandFn | None = None
-    stop_scheduling: CommandFn | None = None
-    graph_edits: object | None = None
-    review_decision: CommandFn | None = None
-    git: object | None = None
+    session_input: SessionInputHandler | None = None
+    cancel: RunHandler | None = None
+    force_stop: RunHandler | None = None
+    stop_scheduling: SchedulingHandler | None = None
+    graph_edits: GraphEditCommands | None = None
+    review_decision: ReviewHandler | None = None
+    git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | None = None
 
 

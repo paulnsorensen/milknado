@@ -1,4 +1,3 @@
-# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUnnecessaryCast=false, reportUnnecessaryIsInstance=false
 """Sorted route discovery for the private web API."""
 
 from __future__ import annotations
