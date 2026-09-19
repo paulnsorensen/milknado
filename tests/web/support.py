@@ -73,7 +73,12 @@ class RecordingCommands:
 
     def cancel(self, run_id: str) -> dict[str, object]:
         self.cancel_calls.append(run_id)
-        return {"run_id": run_id}
+        return {
+            "run_id": run_id,
+            "status": "cancelled",
+            "terminal": True,
+            "terminal_reason": "cancelled by request",
+        }
 
     def force_stop(self, run_id: str) -> dict[str, object]:
         self.force_stop_calls.append(run_id)

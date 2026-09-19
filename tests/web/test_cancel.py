@@ -7,7 +7,12 @@ def test_cancel_calls_capability() -> None:
     commands, recording = recording_commands()
     response = client(commands)[0].post("/api/runs/run-1/cancel", headers=headers())
     assert response.status_code == 200
-    assert response.json() == {"run_id": "run-1"}
+    assert response.json() == {
+        "run_id": "run-1",
+        "status": "cancelled",
+        "terminal": True,
+        "terminal_reason": "cancelled by request",
+    }
     assert recording.cancel_calls == ["run-1"]
 
 

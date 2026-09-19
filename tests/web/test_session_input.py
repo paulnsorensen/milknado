@@ -1,4 +1,6 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false
+import pytest
+
 from milknado.web import HostDependencies, observer_commands
 from tests.web.support import client, headers
 
@@ -23,3 +25,38 @@ def test_session_input_is_admitted_once(graph) -> None:
     assert second.status_code == 200
     assert first.json() == second.json()
     assert graph.commands.command("cmd-1") is not None
+
+
+def test_session_input_rejects_conflicting_command_id(graph) -> None:
+    commands = _commands(graph)
+    test_client = client(commands)[0]
+    first = test_client.post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-1", "action": "steer", "text": "hello"},
+        headers=headers(),
+    )
+    conflict = test_client.post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-1", "action": "steer", "text": "different"},
+        headers=headers(),
+    )
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert "different command" in conflict.json()["reason"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "reason"),
+    [
+        ({"command_id": "  ", "action": "steer", "text": "hello"}, "command_id"),
+        ({"command_id": "cmd-2", "action": "steer"}, "text"),
+        ({"command_id": "cmd-3", "action": "approve"}, "request_id"),
+    ],
+)
+def test_session_input_rejects_malformed_payload(graph, payload, reason) -> None:
+    commands = _commands(graph)
+    response = client(commands)[0].post(
+        "/api/runs/run-1/session-input", json=payload, headers=headers()
+    )
+    assert response.status_code == 400
+    assert reason in response.json()["reason"]
