@@ -15,6 +15,11 @@ from milknado.app.run_source import (
 from milknado.domains.graph import NodeDetailResponse
 
 _logger = logging.getLogger(__name__)
+_MAX_RETAINED_ERRORS = 32
+
+
+def _remember_errors(existing: tuple[str, ...], new: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((*existing, *new)))[-_MAX_RETAINED_ERRORS:]
 
 
 @dataclass(slots=True)
@@ -90,13 +95,13 @@ class PolledSnapshotSource:
 
     def _publish_error(self, operation: str, error: BaseException) -> None:
         message = f"Web snapshot {operation} failed: {type(error).__name__}: {error}"
-        _logger.exception(message)
+        _logger.error(message)
         with self._lock:
             if self._snapshot is None:
                 return
             self._snapshot = replace(
                 self._snapshot,
-                listener_errors=(*self._snapshot.listener_errors, message),
+                listener_errors=_remember_errors(self._snapshot.listener_errors, (message,)),
             )
             snapshot = self._snapshot
             listeners = tuple(self._listeners)
@@ -117,13 +122,13 @@ class PolledSnapshotSource:
                 name = getattr(listener, "__qualname__", type(listener).__qualname__)
                 failures.append(f"{name}: {type(exc).__name__}: {exc}")
         if failures:
-            _logger.exception("Web snapshot listener failed: %s", "; ".join(failures))
+            _logger.error("Web snapshot listener failed: %s", "; ".join(failures))
             with self._lock:
                 self._snapshot = replace(
                     self._snapshot or snapshot,
-                    listener_errors=(
-                        *(self._snapshot.listener_errors if self._snapshot else ()),
-                        *failures,
+                    listener_errors=_remember_errors(
+                        self._snapshot.listener_errors if self._snapshot else (),
+                        tuple(failures),
                     ),
                 )
 

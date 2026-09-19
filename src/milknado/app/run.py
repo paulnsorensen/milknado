@@ -179,9 +179,7 @@ class ExecutionController:
         with self._state_lock:
             return self._snapshot
 
-    def node_snapshot(  # noqa: V105 - shared source contract consumed by the run view
-        self, request: NodeSnapshotRequest
-    ) -> NodeDetailResponse:
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
         if self._graph is None:
             raise RuntimeError("node snapshots require a graph")
         return self._graph.get_node_detail_snapshot(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Event, Thread
 from time import sleep
@@ -81,10 +81,10 @@ def _host_dependencies(
 
 
 def _owner_capabilities(controller: _Controller, graph: MikadoGraph) -> OwnerCapabilities | None:
-    snapshot = controller.snapshot()
-    if not snapshot.active_runs:
+    active_runs = controller.snapshot().active_runs
+    if len(active_runs) != 1:
         return None
-    return graph.commands.capabilities(snapshot.active_runs[0].run_id)
+    return graph.commands.capabilities(active_runs[0].run_id)
 
 
 def web(
@@ -156,10 +156,10 @@ class _ControllerTask:
 
 
 def _serve(task: _ServerTask) -> None:
-    task.ready.set()
+    options = replace(task.options, started=task.ready.set)
     try:
-        task.server(task.app, task.login, options=task.options)
-    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        task.server(task.app, task.login, options=options)
+    except BaseException as exc:  # noqa: BLE001 - capture terminal server failures
         task.errors.append(exc)
     finally:
         task.done.set()
@@ -176,7 +176,7 @@ def _run_controller(task: _ControllerTask) -> None:
                 allow_protected=task.options.allow_protected,
             )
         )
-    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+    except BaseException as exc:  # noqa: BLE001 - preserve controller failure
         task.results.append(exc)
 
 
@@ -277,6 +277,7 @@ def run_owner_web(
     try:
         interrupts = _wait_for_shutdown(controller, server_thread, controller_thread)
         if interrupts >= 2:
+            controller_thread.join()
             if results and not isinstance(results[0], BaseException):
                 return cast("RunLoopResult", results[0])
             return None

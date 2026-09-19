@@ -21,6 +21,7 @@ class ServerRunner(Protocol):
 class ServerOptions:
     port: int = 8000
     no_open: bool = False
+    started: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,8 @@ def run_server(
     print(token_url, flush=True)
     if not options.no_open:
         _ = services.opener(browser_url)
+    if options.started is not None:
+        options.started()
     if services.runner is None:
         uvicorn.run(app, host="127.0.0.1", port=options.port)
     else:
