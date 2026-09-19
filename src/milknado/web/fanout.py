@@ -46,7 +46,7 @@ class SnapshotFanout:
         subscribe = False
         with self._lock:
             self._clients[queue] = loop
-            if self._latest is not None and self._unsubscribe is not None:
+            if self._latest is not None:
                 queue.put_nowait(self._latest)
             if self._unsubscribe is None and not self._subscribing:
                 self._subscribing = True

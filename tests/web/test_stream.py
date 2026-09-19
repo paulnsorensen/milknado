@@ -66,6 +66,40 @@ def test_stream_handles_synchronous_replay_without_deadlock() -> None:
     assert '"goal":"fixture goal"' in event["data"]
 
 
+def test_stream_replays_synchronous_setup_snapshot_to_joining_client() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+    second_queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
+
+    async def exercise() -> tuple[dict[str, str], ExecutionSnapshot]:
+        loop = asyncio.get_running_loop()
+        subscribe = source.subscribe
+
+        def replay_then_join(
+            listener: Callable[[ExecutionSnapshot], None],
+        ) -> Callable[[], None]:
+            unsubscribe = subscribe(listener)
+            listener(source.snapshot())
+            fanout._add(second_queue, loop)  # pyright: ignore[reportPrivateUsage]
+            return unsubscribe
+
+        source.subscribe = replay_then_join  # type: ignore[method-assign]
+        first_stream = fanout.events()
+        try:
+            first_event = await asyncio.wait_for(first_stream.__anext__(), 2)
+            second_snapshot = await asyncio.wait_for(second_queue.get(), 2)
+            assert second_snapshot is not None
+            return first_event, second_snapshot
+        finally:
+            await first_stream.aclose()
+            fanout._remove(second_queue)  # pyright: ignore[reportPrivateUsage]
+
+    event, snapshot = asyncio.run(exercise())
+
+    assert event["event"] == "snapshot"
+    assert snapshot == source.snapshot()
+
+
 def test_stream_publishes_exact_frames_to_two_clients_and_unsubscribes() -> None:
     _, _, source = client_with_source()
     fanout = SnapshotFanout(source)
