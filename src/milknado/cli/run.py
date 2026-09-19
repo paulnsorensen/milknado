@@ -168,14 +168,6 @@ def run(  # noqa: PLR0913
     no_open: NoOpenOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
-    if web:
-        from milknado.cli.web import run_owner_web
-
-        config, plugins = _load_or_default(project_root.resolve())
-        run_owner_web(
-            project_root.resolve(), config, plugins, strict, allow_protected, port, no_open
-        )
-        return
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
@@ -184,6 +176,7 @@ def run(  # noqa: PLR0913
         run_execution_loop,
     )
     from milknado.app.run_tui import run_execution_tui
+    from milknado.cli.web import OwnerWebContext, OwnerWebOptions, run_owner_web
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import get_dispatchable_nodes
     from milknado.domains.graph import invalid_subtree_node_ids, validate_runnable_roots
@@ -193,6 +186,23 @@ def run(  # noqa: PLR0913
     graph = None
 
     try:
+        if web:
+            result = run_owner_web(
+                OwnerWebContext(project_root, config, plugins),
+                OwnerWebOptions(
+                    strict=strict,
+                    allow_protected=allow_protected,
+                    port=port,
+                    no_open=no_open,
+                ),
+            )
+            if result is None:
+                return
+            _print_run_result(result)
+            if result.strict_exit:
+                raise typer.Exit(code=1)
+            return
+
         feature_branch = resolve_feature_branch(project_root)
         ensure_dispatch_allowed(config, feature_branch, allow_protected)
         graph = _ensure_db(config, plugins)

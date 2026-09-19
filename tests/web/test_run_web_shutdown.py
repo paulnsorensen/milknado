@@ -3,6 +3,9 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
+
+from milknado.cli.web import OwnerWebContext, OwnerWebOptions, OwnerWebServices
 
 web_module = importlib.import_module("milknado.cli.web")
 
@@ -19,7 +22,7 @@ class Controller:
 
     def run(self, **kwargs):
         self.called.set()
-        raise KeyboardInterrupt
+        return SimpleNamespace(strict_exit=False)
 
     def stop_scheduling(self) -> None:
         self.stopped += 1
@@ -36,15 +39,25 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
     monkeypatch.setattr("milknado.app.run.resolve_feature_branch", lambda root: "feature")
     monkeypatch.setattr(web_module, "create_app", lambda *args: object())
     monkeypatch.setattr(web_module, "owner_commands", lambda *args: object())
-    monkeypatch.setattr(
-        web_module, "sleep", lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt)
-    )
+    interrupts = iter((KeyboardInterrupt(), KeyboardInterrupt()))
 
-    server_started = Event()
+    def interrupting_sleep(_seconds: float) -> None:
+        raise next(interrupts)
+
+    monkeypatch.setattr(web_module, "sleep", interrupting_sleep)
+
+    server_active = Event()
+    server_release = Event()
 
     def server(*args, **kwargs):
-        server_started.set()
+        server_active.set()
+        server_release.wait()
 
-    web_module.run_owner_web(tmp_path, object(), [], False, False, 8000, True, server=server)
-    assert server_started.is_set()
+    result = web_module.run_owner_web(
+        OwnerWebContext(tmp_path, object(), []),
+        OwnerWebOptions(),
+        OwnerWebServices(server=server),
+    )
+    assert server_active.is_set()
+    assert result is not None
     assert controller.stopped == 1

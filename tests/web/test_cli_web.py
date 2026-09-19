@@ -32,17 +32,28 @@ def test_web_command_accepts_port_and_no_open(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     polling.return_value.start.assert_called_once()
     server.assert_called_once()
-    assert server.call_args.kwargs == {"port": 8123, "no_open": True}
+    options = server.call_args.args[2]
+    assert options.port == 8123
+    assert options.no_open is True
 
 
 def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
     with (
         patch("milknado.cli.run._load_or_default", return_value=(object(), [])),
         patch("milknado.cli.web.run_owner_web") as host,
+        patch("milknado.cli.run._print_run_result") as print_result,
     ):
+        host.return_value = SimpleNamespace(strict_exit=False)
         result = runner.invoke(
             app,
             ["run", "--web", "--no-open", "--port", "8124", "--project-root", str(tmp_path)],
         )
     assert result.exit_code == 0, result.output
-    assert host.call_args.args[-3:] == (False, 8124, True)
+    context = host.call_args.args[0]
+    assert context.project_root == tmp_path
+    options = host.call_args.args[1]
+    assert options.strict is False
+    assert options.allow_protected is False
+    assert options.port == 8124
+    assert options.no_open is True
+    print_result.assert_called_once_with(host.return_value)
