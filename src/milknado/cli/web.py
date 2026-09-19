@@ -144,7 +144,6 @@ class _ServerTask:
     options: ServerOptions
     errors: list[BaseException]
     ready: Event
-    done: Event
 
 
 @dataclass(slots=True)
@@ -161,8 +160,6 @@ def _serve(task: _ServerTask) -> None:
         task.server(task.app, task.login, options=options)
     except BaseException as exc:  # noqa: BLE001 - capture terminal server failures
         task.errors.append(exc)
-    finally:
-        task.done.set()
 
 
 def _run_controller(task: _ControllerTask) -> None:
@@ -218,7 +215,6 @@ def _start_owner_tasks(
 ) -> tuple[list[BaseException], list[object], Thread, Thread]:
     errors: list[BaseException] = []
     server_ready = Event()
-    server_done = Event()
     server_thread = Thread(
         target=_serve,
         args=(
@@ -229,15 +225,14 @@ def _start_owner_tasks(
                 ServerOptions(port=launch.options.port, no_open=launch.options.no_open),
                 errors,
                 server_ready,
-                server_done,
             ),
         ),
         daemon=True,
     )
     server_thread.start()
-    _ = server_ready.wait(timeout=1.0)
-    if server_done.is_set() and errors:
-        raise errors[0]
+    ready = server_ready.wait(timeout=1.0)
+    if not ready:
+        raise errors[0] if errors else TimeoutError("server did not report readiness")
     results: list[object] = []
     controller_thread = Thread(
         target=_run_controller,
@@ -263,21 +258,23 @@ def run_owner_web(
     from milknado.app.run import build_execution_controller
 
     graph = ensure_db(context.config, context.plugins)
-    controller = build_execution_controller(graph, context.config, context.project_root)
-    login = LaunchToken()
-
-    def owner() -> OwnerCapabilities | None:
-        return _owner_capabilities(controller, graph)
-
-    dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
-    app = create_app(controller, owner_commands(controller, dependencies), login)
-    errors, results, server_thread, controller_thread = _start_owner_tasks(
-        _OwnerLaunch(controller, context, options, services, app, login)
-    )
+    controller: _Controller | None = None
+    controller_thread: Thread | None = None
+    interrupts = 0
     try:
+        controller = build_execution_controller(graph, context.config, context.project_root)
+        login = LaunchToken()
+
+        def owner() -> OwnerCapabilities | None:
+            return _owner_capabilities(controller, graph)
+
+        dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
+        app = create_app(controller, owner_commands(controller, dependencies), login)
+        errors, results, server_thread, controller_thread = _start_owner_tasks(
+            _OwnerLaunch(controller, context, options, services, app, login)
+        )
         interrupts = _wait_for_shutdown(controller, server_thread, controller_thread)
         if interrupts >= 2:
-            controller_thread.join()
             if results and not isinstance(results[0], BaseException):
                 return cast("RunLoopResult", results[0])
             return None
@@ -287,6 +284,10 @@ def run_owner_web(
             raise results[0]
         return cast("RunLoopResult", results[0]) if results else None
     finally:
+        if controller is not None and controller_thread is not None:
+            if interrupts == 0:
+                controller.stop_scheduling()
+            controller_thread.join(timeout=1.0)
         graph.close()
 
 

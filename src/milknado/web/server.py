@@ -44,12 +44,12 @@ def run_server(
     print(token_url, flush=True)
     if not options.no_open:
         _ = services.opener(browser_url)
-    if options.started is not None:
-        options.started()
     if services.runner is None:
         uvicorn.run(app, host="127.0.0.1", port=options.port)
     else:
         services.runner.run(app, host="127.0.0.1", port=options.port)
+    if options.started is not None:
+        options.started()
 
 
 __all__ = ["ServerOptions", "ServerRunner", "ServerServices", "run_server"]
