@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol, cast
 
-from milknado.domains.graph.commands import OwnerCapabilities
+from milknado.domains.common import SessionInput
+from milknado.domains.graph.commands import CommandReceipt, OwnerCapabilities
 from milknado.web.commands import (
     GitInspection,
     GraphEditCommands,
@@ -16,6 +18,13 @@ from milknado.web.commands import (
     SessionInputHandler,
     WebCommands,
 )
+
+
+class OwnerController(Protocol):
+    def session_input(self, run_id: str, command: SessionInput) -> bool: ...
+    def cancel(self, run_id: str) -> None: ...
+    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool: ...
+    def stop_scheduling(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,11 +60,34 @@ def _graph_edits(dependencies: HostDependencies) -> GraphEditCommands | None:
 
 
 def owner_commands(
-    handlers: OwnerHandlers | None = None,
+    handlers: OwnerHandlers | OwnerController | None = None,
     dependencies: HostDependencies | None = None,
 ) -> WebCommands:
-    handlers = handlers or OwnerHandlers()
     dependencies = dependencies or HostDependencies()
+    if handlers is None:
+        handlers = OwnerHandlers()
+    elif not isinstance(handlers, OwnerHandlers):
+        controller = handlers
+        handlers = OwnerHandlers(
+            session_input=lambda request: cast(
+                CommandReceipt,
+                cast(
+                    object,
+                    controller.session_input(
+                        dependencies.owner_capabilities.run_id
+                        if dependencies.owner_capabilities is not None
+                        else request.request_id,
+                        request,
+                    ),
+                ),
+            ),
+            cancel=lambda run_id: {"run_id": run_id, "result": controller.cancel(run_id)},
+            force_stop=lambda run_id: {
+                "run_id": run_id,
+                "result": controller.force_stop(run_id),
+            },
+            stop_scheduling=controller.stop_scheduling,
+        )
     return WebCommands(
         session_input=handlers.session_input,
         cancel=handlers.cancel,

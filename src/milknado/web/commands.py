@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from milknado.adapters._git_changes import ChangedFile
 from milknado.domains.common import MikadoNode, NodeKind, NodeSpec, SessionInput
 from milknado.domains.graph.commands import (
     CommandReceipt,
     OwnerCapabilities,
 )
-from milknado.domains.graph.goal_review import GoalReviewRecord
+from milknado.domains.graph.goal_review import GoalReviewDecisionRequest, GoalReviewRecord
 
 
 class SessionInputHandler(Protocol):
@@ -27,7 +28,7 @@ class SchedulingHandler(Protocol):
 
 
 class ReviewHandler(Protocol):
-    def __call__(self, review_id: int, decision: str) -> GoalReviewRecord: ...
+    def __call__(self, request: GoalReviewDecisionRequest, reviewer: str) -> GoalReviewRecord: ...
 
 
 class GraphProtocol(Protocol):
@@ -61,8 +62,7 @@ class GraphEditCommands:
 
 
 class GitInspection(Protocol):
-    def changes(self, run_id: str) -> list[dict[str, object]]: ...
-
+    def changes(self, run_id: str) -> tuple[ChangedFile, ...]: ...
     def diff(self, run_id: str, path: str) -> str: ...
 
 
