@@ -1,10 +1,12 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnusedCallResult=false
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from starlette.testclient import TestClient
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.graph import GoalReviewRequest, MikadoGraph
+from milknado.domains.graph import GoalReviewDecision, GoalReviewRequest, MikadoGraph
 from milknado.web import LaunchToken, WebCommands, create_app
 from milknado.web.commands import GraphEditCommands
 from tests.web.support import FixtureSnapshotSource, headers
@@ -44,6 +46,29 @@ def test_reviews_list_and_decision(tmp_path: Path) -> None:
         assert decision["decision"] == "accepted"
         assert decision["decided_by"] == "web"
         assert decision["decided_at"] == "2026-09-19T15:00:00+00:00"
+        assert client.get("/api/reviews", headers=headers()).json() == []
+    finally:
+        graph.close()
+
+
+def test_reviews_list_rechecks_decision_after_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        pending = graph.request_goal_review(
+            GoalReviewRequest(goal.id, "rev", "evidence", "change", reviewer="reviewer")
+        )
+        decided = replace(pending, decision=GoalReviewDecision.ACCEPTED)
+        monkeypatch.setattr(graph, "get_goal_review", lambda _review_id: decided)
+        commands = WebCommands(
+            graph_edits=GraphEditCommands(graph, frozenset({"implement"}), tmp_path),
+        )
+        app = create_app(FixtureSnapshotSource(), commands, LaunchToken("test-token"))
+        client = TestClient(app, base_url="http://127.0.0.1")
+        client.cookies.set("milknado_login", "test-token")
+
         assert client.get("/api/reviews", headers=headers()).json() == []
     finally:
         graph.close()

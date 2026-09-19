@@ -49,7 +49,7 @@ def _pending_reviews(request: Request) -> list[object]:
         if admission.review_id is None or admission.decision is not GoalReviewDecision.PENDING:
             continue
         record = graph.get_goal_review(admission.review_id)
-        if record is not None:
+        if record is not None and record.decision is GoalReviewDecision.PENDING:
             records[record.review_id] = record
     return list(records.values())
 
