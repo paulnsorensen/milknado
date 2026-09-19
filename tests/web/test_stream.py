@@ -6,11 +6,13 @@ import threading
 from collections.abc import Callable
 
 import pytest
+from starlette.requests import Request
 from starlette.types import Message, Scope
 
 from milknado.app.run_source import ExecutionSnapshot
 from milknado.web import WebCommands, create_app
-from milknado.web.fanout import SnapshotFanout
+from milknado.web.fanout import SnapshotFanout, _encode  # pyright: ignore[reportPrivateUsage]
+from milknado.web.routes.stream import stream_route
 from tests.web.support import client_with_source
 
 
@@ -82,6 +84,18 @@ def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
     assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
 
 
+def test_stream_route_concurrent_requests_share_one_fanout() -> None:
+    _, login, source = client_with_source()
+    app = create_app(source, WebCommands(), login)
+    request = Request({"type": "http", "app": app})
+
+    async def exercise() -> None:
+        _ = await asyncio.gather(stream_route(request), stream_route(request))
+        assert app.state.snapshot_fanout is not None  # pyright: ignore[reportAny]
+
+    asyncio.run(exercise())
+
+
 def test_stream_queues_every_frame_and_disconnects_on_overflow() -> None:
     _, _, source = client_with_source()
     fanout = SnapshotFanout(source)
@@ -119,6 +133,46 @@ def test_stream_queues_every_frame_and_disconnects_on_overflow() -> None:
         await asyncio.sleep(0)
         assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
         assert await queue.get() is None
+
+    asyncio.run(exercise())
+
+
+def test_stream_replays_synchronous_subscription_without_deadlock() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+    snapshot = source.snapshot()
+
+    def subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        listener(snapshot)
+        return lambda: None
+
+    source.subscribe = subscribe  # type: ignore[method-assign]
+
+    async def exercise() -> None:
+        stream = fanout.events()
+        frame = await asyncio.wait_for(stream.__anext__(), 2)
+        assert frame == {"event": "snapshot", "data": _encode(snapshot)}
+        await stream.aclose()
+
+    asyncio.run(exercise())
+
+
+def test_stream_replays_latest_snapshot_to_staggered_client() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+
+    async def exercise() -> None:
+        first = fanout.events()
+        first_pending = asyncio.create_task(first.__anext__())
+        await asyncio.sleep(0)
+        snapshot = source.snapshot()
+        source.publish(snapshot)
+        expected = {"event": "snapshot", "data": _encode(snapshot)}
+        assert await asyncio.wait_for(first_pending, 2) == expected
+        second = fanout.events()
+        assert await asyncio.wait_for(second.__anext__(), 2) == expected
+        await first.aclose()
+        await second.aclose()
 
     asyncio.run(exercise())
 

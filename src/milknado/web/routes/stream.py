@@ -14,7 +14,7 @@ from milknado.web.app import WebContext
 from milknado.web.fanout import SnapshotFanout
 
 
-def stream_route(request: Request) -> Response:
+async def stream_route(request: Request) -> Response:
     app = cast(Starlette, request.app)
     context = cast(WebContext, app.state.web)
     fanout = getattr(app.state, "snapshot_fanout", None)
