@@ -70,6 +70,19 @@ just clean          # Remove build artifacts and caches
 Because the server speaks stdio, a restart drops the existing connection — the client
 must `/mcp` reconnect after each restart to pick up the new process.
 
+### Web UI prerequisites
+
+The local web dashboard lives under `web/` (npm workspace) and builds into the
+committed, byte-stable `src/milknado/web/static/`. `just install` installs Node
+dependencies (`npm --prefix web ci`) and the Chromium build Playwright needs
+(`uv run playwright install chromium`) alongside `uv sync`. `just check-llm` runs
+`web`'s typecheck, lint, and vitest suite, then `tests/browser` (Playwright, marked
+`browser`) over the committed build — these steps require Node and a working
+Chromium install. Rebuild the dashboard with `npm --prefix web run build` after
+changing `web/src/**` and commit the regenerated `src/milknado/web/static/` files;
+`tests/browser/test_stale_build.py` fails the gate if the committed build drifts
+from `web/` source.
+
 ## Project Overview
 
 Milknado is a Mikado execution engine — it decomposes goals into dependency graphs and executes them as parallel ralph loops.

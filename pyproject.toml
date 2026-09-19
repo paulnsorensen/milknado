@@ -38,6 +38,7 @@ packages = ["src/milknado"]
 testpaths = ["tests"]
 markers = [
     "e2e: live-API end-to-end tests (claude CLI + ANTHROPIC_API_KEY required; slow)",
+    "browser: Playwright end-to-end tests over a real committed build; excluded from the xdist coverage run",
 ]
 
 [tool.importlinter]
@@ -265,6 +266,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "vulture>=2.16",
     "httpx>=0.28.1",
+    "pytest-playwright>=0.7.1",
 ]
 
 # typeCheckingMode is deliberately unset: basedpyright's default "recommended"

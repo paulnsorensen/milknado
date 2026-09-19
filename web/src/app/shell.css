@@ -1,0 +1,34 @@
+.mk-shell {
+  display: grid;
+  grid-template-areas: 'header header' 'rail canvas' 'rail dock';
+  grid-template-columns: var(--mk-rail-width) 1fr;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  background: var(--mk-surface);
+  color: var(--mk-text);
+  font-family: var(--mk-font-sans);
+}
+
+.mk-shell [data-region='header'] {
+  grid-area: header;
+}
+
+.mk-shell [data-region='rail'] {
+  grid-area: rail;
+}
+
+.mk-shell [data-region='canvas'] {
+  grid-area: canvas;
+  position: relative;
+}
+
+.mk-shell [data-region='dock'] {
+  grid-area: dock;
+}
+
+.mk-shell [data-region='sidecar'] {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+}

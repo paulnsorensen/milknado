@@ -16,6 +16,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+!web/vendor/milknado/components/lib/
 parts/
 sdist/
 var/
@@ -226,3 +227,6 @@ ralphs/
 .worktrees/
 worktrees/
 milknado-[0-9]*-*/
+
+# Web workspace dependencies (npm install artifacts)
+web/node_modules/

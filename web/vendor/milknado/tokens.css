@@ -1,0 +1,213 @@
+/* Generated from tokens.json (Milknado design system 1789801777-16ad). Do not edit by hand. */
+:root, :root[data-theme="dark"] {
+  --mk-surface: #161826;
+  --mk-surface-raised: #232532;
+  --mk-surface-sunken: #101120;
+  --mk-line: #2c2f40;
+  --mk-line-strong: #6f738a;
+  --mk-ink: #e9e9ed;
+  --mk-ink-muted: #a3a7ba;
+  --mk-ink-faint: #9397ab;
+  --mk-accent: #9184d9;
+  --mk-accent-soft: #231f36;
+  --mk-accent-strong: #b5abfc;
+  --mk-accent-text: #d2cefd;
+  --mk-on-accent: #14122a;
+  --mk-running: #9184d9;
+  --mk-done: #a3a7ba;
+  --mk-done-soft: #26292d;
+  --mk-at-risk: #e3b25a;
+  --mk-at-risk-soft: #33280f;
+  --mk-blocked: #f08a78;
+  --mk-blocked-soft: #3a1f1a;
+  --mk-critical: #f08a78;
+  --mk-series-neutral: #8a919b;
+  --mk-series-1: #5cc4b2;
+  --mk-series-2: #b5578a;
+  --mk-series-3: #93d0f0;
+  --mk-series-4: #eb93a7;
+  --mk-series-5: #c9c768;
+  --mk-series-6: #8c83d9;
+}
+:root[data-theme="light"] {
+  --mk-surface: #e6e8ef;
+  --mk-surface-raised: #f4f5f9;
+  --mk-surface-sunken: #dcdfe8;
+  --mk-line: #d0d3de;
+  --mk-line-strong: #767a8d;
+  --mk-ink: #1b1d29;
+  --mk-ink-muted: #565a6b;
+  --mk-ink-faint: #6b6f80;
+  --mk-accent: #5d5294;
+  --mk-accent-soft: #e3e0f7;
+  --mk-accent-strong: #3f3670;
+  --mk-accent-text: #5d5294;
+  --mk-on-accent: #ffffff;
+  --mk-running: #5d5294;
+  --mk-done: #565a6b;
+  --mk-done-soft: #d7dae4;
+  --mk-at-risk: #8a5a06;
+  --mk-at-risk-soft: #f1e6cd;
+  --mk-blocked: #a8372a;
+  --mk-blocked-soft: #f2dcd6;
+  --mk-critical: #a8372a;
+  --mk-series-neutral: #737a84;
+  --mk-series-1: #2f8a7c;
+  --mk-series-2: #7e2350;
+  --mk-series-3: #3f84ad;
+  --mk-series-4: #b8506a;
+  --mk-series-5: #7d7d24;
+  --mk-series-6: #3a3190;
+}
+/* spacing */
+:root {
+  --mk-space-1: 4px;
+  --mk-space-2: 8px;
+  --mk-space-3: 12px;
+  --mk-space-4: 16px;
+  --mk-space-6: 24px;
+  --mk-space-8: 32px;
+}
+/* radius */
+:root {
+  --mk-radius-sm: 3px;
+  --mk-radius-md: 6px;
+  --mk-radius-lg: 10px;
+  --mk-radius-pill: 999px;
+}
+/* size */
+:root {
+  --mk-rail-width: 216px;
+  --mk-sidecar-width: 360px;
+  --mk-dock-height: 250px;
+  --mk-node-width: 208px;
+  --mk-row-height: 32px;
+  --mk-hovercard-width: 320px;
+  --mk-dot: 8px;
+  --mk-sidecar-width-review: 560px;
+  --mk-dialog-width: 440px;
+  --mk-dialog-width-wide: 760px;
+  --mk-toast-width: 320px;
+  --mk-canvas-min-width: 1180px;
+  --mk-control-height: 26px;
+}
+/* opacity */
+:root {
+  --mk-opacity-edge: 0.6;
+  --mk-opacity-tint-hover: 0.07;
+  --mk-opacity-tint-accent: 0.12;
+  --mk-opacity-disabled: 0.45;
+}
+/* duration */
+:root {
+  --mk-duration-fast: 100ms;
+  --mk-duration-base: 150ms;
+  --mk-duration-rise: 180ms;
+  --mk-duration-meter: 300ms;
+  --mk-duration-pulse: 1800ms;
+}
+/* layer */
+:root {
+  --mk-layer-canvas: 0;
+  --mk-layer-toolbar: 2;
+  --mk-layer-sidecar: 4;
+  --mk-layer-dialog: 6;
+  --mk-layer-toast: 9;
+}
+/* shadow (theme dependent) */
+:root, :root[data-theme="dark"] {
+  --mk-shadow-popover: 0 0 0 1px #2c2f40, 0 8px 24px rgba(0,0,0,0.45);
+  --mk-shadow-glow-running: 0 0 16px rgba(145,132,217,0.45);
+}
+:root[data-theme="light"] {
+  --mk-shadow-popover: 0 1px 2px rgba(27,29,41,0.10), 0 6px 20px rgba(27,29,41,0.14);
+  --mk-shadow-glow-running: 0 0 14px rgba(93,82,148,0.30);
+}
+/* type families */
+:root {
+  --mk-font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mk-font-serif: "Source Serif 4", Georgia, serif;
+  --mk-font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+/* type scale utility classes */
+.mk-text-display {
+  font-family: var(--mk-font-serif);
+  font-size: 32px;
+  line-height: 38px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.mk-text-title {
+  font-family: var(--mk-font-serif);
+  font-size: 22px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.mk-text-goal {
+  font-family: var(--mk-font-serif);
+  font-size: 18px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.mk-text-heading {
+  font-family: var(--mk-font-sans);
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 500;
+}
+.mk-text-stat {
+  font-family: var(--mk-font-sans);
+  font-size: 26px;
+  line-height: 30px;
+  font-weight: 500;
+}
+.mk-text-body {
+  font-family: var(--mk-font-sans);
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 400;
+}
+.mk-text-label {
+  font-family: var(--mk-font-sans);
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 500;
+}
+.mk-text-caption {
+  font-family: var(--mk-font-sans);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 400;
+}
+.mk-text-kicker {
+  font-family: var(--mk-font-sans);
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+}
+.mk-text-wordmark {
+  font-family: var(--mk-font-sans);
+  font-size: 14px;
+  line-height: 18px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+}
+.mk-text-stat-small {
+  font-family: var(--mk-font-sans);
+  font-size: 13px;
+  line-height: 16px;
+  font-weight: 500;
+}
+.mk-text-console {
+  font-family: var(--mk-font-mono);
+  font-size: 11.5px;
+  line-height: 18px;
+  font-weight: 400;
+}
+.mk-text-data {
+  font-family: var(--mk-font-mono);
+  font-size: 11.5px;
+  line-height: 16px;
+  font-weight: 400;
+}

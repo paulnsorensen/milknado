@@ -8,9 +8,11 @@ TEST_WORKERS := "4"
 default:
     @just --list
 
-# Install dependencies using uv
+# Install dependencies using uv, npm, and the browser tests' Chromium build
 install:
     uv sync
+    npm --prefix web ci
+    uv run playwright install chromium
 
 # Run lint and format checks concurrently (both are read-only).
 lint:
@@ -56,10 +58,13 @@ coverage-check:
 
     # Streamed (not captured): a captured, buffered run prints nothing until
     # the process exits, which hides all progress if pytest ever hangs.
+    # Excludes tests/browser: those need a built web/ bundle and a browser,
+    # and are run as their own CI/check-llm step instead.
     result = subprocess.run(
         [
             "uv", "run", "pytest", "tests/",
             "-n", "{{TEST_WORKERS}}",
+            "-m", "not browser",
             "--cov=src/milknado",
             "--cov-report=term",
             "--cov-report=xml:coverage.xml",
@@ -116,11 +121,15 @@ check-llm:
         ("import-contracts", ["uv", "run", "lint-imports"]),
         ("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"]),
         ("lint+format", ["just", "lint"]),
+        ("web-typecheck", ["npm", "--prefix", "web", "run", "typecheck"]),
+        ("web-lint", ["npm", "--prefix", "web", "run", "lint"]),
+        ("web-test", ["npm", "--prefix", "web", "run", "test"]),
         (
             "tests+coverage",
             [
                 "uv", "run", "pytest", "tests/", "-q",
                 "-n", "{{TEST_WORKERS}}",
+                "-m", "not browser",
                 "--cov=src/milknado",
                 "--cov-report=term-missing",
                 "--cov-report=xml:coverage.xml",
@@ -139,6 +148,7 @@ check-llm:
                 f"--fail-under={threshold}",
             ],
         ),
+        ("browser", ["uv", "run", "pytest", "tests/browser", "-m", "browser", "-q"]),
         ("typecheck", ["just", "typecheck"]),
     ]
 
