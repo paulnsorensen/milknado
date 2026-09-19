@@ -16,7 +16,7 @@ from milknado.domains.common import (
 )
 
 
-class AddNodeBody(msgspec.Struct, frozen=True):
+class AddNodeBody(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     description: str
     parent_id: int | None = None
     kind: NodeKind = NodeKind.TASK
@@ -26,7 +26,7 @@ class AddNodeBody(msgspec.Struct, frozen=True):
     prereqs: list[int] | None = None
 
 
-class EditNodeBody(msgspec.Struct, frozen=True, kw_only=True):
+class EditNodeBody(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     description: str | None = None
     kind: NodeKind | None = None
     flavor: str | None = None
@@ -34,7 +34,7 @@ class EditNodeBody(msgspec.Struct, frozen=True, kw_only=True):
     files: list[str] | None = None
 
 
-class MoveNodeBody(msgspec.Struct, frozen=True):
+class MoveNodeBody(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     new_parent_id: int | None = None
 
 

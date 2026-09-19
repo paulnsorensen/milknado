@@ -46,12 +46,11 @@ def test_node_mutations_apply_to_graph(tmp_path: Path) -> None:
             f"/api/nodes/{node_id}/move", json={"new_parent_id": child_id}, headers=headers()
         )
         assert rejected.status_code == 409
-        assert (
-            client.post(
-                f"/api/nodes/{child_id}/move", json={"new_parent_id": None}, headers=headers()
-            ).status_code
-            == 200
+        moved = client.post(
+            f"/api/nodes/{child_id}/move", json={"new_parent_id": None}, headers=headers()
         )
+        assert moved.status_code == 200
+        assert moved.json()["parent_id"] is None
         graph.set_todo_status(child_id, NodeStatus.DONE)
         assert client.post(f"/api/nodes/{child_id}/archive", headers=headers()).status_code == 200
         updated = graph.get_node(child_id)
@@ -86,11 +85,28 @@ def test_node_routes_reject_bad_requests(tmp_path: Path) -> None:
             ).status_code
             == 200
         )
-        assert (
-            client.patch(
-                "/api/nodes/999", json={"description": "missing"}, headers=headers()
-            ).status_code
-            == 409
-        )
+        missing = client.patch("/api/nodes/999", json={"files": ["missing.md"]}, headers=headers())
+        assert missing.status_code == 409
+        following = client.post("/api/nodes", json={"description": "following"}, headers=headers())
+        assert following.status_code == 200
+    finally:
+        graph.close()
+
+
+def test_node_routes_reject_unknown_fields_without_mutation(tmp_path: Path) -> None:
+    client, graph = _client(tmp_path)
+    try:
+        created = client.post("/api/nodes", json={"description": "node"}, headers=headers())
+        node_id = created.json()["id"]
+        for method, path, payload in (
+            ("post", "/api/nodes", {"description": "bad", "extra": True}),
+            ("patch", f"/api/nodes/{node_id}", {"description": "bad", "extra": True}),
+            ("post", f"/api/nodes/{node_id}/move", {"new_parent_id": None, "extra": True}),
+        ):
+            response = getattr(client, method)(path, json=payload, headers=headers())
+            assert response.status_code == 400
+        stored = graph.get_node(node_id)
+        assert stored is not None
+        assert stored.description == "node"
     finally:
         graph.close()

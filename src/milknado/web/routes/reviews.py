@@ -7,6 +7,7 @@ from json import JSONDecodeError
 from typing import cast
 
 import msgspec
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
@@ -17,10 +18,14 @@ from milknado.web.app import WebContext
 from milknado.web.encoding import json_response
 
 
-class ReviewDecisionBody(msgspec.Struct, frozen=True, kw_only=True):
+class ReviewDecisionBody(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True):
     decision: GoalReviewDecision
     decided_by: str = "web"
     decided_at: str | None = None
+
+
+def _bad_request(error: Exception) -> Response:
+    return json_response({"error": str(error)}, status_code=400)
 
 
 def _context(request: Request) -> WebContext:
@@ -50,7 +55,8 @@ def _pending_reviews(request: Request) -> list[object]:
 
 
 async def list_reviews(request: Request) -> Response:
-    return json_response(msgspec.to_builtins(_pending_reviews(request)))
+    reviews = await run_in_threadpool(_pending_reviews, request)
+    return json_response(msgspec.to_builtins(reviews))
 
 
 async def decide_review(request: Request) -> Response:
@@ -60,7 +66,8 @@ async def decide_review(request: Request) -> Response:
         if commands is None:
             raise PermissionError("Review decisions are unavailable.")
         body = cast(ReviewDecisionBody, payload)
-        result = commands(
+        result = await run_in_threadpool(
+            commands,
             GoalReviewDecisionRequest(
                 int(request.path_params["review_id"]), body.decision, body.decided_at
             ),
@@ -70,7 +77,7 @@ async def decide_review(request: Request) -> Response:
     except PermissionError as error:
         return json_response({"error": str(error)}, status_code=403)
     except (JSONDecodeError, msgspec.DecodeError) as error:
-        return json_response({"error": str(error)}, status_code=400)
+        return _bad_request(error)
     except ValueError as error:
         return json_response({"error": str(error)}, status_code=409)
 
