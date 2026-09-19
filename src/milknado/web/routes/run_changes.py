@@ -53,8 +53,10 @@ def diff_route(request: Request) -> Response:
     path = request.query_params.get("path", "")
     try:
         diff = git.diff(run_id, path)
-    except (GitOperationError, ValueError) as exc:
+    except GitOperationError as exc:
         return json_response({"error": str(exc)}, status_code=409)
+    except ValueError as exc:
+        return json_response({"error": str(exc)}, status_code=400)
     return PlainTextResponse(diff)
 
 

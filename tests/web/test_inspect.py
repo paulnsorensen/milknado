@@ -192,14 +192,18 @@ def test_inspection_routes_return_fixture_data() -> None:
     ("query", "reason"),
     [
         ("limit=-1", "limit must be non-negative"),
+        ("limit=0", "limit must be between 1 and 100"),
+        ("limit=101", "limit must be between 1 and 100"),
         ("page=invalid", "page must be an integer"),
         ("session_event_page=-1", "session_event_page must be non-negative"),
     ],
 )
 def test_node_detail_rejects_invalid_query_bounds(query: str, reason: str) -> None:
-    response = request(client(), f"/api/nodes/7?{query}")
+    source = InspectionSource(detail=_detail(), run=_run())
+    response = request(client_from_source(source), f"/api/nodes/7?{query}")
     assert response.status_code == 400
     assert response.json() == {"error": reason}
+    assert source.last_request is None
 
 
 def test_node_detail_returns_not_found_for_unknown_node() -> None:
@@ -247,7 +251,7 @@ def test_run_inspection_reports_git_failures(endpoint: str, reason: str) -> None
 
 def test_diff_rejects_invalid_path() -> None:
     response = request(client(git=InvalidPathGit()), "/api/runs/run-1/diff?path=../secret")
-    assert response.status_code == 409
+    assert response.status_code == 400
     assert response.json() == {"error": "invalid diff path: ../secret"}
 
 

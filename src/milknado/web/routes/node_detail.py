@@ -23,6 +23,8 @@ def _query_int(request: Request, name: str, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from exc
     if result < 0:
         raise ValueError(f"{name} must be non-negative")
+    if name == "limit" and not 1 <= result <= 100:
+        raise ValueError("limit must be between 1 and 100")
     return result
 
 
