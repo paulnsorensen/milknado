@@ -290,6 +290,25 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         )
 
     @synchronized
+    def edit_node(
+        self,
+        node_id: int,
+        description: str | None = None,
+        kind: NodeKind | None = None,
+        flavor: str | None = None,
+        artifact_path: str | None = None,
+        files: tuple[str, ...] | None = None,
+        flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
+    ) -> MikadoNode:
+        """Atomically update node fields and file ownership, then return the node."""
+        _mutations.edit_node(
+            self._conn, node_id, description, kind, flavor, artifact_path, files, flavor_registry
+        )
+        node = _reads.get_node(self._conn, node_id)
+        assert node is not None
+        return node
+
+    @synchronized
     def archive_subtree(self, node_id: int) -> int:
         return _mutations.archive_subtree(self._conn, node_id)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -82,6 +83,36 @@ def maybe_block_parent(graph: MikadoGraph, parent: int | None) -> None:
         console.print(f"Parent node {parent} marked as blocked.")
 
 
+@dataclass(frozen=True, slots=True)
+class RunnableRootExclusions:
+    """Result of validating root goals and excluding invalid subtrees."""
+
+    has_errors: bool
+    excluded: frozenset[int]
+
+
+def apply_runnable_root_exclusions(graph: MikadoGraph, console: Console) -> RunnableRootExclusions:
+    """Validate every runnable root and exclude structurally invalid subtrees.
+
+    Prints warnings for non-fatal issues and errors for goals that are skipped.
+    """
+    from milknado.domains.graph import invalid_subtree_node_ids, validate_runnable_roots
+
+    root_reports = validate_runnable_roots(graph)
+    excluded: set[int] = set()
+    has_errors = False
+    for goal_id, report in root_reports:
+        for msg in report.warnings:
+            console.print(f"[yellow]warning (goal {goal_id}): {msg}[/yellow]")
+        if report.errors:
+            has_errors = True
+            excluded.update(invalid_subtree_node_ids(graph, goal_id))
+            for msg in report.errors:
+                console.print(f"[yellow]warning (goal {goal_id}; skipped): {msg}[/yellow]")
+    graph.set_dispatch_exclusions(excluded)
+    return RunnableRootExclusions(has_errors=has_errors, excluded=frozenset(excluded))
+
+
 def emit(text: str, out: Path | None) -> None:
     if out is None:
         typer.echo(text, nl=not text.endswith("\n"))
@@ -101,6 +132,8 @@ _emit = emit
 
 __all__ = [
     "DEFAULT_PROJECT_ROOT",
+    "RunnableRootExclusions",
+    "apply_runnable_root_exclusions",
     "console",
     "emit",
     "ensure_db",

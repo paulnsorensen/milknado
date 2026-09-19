@@ -401,6 +401,44 @@ def test_execution_overview_uses_one_cross_connection_snapshot(
         writer.close()
 
 
+def test_edit_node_applies_fields_and_files_together(graph: MikadoGraph) -> None:
+    node = graph.add_node("original")
+    updated = graph.edit_node(node.id, description="edited", files=("owned.md",))
+    assert updated.description == "edited"
+    assert graph.files.for_node(node.id) == ["owned.md"]
+
+
+def test_edit_node_rolls_back_fields_when_file_claim_fails(
+    graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from milknado.domains.graph import _mutations
+
+    node = graph.add_node("original")
+    graph.files.claim(node.id, ["kept.md"])
+
+    def delete_then_fail(
+        conn: sqlite3.Connection, node_id: int, _files: list[str], *, _in_transaction: bool = False
+    ) -> NoReturn:
+        _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
+        raise RuntimeError("claim failed")
+
+    monkeypatch.setattr(_mutations, "set_file_ownership", delete_then_fail)
+    with pytest.raises(RuntimeError, match="claim failed"):
+        _ = graph.edit_node(node.id, description="edited", files=("new.md",))
+
+    reloaded = graph.get_node(node.id)
+    assert reloaded is not None
+    assert reloaded.description == "original"
+    assert graph.files.for_node(node.id) == ["kept.md"]
+
+
+def test_edit_node_rejects_missing_node_and_empty_request(graph: MikadoGraph) -> None:
+    with pytest.raises(ValueError, match="nothing to edit"):
+        _ = graph.edit_node(1)
+    with pytest.raises(ValueError, match="not found"):
+        _ = graph.edit_node(999, files=("orphan.md",))
+
+
 def test_inherited_analytics_operations_hold_graph_lock(
     graph: MikadoGraph, monkeypatch: pytest.MonkeyPatch
 ) -> None:

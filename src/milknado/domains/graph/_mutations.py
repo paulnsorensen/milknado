@@ -8,7 +8,7 @@ from typing import cast
 
 from milknado.domains.common import BUILTIN_FLAVORS, VALID_CHILD_KINDS, NodeKind, NodeStatus
 from milknado.domains.common.errors import ArchiveIneligible, InvalidContainment
-from milknado.domains.graph._persistence import children_id_map
+from milknado.domains.graph._persistence import children_id_map, set_file_ownership
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 
@@ -215,6 +215,8 @@ def update_node_fields(
     flavor: str | None = None,
     artifact_path: str | None = None,
     flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
+    *,
+    _in_transaction: bool = False,
 ) -> None:
     """Update description, kind, flavor, and/or artifact_path; raise if node absent."""
     if flavor is not None and flavor not in flavor_registry:
@@ -258,7 +260,41 @@ def update_node_fields(
     cur = conn.execute(f"UPDATE nodes SET {', '.join(fields)} WHERE id = ?", values)
     if cur.rowcount == 0:
         raise ValueError(f"Node {node_id} not found")
-    conn.commit()
+    if not _in_transaction:
+        conn.commit()
+
+
+def edit_node(
+    conn: sqlite3.Connection,
+    node_id: int,
+    description: str | None,
+    kind: NodeKind | None,
+    flavor: str | None,
+    artifact_path: str | None,
+    files: tuple[str, ...] | None,
+    flavor_registry: frozenset[str] = BUILTIN_FLAVORS,
+) -> None:
+    """Atomically update node fields and file ownership; raise if node absent."""
+    has_fields = any(value is not None for value in (description, kind, flavor, artifact_path))
+    if not has_fields and files is None:
+        raise ValueError("nothing to edit")
+    _ = conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        if fetchone(conn, "SELECT 1 FROM nodes WHERE id = ?", (node_id,)) is None:
+            raise ValueError(f"Node {node_id} not found")
+        if has_fields:
+            update_node_fields(
+                conn,
+                node_id,
+                description,
+                kind,
+                flavor,
+                artifact_path,
+                flavor_registry,
+                _in_transaction=True,
+            )
+        if files is not None:
+            set_file_ownership(conn, node_id, list(files), _in_transaction=True)
 
 
 def would_create_cycle(conn: sqlite3.Connection, parent_id: int, child_id: int) -> bool:

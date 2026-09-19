@@ -6,7 +6,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, NamedTuple
 
 if TYPE_CHECKING:
     from milknado.domains.execution import RunLoopResult
@@ -47,6 +47,9 @@ AttachedWatchOption = Annotated[
     bool,
     typer_option("--attached", help="Enable owner-fenced session input; read-only by default."),
 ]
+WebOption = Annotated[bool, typer_option("--web", help="Serve the owner web view")]
+RunPortOption = Annotated[int, typer_option("--port", min=1, max=65535, help="HTTP port")]
+NoOpenOption = Annotated[bool, typer_option("--no-open", help="Do not open a browser")]
 
 
 def _print_run_result(result: RunLoopResult) -> None:
@@ -154,14 +157,31 @@ def watch(
             graph.close()
 
 
-def run(
+class RunCommandOptions(NamedTuple):
+    project_root: Path
+    strict: bool
+    allow_protected: bool
+    web: bool
+    port: int
+    no_open: bool
+
+
+def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this boundary.
     project_root: Annotated[
         Path, typer_option("--project-root", help="Project root directory")
     ] = DEFAULT_PROJECT_ROOT,
     strict: StrictOption = False,
     allow_protected: AllowProtectedOption = False,
+    web: WebOption = False,
+    port: RunPortOption = 8000,
+    no_open: NoOpenOption = False,
 ) -> None:
     """Execute ready leaf nodes as parallel ralph loops."""
+    _run(RunCommandOptions(project_root, strict, allow_protected, web, port, no_open))
+
+
+def _run(options: RunCommandOptions) -> None:
+    project_root, strict, allow_protected, web, port, no_open = options
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
@@ -170,32 +190,39 @@ def run(
         run_execution_loop,
     )
     from milknado.app.run_tui import run_execution_tui
+    from milknado.cli._helpers import apply_runnable_root_exclusions
+    from milknado.cli.web import OwnerWebContext, OwnerWebOptions, run_owner_web
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import get_dispatchable_nodes
-    from milknado.domains.graph import invalid_subtree_node_ids, validate_runnable_roots
 
     project_root = project_root.resolve()
     config, plugins = _load_or_default(project_root)
     graph = None
 
     try:
+        if web:
+            result = run_owner_web(
+                OwnerWebContext(project_root, config, plugins),
+                OwnerWebOptions(
+                    strict=strict,
+                    allow_protected=allow_protected,
+                    port=port,
+                    no_open=no_open,
+                ),
+            )
+            if result is None:
+                return
+            _print_run_result(result)
+            if result.strict_exit:
+                raise typer.Exit(code=1)
+            return
+
         feature_branch = resolve_feature_branch(project_root)
         ensure_dispatch_allowed(config, feature_branch, allow_protected)
         graph = _ensure_db(config, plugins)
 
         _ = graph.reconcile_completed_goals()
-        root_reports = validate_runnable_roots(graph)
-        excluded: set[int] = set()
-        has_errors = False
-        for goal_id, report in root_reports:
-            for msg in report.warnings:
-                console.print(f"[yellow]warning (goal {goal_id}): {msg}[/yellow]")
-            if report.errors:
-                has_errors = True
-                excluded.update(invalid_subtree_node_ids(graph, goal_id))
-                for msg in report.errors:
-                    console.print(f"[yellow]warning (goal {goal_id}; skipped): {msg}[/yellow]")
-        graph.set_dispatch_exclusions(excluded)
+        exclusions = apply_runnable_root_exclusions(graph, console)
 
         interactive = _is_interactive_terminal()
         if not interactive:
@@ -203,9 +230,10 @@ def run(
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
-        if not any(node not in excluded for node in get_dispatchable_nodes(graph)):
+        dispatchable = get_dispatchable_nodes(graph)
+        if not any(node not in exclusions.excluded for node in dispatchable):
             console.print("No nodes ready for execution.")
-            if has_errors:
+            if exclusions.has_errors:
                 raise typer.Exit(code=1)
             return
 

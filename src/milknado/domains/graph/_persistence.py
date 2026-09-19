@@ -502,13 +502,20 @@ def children_id_map(conn: sqlite3.Connection) -> dict[int, list[int]]:
     return mapping
 
 
-def set_file_ownership(conn: sqlite3.Connection, node_id: int, files: list[str]) -> None:
+def set_file_ownership(
+    conn: sqlite3.Connection,
+    node_id: int,
+    files: list[str],
+    *,
+    _in_transaction: bool = False,
+) -> None:
     _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))
     _ = conn.executemany(
         "INSERT INTO file_ownership (node_id, file_path) VALUES (?, ?)",
         [(node_id, f) for f in files],
     )
-    conn.commit()
+    if not _in_transaction:
+        conn.commit()
 
 
 def get_file_ownership(conn: sqlite3.Connection, node_id: int) -> list[str]:
