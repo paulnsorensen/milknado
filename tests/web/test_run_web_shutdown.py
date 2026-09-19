@@ -137,3 +137,61 @@ def test_owner_host_stops_controller_when_server_fails_after_ready(
     assert controller.called.is_set()
     assert controller.stopped == 1
     assert graph.closed
+
+
+class BlockingController(Controller):
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = Event()
+
+    def run(self, **kwargs):
+        self.called.set()
+        self.release.wait()
+        return SimpleNamespace(strict_exit=False)
+
+
+def test_owner_host_preserves_graph_when_controller_misses_shutdown_deadline(
+    monkeypatch, tmp_path: Path
+) -> None:
+    graph = Graph()
+    controller = BlockingController()
+    _configure(monkeypatch, graph, controller)
+
+    def server(*args, **kwargs):
+        kwargs["options"].started()
+
+    with pytest.raises(RuntimeError, match="shutdown deadline"):
+        web_module.run_owner_web(
+            OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+            OwnerWebOptions(),
+            OwnerWebServices(server=server),
+        )
+    assert not graph.closed
+    controller.release.set()
+
+
+def test_owner_host_exits_on_first_interrupt_after_controller_completes(
+    monkeypatch, tmp_path: Path
+) -> None:
+    graph = Graph()
+    controller = Controller()
+    _configure(monkeypatch, graph, controller)
+    interrupts = iter((KeyboardInterrupt(),))
+
+    def interrupting_sleep(_seconds: float) -> None:
+        controller.called.wait(timeout=1.0)
+        raise next(interrupts)
+
+    monkeypatch.setattr(web_module, "sleep", interrupting_sleep)
+
+    def server(*args, **kwargs):
+        kwargs["options"].started()
+        Event().wait()
+
+    result = web_module.run_owner_web(
+        OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+        OwnerWebOptions(),
+        OwnerWebServices(server=server),
+    )
+    assert result is not None
+    assert controller.stopped == 1

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from threading import Event, Thread
+from threading import Thread
 from time import sleep
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
 from milknado.app.run_source import ExecutionSnapshot, ExecutionSnapshotSource
 from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, ensure_db, load_or_default, typer_option
+from milknado.cli._web_owner import (
+    OwnerLaunch,
+    finish_shutdown,
+    start_owner_tasks,
+    wait_for_shutdown,
+)
 from milknado.web import LaunchToken, create_app, observer_commands, owner_commands
 from milknado.web.hosts import HostDependencies
 from milknado.web.polling import PolledSnapshotSource
@@ -136,117 +142,6 @@ class OwnerWebServices:
     server: Callable[..., None] = run_server
 
 
-@dataclass(slots=True)
-class _ServerTask:
-    server: Callable[..., None]
-    app: object
-    login: LaunchToken
-    options: ServerOptions
-    errors: list[BaseException]
-    ready: Event
-
-
-@dataclass(slots=True)
-class _ControllerTask:
-    controller: _Controller
-    root: Path
-    options: OwnerWebOptions
-    results: list[object]
-
-
-def _serve(task: _ServerTask) -> None:
-    options = replace(task.options, started=task.ready.set)
-    try:
-        task.server(task.app, task.login, options=options)
-    except BaseException as exc:  # noqa: BLE001 - capture terminal server failures
-        task.errors.append(exc)
-
-
-def _run_controller(task: _ControllerTask) -> None:
-    from milknado.app.run import resolve_feature_branch
-
-    try:
-        task.results.append(
-            task.controller.run(
-                feature_branch=resolve_feature_branch(task.root),
-                strict=task.options.strict,
-                allow_protected=task.options.allow_protected,
-            )
-        )
-    except BaseException as exc:  # noqa: BLE001 - preserve controller failure
-        task.results.append(exc)
-
-
-def _wait_for_shutdown(
-    controller: _Controller,
-    server_thread: Thread,
-    controller_thread: Thread,
-) -> int:
-    interrupts = 0
-    scheduling_stopped = False
-    while server_thread.is_alive():
-        try:
-            sleep(0.1)
-        except KeyboardInterrupt:
-            interrupts += 1
-            if interrupts == 1 and not scheduling_stopped:
-                controller.stop_scheduling()
-                scheduling_stopped = True
-            elif interrupts >= 2:
-                break
-        if not controller_thread.is_alive() and interrupts == 0:
-            continue
-
-    return interrupts
-
-
-@dataclass(slots=True)
-class _OwnerLaunch:
-    controller: _Controller
-    context: OwnerWebContext
-    options: OwnerWebOptions
-    services: OwnerWebServices
-    app: object
-    login: LaunchToken
-
-
-def _start_owner_tasks(
-    launch: _OwnerLaunch,
-) -> tuple[list[BaseException], list[object], Thread, Thread]:
-    errors: list[BaseException] = []
-    server_ready = Event()
-    server_thread = Thread(
-        target=_serve,
-        args=(
-            _ServerTask(
-                launch.services.server,
-                launch.app,
-                launch.login,
-                ServerOptions(port=launch.options.port, no_open=launch.options.no_open),
-                errors,
-                server_ready,
-            ),
-        ),
-        daemon=True,
-    )
-    server_thread.start()
-    ready = server_ready.wait(timeout=1.0)
-    if not ready:
-        raise errors[0] if errors else TimeoutError("server did not report readiness")
-    results: list[object] = []
-    controller_thread = Thread(
-        target=_run_controller,
-        args=(
-            _ControllerTask(
-                launch.controller, launch.context.project_root, launch.options, results
-            ),
-        ),
-        daemon=True,
-    )
-    controller_thread.start()
-    return errors, results, server_thread, controller_thread
-
-
 def run_owner_web(
     context: OwnerWebContext,
     options: OwnerWebOptions | None = None,
@@ -261,6 +156,7 @@ def run_owner_web(
     controller: _Controller | None = None
     controller_thread: Thread | None = None
     interrupts = 0
+    errors: list[BaseException] = []
     try:
         controller = build_execution_controller(graph, context.config, context.project_root)
         login = LaunchToken()
@@ -270,25 +166,32 @@ def run_owner_web(
 
         dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
         app = create_app(controller, owner_commands(controller, dependencies), login)
-        errors, results, server_thread, controller_thread = _start_owner_tasks(
-            _OwnerLaunch(controller, context, options, services, app, login)
+        errors, results, server_thread, controller_thread = start_owner_tasks(
+            OwnerLaunch(controller, context, options, services, app, login)
         )
         interrupts = _wait_for_shutdown(controller, server_thread, controller_thread)
         if interrupts >= 2:
-            if results and not isinstance(results[0], BaseException):
-                return cast("RunLoopResult", results[0])
-            return None
+            return cast("RunLoopResult", results[0]) if results else None
         if errors:
             raise errors[0]
         if results and isinstance(results[0], BaseException):
             raise results[0]
         return cast("RunLoopResult", results[0]) if results else None
     finally:
-        if controller is not None and controller_thread is not None:
-            if interrupts == 0:
-                controller.stop_scheduling()
-            controller_thread.join(timeout=1.0)
-        graph.close()
+        if controller_thread is not None:
+            assert controller is not None
+            finish_shutdown(controller, controller_thread, interrupts, errors)
+            graph.close()
+        else:
+            graph.close()
+
+
+def _wait_for_shutdown(
+    controller: _Controller,
+    server_thread: Thread,
+    controller_thread: Thread,
+) -> int:
+    return wait_for_shutdown(controller, server_thread, controller_thread, sleep)
 
 
 __all__ = [
