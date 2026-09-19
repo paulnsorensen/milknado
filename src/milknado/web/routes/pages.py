@@ -26,16 +26,7 @@ _LOGIN_PAGE = """<!doctype html>
         <button type="submit">Log in</button>
       </form>
     </main>
-    <script>
-      const form = document.querySelector("form");
-      const launchUrl = document.querySelector("#launch-url");
-      const token = document.querySelector("#token");
-      form.addEventListener("submit", (event) => {
-        event.preventDefault();
-        token.value = new URL(launchUrl.value).searchParams.get("token") ?? "";
-        if (token.value) form.submit();
-      });
-    </script>
+    <script src="/login.js"></script>
   </body>
 </html>
 """
@@ -46,6 +37,10 @@ def index_route(request: Request) -> Response:
     if not context.login.verify(request.cookies.get(context.login.cookie_name)):
         return HTMLResponse(_LOGIN_PAGE)
     return Response((_STATIC_DIR / "index.html").read_bytes(), media_type="text/html")
+
+
+def login_script_route(_request: Request) -> Response:
+    return FileResponse(_STATIC_DIR / "login.js")
 
 
 def assets_route(request: Request) -> Response:
@@ -61,5 +56,6 @@ def assets_route(request: Request) -> Response:
 
 ROUTES = (
     Route("/", index_route, methods=["GET"]),
+    Route("/login.js", login_script_route, methods=["GET"]),
     Route("/assets/{path:path}", assets_route, methods=["GET"]),
 )

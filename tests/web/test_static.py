@@ -1,5 +1,7 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false
+import subprocess
 import zipfile
+from pathlib import Path
 
 from tests.web.support import client
 
@@ -8,7 +10,8 @@ def test_logged_in_root_serves_index() -> None:
     response = client()[0].get("/")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert "Milknado" in response.text
+    assert "Execution dashboard loading." in response.text
+    assert 'name="token"' not in response.text
 
 
 def test_logged_out_root_serves_login_page() -> None:
@@ -23,11 +26,29 @@ def test_logged_out_root_serves_login_page() -> None:
 def test_login_form_extracts_token_from_launch_url() -> None:
     test_client, login = client()
     test_client.cookies.clear()
-    response = test_client.get("/")
     launch_url = f"http://127.0.0.1/?token={login.value}"
-    assert "new URL(launchUrl.value)" in response.text
-    assert 'searchParams.get("token")' in response.text
-    assert launch_url.split("?token=", 1)[1] == login.value
+    login_script = test_client.get("/login.js")
+    assert login_script.status_code == 200
+    assert "submitLaunchUrl" in login_script.text
+    script = """
+const { submitLaunchUrl } = require(process.argv[1]);
+const token = { value: "" };
+let submitted = false;
+submitLaunchUrl({ submit: () => { submitted = true; } }, { value: process.argv[2] }, token);
+if (token.value !== process.argv[3] || !submitted) process.exit(1);
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(Path("src/milknado/web/static/login.js").resolve()),
+            launch_url,
+            login.value,
+        ],
+        check=False,
+    )
+    assert result.returncode == 0
     authenticated = test_client.get("/auth", params={"token": login.value}, follow_redirects=False)
     assert authenticated.status_code == 303
 
@@ -40,7 +61,6 @@ def test_static_assets_require_login() -> None:
 
 def test_wheel_contains_index() -> None:
     import subprocess
-    from pathlib import Path
 
     result = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", ".static-wheel-test"], check=True
@@ -61,4 +81,4 @@ def test_static_assets_serve_committed_asset() -> None:
 
 def test_static_assets_reject_traversal() -> None:
     test_client, _ = client()
-    assert test_client.get("/assets/../index.html").status_code == 404
+    assert test_client.get("/assets/%2e%2e/index.html").status_code == 404
