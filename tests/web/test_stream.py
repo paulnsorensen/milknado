@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import Callable
 
+import pytest
 from starlette.requests import Request
 from starlette.types import Message, Scope
 
@@ -262,6 +264,60 @@ def test_stream_coalesces_threadsafe_callbacks_and_overflow_disconnects() -> Non
         await asyncio.sleep(0)
         assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
         await pending
+        with pytest.raises(StopAsyncIteration):
+            while True:
+                _ = await stream.__anext__()
         await stream.aclose()
 
     asyncio.run(exercise())
+
+
+def test_stream_reconnect_waits_for_old_unsubscribe_before_replacement() -> None:
+    _, _, source = client_with_source()
+    fanout = SnapshotFanout(source)
+    active: list[Callable[[ExecutionSnapshot], None]] = []
+    unsubscribe_started = threading.Event()
+    release_unsubscribe = threading.Event()
+    subscribe_count = 0
+
+    def subscribe(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
+        nonlocal subscribe_count
+        subscribe_count += 1
+        active.append(listener)
+
+        def unsubscribe() -> None:
+            unsubscribe_started.set()
+            _ = release_unsubscribe.wait()
+            active.clear()
+
+        return unsubscribe
+
+    def publish(snapshot: ExecutionSnapshot) -> None:
+        for listener in tuple(active):
+            listener(snapshot)
+
+    source.subscribe = subscribe  # type: ignore[method-assign]
+    source.publish = publish  # type: ignore[method-assign]
+
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        first_queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
+        second_queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
+        fanout._add(first_queue, loop)  # pyright: ignore[reportPrivateUsage]
+        remove_task = asyncio.create_task(
+            asyncio.to_thread(fanout._remove, first_queue)  # pyright: ignore[reportPrivateUsage]
+        )
+        _ = await asyncio.to_thread(unsubscribe_started.wait)
+        add_task = asyncio.create_task(
+            asyncio.to_thread(fanout._add, second_queue, loop)  # pyright: ignore[reportPrivateUsage]
+        )
+        await asyncio.sleep(0)
+        assert subscribe_count == 1
+        release_unsubscribe.set()
+        await remove_task
+        await add_task
+        source.publish(source.snapshot())
+        assert await asyncio.wait_for(second_queue.get(), 2) == source.snapshot()
+
+    asyncio.run(exercise())
+    assert subscribe_count == 2

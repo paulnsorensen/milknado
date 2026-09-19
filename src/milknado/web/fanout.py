@@ -27,7 +27,7 @@ class SnapshotFanout:
         self._unsubscribe: Callable[[], None] | None = None
         self._latest: ExecutionSnapshot | None = None
         self._subscribing: bool = False
-        self._lock: threading.Lock = threading.Lock()
+        self._lock: threading.RLock = threading.RLock()
 
     async def events(self) -> AsyncGenerator[dict[str, str], None]:
         queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue(_QUEUE_SIZE)
@@ -60,18 +60,14 @@ class SnapshotFanout:
                 self._subscribing = False
                 _ = self._clients.pop(queue, None)
             raise
-        remove_subscription = False
         with self._lock:
             self._subscribing = False
             if self._clients:
                 self._unsubscribe = unsubscribe
             else:
-                remove_subscription = True
-        if remove_subscription:
-            unsubscribe()
+                unsubscribe()
 
     def _remove(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
-        unsubscribe: Callable[[], None] | None = None
         with self._lock:
             _ = self._clients.pop(queue, None)
             _ = self._pending.pop(queue, None)
@@ -79,8 +75,8 @@ class SnapshotFanout:
             if not self._clients and not self._subscribing:
                 unsubscribe = self._unsubscribe
                 self._unsubscribe = None
-        if unsubscribe is not None:
-            unsubscribe()
+                if unsubscribe is not None:
+                    unsubscribe()
 
     def _publish(self, snapshot: ExecutionSnapshot) -> None:
         callbacks: list[
