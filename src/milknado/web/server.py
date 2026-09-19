@@ -5,6 +5,8 @@ from __future__ import annotations
 import webbrowser
 from collections.abc import Callable
 from dataclasses import dataclass
+from threading import Thread
+from time import sleep
 from typing import Protocol
 
 import uvicorn
@@ -30,6 +32,23 @@ class ServerServices:
     runner: ServerRunner | None = None
 
 
+def _run_uvicorn(app: Starlette, port: int, started: Callable[[], None] | None) -> None:
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port))
+
+    def notify_ready() -> None:
+        while not server.started and not server.should_exit:
+            sleep(0.01)
+        if server.started and started is not None:
+            started()
+
+    watcher = Thread(target=notify_ready, daemon=True)
+    watcher.start()
+    try:
+        server.run()
+    finally:
+        watcher.join(timeout=1.0)
+
+
 def run_server(
     app: Starlette,
     login: LaunchToken,
@@ -45,11 +64,11 @@ def run_server(
     if not options.no_open:
         _ = services.opener(browser_url)
     if services.runner is None:
-        uvicorn.run(app, host="127.0.0.1", port=options.port)
+        _run_uvicorn(app, options.port, options.started)
     else:
         services.runner.run(app, host="127.0.0.1", port=options.port)
-    if options.started is not None:
-        options.started()
+        if options.started is not None:
+            options.started()
 
 
 __all__ = ["ServerOptions", "ServerRunner", "ServerServices", "run_server"]
