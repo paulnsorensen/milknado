@@ -7,6 +7,7 @@
   background: var(--mk-surface);
   color: var(--mk-text);
   font-family: var(--mk-font-sans);
+  position: relative;
 }
 
 .mk-shell [data-region='header'] {
@@ -31,4 +32,25 @@
   top: 0;
   right: 0;
   bottom: 0;
+  width: var(--mk-sidecar-width);
+  background: var(--mk-surface-raised);
+  box-shadow: var(--mk-shadow-popover);
+  z-index: var(--mk-layer-sidecar);
+}
+
+.mk-shell [data-region='canvas-overlay'] {
+  position: absolute;
+  top: var(--mk-space-3);
+  right: var(--mk-space-3);
+  z-index: var(--mk-layer-toolbar);
+}
+
+.mk-shell [data-region='toast'] {
+  position: absolute;
+  right: var(--mk-space-4);
+  bottom: var(--mk-space-4);
+  z-index: var(--mk-layer-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
 }
