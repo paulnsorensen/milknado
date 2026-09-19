@@ -173,7 +173,7 @@ def test_task_flavors_default_and_use_project_registry(tmp_path: Path) -> None:
             "unknown",
             "Error calling tool 'milknado_todo_add': invalid flavor 'unknown'; expected one of "
             + "['custom', 'implement', 'plate', 'prototype', 'research', "
-            + "'review', 'spec', 'spike']",
+            + "'review', 'runner', 'spec', 'spike']",
         ),
     ],
 )

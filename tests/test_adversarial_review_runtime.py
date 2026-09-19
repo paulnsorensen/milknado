@@ -166,7 +166,9 @@ class _ReviewRalph:
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
     ) -> _Run:
+        _ = max_iterations
         self._next_id += 1
         resolved_run_id = run_id or f"run-{self._next_id}"
         self.created.append(

@@ -103,6 +103,22 @@ def test_dispatch_inserts_runs_row(graph: MikadoGraph, tmp_path: Path) -> None:
     assert (Path(row["log_path"]) / "0000-dispatch.log").is_file()
 
 
+def test_dispatch_forwards_flavor_iteration_bound(graph: MikadoGraph, tmp_path: Path) -> None:
+    """A flavor's max_iterations reaches the worker loop in Python — the bounded
+    auto-retry does not depend on the native Workflow orchestrator."""
+    _ = graph.add_node("bounded worker")
+    ralph = FakeRalph()
+    config = ExecutionConfig(
+        execution_agent="claude",
+        quality_gates=(Gate(command="true"),),
+        worktree_pattern="milknado-{node_id}-{slug}",
+        project_root=tmp_path,
+        max_iterations=3,
+    )
+    _ = _executor_with_ralph(graph, ralph).dispatch(1, config)
+    assert ralph.max_iterations_seen == [3]
+
+
 def test_verdict_message_deposit_no_longer_fk_fails(graph: MikadoGraph, tmp_path: Path) -> None:
     """The #296 regression: run_messages REFERENCES runs(run_id); without the
     dispatch-time row this insert raised a FOREIGN KEY error and the verdict

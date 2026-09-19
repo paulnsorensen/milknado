@@ -68,6 +68,7 @@ class TestCreateRun:
             log_dir=Path("/project") / ".ralph-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
+            max_iterations=None,
         )
         mock_manager.create_run.assert_called_once_with(  # pyright: ignore[reportAny]
             mock_config,
@@ -75,6 +76,25 @@ class TestCreateRun:
             run_id=None,
         )
         assert result is mock_run
+
+    @patch("milknado.adapters.loop.RunConfig")
+    def test_bounds_worker_loop_with_max_iterations(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+    ) -> None:
+        mock_manager.create_run.return_value = MagicMock()  # pyright: ignore[reportAny]
+
+        _ = adapter.create_run(
+            agent="claude",
+            ralph_dir=Path("/project"),
+            ralph_file=Path("/project/RALPH.md"),
+            quality_gates=(Gate(command="just check-llm"),),
+            max_iterations=3,
+        )
+
+        assert mock_config_cls.call_args.kwargs["max_iterations"] == 3
 
 
 class TestStartStopRun:

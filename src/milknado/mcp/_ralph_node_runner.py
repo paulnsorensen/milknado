@@ -115,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
             review_timeout_seconds=profile.review_timeout_seconds,
             on_reject=profile.on_reject,
             session_mode=profile.session_mode,
-            completion_timeout_seconds=int(args.timeout),
+            completion_timeout_seconds=int(profile.attempt_timeout_seconds),
+            max_iterations=profile.max_iterations,
         )
         outcome = run_node_to_completion(
             executor,
@@ -123,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             args.node_id,
             exec_config,
             args.target_branch,
-            args.timeout,
+            float(profile.attempt_timeout_seconds),
             base_oid=args.base_oid,
             parent_run_id=args.run_id,
         )

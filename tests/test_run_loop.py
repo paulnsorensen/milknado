@@ -292,6 +292,7 @@ class FakeRalph:
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
     ) -> FakeRun:
         _ = (
             agent,
@@ -303,6 +304,7 @@ class FakeRalph:
             base_oid,
             runtime_policy,
             completion_probe,
+            max_iterations,
         )
         self._run_counter += 1
         ordinal_id = f"run-{self._run_counter}"

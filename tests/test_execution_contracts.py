@@ -45,6 +45,7 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
         "runtime_policy",
         "run_id",
         "completion_probe",
+        "max_iterations",
     ]
     assert cast(object, create_signature.parameters["base_oid"].default) is None
     assert get_type_hints(LoopPort.create_run)["base_oid"] == (str | None)

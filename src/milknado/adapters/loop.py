@@ -52,13 +52,11 @@ class LoopAdapter(LoopSessionMixin):
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
     ) -> _RunHandle:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
-        session = cast(
-            NodeAgentSession | None,
-            getattr(runtime_policy, "session", None),
-        )
+        session = cast(NodeAgentSession | None, getattr(runtime_policy, "session", None))
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
@@ -77,6 +75,7 @@ class LoopAdapter(LoopSessionMixin):
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
+            max_iterations=max_iterations,
         )
         if context is not None:
             config.session_context = context

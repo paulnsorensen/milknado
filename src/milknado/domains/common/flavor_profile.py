@@ -15,8 +15,10 @@ if TYPE_CHECKING:
 class FlavorProfile(msgspec.Struct, frozen=True, kw_only=True):
     """Resolved, ready-to-use per-flavor configuration. No identity.
 
-    ``worker_agent_type`` / ``loop_mode`` / ``max_iterations`` / ``max_turns``
-    drive the native Workflow backend; the subprocess dispatcher ignores them.
+    ``worker_agent_type`` / ``loop_mode`` / ``max_turns`` drive the native
+    Workflow backend. ``max_iterations`` also bounds the detached ralph worker
+    loop (its in-run retry budget); the plain subprocess dispatcher ignores it.
+    ``attempt_timeout_seconds`` caps each detached ralph attempt's wall clock.
     """
 
     execution_agent: str
@@ -32,6 +34,7 @@ class FlavorProfile(msgspec.Struct, frozen=True, kw_only=True):
     review_agent: str | None = None
     review_max_rounds: int = 2
     review_timeout_seconds: int = 1800
+    attempt_timeout_seconds: int = 1800
     on_reject: str = "block"
 
 
@@ -77,6 +80,7 @@ def resolve_flavor_profile(
             review_agent=None,
             review_max_rounds=2,
             review_timeout_seconds=1800,
+            attempt_timeout_seconds=1800,
             on_reject="block",
         )
 
@@ -109,6 +113,7 @@ def resolve_flavor_profile(
     review_agent = override.review_agent
     review_max_rounds = override.review_max_rounds
     review_timeout_seconds = override.review_timeout_seconds
+    attempt_timeout_seconds = override.attempt_timeout_seconds
     on_reject = override.on_reject
     _validate_session_mode_family(cfg.agent_family, session_mode, execution_agent)
 
@@ -126,6 +131,7 @@ def resolve_flavor_profile(
         review_agent=review_agent,
         review_max_rounds=review_max_rounds,
         review_timeout_seconds=review_timeout_seconds,
+        attempt_timeout_seconds=attempt_timeout_seconds,
         on_reject=on_reject,
     )
 
