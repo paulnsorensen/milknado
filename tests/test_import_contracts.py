@@ -117,7 +117,7 @@ def test_representative_boundary_modules_do_not_import_domain_submodules() -> No
         "reporting",
         "wiki",
     )
-    for boundary in ("app", "cli", "mcp", "adapters"):
+    for boundary in ("app", "cli", "mcp", "adapters", "web"):
         for path in (source_root / boundary).rglob("*.py"):
             text = path.read_text()
             for package in domain_packages:

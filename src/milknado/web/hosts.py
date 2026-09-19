@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from milknado.domains.common import GitPort, SessionInput
-from milknado.domains.dispatch.cancel import cancel_run
-from milknado.domains.dispatch.ports import ProcessTerminationPort
+from milknado.domains.dispatch import ProcessTerminationPort, cancel_run
 from milknado.domains.graph import MikadoGraph, OwnerCapabilities, admit_session_command
 from milknado.web.commands import (
     GitInspection,
@@ -23,7 +22,7 @@ from milknado.web.commands import (
 
 class OwnerController(Protocol):
     def session_input(self, run_id: str, command: SessionInput) -> bool: ...
-    def cancel(self, run_id: str) -> dict[str, object]: ...
+    def cancel(self, run_id: str) -> dict[str, object] | None: ...
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool: ...
     def stop_scheduling(self) -> None: ...
 
@@ -52,6 +51,20 @@ class OwnerHandlers:
 class ObserverHandlers:
     session_input: SessionInputHandler | None = None
     cancel: RunHandler | None = None
+
+
+def _cancel_owner(
+    controller: OwnerController, graph: MikadoGraph | None, run_id: str
+) -> dict[str, object]:
+    result = controller.cancel(run_id)
+    if graph is None:
+        if isinstance(result, dict):
+            return result
+        raise RuntimeError("owner cancellation requires an injected graph")
+    record = graph.runs.get(run_id)
+    if record is None:
+        raise ValueError(f"run {run_id!r} not found after cancellation")
+    return cast(dict[str, object], cast(object, record))
 
 
 def _graph_edits(dependencies: HostDependencies) -> GraphEditCommands | None:
@@ -83,7 +96,7 @@ def owner_commands(
                 )
                 else None
             ),
-            cancel=lambda run_id: controller.cancel(run_id),
+            cancel=lambda run_id: _cancel_owner(controller, dependencies.graph, run_id),
             force_stop=lambda run_id: {
                 "run_id": run_id,
                 "result": controller.force_stop(run_id),
