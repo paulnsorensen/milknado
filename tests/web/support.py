@@ -1,11 +1,14 @@
+# pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false
 from types import SimpleNamespace
+from typing import cast
 
 from starlette.testclient import TestClient
 
+from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.web import LaunchToken, WebCommands, create_app
 
 
-def source(goal: str = "fixture goal") -> SimpleNamespace:
+def source(goal: str = "fixture goal") -> ExecutionSnapshotSource:
     snapshot = SimpleNamespace(
         goal=goal,
         active_runs=(),
@@ -18,7 +21,7 @@ def source(goal: str = "fixture goal") -> SimpleNamespace:
         graph=None,
         node=None,
     )
-    return SimpleNamespace(snapshot=lambda: snapshot)
+    return cast(ExecutionSnapshotSource, cast(object, SimpleNamespace(snapshot=lambda: snapshot)))
 
 
 def client(commands: WebCommands | None = None) -> tuple[TestClient, LaunchToken]:

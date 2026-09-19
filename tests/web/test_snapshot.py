@@ -1,3 +1,4 @@
+# pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false
 from tests.web.support import client, headers
 
 

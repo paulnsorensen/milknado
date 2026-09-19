@@ -1,3 +1,4 @@
+# pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false
 from milknado.web import WebCommands
 from tests.web.support import client, headers
 

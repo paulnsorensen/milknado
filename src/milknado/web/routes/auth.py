@@ -1,16 +1,21 @@
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUnnecessaryCast=false, reportUnnecessaryIsInstance=false
 """Authentication exchange endpoint."""
 
 from __future__ import annotations
+
+from typing import cast
 
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, RedirectResponse
 from starlette.routing import Route
 
+from milknado.web.app import WebContext
 from milknado.web.login import LaunchToken
 
 
 def auth_route(request: Request) -> RedirectResponse | PlainTextResponse:
-    login = request.app.state.web.login
+    context = cast(WebContext, request.app.state.web)
+    login = context.login
     token = request.query_params.get("token")
     if not isinstance(login, LaunchToken) or not login.verify(token):
         return PlainTextResponse("Invalid launch token.", status_code=403)

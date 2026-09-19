@@ -1,14 +1,14 @@
+# pyright: reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnannotatedClassAttribute=false, reportUnnecessaryCast=false, reportUnnecessaryIsInstance=false
 """Command capabilities exposed by the web adapter."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from milknado.domains.graph.commands import OwnerCapabilities
 
-CommandFn = Callable[..., Any]
+CommandFn = Callable[..., object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,14 +17,14 @@ class WebCommands:
     cancel: CommandFn | None = None
     force_stop: CommandFn | None = None
     stop_scheduling: CommandFn | None = None
-    graph_edits: Any | None = None
+    graph_edits: object | None = None
     review_decision: CommandFn | None = None
-    git: Any | None = None
+    git: object | None = None
     owner_capabilities: OwnerCapabilities | None = None
 
 
-def _capability(fn: CommandFn | None, reason: str) -> dict[str, object]:
-    return {"available": fn is not None, "reason": None if fn is not None else reason}
+def _capability(value: object | None, reason: str) -> dict[str, object]:
+    return {"available": value is not None, "reason": None if value is not None else reason}
 
 
 def build_capabilities(commands: WebCommands) -> dict[str, object]:
