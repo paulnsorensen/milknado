@@ -53,6 +53,39 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
     assert capabilities["owner"]["published_at"] == "now"
 
 
+def test_snapshot_reads_live_owner_capabilities_after_app_construction() -> None:
+    first = OwnerCapabilities(
+        run_id="run-1",
+        node_id=1,
+        invocation_id="inv-1",
+        owner_incarnation="owner-1",
+        actions=(),
+        permission_ids=(),
+        published_at="first",
+    )
+    second = OwnerCapabilities(
+        run_id="run-2",
+        node_id=2,
+        invocation_id="inv-2",
+        owner_incarnation="owner-2",
+        actions=("steer",),
+        permission_ids=("permission-2",),
+        published_at="second",
+    )
+    current = [first]
+    commands = WebCommands(owner_capabilities=lambda: current[0])
+    test_client, _ = client(commands)
+
+    first_response = test_client.get("/api/snapshot", headers=headers())  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    current[0] = second
+    second_response = test_client.get("/api/snapshot", headers=headers())  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    assert first_response.json()["capabilities"]["owner"]["published_at"] == "first"  # pyright: ignore[reportUnknownMemberType]
+    assert second_response.json()["capabilities"]["owner"]["run_id"] == "run-2"  # pyright: ignore[reportUnknownMemberType]
+    assert second_response.json()["capabilities"]["owner"]["actions"] == ["steer"]  # pyright: ignore[reportUnknownMemberType]
+    assert second_response.json()["capabilities"]["owner"]["permission_ids"] == ["permission-2"]  # pyright: ignore[reportUnknownMemberType]
+
+
 def test_observer_builder_reports_owner_only_commands_unavailable() -> None:
     owner = OwnerCapabilities(
         run_id="run-1",

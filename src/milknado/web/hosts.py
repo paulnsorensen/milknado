@@ -12,6 +12,7 @@ from milknado.domains.graph import MikadoGraph, OwnerCapabilities, admit_session
 from milknado.web.commands import (
     GitInspection,
     GraphEditCommands,
+    OwnerCapabilitiesProvider,
     ReviewHandler,
     RunHandler,
     SchedulingHandler,
@@ -36,7 +37,7 @@ class HostDependencies:
     process: ProcessTerminationPort | None = None
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
-    owner_capabilities: OwnerCapabilities | None = None
+    owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,13 @@ class OwnerHandlers:
 class ObserverHandlers:
     session_input: SessionInputHandler | None = None
     cancel: RunHandler | None = None
+
+
+def _current_owner_capabilities(
+    dependencies: HostDependencies,
+) -> OwnerCapabilities | None:
+    owner = dependencies.owner_capabilities
+    return owner() if callable(owner) else owner
 
 
 def _cancel_owner(
@@ -89,8 +97,8 @@ def owner_commands(
                 request
                 if (
                     (
-                        dependencies.owner_capabilities is None
-                        or run_id == dependencies.owner_capabilities.run_id
+                        (owner := _current_owner_capabilities(dependencies)) is None
+                        or run_id == owner.run_id
                     )
                     and controller.session_input(run_id, request)
                 )
@@ -123,11 +131,8 @@ def observer_commands(
     dependencies = dependencies or HostDependencies()
     if handlers.session_input is None and dependencies.graph is not None:
         graph = dependencies.graph
-        owner_incarnation = (
-            None
-            if dependencies.owner_capabilities is None
-            else dependencies.owner_capabilities.owner_incarnation
-        )
+        owner = _current_owner_capabilities(dependencies)
+        owner_incarnation = None if owner is None else owner.owner_incarnation
         handlers = ObserverHandlers(
             session_input=lambda run_id, request: admit_session_command(
                 graph, run_id, request, owner_incarnation=owner_incarnation

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -14,6 +15,8 @@ from milknado.domains.graph import (
     MikadoGraph,
     OwnerCapabilities,
 )
+
+OwnerCapabilitiesProvider = Callable[[], OwnerCapabilities | None]
 
 
 class SessionInputHandler(Protocol):
@@ -55,7 +58,7 @@ class WebCommands:
     graph_edits: GraphEditCommands | None = None
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
-    owner_capabilities: OwnerCapabilities | None = None
+    owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
 
 
 def _capability(value: object | None, reason: str) -> dict[str, object]:
@@ -80,7 +83,11 @@ def build_capabilities(commands: WebCommands) -> dict[str, object]:
     }
 
 
-def _owner_capabilities(owner: OwnerCapabilities | None) -> dict[str, object]:
+def _owner_capabilities(
+    owner: OwnerCapabilities | OwnerCapabilitiesProvider | None,
+) -> dict[str, object]:
+    if callable(owner):
+        owner = owner()
     if owner is None:
         return {"available": False, "reason": "No live owner is connected."}
     return {
