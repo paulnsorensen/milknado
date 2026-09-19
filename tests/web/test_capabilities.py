@@ -50,10 +50,22 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
         for name in ("session_input", "cancel", "force_stop", "stop_scheduling")
     )
     assert capabilities["owner"]["available"] is True
+    assert capabilities["owner"]["published_at"] == "now"
 
 
 def test_observer_builder_reports_owner_only_commands_unavailable() -> None:
-    capabilities = _snapshot_capabilities(observer_commands(ObserverHandlers()))
+    owner = OwnerCapabilities(
+        run_id="run-1",
+        node_id=1,
+        invocation_id="inv-1",
+        owner_incarnation="owner-1",
+        actions=(),
+        permission_ids=(),
+        published_at="now",
+    )
+    capabilities = _snapshot_capabilities(
+        observer_commands(ObserverHandlers(), HostDependencies(owner_capabilities=owner))
+    )
     assert capabilities["session_input"]["available"] is False
     assert capabilities["cancel"]["available"] is False
     assert capabilities["force_stop"]["available"] is False
@@ -61,7 +73,9 @@ def test_observer_builder_reports_owner_only_commands_unavailable() -> None:
     assert capabilities["graph_edits"]["available"] is False
     assert capabilities["review_decision"]["available"] is False
     assert capabilities["git"]["available"] is False
-    assert capabilities["owner"]["available"] is False
+    assert capabilities["owner"]["available"] is True
+    assert capabilities["owner"]["run_id"] == "run-1"
+    assert capabilities["owner"]["published_at"] == "now"
 
 
 class _Controller:
@@ -73,8 +87,9 @@ class _Controller:
         _ = command
         return True
 
-    def cancel(self, run_id: str) -> None:
+    def cancel(self, run_id: str) -> dict[str, object]:
         self.run_ids.append(run_id)
+        return {"run_id": run_id, "state": "cancelled"}
 
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
         self.run_ids.append(run_id)
@@ -85,7 +100,7 @@ class _Controller:
         pass
 
 
-def test_owner_controller_builder_targets_owner_run_id() -> None:
+def test_owner_controller_builder_targets_requested_run_id() -> None:
     controller = _Controller()
     owner = OwnerCapabilities(
         run_id="owner-run",
@@ -98,11 +113,12 @@ def test_owner_controller_builder_targets_owner_run_id() -> None:
     )
     commands = owner_commands(controller, HostDependencies(owner_capabilities=owner))
     assert commands.session_input is not None
-    assert (
-        commands.session_input("request-run", SessionInput(action="steer", request_id="request"))
-        is not None
-    )
-    assert controller.run_ids == ["owner-run"]
+    command = SessionInput(action="steer", request_id="request")
+    assert commands.session_input("request-run", command) is None
+    assert commands.session_input("owner-run", command) == command
+    assert commands.cancel is not None
+    assert commands.cancel("owner-run") == {"run_id": "owner-run", "state": "cancelled"}
+    assert controller.run_ids == ["owner-run", "owner-run"]
 
 
 def test_observer_builder_wires_graph_process_and_project_dependencies(

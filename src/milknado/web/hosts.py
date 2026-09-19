@@ -9,9 +9,7 @@ from typing import Protocol
 from milknado.domains.common import GitPort, SessionInput
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.ports import ProcessTerminationPort
-from milknado.domains.graph import MikadoGraph
-from milknado.domains.graph._command_admission import admit_session_command
-from milknado.domains.graph.commands import OwnerCapabilities
+from milknado.domains.graph import MikadoGraph, OwnerCapabilities, admit_session_command
 from milknado.web.commands import (
     GitInspection,
     GraphEditCommands,
@@ -25,7 +23,7 @@ from milknado.web.commands import (
 
 class OwnerController(Protocol):
     def session_input(self, run_id: str, command: SessionInput) -> bool: ...
-    def cancel(self, run_id: str) -> None: ...
+    def cancel(self, run_id: str) -> dict[str, object]: ...
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool: ...
     def stop_scheduling(self) -> None: ...
 
@@ -76,15 +74,16 @@ def owner_commands(
         handlers = OwnerHandlers(
             session_input=lambda run_id, request: (
                 request
-                if controller.session_input(
-                    dependencies.owner_capabilities.run_id
-                    if dependencies.owner_capabilities is not None
-                    else run_id,
-                    request,
+                if (
+                    (
+                        dependencies.owner_capabilities is None
+                        or run_id == dependencies.owner_capabilities.run_id
+                    )
+                    and controller.session_input(run_id, request)
                 )
                 else None
             ),
-            cancel=lambda run_id: {"run_id": run_id, "result": controller.cancel(run_id)},
+            cancel=lambda run_id: controller.cancel(run_id),
             force_stop=lambda run_id: {
                 "run_id": run_id,
                 "result": controller.force_stop(run_id),
@@ -142,4 +141,5 @@ def observer_commands(
         graph_edits=_graph_edits(dependencies),
         review_decision=dependencies.review_decision,
         git=dependencies.git,
+        owner_capabilities=dependencies.owner_capabilities,
     )

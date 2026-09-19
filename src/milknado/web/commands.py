@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from milknado.adapters._git_changes import ChangedFile
+from milknado.adapters import ChangedFile
 from milknado.domains.common import SessionInput
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph.commands import OwnerCapabilities
