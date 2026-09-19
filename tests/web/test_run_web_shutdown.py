@@ -1,11 +1,15 @@
+# pyright: basic
+
 from __future__ import annotations
 
 import importlib
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
+from typing import cast
 
 from milknado.cli.web import OwnerWebContext, OwnerWebOptions, OwnerWebServices
+from milknado.domains.common import MilknadoConfig
 
 web_module = importlib.import_module("milknado.cli.web")
 
@@ -54,7 +58,7 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
         server_release.wait()
 
     result = web_module.run_owner_web(
-        OwnerWebContext(tmp_path, object(), []),
+        OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
         OwnerWebOptions(),
         OwnerWebServices(server=server),
     )

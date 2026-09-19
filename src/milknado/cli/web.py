@@ -9,6 +9,7 @@ from threading import Thread
 from time import sleep
 from typing import TYPE_CHECKING, Annotated
 
+from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, ensure_db, load_or_default, typer_option
 from milknado.web import (
     HostDependencies,
@@ -51,7 +52,7 @@ def web(
         graph.close()
 
 
-def _watch_source(project_root: Path, db_path: Path) -> object:
+def _watch_source(project_root: Path, db_path: Path) -> ExecutionSnapshotSource:
     from milknado.app.watch import WatchSnapshotSource
 
     return WatchSnapshotSource(project_root, db_path)

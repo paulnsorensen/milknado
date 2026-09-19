@@ -69,7 +69,7 @@ class PolledSnapshotSource:
         self._thread = None
         close = getattr(self.source, "close", None)
         if callable(close):
-            close()
+            _ = close()
 
     def _poll(self) -> None:
         while not self._stop.wait(self.interval):

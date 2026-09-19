@@ -1,9 +1,13 @@
+# pyright: basic
+
 from __future__ import annotations
 
 from threading import Event
 from time import monotonic
 
-from milknado.app.run_source import ExecutionSnapshot
+import pytest
+
+from milknado.app.run_source import ExecutionSnapshot, NodeSnapshotRequest
 from milknado.web.polling import PolledSnapshotSource
 
 
@@ -42,7 +46,12 @@ def test_polling_caches_and_publishes_one_snapshot_per_tick() -> None:
     polled = PolledSnapshotSource(source, interval=0.01)
     events: list[str] = []
     ready = Event()
-    unsubscribe = polled.subscribe(lambda snapshot: (events.append(snapshot.goal), ready.set()))
+
+    def record(snapshot: ExecutionSnapshot) -> None:
+        events.append(snapshot.goal)
+        ready.set()
+
+    unsubscribe = polled.subscribe(record)
     polled.start()
     assert ready.wait(1)
     deadline = monotonic() + 1
@@ -53,3 +62,9 @@ def test_polling_caches_and_publishes_one_snapshot_per_tick() -> None:
     unsubscribe()
     polled.close()
     assert source.closed
+
+
+def test_polling_delegates_node_snapshot() -> None:
+    polled = PolledSnapshotSource(Source())
+    with pytest.raises(NotImplementedError):
+        _ = polled.node_snapshot(NodeSnapshotRequest(node_id=1, request_generation=1))

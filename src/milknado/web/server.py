@@ -42,19 +42,11 @@ def run_server(
     browser_url = f"http://127.0.0.1:{options.port}/"
     print(token_url, flush=True)
     if not options.no_open:
-        services.opener(browser_url)
-    (services.runner or UvicornRunner()).run(app, host="127.0.0.1", port=options.port)
+        _ = services.opener(browser_url)
+    if services.runner is None:
+        uvicorn.run(app, host="127.0.0.1", port=options.port)
+    else:
+        services.runner.run(app, host="127.0.0.1", port=options.port)
 
 
-class UvicornRunner:
-    def run(self, app: Starlette, *, host: str, port: int) -> None:
-        uvicorn.run(app, host=host, port=port)
-
-
-__all__ = [
-    "ServerOptions",
-    "ServerRunner",
-    "ServerServices",
-    "UvicornRunner",
-    "run_server",
-]
+__all__ = ["ServerOptions", "ServerRunner", "ServerServices", "run_server"]
