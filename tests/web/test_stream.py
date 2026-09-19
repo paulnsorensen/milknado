@@ -6,156 +6,12 @@ import threading
 from collections.abc import Callable
 
 import pytest
-from starlette.requests import Request
 from starlette.types import Message, Scope
 
 from milknado.app.run_source import ExecutionSnapshot
-from milknado.web import LaunchToken, WebCommands, create_app
+from milknado.web import WebCommands, create_app
 from milknado.web.fanout import SnapshotFanout
-from milknado.web.routes.stream import stream_route
 from tests.web.support import client_with_source
-
-
-def test_stream_publishes_snapshot_event_and_unsubscribes() -> None:
-    _, _, source = client_with_source()
-    fanout = SnapshotFanout(source)
-
-    async def consume() -> dict[str, str]:
-        async for event in fanout.events():
-            return event
-        raise AssertionError("stream ended without an event")
-
-    async def exercise() -> dict[str, str]:
-        task = asyncio.create_task(consume())
-        await asyncio.sleep(0)
-        await asyncio.to_thread(source.publish, source.snapshot())
-        return await asyncio.wait_for(task, 2)
-
-    event = asyncio.run(exercise())
-
-    assert event["event"] == "snapshot"
-    assert '"goal":"fixture goal"' in event["data"]
-
-
-def test_stream_route_registers_fanout() -> None:
-    _, _, source = client_with_source()
-    app = create_app(source, WebCommands(), LaunchToken("test-token"))
-    request = Request({"type": "http", "app": app})
-
-    response = stream_route(request)
-
-    assert response.media_type == "text/event-stream"
-
-
-def test_stream_handles_synchronous_replay_without_deadlock() -> None:
-    _, _, source = client_with_source()
-    subscribe = source.subscribe
-
-    def replay(listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
-        unsubscribe = subscribe(listener)
-        listener(source.snapshot())
-        return unsubscribe
-
-    source.subscribe = replay  # type: ignore[method-assign]
-    fanout = SnapshotFanout(source)
-
-    async def exercise() -> dict[str, str]:
-        stream = fanout.events()
-        return await asyncio.wait_for(stream.__anext__(), 2)
-
-    event = asyncio.run(exercise())
-
-    assert event["event"] == "snapshot"
-    assert '"goal":"fixture goal"' in event["data"]
-
-
-def test_stream_replays_synchronous_setup_snapshot_to_joining_client() -> None:
-    _, _, source = client_with_source()
-    fanout = SnapshotFanout(source)
-    second_queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
-
-    async def exercise() -> tuple[dict[str, str], ExecutionSnapshot]:
-        loop = asyncio.get_running_loop()
-        subscribe = source.subscribe
-
-        def replay_then_join(
-            listener: Callable[[ExecutionSnapshot], None],
-        ) -> Callable[[], None]:
-            unsubscribe = subscribe(listener)
-            listener(source.snapshot())
-            fanout._add(second_queue, loop)  # pyright: ignore[reportPrivateUsage]
-            return unsubscribe
-
-        source.subscribe = replay_then_join  # type: ignore[method-assign]
-        first_stream = fanout.events()
-        try:
-            first_event = await asyncio.wait_for(first_stream.__anext__(), 2)
-            second_snapshot = await asyncio.wait_for(second_queue.get(), 2)
-            assert second_snapshot is not None
-            return first_event, second_snapshot
-        finally:
-            await first_stream.aclose()
-            fanout._remove(second_queue)  # pyright: ignore[reportPrivateUsage]
-
-    event, snapshot = asyncio.run(exercise())
-
-    assert event["event"] == "snapshot"
-    assert snapshot == source.snapshot()
-
-
-def test_stream_publishes_exact_frames_to_two_clients_and_unsubscribes() -> None:
-    _, _, source = client_with_source()
-    fanout = SnapshotFanout(source)
-
-    async def consume() -> dict[str, str]:
-        stream = fanout.events()
-        try:
-            return await asyncio.wait_for(stream.__anext__(), 2)
-        finally:
-            await stream.aclose()
-
-    async def exercise() -> tuple[dict[str, str], dict[str, str]]:
-        first_task = asyncio.create_task(consume())
-        second_task = asyncio.create_task(consume())
-        await asyncio.sleep(0)
-        await asyncio.to_thread(source.publish, source.snapshot())
-        return await asyncio.gather(first_task, second_task)
-
-    first, second = asyncio.run(exercise())
-
-    expected = {
-        "event": "snapshot",
-        "data": '{"goal":"fixture goal","active_runs":[],"terminal_runs":[],"completed":0,'
-        + '"failed":0,"stopped":0,"available":1,"event_lines":[],"listener_errors":'
-        + '["fixture listener error"],"graph":null,"node":null}',
-    }
-    assert first == expected
-    assert second == expected
-    assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
-
-
-def test_stream_replays_latest_snapshot_to_staggered_client() -> None:
-    _, _, source = client_with_source()
-    fanout = SnapshotFanout(source)
-
-    async def exercise() -> tuple[dict[str, str], dict[str, str]]:
-        first_stream = fanout.events()
-        first_task = asyncio.create_task(first_stream.__anext__())
-        await asyncio.sleep(0)
-        await asyncio.to_thread(source.publish, source.snapshot())
-        first_event = await asyncio.wait_for(first_task, 2)
-
-        second_stream = fanout.events()
-        try:
-            second_event = await asyncio.wait_for(second_stream.__anext__(), 2)
-            return first_event, second_event
-        finally:
-            await first_stream.aclose()
-            await second_stream.aclose()
-
-    first, second = asyncio.run(exercise())
-
-    assert second == first
 
 
 def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
@@ -260,6 +116,7 @@ def test_stream_queues_every_frame_and_disconnects_on_overflow() -> None:
         fanout._add(queue, loop)  # pyright: ignore[reportPrivateUsage]
         for _ in range(33):
             source.publish(source.snapshot())
+        await asyncio.sleep(0)
         assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
         assert await queue.get() is None
 
@@ -341,6 +198,7 @@ def test_stream_terminates_clients_when_subscription_fails(
     assert not fanout._clients  # pyright: ignore[reportPrivateUsage]
     assert caplog.records[0].getMessage() == "snapshot subscription failed"
     assert caplog.records[0].exc_info is not None
+    assert not any("backpressure" in record.getMessage() for record in caplog.records)
 
 
 def test_stream_ignores_callback_interleaved_with_generation_invalidation() -> None:

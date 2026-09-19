@@ -27,6 +27,7 @@ class SnapshotFanout:
         ] = {}
         self._pending: dict[asyncio.Queue[ExecutionSnapshot | None], deque[ExecutionSnapshot]] = {}
         self._scheduled: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
+        self._terminated: set[asyncio.Queue[ExecutionSnapshot | None]] = set()
         self._unsubscribe: Callable[[], None] | None = None
         self._latest: ExecutionSnapshot | None = None
         self._subscribing: bool = False
@@ -85,8 +86,8 @@ class SnapshotFanout:
                 clients = tuple(self._subscribing_clients)
                 self._subscribing = False
                 self._subscribing_clients.clear()
-                for client in clients:
-                    self._terminate(client)
+            for client in clients:
+                self._terminate(client)
             if not isinstance(error, Exception):
                 raise
             return
@@ -112,6 +113,7 @@ class SnapshotFanout:
             self._subscribing_clients.discard(queue)
             _ = self._pending.pop(queue, None)
             self._scheduled.discard(queue)
+            self._terminated.discard(queue)
             if not self._clients and not self._subscribing:
                 unsubscribe = self._unsubscribe
                 self._unsubscribe = None
@@ -130,7 +132,9 @@ class SnapshotFanout:
             if self._subscribing:
                 self._replayed_during_subscription = True
             for queue in tuple(self._clients):
-                pending = self._pending[queue]
+                pending = self._pending.get(queue)
+                if pending is None:
+                    continue
                 if len(pending) >= _QUEUE_SIZE:
                     self._evict(queue)
                     continue
@@ -174,7 +178,9 @@ class SnapshotFanout:
             if queue not in self._clients:
                 return
             self._scheduled.discard(queue)
-            pending = self._pending[queue]
+            pending = self._pending.get(queue)
+            if pending is None:
+                return
             while pending and not queue.full():
                 queue.put_nowait(pending.popleft())
 
@@ -183,19 +189,30 @@ class SnapshotFanout:
             "snapshot stream evicted on backpressure",
             extra={"event": "snapshot_backpressure_eviction", "capacity": _QUEUE_SIZE},
         )
+        self._schedule_termination(queue)
+
+    def _terminate(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
+        self._schedule_termination(queue)
+
+    def _schedule_termination(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
+        with self._lock:
+            loop = self._clients.get(queue)
+            if loop is None or queue in self._terminated:
+                return
+            self._terminated.add(queue)
+            _ = self._pending.pop(queue, None)
+            self._scheduled.discard(queue)
+        _ = loop.call_soon_threadsafe(self._terminate_on_loop, queue)
+
+    def _terminate_on_loop(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
         while True:
             try:
                 _ = queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-        _ = self._pending.pop(queue, None)
-        _ = queue.put_nowait(None)
+        if queue in self._clients:
+            _ = queue.put_nowait(None)
         self._remove(queue)
-
-    def _terminate(self, queue: asyncio.Queue[ExecutionSnapshot | None]) -> None:
-        if queue not in self._clients:
-            return
-        self._evict(queue)
 
 
 def _encode(snapshot: ExecutionSnapshot) -> str:

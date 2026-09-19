@@ -8,7 +8,6 @@ from starlette.applications import Starlette
 
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.web.commands import WebCommands
-from milknado.web.fanout import SnapshotFanout
 from milknado.web.guards import RequestGuards
 from milknado.web.login import LaunchToken
 from milknado.web.routes import discover_routes
@@ -27,6 +26,5 @@ def create_app(
     """Build the guarded local application from injected seams."""
     app = Starlette(routes=discover_routes())
     app.state.web = WebContext(source, commands, login)
-    app.state.snapshot_fanout = SnapshotFanout(source)
     app.add_middleware(RequestGuards, login=login)
     return app
