@@ -65,33 +65,17 @@ async def add_node(request: Request) -> Response:
 
 
 def _edit_node(commands: GraphEditCommands, node_id: int, body: EditNodeBody) -> MikadoNode:
-    if commands.graph.get_node(node_id) is None:
-        raise ValueError(f"node {node_id} not found")
     context = NodeRequestContext(commands.project_root, commands.flavor_registry)
     files, artifact = edit_inputs(body, context)
-    no_fields = (
-        body.description is None
-        and body.kind is None
-        and body.flavor is None
-        and artifact is None
-        and files is None
+    return commands.graph.edit_node(
+        node_id,
+        body.description,
+        body.kind,
+        body.flavor,
+        artifact,
+        files,
+        commands.flavor_registry,
     )
-    if no_fields:
-        raise ValueError("nothing to edit")
-    if any(value is not None for value in (body.description, body.kind, body.flavor, artifact)):
-        commands.graph.update_node(
-            node_id,
-            body.description,
-            body.kind,
-            body.flavor,
-            artifact,
-            commands.flavor_registry,
-        )
-    if files is not None:
-        commands.graph.files.claim(node_id, list(files))
-    node = commands.graph.get_node(node_id)
-    assert node is not None
-    return node
 
 
 async def edit_node(request: Request) -> Response:
