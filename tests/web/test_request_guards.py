@@ -1,3 +1,4 @@
+import asyncio
 from typing import cast
 
 import httpx
@@ -6,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
+from starlette.types import Message, Receive, Scope, Send
 
 from milknado.web.guards import RequestGuards
 from milknado.web.login import LaunchToken
@@ -76,3 +78,29 @@ def test_origin_guard_allows_matching_authority_and_calls_handler() -> None:
     )
     assert response.status_code == 200
     assert calls == ["write"]
+
+
+def test_non_http_scope_passes_through() -> None:
+    calls: list[str] = []
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        _ = receive
+        _ = send
+        calls.append(cast(str, scope["type"]))
+
+    async def receive() -> Message:
+        return {"type": "lifespan.startup"}
+
+    async def send(message: Message) -> None:
+        _ = message
+
+    async def exercise() -> None:
+        guarded = RequestGuards(app, LaunchToken("test-token"))
+        await guarded(
+            {"type": "lifespan", "asgi": {"version": "3.0", "spec_version": "2.0"}},
+            receive,
+            send,
+        )
+
+    asyncio.run(exercise())
+    assert calls == ["lifespan"]

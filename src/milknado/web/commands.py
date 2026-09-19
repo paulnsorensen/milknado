@@ -7,16 +7,14 @@ from pathlib import Path
 from typing import Protocol
 
 from milknado.adapters._git_changes import ChangedFile
-from milknado.domains.common import MikadoNode, NodeKind, NodeSpec, SessionInput
-from milknado.domains.graph.commands import (
-    CommandReceipt,
-    OwnerCapabilities,
-)
+from milknado.domains.common import SessionInput
+from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph.commands import OwnerCapabilities
 from milknado.domains.graph.goal_review import GoalReviewDecisionRequest, GoalReviewRecord
 
 
 class SessionInputHandler(Protocol):
-    def __call__(self, request: SessionInput) -> CommandReceipt: ...
+    def __call__(self, run_id: str, request: SessionInput) -> SessionInput | None: ...
 
 
 class RunHandler(Protocol):
@@ -28,35 +26,14 @@ class SchedulingHandler(Protocol):
 
 
 class ReviewHandler(Protocol):
-    def __call__(self, request: GoalReviewDecisionRequest, reviewer: str) -> GoalReviewRecord: ...
-
-
-class GraphProtocol(Protocol):
-    def add_node(
-        self,
-        description: str,
-        parent_id: int | None = None,
-        spec: NodeSpec | None = None,
-        files: tuple[str, ...] | None = None,
-    ) -> MikadoNode: ...
-
-    def update_node(  # noqa: PLR0913 - mirrors graph mutation contract
-        self,
-        node_id: int,
-        description: str | None = None,
-        kind: NodeKind | None = None,
-        flavor: str | None = None,
-        artifact_path: str | None = None,
-        flavor_registry: frozenset[str] | None = None,
-    ) -> None: ...
-
-    def move_node(self, node_id: int, parent_id: int | None) -> None: ...
-    def archive_subtree(self, node_id: int) -> int: ...
+    def __call__(
+        self, request: GoalReviewDecisionRequest, *, decided_by: str
+    ) -> GoalReviewRecord: ...
 
 
 @dataclass(frozen=True, slots=True)
 class GraphEditCommands:
-    graph: GraphProtocol
+    graph: MikadoGraph
     flavor_registry: frozenset[str]
     project_root: Path
 

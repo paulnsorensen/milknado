@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Protocol
 
-from milknado.domains.common import SessionInput
-from milknado.domains.graph.commands import CommandReceipt, OwnerCapabilities
+from milknado.domains.common import GitPort, SessionInput
+from milknado.domains.dispatch.cancel import cancel_run
+from milknado.domains.dispatch.ports import ProcessTerminationPort
+from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph._command_admission import admit_session_command
+from milknado.domains.graph.commands import OwnerCapabilities
 from milknado.web.commands import (
     GitInspection,
     GraphEditCommands,
-    GraphProtocol,
     ReviewHandler,
     RunHandler,
     SchedulingHandler,
@@ -29,9 +32,11 @@ class OwnerController(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class HostDependencies:
-    graph: GraphProtocol | None = None
+    graph: MikadoGraph | None = None
     flavor_registry: frozenset[str] = frozenset()
     project_root: Path = Path()
+    git_port: GitPort | None = None
+    process: ProcessTerminationPort | None = None
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | None = None
@@ -69,17 +74,15 @@ def owner_commands(
     elif not isinstance(handlers, OwnerHandlers):
         controller = handlers
         handlers = OwnerHandlers(
-            session_input=lambda request: cast(
-                CommandReceipt,
-                cast(
-                    object,
-                    controller.session_input(
-                        dependencies.owner_capabilities.run_id
-                        if dependencies.owner_capabilities is not None
-                        else request.request_id,
-                        request,
-                    ),
-                ),
+            session_input=lambda run_id, request: (
+                request
+                if controller.session_input(
+                    dependencies.owner_capabilities.run_id
+                    if dependencies.owner_capabilities is not None
+                    else run_id,
+                    request,
+                )
+                else None
             ),
             cancel=lambda run_id: {"run_id": run_id, "result": controller.cancel(run_id)},
             force_stop=lambda run_id: {
@@ -106,6 +109,33 @@ def observer_commands(
 ) -> WebCommands:
     handlers = handlers or ObserverHandlers()
     dependencies = dependencies or HostDependencies()
+    if handlers.session_input is None and dependencies.graph is not None:
+        graph = dependencies.graph
+        owner_incarnation = (
+            None
+            if dependencies.owner_capabilities is None
+            else dependencies.owner_capabilities.owner_incarnation
+        )
+        handlers = ObserverHandlers(
+            session_input=lambda run_id, request: admit_session_command(
+                graph, run_id, request, owner_incarnation=owner_incarnation
+            ),
+            cancel=handlers.cancel,
+        )
+    if (
+        handlers.cancel is None
+        and dependencies.graph is not None
+        and dependencies.git_port is not None
+        and dependencies.process is not None
+    ):
+        graph = dependencies.graph
+        git_port = dependencies.git_port
+        process = dependencies.process
+        project_root = dependencies.project_root
+        handlers = ObserverHandlers(
+            session_input=handlers.session_input,
+            cancel=lambda run_id: cancel_run(graph, git_port, process, project_root, run_id),
+        )
     return WebCommands(
         session_input=handlers.session_input,
         cancel=handlers.cancel,
