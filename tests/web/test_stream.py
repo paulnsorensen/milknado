@@ -226,7 +226,7 @@ def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
     assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
 
 
-def test_stream_coalesces_threadsafe_callbacks_and_overflow_disconnects() -> None:
+def test_stream_queues_every_frame_and_disconnects_on_overflow() -> None:
     _, _, source = client_with_source()
     fanout = SnapshotFanout(source)
 
@@ -234,7 +234,6 @@ def test_stream_coalesces_threadsafe_callbacks_and_overflow_disconnects() -> Non
         stream = fanout.events()
         pending = asyncio.create_task(stream.__anext__())
         await asyncio.sleep(0)
-        queue = next(iter(fanout._clients))  # pyright: ignore[reportPrivateUsage]
         loop = asyncio.get_running_loop()
         original = loop.call_soon_threadsafe
         calls = 0
@@ -247,27 +246,22 @@ def test_stream_coalesces_threadsafe_callbacks_and_overflow_disconnects() -> Non
         loop.call_soon_threadsafe = counted  # pyright: ignore[reportAttributeAccessIssue]
         try:
             snapshot = source.snapshot()
-            for _ in range(1000):
+            for _ in range(3):
                 source.publish(snapshot)
             assert calls == 1
+            await pending
+            for _ in range(2):
+                _ = await stream.__anext__()
         finally:
             loop.call_soon_threadsafe = original
-            await pending
             await stream.aclose()
-        assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
 
-        stream = fanout.events()
-        pending = asyncio.create_task(stream.__anext__())
-        await asyncio.sleep(0)
-        queue = next(iter(fanout._clients))  # pyright: ignore[reportPrivateUsage]
+        queue: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue(32)
+        fanout._add(queue, loop)  # pyright: ignore[reportPrivateUsage]
         for _ in range(33):
-            fanout._enqueue(queue, source.snapshot())  # pyright: ignore[reportPrivateUsage]
-        await asyncio.sleep(0)
+            source.publish(source.snapshot())
         assert len(source._listeners) == 0  # pyright: ignore[reportPrivateUsage]
-        await pending
-        with pytest.raises(StopAsyncIteration):
-            _ = await stream.__anext__()
-        await stream.aclose()
+        assert await queue.get() is None
 
     asyncio.run(exercise())
 
@@ -349,7 +343,7 @@ def test_stream_terminates_clients_when_subscription_fails(
     assert caplog.records[0].exc_info is not None
 
 
-def test_stream_ignores_callback_from_previous_subscription_generation() -> None:
+def test_stream_ignores_callback_interleaved_with_generation_invalidation() -> None:
     _, _, source = client_with_source()
     fanout = SnapshotFanout(source)
     listeners: list[Callable[[ExecutionSnapshot], None]] = []
@@ -366,13 +360,22 @@ def test_stream_ignores_callback_from_previous_subscription_generation() -> None
         second: asyncio.Queue[ExecutionSnapshot | None] = asyncio.Queue()
         fanout._add(first, loop)  # pyright: ignore[reportPrivateUsage]
         old_listener = listeners[0]
-        fanout._remove(first)  # pyright: ignore[reportPrivateUsage]
-        fanout._add(second, loop)  # pyright: ignore[reportPrivateUsage]
+        started = threading.Event()
 
-        old_listener(source.snapshot())
+        def invoke_old_listener() -> None:
+            started.set()
+            old_listener(source.snapshot())
+
+        with fanout._lock:  # pyright: ignore[reportPrivateUsage]
+            thread = threading.Thread(target=invoke_old_listener)
+            thread.start()
+            assert started.wait(2)
+            fanout._remove(first)  # pyright: ignore[reportPrivateUsage]
+            fanout._add(second, loop)  # pyright: ignore[reportPrivateUsage]
+        thread.join(2)
+        assert not thread.is_alive()
         await asyncio.sleep(0)
         assert second.empty()
-
         fanout._remove(second)  # pyright: ignore[reportPrivateUsage]
 
     asyncio.run(exercise())
