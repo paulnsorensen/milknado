@@ -33,6 +33,14 @@ _EXPECTED_CONTRACTS: dict[str, tuple[list[str], list[str]]] = {
         ["milknado.adapters"],
         ["milknado.app"],
     ),
+    "app domains and adapters must not import web": (
+        ["milknado.app", "milknado.domains", "milknado.adapters"],
+        ["milknado.web"],
+    ),
+    "web must not import cli mcp or textual": (
+        ["milknado.web"],
+        ["milknado.cli", "milknado.mcp", "textual"],
+    ),
 }
 
 
@@ -57,6 +65,7 @@ def test_layering_contracts_are_declared() -> None:
         "milknado.cli",
         "milknado.mcp",
         "milknado.adapters",
+        "milknado.web",
     ]
     assert barrel_contract["forbidden_modules"] == [
         "milknado.domains.batching._model",
