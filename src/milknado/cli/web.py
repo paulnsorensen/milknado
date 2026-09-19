@@ -42,38 +42,31 @@ class _Controller(Protocol):
 
 
 class _ProjectGitInspection:
-    def __init__(self, graph: MikadoGraph, project_root: Path) -> None:
+    def __init__(self, project_root: Path) -> None:
         from milknado.adapters import GitAdapter
 
-        self._graph: MikadoGraph = graph
         self._git: GitAdapter = GitAdapter(project_root)
 
     @property
     def port(self) -> GitPort:
         return self._git
 
-    def _context(self, run_id: str) -> SessionContext:
-        context = self._graph.sessions.view(run_id).context
-        if context is None:
-            raise ValueError(f"run {run_id!r} has no session context")
-        return context
+    def changes(self, context: SessionContext) -> tuple[ChangedFile, ...]:
+        return self._git.session_changes(context)
 
-    def changes(self, run_id: str) -> tuple[ChangedFile, ...]:
-        return self._git.session_changes(self._context(run_id))
-
-    def diff(self, run_id: str, path: str) -> str:
-        return self._git.session_diff(self._context(run_id), path)
+    def diff(self, context: SessionContext, path: str) -> str:
+        return self._git.session_diff(context, path)
 
 
 def _host_dependencies(
     graph: MikadoGraph,
     config: MilknadoConfig,
     project_root: Path,
-    owner: Callable[[], OwnerCapabilities | None] | None = None,
+    owner: Callable[[str | None], OwnerCapabilities | None] | None = None,
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
 
-    git = _ProjectGitInspection(graph, project_root)
+    git = _ProjectGitInspection(project_root)
 
     return HostDependencies(
         graph=graph,
@@ -87,7 +80,11 @@ def _host_dependencies(
     )
 
 
-def _owner_capabilities(controller: _Controller, graph: MikadoGraph) -> OwnerCapabilities | None:
+def _owner_capabilities(
+    controller: _Controller, graph: MikadoGraph, run_id: str | None = None
+) -> OwnerCapabilities | None:
+    if run_id is not None:
+        return graph.commands.capabilities(run_id)
     active_runs = controller.snapshot().active_runs
     if len(active_runs) != 1:
         return None
@@ -162,8 +159,8 @@ def run_owner_web(
         controller = build_execution_controller(graph, context.config, context.project_root)
         login = LaunchToken()
 
-        def owner() -> OwnerCapabilities | None:
-            return _owner_capabilities(controller, graph)
+        def owner(run_id: str | None = None) -> OwnerCapabilities | None:
+            return _owner_capabilities(controller, graph, run_id)
 
         dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
         app = create_app(controller, owner_commands(controller, dependencies), login)

@@ -56,9 +56,10 @@ class ObserverHandlers:
 
 def _current_owner_capabilities(
     dependencies: HostDependencies,
+    run_id: str | None = None,
 ) -> OwnerCapabilities | None:
     owner = dependencies.owner_capabilities
-    return owner() if callable(owner) else owner
+    return owner(run_id) if callable(owner) else owner
 
 
 def _cancel_owner(
@@ -97,7 +98,7 @@ def owner_commands(
                 request
                 if (
                     (
-                        (owner := _current_owner_capabilities(dependencies)) is None
+                        (owner := _current_owner_capabilities(dependencies, run_id)) is None
                         or run_id == owner.run_id
                     )
                     and controller.session_input(run_id, request)
@@ -138,7 +139,7 @@ def observer_commands(
                 request,
                 owner_incarnation=(
                     owner.owner_incarnation
-                    if (owner := _current_owner_capabilities(dependencies)) is not None
+                    if (owner := _current_owner_capabilities(dependencies, run_id)) is not None
                     else None
                 ),
             ),

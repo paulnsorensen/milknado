@@ -7,7 +7,13 @@ from milknado.app.run_source import (
     ExecutionSnapshotSource,
     NodeSnapshotRequest,
 )
-from milknado.domains.graph import NodeDetailResponse
+from milknado.domains.common import MikadoNode
+from milknado.domains.graph import (
+    NodeDetailResponse,
+    NodeDetailSnapshot,
+    SnapshotPage,
+    SnapshotValue,
+)
 from milknado.web import LaunchToken, WebCommands, create_app
 
 
@@ -106,3 +112,43 @@ def client_with_source(
     test_client = TestClient(app, base_url="http://127.0.0.1")
     test_client.cookies.set(login.cookie_name, login.value)  # pyright: ignore[reportUnknownMemberType]
     return test_client, login, fixture
+
+
+def node_detail_response(node_id: int = 7) -> NodeDetailResponse:
+    node = MikadoNode(id=node_id, description="fixture node")
+    nodes = SnapshotPage((), 0, 10, 0, False)
+    ids = SnapshotPage((), 0, 10, 0, False)
+    detail = NodeDetailSnapshot(
+        node=node,
+        description=node.description,
+        parent=None,
+        children=nodes,
+        ancestors=nodes,
+        prerequisite_ids=ids,
+        dependent_ids=ids,
+        reverse_dependents=nodes,
+        owned_files=SnapshotPage((), 0, 10, 0, False),
+        runs=SnapshotPage((), 0, 10, 0, False),
+        reviews=SnapshotPage((), 0, 10, 0, False),
+        sessions=SnapshotPage((), 0, 10, 0, False),
+        receipts=SnapshotPage((), 0, 10, 0, False),
+        goal_claim=SnapshotValue(None, "not_stored"),
+        artifacts=SnapshotPage((), 0, 10, 0, False),
+    )
+    return NodeDetailResponse(node_id, 2, detail)
+
+
+def authenticated_client(
+    snapshot_source: ExecutionSnapshotSource,
+    commands: WebCommands | None = None,
+    *,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
+    login = LaunchToken("test-token")
+    result = TestClient(
+        create_app(snapshot_source, commands or WebCommands(), login),
+        base_url="http://127.0.0.1",
+        raise_server_exceptions=raise_server_exceptions,
+    )
+    result.cookies.set(login.cookie_name, login.value)  # pyright: ignore[reportUnknownMemberType]
+    return result

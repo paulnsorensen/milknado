@@ -73,7 +73,7 @@ def test_snapshot_reads_live_owner_capabilities_after_app_construction() -> None
         published_at="second",
     )
     current = [first]
-    commands = WebCommands(owner_capabilities=lambda: current[0])
+    commands = WebCommands(owner_capabilities=lambda _run_id: current[0])
     test_client, _ = client(commands)
 
     first_response = test_client.get("/api/snapshot", headers=headers())  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
@@ -112,7 +112,7 @@ def test_observer_session_input_reads_new_owner_fence_per_request(
     )
     current = [first]
     commands = observer_commands(
-        dependencies=HostDependencies(graph=graph, owner_capabilities=lambda: current[0])
+        dependencies=HostDependencies(graph=graph, owner_capabilities=lambda _run_id: current[0])
     )
     assert commands.session_input is not None
     current[0] = second
@@ -219,3 +219,29 @@ def test_observer_builder_wires_graph_process_and_project_dependencies(
     assert commands.cancel is not None
     with pytest.raises(ValueError, match="not found"):
         _ = commands.cancel("missing-run")
+
+
+def test_owner_routes_input_to_each_requested_run_fence() -> None:
+    controller = _Controller()
+    owners = {
+        run_id: OwnerCapabilities(
+            run_id=run_id,
+            node_id=index,
+            invocation_id=f"inv-{run_id}",
+            owner_incarnation=f"owner-{run_id}",
+            actions=("steer",),
+            permission_ids=(),
+            published_at="now",
+        )
+        for index, run_id in enumerate(("run-1", "run-2"), start=1)
+    }
+    commands = owner_commands(
+        controller,
+        HostDependencies(owner_capabilities=lambda run_id: owners.get(run_id or "")),
+    )
+    assert commands.session_input is not None
+    command = SessionInput(action="steer", request_id="request")
+
+    assert commands.session_input("run-1", command) == command
+    assert commands.session_input("run-2", command) == command
+    assert controller.run_ids == ["run-1", "run-2"]

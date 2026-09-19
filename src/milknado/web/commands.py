@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 from milknado.adapters import ChangedFile
-from milknado.domains.common import SessionInput
+from milknado.domains.common import SessionContext, SessionInput
 from milknado.domains.graph import (
     GoalReviewDecisionRequest,
     GoalReviewRecord,
@@ -16,7 +16,7 @@ from milknado.domains.graph import (
     OwnerCapabilities,
 )
 
-OwnerCapabilitiesProvider = Callable[[], OwnerCapabilities | None]
+OwnerCapabilitiesProvider = Callable[[str | None], OwnerCapabilities | None]
 
 
 class SessionInputHandler(Protocol):
@@ -45,8 +45,8 @@ class GraphEditCommands:
 
 
 class GitInspection(Protocol):
-    def changes(self, run_id: str) -> tuple[ChangedFile, ...]: ...
-    def diff(self, run_id: str, path: str) -> str: ...
+    def changes(self, context: SessionContext) -> tuple[ChangedFile, ...]: ...
+    def diff(self, context: SessionContext, path: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +85,10 @@ def build_capabilities(commands: WebCommands) -> dict[str, object]:
 
 def _owner_capabilities(
     owner: OwnerCapabilities | OwnerCapabilitiesProvider | None,
+    run_id: str | None = None,
 ) -> dict[str, object]:
     if callable(owner):
-        owner = owner()
+        owner = owner(run_id)
     if owner is None:
         return {"available": False, "reason": "No live owner is connected."}
     return {

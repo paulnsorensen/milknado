@@ -14,8 +14,9 @@ from milknado.app.run_source import (
     TerminalRunSnapshot,
 )
 from milknado.domains.common import GitOperationError, SessionContext, SessionView
-from milknado.domains.graph import NodeDetailResponse, NodeDetailSnapshot
-from milknado.web import LaunchToken, WebCommands, create_app
+from milknado.domains.graph import NodeDetailResponse
+from milknado.web import WebCommands
+from tests.web.support import authenticated_client, headers, node_detail_response
 
 
 @dataclass
@@ -57,37 +58,34 @@ class LookupErrorSource(InspectionSource):
 
 
 class InspectionGit:
-    def changes(self, run_id: str) -> tuple[ChangedFile, ...]:
-        assert run_id == "run-1"
+    def changes(self, context: SessionContext) -> tuple[ChangedFile, ...]:
+        assert context == SessionContext(family="test", cwd="/tmp")
         return (ChangedFile("README.md", "M", 2, 1),)
 
-    def diff(self, run_id: str, path: str) -> str:
-        assert run_id == "run-1"
+    def diff(self, context: SessionContext, path: str) -> str:
+        assert context == SessionContext(family="test", cwd="/tmp")
         assert path == "README.md"
         return "diff -- README.md"
 
 
 class FailingGit:
-    def changes(self, run_id: str) -> tuple[ChangedFile, ...]:
-        raise GitOperationError("status", f"failed for {run_id}")
+    def changes(self, context: SessionContext) -> tuple[ChangedFile, ...]:
+        raise GitOperationError("status", f"failed for {context.cwd}")
 
-    def diff(self, run_id: str, path: str) -> str:
-        raise GitOperationError("diff", f"failed for {run_id}:{path}")
+    def diff(self, context: SessionContext, path: str) -> str:
+        raise GitOperationError("diff", f"failed for {context.cwd}:{path}")
 
 
 class InvalidPathGit(InspectionGit):
     def diff(  # pyright: ignore[reportImplicitOverride]
-        self, run_id: str, path: str
+        self, context: SessionContext, path: str
     ) -> str:
+        _ = context
         raise ValueError(f"invalid diff path: {path}")
 
 
 def _detail(node_id: int = 7) -> NodeDetailResponse:
-    return NodeDetailResponse(
-        node_id=node_id,
-        request_generation=2,
-        detail=cast(NodeDetailSnapshot, cast(object, {})),
-    )
+    return node_detail_response(node_id)
 
 
 def _run() -> TerminalRunSnapshot:
@@ -120,32 +118,14 @@ def client(
     include_git: bool = True,
 ) -> TestClient:
     source = InspectionSource(detail=detail or _detail(), run=run or _run())
-    login = LaunchToken("test-token")
     commands = WebCommands(git=git if include_git else None)
-    result = TestClient(create_app(source, commands, login), base_url="http://127.0.0.1")
-    result.cookies.set(  # pyright: ignore[reportUnknownMemberType]
-        login.cookie_name, login.value
-    )
-    return result
+    return authenticated_client(source, commands)
 
 
 def client_from_source(
     source: InspectionSource, *, raise_server_exceptions: bool = True
 ) -> TestClient:
-    login = LaunchToken("test-token")
-    result = TestClient(
-        create_app(source, WebCommands(), login),
-        base_url="http://127.0.0.1",
-        raise_server_exceptions=raise_server_exceptions,
-    )
-    result.cookies.set(  # pyright: ignore[reportUnknownMemberType]
-        login.cookie_name, login.value
-    )
-    return result
-
-
-def headers() -> dict[str, str]:
-    return {"host": "127.0.0.1", "origin": "http://127.0.0.1"}
+    return authenticated_client(source, raise_server_exceptions=raise_server_exceptions)
 
 
 def test_inspection_routes_return_fixture_data() -> None:
@@ -167,11 +147,13 @@ def test_inspection_routes_return_fixture_data() -> None:
     assert response.status_code == 200
     assert default_source.last_request == NodeSnapshotRequest(node_id=7, request_generation=0)
 
-    assert response.json() == {
-        "node_id": 7,
-        "request_generation": 2,
-        "detail": {},
-    }
+    encoded = cast(dict[str, object], response.json())
+    detail = cast(dict[str, object], encoded["detail"])
+    node = cast(dict[str, object], detail["node"])
+    assert encoded["node_id"] == 7
+    assert encoded["request_generation"] == 2
+    assert node["id"] == 7
+    assert detail["description"] == "fixture node"
 
     response = client(git=InspectionGit()).get(  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         "/api/runs/run-1/changes", headers=headers()
@@ -239,8 +221,8 @@ def test_run_inspection_rejects_missing_git_capability() -> None:
 @pytest.mark.parametrize(
     ("endpoint", "reason"),
     [
-        ("changes", "git status failed: failed for run-1"),
-        ("diff?path=README.md", "git diff failed: failed for run-1:README.md"),
+        ("changes", "git status failed: failed for /tmp"),
+        ("diff?path=README.md", "git diff failed: failed for /tmp:README.md"),
     ],
 )
 def test_run_inspection_reports_git_failures(endpoint: str, reason: str) -> None:

@@ -36,7 +36,7 @@ def changes_route(request: Request) -> Response:
     git = context.commands.git
     assert git is not None
     try:
-        changes = git.changes(run_id)
+        changes = git.changes(run_context)
     except GitOperationError as exc:
         return json_response({"error": str(exc)}, status_code=409)
     return json_response(changes)
@@ -52,7 +52,7 @@ def diff_route(request: Request) -> Response:
     assert git is not None
     path = request.query_params.get("path", "")
     try:
-        diff = git.diff(run_id, path)
+        diff = git.diff(run_context, path)
     except GitOperationError as exc:
         return json_response({"error": str(exc)}, status_code=409)
     except ValueError as exc:

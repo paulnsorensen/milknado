@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
@@ -68,27 +67,15 @@ def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
 
 def test_project_git_inspection_delegates_session_context(tmp_path: Path) -> None:
     context = SessionContext(family="ralph", cwd=str(tmp_path), base_oid="base")
-    graph = SimpleNamespace(
-        sessions=SimpleNamespace(view=lambda run_id: SimpleNamespace(context=context))
-    )
     with patch("milknado.adapters.GitAdapter") as adapter_type:
         adapter = adapter_type.return_value
         adapter.session_changes.return_value = ("changed",)
         adapter.session_diff.return_value = "diff"
-        inspection = _ProjectGitInspection(cast(MikadoGraph, graph), tmp_path)
-        assert inspection.changes("run") == ("changed",)
-        assert inspection.diff("run", "file") == "diff"
+        inspection = _ProjectGitInspection(tmp_path)
+        assert inspection.changes(context) == ("changed",)
+        assert inspection.diff(context, "file") == "diff"
         adapter.session_changes.assert_called_once_with(context)
         adapter.session_diff.assert_called_once_with(context, "file")
-
-
-def test_project_git_inspection_rejects_missing_context(tmp_path: Path) -> None:
-    graph = SimpleNamespace(
-        sessions=SimpleNamespace(view=lambda run_id: SimpleNamespace(context=None))
-    )
-    inspection = _ProjectGitInspection(cast(MikadoGraph, graph), tmp_path)
-    with pytest.raises(ValueError, match="no session context"):
-        inspection.changes("run")
 
 
 def test_owner_capabilities_reads_active_run() -> None:
@@ -100,3 +87,17 @@ def test_owner_capabilities_reads_active_run() -> None:
     assert (
         _owner_capabilities(cast(_Controller, controller), cast(MikadoGraph, graph)) is capability
     )
+
+
+def test_owner_capabilities_resolves_requested_run_with_concurrent_runs() -> None:
+    controller = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            active_runs=(SimpleNamespace(run_id="run-1"), SimpleNamespace(run_id="run-2"))
+        )
+    )
+    capabilities = {"run-2": object()}
+    graph = SimpleNamespace(
+        commands=SimpleNamespace(capabilities=lambda run_id: capabilities.get(run_id))
+    )
+    actual = _owner_capabilities(cast(_Controller, controller), cast(MikadoGraph, graph), "run-2")
+    assert actual is capabilities["run-2"]
