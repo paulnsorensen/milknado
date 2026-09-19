@@ -2,30 +2,68 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from milknado.domains.graph.commands import OwnerCapabilities
+from milknado.domains.common import MikadoNode, NodeKind, NodeSpec, SessionInput
+from milknado.domains.graph.commands import (
+    CommandReceipt,
+    OwnerCapabilities,
+)
+from milknado.domains.graph.goal_review import GoalReviewRecord
 
-SessionInputHandler = Callable[[], object]
-RunHandler = Callable[[], object]
-SchedulingHandler = Callable[[], object]
-ReviewHandler = Callable[[], object]
+
+class SessionInputHandler(Protocol):
+    def __call__(self, request: SessionInput) -> CommandReceipt: ...
+
+
+class RunHandler(Protocol):
+    def __call__(self, run_id: str) -> dict[str, object]: ...
+
+
+class SchedulingHandler(Protocol):
+    def __call__(self) -> None: ...
+
+
+class ReviewHandler(Protocol):
+    def __call__(self, review_id: int, decision: str) -> GoalReviewRecord: ...
+
+
+class GraphProtocol(Protocol):
+    def add_node(
+        self,
+        description: str,
+        parent_id: int | None = None,
+        spec: NodeSpec | None = None,
+        files: tuple[str, ...] | None = None,
+    ) -> MikadoNode: ...
+
+    def update_node(  # noqa: PLR0913 - mirrors graph mutation contract
+        self,
+        node_id: int,
+        description: str | None = None,
+        kind: NodeKind | None = None,
+        flavor: str | None = None,
+        artifact_path: str | None = None,
+        flavor_registry: frozenset[str] | None = None,
+    ) -> None: ...
+
+    def move_node(self, node_id: int, parent_id: int | None) -> None: ...
+    def archive_subtree(self, node_id: int) -> int: ...
 
 
 @dataclass(frozen=True, slots=True)
 class GraphEditCommands:
-    graph: object
+    graph: GraphProtocol
     flavor_registry: frozenset[str]
     project_root: Path
 
 
 class GitInspection(Protocol):
-    def changes(self, run_id: str) -> object: ...
+    def changes(self, run_id: str) -> list[dict[str, object]]: ...
 
-    def diff(self, run_id: str, path: str) -> object: ...
+    def diff(self, run_id: str, path: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)

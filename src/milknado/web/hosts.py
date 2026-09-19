@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from milknado.domains.graph.commands import OwnerCapabilities
 from milknado.web.commands import (
     GitInspection,
     GraphEditCommands,
+    GraphProtocol,
     ReviewHandler,
     RunHandler,
     SchedulingHandler,
@@ -16,55 +18,66 @@ from milknado.web.commands import (
 )
 
 
-def owner_commands(  # noqa: PLR0913 - approved capability set
-    session_input: SessionInputHandler | None = None,
-    cancel: RunHandler | None = None,
-    force_stop: RunHandler | None = None,
-    stop_scheduling: SchedulingHandler | None = None,
-    *,
-    graph: object | None = None,
-    flavor_registry: frozenset[str] | None = None,
-    project_root: Path | None = None,
-    review_decision: ReviewHandler | None = None,
-    git: GitInspection | None = None,
-    owner_capabilities: OwnerCapabilities | None = None,
-) -> WebCommands:
-    graph_edits = (
-        None
-        if graph is None
-        else GraphEditCommands(graph, flavor_registry or frozenset(), project_root or Path())
-    )
-    return WebCommands(
-        session_input,
-        cancel,
-        force_stop,
-        stop_scheduling,
-        graph_edits,
-        review_decision,
-        git,
-        owner_capabilities,
+@dataclass(frozen=True, slots=True)
+class HostDependencies:
+    graph: GraphProtocol | None = None
+    flavor_registry: frozenset[str] = frozenset()
+    project_root: Path = Path()
+    review_decision: ReviewHandler | None = None
+    git: GitInspection | None = None
+    owner_capabilities: OwnerCapabilities | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerHandlers:
+    session_input: SessionInputHandler | None = None
+    cancel: RunHandler | None = None
+    force_stop: RunHandler | None = None
+    stop_scheduling: SchedulingHandler | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverHandlers:
+    session_input: SessionInputHandler | None = None
+    cancel: RunHandler | None = None
+
+
+def _graph_edits(dependencies: HostDependencies) -> GraphEditCommands | None:
+    if dependencies.graph is None:
+        return None
+    return GraphEditCommands(
+        dependencies.graph, dependencies.flavor_registry, dependencies.project_root
     )
 
 
-def observer_commands(  # noqa: PLR0913 - approved capability set
-    session_input: SessionInputHandler | None = None,
-    cancel: RunHandler | None = None,
-    *,
-    graph: object | None = None,
-    flavor_registry: frozenset[str] | None = None,
-    project_root: Path | None = None,
-    review_decision: ReviewHandler | None = None,
-    git: GitInspection | None = None,
+def owner_commands(
+    handlers: OwnerHandlers | None = None,
+    dependencies: HostDependencies | None = None,
 ) -> WebCommands:
-    graph_edits = (
-        None
-        if graph is None
-        else GraphEditCommands(graph, flavor_registry or frozenset(), project_root or Path())
-    )
+    handlers = handlers or OwnerHandlers()
+    dependencies = dependencies or HostDependencies()
     return WebCommands(
-        session_input=session_input,
-        cancel=cancel,
-        graph_edits=graph_edits,
-        review_decision=review_decision,
-        git=git,
+        session_input=handlers.session_input,
+        cancel=handlers.cancel,
+        force_stop=handlers.force_stop,
+        stop_scheduling=handlers.stop_scheduling,
+        graph_edits=_graph_edits(dependencies),
+        review_decision=dependencies.review_decision,
+        git=dependencies.git,
+        owner_capabilities=dependencies.owner_capabilities,
+    )
+
+
+def observer_commands(
+    handlers: ObserverHandlers | None = None,
+    dependencies: HostDependencies | None = None,
+) -> WebCommands:
+    handlers = handlers or ObserverHandlers()
+    dependencies = dependencies or HostDependencies()
+    return WebCommands(
+        session_input=handlers.session_input,
+        cancel=handlers.cancel,
+        graph_edits=_graph_edits(dependencies),
+        review_decision=dependencies.review_decision,
+        git=dependencies.git,
     )
