@@ -59,15 +59,11 @@ def test_static_assets_require_login() -> None:
     assert test_client.get("/assets/missing.txt").status_code == 401
 
 
-def test_wheel_contains_index() -> None:
-    import subprocess
-
-    result = subprocess.run(
-        ["uv", "build", "--wheel", "--out-dir", ".static-wheel-test"], check=True
-    )
-    assert result.returncode == 0
-    wheels = list(Path(".static-wheel-test").glob("*.whl"))
-    assert wheels
+def test_wheel_contains_index(tmp_path: Path) -> None:
+    output_dir = tmp_path / "wheel"
+    _ = subprocess.run(["uv", "build", "--wheel", "--out-dir", str(output_dir)], check=True)
+    wheels = list(output_dir.glob("*.whl"))
+    assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as wheel:
         assert "milknado/web/static/index.html" in wheel.namelist()
 
@@ -82,3 +78,8 @@ def test_static_assets_serve_committed_asset() -> None:
 def test_static_assets_reject_traversal() -> None:
     test_client, _ = client()
     assert test_client.get("/assets/%2e%2e/index.html").status_code == 404
+
+
+def test_static_assets_reject_encoded_nul() -> None:
+    test_client, _ = client()
+    assert test_client.get("/assets/%00").status_code == 404

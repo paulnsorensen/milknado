@@ -48,7 +48,10 @@ def assets_route(request: Request) -> Response:
     if not context.login.verify(request.cookies.get(context.login.cookie_name)):
         return PlainTextResponse("Authentication required.", status_code=401)
     requested = cast(str, request.path_params.get("path", ""))
-    asset = (_ASSETS_DIR / requested).resolve()
+    try:
+        asset = (_ASSETS_DIR / requested).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return PlainTextResponse("Not found.", status_code=404)
     if _ASSETS_DIR not in asset.parents or not asset.is_file():
         return PlainTextResponse("Not found.", status_code=404)
     return FileResponse(asset)
