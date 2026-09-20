@@ -1,0 +1,89 @@
+"""AC-8: confirming a run-control action mints one command; dismiss mints none."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterator
+
+import pytest
+from playwright.sync_api import Page
+
+from milknado.domains.graph import OwnerCapabilities
+from milknado.web import LaunchToken, WebCommands, create_app
+from tests.browser.conftest import (
+    BROWSER_TOKEN,
+    BrowserServer,
+    BrowserSnapshotSource,
+    RecordingCommands,
+    open_app,
+    owner_web_commands,
+    wait_until,
+)
+
+pytestmark = pytest.mark.browser
+
+RUN_ID = "run-1"
+
+CASES: tuple[tuple[str, Callable[[RecordingCommands], int]], ...] = (
+    ("Cancel run", lambda recorder: len(recorder.cancel_calls)),
+    ("Force stop", lambda recorder: len(recorder.force_stop_calls)),
+    ("Stop scheduling", lambda recorder: recorder.stop_scheduling_calls),
+)
+
+
+@pytest.fixture
+def confirm_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
+    login = LaunchToken(BROWSER_TOKEN)
+    source = BrowserSnapshotSource()
+    commands, recorder = owner_web_commands()
+    commands = WebCommands(
+        cancel=commands.cancel,
+        force_stop=commands.force_stop,
+        stop_scheduling=commands.stop_scheduling,
+        owner_capabilities=OwnerCapabilities(
+            run_id=RUN_ID,
+            node_id=1,
+            invocation_id="invocation-1",
+            owner_incarnation="1",
+            actions=(),
+            permission_ids=(),
+            published_at="",
+        ),
+    )
+    app = create_app(source, commands, login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server, recorder
+    server.stop()
+
+
+@pytest.mark.parametrize("case", CASES, ids=[label for label, _ in CASES])
+def test_confirm_records_one_command(
+    page: Page,
+    confirm_server: tuple[BrowserServer, RecordingCommands],
+    case: tuple[str, Callable[[RecordingCommands], int]],
+) -> None:
+    trigger_label, call_count = case
+    server, recorder = confirm_server
+    open_app(page, server.login_url, page.get_by_role("button", name=trigger_label, exact=True))
+
+    page.get_by_role("button", name=trigger_label, exact=True).click()
+    page.get_by_role("button", name="Confirm").click()
+
+    wait_until(lambda: call_count(recorder) == 1)
+
+
+@pytest.mark.parametrize("case", CASES, ids=[label for label, _ in CASES])
+def test_dismiss_records_zero_commands(
+    page: Page,
+    confirm_server: tuple[BrowserServer, RecordingCommands],
+    case: tuple[str, Callable[[RecordingCommands], int]],
+) -> None:
+    trigger_label, call_count = case
+    server, recorder = confirm_server
+    open_app(page, server.login_url, page.get_by_role("button", name=trigger_label, exact=True))
+
+    page.get_by_role("button", name=trigger_label, exact=True).click()
+    page.get_by_role("button", name="Dismiss").click()
+    page.wait_for_timeout(200)
+
+    assert call_count(recorder) == 0

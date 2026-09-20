@@ -1,0 +1,52 @@
+.mk-shell {
+  display: grid;
+  grid-template-areas: 'header header header' 'rail canvas sidecar' 'rail dock sidecar';
+  grid-template-columns: var(--mk-rail-width) 1fr var(--mk-sidecar-width);
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+  background: var(--mk-surface);
+  color: var(--mk-ink);
+  font-family: var(--mk-font-sans);
+  position: relative;
+}
+
+.mk-shell [data-region='header'] {
+  grid-area: header;
+}
+
+.mk-shell [data-region='rail'] {
+  grid-area: rail;
+}
+
+.mk-shell [data-region='canvas'] {
+  grid-area: canvas;
+  position: relative;
+}
+
+.mk-shell [data-region='dock'] {
+  grid-area: dock;
+}
+
+.mk-shell [data-region='sidecar'] {
+  grid-area: sidecar;
+  overflow-y: auto;
+  background: var(--mk-surface-raised);
+  box-shadow: var(--mk-shadow-popover);
+}
+
+.mk-shell [data-region='canvas-overlay'] {
+  position: absolute;
+  top: var(--mk-space-3);
+  right: var(--mk-space-3);
+  z-index: var(--mk-layer-toolbar);
+}
+
+.mk-shell [data-region='toast'] {
+  position: absolute;
+  right: var(--mk-space-4);
+  bottom: var(--mk-space-4);
+  z-index: var(--mk-layer-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
+}

@@ -50,6 +50,7 @@ def test_session_input_rejects_conflicting_command_id(graph) -> None:
     [
         ({"command_id": "  ", "action": "steer", "text": "hello"}, "command_id"),
         ({"command_id": "cmd-2", "action": "steer"}, "text"),
+        ({"command_id": "cmd-2b", "action": "follow_up"}, "text"),
         ({"command_id": "cmd-3", "action": "approve"}, "request_id"),
     ],
 )
@@ -60,3 +61,25 @@ def test_session_input_rejects_malformed_payload(graph, payload, reason) -> None
     )
     assert response.status_code == 400
     assert reason in response.json()["reason"]
+
+
+def test_session_input_admits_interrupt_without_text(graph) -> None:
+    node = graph.add_node("interruptible")
+    assert graph.claim_node(node.id, "run-1", now="2026-09-12T12:00:00+00:00")
+    graph.runs.start("run-1", node.id, "run.log", "2026-09-12T12:00:00+00:00", 60)
+    graph.commands.publish_capabilities(
+        "run-1",
+        node.id,
+        "inv-1",
+        "owner-1",
+        ("interrupt",),
+        published_at="2026-09-12T12:00:00+00:00",
+    )
+    commands = observer_commands(dependencies=HostDependencies(graph=graph))
+    response = client(commands)[0].post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-4", "action": "interrupt"},
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    assert graph.commands.command("cmd-4") is not None
