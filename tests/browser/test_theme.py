@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import BrowserServer
+from tests.browser.conftest import BrowserServer, open_app
 
 pytestmark = pytest.mark.browser
 
@@ -33,8 +33,9 @@ def test_theme_switch_sets_and_persists_the_palette(
     case: tuple[str, str, str],
 ) -> None:
     button_name, theme, background = case
-    _ = page.goto(browser_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(
+        page, browser_server.login_url, page.get_by_role("button", name=button_name, exact=True)
+    )
 
     page.get_by_role("button", name=button_name, exact=True).click()
 
@@ -42,7 +43,7 @@ def test_theme_switch_sets_and_persists_the_palette(
     assert _shell_background(page) == background
 
     _ = page.reload()
-    page.wait_for_load_state("networkidle")
+    expect(page.locator(".mk-shell")).to_be_visible()
 
     expect(page.locator("html")).to_have_attribute("data-theme", theme)
     assert _shell_background(page) == background

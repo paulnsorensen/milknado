@@ -17,6 +17,7 @@ from tests.browser.conftest import (
     BrowserServer,
     BrowserSnapshotSource,
     RecordingCommands,
+    open_app,
     owner_web_commands,
     wait_until,
 )
@@ -87,9 +88,11 @@ def steering_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
 def test_question_mark_opens_help_with_all_columns(
     page: Page, two_root_server: BrowserServer
 ) -> None:
-    _ = page.goto(two_root_server.login_url)
-    page.wait_for_load_state("networkidle")
-    page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True).wait_for()
+    open_app(
+        page,
+        two_root_server.login_url,
+        page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True),
+    )
 
     page.keyboard.press("?")
 
@@ -100,11 +103,9 @@ def test_question_mark_opens_help_with_all_columns(
 
 
 def test_arrow_key_moves_graph_selection(page: Page, two_root_server: BrowserServer) -> None:
-    _ = page.goto(two_root_server.login_url)
-    page.wait_for_load_state("networkidle")
-
     first = page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True)
     second = page.get_by_role("button", name=f"pending {SECOND_NODE_DESCRIPTION}", exact=True)
+    open_app(page, two_root_server.login_url, first)
     first.click()
 
     page.keyboard.press("ArrowDown")
@@ -118,9 +119,11 @@ def test_steering_key_confirms_and_runs_command(
     page: Page, steering_server: tuple[BrowserServer, RecordingCommands]
 ) -> None:
     server, recorder = steering_server
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
-    page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True).wait_for()
+    open_app(
+        page,
+        server.login_url,
+        page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True),
+    )
 
     page.keyboard.press("x")
     page.get_by_role("button", name="Confirm").click()
@@ -129,10 +132,12 @@ def test_steering_key_confirms_and_runs_command(
 
 
 def test_shortcut_key_is_ignored_while_typing(page: Page, two_root_server: BrowserServer) -> None:
-    _ = page.goto(two_root_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(
+        page,
+        two_root_server.login_url,
+        page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True),
+    )
 
-    page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True).wait_for()
     page.get_by_role("textbox", name="Jump to node").click()
     page.keyboard.press("?")
     page.wait_for_timeout(200)

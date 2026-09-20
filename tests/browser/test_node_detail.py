@@ -33,6 +33,7 @@ from tests.browser.conftest import (
     FIXTURE_NODE_DESCRIPTION,
     BrowserServer,
     BrowserSnapshotSource,
+    open_app,
 )
 
 pytestmark = pytest.mark.browser
@@ -179,8 +180,11 @@ def node_detail_server() -> Iterator[BrowserServer]:
 def test_node_sidecar_shows_run_paging_and_changes(
     page: Page, node_detail_server: BrowserServer
 ) -> None:
-    _ = page.goto(node_detail_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(
+        page,
+        node_detail_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
 
     page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
 

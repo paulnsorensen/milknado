@@ -7,14 +7,13 @@ from typing import cast
 import pytest
 from playwright.sync_api import Page
 
-from tests.browser.conftest import FIXTURE_NODE_DESCRIPTION, BrowserServer
+from tests.browser.conftest import FIXTURE_NODE_DESCRIPTION, BrowserServer, open_app
 
 pytestmark = pytest.mark.browser
 
 
 def _goto_logged_in(page: Page, server: BrowserServer) -> None:
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, server.login_url, page.get_by_text(FIXTURE_NODE_DESCRIPTION).first)
 
 
 def test_graph_renders_fixture_node_with_shared_react(

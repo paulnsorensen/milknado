@@ -25,18 +25,25 @@ export type SlotId = (typeof SLOT_IDS)[number];
 
 export type SlotContribution = () => ReactNode;
 
-const slots = new Map<SlotId, SlotContribution[]>();
+export interface SlotEntry {
+  key: number;
+  contribution: SlotContribution;
+}
+
+const slots = new Map<SlotId, SlotEntry[]>();
+let nextKey = 0;
 
 export function registerSlot(id: SlotId, contribution: SlotContribution): void {
   const existing = slots.get(id) ?? [];
-  existing.push(contribution);
+  existing.push({ key: nextKey++, contribution });
   slots.set(id, existing);
 }
 
-export function getSlot(id: SlotId): SlotContribution[] {
+export function getSlot(id: SlotId): SlotEntry[] {
   return slots.get(id) ?? [];
 }
 
 export function clearSlots(): void {
   slots.clear();
+  nextKey = 0;
 }

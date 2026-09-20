@@ -15,6 +15,7 @@ from tests.browser.conftest import (
     BrowserServer,
     BrowserSnapshotSource,
     build_fixture_snapshot,
+    open_app,
 )
 
 pytestmark = pytest.mark.browser
@@ -47,8 +48,11 @@ def unavailable_cancel_server() -> Iterator[BrowserServer]:
 def test_409_domain_reason_shows_toast(
     page: Page, unavailable_cancel_server: BrowserServer
 ) -> None:
-    _ = page.goto(unavailable_cancel_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(
+        page,
+        unavailable_cancel_server.login_url,
+        page.get_by_role("button", name="Cancel run", exact=True),
+    )
 
     page.get_by_role("button", name="Cancel run", exact=True).click()
     page.get_by_role("button", name="Confirm").click()
@@ -69,7 +73,6 @@ def listener_error_server() -> Iterator[BrowserServer]:
 
 
 def test_listener_error_shows_banner(page: Page, listener_error_server: BrowserServer) -> None:
-    _ = page.goto(listener_error_server.login_url)
-    page.wait_for_load_state("networkidle")
-
-    expect(page.get_by_text("Live update listener failed.")).to_be_visible()
+    open_app(
+        page, listener_error_server.login_url, page.get_by_text("Live update listener failed.")
+    )

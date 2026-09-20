@@ -4,7 +4,5 @@ import { Fragment, type ReactNode } from 'react';
 import { getSlot, type SlotId } from '../slots';
 
 export function renderSlot(id: SlotId): ReactNode[] {
-  return getSlot(id).map((contribution, index) => (
-    <Fragment key={index}>{contribution()}</Fragment>
-  ));
+  return getSlot(id).map(({ key, contribution }) => <Fragment key={key}>{contribution()}</Fragment>);
 }

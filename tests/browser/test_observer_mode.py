@@ -8,7 +8,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 from milknado.web import LaunchToken, WebCommands, create_app
-from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, BrowserSnapshotSource
+from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, BrowserSnapshotSource, open_app
 
 pytestmark = pytest.mark.browser
 
@@ -34,10 +34,8 @@ def test_observer_control_disabled_with_reason(
     page: Page, observer_server: BrowserServer, case: tuple[str, str]
 ) -> None:
     label, reason = case
-    _ = page.goto(observer_server.login_url)
-    page.wait_for_load_state("networkidle")
-
     button = page.get_by_role("button", name=label, exact=True)
-    expect(button).to_be_visible()
+    open_app(page, observer_server.login_url, button)
+
     expect(button).to_be_disabled()
     expect(page.get_by_text(reason)).to_be_visible()

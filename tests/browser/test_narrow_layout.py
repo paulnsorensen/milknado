@@ -17,7 +17,7 @@ from milknado.domains.graph import (
     SnapshotValue,
 )
 from milknado.web import LaunchToken, WebCommands, create_app
-from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, BrowserSnapshotSource
+from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, BrowserSnapshotSource, open_app
 
 pytestmark = pytest.mark.browser
 
@@ -78,10 +78,8 @@ def test_narrow_list_view_shows_outline_with_no_horizontal_scroll(
     page: Page, narrow_server: BrowserServer
 ) -> None:
     page.set_viewport_size(NARROW_VIEWPORT)
-    _ = page.goto(narrow_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
 
-    expect(page.get_by_role("treeitem", name=NODE_DESCRIPTION)).to_be_visible()
     expect(page.get_by_label("Jump to node")).to_be_visible()
     assert _has_no_horizontal_scroll(page)
 
@@ -90,8 +88,7 @@ def test_narrow_detail_view_is_full_width_with_44px_controls_and_no_horizontal_s
     page: Page, narrow_server: BrowserServer
 ) -> None:
     page.set_viewport_size(NARROW_VIEWPORT)
-    _ = page.goto(narrow_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
 
     page.get_by_role("treeitem", name=NODE_DESCRIPTION).click()
     page.get_by_role("button", name="Open node").click()

@@ -14,6 +14,7 @@ from typing import cast
 
 import pytest
 import uvicorn
+from playwright.sync_api import Locator, Page, expect
 from starlette.applications import Starlette
 
 from milknado.app.run_source import ExecutionSnapshot, NodeSnapshotRequest
@@ -148,11 +149,20 @@ def wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
         time.sleep(0.02)
 
 
-def _free_port() -> int:
+def open_app(page: Page, url: str, ready: Locator) -> None:
+    """Navigate to `url` and wait until `ready` is visible."""
+    _ = page.goto(url)
+    expect(ready).to_be_visible()
+
+
+def _bound_port(server: uvicorn.Server) -> int:
+    address = cast("tuple[str, int]", server.servers[0].sockets[0].getsockname())
+    return address[1]
+
+
+def _port_is_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        address = cast("tuple[str, int]", sock.getsockname())
-        return address[1]
+        return sock.connect_ex(("127.0.0.1", port)) != 0
 
 
 @dataclass
@@ -161,7 +171,7 @@ class BrowserServer:
 
     app: Starlette
     login: LaunchToken
-    port: int = field(default_factory=_free_port)
+    port: int = 0
     _server: uvicorn.Server | None = field(default=None, init=False, repr=False)
     _thread: Thread | None = field(default=None, init=False, repr=False)
 
@@ -189,6 +199,7 @@ class BrowserServer:
             if time.monotonic() > deadline:
                 raise TimeoutError("browser test server did not start within 5s")
             time.sleep(0.01)
+        self.port = _bound_port(server)
         self._server = server
         self._thread = thread
 
@@ -199,6 +210,8 @@ class BrowserServer:
             self._thread.join(timeout=5.0)
         self._server = None
         self._thread = None
+        if self.port:
+            wait_until(lambda: _port_is_free(self.port), timeout=5.0)
 
     def restart(self, app: Starlette | None = None) -> None:
         self.stop()

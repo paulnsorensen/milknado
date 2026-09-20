@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import wait_until
+from tests.browser.conftest import open_app, wait_until
 from tests.browser.graph_db import GraphDbServer, graph_db_server
 
 _ = graph_db_server
@@ -14,8 +14,9 @@ pytestmark = pytest.mark.browser
 
 
 def test_add_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer) -> None:
-    _ = page.goto(graph_db_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(
+        page, graph_db_server.login_url, page.get_by_role("button", name="Add node", exact=True)
+    )
 
     page.get_by_role("button", name="Add node", exact=True).click()
     page.get_by_label("Description").fill("Newly added node")
@@ -31,8 +32,7 @@ def test_add_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer
 
 
 def test_edit_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer) -> None:
-    _ = page.goto(graph_db_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, graph_db_server.login_url, page.get_by_role("button", name="Edit target"))
 
     page.get_by_role("button", name="Edit target").click()
     page.get_by_role("button", name="Edit node", exact=True).click()
@@ -49,8 +49,7 @@ def test_edit_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServe
 
 
 def test_move_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer) -> None:
-    _ = page.goto(graph_db_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, graph_db_server.login_url, page.get_by_role("button", name="Move target"))
 
     page.get_by_role("button", name="Move target").click()
     page.get_by_role("button", name="Move node", exact=True).click()
@@ -67,8 +66,7 @@ def test_move_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServe
 
 
 def test_archive_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer) -> None:
-    _ = page.goto(graph_db_server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, graph_db_server.login_url, page.get_by_role("button", name="Archive target"))
 
     page.get_by_role("button", name="Archive target").click()
     page.get_by_role("button", name="Archive node", exact=True).click()

@@ -15,6 +15,7 @@ from tests.browser.conftest import (
     BROWSER_TOKEN,
     BrowserServer,
     RecordingCommands,
+    open_app,
     owner_web_commands,
 )
 from tests.browser.conftest import BrowserSnapshotSource as SnapshotSource
@@ -79,8 +80,7 @@ def graph_view_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
 
 
 def _open(page: Page, server: BrowserServer) -> None:
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, server.login_url, page.locator(".mk-graph-node").first)
 
 
 def _assert_no_commands(recorder: RecordingCommands) -> None:

@@ -15,6 +15,7 @@ from tests.browser.conftest import (
     BrowserServer,
     BrowserSnapshotSource,
     RecordingCommands,
+    open_app,
     owner_web_commands,
     wait_until,
 )
@@ -59,8 +60,7 @@ def test_session_input_buttons_each_mint_one_fresh_command(
     page: Page, session_input_server: tuple[BrowserServer, RecordingCommands]
 ) -> None:
     server, recorder = session_input_server
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, server.login_url, page.get_by_label("Session guidance"))
 
     seen_command_ids: list[str] = []
 

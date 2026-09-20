@@ -14,6 +14,7 @@ from tests.browser.conftest import (
     BrowserServer,
     BrowserSnapshotSource,
     RecordingCommands,
+    open_app,
     owner_web_commands,
     wait_until,
 )
@@ -63,8 +64,7 @@ def test_confirm_records_one_command(
 ) -> None:
     trigger_label, call_count = case
     server, recorder = confirm_server
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, server.login_url, page.get_by_role("button", name=trigger_label, exact=True))
 
     page.get_by_role("button", name=trigger_label, exact=True).click()
     page.get_by_role("button", name="Confirm").click()
@@ -80,8 +80,7 @@ def test_dismiss_records_zero_commands(
 ) -> None:
     trigger_label, call_count = case
     server, recorder = confirm_server
-    _ = page.goto(server.login_url)
-    page.wait_for_load_state("networkidle")
+    open_app(page, server.login_url, page.get_by_role("button", name=trigger_label, exact=True))
 
     page.get_by_role("button", name=trigger_label, exact=True).click()
     page.get_by_role("button", name="Dismiss").click()

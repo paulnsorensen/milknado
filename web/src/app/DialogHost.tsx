@@ -1,14 +1,7 @@
 import type { ReactElement } from 'react';
-import { getSlot } from './slots';
+import { renderSlot } from './hosts/renderSlot';
 
 /** Renders every feature contribution registered on the `dialog` slot. */
 export function DialogHost(): ReactElement {
-  const dialogs = getSlot('dialog');
-  return (
-    <div data-region="dialog-host">
-      {dialogs.map((render, index) => (
-        <div key={index}>{render()}</div>
-      ))}
-    </div>
-  );
+  return <div data-region="dialog-host">{renderSlot('dialog')}</div>;
 }
