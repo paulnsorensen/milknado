@@ -1,0 +1,46 @@
+"""AC-12: a pending review is listed, its sidecar shows evidence and the
+proposed change, and a decision stores in the graph and clears the rail."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+
+import pytest
+from playwright.sync_api import Page, expect
+
+from milknado.domains.graph import GoalReviewDecision
+from tests.browser.graph_db import GraphDbServer, graph_db_server
+
+_ = graph_db_server
+
+pytestmark = pytest.mark.browser
+
+
+def _wait_for(predicate: Callable[[], bool]) -> None:
+    deadline = time.monotonic() + 5.0
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise TimeoutError("condition was not met within 5s")
+        time.sleep(0.05)
+
+
+def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbServer) -> None:
+    _ = page.goto(graph_db_server.login_url)
+    page.wait_for_load_state("networkidle")
+
+    expect(page.get_by_text("evidence for the change")).to_be_visible()
+
+    page.get_by_role("button", name="Open").click()
+
+    expect(page.get_by_text("proposed change text")).to_be_visible()
+
+    page.get_by_role("button", name="Accept change").click()
+
+    _wait_for(
+        lambda: (
+            graph_db_server.graph.get_goal_review(graph_db_server.review_id).decision
+            is GoalReviewDecision.ACCEPTED
+        )
+    )
+    expect(page.get_by_text("No goal reviews are pending.")).to_be_visible()
