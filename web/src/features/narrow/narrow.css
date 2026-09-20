@@ -1,0 +1,50 @@
+/* The narrow list/detail layout. A registered `layout` slot contribution
+   replaces the shell's grid region tree, so this stylesheet also replaces
+   the shell's fixed-column grid with a single stacked column: the fixed
+   rail and sidecar column widths would otherwise force horizontal scroll
+   under the 400px breakpoint. `:has()` gives this rule higher specificity
+   than `.mk-shell` in shell.css, so source order does not matter. */
+.mk-shell:has(> .mk-narrow-root) {
+  display: block;
+  height: auto;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.mk-narrow-root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+  width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
+  padding: var(--mk-space-3);
+  overflow-x: hidden;
+}
+
+.mk-narrow-root * {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.mk-narrow-jump {
+  display: flex;
+  align-items: center;
+  gap: var(--mk-space-2);
+}
+
+.mk-narrow-jump input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Every control gets a 44px touch target. */
+.mk-narrow-jump input,
+.mk-narrow-root button,
+.mk-narrow-root .mk-outline-row {
+  min-height: 44px;
+}
+
+.mk-narrow-open-bar button {
+  width: 100%;
+}

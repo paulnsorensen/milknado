@@ -39,8 +39,9 @@ def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbSe
 
     _wait_for(
         lambda: (
-            graph_db_server.graph.get_goal_review(graph_db_server.review_id).decision
-            is GoalReviewDecision.ACCEPTED
+            (review := graph_db_server.graph.get_goal_review(graph_db_server.review_id))
+            is not None
+            and review.decision is GoalReviewDecision.ACCEPTED
         )
     )
     expect(page.get_by_text("No goal reviews are pending.")).to_be_visible()

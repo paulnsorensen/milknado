@@ -13,7 +13,12 @@ import pytest
 
 from milknado.app.watch import WatchSnapshotSource
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.graph import GoalReviewRequest, MikadoGraph
+from milknado.domains.graph import (
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    MikadoGraph,
+)
 from milknado.web import LaunchToken, PolledSnapshotSource, WebCommands, create_app
 from milknado.web.commands import GraphEditCommands
 from tests.browser.conftest import BROWSER_TOKEN, BrowserServer
@@ -58,11 +63,12 @@ def _seed_nodes(graph: MikadoGraph) -> tuple[int, int, int, int, int]:
 
 
 def _build_commands(graph: MikadoGraph, project_root: Path) -> WebCommands:
+    def decide(request: GoalReviewDecisionRequest, *, decided_by: str) -> GoalReviewRecord:
+        return graph.decide_goal_review(request, decided_by=decided_by)
+
     return WebCommands(
         graph_edits=GraphEditCommands(graph, frozenset({"implement"}), project_root),
-        review_decision=lambda request, *, decided_by: graph.decide_goal_review(
-            request, decided_by=decided_by
-        ),
+        review_decision=decide,
     )
 
 

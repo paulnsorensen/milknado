@@ -51,8 +51,8 @@ def test_edit_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServe
 
     _wait_for(
         lambda: (
-            graph_db_server.graph.get_node(graph_db_server.edit_node_id).description
-            == "Edited target"
+            (node := graph_db_server.graph.get_node(graph_db_server.edit_node_id)) is not None
+            and node.description == "Edited target"
         )
     )
     expect(page.locator("button.mk-node", has_text="Edited target")).to_be_visible()
@@ -64,13 +64,13 @@ def test_move_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServe
 
     page.get_by_role("button", name="Move target").click()
     page.get_by_role("button", name="Move node", exact=True).click()
-    page.get_by_label("New parent").select_option(label="Target parent")
+    _ = page.get_by_label("New parent").select_option(label="Target parent")
     page.get_by_role("dialog", name="Move node").get_by_role("button", name="Move node").click()
 
     _wait_for(
         lambda: (
-            graph_db_server.graph.get_node(graph_db_server.move_node_id).parent_id
-            == graph_db_server.target_parent_id
+            (node := graph_db_server.graph.get_node(graph_db_server.move_node_id)) is not None
+            and node.parent_id == graph_db_server.target_parent_id
         )
     )
     expect(page.locator("button.mk-node", has_text="Move target")).to_be_visible()
@@ -88,7 +88,8 @@ def test_archive_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbSe
 
     _wait_for(
         lambda: (
-            graph_db_server.graph.get_node(graph_db_server.archive_node_id).archived_at is not None
+            (node := graph_db_server.graph.get_node(graph_db_server.archive_node_id)) is not None
+            and node.archived_at is not None
         )
     )
     expect(page.locator("button.mk-node", has_text="Archive target")).not_to_be_visible()
