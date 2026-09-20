@@ -165,7 +165,13 @@ class BrowserServer:
         return f"{self.base_url}/auth?token={self.login.value}"
 
     def start(self) -> None:
-        config = uvicorn.Config(self.app, host="127.0.0.1", port=self.port, log_level="warning")
+        config = uvicorn.Config(
+            self.app,
+            host="127.0.0.1",
+            port=self.port,
+            log_level="warning",
+            timeout_graceful_shutdown=1,
+        )
         server = uvicorn.Server(config)
         thread = Thread(target=server.run, daemon=True)
         thread.start()
