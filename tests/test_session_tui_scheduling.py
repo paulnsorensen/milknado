@@ -290,13 +290,19 @@ async def test_periodic_refresh_preserves_keyboard_file_choice(
         return result
 
     monkeypatch.setattr(GitAdapter, "session_changes", inspected)
+    # A fake clock drives the refresh throttle, so the test does not wait on the 1 s timer.
+    clock = [0.0]
+    monkeypatch.setattr("milknado.app.session_changes.monotonic", lambda: clock[0])
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
         await pilot.press("x", "down")
         ready.set()
-        assert await asyncio.to_thread(refreshed.wait, 3)
+        clock[0] += 2.0
+        app.refresh_session_changes()
+        await _wait_for_workers(app).wait_for_complete()
+        assert refreshed.is_set()
         await pilot.pause()
         await pilot.press("enter")
         await _wait_for_workers(app).wait_for_complete()

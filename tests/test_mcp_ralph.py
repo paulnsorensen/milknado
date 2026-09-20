@@ -77,7 +77,7 @@ finally:
 _ENV_CAPTURE_RUNNER = """
 import argparse, os
 from pathlib import Path
-from milknado.mcp._core import open_graph
+from milknado.app.project import open_graph
 from milknado.domains.common import RunResult
 p = argparse.ArgumentParser()
 p.add_argument("--node-id", type=int)
