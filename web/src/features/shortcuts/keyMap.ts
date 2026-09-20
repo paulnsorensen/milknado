@@ -183,7 +183,7 @@ export const KEY_BINDINGS: Shortcut[] = [
     label: 'X',
     description: 'Cancel the current run',
     column: 'Steering',
-    run: gated((c) => c.cancel.available, 'run.cancel'),
+    run: gated((c) => c.cancel.available && Boolean(c.owner.run_id), 'run.cancel'),
   },
   {
     key: 'X',

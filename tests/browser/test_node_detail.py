@@ -72,8 +72,8 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
         ),
         offset=0,
         limit=50,
-        total=1,
-        has_more=False,
+        total=2,
+        has_more=request.session_event_page == 0,
     )
     return NodeDetailResponse(
         node_id=request.node_id,
@@ -93,8 +93,8 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
                 items=(f"file-page-{request.page}.py",),
                 offset=0,
                 limit=50,
-                total=1,
-                has_more=False,
+                total=2,
+                has_more=request.page == 0,
             ),
             runs=SnapshotPage(items=(_run_record(),), offset=0, limit=50, total=1, has_more=False),
             reviews=_empty_page(),

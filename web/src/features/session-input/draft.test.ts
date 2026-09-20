@@ -52,8 +52,7 @@ describe('draft', () => {
     });
     setDraft('Keep going');
 
-    queueGuidance();
-    await Promise.resolve();
+    await queueGuidance();
 
     expect(getDraft()).toBe('');
     expect(post).toHaveBeenCalledWith(

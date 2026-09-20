@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Iterator
 
 import pytest
@@ -17,6 +16,7 @@ from tests.browser.conftest import (
     BrowserSnapshotSource,
     RecordingCommands,
     owner_web_commands,
+    wait_until,
 )
 
 pytestmark = pytest.mark.browser
@@ -50,12 +50,7 @@ def session_input_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
 
 
 def _wait_for_call_count(recorder: RecordingCommands, count: int) -> tuple[str, SessionInput]:
-    deadline = time.monotonic() + 5.0
-    while len(recorder.session_input_calls) < count:
-        if time.monotonic() > deadline:
-            calls = recorder.session_input_calls
-            raise TimeoutError(f"expected {count} session_input calls, got {calls}")
-        time.sleep(0.02)
+    wait_until(lambda: len(recorder.session_input_calls) >= count)
     assert len(recorder.session_input_calls) == count
     return recorder.session_input_calls[-1]
 
@@ -82,5 +77,6 @@ def test_session_input_buttons_each_mint_one_fresh_command(
 
     _send_and_check("follow_up", "Follow up", fill=True)
     _send_and_check("steer", "Steer", fill=True)
+    _send_and_check("interrupt", "Interrupt", fill=True)
     _send_and_check("approve", "Approve", fill=False)
     _send_and_check("deny", "Deny", fill=False)

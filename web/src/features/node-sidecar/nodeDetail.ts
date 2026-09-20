@@ -105,3 +105,22 @@ export function resetDetail(): void {
   state = { nodeId: null, page: 0, sessionPage: 0, detail: null };
   emit();
 }
+
+/** Whether the Details tab's paged fields have another page beyond the current one. */
+export function detailHasMore(detailState: DetailState): boolean {
+  const detail = detailState.detail?.detail;
+  if (!detail) {
+    return false;
+  }
+  return (
+    detail.ancestors.has_more ||
+    detail.prerequisite_ids.has_more ||
+    detail.dependent_ids.has_more ||
+    detail.owned_files.has_more
+  );
+}
+
+/** Whether the session transcript has another page beyond the current one. */
+export function sessionHasMore(detailState: DetailState): boolean {
+  return detailState.detail?.detail?.sessions.items?.[0]?.event_history.has_more ?? false;
+}

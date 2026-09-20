@@ -2,7 +2,7 @@
 // `api.ts` pushes a notice with the server's domain reason on a 409.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { getState, removeNotice, subscribe } from '../../app/store';
 
 export function NoticeToasts(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
@@ -11,7 +11,10 @@ export function NoticeToasts(): ReactElement {
     <div className="mk-toasts">
       {store.notices.map((notice) => (
         <p key={notice.id} role="alert">
-          {notice.reason}
+          <span>{notice.reason}</span>
+          <button type="button" aria-label="Close notice" onClick={() => removeNotice(notice.id)}>
+            ×
+          </button>
         </p>
       ))}
     </div>

@@ -3,16 +3,21 @@
 import type { ReactElement } from 'react';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Milknado } from '../../design-system';
-import { getReviews, loadReviews, subscribeReviews } from './reviewsState';
+import { getReviews, getReviewsError, loadReviews, subscribeReviews } from './reviewsState';
 import { selectReview } from './selection';
 
 export function ReviewsRail(): ReactElement {
   const reviews = useSyncExternalStore(subscribeReviews, getReviews);
+  const reviewsError = useSyncExternalStore(subscribeReviews, getReviewsError);
   const { Button } = Milknado;
 
   useEffect(() => {
     void loadReviews();
   }, []);
+
+  if (reviewsError) {
+    return <p role="alert">{reviewsError}</p>;
+  }
 
   if (reviews.length === 0) {
     return <p role="status">No goal reviews are pending.</p>;

@@ -16,12 +16,15 @@ export function SessionInputSection(): ReactElement {
 
   function send(action: SendAction): void {
     const text = draft;
-    setDraft('');
-    void sendSessionCommand(action, { text });
+    void sendSessionCommand(action, { text }).then((sent) => {
+      if (sent && getDraft() === text) {
+        setDraft('');
+      }
+    });
   }
 
-  if (sessionInput && !sessionInput.available) {
-    return <p role="note">{sessionInput.reason ?? 'Session input is not available.'}</p>;
+  if (!sessionInput?.available) {
+    return <p role="note">{sessionInput?.reason ?? 'Session input is not available.'}</p>;
   }
 
   return (

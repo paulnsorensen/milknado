@@ -23,7 +23,10 @@ export function RunControlsSidecar(): ReactElement | null {
 
   return (
     <div className="mk-run-controls">
-      <Button onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}>
+      <Button
+        disabled={runId === ''}
+        onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}
+      >
         Cancel run
       </Button>
       <Button

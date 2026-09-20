@@ -6,7 +6,7 @@ import { toGraphNodes } from '../../app/wire';
 import { toBadgeState } from './badgeState';
 import { getActiveTab, subscribeTab } from './detailTab';
 import { DetailsTab } from './DetailsTab';
-import { getDetailState, selectNode, subscribeDetail } from './nodeDetail';
+import { detailHasMore, getDetailState, selectNode, sessionHasMore, subscribeDetail } from './nodeDetail';
 import { SessionTab } from './SessionTab';
 
 /** The `sidecar` slot contribution: the node detail panel for the selected node. */
@@ -45,8 +45,12 @@ export function NodeSidecar(): ReactElement | null {
           </li>
         ))}
       </ul>
-      {activeTab === 'session' && <SessionTab events={events} />}
-      {activeTab === 'details' && detail && <DetailsTab detail={detail} />}
+      {activeTab === 'session' && (
+        <SessionTab events={events} hasMore={sessionHasMore(detailState)} />
+      )}
+      {activeTab === 'details' && detail && (
+        <DetailsTab detail={detail} hasMore={detailHasMore(detailState)} />
+      )}
     </div>
   );
 }

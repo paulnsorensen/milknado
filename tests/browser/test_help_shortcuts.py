@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -19,6 +18,7 @@ from tests.browser.conftest import (
     BrowserSnapshotSource,
     RecordingCommands,
     owner_web_commands,
+    wait_until,
 )
 
 pytestmark = pytest.mark.browser
@@ -84,14 +84,6 @@ def steering_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
     server.stop()
 
 
-def _wait_for_count(get_count: Callable[[], int], expected: int) -> None:
-    deadline = time.monotonic() + 5.0
-    while get_count() != expected:
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"expected {expected} calls, got {get_count()}")
-        time.sleep(0.02)
-
-
 def test_question_mark_opens_help_with_all_columns(
     page: Page, two_root_server: BrowserServer
 ) -> None:
@@ -133,7 +125,7 @@ def test_steering_key_confirms_and_runs_command(
     page.keyboard.press("x")
     page.get_by_role("button", name="Confirm").click()
 
-    _wait_for_count(lambda: len(recorder.cancel_calls), 1)
+    wait_until(lambda: len(recorder.cancel_calls) == 1)
 
 
 def test_shortcut_key_is_ignored_while_typing(page: Page, two_root_server: BrowserServer) -> None:

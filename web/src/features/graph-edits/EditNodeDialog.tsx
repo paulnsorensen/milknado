@@ -18,7 +18,9 @@ export function EditNodeDialog(): ReactElement | null {
   useEffect(() => {
     setDescription(node?.description ?? '');
     setFlavor(node?.flavor ?? '');
-  }, [dialog.nodeId, node?.description, node?.flavor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed only on a
+    // node switch; a live snapshot must not overwrite in-progress edits.
+  }, [dialog.nodeId]);
 
   if (dialog.kind !== 'edit' || dialog.nodeId === null) {
     return null;

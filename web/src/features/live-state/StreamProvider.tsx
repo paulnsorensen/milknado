@@ -4,7 +4,7 @@
 import type { ReactElement } from 'react';
 import { useEffect } from 'react';
 import { get } from '../../app/api';
-import { getState, setSnapshot } from '../../app/store';
+import { getState, pushNotice, setSnapshot } from '../../app/store';
 import type { WireExecutionSnapshot } from '../../app/wire';
 import { setConnectionStatus } from './connection';
 import { mergeSnapshot, type RawStreamSnapshot } from './runtimeSnapshot';
@@ -16,7 +16,13 @@ export function StreamProvider(): ReactElement | null {
     const source = new EventSource(STREAM_URL);
 
     const handleSnapshot = (event: MessageEvent<string>): void => {
-      const raw = JSON.parse(event.data) as RawStreamSnapshot;
+      let raw: RawStreamSnapshot;
+      try {
+        raw = JSON.parse(event.data) as RawStreamSnapshot;
+      } catch {
+        pushNotice('Received a malformed update from the server.');
+        return;
+      }
       setSnapshot(mergeSnapshot(raw, getState().capabilities));
       setConnectionStatus('connected');
     };

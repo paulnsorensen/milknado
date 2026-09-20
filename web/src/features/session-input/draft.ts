@@ -35,13 +35,15 @@ export function focusSessionInput(): void {
   inputEl?.focus();
 }
 
-export function queueGuidance(): void {
+export async function queueGuidance(): Promise<void> {
   const text = draft;
   if (text === '') {
     return;
   }
-  setDraft('');
-  void sendSessionCommand('follow_up', { text });
+  const sent = await sendSessionCommand('follow_up', { text });
+  if (sent && draft === text) {
+    setDraft('');
+  }
 }
 
 export function resetDraft(): void {

@@ -139,6 +139,15 @@ def observer_web_commands() -> tuple[WebCommands, RecordingCommands]:
     return WebCommands(), RecordingCommands()
 
 
+def wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
+    """Poll `predicate` until it is true, or raise after `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"condition was not met within {timeout}s")
+        time.sleep(0.02)
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

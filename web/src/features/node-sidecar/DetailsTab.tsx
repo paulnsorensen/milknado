@@ -5,10 +5,11 @@ import type { WireNodeDetailSnapshot } from './detailWire';
 
 export interface DetailsTabProps {
   detail: WireNodeDetailSnapshot;
+  hasMore: boolean;
 }
 
 /** The Details tab body: the node's fields, plus detail paging. */
-export function DetailsTab({ detail }: DetailsTabProps): ReactElement {
+export function DetailsTab({ detail, hasMore }: DetailsTabProps): ReactElement {
   const { Button } = Milknado;
 
   return (
@@ -27,7 +28,9 @@ export function DetailsTab({ detail }: DetailsTabProps): ReactElement {
         <dd>{detail.owned_files.items?.join(', ') ?? ''}</dd>
       </dl>
       <Button onClick={() => dispatchAction('detail.page-previous')}>Previous</Button>
-      <Button onClick={() => dispatchAction('detail.page-next')}>Next</Button>
+      <Button disabled={!hasMore} onClick={() => dispatchAction('detail.page-next')}>
+        Next
+      </Button>
     </div>
   );
 }

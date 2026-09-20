@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom/vitest';
+import { beforeEach } from 'vitest';
 
 // Node 26 ships a native localStorage that stays disabled without
 // --localstorage-file and shadows the jsdom one, so window.localStorage is
@@ -35,3 +36,7 @@ class MemoryStorage implements Storage {
 const storage = new MemoryStorage();
 Object.defineProperty(window, 'localStorage', { value: storage, configurable: true });
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true });
+
+beforeEach(() => {
+  storage.clear();
+});

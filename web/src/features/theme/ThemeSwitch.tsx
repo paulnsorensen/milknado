@@ -9,7 +9,12 @@ export function ThemeSwitch(): ReactElement {
   const { Button } = Milknado;
 
   function select(next: Theme): void {
-    window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Storage unavailable (private mode, quota, disabled): the palette
+      // still applies for this session, just is not remembered.
+    }
     applyTheme(next);
     setTheme(next);
   }

@@ -97,7 +97,14 @@ describe('handleShortcutKey', () => {
     handleShortcutKey(press('x'));
     expect(spy).not.toHaveBeenCalled();
 
-    setSnapshot({ goal: null, graph: null, capabilities: capabilities({ cancel: { available: true, reason: null } }) });
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({
+        cancel: { available: true, reason: null },
+        owner: { available: true, run_id: 'run-1' },
+      }),
+    });
     handleShortcutKey(press('x'));
     expect(spy).toHaveBeenCalledTimes(1);
   });

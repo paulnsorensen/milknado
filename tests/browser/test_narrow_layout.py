@@ -100,6 +100,7 @@ def test_narrow_detail_view_is_full_width_with_44px_controls_and_no_horizontal_s
     expect(back_button).to_be_visible()
     box = back_button.bounding_box()
     assert box is not None
+    assert box["width"] >= MIN_TOUCH_TARGET
     assert box["height"] >= MIN_TOUCH_TARGET
 
     assert _has_no_horizontal_scroll(page)

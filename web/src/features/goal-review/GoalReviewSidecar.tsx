@@ -33,8 +33,8 @@ export function GoalReviewSidecar(): ReactElement | null {
       <p>{review.proposed_change}</p>
       {heldNodes.length > 0 && (
         <ul>
-          {heldNodes.map((title) => (
-            <li key={title}>{title}</li>
+          {heldNodes.map((title, index) => (
+            <li key={`${index}-${title}`}>{title}</li>
           ))}
         </ul>
       )}

@@ -3,26 +3,16 @@ proposed change, and a decision stores in the graph and clears the rail."""
 
 from __future__ import annotations
 
-import time
-from collections.abc import Callable
-
 import pytest
 from playwright.sync_api import Page, expect
 
 from milknado.domains.graph import GoalReviewDecision
+from tests.browser.conftest import wait_until
 from tests.browser.graph_db import GraphDbServer, graph_db_server
 
 _ = graph_db_server
 
 pytestmark = pytest.mark.browser
-
-
-def _wait_for(predicate: Callable[[], bool]) -> None:
-    deadline = time.monotonic() + 5.0
-    while not predicate():
-        if time.monotonic() > deadline:
-            raise TimeoutError("condition was not met within 5s")
-        time.sleep(0.05)
 
 
 def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbServer) -> None:
@@ -37,7 +27,7 @@ def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbSe
 
     page.get_by_role("button", name="Accept change").click()
 
-    _wait_for(
+    wait_until(
         lambda: (
             (review := graph_db_server.graph.get_goal_review(graph_db_server.review_id))
             is not None

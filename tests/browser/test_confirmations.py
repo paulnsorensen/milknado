@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -16,6 +15,7 @@ from tests.browser.conftest import (
     BrowserSnapshotSource,
     RecordingCommands,
     owner_web_commands,
+    wait_until,
 )
 
 pytestmark = pytest.mark.browser
@@ -55,14 +55,6 @@ def confirm_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
     server.stop()
 
 
-def _wait_for_count(get_count: Callable[[], int], expected: int) -> None:
-    deadline = time.monotonic() + 5.0
-    while get_count() != expected:
-        if time.monotonic() > deadline:
-            raise TimeoutError(f"expected {expected} calls, got {get_count()}")
-        time.sleep(0.02)
-
-
 @pytest.mark.parametrize("case", CASES, ids=[label for label, _ in CASES])
 def test_confirm_records_one_command(
     page: Page,
@@ -77,7 +69,7 @@ def test_confirm_records_one_command(
     page.get_by_role("button", name=trigger_label, exact=True).click()
     page.get_by_role("button", name="Confirm").click()
 
-    _wait_for_count(lambda: call_count(recorder), 1)
+    wait_until(lambda: call_count(recorder) == 1)
 
 
 @pytest.mark.parametrize("case", CASES, ids=[label for label, _ in CASES])

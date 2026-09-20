@@ -98,10 +98,18 @@ export function setGraphView(patch: Partial<GraphView>): void {
   emit();
 }
 
+const NOTICE_TTL_MS = 6000;
+
+export function removeNotice(id: string): void {
+  state = { ...state, notices: state.notices.filter((notice) => notice.id !== id) };
+  emit();
+}
+
 export function pushNotice(reason: string): void {
   const notice: Notice = { id: `${Date.now()}-${state.notices.length}`, reason };
   state = { ...state, notices: [...state.notices, notice] };
   emit();
+  setTimeout(() => removeNotice(notice.id), NOTICE_TTL_MS);
 }
 
 export function resetStore(): void {

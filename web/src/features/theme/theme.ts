@@ -32,9 +32,18 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
   root.setAttribute('data-theme', theme);
 }
 
+/** Reads the stored theme, or null when storage is unavailable or unset. */
+function readStoredTheme(): string | null {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 /** Applies the stored or system theme to the document root, and returns it. */
 export function initializeTheme(): Theme {
-  const theme = resolveTheme(window.localStorage.getItem(THEME_STORAGE_KEY));
+  const theme = resolveTheme(readStoredTheme());
   applyTheme(theme);
   return theme;
 }
