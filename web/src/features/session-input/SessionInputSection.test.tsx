@@ -60,4 +60,28 @@ describe('SessionInputSection', () => {
       expect.objectContaining({ action: 'steer' }),
     );
   });
+
+  it('disables steer and follow up with an empty draft', () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+
+    render(<SessionInputSection />);
+
+    expect(screen.getByText('Steer')).toBeDisabled();
+    expect(screen.getByText('Follow up')).toBeDisabled();
+  });
+
+  it('sends interrupt with an empty draft and leaves it enabled', () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+
+    render(<SessionInputSection />);
+
+    expect(screen.getByText('Interrupt')).not.toBeDisabled();
+
+    screen.getByText('Interrupt').click();
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'interrupt', text: '' }),
+    );
+  });
 });

@@ -19,7 +19,7 @@ def _command(body: object) -> SessionInput:
     command = msgspec.convert(body, type=SessionInput, strict=True)
     if not command.command_id.strip():
         raise ValueError("command_id is required")
-    if command.action in {"steer", "follow_up", "interrupt"} and not command.text.strip():
+    if command.action in {"steer", "follow_up"} and not command.text.strip():
         raise ValueError("text is required for message actions")
     if command.action in {"approve", "deny"} and not command.request_id.strip():
         raise ValueError("request_id is required for permission decisions")

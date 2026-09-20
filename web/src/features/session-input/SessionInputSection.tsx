@@ -27,6 +27,8 @@ export function SessionInputSection(): ReactElement {
     return <p role="note">{sessionInput?.reason ?? 'Session input is not available.'}</p>;
   }
 
+  const textEmpty = draft.trim() === '';
+
   return (
     <div className="mk-session-input">
       <textarea
@@ -35,8 +37,12 @@ export function SessionInputSection(): ReactElement {
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <Button onClick={() => send('steer')}>Steer</Button>
-      <Button onClick={() => send('follow_up')}>Follow up</Button>
+      <Button onClick={() => send('steer')} disabled={textEmpty}>
+        Steer
+      </Button>
+      <Button onClick={() => send('follow_up')} disabled={textEmpty}>
+        Follow up
+      </Button>
       <Button onClick={() => send('interrupt')}>Interrupt</Button>
     </div>
   );

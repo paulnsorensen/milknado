@@ -80,3 +80,17 @@ def test_session_input_buttons_each_mint_one_fresh_command(
     _send_and_check("interrupt", "Interrupt", fill=True)
     _send_and_check("approve", "Approve", fill=False)
     _send_and_check("deny", "Deny", fill=False)
+
+
+def test_session_input_interrupt_without_text(
+    page: Page, session_input_server: tuple[BrowserServer, RecordingCommands]
+) -> None:
+    server, recorder = session_input_server
+    open_app(page, server.login_url, page.get_by_label("Session guidance"))
+
+    page.get_by_role("button", name="Interrupt").click()
+
+    run_id, request = _wait_for_call_count(recorder, 1)
+    assert run_id == RUN_ID
+    assert request.action == "interrupt"
+    assert request.text == ""
