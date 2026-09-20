@@ -1,7 +1,7 @@
 .mk-shell {
   display: grid;
-  grid-template-areas: 'header header' 'rail canvas' 'rail dock';
-  grid-template-columns: var(--mk-rail-width) 1fr;
+  grid-template-areas: 'header header header' 'rail canvas sidecar' 'rail dock sidecar';
+  grid-template-columns: var(--mk-rail-width) 1fr var(--mk-sidecar-width);
   grid-template-rows: auto 1fr auto;
   height: 100vh;
   background: var(--mk-surface);
@@ -28,14 +28,10 @@
 }
 
 .mk-shell [data-region='sidecar'] {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: var(--mk-sidecar-width);
+  grid-area: sidecar;
+  overflow-y: auto;
   background: var(--mk-surface-raised);
   box-shadow: var(--mk-shadow-popover);
-  z-index: var(--mk-layer-sidecar);
 }
 
 .mk-shell [data-region='canvas-overlay'] {
