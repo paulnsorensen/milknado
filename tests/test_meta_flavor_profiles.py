@@ -117,6 +117,19 @@ EXPECTED_PROFILES = {
         + "structured result with verdict, confidence, evidence, actions, and "
         + "implementation-ready next steps.",
     ),
+    "runner": _profile(
+        LUNA_XHIGH,
+        ("just check-llm",),
+        "Run the scoped task to completion with robustness. Always run the required "
+        + "quality gate and call milknado_node_verify before declaring done. On a failed "
+        + "gate or verify, fix the cause and re-verify. Never mark the node done without "
+        + "a passing verify.",
+        review=True,
+        review_agent=OPUS_REVIEWER,
+        review_max_rounds=3,
+        review_timeout_seconds=5400,
+        max_iterations=3,
+    ),
 }
 
 

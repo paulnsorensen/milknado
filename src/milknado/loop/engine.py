@@ -369,7 +369,12 @@ def _run_agent_phase(
     continue_loop = iteration_succeeded or (
         agent.interrupted and event_type == EventType.ITERATION_INTERRUPTED
     )
-    return continue_loop, completion_detected and config.stop_on_completion_signal
+    completion_candidate = (
+        probe_completed
+        if config.completion_required and config.completion_probe is not None
+        else completion_detected
+    )
+    return continue_loop, completion_candidate and config.stop_on_completion_signal
 
 
 def _run_iteration(
@@ -481,7 +486,7 @@ def run_loop(
     )
 
     pending_feedback: str | None = None
-    verifier_rejected = False
+    completion_accepted = False
 
     try:
         while True:
@@ -490,11 +495,13 @@ def run_loop(
 
             if config.max_iterations is not None and state.iteration >= config.max_iterations:
                 state.close_guidance()
-                if verifier_rejected and state.try_commit_failure():
-                    emit.log_error(
-                        "Completion verifier never accepted within the "
-                        + f"{config.max_iterations}-iteration budget."
-                    )
+                if config.completion_required and not completion_accepted:
+                    if state.try_commit_failure():
+                        message = (
+                            "Completion acceptance was not confirmed within the "
+                            + f"{config.max_iterations}-iteration budget."
+                        )
+                        emit.log_error(message)
                 break
             state.iteration += 1
 
@@ -508,11 +515,11 @@ def run_loop(
             if promise_would_complete:
                 verdict = config.completion_verifier() if config.completion_verifier else None
                 if (verdict is None or verdict.ok) and state.try_commit_soft_completion():
+                    completion_accepted = True
                     break
                 if cast(RunStatus, cast(object, state.status)) is RunStatus.STOPPED:
                     break
                 if verdict is not None and not verdict.ok:
-                    verifier_rejected = True
                     pending_feedback = verdict.feedback
                     emit.log_info(f"Completion verifier rejected: {verdict.feedback}")
             if not should_continue:
@@ -535,7 +542,11 @@ def run_loop(
                 state.status = RunStatus.FAILED
             emit.log_error(f"Session persistence failed: {exc}")
     if state.status == RunStatus.RUNNING:
-        _ = state.try_commit_completion()
+        if config.completion_required and not completion_accepted:
+            if state.try_commit_failure():
+                emit.log_error("Completion acceptance was not confirmed before the run ended.")
+        else:
+            _ = state.try_commit_completion()
     state.close_guidance()
 
     emit(

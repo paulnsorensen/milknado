@@ -36,6 +36,7 @@ class _FakeExecutor:
         self.cancelled: list[int] = []
         self.failed: list[int] = []
         self.stopped: list[str] = []
+        self.force_stopped: list[str] = []
         self.stop_result: bool = True
 
     def dispatch(
@@ -69,9 +70,14 @@ class _FakeExecutor:
         self.stopped.append(run_id)
         return self.stop_result
 
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = timeout
+        self.force_stopped.append(run_id)
+        return self.stop_result
+
 
 class _FakeRalph:
-    _outcome: Literal["completed", "stopped", "failed"]
+    outcome: TerminalRunOutcome
     _timeout: bool
     stop_result: bool
 
@@ -81,7 +87,7 @@ class _FakeRalph:
         outcome: Literal["completed", "stopped", "failed"] = "completed",
         timeout: bool = False,
     ) -> None:
-        self._outcome = outcome
+        self.outcome = TerminalRunOutcome(outcome)
         self._timeout = timeout
         self.stop_result = True
         self.stopped: list[str] = []
@@ -91,7 +97,7 @@ class _FakeRalph:
     ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         if self._timeout:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
-        return next(iter(active_run_ids)), self._outcome
+        return next(iter(active_run_ids)), self.outcome
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = timeout
@@ -107,7 +113,7 @@ class _ProgressThenTerminalRalph(_FakeRalph):
         self._outcomes = iter(
             (
                 ProgressEvent(run_id="run-13", work=1, total=0, message="iteration 1 started"),
-                "completed",
+                TerminalRunOutcome("completed"),
             )
         )
         self.waits: int = 0
@@ -172,6 +178,7 @@ def test_completion_timeout_fails_the_node() -> None:
     ex = _FakeExecutor()
     outcome = run_node_to_completion(ex, _FakeRalph(timeout=True), 4, _EXEC_CONFIG, "main", 5.0)
     assert outcome.success is False
+    assert outcome.timed_out is True
     assert "timeout" in (outcome.detail or "")
     assert ex.completed == []
     assert ex.failed == [4]
@@ -200,7 +207,30 @@ def test_timeout_stops_the_ralph_run() -> None:
     outcome = run_node_to_completion(ex, ralph, 10, _EXEC_CONFIG, "main", 5.0)
     assert outcome.success is False
     assert "timeout" in (outcome.detail or "")
-    assert ex.stopped == ["run-10"], "executor must stop the ralph run"
+    assert ex.force_stopped == ["run-10"], "executor must force-stop the ralph run"
+
+
+def test_failed_timeout_outcome_sets_headless_timeout() -> None:
+    ex = _FakeExecutor()
+    ralph = _FakeRalph(outcome="failed")
+    ralph.outcome = TerminalRunOutcome("failed", timed_out=True)
+
+    outcome = run_node_to_completion(ex, ralph, 10, _EXEC_CONFIG, "main", 30.0)
+
+    assert outcome.success is False
+    assert outcome.timed_out is True
+
+
+def test_failed_timeout_preserves_timeout_when_stop_fails() -> None:
+    ex = _FakeExecutor()
+    ex.stop_result = False
+    ralph = _FakeRalph(outcome="failed")
+    ralph.outcome = TerminalRunOutcome("failed", timed_out=True)
+
+    outcome = run_node_to_completion(ex, ralph, 10, _EXEC_CONFIG, "main", 30.0)
+
+    assert outcome.success is False
+    assert outcome.timed_out is True
 
 
 def test_non_completed_stops_the_ralph_run() -> None:
@@ -223,6 +253,58 @@ def test_stopped_run_cancels_without_merging() -> None:
     assert ex.completed == []
     assert ex.cancelled == [12]
     assert ex.failed == []
+
+
+def test_redispatch_keeps_the_aggregate_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+
+    class _RedispatchExecutor(_FakeExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.completions: int = 0
+
+        @override
+        def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
+            self.completions += 1
+            if self.completions == 1:
+                return CompletionResult(
+                    node_id=node_id,
+                    rebased=False,
+                    newly_ready=[],
+                    redispatch=DispatchResult(
+                        node_id=node_id, worktree=Path("/tmp/wt-2"), run_id="run-2"
+                    ),
+                )
+            return super().complete(node_id, feature_branch)
+
+    class _RedispatchRalph(_FakeRalph):
+        def __init__(self) -> None:
+            super().__init__()
+            self.timeouts: list[float | None] = []
+            self.waits: int = 0
+
+        @override
+        def wait_for_next_completion(
+            self, active_run_ids: set[str], timeout: float | None = None
+        ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
+            self.timeouts.append(timeout)
+            self.waits += 1
+            if self.waits == 1:
+                return next(iter(active_run_ids)), TerminalRunOutcome("completed")
+            raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
+
+    monotonic = iter((100.0, 101.0, 102.0))
+    monkeypatch.setattr(time, "monotonic", lambda: next(monotonic))
+    executor = _RedispatchExecutor()
+    ralph = _RedispatchRalph()
+    config = replace(_EXEC_CONFIG, max_iterations=2)
+
+    result = run_node_to_completion(executor, ralph, 14, config, "main", 3.0)
+
+    assert result.timed_out is True
+    assert ralph.timeouts == [5.0, 4.0]
 
 
 def test_progress_event_waits_for_terminal_outcome_before_merging() -> None:
@@ -261,7 +343,7 @@ def test_timeout_preserves_ownership_when_worker_does_not_exit() -> None:
     assert result.success is False
     assert result.detail == "completion timeout; worker did not exit, ownership preserved"
     assert ex.failed == []
-    assert ex.stopped == ["run-1"]
+    assert ex.force_stopped == ["run-1"]
 
 
 def test_incomplete_run_preserves_ownership_when_worker_does_not_exit() -> None:

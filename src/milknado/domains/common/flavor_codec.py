@@ -123,6 +123,7 @@ class _FlavorFields(msgspec.Struct, frozen=True, kw_only=True):
     review_agent: str | None = None
     review_max_rounds: int = 2
     review_timeout_seconds: int = 1800
+    attempt_timeout_seconds: int = 1800
     on_reject: str = "block"
 
 
@@ -150,6 +151,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
         _ = validate_positive_int(self.max_turns, "max_turns")
         _ = validate_positive_int(self.review_max_rounds, "review_max_rounds")
         _ = validate_positive_int(self.review_timeout_seconds, "review_timeout_seconds")
+        _ = validate_positive_int(self.attempt_timeout_seconds, "attempt_timeout_seconds")
         if self.session_mode == "resume":
             self._reject_cursor_resume()
 
@@ -182,6 +184,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
             review_agent=self.review_agent,
             review_max_rounds=self.review_max_rounds,
             review_timeout_seconds=self.review_timeout_seconds,
+            attempt_timeout_seconds=self.attempt_timeout_seconds,
             on_reject=self.on_reject,
         )
 
@@ -270,6 +273,7 @@ def serialize_flavor_tables(
                 ("review_agent", flavor.review_agent),
                 ("review_max_rounds", flavor.review_max_rounds),
                 ("review_timeout_seconds", flavor.review_timeout_seconds),
+                ("attempt_timeout_seconds", flavor.attempt_timeout_seconds),
                 ("on_reject", flavor.on_reject),
             )
             if value is not None

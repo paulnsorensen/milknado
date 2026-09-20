@@ -649,6 +649,7 @@ class TestCompletionVerifier:
             "do the work",
             max_iterations=3,
             stop_on_completion_signal=True,
+            completion_required=True,
             completion_verifier=lambda: CompletionVerdict(ok=False, feedback="still failing"),
         )
         state = make_state()
@@ -667,9 +668,29 @@ class TestCompletionVerifier:
         error_logs = [
             e
             for e in events_of_type(events, EventType.LOG_MESSAGE)
-            if "verifier never accepted" in e.data["message"]
+            if "acceptance was not confirmed" in e.data["message"]
         ]
         assert len(error_logs) == 1
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_probe_reject_exhausts_budget_fails_loud(
+        self, mock_execute_agent: MagicMock, tmp_path: Path
+    ) -> None:
+        config = make_config(
+            tmp_path,
+            "do the work",
+            max_iterations=2,
+            stop_on_completion_signal=True,
+            completion_required=True,
+            completion_probe=lambda: False,
+        )
+        state = make_state()
+        mock_execute_agent.return_value = self._promise_result()
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        assert state.status == RunStatus.FAILED
 
     @patch("milknado.loop.engine.execute_agent")
     def test_verifier_not_consulted_without_promise(
@@ -681,6 +702,7 @@ class TestCompletionVerifier:
             tmp_path,
             max_iterations=2,
             stop_on_completion_signal=True,
+            completion_required=True,
             completion_verifier=lambda: calls.append(1) or CompletionVerdict(ok=True, feedback=""),
         )
         state = make_state()
@@ -694,7 +716,48 @@ class TestCompletionVerifier:
 
         assert calls == []
         assert mock_execute_agent.call_count == 2
-        assert state.status == RunStatus.COMPLETED
+        assert state.status == RunStatus.FAILED
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_required_completion_policy_fails_without_signal_or_verifier(
+        self, mock_execute_agent: MagicMock, tmp_path: Path
+    ) -> None:
+        config = make_config(tmp_path, max_iterations=1, completion_required=True)
+        state = make_state()
+        mock_execute_agent.return_value = AgentResult(
+            returncode=1,
+            elapsed=0.01,
+            captured_stdout="",
+        )
+
+        run_loop(config, state, NullEmitter())
+
+        assert state.status == RunStatus.FAILED
+
+    @patch("milknado.loop.engine.execute_agent")
+    def test_required_completion_policy_fails_at_budget_without_signal_or_verifier(
+        self, mock_execute_agent: MagicMock, tmp_path: Path
+    ) -> None:
+        config = make_config(tmp_path, max_iterations=1, completion_required=True)
+        state = make_state()
+        mock_execute_agent.return_value = AgentResult(returncode=0, elapsed=0.01)
+
+        run_loop(config, state, NullEmitter())
+
+        assert state.completed == 1
+        assert state.status == RunStatus.FAILED
+
+    @patch("milknado.loop.engine._handle_control_signals", return_value=False)
+    def test_required_completion_policy_fails_when_loop_stops_without_acceptance(
+        self, mock_handle_control_signals: MagicMock, tmp_path: Path
+    ) -> None:
+        config = make_config(tmp_path, max_iterations=None, completion_required=True)
+        state = make_state()
+
+        run_loop(config, state, NullEmitter())
+
+        mock_handle_control_signals.assert_called_once_with(state)
+        assert state.status == RunStatus.FAILED
 
     def test_assemble_prompt_appends_verifier_feedback(self, tmp_path: Path):
         """``_assemble_prompt`` appends feedback verbatim when supplied."""

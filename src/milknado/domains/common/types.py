@@ -28,7 +28,7 @@ class WorktreeMode(Enum):
 # names at write paths (see config.MilknadoConfig.flavors); the registry
 # mechanism lives in milknado, the vocabulary lives in user space.
 BUILTIN_FLAVORS: frozenset[str] = frozenset(
-    {"implement", "spec", "spike", "prototype", "research", "review", "plate"}
+    {"implement", "spec", "spike", "prototype", "research", "review", "plate", "runner"}
 )
 DEFAULT_FLAVOR = "implement"
 

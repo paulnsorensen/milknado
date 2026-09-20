@@ -588,8 +588,6 @@ def test_runner_crash_writes_detail_and_keeps_schema(
             str(tmp_path),
             "--run-id",
             run_id,
-            "--timeout",
-            "12",
             "--target-branch",
             "main",
             "--base-oid",
@@ -686,22 +684,32 @@ def test_runner_writes_done_on_successful_outcome(
             return "main"
 
     graph = _Graph()
-    monkeypatch.setattr(project, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def open_graph_stub(_root: Path) -> tuple[_Graph, _Cfg]:
+        return graph, _Cfg()
+
+    monkeypatch.setattr(project, "open_graph", open_graph_stub)
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
     class _StubRalph:
         def poll_progress_events(self) -> list[object]:
             return []
 
-    monkeypatch.setattr(adapters, "LoopAdapter", lambda *_args, **_kwargs: _StubRalph())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(adapters, "CrgAdapter", lambda *_args, **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(execution, "Executor", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(execution, "ExecutionConfig", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(
-        execution,
-        "run_node_to_completion",
-        lambda *_args, **_kwargs: HeadlessOutcome(node_id=1, success=True, detail=None),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    )
+    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubRalph:
+        return _StubRalph()
+
+    def object_stub(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    monkeypatch.setattr(adapters, "LoopAdapter", loop_adapter_stub)
+    monkeypatch.setattr(adapters, "CrgAdapter", object_stub)
+    monkeypatch.setattr(execution, "Executor", object_stub)
+    monkeypatch.setattr(execution, "ExecutionConfig", object_stub)
+
+    def run_node_stub(*_args: object, **_kwargs: object) -> HeadlessOutcome:
+        return HeadlessOutcome(node_id=1, success=True, detail=None)
+
+    monkeypatch.setattr(execution, "run_node_to_completion", run_node_stub)
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
@@ -712,8 +720,6 @@ def test_runner_writes_done_on_successful_outcome(
             str(tmp_path),
             "--run-id",
             run_id,
-            "--timeout",
-            "30",
             "--target-branch",
             "main",
             "--base-oid",
@@ -728,11 +734,10 @@ def test_runner_writes_done_on_successful_outcome(
     assert graph.finished["run_id"] == run_id
 
 
-def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A timed-out run must call stop_run on the ralph adapter so the underlying
-    loop does not outlive its timeout as a zombie process. Exercises the full
-    _ralph_node_runner.main path without monkeypatching run_node_to_completion,
-    so the real CompletionTimeout handler is exercised end-to-end."""
+def test_runner_calls_force_stop_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A completion deadline force-stops the worker before recording timeout."""
     import milknado.adapters as adapters
     import milknado.app.project as project
     import milknado.domains.execution as execution
@@ -783,13 +788,15 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
     class _StubRalph:
         def __init__(self) -> None:
             self.stopped: list[str] = []
+            self.force_stopped: list[str] = []
 
         def wait_for_next_completion(
             self, active_run_ids: set[str], timeout: float | None = None
         ) -> NoReturn:
             raise CompletionTimeout(active_run_ids=active_run_ids, waited_seconds=timeout or 0.0)
 
-        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:  # pyright: ignore[reportUnusedParameter]
+        def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+            _ = timeout
             self.stopped.append(run_id)
             return True
 
@@ -802,9 +809,10 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
             node_id: int,
             _config: object,
             *,
-            base_oid: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            parent_run_id: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            base_oid: str | None = None,
+            parent_run_id: str | None = None,
         ) -> DispatchResult:
+            _ = (base_oid, parent_run_id)
             return DispatchResult(
                 node_id=node_id, worktree=Path("/tmp/wt"), run_id=f"run-{node_id}"
             )
@@ -817,14 +825,40 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
             stub_ralph.stopped.append(run_id)
             return True
 
+        def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+            _ = timeout
+            stub_ralph.force_stopped.append(run_id)
+            return True
+
     stub_ralph = _StubRalph()
     graph = _Graph()
-    monkeypatch.setattr(project, "open_graph", lambda _root: (graph, _Cfg()))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def open_graph_stub(_root: Path) -> tuple[_Graph, _Cfg]:
+        return graph, _Cfg()
+
+    monkeypatch.setattr(project, "open_graph", open_graph_stub)
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
-    monkeypatch.setattr(adapters, "LoopAdapter", lambda *_args, **_kwargs: stub_ralph)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(adapters, "CrgAdapter", lambda *_args, **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(execution, "Executor", lambda **_kwargs: _StubExecutor())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(execution, "ExecutionConfig", lambda **_kwargs: object())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubRalph:
+        return stub_ralph
+
+    def object_stub(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    def executor_stub(*_args: object, **_kwargs: object) -> _StubExecutor:
+        return _StubExecutor()
+
+    monkeypatch.setattr(adapters, "LoopAdapter", loop_adapter_stub)
+    monkeypatch.setattr(adapters, "CrgAdapter", object_stub)
+    monkeypatch.setattr(execution, "Executor", executor_stub)
+
+    class _ExecConfig:
+        max_iterations: int = 8
+
+    def execution_config_stub(**_kwargs: object) -> _ExecConfig:
+        return _ExecConfig()
+
+    monkeypatch.setattr(execution, "ExecutionConfig", execution_config_stub)
 
     run_id = "node-1-20260101T000000Z-abcd"
     rc = _ralph_node_runner.main(
@@ -835,8 +869,6 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
             str(tmp_path),
             "--run-id",
             run_id,
-            "--timeout",
-            "5",
             "--target-branch",
             "main",
             "--base-oid",
@@ -844,8 +876,9 @@ def test_runner_calls_stop_run_on_timeout(tmp_path: Path, monkeypatch: pytest.Mo
         ]
     )
     assert rc == 1
-    assert stub_ralph.stopped == ["run-1"], "timeout must call stop_run on the ralph adapter"
+    assert stub_ralph.force_stopped == ["run-1"], "timeout must force-stop the ralph run"
     assert graph.finished is not None
+    assert graph.finished["timed_out"] is True
     assert graph.finished["status"] == "failed"
     detail = graph.finished.get("detail")
     assert isinstance(detail, str)

@@ -236,6 +236,8 @@ class FakeRalph:
         self.force_stop_result = True
         self.force_stop_raises: Exception | None = None
         self.create_run_error: Exception | None = None
+        self.max_iterations_seen: list[int | None] = []
+        self.timeouts_seen: list[float | None] = []
         self._stop_events: dict[str, threading.Event] = {}
 
     def make_live(self, run_id: str) -> None:
@@ -264,6 +266,8 @@ class FakeRalph:
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> FakeRun:
         _ = (
             ralph_file,
@@ -271,7 +275,10 @@ class FakeRalph:
             project_root,
             runtime_policy,
             completion_probe,
+            timeout,
         )
+        self.max_iterations_seen.append(max_iterations)
+        self.timeouts_seen.append(timeout)
         create_run_error = self.create_run_error
         if create_run_error is not None:
             raise create_run_error
@@ -1669,6 +1676,8 @@ class TestDispatchRetry:
                 runtime_policy: object | None = None,
                 run_id: str | None = None,
                 completion_probe: Callable[[], bool] | None = None,
+                max_iterations: int | None = None,
+                timeout: float | None = None,
             ) -> FakeRun:
                 nonlocal call_count
                 call_count += 1
@@ -1708,6 +1717,8 @@ class TestDispatchRetry:
                 runtime_policy: object | None = None,
                 run_id: str | None = None,
                 completion_probe: Callable[[], bool] | None = None,
+                max_iterations: int | None = None,
+                timeout: float | None = None,
             ) -> FakeRun:
                 raise ValueError("bad config")
 
@@ -1735,6 +1746,8 @@ class TestDispatchRetry:
                 runtime_policy: object | None = None,
                 run_id: str | None = None,
                 completion_probe: Callable[[], bool] | None = None,
+                max_iterations: int | None = None,
+                timeout: float | None = None,
             ) -> FakeRun:
                 raise TransientDispatchError("always fails")
 

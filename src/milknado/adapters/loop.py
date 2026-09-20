@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 MILKNADO_COMPLETION_SIGNAL: Final[str] = "MILKNADO_NODE_COMPLETE"
 
-MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3  # Stop after three launch failures.
+MAX_CONSECUTIVE_AGENT_FAILURES: Final[int] = 3
 
 
 _logger = logging.getLogger(__name__)
@@ -52,13 +52,12 @@ class LoopAdapter(LoopSessionMixin):
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> _RunHandle:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
-        session = cast(
-            NodeAgentSession | None,
-            getattr(runtime_policy, "session", None),
-        )
+        session = cast(NodeAgentSession | None, getattr(runtime_policy, "session", None))
         if session is not None:
             agent_cmd = build_resume_command(agent_cmd, session.family, session.session_id)
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
@@ -73,10 +72,13 @@ class LoopAdapter(LoopSessionMixin):
             project_root=project_root,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
+            completion_required=True,
             stop_on_error=True,
             log_dir=ralph_dir / ".ralph-logs",
             commit_footer=commit_footer,
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
+            max_iterations=max_iterations,
+            timeout=timeout,
         )
         if context is not None:
             config.session_context = context
@@ -196,13 +198,15 @@ class LoopAdapter(LoopSessionMixin):
                 continue
             run = self._manager.get_run(event.run_id)
             if run is None:
-                return event.run_id, "failed"
+                return event.run_id, TerminalRunOutcome("failed")
             status = run.state.status
             if status is RunStatus.COMPLETED:
-                return event.run_id, "completed"
+                return event.run_id, TerminalRunOutcome("completed")
             if status is RunStatus.STOPPED:
-                return event.run_id, "stopped"
-            return event.run_id, "failed"
+                return event.run_id, TerminalRunOutcome("stopped")
+            return event.run_id, TerminalRunOutcome(
+                "failed", timed_out=run.state.timed_out_count > 0
+            )
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
         if not self._agent:
@@ -307,12 +311,7 @@ def _drain_verify_run(
     run_id: str,
     ev_queue: queue.Queue[Event[EventData]],
 ) -> VerifySpecResult:
-    _ITERATION_EVENTS = frozenset(
-        {
-            EventType.ITERATION_COMPLETED,
-            EventType.ITERATION_FAILED,
-        }
-    )
+    _ITERATION_EVENTS = frozenset((EventType.ITERATION_COMPLETED, EventType.ITERATION_FAILED))
     output_parts: list[str] = []
     deadline = time.monotonic() + 120.0
     try:
@@ -447,7 +446,6 @@ def _build_ralph_content(
 def _parse_review_verdict(output: str) -> ReviewVerdict:
     verdicts = list(re.finditer(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I))
     marker_count = len(re.findall(r"</?verdict\b", output, re.I))
-    # Exactly one valid tag contributes exactly two markers; anything else is ambiguous.
     if len(verdicts) != 1 or marker_count != 2:
         _logger.warning("run_node_review: unparseable or conflicting reviewer output")
         findings = output.strip() or "reviewer produced no parseable <verdict> tag"

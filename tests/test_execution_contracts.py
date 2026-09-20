@@ -2,7 +2,7 @@ import inspect
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from importlib.metadata import metadata
-from typing import Literal, cast, get_type_hints
+from typing import cast, get_type_hints
 
 import pytest
 from textual.app import App
@@ -45,6 +45,8 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
         "runtime_policy",
         "run_id",
         "completion_probe",
+        "max_iterations",
+        "timeout",
     ]
     assert cast(object, create_signature.parameters["base_oid"].default) is None
     assert get_type_hints(LoopPort.create_run)["base_oid"] == (str | None)
@@ -74,7 +76,9 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
         == tuple[str, TerminalRunOutcome | ProgressEvent]
     )
     assert get_type_hints(LoopPort.wait_for_next_completion)["active_run_ids"] == set[str]
-    assert TerminalRunOutcome == Literal["completed", "stopped", "failed"]
+    outcome = TerminalRunOutcome("failed", timed_out=True)
+    assert outcome.status == "failed"
+    assert outcome.timed_out is True
     assert common.TerminalRunOutcome is TerminalRunOutcome
     assert "TerminalRunOutcome" in common.__all__
 

@@ -35,7 +35,6 @@ class _RunnerArgs(Protocol):
     node_id: int
     project_root: str
     run_id: str
-    timeout: float
     target_branch: str
     base_oid: str
 
@@ -69,7 +68,6 @@ def main(argv: list[str] | None = None) -> int:
     _ = parser.add_argument("--node-id", type=int, required=True)
     _ = parser.add_argument("--project-root", required=True)
     _ = parser.add_argument("--run-id", required=True)
-    _ = parser.add_argument("--timeout", type=float, default=1800.0)
     _ = parser.add_argument("--target-branch", required=True)
     _ = parser.add_argument("--base-oid", required=True)
     args = cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
@@ -115,7 +113,11 @@ def main(argv: list[str] | None = None) -> int:
             review_timeout_seconds=profile.review_timeout_seconds,
             on_reject=profile.on_reject,
             session_mode=profile.session_mode,
-            completion_timeout_seconds=int(args.timeout),
+            completion_timeout_seconds=int(
+                profile.attempt_timeout_seconds * profile.max_iterations
+            ),
+            attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
+            max_iterations=profile.max_iterations,
         )
         outcome = run_node_to_completion(
             executor,
@@ -123,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             args.node_id,
             exec_config,
             args.target_branch,
-            args.timeout,
+            float(profile.attempt_timeout_seconds),
             base_oid=args.base_oid,
             parent_run_id=args.run_id,
         )
@@ -134,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             RunResult(
                 status="done" if outcome.success else "failed",
                 exit_code=0 if outcome.success else 1,
-                timed_out=False,
+                timed_out=outcome.timed_out,
                 ended_at=now_iso(),
                 rebased=outcome.success,
                 detail=outcome.detail,

@@ -15,7 +15,7 @@ from milknado.adapters.loop import (
 from milknado.domains.common import RunResult, SessionView
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
-from milknado.domains.common.protocols import ProgressEvent, VerifySpecResult
+from milknado.domains.common.protocols import ProgressEvent, TerminalRunOutcome, VerifySpecResult
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.graph import MikadoGraph
 from milknado.loop import EventType
@@ -55,6 +55,7 @@ class TestCreateRun:
             ralph_file=Path("/project/RALPH.md"),
             quality_gates=(Gate(command="uv run ruff check"),),
             commit_footer="Co-authored-by: Team <team@example.com>",
+            timeout=12.5,
         )
 
         mock_config_cls.assert_called_once_with(
@@ -64,10 +65,13 @@ class TestCreateRun:
             project_root=Path("/project"),
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
+            completion_required=True,
             stop_on_error=True,
             log_dir=Path("/project") / ".ralph-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
+            max_iterations=None,
+            timeout=12.5,
         )
         mock_manager.create_run.assert_called_once_with(  # pyright: ignore[reportAny]
             mock_config,
@@ -75,6 +79,27 @@ class TestCreateRun:
             run_id=None,
         )
         assert result is mock_run
+
+    @patch("milknado.adapters.loop.RunConfig")
+    def test_bounds_worker_loop_with_max_iterations(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+    ) -> None:
+        mock_manager.create_run.return_value = MagicMock()  # pyright: ignore[reportAny]
+
+        _ = adapter.create_run(
+            agent="claude",
+            ralph_dir=Path("/project"),
+            ralph_file=Path("/project/RALPH.md"),
+            quality_gates=(Gate(command="just check-llm"),),
+            max_iterations=3,
+            completion_probe=lambda: True,
+        )
+
+        assert mock_config_cls.call_args.kwargs["max_iterations"] == 3
+        assert mock_config_cls.call_args.kwargs["completion_required"] is True
 
 
 class TestStartStopRun:
@@ -271,12 +296,32 @@ class TestWaitForNextCompletion:
         event.run_id = "run-1"
         run = MagicMock()
         run.state.status = RunStatus.FAILED  # pyright: ignore[reportAny]
+        run.state.timed_out_count = 0  # pyright: ignore[reportAny]
         mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
         adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
 
         run_id, success = adapter.wait_for_next_completion({"run-1"})
         assert run_id == "run-1"
         assert success == "failed"
+
+    def test_marks_failed_timeout_outcome(
+        self, adapter: LoopAdapter, mock_manager: MagicMock
+    ) -> None:
+        from milknado.loop import RunStatus
+
+        event = MagicMock(type=EventType.RUN_STOPPED, run_id="run-1")
+        run = MagicMock()
+        run.state.status = RunStatus.FAILED  # pyright: ignore[reportAny]
+        run.state.timed_out_count = 1  # pyright: ignore[reportAny]
+        mock_manager.get_run.return_value = run  # pyright: ignore[reportAny]
+        adapter._queue.put(event)  # pyright: ignore[reportPrivateUsage]
+
+        run_id, outcome = adapter.wait_for_next_completion({"run-1"})
+
+        assert run_id == "run-1"
+        assert outcome == "failed"
+        assert isinstance(outcome, TerminalRunOutcome)
+        assert outcome.timed_out is True
 
     def test_skips_non_stop_events(
         self,

@@ -1533,13 +1533,6 @@ class TestStreamingDeadlineAndBuffering:
         assert elapsed < 10.0
 
     def test_streaming_peek_flows_line_at_a_time(self, tmp_path: Path):
-        """Peek callbacks must fire promptly as lines arrive, not in 8KB bursts.
-
-        A fake agent emits timestamped lines with 200ms sleeps.  Each
-        ``on_output_line`` callback must fire within 500ms of the line's
-        emission — if they arrived in readahead bursts the later lines
-        would be delayed.
-        """
         # Agent emits 5 lines at ~200ms intervals with wall-clock timestamps.
         script = (
             "import sys, time\n"
@@ -1549,10 +1542,12 @@ class TestStreamingDeadlineAndBuffering:
             "    if i < 4:\n"
             "        time.sleep(0.2)\n"
         )
-        receive_times: list[float] = []
+        delivery_delays: list[float] = []
 
-        def on_line(line: str, stream: str) -> None:  # pyright: ignore[reportUnusedParameter]
-            receive_times.append(time.monotonic())
+        def on_line(line: str, stream: str) -> None:
+            if stream == "stdout":
+                emitted_at = float(line.split(maxsplit=1)[0])
+                delivery_delays.append(time.monotonic() - emitted_at)
 
         result = _run_agent_streaming(
             _ResolvedAgentRun(
@@ -1569,19 +1564,8 @@ class TestStreamingDeadlineAndBuffering:
         assert result.timed_out is False
         # Should have received all 5 lines (stdout) plus any stderr lines
         # forwarded by the stderr pump — at least 5.
-        stdout_callbacks = len(receive_times)
-        assert stdout_callbacks >= 5
-
-        # Check that lines were delivered promptly.  The gap between
-        # consecutive callbacks should be roughly 200ms (±300ms for
-        # scheduling jitter).  If buffered in 8KB bursts, the last 4
-        # lines would all arrive at once with ~0ms gaps.
-        for i in range(1, min(5, stdout_callbacks)):
-            gap = receive_times[i] - receive_times[i - 1]
-            assert gap > 0.05, (
-                f"Gap between line {i - 1} and {i} was {gap:.3f}s — "
-                "lines likely arrived in a buffered burst"
-            )
+        assert len(delivery_delays) >= 5
+        assert all(delay < 0.5 for delay in delivery_delays[:5])
 
 
 class TestBlockingInheritPath:

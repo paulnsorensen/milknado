@@ -44,6 +44,9 @@ class _DispatchLoopFixture(Protocol):
         base_oid: str | None = None,
         runtime_policy: object | None = None,
         run_id: str | None = None,
+        completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> object: ...
 
     def start_run(self, run_id: str) -> None: ...
@@ -101,6 +104,22 @@ def test_dispatch_inserts_runs_row(graph: MikadoGraph, tmp_path: Path) -> None:
     assert row["status"] == "running"
     assert row["log_path"].endswith(".ralph-logs")
     assert (Path(row["log_path"]) / "0000-dispatch.log").is_file()
+
+
+def test_dispatch_forwards_flavor_iteration_bound(graph: MikadoGraph, tmp_path: Path) -> None:
+    _ = graph.add_node("bounded worker")
+    ralph = FakeRalph()
+    config = ExecutionConfig(
+        execution_agent="claude",
+        quality_gates=(Gate(command="true"),),
+        worktree_pattern="milknado-{node_id}-{slug}",
+        project_root=tmp_path,
+        max_iterations=3,
+        attempt_timeout_seconds=12.5,
+    )
+    _ = _executor_with_ralph(graph, ralph).dispatch(1, config)
+    assert ralph.max_iterations_seen == [3]
+    assert ralph.timeouts_seen == [12.5]
 
 
 def test_verdict_message_deposit_no_longer_fk_fails(graph: MikadoGraph, tmp_path: Path) -> None:
@@ -275,10 +294,6 @@ def test_completed_ralph_run_row_is_finalized(graph: MikadoGraph, tmp_path: Path
 def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Persistence precedes execution and records its completion timeout.
-
-    Executor runs intentionally leave ``runs.pid`` NULL because their owner is
-    the coordinator; cancellation must not process-kill that coordinator."""
     call_order: list[str] = []
     orig_graph_start_run = graph.runs.start
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Literal
 
 from milknado.domains.common import TerminalRunOutcome
 from milknado.domains.execution.executor import RebaseConflict
@@ -11,14 +12,16 @@ from milknado.domains.execution.run_loop.state import TerminalRunState
 from milknado.loop import RunStatus
 
 _logger = logging.getLogger("milknado")
+TerminalRunStatus = Literal["completed", "stopped", "failed"]
 
 
 def handle_completion(
     loop: RunLoopState,
     run_id: str,
-    outcome: TerminalRunOutcome,
+    outcome: TerminalRunStatus | TerminalRunOutcome,
     feature_branch: str,
 ) -> tuple[int, int, list[RebaseConflict]]:
+    status = outcome.status if isinstance(outcome, TerminalRunOutcome) else outcome
     completed = failed = 0
     conflicts: list[RebaseConflict] = []
     active = loop._active  # pyright: ignore[reportPrivateUsage]
@@ -42,7 +45,7 @@ def handle_completion(
             run_id=run_id,
             node_id=node_id,
             description=desc,
-            status=RunStatus(outcome),
+            status=RunStatus(status),
             output=tuple(ralph.get_run_output_tail(run_id, 30)),
             pending_guidance=tuple(ralph.get_run_guidance(run_id)),
             duration_seconds=duration,
@@ -50,7 +53,7 @@ def handle_completion(
         )
     )
 
-    if outcome == "completed":
+    if status == "completed":
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
         completion_durations = loop._completion_durations  # pyright: ignore[reportPrivateUsage]
         result = executor.complete(node_id, feature_branch)
@@ -98,7 +101,7 @@ def handle_completion(
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
             logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
             completed += 1
-    elif outcome == "stopped":
+    elif status == "stopped":
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
         stopped_nodes = loop._stopped_nodes  # pyright: ignore[reportPrivateUsage]
         stopped = loop._stopped  # pyright: ignore[reportPrivateUsage]

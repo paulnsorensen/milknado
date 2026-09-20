@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from milknado.domains.common.flavor_codec import Gate
 from milknado.domains.common.session import SessionInput, SessionView
@@ -102,7 +102,20 @@ class ToolchainPort(Protocol):
     def home(self) -> Path: ...
 
 
-TerminalRunOutcome = Literal["completed", "stopped", "failed"]
+TerminalRunStatus = Literal["completed", "stopped", "failed"]
+
+
+class TerminalRunOutcome(str):
+    timed_out: bool
+
+    def __new__(cls, status: TerminalRunStatus, timed_out: bool = False) -> TerminalRunOutcome:
+        outcome = str.__new__(cls, status)
+        outcome.timed_out = timed_out
+        return outcome
+
+    @property
+    def status(self) -> TerminalRunStatus:
+        return cast(TerminalRunStatus, str(self))
 
 
 class RunStateView(Protocol):
@@ -151,6 +164,8 @@ class LoopPort(Protocol):
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> RunHandle: ...
     def start_run(self, run_id: str) -> None: ...
     def queue_guidance(self, run_id: str, text: str) -> bool: ...
