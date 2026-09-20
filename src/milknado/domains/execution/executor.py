@@ -111,6 +111,7 @@ class ExecutionConfig:
     on_reject: str = "warn"
     session_mode: str = "fresh"
     completion_timeout_seconds: int | None = None
+    attempt_timeout_seconds: float | None = None
     max_iterations: int | None = None
 
 
@@ -158,6 +159,7 @@ class _RalphRunKwargs(TypedDict, total=False):
     completion_probe: Callable[[], bool]
     runtime_policy: RuntimePolicy
     max_iterations: int | None
+    timeout: float
 
 
 def _build_commit_message(node_id: int, description: str) -> str:
@@ -640,6 +642,8 @@ class Executor:
         }
         if config.max_iterations is not None:
             create_kwargs["max_iterations"] = config.max_iterations
+        if config.attempt_timeout_seconds is not None:
+            create_kwargs["timeout"] = config.attempt_timeout_seconds
         if node.flavor == "review":
             create_kwargs["completion_probe"] = lambda run_id=ralph_run_id: (
                 self._graph.runs.latest_message(run_id, "review_terminal") is not None

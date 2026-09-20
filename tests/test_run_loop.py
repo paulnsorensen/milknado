@@ -293,6 +293,7 @@ class FakeRalph:
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> FakeRun:
         _ = (
             agent,
@@ -305,6 +306,7 @@ class FakeRalph:
             runtime_policy,
             completion_probe,
             max_iterations,
+            timeout,
         )
         self._run_counter += 1
         ordinal_id = f"run-{self._run_counter}"
@@ -314,7 +316,9 @@ class FakeRalph:
         success = self._success.get(resolved_run_id, self._success.get(ordinal_id, True))
         outcome = self._outcomes.get(
             resolved_run_id,
-            self._outcomes.get(ordinal_id, "completed" if success else "failed"),
+            self._outcomes.get(
+                ordinal_id, TerminalRunOutcome("completed" if success else "failed")
+            ),
         )
         self._pending_completions.append((resolved_run_id, outcome))
         run = FakeRun(state=FakeRunState(run_id=resolved_run_id))
@@ -437,7 +441,7 @@ class FakeRalph:
         self._success[run_id] = False
 
     def set_run_stopped(self, run_id: str) -> None:
-        self._outcomes[run_id] = "stopped"
+        self._outcomes[run_id] = TerminalRunOutcome("stopped")
 
 
 @pytest.fixture()

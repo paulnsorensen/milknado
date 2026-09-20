@@ -122,10 +122,10 @@ class RunConfig:
     log_dir: Path | None = None
     project_root: Path = field(default=Path("."))
     commit_footer: str | None = None
-    # Inner text expected inside ``<promise>...</promise>``.
     completion_signal: str = DEFAULT_COMPLETION_SIGNAL
-    # Stop the run when the configured promise payload is observed.
     stop_on_completion_signal: bool = False
+    # Require an accepted completion signal before a bounded run can finish.
+    completion_required: bool = False
     # Per-iteration tool-use cap; None disables the cap.
     max_turns: int | None = None
     # Soft wind-down fires at ``max_turns - max_turns_grace``.

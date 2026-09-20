@@ -588,6 +588,8 @@ class _DispatchRalph:
         runtime_policy: object | None = None,
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
+        max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> _Run:
         _ = (
             agent,
@@ -599,6 +601,8 @@ class _DispatchRalph:
             base_oid,
             runtime_policy,
             completion_probe,
+            max_iterations,
+            timeout,
         )
         return _Run(_RunState(run_id or "run-1"))
 

@@ -167,8 +167,9 @@ class _ReviewRalph:
         run_id: str | None = None,
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
+        timeout: float | None = None,
     ) -> _Run:
-        _ = max_iterations
+        _ = (max_iterations, timeout)
         self._next_id += 1
         resolved_run_id = run_id or f"run-{self._next_id}"
         self.created.append(
@@ -1077,13 +1078,17 @@ class _HeadlessRoundExecutor:
         _ = run_id, timeout
         return True
 
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return True
+
 
 class _HeadlessRoundRalph:
     def wait_for_next_completion(
         self, active_run_ids: set[str], timeout: float | None = None
     ) -> tuple[str, TerminalRunOutcome]:
         _ = timeout
-        return next(iter(active_run_ids)), "completed"
+        return next(iter(active_run_ids)), TerminalRunOutcome("completed")
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = run_id, timeout
@@ -1111,7 +1116,7 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", "completed", "main") == (0, 0, [])
+    assert handle_completion(loop, "run-1", TerminalRunOutcome("completed"), "main") == (0, 0, [])
     assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))

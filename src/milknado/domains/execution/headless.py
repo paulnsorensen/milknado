@@ -30,6 +30,7 @@ class HeadlessOutcome:
     node_id: int
     success: bool
     detail: str | None = None
+    timed_out: bool = False
 
 
 class _ExecutorLike(Protocol):
@@ -45,6 +46,7 @@ class _ExecutorLike(Protocol):
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult: ...
     def fail(self, node_id: int, detail: str | None = None) -> None: ...
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
+    def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
 
 
 class _RalphLike(Protocol):
@@ -87,7 +89,8 @@ def run_node_to_completion(
         dispatch = executor.dispatch(
             node_id, exec_config, base_oid=base_oid, parent_run_id=parent_run_id
         )
-    deadline = time.monotonic() + timeout
+    total_timeout = timeout * (exec_config.max_iterations or 1)
+    deadline = time.monotonic() + total_timeout
     while True:
         try:
             remaining_timeout = deadline - time.monotonic()
@@ -95,35 +98,45 @@ def run_node_to_completion(
                 {dispatch.run_id}, timeout=remaining_timeout
             )
         except CompletionTimeout:
-            if not executor.stop_run(dispatch.run_id, timeout=10.0):
+            if not executor.force_stop_run(dispatch.run_id, timeout=10.0):
                 return HeadlessOutcome(
                     node_id,
                     success=False,
                     detail="completion timeout; worker did not exit, ownership preserved",
+                    timed_out=True,
                 )
             executor.fail(node_id)
-            return HeadlessOutcome(node_id, success=False, detail="completion timeout")
+            return HeadlessOutcome(
+                node_id, success=False, detail="completion timeout", timed_out=True
+            )
 
         if isinstance(outcome, ProgressEvent):
             continue
 
-        if outcome == "stopped":
+        timed_out = outcome.timed_out if hasattr(outcome, "timed_out") else False
+        status = outcome.status if hasattr(outcome, "status") else outcome
+        if status == "stopped":
             executor.cancel(node_id)
             return HeadlessOutcome(node_id, success=False, detail="worker run stopped")
-        if outcome == "failed":
+        if status == "failed":
             if not executor.stop_run(dispatch.run_id, timeout=10.0):
                 return HeadlessOutcome(
                     node_id,
                     success=False,
                     detail="worker run did not complete or exit; ownership preserved",
+                    timed_out=timed_out,
                 )
             executor.fail(node_id)
-            return HeadlessOutcome(node_id, success=False, detail="worker run did not complete")
+            return HeadlessOutcome(
+                node_id,
+                success=False,
+                detail="worker run did not complete",
+                timed_out=timed_out,
+            )
 
         result = executor.complete(node_id, feature_branch)
         if result.redispatch is not None:
             dispatch = result.redispatch
-            deadline = time.monotonic() + timeout
             continue
         if result.blocked:
             return HeadlessOutcome(

@@ -135,8 +135,6 @@ def _runner_argv(request: RalphStartRequest, claim: RalphClaim) -> list[str]:
         str(request.root),
         "--run-id",
         claim.run_id,
-        "--timeout",
-        str(request.timeout_seconds),
         "--target-branch",
         claim.target_branch,
         "--base-oid",
