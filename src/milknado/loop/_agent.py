@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, cast
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV
+from milknado.domains.common.process import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._events import OutputStream
 from milknado.loop._output import (
     IS_WINDOWS,
@@ -1212,15 +1212,14 @@ def execute_agent(spec: AgentRunSpec) -> AgentResult:
             wind_down.cleanup()
 
 
-def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str] | None:
-    """Compose a spawn environment without the controller master secret."""
-    if not overrides and CONTROLLER_MASTER_ENV not in os.environ:
-        return None
+def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str]:
+    """Compose a marked worker environment without controller authority."""
     merged = os.environ.copy()
     _ = merged.pop(CONTROLLER_MASTER_ENV, None)
     if overrides:
         merged.update(overrides)
         _ = merged.pop(CONTROLLER_MASTER_ENV, None)
+    merged[WORKER_CONTEXT_ENV] = "1"
     return merged
 
 

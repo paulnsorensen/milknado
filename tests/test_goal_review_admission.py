@@ -639,6 +639,7 @@ def test_goal_review_cli_decides_from_confirmed_human_boundary(
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     graph.register_controller_master()
     graph.close()
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
 
     import milknado.cli.graph as cli_graph
 

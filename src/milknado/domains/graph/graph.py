@@ -87,7 +87,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _pipeline: StatusPipeline
     _dispatch_exclusions: set[int]
     _graph_snapshot_cache: GraphSnapshot | None
-    _graph_snapshot_revision: tuple[int, int] | None
     runs: _RunFacade
     sessions: _SessionFacade
     commands: _CommandFacade
@@ -114,7 +113,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         )
         self._dispatch_exclusions = set()
         self._graph_snapshot_cache = None
-        self._graph_snapshot_revision = None
+        self._graph_snapshot_revision: tuple[int, int] | None = None
+        self._controller_master: bytes | None = None
         self.runs = _RunFacade(self)
         self.sessions = _SessionFacade(self)
         self.commands = _CommandFacade(self)
@@ -555,7 +555,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     @synchronized
     def register_controller_master(self) -> None:
-        _controller_capability.register_controller_master(self._conn)
+        self._controller_master = _controller_capability.register_controller_master(self._conn)
 
     @synchronized
     def decide_goal_review(
@@ -564,7 +564,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         _ = self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
             if not _controller_capability.consume_controller_capability(
-                self._conn, request.review_id, request.decision.value
+                self._conn, request.review_id, request.decision.value, self._controller_master
             ):
                 raise PermissionError("a controller capability is required for this decision")
             return _goal_review.decide_goal_review(

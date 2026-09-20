@@ -16,7 +16,12 @@ import typer
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.domains.common import CONTROLLER_MASTER_ENV, NodeKind, NodeSpec
+from milknado.domains.common import (
+    CONTROLLER_MASTER_ENV,
+    WORKER_CONTEXT_ENV,
+    NodeKind,
+    NodeSpec,
+)
 from milknado.domains.dispatch import build_worker_env
 from milknado.domains.graph import (
     GoalReviewDecision,
@@ -144,6 +149,7 @@ def test_worker_environment_strips_controller_master(monkeypatch: pytest.MonkeyP
     worker_env = build_worker_env({CONTROLLER_MASTER_ENV: "worker-spoof"})
 
     assert CONTROLLER_MASTER_ENV not in worker_env
+    assert worker_env[WORKER_CONTEXT_ENV] == "1"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY worker test requires POSIX")
@@ -210,7 +216,7 @@ def test_worker_cannot_self_approve_from_a_pty(  # noqa: PLR0915 - real PTY boun
 
     assert proc is not None
     assert proc.returncode != 0
-    assert b"controller capability" in bytes(output), (
+    assert b"worker context" in bytes(output), (
         f"returncode={proc.returncode}, output={bytes(output)!r}"
     )
     graph = MikadoGraph(tmp_path / ".milknado" / "milknado.db")
@@ -231,6 +237,7 @@ def test_loop_agent_environment_strips_controller_master(
 
     assert worker_env is not None
     assert CONTROLLER_MASTER_ENV not in worker_env
+    assert worker_env[WORKER_CONTEXT_ENV] == "1"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group test")
@@ -246,7 +253,8 @@ def test_session_environment_strips_controller_master(
                 command=(
                     sys.executable,
                     "-c",
-                    "import os; print(os.environ.get('MILKNADO_CONTROLLER_MASTER', ''))",
+                    "import os; print(os.environ.get('MILKNADO_CONTROLLER_MASTER', '')); "
+                    + "print(os.environ.get('MILKNADO_WORKER_CONTEXT', ''))",
                 )
             ),
         ),
@@ -254,17 +262,28 @@ def test_session_environment_strips_controller_master(
     proc = start_process(protocol, tmp_path)
     stdout, _ = proc.communicate(timeout=10)
 
-    assert stdout == b"\n"
+    assert stdout == b"\n1\n"
 
 
-def test_controller_registration_rejects_missing_and_wrong_master(
+def test_controller_registration_reuses_managed_master_and_rejects_wrong_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(CONTROLLER_MASTER_ENV)
-    with pytest.raises(RuntimeError, match=CONTROLLER_MASTER_ENV):
-        _register_controller(tmp_path)
-    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "registered-master")
+    _register_controller(tmp_path)
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
     _register_controller(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "different-master")
     with pytest.raises(RuntimeError, match="different controller master"):
         _register_controller(tmp_path)
+
+
+def test_goal_review_cli_reports_controller_storage_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    review_id = _pending_review(tmp_path)
+    monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
+
+    result = _invoke_human(tmp_path, review_id, "accepted", monkeypatch)
+
+    assert result.exit_code == 1
+    assert "XDG_STATE_HOME must be an absolute path" in result.output

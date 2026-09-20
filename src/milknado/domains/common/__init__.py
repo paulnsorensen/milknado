@@ -43,7 +43,11 @@ from milknado.domains.common.paths import (
     validate_hint_path,
 )
 from milknado.domains.common.plugin import PluginHook, PluginMeta
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV, pid_alive
+from milknado.domains.common.process import (
+    CONTROLLER_MASTER_ENV,
+    WORKER_CONTEXT_ENV,
+    pid_alive,
+)
 from milknado.domains.common.protocols import (
     CrgPort,
     GitPort,
@@ -121,6 +125,7 @@ __all__ = [
     "VALID_TRANSITIONS",
     "pid_alive",
     "CONTROLLER_MASTER_ENV",
+    "WORKER_CONTEXT_ENV",
     "FlavorOverride",
     "default_config",
     "detect_project_gates",

@@ -25,6 +25,7 @@ def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
     """
     xdg = tmp_path_factory.mktemp("xdg_config")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("xdg_state")))
 
 
 @pytest.fixture(autouse=True)
