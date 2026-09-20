@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
 import type { WireExecutionSnapshot } from '../../app/wire';
-import { resetTab, getActiveTab } from '../node-sidecar/detailTab';
+import { getActiveTab, resetTab } from '../../shared/node-detail';
 import {
   clearSelection,
   openSelectedDetails,

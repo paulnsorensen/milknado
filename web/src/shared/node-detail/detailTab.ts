@@ -1,6 +1,6 @@
 // Which sidecar tab is active for the selected node: Session, Changes or
-// Details. A plain pub-sub so the `changes` and `session-input` features can
-// read it without a shared parent component.
+// Details. A plain pub-sub so features across the app can read it without a
+// shared parent component.
 export type DetailTab = 'session' | 'changes' | 'details';
 
 let activeTab: DetailTab = 'session';

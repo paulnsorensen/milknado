@@ -10,7 +10,7 @@ import {
   pagePrevious,
   sessionPageNext,
   sessionPagePrevious,
-} from '../node-sidecar/nodeDetail';
+} from '../../shared/node-detail';
 import { PermissionActions } from './PermissionActions';
 import { SessionInputSection } from './SessionInputSection';
 

@@ -2,7 +2,7 @@
 // `changes.open` action `node-sidecar`'s Changes tab button dispatches.
 import { registerAction } from '../../app/actions';
 import { registerSlot } from '../../app/slots';
-import { setActiveTab } from '../node-sidecar/detailTab';
+import { setActiveTab } from '../../shared/node-detail';
 import { ChangesSection } from './ChangesSection';
 
 export function register(): void {

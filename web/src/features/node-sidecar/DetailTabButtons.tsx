@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { dispatchAction } from '../../app/actions';
 import { Milknado } from '../../design-system';
-import { getActiveTab, setActiveTab, subscribeTab, type DetailTab } from './detailTab';
+import { getActiveTab, setActiveTab, subscribeTab, type DetailTab } from '../../shared/node-detail';
 
 function TabButton({ tab, label }: { tab: DetailTab; label: string }): ReactElement {
   const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);

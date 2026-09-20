@@ -4,9 +4,16 @@ import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { toGraphNodes } from '../../app/wire';
 import { toBadgeState } from './badgeState';
-import { getActiveTab, subscribeTab } from './detailTab';
 import { DetailsTab } from './DetailsTab';
-import { detailHasMore, getDetailState, selectNode, sessionHasMore, subscribeDetail } from './nodeDetail';
+import {
+  detailHasMore,
+  getActiveTab,
+  getDetailState,
+  selectNode,
+  sessionHasMore,
+  subscribeDetail,
+  subscribeTab,
+} from '../../shared/node-detail';
 import { SessionTab } from './SessionTab';
 
 /** The `sidecar` slot contribution: the node detail panel for the selected node. */

@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { clearActions, registerAction } from '../../app/actions';
-import { getActiveTab, resetTab } from './detailTab';
+import { getActiveTab, resetTab } from '../../shared/node-detail';
 import { ChangesTabButton, DetailsTabButton, SessionTabButton } from './DetailTabButtons';
 
 describe('DetailTabButtons', () => {

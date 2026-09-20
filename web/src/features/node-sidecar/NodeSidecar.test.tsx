@@ -2,10 +2,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
 import { resetStore, setSelection } from '../../app/store';
-import { resetDetail } from './nodeDetail';
-import { resetTab, setActiveTab } from './detailTab';
+import { resetDetail, resetTab, setActiveTab, type WireNodeDetailResponse } from '../../shared/node-detail';
 import { NodeSidecar } from './NodeSidecar';
-import type { WireNodeDetailResponse } from './detailWire';
 
 vi.mock('../../app/api', () => ({ get: vi.fn() }));
 

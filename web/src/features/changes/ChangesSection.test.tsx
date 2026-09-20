@@ -1,13 +1,16 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
-import { resetTab, setActiveTab } from '../node-sidecar/detailTab';
-import { getDetailState, type DetailState } from '../node-sidecar/nodeDetail';
+import { getDetailState, resetTab, setActiveTab, type DetailState } from '../../shared/node-detail';
 import { resetChanges } from './changesState';
 import { ChangesSection } from './ChangesSection';
 
 vi.mock('../../app/api', () => ({ get: vi.fn() }));
-vi.mock('../node-sidecar/nodeDetail', () => ({ getDetailState: vi.fn(), subscribeDetail: vi.fn(() => () => {}) }));
+vi.mock('../../shared/node-detail', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getDetailState: vi.fn(),
+  subscribeDetail: vi.fn(() => () => {}),
+}));
 
 const emptyPage = { items: [], offset: 0, limit: 50, total: 0, has_more: false, state: 'loaded' as const };
 

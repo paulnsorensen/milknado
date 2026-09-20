@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react';
 import { dispatchAction } from '../../app/actions';
 import { Milknado } from '../../design-system';
-import type { WireSessionEvent } from './detailWire';
+import type { WireSessionEvent } from '../../shared/node-detail';
 
 export interface SessionTabProps {
   events: WireSessionEvent[];

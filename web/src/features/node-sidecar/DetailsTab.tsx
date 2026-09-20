@@ -1,7 +1,7 @@
 import type { ReactElement } from 'react';
 import { dispatchAction } from '../../app/actions';
 import { Milknado } from '../../design-system';
-import type { WireNodeDetailSnapshot } from './detailWire';
+import type { WireNodeDetailSnapshot } from '../../shared/node-detail';
 
 export interface DetailsTabProps {
   detail: WireNodeDetailSnapshot;

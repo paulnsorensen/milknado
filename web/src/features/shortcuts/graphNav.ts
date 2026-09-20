@@ -3,7 +3,7 @@
 import { getState, setGraphView, setSelection } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { toGraphNodes, type GraphNodeData } from '../../app/wire';
-import { setActiveTab } from '../node-sidecar/detailTab';
+import { setActiveTab } from '../../shared/node-detail';
 
 function graphNodes(): GraphNodeData[] {
   const graph = getState().snapshot?.graph;

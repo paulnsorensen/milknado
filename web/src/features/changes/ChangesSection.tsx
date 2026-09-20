@@ -1,8 +1,7 @@
 import type { ReactElement } from 'react';
 import { useEffect, useSyncExternalStore } from 'react';
 import { Milknado } from '../../design-system';
-import { getActiveTab, subscribeTab } from '../node-sidecar/detailTab';
-import { getDetailState, subscribeDetail } from '../node-sidecar/nodeDetail';
+import { getActiveTab, getDetailState, subscribeDetail, subscribeTab } from '../../shared/node-detail';
 import { getChangesState, selectPath, setRunId, subscribeChanges } from './changesState';
 
 /** The `sidecar-section` contribution for the Changes tab: a file list and its diff. */

@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
 import { resetStore, setSelection, setSnapshot } from '../../app/store';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
-import { resetTab } from '../node-sidecar/detailTab';
-import { resetDetail } from '../node-sidecar/nodeDetail';
+import { resetDetail, resetTab } from '../../shared/node-detail';
 import { NarrowDetail } from './NarrowDetail';
 
 vi.mock('../../app/api', () => ({ get: vi.fn() }));
