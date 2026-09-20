@@ -34,8 +34,8 @@ describe('Shell', () => {
   it('renders the default layout when no layout is registered', () => {
     vi.mocked(get).mockResolvedValue(null);
 
-    expect(() => render(<Shell />)).not.toThrow();
+    render(<Shell />);
 
-    expect(document.querySelector('.mk-shell')).toBeInTheDocument();
+    expect(screen.getByTestId('default-layout')).toBeInTheDocument();
   });
 });

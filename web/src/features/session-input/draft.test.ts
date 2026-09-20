@@ -65,4 +65,11 @@ describe('draft', () => {
     queueGuidance();
     expect(post).not.toHaveBeenCalled();
   });
+
+  it('does nothing with a whitespace-only draft', async () => {
+    setDraft('   ');
+    await queueGuidance();
+    expect(post).not.toHaveBeenCalled();
+    expect(getDraft()).toBe('   ');
+  });
 });

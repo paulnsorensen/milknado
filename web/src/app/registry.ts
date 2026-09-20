@@ -18,18 +18,15 @@ export function registerFeaturesFrom(discovered: Record<string, FeatureModule>):
   return paths;
 }
 
-let registered = false;
+let registeredPaths: string[] | null = null;
 
-/** Runs `registerFeaturesFrom` at most once, guarding against a re-import or HMR double-registering every slot and action. */
+/** Runs `registerFeaturesFrom` at most once; a repeat call returns the first result. */
 export function registerFeatures(): string[] {
-  if (registered) {
-    return [];
-  }
-  registered = true;
-  return registerFeaturesFrom(modules);
+  registeredPaths ??= registerFeaturesFrom(modules);
+  return registeredPaths;
 }
 
 /** Test-only reset, mirroring `clearSlots`, so a suite can call `registerFeatures()` again. */
 export function resetFeatureRegistration(): void {
-  registered = false;
+  registeredPaths = null;
 }

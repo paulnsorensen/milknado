@@ -11,9 +11,10 @@ describe('registerSlot', () => {
     registerSlot('dialog', () => null);
     registerSlot('toast', () => null);
 
-    const toastKeys = getSlot('toast').map((entry) => entry.key);
+    const keys = (id: 'toast' | 'dialog'): number[] => getSlot(id).map((entry) => entry.key);
 
-    expect(toastKeys[0]).not.toBe(toastKeys[1]);
-    expect(toastKeys[1]).not.toBe(1);
+    expect(keys('toast')).toEqual([0, 2]);
+    expect(keys('dialog')).toEqual([1]);
+    expect(keys('toast')).toEqual([0, 2]);
   });
 });

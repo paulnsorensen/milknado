@@ -5,7 +5,7 @@ import { Milknado } from '../../design-system';
 import { getDraft, registerInputEl, setDraft, subscribeDraft } from './draft';
 import { sendSessionCommand } from './sessionCommand';
 
-type SendAction = 'steer' | 'follow_up' | 'interrupt';
+type MessageAction = 'steer' | 'follow_up';
 
 /** The `sidecar-section` contribution: the guidance draft and its send actions. */
 export function SessionInputSection(): ReactElement {
@@ -14,13 +14,18 @@ export function SessionInputSection(): ReactElement {
   const { Button } = Milknado;
   const sessionInput = store.capabilities?.session_input;
 
-  function send(action: SendAction): void {
+  function send(action: MessageAction): void {
     const text = draft;
     void sendSessionCommand(action, { text }).then((sent) => {
       if (sent && getDraft() === text) {
         setDraft('');
       }
     });
+  }
+
+  // No session backend reads interrupt text, so the draft stays for a later send.
+  function interrupt(): void {
+    void sendSessionCommand('interrupt', { text: '' });
   }
 
   if (!sessionInput?.available) {
@@ -43,7 +48,7 @@ export function SessionInputSection(): ReactElement {
       <Button onClick={() => send('follow_up')} disabled={textEmpty}>
         Follow up
       </Button>
-      <Button onClick={() => send('interrupt')}>Interrupt</Button>
+      <Button onClick={interrupt}>Interrupt</Button>
     </div>
   );
 }

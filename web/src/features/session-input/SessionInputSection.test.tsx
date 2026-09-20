@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
 import { resetStore, setSnapshot } from '../../app/store';
-import { resetDraft } from './draft';
+import { getDraft, resetDraft, setDraft } from './draft';
 import { SessionInputSection } from './SessionInputSection';
 
 vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
@@ -83,5 +83,20 @@ describe('SessionInputSection', () => {
       '/api/runs/run-1/session-input',
       expect.objectContaining({ action: 'interrupt', text: '' }),
     );
+  });
+
+  it('sends interrupt without the typed draft and keeps the draft', async () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setDraft('Send this after the stop');
+
+    render(<SessionInputSection />);
+    screen.getByText('Interrupt').click();
+    await Promise.resolve();
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'interrupt', text: '' }),
+    );
+    expect(getDraft()).toBe('Send this after the stop');
   });
 });

@@ -37,7 +37,7 @@ export function focusSessionInput(): void {
 
 export async function queueGuidance(): Promise<void> {
   const text = draft;
-  if (text === '') {
+  if (text.trim() === '') {
     return;
   }
   const sent = await sendSessionCommand('follow_up', { text });
