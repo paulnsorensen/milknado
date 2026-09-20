@@ -109,6 +109,7 @@ def consume_controller_capability(
 
 
 def _explicit_master() -> bytes | None:
+    """Read and validate an explicitly configured controller credential."""
     if CONTROLLER_MASTER_ENV not in os.environ:
         return None
     value = os.environ[CONTROLLER_MASTER_ENV]
@@ -123,6 +124,7 @@ def _explicit_master() -> bytes | None:
 
 
 def _load_credential(master_hash: str) -> bytes | None:
+    """Load the owner-only credential matching a registered hash, if present."""
     path = _credential_path(master_hash)
     try:
         if path.is_symlink():
@@ -156,6 +158,7 @@ def _load_credential(master_hash: str) -> bytes | None:
 
 
 def _publish_if_missing(master_hash: str, master: bytes) -> None:
+    """Atomically persist a controller credential when no record exists."""
     path = _credential_path(master_hash)
     existing = _load_credential(master_hash)
     if existing is not None:
@@ -184,10 +187,12 @@ def _publish_if_missing(master_hash: str, master: bytes) -> None:
 
 
 def _credential_path(master_hash: str) -> Path:
+    """Return the managed record path for a controller hash."""
     return _store_dir() / master_hash
 
 
 def _store_dir() -> Path:
+    """Return the owner-only managed controller credential directory."""
     state_home = os.environ.get("XDG_STATE_HOME", "").strip()
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
     if state_home and not root.is_absolute():
@@ -217,6 +222,7 @@ def _store_dir() -> Path:
 
 
 def _validated_hash(value: str) -> str:
+    """Reject malformed controller hashes read from graph storage."""
     if not _HASH_RE.fullmatch(value):
         raise ControllerAuthorizationError("registered controller hash is malformed")
     return value

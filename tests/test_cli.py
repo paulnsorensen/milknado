@@ -1397,6 +1397,7 @@ class TestRunCommand:
         project_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Run ready nodes without requiring an exported controller secret."""
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
@@ -1426,6 +1427,7 @@ class TestRunCommand:
         project_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Report controller credential storage failures through the run CLI."""
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 

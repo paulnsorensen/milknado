@@ -145,6 +145,7 @@ def test_controller_capability_authorizes_one_exact_decision(
 
 
 def test_worker_environment_strips_controller_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip controller authority and mark dispatch worker environments."""
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     worker_env = build_worker_env({CONTROLLER_MASTER_ENV: "worker-spoof"})
 
@@ -156,6 +157,7 @@ def test_worker_environment_strips_controller_master(monkeypatch: pytest.MonkeyP
 def test_worker_cannot_self_approve_from_a_pty(  # noqa: PLR0915 - real PTY boundary
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Reject a marked worker's review attempt even when it owns a real PTY."""
     review_id = _pending_review(tmp_path)
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     _register_controller(tmp_path)
@@ -231,6 +233,7 @@ def test_worker_cannot_self_approve_from_a_pty(  # noqa: PLR0915 - real PTY boun
 def test_loop_agent_environment_strips_controller_master(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Strip controller authority from loop-agent worker environments."""
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
 
     worker_env = _build_spawn_env(None)
@@ -244,6 +247,7 @@ def test_loop_agent_environment_strips_controller_master(
 def test_session_environment_strips_controller_master(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Strip controller authority and mark session subprocess environments."""
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     protocol = cast(
         SessionProtocol,
@@ -268,6 +272,7 @@ def test_session_environment_strips_controller_master(
 def test_controller_registration_reuses_managed_master_and_rejects_wrong_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Reuse a managed credential while rejecting a conflicting override."""
     monkeypatch.delenv(CONTROLLER_MASTER_ENV)
     _register_controller(tmp_path)
     monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
@@ -280,6 +285,7 @@ def test_controller_registration_reuses_managed_master_and_rejects_wrong_overrid
 def test_goal_review_cli_reports_controller_storage_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Surface controller credential storage failures during CLI review."""
     review_id = _pending_review(tmp_path)
     monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
 

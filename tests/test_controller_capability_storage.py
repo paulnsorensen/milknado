@@ -13,20 +13,24 @@ from milknado.domains.graph import controller_capability as capability
 
 
 def _store(state: Path) -> Path:
+    """Return the controller credential store beneath a state root."""
     return state / "milknado" / "controllers"
 
 
 def _raise_denied(*_args: object, **_kwargs: object) -> object:
+    """Simulate an operating-system permission failure."""
     raise OSError("denied")
 
 
 def _raise_replace(*_args: object, **_kwargs: object) -> Path:
+    """Simulate failure while publishing a credential record."""
     raise OSError("replace denied")
 
 
 def test_startup_rejects_worker_blank_long_and_relative_contexts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Reject unsafe controller registration inputs and worker contexts."""
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
         monkeypatch.setenv(WORKER_CONTEXT_ENV, "1")
@@ -50,6 +54,7 @@ def test_startup_rejects_worker_blank_long_and_relative_contexts(
 def test_legacy_missing_and_corrupt_records_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Fail closed when a registered credential record is absent or corrupt."""
     state = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "legacy-secret")
@@ -83,6 +88,7 @@ def test_legacy_missing_and_corrupt_records_fail_closed(
 
 @pytest.mark.skipif(os.name == "nt", reason="permission and symlink checks need POSIX")
 def test_credential_record_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject credential records with unsafe type, ownership, or permissions."""
     state = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "record-secret")
@@ -125,6 +131,7 @@ def test_credential_record_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_store_directory_permissions_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Reject credential stores that are shared or traverse symlinks."""
     state = tmp_path / "state"
     namespace = state / "milknado"
     namespace.mkdir(parents=True)
@@ -143,6 +150,7 @@ def test_store_directory_permissions_fail_closed(
 def test_malformed_hash_and_storage_errors_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Convert malformed hashes and storage errors into authorization failures."""
     state = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "hash-secret")

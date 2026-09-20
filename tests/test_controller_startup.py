@@ -24,6 +24,7 @@ from milknado.domains.graph import controller_capability as capability
 
 
 def _review(graph: MikadoGraph, goal_id: int, revision: str) -> int:
+    """Request a goal review and return its identifier."""
     record = graph.request_goal_review(
         GoalReviewRequest(
             goal_id=goal_id,
@@ -39,6 +40,7 @@ def _review(graph: MikadoGraph, goal_id: int, revision: str) -> int:
 def _child(
     db_path: Path, state_home: Path, code: str, *args: object
 ) -> subprocess.CompletedProcess[str]:
+    """Run isolated controller code against a graph and managed state root."""
     env = os.environ.copy()
     _ = env.pop(CONTROLLER_MASTER_ENV, None)
     env["XDG_STATE_HOME"] = str(state_home)
@@ -52,6 +54,7 @@ def _child(
 
 
 def test_concurrent_registration_converges_and_restarts_in_a_new_process(tmp_path: Path) -> None:
+    """Converge concurrent registration on one credential reusable after restart."""
     db_path = tmp_path / "graph.db"
     state_home = tmp_path / "state"
     graph = MikadoGraph(db_path)
@@ -71,6 +74,7 @@ def test_concurrent_registration_converges_and_restarts_in_a_new_process(tmp_pat
     """
 
     def launch(_index: int) -> subprocess.CompletedProcess[str]:
+        """Launch one registration contender."""
         return _child(db_path, state_home, code)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -90,6 +94,7 @@ def test_concurrent_registration_converges_and_restarts_in_a_new_process(tmp_pat
 def test_separate_operator_process_approves_with_managed_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Allow a separate operator process to reuse managed authority."""
     db_path = tmp_path / "graph.db"
     state_home = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
@@ -135,6 +140,7 @@ def test_separate_operator_process_approves_with_managed_credential(
 def test_matching_legacy_import_preserves_nodes_reviews_and_decisions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Import the matching legacy secret without changing existing graph data."""
     db_path = tmp_path / "graph.db"
     state_home = tmp_path / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
@@ -175,6 +181,7 @@ def test_matching_legacy_import_preserves_nodes_reviews_and_decisions(
 def test_storage_failure_rolls_back_registration_without_graph_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Roll back registration when credential publication fails."""
     db_path = tmp_path / "graph.db"
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "rollback-secret")
@@ -185,6 +192,7 @@ def test_storage_failure_rolls_back_registration_without_graph_changes(
     graph = MikadoGraph(db_path)
 
     def fail_publish(*_args: object) -> None:
+        """Simulate a credential publication failure."""
         raise ControllerAuthorizationError("publish failed")
 
     monkeypatch.setattr(capability, "_publish_if_missing", fail_publish)

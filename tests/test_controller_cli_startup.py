@@ -16,6 +16,7 @@ runner = CliRunner()
 
 
 def _project_with_ready_nodes(project_root: Path) -> None:
+    """Create a runnable project with one ready leaf node."""
     project_root.mkdir()
     _ = runner.invoke(app, ["init", str(project_root)])
     with (project_root / "milknado.toml").open("a", encoding="utf-8") as config:
@@ -29,6 +30,7 @@ def _project_with_ready_nodes(project_root: Path) -> None:
 def test_interactive_run_without_secret_enters_tui_after_controller_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Create controller authority before entering an interactive run TUI."""
     project_root = tmp_path / "project"
     _project_with_ready_nodes(project_root)
     monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
@@ -53,6 +55,7 @@ def test_interactive_run_without_secret_enters_tui_after_controller_creation(
 def test_watch_modes_do_not_load_credentials_when_store_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Keep both watch modes independent of controller credential storage."""
     project_root = tmp_path / "project"
     _project_with_ready_nodes(project_root)
     cli_run = importlib.import_module("milknado.cli.run")

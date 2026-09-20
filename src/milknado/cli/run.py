@@ -181,6 +181,7 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
 
 
 def _run(options: RunCommandOptions) -> None:
+    """Execute a run command after parsing its grouped options."""
     project_root, strict, allow_protected, web, port, no_open = options
     from milknado.app.run import (
         ProtectedBranchRefusal,

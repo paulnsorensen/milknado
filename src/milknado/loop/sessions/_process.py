@@ -257,6 +257,7 @@ def start_process(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
+    """Start a marked worker process without controller authority."""
     spawn_env = os.environ.copy()
     _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
     if env:
