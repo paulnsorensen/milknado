@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
+import { getState as getAppState, resetStore } from '../../app/store';
 import {
   followNewest,
   getDetailState,
@@ -72,5 +73,18 @@ describe('nodeDetail', () => {
     pageNext();
     sessionPageNext();
     expect(getDetailState().nodeId).toBeNull();
+  });
+
+  it('pushes a notice when the fetch rejects', async () => {
+    resetStore();
+    vi.mocked(get).mockRejectedValueOnce(new Error('network down'));
+
+    selectNode(7);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getAppState().notices.map((notice) => notice.reason)).toContain(
+      'Could not load the node detail.',
+    );
   });
 });

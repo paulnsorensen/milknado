@@ -13,6 +13,7 @@ export function SessionInputSection(): ReactElement {
   const draft = useSyncExternalStore(subscribeDraft, getDraft);
   const { Button } = Milknado;
   const sessionInput = store.capabilities?.session_input;
+  const actions = store.capabilities?.owner?.actions ?? [];
 
   function send(action: MessageAction): void {
     const text = draft;
@@ -42,13 +43,18 @@ export function SessionInputSection(): ReactElement {
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <Button onClick={() => send('steer')} disabled={textEmpty}>
+      <Button onClick={() => send('steer')} disabled={textEmpty || !actions.includes('steer')}>
         Steer
       </Button>
-      <Button onClick={() => send('follow_up')} disabled={textEmpty}>
+      <Button
+        onClick={() => send('follow_up')}
+        disabled={textEmpty || !actions.includes('follow_up')}
+      >
         Follow up
       </Button>
-      <Button onClick={interrupt}>Interrupt</Button>
+      <Button onClick={interrupt} disabled={!actions.includes('interrupt')}>
+        Interrupt
+      </Button>
     </div>
   );
 }

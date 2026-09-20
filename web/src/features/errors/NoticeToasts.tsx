@@ -3,18 +3,20 @@
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getState, removeNotice, subscribe } from '../../app/store';
+import { Milknado } from '../../design-system';
 
 export function NoticeToasts(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
+  const { Button } = Milknado;
 
   return (
     <div className="mk-toasts">
       {store.notices.map((notice) => (
         <p key={notice.id} role="alert">
           <span>{notice.reason}</span>
-          <button type="button" aria-label="Close notice" onClick={() => removeNotice(notice.id)}>
+          <Button icon ariaLabel="Close notice" onClick={() => removeNotice(notice.id)}>
             ×
-          </button>
+          </Button>
         </p>
       ))}
     </div>

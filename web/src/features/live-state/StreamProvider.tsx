@@ -29,7 +29,7 @@ export function StreamProvider(): ReactElement | null {
 
     const handleError = (): void => {
       setConnectionStatus('reconnecting');
-      void get<WireExecutionSnapshot>('/api/snapshot');
+      void get<WireExecutionSnapshot>('/api/snapshot').catch(() => {});
     };
 
     source.addEventListener('snapshot', handleSnapshot);

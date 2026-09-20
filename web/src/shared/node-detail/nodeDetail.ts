@@ -1,6 +1,7 @@
 // Fetches and pages GET /api/nodes/{id}. One node is tracked at a time: a
 // new node id resets both the detail page and the session transcript page.
 import { get } from '../../app/api';
+import { pushNotice } from '../../app/store';
 import type { WireNodeDetailResponse } from './detailWire';
 
 export interface DetailState {
@@ -40,7 +41,13 @@ async function fetchDetail(): Promise<void> {
     page: String(page),
     session_event_page: String(sessionPage),
   });
-  const response = await get<WireNodeDetailResponse>(`/api/nodes/${nodeId}?${params.toString()}`);
+  let response: WireNodeDetailResponse | null;
+  try {
+    response = await get<WireNodeDetailResponse>(`/api/nodes/${nodeId}?${params.toString()}`);
+  } catch {
+    pushNotice('Could not load the node detail.');
+    return;
+  }
   if (response !== null && generation === requestGeneration) {
     state = { ...state, detail: response };
     emit();

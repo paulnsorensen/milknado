@@ -28,7 +28,7 @@ export function GoalReviewSidecar(): ReactElement | null {
   }
 
   return (
-    <div className="mk-goal-review-sidecar" style={{ width: 560 }}>
+    <div className="mk-goal-review-sidecar" style={{ width: 'var(--mk-sidecar-width-review)' }}>
       <p>{review.evidence}</p>
       <p>{review.proposed_change}</p>
       {heldNodes.length > 0 && (

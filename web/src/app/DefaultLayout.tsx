@@ -34,7 +34,7 @@ export function DefaultLayout(): ReactElement {
           lod={state.graphView.lod}
           zoom={state.graphView.zoom}
           collapsed={state.graphView.collapsed}
-          onLayout={(layout) => setGraphView({ lod: layout.lod, collapsed: layout.collapsed })}
+          onLayout={(layout) => setGraphView({ lod: layout.lod })}
           height="auto"
         />
         <CanvasOverlay />

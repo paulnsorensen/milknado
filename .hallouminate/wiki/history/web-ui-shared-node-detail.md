@@ -4,7 +4,7 @@ Date: 2026-09-20 · Status: accepted · Issue: #464
 
 ## Decision
 
-State that more than one web feature reads lives in `web/src/shared/<name>/`.
+Shared state lives in `web/src/shared/<name>/` when more than one web feature reads it.
 Each shared module exposes one public surface, its `index.ts`.
 Features import the `index.ts` only, never a file inside the module.
 

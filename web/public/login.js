@@ -1,5 +1,9 @@
 function tokenFromLaunchUrl(launchUrl) {
-  return new URL(launchUrl).searchParams.get("token") ?? "";
+  try {
+    return new URL(launchUrl).searchParams.get("token") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function submitLaunchUrl(form, launchUrl, token) {

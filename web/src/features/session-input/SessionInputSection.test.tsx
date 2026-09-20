@@ -16,7 +16,7 @@ function capabilities(overrides: Record<string, unknown> = {}) {
     graph_edits: { available: true, reason: null },
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
-    owner: { available: true, run_id: 'run-1' },
+    owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up', 'interrupt'] },
     ...overrides,
   };
 }
@@ -98,5 +98,17 @@ describe('SessionInputSection', () => {
       expect.objectContaining({ action: 'interrupt', text: '' }),
     );
     expect(getDraft()).toBe('Send this after the stop');
+  });
+
+  it('disables interrupt when the owner lacks the interrupt action', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({ owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up'] } }),
+    });
+
+    render(<SessionInputSection />);
+
+    expect(screen.getByText('Interrupt')).toBeDisabled();
   });
 });

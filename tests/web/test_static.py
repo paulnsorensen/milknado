@@ -53,6 +53,24 @@ if (token.value !== process.argv[3] || !submitted) process.exit(1);
     assert authenticated.status_code == 303
 
 
+def test_login_form_returns_empty_token_for_invalid_launch_url() -> None:
+    script = """
+const { tokenFromLaunchUrl } = require(process.argv[1]);
+if (tokenFromLaunchUrl(process.argv[2]) !== "") process.exit(1);
+"""
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(Path("src/milknado/web/static/login.js").resolve()),
+            "not a url",
+        ],
+        check=False,
+    )
+    assert result.returncode == 0
+
+
 def test_static_assets_require_login() -> None:
     test_client, _ = client()
     test_client.cookies.clear()

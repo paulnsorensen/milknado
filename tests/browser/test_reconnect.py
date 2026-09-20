@@ -23,14 +23,14 @@ def test_stream_drop_shows_status_then_clears_on_reconnect(
     expect(page.get_by_text(FIXTURE_NODE_DESCRIPTION)).to_be_visible()
     expect(reconnecting).to_have_count(0)
 
-    browser_server.restart()
+    browser_server.stop()
 
     expect(reconnecting).to_be_visible(timeout=15000)
 
     with page.expect_response(
         lambda response: response.url.endswith("/api/stream") and response.status == 200
     ):
-        browser_server.restart(browser_server.app)
+        browser_server.start()
     browser_source.publish(build_fixture_snapshot())
 
     expect(reconnecting).to_have_count(0, timeout=15000)

@@ -5,7 +5,7 @@
   grid-template-rows: auto 1fr auto;
   height: 100vh;
   background: var(--mk-surface);
-  color: var(--mk-text);
+  color: var(--mk-ink);
   font-family: var(--mk-font-sans);
   position: relative;
 }

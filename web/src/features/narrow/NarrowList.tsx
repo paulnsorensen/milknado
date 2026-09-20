@@ -19,7 +19,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
   const [collapsed, setCollapsed] = useState<Array<string | number>>([]);
   const [jumpValue, setJumpValue] = useState('');
-  const { StatusStrip, OutlineTree } = Milknado;
+  const { StatusStrip, OutlineTree, Button } = Milknado;
 
   const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
   const selectedNode = nodes.find((node) => node.id === state.selection) ?? null;
@@ -44,7 +44,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
           value={jumpValue}
           onChange={(event) => setJumpValue(event.target.value)}
         />
-        <button type="submit">Jump</button>
+        <Button type="submit">Jump</Button>
       </form>
       <OutlineTree
         nodes={nodes}
@@ -55,13 +55,12 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
         onToggle={(id) => setCollapsed((current) => toggle(current, id))}
       />
       <div className="mk-narrow-open-bar">
-        <button
-          type="button"
+        <Button
           disabled={selectedNode === null}
           onClick={() => selectedNode && onOpen(selectedNode.id)}
         >
           Open node
-        </button>
+        </Button>
       </div>
     </div>
   );
