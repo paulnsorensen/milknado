@@ -1,0 +1,63 @@
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { post } from '../../app/api';
+import { resetStore, setSnapshot } from '../../app/store';
+import { resetDraft } from './draft';
+import { SessionInputSection } from './SessionInputSection';
+
+vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
+
+function capabilities(overrides: Record<string, unknown> = {}) {
+  return {
+    session_input: { available: true, reason: null },
+    cancel: { available: true, reason: null },
+    force_stop: { available: true, reason: null },
+    stop_scheduling: { available: true, reason: null },
+    graph_edits: { available: true, reason: null },
+    review_decision: { available: true, reason: null },
+    git: { available: true, reason: null },
+    owner: { available: true, run_id: 'run-1' },
+    ...overrides,
+  };
+}
+
+describe('SessionInputSection', () => {
+  beforeEach(() => {
+    resetStore();
+    resetDraft();
+    vi.mocked(post).mockClear();
+  });
+
+  afterEach(cleanup);
+
+  it('shows a notice instead of the input for an inactive run', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({ session_input: { available: false, reason: 'The run has finished.' } }),
+    });
+
+    render(<SessionInputSection />);
+
+    expect(screen.getByText('The run has finished.')).toBeTruthy();
+    expect(screen.queryByLabelText('Session guidance')).toBeNull();
+  });
+
+  it('sends the draft as a steer command and clears it', () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+
+    render(<SessionInputSection />);
+
+    const textarea = screen.getByLabelText('Session guidance') as HTMLTextAreaElement;
+    textarea.focus();
+    Object.defineProperty(textarea, 'value', { writable: true, value: 'Slow down' });
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    screen.getByText('Steer').click();
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'steer' }),
+    );
+  });
+});
