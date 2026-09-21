@@ -128,6 +128,12 @@ def test_credential_record_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         graph.close()
 
 
+def test_store_directory_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(os, "name", "nt")
+    with pytest.raises(ControllerAuthorizationError, match="Windows is unsupported"):
+        _ = capability._store_dir()  # pyright: ignore[reportPrivateUsage]
+
+
 def test_store_directory_permissions_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -135,7 +141,7 @@ def test_store_directory_permissions_fail_closed(
     state = tmp_path / "state"
     namespace = state / "milknado"
     namespace.mkdir(parents=True)
-    os.chmod(namespace, 0o755)
+    os.chmod(namespace, 0o750)
     monkeypatch.setenv("XDG_STATE_HOME", str(state))
     with pytest.raises(RuntimeError, match="owner-only"):
         _ = capability._store_dir()  # pyright: ignore[reportPrivateUsage]

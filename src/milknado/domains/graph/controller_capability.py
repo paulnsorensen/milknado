@@ -193,6 +193,10 @@ def _credential_path(master_hash: str) -> Path:
 
 def _store_dir() -> Path:
     """Return the owner-only managed controller credential directory."""
+    if os.name == "nt":
+        raise ControllerAuthorizationError(
+            "managed controller credentials require a POSIX platform; Windows is unsupported"
+        )
     state_home = os.environ.get("XDG_STATE_HOME", "").strip()
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
     if state_home and not root.is_absolute():
