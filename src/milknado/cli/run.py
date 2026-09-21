@@ -25,7 +25,7 @@ from milknado.cli._helpers import (
 from milknado.cli._helpers import (
     load_or_default as _load_or_default,
 )
-from milknado.domains.common import CONTROLLER_MASTER_ENV
+from milknado.domains.graph import ControllerAuthorizationError
 
 console = Console()
 
@@ -181,6 +181,7 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
 
 
 def _run(options: RunCommandOptions) -> None:
+    """Execute a run command after parsing its grouped options."""
     project_root, strict, allow_protected, web, port, no_open = options
     from milknado.app.run import (
         ProtectedBranchRefusal,
@@ -273,9 +274,7 @@ def _run(options: RunCommandOptions) -> None:
                 + "Pass --allow-protected to override.[/red]"
             )
         raise typer.Exit(code=2) from None
-    except RuntimeError as exc:
-        if "controller master" not in str(exc) and CONTROLLER_MASTER_ENV not in str(exc):
-            raise
+    except ControllerAuthorizationError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from None
     finally:

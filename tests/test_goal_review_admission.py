@@ -634,11 +634,13 @@ def test_goal_review_cli_refuses_noninteractive_decision(tmp_path: Path) -> None
 def test_goal_review_cli_decides_from_confirmed_human_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Record a managed decision after interactive human confirmation."""
     graph, nodes = _hierarchy(tmp_path, project_db=True)
     review = _request(graph, nodes["goal_a"])
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     graph.register_controller_master()
     graph.close()
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
 
     import milknado.cli.graph as cli_graph
 

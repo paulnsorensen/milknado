@@ -192,6 +192,44 @@ server/subprocess. Flow: refuse to dispatch onto an empty/`"HEAD"` branch
 timeout/non-completion `stop_run` + `executor.fail` → otherwise `complete`.
 Success requires both run completion AND a clean rebase.
 
+## Controller authorization boundary
+
+Normal local startup manages controller credentials without a manual export.
+The graph keeps its existing credential hash and transactional, one-use review capabilities.
+Controller registration loads or creates a credential under `$XDG_STATE_HOME/milknado/controllers`.
+The default state root is `~/.local/state`.
+Credential filenames use the registered hash, so moving a database does not change its credential lookup.[^controller-store]
+
+Registration serializes through a SQLite write transaction.
+It publishes the credential before committing a new hash.
+The controller keeps generated credentials on its graph instance, not in the process environment.
+Decision consumption does not automatically load the credential store.[^controller-store]
+
+An existing registration accepts only its original credential.
+A matching `MILKNADO_CONTROLLER_MASTER` imports that credential once for later starts.
+Missing or mismatched credentials fail closed.
+This path does not rewrite nodes, decisions, or authorization records.
+There is no credential-free takeover or graph reset.[^controller-store]
+
+A separate operator terminal uses `milknado graph review` with the same user state directory.
+The command loads authorization and asks for confirmation.
+A TTY selects the confirmation interface; it does not prove human presence.
+Neither watch mode acquires a controller credential.
+Attached watch retains its existing owner-fenced session controls, not goal-approval authority.[^controller-cli]
+
+These checks are API guardrails, not process isolation.
+Workers can submit proposals, but the MCP surface has no goal-approval tool.
+Worker markers and secret filtering prevent ordinary worker calls from acquiring operator authority.
+Same-user arbitrary code can remove markers, read user files, or modify SQLite.
+Git worktrees and owner-only credential files do not prevent those actions.
+Enforced isolation requires separate operating-system permissions or a sandbox outside this change.[^controller-workers]
+
+[^controller-store]: src/milknado/domains/graph/controller_capability.py; src/milknado/domains/graph/graph.py, register_controller_master and decide_goal_review.
+[^controller-cli]: src/milknado/cli/graph.py, review; src/milknado/cli/run.py, watch.
+[^controller-workers]: src/milknado/domains/dispatch/runner.py, build_worker_env; src/milknado/loop/_agent.py, _build_spawn_env; src/milknado/loop/sessions/_process.py, start_process; src/milknado/mcp/goal_review.py.
+
+_Source: controller startup fix · Updated: 2026-09-20 · Supersedes: manual credential provisioning from PR #451 and the blanket MILKNADO environment-forwarding claim._
+
 ## Subprocess workers & run-state (runner.py, _runstate.py)
 
 `run_headless` (blocking, via `_execute`) and `start_headless_async` (detached
@@ -202,9 +240,9 @@ brief piped to stdin, combined stdout/stderr to a log file, cwd = worktree.
   against `{claude, codex, cursor-agent, gemini}`, defeating both prefix tricks
   (`claude-evil`) and absolute paths. Guards the explicit MCP arg, the
   `$MILKNADO_WORKER_CMD` env, and the default `claude -p`.
-- **Env scrubbing** — `_build_worker_env` passes only an allowlist of system vars
-  plus `MILKNADO_*`. INVARIANT: no `MILKNADO_*` var may hold a secret — every one
-  is forwarded verbatim. API keys / tokens / DB URLs stay in the parent.
+- **Env scrubbing** — `build_worker_env` filters the inherited environment.
+  Dispatch and native agent launchers remove `MILKNADO_CONTROLLER_MASTER` after overrides.
+  They set `MILKNADO_WORKER_CONTEXT=1` to reject controller acquisition and goal approval through supported worker paths.[^controller-workers]
 
 Run-state lives in the **SQLite `runs` table** (PR #127, closes #100) — schema
 and repo functions in [[graph]]. Only **log files and cancel sentinels** remain

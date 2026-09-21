@@ -90,16 +90,25 @@ cp -r plugins/milknado/skills/ ~/.config/opencode/skills/
 
 ## Controller authorization
 
-```sh
-export MILKNADO_CONTROLLER_MASTER="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+`milknado run` creates a controller credential on first startup when no override is set.
+It stores the credential outside the project under `$XDG_STATE_HOME/milknado/controllers`
+(or `~/.local/state/milknado/controllers`) with owner-only permissions.
+Generated credentials stay in the graph process and never enter `os.environ`.
+
+Use a separate terminal for goal-review decisions:
+
+```console
+milknado graph review <id> accepted --project-root <repo>
 ```
 
-Set `MILKNADO_CONTROLLER_MASTER` before you start `milknado-mcp` or any dispatch command.
-Use one random secret for the life of the graph database.
-The execution controller stores only its SHA-256 hash in the graph database.
-It removes the secret from every worker environment.
-Use the same secret when a separate terminal submits a goal-review decision.
-Milknado refuses dispatch without the secret and rejects a different secret after registration.
+For a registered legacy graph, set its original `MILKNADO_CONTROLLER_MASTER` value once.
+Milknado imports it only when its hash matches the graph hash; do not generate a replacement.
+Missing legacy secrets, wrong or empty overrides, and unavailable or corrupt records fail closed.
+Restore the credential backup or provide the original secret.
+`milknado watch` stays read-only and does not load credentials.
+Workers receive no controller secret and carry an authorization guard marker.
+TTY detection and confirmation do not prove human presence. Same-UID code can read files or edit SQLite.
+This marker is an API guardrail, not process isolation.
 
 ## Terminal controls
 

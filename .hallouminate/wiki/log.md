@@ -14,3 +14,6 @@
 2026-09-09 · 9cfb496463a903b4 · merged · architecture/execution.md · Recorded native session receipts, decoded completion, and descendant cleanup.
 2026-09-09 · 9cfb496463a903b4 · merged · architecture/omp-json-streaming.md · Distinguished native RPC sessions from one-shot JSON execution.
 
+
+2026-09-20 · ea4ad1eb73c15b78 · merged · architecture/execution.md · Recorded managed controller credentials, matching legacy adoption, and the API guardrail versus process-isolation boundary.
+

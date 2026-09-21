@@ -1397,6 +1397,7 @@ class TestRunCommand:
         project_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Run ready nodes without requiring an exported controller secret."""
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
@@ -1410,14 +1411,6 @@ class TestRunCommand:
         _ = graph.add_node("leaf task", parent_id=root.id)
         graph.close()
         monkeypatch.delenv("MILKNADO_CONTROLLER_MASTER")
-        missing_master = runner.invoke(
-            app,
-            ["run", "--project-root", str(project_dir)],
-        )
-        assert missing_master.exit_code == 2
-        assert "MILKNADO_CONTROLLER_MASTER is required before dispatch" in missing_master.output
-        monkeypatch.setenv("MILKNADO_CONTROLLER_MASTER", "test-controller-master")
-
         _configure_ralph_mocks(mock_ralph_cls, project_dir)
 
         result = runner.invoke(
@@ -1427,6 +1420,34 @@ class TestRunCommand:
         assert result.exit_code == 0
         assert "Starting execution loop" in result.output
         assert "All nodes complete. Root goal achieved." in result.output
+
+    def test_controller_storage_error_is_cli_failure(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Report controller credential storage failures through the run CLI."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"  # pyright: ignore[reportAny]
+        _ = runner.invoke(app, ["init", str(project_dir)])
+        _disable_review_for_test(project_dir)
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root goal")
+        _ = graph.add_node("leaf task", parent_id=root.id)
+        graph.close()
+        monkeypatch.delenv("MILKNADO_CONTROLLER_MASTER", raising=False)
+        monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
+        _configure_ralph_mocks(_mock_ralph_cls, project_dir)
+
+        result = runner.invoke(app, ["run", "--project-root", str(project_dir)])
+
+        assert result.exit_code == 2
+        assert "XDG_STATE_HOME must be an absolute path" in result.output
 
     def test_dispatches_multiple_parallel_leaves(
         self,

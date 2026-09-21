@@ -10,6 +10,7 @@ from milknado.domains.graph.commands import (
     OwnerCapabilities,
     new_command_id,
 )
+from milknado.domains.graph.controller_capability import ControllerAuthorizationError
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
     GoalAdmissionDenied,
@@ -59,6 +60,7 @@ from milknado.domains.graph.traversals import walk_ancestors
 
 __all__ = [
     "admit_session_command",
+    "ControllerAuthorizationError",
     "connect_readonly",
     "CommandFenceError",
     "CommandReceipt",

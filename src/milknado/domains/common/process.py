@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 
 CONTROLLER_MASTER_ENV = "MILKNADO_CONTROLLER_MASTER"
+WORKER_CONTEXT_ENV = "MILKNADO_WORKER_CONTEXT"
 
 
 def pid_alive(pid: object) -> bool:
