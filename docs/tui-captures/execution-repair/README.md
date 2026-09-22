@@ -1,6 +1,6 @@
 # Execution repair captures
 
-This bundle contains 30 matched pairs: 60 PNG files, 2,715,955 bytes.
+The archive contains 30 matched pairs: 60 PNG files, 2,715,955 bytes.
 Each pair uses the same terminal dimensions, fixture data, renderer, and interaction state.
 The visible wall clock and cursor blink differ between capture times.
 
@@ -8,6 +8,26 @@ These are archived repair captures, not a new live-provider run or a release app
 The images remain unchanged. No pixels are generated, redacted, or recolored.
 All 60 images are opened and inspected on 2026-09-22.
 The visible data is synthetic and contains no observed secrets.
+
+## Integrated verification
+
+The [current manifest](current/manifest.json) records ten additional, inspected screenshots.
+Eight fixture screenshots cover Run and Watch at 80×24 and 120×40, in main and empty-graph states.
+They use controller commit `a24af68` and the TUI source committed with this evidence.
+Use the reproduction commands below with this checkout to reproduce these states.
+The fixture still substitutes worker I/O; these eight frames do not prove provider execution.
+
+Two separate frames show [a real OMP run](current/live-run-active-120x40.png) and [its completed observer](current/live-watch-completed-120x40.png).
+The disposable task writes exactly `milknado-live-proof\n` to `proof.txt`.
+Its configured gate checks those exact bytes.
+Both graph nodes finish as `done`; the run finishes as `done`, exit code 0, with successful merge-back.
+The worker worktree is removed, and the observer exits without changing the completed graph.
+The run uses an isolated project and credential state root, not the operator's live graph.
+The worker's MCP result deposit fails because its server is disconnected.
+This evidence proves execution, gate completion, merge-back, and observation, not MCP result deposition.
+
+The current frames use `reference-dark` and contain no observed secrets.
+The archived matched pairs below remain unchanged.
 
 ## Provenance
 

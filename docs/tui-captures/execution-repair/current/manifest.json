@@ -1,0 +1,108 @@
+{
+  "controller_commit": "a24af68",
+  "tui_source": "Source committed with this evidence; only formatter whitespace changes follow capture.",
+  "renderer": "ghostty-web",
+  "profile": "reference-dark",
+  "captures": [
+    {
+      "file": "run-empty-graph-80x24.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "943d3893a82d0e4bd7349fefa639b58e76eae296b6c865f2a286ed7072c7aded",
+      "synthetic": true
+    },
+    {
+      "file": "run-empty-graph-120x40.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "e05b20c78ee8c6fa899ce1b37fd063e292798cb0c4874693709bad1b08580468",
+      "synthetic": true
+    },
+    {
+      "file": "watch-empty-graph-80x24.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "cf0bf0bdb28ea9dea6ea9542f2083156592b175c92fe10ed269fc8948234bce6",
+      "synthetic": true
+    },
+    {
+      "file": "watch-empty-graph-120x40.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "e06bfba6214a9872eed6fc7473ea1f8b09993f4f2cccb93c0deb9d25f18e8024",
+      "synthetic": true
+    },
+    {
+      "file": "run-main-80x24.png",
+      "mode": "run",
+      "state": "main",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "f5d53bb17f5fbd7b4cb94032fbf0be8a1a3d3805c1c8a5a831d494cc83e13f99",
+      "synthetic": true
+    },
+    {
+      "file": "run-main-120x40.png",
+      "mode": "run",
+      "state": "main",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "811d1299c8bc21fe1808076741494ac629946a2698c6871a7057062e3eb3411e",
+      "synthetic": true
+    },
+    {
+      "file": "watch-main-80x24.png",
+      "mode": "watch",
+      "state": "main",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "a40c3b5b2c132acdeb7659ef3a91c4c024db9737dd67f44c6481ae927e07abbb",
+      "synthetic": true
+    },
+    {
+      "file": "watch-main-120x40.png",
+      "mode": "watch",
+      "state": "main",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "b52f4fa509e17d360f398815fe62409a31aeeaafad48e5a672af8233bdfade86",
+      "synthetic": true
+    },
+    {
+      "file": "live-run-active-120x40.png",
+      "state": "active",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "99ca7e764ed31c86a9ae64de0387daadc33b13e1f017a1673cf4bc8aff630a70",
+      "synthetic": false
+    },
+    {
+      "file": "live-watch-completed-120x40.png",
+      "state": "completed",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "b9d26590ae6a05f5f1e7f9e1dfe5ef463a4565ecb0eee3df85b39f100219c600",
+      "synthetic": false
+    }
+  ],
+  "live_proof": {
+    "content": "milknado-live-proof\n",
+    "node_statuses": [
+      "done",
+      "done"
+    ],
+    "run_status": "done",
+    "exit_code": 0,
+    "rebased": true,
+    "worker_worktree_removed": true,
+    "mcp_result_deposit": "Unavailable: server disconnected; no MCP integration result claimed."
+  }
+}

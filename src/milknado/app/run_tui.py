@@ -69,9 +69,9 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     """Controller-backed operator view for one execution."""
 
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
-        ("g", "focus_guidance", "Queue guidance"),
+        ("g", "focus_guidance", "Guidance"),
         ("c", "cancel", "Cancel"),
-        ("f", "force", "Force stop"),
+        ("f", "force", "Force"),
     ]
 
     def __init__(

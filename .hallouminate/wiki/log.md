@@ -19,4 +19,8 @@
 
 
 2026-09-21 · aa4ab6275c766979 · merged · architecture/execution.md · Record native Windows credential protection, read sharing, publication checks, and branch-before-registration ordering. Preserve the same-user isolation limitation. Native Windows CI remains required.
+2026-09-21 · 9e704f381a2a6e9c · merged · architecture/watch-observer.md · Record run-identity draft ownership, effective clickable footer hints, empty-graph focus, and compact graph-only Help. Preserve read-only watch. Source and mounted checks support these facts; final gate and native capture verification remain pending.
+
+
+2026-09-21 · 6fb651ad966bd4ce · merged · architecture/watch-observer.md · Correct fixed-width footer ownership. Selection refresh compares effective hints; inherited signals cover binding and focus changes. Native pending-node captures expose the gap, and the mounted transition regression passes after correction.
 

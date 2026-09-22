@@ -147,7 +147,13 @@ def session_help_text(session: SessionView) -> str:
     return f"Session actions: {labels}"
 
 
-def help_text(run: RunSnapshot | None, *, compact: bool, route: str, auto_follow: bool) -> str:
+def help_text(
+    run: RunSnapshot | None,
+    *,
+    compact: bool,
+    route: str,
+    auto_follow: bool,
+) -> str:
     actions = ["↑/↓ or j/k select", "?/F1/h toggle help", "q quit"]
     actions.append("e events; ↑/↓ Home/End scroll")
     if compact and run is not None:

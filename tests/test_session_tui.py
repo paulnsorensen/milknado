@@ -11,7 +11,8 @@ import pytest
 from rich.console import RenderableType
 from rich.text import Text
 from textual.css.query import NoMatches
-from textual.widgets import Button, DataTable, Input, Select, Static
+from textual.events import Key
+from textual.widgets import Button, DataTable, Input, Select, Static, TabbedContent
 from typing_extensions import override
 
 from milknado.adapters import ChangedFile, GitAdapter
@@ -22,6 +23,7 @@ from milknado.app.run import (
     TerminalRunSnapshot,
 )
 from milknado.app.run_tui import ExecutionApp
+from milknado.app.session_panels import ChangesPanel, ChangesPanelState
 from milknado.app.session_view import session_state_text
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.common import (
@@ -33,6 +35,7 @@ from milknado.domains.common import (
     SessionView,
 )
 from milknado.loop.sessions import SessionChannel
+from tests.graph_navigation_fixtures import source as graph_source
 from tests.test_execution_tui import FakeController, snapshot
 
 
@@ -230,6 +233,24 @@ async def test_native_input_events_enqueue_exact_text_and_clear_the_editor(
 
 
 @pytest.mark.asyncio
+async def test_queued_input_events_survive_snapshot_refresh(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+    payload = "queued input remains complete"
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("i")
+        editor = app.query_one("#session-input", Input)
+        for character in payload:
+            _ = editor.post_message(Key(character, character))
+        controller.show_session()
+        await pilot.pause()
+
+        assert editor.value == payload
+
+
+@pytest.mark.asyncio
 async def test_permission_choice_survives_refresh_and_preserves_reply_text(
     controller: _SessionController,
 ) -> None:
@@ -310,6 +331,87 @@ async def test_session_controls_and_drafts_are_scoped_to_selected_run(
         assert app.query_one("#session-input", Input).value == "second draft"
         assert action.value == "follow_up"
         assert permission.value == "second-permission"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_selection_replaces_hidden_run_input(tmp_path: Path) -> None:
+    first = SessionContext(family="omp", cwd=str(tmp_path / "first"), base_oid="first")
+    second = SessionContext(family="omp", cwd=str(tmp_path / "second"), base_oid="second")
+    controller = SnapshotController(
+        initial_snapshot=two_run_snapshot(first, second), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i", *"run-A-only")
+        current = controller.snapshot()
+        controller.publish(replace(current, active_runs=(current.active_runs[1],)))
+        await pilot.pause()
+
+        assert app.selected_run_id == "run-2"
+        assert app.query_one("#session-input", Input).value == ""
+
+        await pilot.press("z", "enter")
+        await _wait_for_workers(app).wait_for_complete()
+        assert controller.submissions[-1][0] == "run-2"
+        assert controller.submissions[-1][1].text == "z"
+
+
+@pytest.mark.asyncio
+async def test_action_choice_survives_refresh_before_change_event(tmp_path: Path) -> None:
+    first = SessionContext(family="omp", cwd=str(tmp_path / "first"), base_oid="first")
+    second = SessionContext(family="omp", cwd=str(tmp_path / "second"), base_oid="second")
+    controller = SnapshotController(
+        initial_snapshot=two_run_snapshot(first, second), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        action = cast(Select[SessionAction], app.query_one("#session-action", Select))
+        _ = action.focus()
+        await pilot.pause()
+        action.value = "follow_up"
+        controller.publish(controller.snapshot())
+        await pilot.pause()
+
+        assert action.value == "follow_up"
+        assert action.has_focus
+
+
+@pytest.mark.asyncio
+async def test_open_action_menu_keeps_focus_during_graph_transition(tmp_path: Path) -> None:
+    first = SessionContext(family="omp", cwd=str(tmp_path / "first"), base_oid="first")
+    second = SessionContext(family="omp", cwd=str(tmp_path / "second"), base_oid="second")
+    graph = graph_source().current.graph
+    assert graph is not None
+    controller = SnapshotController(
+        initial_snapshot=replace(two_run_snapshot(first, second), graph=graph),
+        replay_subscription=False,
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        action = cast(Select[SessionAction], app.query_one("#session-action", Select))
+        _ = action.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        overlay = app.screen.focused
+        assert overlay is not None
+        assert overlay.parent is action
+
+        await pilot.press("down")
+        await pilot.pause()
+        controller.publish(controller.snapshot())
+        await pilot.pause()
+
+        assert app.screen.focused is overlay
+        assert action.expanded
+        await pilot.press("enter")
+        await pilot.pause()
+        assert action.value == "follow_up"
 
 
 @pytest.mark.asyncio
@@ -442,6 +544,38 @@ async def test_failed_git_diff_is_visible_after_changed_files_load(
         expected = f"git session changes failed: worktree is unavailable: {context.cwd}"
         assert plain(app, "#changes-state") == "1 changed file"
         assert plain(app, "#diff-text") == expected
+
+
+@pytest.mark.asyncio
+async def test_changes_panel_preserves_selected_path_after_focused_file_removal() -> None:
+    controller = cast(
+        ExecutionController, cast(object, FakeController(initial_snapshot=snapshot()))
+    )
+    app = ExecutionApp(controller)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.query_one("#run-tabs", TabbedContent).active = "changes"
+        await pilot.pause()
+        panel = app.query_one("#changes-panel", ChangesPanel)
+        table = cast(DataTable[RenderableType], panel.query_one("#changes-files", DataTable))
+        initial = (
+            ChangedFile("old.txt", "M", 1, 0),
+            ChangedFile("other.txt", "M", 2, 0),
+        )
+        panel.update(ChangesPanelState(files=initial, selected_path="old.txt"))
+        await pilot.pause()
+        _ = table.focus()
+        await pilot.pause()
+        table.move_cursor(row=0, animate=False)
+        assert table.has_focus
+        replacement = (
+            ChangedFile("new.txt", "A", 1, 0),
+            ChangedFile("keep.txt", "M", 3, 0),
+        )
+        panel.update(ChangesPanelState(files=replacement, selected_path="keep.txt"))
+        await pilot.pause()
+
+        assert table.get_row_at(table.cursor_row)[1] == "keep.txt"
 
 
 @pytest.mark.asyncio

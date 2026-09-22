@@ -6,13 +6,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event, Thread
 from typing import Protocol, cast
+from xml.etree import ElementTree
 
 import pytest
 from rich.console import RenderableType
 from rich.text import Text
 from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import DataTable, Input, Static, Tree
 from typing_extensions import override
 
 from milknado.app.run import (
@@ -23,11 +24,12 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.app.run_panels import RunDetailPanel
+from milknado.app.run_overlays import FooterHint
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.graph import NodeDetailResponse
+from tests.graph_navigation_fixtures import source as graph_source
 
 
 class _WorkerManager(Protocol):
@@ -617,22 +619,30 @@ async def test_compact_layout_returns_to_the_focused_run_table() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pointer_scroll_pauses_auto_follow() -> None:
+async def test_output_wheel_pauses_follow_and_preserves_offset_on_snapshot_refresh() -> None:
+    lines = tuple(f"output {index}" for index in range(150))
+    app = _execution_app(FakeController(initial_snapshot=snapshot(output=lines)))
 
-    app = _execution_app(FakeController())
-
-    async with app.run_test(size=(120, 36)):
-        app.query_one("#detail", RunDetailPanel).on_mouse_scroll_down(
-            cast(MouseScrollDown, cast(object, None))
-        )
+    async with app.run_test(size=(120, 24)) as pilot:
+        output = _output(app)
+        output.scroll_to(y=8, animate=False)
+        await pilot.pause()
+        offset = output.scroll_offset.y
+        _ = output.post_message(MouseScrollUp(output, 0, 0, 0, -1, 0, False, False, False))
+        await pilot.pause()
+        offset = output.scroll_offset.y
 
         assert app.auto_follow is False
-        app.query_one("#detail", RunDetailPanel).on_mouse_scroll_up(
-            cast(MouseScrollUp, cast(object, None))
-        )
-        assert _output(app).border_title == "Output (paused; press r to resume)"
-        rendered = app.export_screenshot().replace("&#160;", " ")
-        assert "Output (paused; press r to resume)" in rendered
+        app.action_resume_output()
+        _ = output.post_message(MouseScrollDown(output, 0, 0, 0, 1, 0, False, False, False))
+        await pilot.pause()
+        assert app.auto_follow is False
+        offset = output.scroll_offset.y
+        app.show_snapshot(replace(app.snapshot, event_lines=("poll",)))
+        await pilot.pause()
+
+        assert output.scroll_offset.y == offset
+        assert output.border_title == "Output (paused; press r to resume)"
 
 
 @pytest.mark.asyncio
@@ -1060,3 +1070,86 @@ async def test_compact_events_keep_errors_visible_and_allow_keyboard_scroll(
         assert app.auto_follow
         await pilot.press("escape")
         assert _runs(cast(ExecutionApp, app)).has_focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_mounted_footer_shows_all_contextual_execution_controls(
+    size: tuple[int, int],
+) -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot()))
+
+    async with app.run_test(size=size) as pilot:
+        app.pause_auto_follow()
+        await pilot.pause()
+        svg = ElementTree.fromstring(app.export_screenshot())
+        rendered = " ".join(
+            node.text or "" for node in svg.iter("{http://www.w3.org/2000/svg}text")
+        ).replace("\xa0", " ")
+
+        footer_lines = [
+            (node.text or "").replace("\xa0", " ")
+            for node in svg.iter("{http://www.w3.org/2000/svg}text")
+            if node.text and "Force" in node.text
+        ]
+        assert any("f Force" in line for line in footer_lines)
+
+        for hint in ("g Guidance", "c Cancel", "f Force", "r Resume"):
+            assert hint in rendered
+
+        if size == (80, 24):
+            app.action_open_detail()
+            await pilot.pause()
+            assert app.route == "detail"
+            updated = ElementTree.fromstring(app.export_screenshot())
+            updated_text = " ".join(
+                node.text or "" for node in updated.iter("{http://www.w3.org/2000/svg}text")
+            ).replace("\xa0", " ")
+            assert "Enter Open" not in updated_text
+            assert "Esc Back" in updated_text
+
+
+@pytest.mark.asyncio
+async def test_mounted_footer_tracks_tree_selection_at_fixed_width() -> None:
+    source_value = graph_source()
+    app = ExecutionApp(cast(ExecutionController, cast(object, source_value)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        tree = cast(Tree[object], app.query_one("#graph-tree", Tree))
+        _ = tree.focus()
+        await pilot.pause()
+
+        def labels() -> set[str]:
+            return {cast(Text, hint.render()).plain for hint in app.query(FooterHint)}
+
+        active = labels()
+        assert "i Session input" in active
+        assert "g Guidance" in active
+        assert "c Cancel" in active
+        assert "f Force" in active
+
+        await pilot.press("down")
+        await pilot.pause()
+        pending = labels()
+        assert "i Session input" not in pending
+        assert "g Guidance" not in pending
+        assert "c Cancel" not in pending
+        assert "f Force" not in pending
+        assert {"? Help", "q Quit", "e Events", "Esc Back"} <= pending
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert labels() == active
+
+
+@pytest.mark.asyncio
+async def test_mounted_footer_help_hint_opens_help() -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot()))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        hint = next(item for item in app.query(FooterHint) if "Help" in str(item.render()))
+        _ = await pilot.click(hint, offset=(2, 0))
+        await pilot.pause()
+
+        assert app.screen.is_modal
+        assert app.screen.query_one("#help-scroll")
