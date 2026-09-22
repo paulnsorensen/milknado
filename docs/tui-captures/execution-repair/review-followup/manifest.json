@@ -3,7 +3,7 @@
   "after_source": "Review-fix working tree committed with this manifest; later type annotations and casts do not change the captured behavior.",
   "pair_count": 14,
   "image_count": 28,
-  "total_bytes": 0,
+  "total_bytes": 1570333,
   "facts_timing": "Recorded immediately after each scripted interaction, before the helper publishes its readiness snapshot. Screenshots may show the next refresh.",
   "limits": [
     "Synthetic worker I/O; no live-provider claim.",
