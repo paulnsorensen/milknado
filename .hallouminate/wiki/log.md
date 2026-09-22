@@ -17,3 +17,6 @@
 
 2026-09-20 · ea4ad1eb73c15b78 · merged · architecture/execution.md · Recorded managed controller credentials, matching legacy adoption, and the API guardrail versus process-isolation boundary.
 
+
+2026-09-21 · aa4ab6275c766979 · merged · architecture/execution.md · Record native Windows credential protection, read sharing, publication checks, and branch-before-registration ordering. Preserve the same-user isolation limitation. Native Windows CI remains required.
+

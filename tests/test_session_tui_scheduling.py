@@ -219,8 +219,7 @@ async def test_context_change_clears_old_diff_and_bounds_streaming_refreshes(
     monkeypatch.setattr(GitAdapter, "session_changes", delayed)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_workers(app).wait_for_complete()
-        await pilot.pause()
+        await _wait_for_change_pipeline(app, pilot)
         assert "+first-only" in plain(app, "#diff-text")
         controller.initial_snapshot = two_run_snapshot(second, first)
         controller.publish(controller.initial_snapshot)

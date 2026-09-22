@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, cast
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
+from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._events import OutputStream
 from milknado.loop._output import (
     IS_WINDOWS,

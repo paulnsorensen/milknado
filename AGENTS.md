@@ -121,6 +121,9 @@ step v2 creates it.
 Extend the ladder when the schema gains a table or column. Do not use it to migrate data
 written by an older release; a stale local database is recreated, not upgraded.
 
+**Narrow controller credential adoption exception.** A controller may adopt only a matching
+credential. It must not rewrite existing graph, node, review, or decision data.
+
 ## Code-Intelligence Routing
 
 Three MCP servers cover code intelligence; they layer rather than overlap. The

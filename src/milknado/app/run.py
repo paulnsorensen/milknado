@@ -546,6 +546,7 @@ def run_inline_start(
 ) -> dict[str, object]:
     """Start an asynchronous worker and return its initial run state."""
     git = _git_for_inline_dispatch(cfg, root, request, allow_protected)
+    graph.register_controller_master()
     from milknado.app.project import open_graph
     from milknado.domains.dispatch import (
         AsyncRunRequest,
@@ -581,6 +582,7 @@ def run_inline_start(
         project_root=root,
     )
     graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    isolated_worktree: Path | None = None
     try:
         worker_cwd, merge_ctx = prepare_isolation(
             graph,
@@ -592,6 +594,8 @@ def run_inline_start(
             request.merge_back,
             cfg.worktree_pattern,
         )
+        if request.worktree is WorktreeMode.ISOLATE:
+            isolated_worktree = worker_cwd
         ref = start_headless_async(
             AsyncRunRequest(
                 project_root=root,
@@ -609,12 +613,19 @@ def run_inline_start(
             ProcessAdapter(),
             tmux,
         )
-    except Exception:
-        # Failed startup releases the claim with a fenced terminal write.
+    except Exception as exc:
+        cleanup_error: Exception | None = None
+        if isolated_worktree is not None:
+            try:
+                git.force_remove_worktree(isolated_worktree)
+            except Exception as error:
+                cleanup_error = error
         if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):
             raise RuntimeError(
                 f"startup terminal node write lost its fence for node {request.node_id}"
-            )
+            ) from exc
+        if cleanup_error is not None:
+            raise cleanup_error from exc
         raise
     _logger.info(
         "milknado_run_inline_start: node=%d run_id=%s timeout=%ds",

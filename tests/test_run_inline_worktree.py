@@ -7,6 +7,7 @@ machinery.
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 import sys
 import time
@@ -16,12 +17,25 @@ from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
+from typing_extensions import override
 
 import milknado.adapters as adapters
-from milknado.domains.common import MikadoNode, RebaseResult, WorktreeMode
+from milknado.domains.common import (
+    WORKER_CONTEXT_ENV,
+    MikadoNode,
+    MilknadoConfig,
+    RebaseResult,
+    WorktreeMode,
+)
 from milknado.domains.common.protocols import GitPort
-from milknado.domains.dispatch import ProcessOutcome
+from milknado.domains.dispatch import (
+    AsyncRunRequest,
+    GraphSessionPort,
+    ProcessOutcome,
+    start_headless_async,
+)
 from milknado.domains.dispatch.isolate import IsolateContext
+from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import NodeSummary, RunDict
 from milknado.mcp.run import (
     milknado_run_inline,
@@ -797,7 +811,7 @@ class TestAsyncStartFailure:
                     milknado_run_inline_start,
                     node_id=task["id"],
                     worker_cmd=worker_stub("sh -c 'true'"),
-                    worktree=WorktreeMode.THIS_BRANCH,
+                    worktree=WorktreeMode.ISOLATE,
                     merge_back=False,
                     project_root=str(root),
                 ),
@@ -805,6 +819,47 @@ class TestAsyncStartFailure:
 
         # The claim was released with a fenced terminal write — not stranded RUNNING.
         assert _node(root, task["id"]).status.value == "failed"
+        assert not (root / "milknado-1-boom").exists()
+
+
+def test_start_failure_surfaces_worktree_cleanup_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    worker_stub: Callable[[str], str],
+) -> None:
+    from milknado.domains import dispatch as dispatch_mod
+
+    root = tmp_path / "repo"
+    _init_repo(root)
+    task = cast(
+        NodeSummary,
+        _call(milknado_todo_add, description="cleanup", kind="task", project_root=str(root)),
+    )
+
+    def _explode_cleanup(_git: adapters.GitAdapter, _path: Path) -> None:
+        raise RuntimeError("cleanup exploded")
+
+    monkeypatch.setattr(adapters.GitAdapter, "force_remove_worktree", _explode_cleanup)
+
+    def _explode_start(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("spawn exploded")
+
+    monkeypatch.setattr(dispatch_mod, "start_headless_async", _explode_start)
+    with pytest.raises(RuntimeError, match="cleanup exploded"):
+        _ = cast(
+            RunDict,
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd=worker_stub("sh -c 'true'"),
+                worktree=WorktreeMode.ISOLATE,
+                merge_back=False,
+                project_root=str(root),
+            ),
+        )
+
+    assert _node(root, task["id"]).status.value == "failed"
+    assert (root / "milknado-1-cleanup").is_dir()
 
 
 def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> None:
@@ -838,6 +893,32 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
             cast(GitPort, cast(object, git)), tmp_path, 8, "race", "milknado-{node_id}-{slug}"
         )
     assert git.removed == [expected]
+
+
+def test_setup_isolated_worktree_removes_checkout_when_graph_write_fails(
+    tmp_path: Path,
+) -> None:
+    from milknado.domains.dispatch.isolate import setup_isolated_worktree
+
+    root = tmp_path / "repo"
+    _init_repo(root)
+    graph = MikadoGraph(root / "graph.db")
+    expected = root / "milknado-8-cleanup"
+    try:
+        _ = graph._conn.execute("PRAGMA query_only = ON")  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            _ = setup_isolated_worktree(
+                graph,
+                adapters.GitAdapter(root),
+                root,
+                MikadoNode(8, "cleanup"),
+                "run-8",
+                "milknado-{node_id}-{slug}",
+            )
+    finally:
+        graph.close()
+
+    assert not expected.exists()
 
 
 class TestMergeBackLock:
@@ -948,3 +1029,82 @@ def test_async_start_reports_lost_terminal_fence(
             )
     finally:
         graph.close()
+
+
+def test_unauthorized_async_start_leaves_claim_worktree_and_logs_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from milknado.app.run import InlineRunRequest, run_inline_start
+
+    root = tmp_path / "repo"
+    _init_repo(root)
+    task = cast(
+        NodeSummary,
+        _call(milknado_todo_add, description="unauthorized", kind="task", project_root=str(root)),
+    )
+    graph, cfg = open_graph(root)
+    log_dir = root / ".milknado" / "runs"
+    before_logs = tuple(log_dir.glob("*.log")) if log_dir.exists() else ()
+    graph.claim_node_for_dispatch(task["id"], "stale-run", now="2026-01-01T00:00:00+00:00")
+    monkeypatch.setenv(WORKER_CONTEXT_ENV, "1")
+    try:
+        with pytest.raises(RuntimeError, match="worker context"):
+            _ = run_inline_start(
+                graph,
+                cfg,
+                root,
+                InlineRunRequest(
+                    node_id=task["id"],
+                    worker_cmd=None,
+                    timeout_seconds=1,
+                    worktree=WorktreeMode.ISOLATE,
+                    merge_back=False,
+                ),
+                use_tmux=False,
+                allow_protected=True,
+            )
+        node = graph.get_node(task["id"])
+        assert node is not None
+        assert node.status.value == "running"
+        assert node.run_id == "stale-run"
+    finally:
+        graph.close()
+
+    after_logs = tuple(log_dir.glob("*.log")) if log_dir.exists() else ()
+    assert after_logs == before_logs
+    assert not (root / "milknado-1-unauthorized").exists()
+
+
+def test_direct_async_starter_authorizes_before_creating_a_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub: Callable[[str], str]
+) -> None:
+    class Sessions(GraphSessionPort):
+        @override
+        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
+            return open_graph(project_root)
+
+    root = tmp_path / "repo"
+    _init_repo(root)
+    log_dir = root / ".milknado" / "runs"
+    before_logs = tuple(log_dir.glob("*.log")) if log_dir.exists() else ()
+    monkeypatch.setenv(WORKER_CONTEXT_ENV, "1")
+
+    with pytest.raises(RuntimeError, match="worker context"):
+        _ = start_headless_async(
+            AsyncRunRequest(
+                project_root=root,
+                node_id=1,
+                brief="",
+                worker_cmd=worker_stub("sh -c 'true'"),
+                timeout_seconds=1,
+                run_id="node-1-unauthorized",
+                default_cmd="sh -c true",
+                cwd=root,
+            ),
+            Sessions(),
+            adapters.GitAdapter(root),
+            adapters.ProcessAdapter(),
+        )
+
+    after_logs = tuple(log_dir.glob("*.log")) if log_dir.exists() else ()
+    assert after_logs == before_logs

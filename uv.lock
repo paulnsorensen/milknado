@@ -694,6 +694,15 @@ server = [
 ]
 
 [[package]]
+name = "filelock"
+version = "4.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/6f/38/88cd6eda96c40594a1e3da7d8b40f04bc40ace5a6aef9ac5cb407540f173/filelock-4.0.1.tar.gz", hash = "sha256:fdefc3f3e87716d855ae2b732c1cfd521dd99799ef2b4d00e8c0d4dcdc7cc94b", size = 238888, upload-time = "2026-09-19T01:08:15.958Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/29/33/af0635ab07fe83b1788a1dbe370ff3e226062495a998335cb18a1cac81aa/filelock-4.0.1-py3-none-any.whl", hash = "sha256:481a321a27bef441e23c53371c6abc8d7d16e26b97090074ba44f7538a3fd55a", size = 106219, upload-time = "2026-09-19T01:08:14.49Z" },
+]
+
+[[package]]
 name = "greenlet"
 version = "3.5.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1261,8 +1270,10 @@ source = { editable = "." }
 dependencies = [
     { name = "code-review-graph" },
     { name = "fastmcp" },
+    { name = "filelock" },
     { name = "msgspec" },
     { name = "ortools" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "sse-starlette" },
@@ -1288,6 +1299,7 @@ dev = [
     { name = "pytest-playwright" },
     { name = "pytest-xdist" },
     { name = "ruff" },
+    { name = "types-pywin32" },
     { name = "vulture" },
     { name = "watchfiles" },
 ]
@@ -1296,8 +1308,10 @@ dev = [
 requires-dist = [
     { name = "code-review-graph", specifier = ">=2.3.3" },
     { name = "fastmcp", specifier = ">=3.3.1" },
+    { name = "filelock", specifier = ">=3.19.1" },
     { name = "msgspec", specifier = ">=0.21.1" },
     { name = "ortools", specifier = ">=9.15.6755" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=311" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "sse-starlette", specifier = ">=3.0.0" },
@@ -1323,6 +1337,7 @@ dev = [
     { name = "pytest-playwright", specifier = ">=0.7.1" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "ruff", specifier = ">=0.15.13" },
+    { name = "types-pywin32", specifier = ">=311" },
     { name = "vulture", specifier = ">=2.16" },
     { name = "watchfiles", specifier = ">=1.2.0" },
 ]
@@ -2721,6 +2736,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e4/51/9aed62104cea109b820bbd6c14245af756112017d309da813ef107d42e7e/typer-0.25.1.tar.gz", hash = "sha256:9616eb8853a09ffeabab1698952f33c6f29ffdbceb4eaeecf571880e8d7664cc", size = 122276, upload-time = "2026-04-30T19:32:16.964Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/f9/2b3ff4e56e5fa7debfaf9eb135d0da96f3e9a1d5b27222223c7296336e5f/typer-0.25.1-py3-none-any.whl", hash = "sha256:75caa44ed46a03fb2dab8808753ffacdbfea88495e74c85a28c5eefcf5f39c89", size = 58409, upload-time = "2026-04-30T19:32:18.271Z" },
+]
+
+[[package]]
+name = "types-pywin32"
+version = "312.0.0.20260827"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/ba/de660e0aa3dcde61b2cada38c79fdaafcaaf2a7c811512fbe577d03c7245/types_pywin32-312.0.0.20260827.tar.gz", hash = "sha256:348facaabb9b3dfbeec50399ef430b660f7454529acf4c7e24874019cb721d58", size = 357427, upload-time = "2026-08-27T12:07:04.192Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/81/53/9c90587245adee3a73af4b8c5374dcfb1f3f0d710d1ab139dfe35dd7258e/types_pywin32-312.0.0.20260827-py3-none-any.whl", hash = "sha256:f22580e0d59c9cea33cf172396a7fb2f19a934c3eb82370bb74ca98f8e3db71e", size = 419299, upload-time = "2026-08-27T12:07:03.081Z" },
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ import hashlib
 import os
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -128,12 +129,6 @@ def test_credential_record_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         graph.close()
 
 
-def test_store_directory_rejects_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(os, "name", "nt")
-    with pytest.raises(ControllerAuthorizationError, match="Windows is unsupported"):
-        _ = capability._store_dir()  # pyright: ignore[reportPrivateUsage]
-
-
 def test_store_directory_permissions_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,7 +170,7 @@ def test_malformed_hash_and_storage_errors_fail_closed(
     finally:
         graph.close()
 
-    monkeypatch.setattr(capability.os, "open", _raise_denied)  # pyright: ignore[reportPrivateLocalImportUsage]
+    monkeypatch.setattr(os, "open", _raise_denied)
     with pytest.raises(RuntimeError, match="cannot read"):
         _ = capability._load_credential("a" * 64)  # pyright: ignore[reportPrivateUsage]
 
@@ -186,3 +181,66 @@ def test_malformed_hash_and_storage_errors_fail_closed(
         _ = capability._publish_if_missing(  # pyright: ignore[reportPrivateUsage]
             hashlib.sha256(b"write-secret").hexdigest(), b"write-secret"
         )
+
+
+def test_relative_home_rejects_registration_before_storage_or_graph_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "graph.db"
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    monkeypatch.setenv("HOME", "relative-home")
+    monkeypatch.chdir(tmp_path)
+    graph = MikadoGraph(db_path)
+    try:
+        with pytest.raises(ControllerAuthorizationError, match="HOME must be an absolute path"):
+            graph.register_controller_master()
+    finally:
+        graph.close()
+
+    assert not (tmp_path / "relative-home").exists()
+    with sqlite3.connect(db_path) as conn:
+        registration = cast(
+            tuple[int], conn.execute("SELECT COUNT(*) FROM controller_master").fetchone()
+        )
+    assert registration == (0,)
+
+
+def test_surrogate_override_rejects_without_storage_or_graph_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    monkeypatch.setattr(os, "environ", {CONTROLLER_MASTER_ENV: "\ud800"})
+    try:
+        with pytest.raises(ControllerAuthorizationError, match="cannot be encoded"):
+            graph.register_controller_master()
+    finally:
+        graph.close()
+
+    with sqlite3.connect(db_path) as conn:
+        registration = cast(
+            tuple[int], conn.execute("SELECT COUNT(*) FROM controller_master").fetchone()
+        )
+    assert registration == (0,)
+
+
+def test_blob_controller_hash_rejects_without_type_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "graph.db"
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    graph = MikadoGraph(db_path)
+    graph.register_controller_master()
+    graph.close()
+    with sqlite3.connect(db_path) as conn:
+        _ = conn.execute(
+            "UPDATE controller_master SET master_hash = ?", (sqlite3.Binary(b"a" * 64),)
+        )
+        conn.commit()
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV)
+    graph = MikadoGraph(db_path)
+    try:
+        with pytest.raises(ControllerAuthorizationError, match="malformed"):
+            graph.register_controller_master()
+    finally:
+        graph.close()
