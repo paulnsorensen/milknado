@@ -4,6 +4,7 @@ import hashlib
 import os
 import sys
 from pathlib import Path, PosixPath
+from types import SimpleNamespace
 from typing import NoReturn, cast
 
 import pytest
@@ -220,14 +221,14 @@ def test_store_dir_rejects_missing_relative_and_non_windows_roots(
     monkeypatch.setenv("XDG_STATE_HOME", "relative")
     with pytest.raises(ControllerAuthorizationError, match="absolute"):
         _ = storage.store_dir()
-    monkeypatch.setattr(os, "name", "posix")
+    monkeypatch.setattr(storage, "os", SimpleNamespace(name="posix", environ=os.environ))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     with pytest.raises(ControllerAuthorizationError, match="requires Windows"):
         _ = storage.store_dir()
 
 
 def test_native_import_failure_is_authorized(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(os, "name", "nt")
+    monkeypatch.setattr(storage, "os", SimpleNamespace(name="nt", environ=os.environ))
     monkeypatch.setenv("XDG_STATE_HOME", "/state")
     monkeypatch.setattr(storage, "Path", PosixPath)
     monkeypatch.setitem(sys.modules, "win32file", None)

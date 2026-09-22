@@ -129,13 +129,6 @@ def test_credential_record_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         graph.close()
 
 
-def test_store_directory_routes_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(os, "name", "nt")
-    monkeypatch.setenv("XDG_STATE_HOME", r"C:\\state")
-    with pytest.raises(ControllerAuthorizationError, match="requires pywin32"):
-        _ = capability._store_dir()  # pyright: ignore[reportPrivateUsage]
-
-
 def test_store_directory_permissions_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

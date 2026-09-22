@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path, PosixPath
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import cast, final
 
 import pytest
 
 from milknado.domains.graph import _windows_controller_storage as storage
+from milknado.domains.graph import controller_capability as capability
 
 
 @final
@@ -84,7 +86,7 @@ class Descriptor:
 @dataclass
 class NativeState:
     sid: str = "user"
-    directories: set[Path] = field(default_factory=set)
+    directories: set[Path] = field(default_factory=lambda: {PosixPath("/")})
     records: dict[Path, bytes] = field(default_factory=dict)
     descriptors: dict[Path, Descriptor] = field(default_factory=dict)
     calls: list[tuple[str, object, object]] = field(default_factory=list)
@@ -169,6 +171,8 @@ class FileModule(ModuleType):
 
     def create_directory(self, value: str, attributes: object) -> None:
         path = PosixPath(value)
+        if path.parent == path:
+            raise NativeError(5)
         if path in self.state.directories:
             raise NativeError(183)
         descriptor = _copy_descriptor(attributes)
@@ -296,7 +300,9 @@ def _pywintypes() -> ModuleType:
 class NativeModules:
     def __init__(self, monkeypatch: pytest.MonkeyPatch, state: NativeState) -> None:
         self.state = state
-        monkeypatch.setattr("os.name", "nt")
+        native_os = SimpleNamespace(name="nt", environ=os.environ)
+        monkeypatch.setattr(storage, "os", native_os)
+        monkeypatch.setattr(capability, "os", native_os)
         monkeypatch.setattr(storage, "Path", PosixPath)
         for name, module in state.modules().items():
             monkeypatch.setitem(sys.modules, name, module)

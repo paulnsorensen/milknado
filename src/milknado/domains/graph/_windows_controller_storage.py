@@ -155,13 +155,13 @@ def _ensure_directory(
 ) -> None:
     if path.parent != path:
         _ensure_directory(path.parent, sid, attributes, protected=False)
-    try:
-        win32file.CreateDirectory(str(path), attributes)
-    except pywintypes.error as exc:
-        if _winerror(exc) not in _ERROR_FILE_CONFLICT:
-            raise _authorization(
-                f"cannot create controller credential store at {path}: {exc}"
-            ) from exc
+        try:
+            win32file.CreateDirectory(str(path), attributes)
+        except pywintypes.error as exc:
+            if _winerror(exc) not in _ERROR_FILE_CONFLICT:
+                raise _authorization(
+                    f"cannot create controller credential store at {path}: {exc}"
+                ) from exc
     _validate_path(path, sid, directory=True, protected=protected)
 
 
