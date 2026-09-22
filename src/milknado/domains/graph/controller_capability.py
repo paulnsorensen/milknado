@@ -15,10 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common.process import (
-    CONTROLLER_MASTER_ENV,
-    WORKER_CONTEXT_ENV,
-)
+from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.domains.graph._sqlite_rows import fetchone
 
 CREATE_CONTROLLER_MASTER = (
@@ -117,7 +114,10 @@ def _explicit_master() -> bytes | None:
         raise ControllerAuthorizationError(
             f"{CONTROLLER_MASTER_ENV} is set but empty; unset it or provide the original secret"
         )
-    master = value.encode()
+    try:
+        master = value.encode()
+    except UnicodeEncodeError as exc:
+        raise ControllerAuthorizationError(f"{CONTROLLER_MASTER_ENV} cannot be encoded") from exc
     if len(master) > 4096:
         raise ControllerAuthorizationError(f"{CONTROLLER_MASTER_ENV} exceeds the 4096-byte limit")
     return master
@@ -126,6 +126,10 @@ def _explicit_master() -> bytes | None:
 def _load_credential(master_hash: str) -> bytes | None:
     """Load the owner-only credential matching a registered hash, if present."""
     path = _credential_path(master_hash)
+    if os.name == "nt":
+        from milknado.domains.graph._windows_controller_storage import load_credential
+
+        return load_credential(path, master_hash)
     try:
         if path.is_symlink():
             raise ControllerAuthorizationError(
@@ -160,6 +164,11 @@ def _load_credential(master_hash: str) -> bytes | None:
 def _publish_if_missing(master_hash: str, master: bytes) -> None:
     """Atomically persist a controller credential when no record exists."""
     path = _credential_path(master_hash)
+    if os.name == "nt":
+        from milknado.domains.graph._windows_controller_storage import publish_if_missing
+
+        publish_if_missing(path, master_hash, master)
+        return
     existing = _load_credential(master_hash)
     if existing is not None:
         return
@@ -194,13 +203,14 @@ def _credential_path(master_hash: str) -> Path:
 def _store_dir() -> Path:
     """Return the owner-only managed controller credential directory."""
     if os.name == "nt":
-        raise ControllerAuthorizationError(
-            "managed controller credentials require a POSIX platform; Windows is unsupported"
-        )
+        from milknado.domains.graph._windows_controller_storage import store_dir
+
+        return store_dir()
     state_home = os.environ.get("XDG_STATE_HOME", "").strip()
     root = Path(state_home) if state_home else Path.home() / ".local" / "state"
-    if state_home and not root.is_absolute():
-        raise ControllerAuthorizationError("XDG_STATE_HOME must be an absolute path")
+    if not root.is_absolute():
+        variable = "XDG_STATE_HOME" if state_home else "HOME"
+        raise ControllerAuthorizationError(f"{variable} must be an absolute path")
     namespace = root / "milknado"
     store = namespace / "controllers"
     try:
@@ -225,9 +235,9 @@ def _store_dir() -> Path:
     return store
 
 
-def _validated_hash(value: str) -> str:
+def _validated_hash(value: object) -> str:
     """Reject malformed controller hashes read from graph storage."""
-    if not _HASH_RE.fullmatch(value):
+    if not isinstance(value, str) or not _HASH_RE.fullmatch(value):
         raise ControllerAuthorizationError("registered controller hash is malformed")
     return value
 

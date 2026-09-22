@@ -338,12 +338,12 @@ def start_headless_async(
     tmux: TmuxPort | None = None,
 ) -> AsyncStartRef:
     argv = tuple(resolve_worker_cmd(request.worker_cmd, request.default_cmd))
-    runs = _runs_dir(request.project_root)
-    log_path = runs / f"{request.run_id}.log"
-    log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
         graph.register_controller_master()
+        runs = _runs_dir(request.project_root)
+        log_path = runs / f"{request.run_id}.log"
+        log_path.touch()
         graph.runs.start(
             request.run_id,
             request.node_id,

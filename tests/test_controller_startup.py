@@ -66,7 +66,6 @@ def test_concurrent_registration_converges_and_restarts_in_a_new_process(tmp_pat
         from milknado.domains.graph import MikadoGraph
         graph = MikadoGraph(Path(sys.argv[1]))
         try:
-            print(hashlib.sha256(graph._controller_master or b'').hexdigest())
             graph.register_controller_master()
             print(hashlib.sha256(graph._controller_master or b'').hexdigest())
         finally:
@@ -81,11 +80,13 @@ def test_concurrent_registration_converges_and_restarts_in_a_new_process(tmp_pat
         results = list(pool.map(launch, range(4)))
 
     assert all(result.returncode == 0 for result in results), results
-    hashes = [result.stdout.splitlines()[-1] for result in results]
+    assert all(result.stderr == "" and len(result.stdout.splitlines()) == 1 for result in results)
+    hashes = [result.stdout.strip() for result in results]
     assert len(set(hashes)) == 1
     restart = _child(db_path, state_home, code)
     assert restart.returncode == 0, restart.stderr
-    assert restart.stdout.splitlines()[-1] == hashes[0]
+    assert restart.stderr == ""
+    assert restart.stdout.splitlines() == [hashes[0]]
     records = list((state_home / "milknado" / "controllers").iterdir())
     assert len(records) == 1
     assert hashlib.sha256(records[0].read_bytes()).hexdigest() == hashes[0]
@@ -210,3 +211,51 @@ def test_storage_failure_rolls_back_registration_without_graph_changes(
     assert reviews == (1,)
     assert nodes == (1,)
     assert review_id > 0
+
+
+def test_worker_process_cannot_consume_a_valid_controller_capability(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "graph.db"
+    state_home = tmp_path / "state"
+    monkeypatch.setenv("XDG_STATE_HOME", str(state_home))
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "worker-secret")
+    graph = MikadoGraph(db_path)
+    goal = graph.add_node("goal", spec=NodeSpec(kind=NodeKind.GOAL))
+    review_id = _review(graph, goal.id, "revision-1")
+    graph.register_controller_master()
+    graph.close()
+    code = """
+        import os
+        import sys
+        from pathlib import Path
+        from milknado.domains.common import WORKER_CONTEXT_ENV
+        from milknado.domains.graph import MikadoGraph
+        from milknado.domains.graph import controller_capability
+        os.environ[WORKER_CONTEXT_ENV] = "1"
+        graph = MikadoGraph(Path(sys.argv[1]))
+        try:
+            print(controller_capability.consume_controller_capability(
+                graph._conn, int(sys.argv[2]), "accepted", b"worker-secret"
+            ))
+        finally:
+            graph.close()
+    """
+
+    result = _child(db_path, state_home, code, review_id)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["False"]
+    graph = MikadoGraph(db_path)
+    try:
+        record = graph.get_goal_review(review_id)
+        assert record is not None
+        assert record.decision is GoalReviewDecision.PENDING
+    finally:
+        graph.close()
+    with sqlite3.connect(db_path) as conn:
+        consumed = cast(
+            tuple[int],
+            conn.execute("SELECT COUNT(*) FROM consumed_controller_capabilities").fetchone(),
+        )
+    assert consumed == (0,)

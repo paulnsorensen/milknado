@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import IO
 from weakref import WeakKeyDictionary
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
+from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._agent import (
     AgentRunSpec,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]

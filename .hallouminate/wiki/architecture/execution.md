@@ -197,7 +197,7 @@ Success requires both run completion AND a clean rebase.
 Normal local startup manages controller credentials without a manual export.
 The graph keeps its existing credential hash and transactional, one-use review capabilities.
 Controller registration loads or creates a credential under `$XDG_STATE_HOME/milknado/controllers`.
-The default state root is `~/.local/state`.
+The POSIX default state root is `~/.local/state`.
 Credential filenames use the registered hash, so moving a database does not change its credential lookup.[^controller-store]
 
 Registration serializes through a SQLite write transaction.
@@ -224,11 +224,36 @@ Same-user arbitrary code can remove markers, read user files, or modify SQLite.
 Git worktrees and owner-only credential files do not prevent those actions.
 Enforced isolation requires separate operating-system permissions or a sandbox outside this change.[^controller-workers]
 
+### Windows storage and startup ordering
+
+Windows uses `LOCALAPPDATA` as its default state root.
+An absolute `XDG_STATE_HOME` overrides that root.
+Storage creates missing ancestors and rejects reparse points through native handles.
+The `milknado/controllers` directories and credential records require protected DACLs.
+Their owner and sole full-access entry must match the process token's `TokenUser` SID.[^controller-windows]
+
+Credential reads permit shared reads, but not shared writes or deletion.
+Validation rejects empty records, records above 4096 bytes, and SHA-256 mismatches.
+Publication flushes a new temporary file, then uses a non-replacing rename.
+A publication race accepts only a destination with the expected hash and protection.[^controller-windows]
+
+Asynchronous inline startup checks the protected branch before controller registration.
+Registration precedes stale-run reclaim, node claims, worktree creation, and log creation.
+Unauthorized startup must preserve the existing running node and its exact run identity.[^controller-order]
+
+The Windows workflow runs native storage, startup, and merge-lock tests.
+A macOS test pass does not establish native Windows behavior.
+Keep the controller pull request in draft until that workflow passes.[^controller-windows-ci]
+
+[^controller-windows]: src/milknado/domains/graph/_windows_controller_storage.py:34-105,123-174,206-269.
+[^controller-order]: src/milknado/app/run.py:538-584; tests/test_run_inline_worktree.py.
+[^controller-windows-ci]: .github/workflows/windows-controller.yml:13-28; approved controller draft publication requirement.
+
 [^controller-store]: src/milknado/domains/graph/controller_capability.py; src/milknado/domains/graph/graph.py, register_controller_master and decide_goal_review.
 [^controller-cli]: src/milknado/cli/graph.py, review; src/milknado/cli/run.py, watch.
 [^controller-workers]: src/milknado/domains/dispatch/runner.py, build_worker_env; src/milknado/loop/_agent.py, _build_spawn_env; src/milknado/loop/sessions/_process.py, start_process; src/milknado/mcp/goal_review.py.
 
-_Source: controller startup fix · Updated: 2026-09-20 · Supersedes: manual credential provisioning from PR #451 and the blanket MILKNADO environment-forwarding claim._
+_Source: controller startup and Windows storage source; selected Cure regressions · Updated: 2026-09-21 · Supersedes: platform-neutral default-root claim; retains the API-guardrail boundary._
 
 ## Subprocess workers & run-state (runner.py, _runstate.py)
 

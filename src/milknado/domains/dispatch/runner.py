@@ -15,11 +15,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.domains.common.agent_argv import (
     POSITIONAL_BRIEF_EXECUTABLES,
     validate_worker_argv,
 )
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.domains.dispatch._runstate import SUMMARY_TAIL_BYTES as _SUMMARY_TAIL_BYTES
 from milknado.domains.dispatch._runstate import is_cancel_requested as _is_cancel_requested
 from milknado.domains.dispatch._runstate import runs_dir as _runs_dir
