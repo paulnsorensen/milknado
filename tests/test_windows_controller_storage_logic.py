@@ -236,6 +236,17 @@ def test_native_import_failure_is_authorized(monkeypatch: pytest.MonkeyPatch) ->
         _ = storage.store_dir()
 
 
+def test_token_close_failure_is_translated(
+    native: NativeState, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _ = _root(tmp_path, monkeypatch)
+    native.fail_close = 5
+    with pytest.raises(ControllerAuthorizationError, match="<process-token>") as error:
+        _ = storage.store_dir()
+    assert isinstance(error.value.__cause__, NativeError)
+    assert error.value.__cause__.winerror == 5
+
+
 def test_token_user_failure_closes_open_token(
     native: NativeState, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -285,8 +296,9 @@ def test_close_translates_native_handle_failure(
 ) -> None:
     root = _root(tmp_path, monkeypatch)
     path = _record(native, root, b"secret")
+    _set_attr(sys.modules["win32file"], "CloseHandle", _ignore_native)
     native.fail_close = 5
-    with pytest.raises(ControllerAuthorizationError, match="cannot close"):
+    with pytest.raises(ControllerAuthorizationError, match=f"at {path}:"):
         _ = storage.load_credential(path, hashlib.sha256(b"secret").hexdigest())
 
 

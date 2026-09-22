@@ -236,6 +236,8 @@ class FileModule(ModuleType):
         return None
 
     def close_handle(self, handle: int) -> None:
+        if self.state.fail_close is not None:
+            raise NativeError(self.state.fail_close)
         self.state.closed_handles.append(handle)
 
 
@@ -267,7 +269,7 @@ def _security_module(state: NativeState) -> ModuleType:
     _set_attr(module, "TokenUser", 3)
     _set_attr(module, "ACL", lambda: Dacl("other", 0))
     _set_attr(module, "SECURITY_DESCRIPTOR", lambda: Descriptor("other", Dacl("other", 0)))
-    _set_attr(module, "SECURITY_ATTRIBUTES", lambda: type("Attributes", (), {})())
+    _set_attr(module, "SECURITY_ATTRIBUTES", type("Attributes", (), {}))
     _set_attr(module, "OpenProcessToken", open_process_token)
     _set_attr(module, "GetTokenInformation", get_token_information)
     _set_attr(module, "GetSecurityInfo", get_security_info)

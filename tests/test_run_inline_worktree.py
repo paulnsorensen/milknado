@@ -827,7 +827,7 @@ def test_start_failure_surfaces_worktree_cleanup_error(
     monkeypatch: pytest.MonkeyPatch,
     worker_stub: Callable[[str], str],
 ) -> None:
-    import milknado.domains.dispatch as dispatch_mod
+    from milknado.domains import dispatch as dispatch_mod
 
     root = tmp_path / "repo"
     _init_repo(root)
