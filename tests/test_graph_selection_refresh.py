@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from textual.widgets import Static
 
 from milknado.app.run import ExecutionRunStatus, TerminalRunSnapshot
 from milknado.domains.graph import GraphSnapshot, NodeDetailResponse
@@ -93,6 +94,10 @@ async def test_empty_graph_clears_selection_and_stale_detail(kind: str) -> None:
         app.node_detail = NodeDetailResponse(1, app.node_request_generation, None)
         app.show_snapshot(empty)
         await pilot.pause()
+        assert app.screen.focused is app.query_one("#runs")
+        assert app.selected_node_id is None
+        assert app.selected_run_id is None
+        assert app.node_detail is None
         await pilot.press("e")
         await pilot.pause()
         focused = app.screen.focused
@@ -100,9 +105,31 @@ async def test_empty_graph_clears_selection_and_stale_detail(kind: str) -> None:
         await pilot.pause()
 
         assert focused is app.screen.focused
-        assert app.selected_node_id is None
-        assert app.selected_run_id is None
+        assert (app.selected_node_id, app.selected_run_id) == (1, "run-1")
         assert app.node_detail is None
+
+
+@pytest.mark.asyncio
+async def test_compact_help_advertises_graph_only_open_and_back() -> None:
+    source_value = source()
+    app = run_app(source_value, "watch")
+    graph_only = replace(source_value.current, active_runs=())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.show_snapshot(graph_only)
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        body = app.screen.query_one("#help-overlay", Static).render()
+        assert "enter open" in str(body).lower()
+
+        await pilot.press("escape", "enter")
+        await pilot.pause()
+        assert app.route == "detail"
+        app.action_help()
+        await pilot.pause()
+        body = app.screen.query_one("#help-overlay", Static).render()
+        assert "escape back" in str(body).lower()
 
 
 @pytest.mark.asyncio
@@ -241,3 +268,33 @@ async def test_graphless_refresh_replaces_missing_run_and_clears_empty(kind: str
         app.show_snapshot(replace(source_value.current, graph=None, active_runs=()))
         await pilot.pause()
         assert (app.selected_node_id, app.selected_run_id) == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["run", "watch"])
+async def test_empty_graph_navigates_retained_runs(kind: str) -> None:
+    source_value = source()
+    terminal = TerminalRunSnapshot("run", 0, "run", ExecutionRunStatus.COMPLETED, (), None, 1.0)
+    retained = (
+        replace(terminal, run_id="run-a", node_id=1),
+        replace(terminal, run_id="run-b", node_id=2),
+    )
+    empty = replace(
+        source_value.current,
+        graph=GraphSnapshot((), (), ()),
+        active_runs=(),
+        terminal_runs=retained,
+    )
+    app = run_app(source_value, kind)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.show_snapshot(empty)
+        await pilot.pause()
+        app.set_focus(app.query_one("#runs"))
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.selected_run_id == "run-a"
+        await pilot.press("k")
+        await pilot.pause()
+        assert app.selected_run_id == "run-b"

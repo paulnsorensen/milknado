@@ -11,6 +11,7 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import DataTable, Input, TabbedContent, Tree
 
+from milknado.app.action_availability import ActionAvailabilityContext, action_availability
 from milknado.app.run import ActiveRunSnapshot, ExecutionSnapshot, TerminalRunSnapshot
 from milknado.app.run_view import session_view
 
@@ -86,9 +87,18 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     @on(Tree.NodeHighlighted, "#graph-tree")
     def select_tree_node(self, event: Tree.NodeHighlighted[object]) -> None:
+        host = _navigation_host(self)
+        tree = cast(Tree[object], host.query_one("#graph-tree", Tree))
+        if event.node is not tree.cursor_node:
+            return
         node_id = getattr(event.node.data, "node_id", None)
         if isinstance(node_id, int):
             _navigation_host(self).select_node(node_id)
+
+    @on(Tree.NodeSelected, "#graph-tree")
+    def open_tree_node(self, _event: Tree.NodeSelected[object]) -> None:
+        if _navigation_host(self).compact:
+            self.action_open_detail()
 
     def _editor_focused(self) -> bool:
         focused = _navigation_host(self).screen.focused
@@ -99,6 +109,26 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
             "session-submit",
             "guidance",
         }
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Hide controls that cannot affect the selected run."""
+        del parameters
+        host = _navigation_host(self)
+        selected = self.selected_run()
+        available = action_availability(
+            action,
+            ActionAvailabilityContext(
+                selected=selected,
+                session=session_view(selected),
+                compact=host.compact,
+                minimum=host.minimum,
+                read_only=host.read_only,
+                auto_follow=host.auto_follow,
+                node_selected=host.selected_node_id is not None,
+                route=host.route,
+            ),
+        )
+        return True if available is None else available
 
     def action_previous_run(self) -> None:  # noqa: V105 - Textual binding action
         self._move_selection(-1)
@@ -113,15 +143,12 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
         if self._editor_focused():
             return
         graph = host.snapshot.graph
-        if graph is not None:
-            if graph.nodes:
-                node_ids = tuple(node.id for node in graph.nodes)
-                current_index = (
-                    node_ids.index(host.selected_node_id)
-                    if host.selected_node_id in node_ids
-                    else 0
-                )
-                host.select_node(node_ids[(current_index + offset) % len(node_ids)])
+        if graph is not None and graph.nodes:
+            node_ids = tuple(node.id for node in graph.nodes)
+            current_index = (
+                node_ids.index(host.selected_node_id) if host.selected_node_id in node_ids else 0
+            )
+            host.select_node(node_ids[(current_index + offset) % len(node_ids)])
             return
         runs = self._runs()
         if not runs:
@@ -173,7 +200,8 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
             host.route = "list"
             host.set_layout(True)
             host.refresh_view()
-        selector = "#graph-tree" if host.snapshot.graph is not None else "#runs"
+        graph = host.snapshot.graph
+        selector = "#graph-tree" if graph is not None and graph.nodes else "#runs"
         _ = host.call_after_refresh(host.query_one(selector, Widget).focus)
 
     def action_focus_events(self) -> None:  # noqa: V105 - Textual binding action
@@ -198,8 +226,9 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
 
     def pause_auto_follow(self) -> None:
         host = _navigation_host(self)
-        host.auto_follow = False
-        host.refresh_view()
+        if host.auto_follow:
+            host.auto_follow = False
+            host.refresh_view()
 
     def on_key(self, event: Key) -> None:  # noqa: V105 - Textual event handler
         host = _navigation_host(self)
@@ -207,5 +236,6 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
             not host.screen.is_modal
             and event.key in {"home", "end", "pageup", "pagedown"}
             and not host.query_one("#events", Widget).has_focus
+            and not host.query_one("#details-panel", Widget).has_focus
         ):
             self.pause_auto_follow()

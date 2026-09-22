@@ -53,7 +53,8 @@ class GraphSelectionMixin:
         host = self._graph_host()
         if host.screen.is_modal:
             return
-        selector = "#graph-tree" if host.snapshot.graph is not None else "#runs"
+        graph = host.snapshot.graph
+        selector = "#graph-tree" if graph is not None and graph.nodes else "#runs"
         _ = host.set_focus(host.query_one(selector))
 
     def selected_node(self) -> MikadoNode | None:
