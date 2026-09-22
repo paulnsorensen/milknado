@@ -5,14 +5,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event, Thread
-from typing import Protocol, cast
+from typing import ClassVar, Protocol, cast
 from xml.etree import ElementTree
 
 import pytest
 from rich.console import RenderableType
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp
+from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static, Tree
 from typing_extensions import override
 
@@ -24,7 +27,7 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.app.run_overlays import FooterHint
+from milknado.app.run_overlays import FooterHint, RunFooter
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
@@ -627,10 +630,8 @@ async def test_output_wheel_pauses_follow_and_preserves_offset_on_snapshot_refre
         output = _output(app)
         output.scroll_to(y=8, animate=False)
         await pilot.pause()
-        offset = output.scroll_offset.y
         _ = output.post_message(MouseScrollUp(output, 0, 0, 0, -1, 0, False, False, False))
         await pilot.pause()
-        offset = output.scroll_offset.y
 
         assert app.auto_follow is False
         app.action_resume_output()
@@ -1153,3 +1154,104 @@ async def test_mounted_footer_help_hint_opens_help() -> None:
 
         assert app.screen.is_modal
         assert app.screen.query_one("#help-scroll")
+
+
+class _FooterOwnerState(Protocol):
+    app_cancel_calls: int
+    modal_cancel_calls: int
+    app_same_calls: int
+    widget_same_calls: int
+
+
+class _FooterOwnerWidget(Static):
+    can_focus: bool = True
+    BINDINGS: ClassVar[list[BindingType]] = [("x", "same", "Same")]
+
+    def action_same(self) -> None:
+        state = cast(_FooterOwnerState, cast(object, self.app))
+        state.widget_same_calls += 1
+
+
+class _FooterOwnerApp(App[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("n", "cancel", "Cancel"),
+        ("x", "same", "Same"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_cancel_calls: int = 0
+        self.modal_cancel_calls: int = 0
+        self.app_same_calls: int = 0
+        self.widget_same_calls: int = 0
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield _FooterOwnerWidget()
+        yield RunFooter()
+
+    def action_cancel(self) -> None:
+        self.app_cancel_calls += 1
+
+    def action_same(self) -> None:
+        self.app_same_calls += 1
+
+
+class _FooterOwnerModal(ModalScreen[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [("n", "cancel", "Cancel")]
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield RunFooter()
+
+    def action_cancel(self) -> None:
+        state = cast(_FooterOwnerState, cast(object, self.app))
+        state.modal_cancel_calls += 1
+        _ = self.dismiss(None)
+
+
+@pytest.mark.asyncio
+async def test_footer_click_dispatches_to_modal_binding_owner() -> None:
+    app = _FooterOwnerApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        _ = app.push_screen(_FooterOwnerModal())
+        await pilot.pause()
+        hint = next(
+            item
+            for item in app.screen.query(FooterHint)
+            if cast(Text, item.render()).plain == "n Cancel"
+        )
+
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+
+        assert not app.screen.is_modal
+        assert app.modal_cancel_calls == 1
+        assert app.app_cancel_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_footer_click_tracks_same_action_when_binding_owner_changes() -> None:
+    app = _FooterOwnerApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.set_focus(None)
+        await pilot.pause()
+        hint = next(
+            item for item in app.query(FooterHint) if cast(Text, item.render()).plain == "x Same"
+        )
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+        assert app.app_same_calls == 1
+
+        _ = app.query_one(_FooterOwnerWidget).focus()
+        await pilot.pause()
+        hint = next(
+            item for item in app.query(FooterHint) if cast(Text, item.render()).plain == "x Same"
+        )
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+
+        assert app.app_same_calls == 1
+        assert app.widget_same_calls == 1

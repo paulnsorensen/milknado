@@ -29,6 +29,45 @@ This evidence proves execution, gate completion, merge-back, and observation, no
 The current frames use `reference-dark` and contain no observed secrets.
 The archived matched pairs below remain unchanged.
 
+## Review follow-up
+
+The [follow-up manifest](review-followup/manifest.json) records 14 matched pairs and their interaction outcomes.
+All 28 PNGs use `reference-dark`, `ghostty-web`, and the same fixture and terminal size within each pair.
+Clock text and header refresh timing can differ.
+The baseline source is commit `0c5222b6189af5c956c0e20f36020bd2a7c8c0d5`.
+The after frames use the review fixes committed with this evidence.
+Later type annotations and casts do not change the captured behavior.
+
+- Empty graph: Run and Watch retain active and terminal rows at 80×24 and 120×40.
+  Earlier empty-graph captures clear those rows and cannot prove retained-run navigation.
+- Permission: Run and writable Watch preserve the focused `second: Approve beta` choice during a stale refresh.
+  The `attached` filenames identify writable Watch, not the read-only observer.
+- Footer owner: a synthetic focused widget exposes an `f6 Owner proof` binding.
+  The real mouse click reaches that widget after the fix.
+  Its diagnostic banner covers the usual header in these component captures.
+- Confirmation: both sizes retain the force-stop overlay and its visible key hints.
+  The real modal blocks mouse access to the underlying footer before and after the fix.
+  These two pairs prove layout, not modal-footer dispatch.
+
+The manifest records outcomes immediately after the scripted interaction.
+The helper then publishes a readiness snapshot before capture.
+Screenshots can therefore show the next refresh, not the earlier selected-row value.
+All worker I/O remains synthetic.
+The original 60 archive images and ten integrated captures remain unchanged.
+
+Use the [capture helper](review-followup/capture.py) with either source checkout:
+
+```text
+python docs/tui-captures/execution-repair/review-followup/capture.py SOURCE MODE STATE PROOF_JSON
+```
+
+Run that command inside an agent-tty session at 80×24 or 120×40.
+Use `run` or `watch` for `empty-graph` and `footer-owner`.
+Use `run` or `attached` for `permission`.
+Use `run` for `confirmation`.
+Wait for `READY`, then capture the stable screen with the commands below.
+The helper writes the interaction outcome to `PROOF_JSON`.
+
 ## Provenance
 
 - Before: the 2026-09-20 audit at `d7c675f7552e76c452d4064484a549e0f8ea7d7c`.

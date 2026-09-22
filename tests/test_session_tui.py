@@ -128,10 +128,12 @@ def two_run_snapshot(first: SessionContext, second: SessionContext) -> Execution
 @dataclass(kw_only=True)
 class _SessionController(FakeController):
     channel: SessionChannel
+    submissions: list[tuple[str, SessionInput]] = field(default_factory=list)
 
     def session_input(self, run_id: str, command: SessionInput) -> bool:
         if run_id != self.snapshot().active_runs[0].run_id:
             return False
+        self.submissions.append((run_id, command))
         accepted = self.channel.submit(command)
         self.show_session()
         return accepted
@@ -377,6 +379,120 @@ async def test_action_choice_survives_refresh_before_change_event(tmp_path: Path
 
         assert action.value == "follow_up"
         assert action.has_focus
+
+
+@pytest.mark.asyncio
+async def test_permission_choice_survives_refresh_before_change_event_and_submits_visible_request(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        action = cast(Select[SessionAction], app.query_one("#session-action", Select))
+        permission = cast(Select[str], app.query_one("#session-permission", Select))
+        action.value = "approve"
+        await pilot.pause()
+        first_id, second_id = (event.event_id for event in controller.channel.view().permissions)
+        permission.value = first_id
+        await pilot.pause()
+        _ = permission.focus()
+        await pilot.pause()
+        permission.value = second_id
+        controller.show_session()
+        await pilot.pause()
+
+        assert permission.value == second_id
+        assert permission.has_focus
+
+        _ = app.query_one("#session-input", Input).focus()
+        await pilot.press("enter")
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert [
+            (run_id, command.action, command.request_id)
+            for run_id, command in controller.submissions
+        ] == [("run-1", "approve", second_id)]
+
+
+@pytest.mark.asyncio
+async def test_permission_choice_resets_when_focus_leaves_before_change_event(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        permission = cast(Select[str], app.query_one("#session-permission", Select))
+        second_id = controller.channel.view().permissions[1].event_id
+        _ = permission.focus()
+        await pilot.pause()
+        with app.prevent(Select.Changed):
+            permission.value = second_id
+            controller.show_session()
+            await pilot.pause()
+            action = cast(Select[SessionAction], app.query_one("#session-action", Select))
+            _ = action.focus()
+            await pilot.pause()
+            controller.show_session()
+            await pilot.pause()
+
+        assert permission.value == Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_permission_choice_resets_when_selected_run_changes(tmp_path: Path) -> None:
+    first = SessionContext(family="omp", cwd=str(tmp_path / "first"), base_oid="first")
+    second = SessionContext(family="omp", cwd=str(tmp_path / "second"), base_oid="second")
+    controller = SnapshotController(
+        initial_snapshot=two_run_snapshot(first, second), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        permission = cast(Select[str], app.query_one("#session-permission", Select))
+        _ = permission.focus()
+        await pilot.pause()
+        permission.value = "first-permission"
+        current = controller.snapshot()
+        controller.publish(replace(current, active_runs=(current.active_runs[1],)))
+        await pilot.pause()
+
+        assert app.selected_run_id == "run-2"
+        assert permission.value == Select.NULL
+
+
+@pytest.mark.asyncio
+async def test_permission_choice_resets_when_request_disappears(
+    controller: _SessionController,
+) -> None:
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        action = cast(Select[SessionAction], app.query_one("#session-action", Select))
+        permission = cast(Select[str], app.query_one("#session-permission", Select))
+        action.value = "approve"
+        selected_id = controller.channel.view().permissions[1].event_id
+        permission.value = selected_id
+        await pilot.pause()
+        _ = permission.focus()
+        await pilot.pause()
+
+        current = controller.snapshot()
+        selected = current.active_runs[0]
+        session = selected.session
+        assert session is not None
+        replacement = replace(session, permissions=(session.permissions[0],))
+        controller.publish(replace(current, active_runs=(replace(selected, session=replacement),)))
+        await pilot.pause()
+
+        assert permission.value == Select.NULL
+        await pilot.press("enter")
+        await pilot.pause()
+        assert controller.submissions == []
 
 
 @pytest.mark.asyncio

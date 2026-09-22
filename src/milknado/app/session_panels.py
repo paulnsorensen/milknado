@@ -160,12 +160,14 @@ class SessionPanel(VerticalScroll):
         if permissions != self._permission_choices:
             permission_select.set_options(permissions)
             self._permission_choices = permissions
-        permission = (
-            state.permission_id
-            if any(value == state.permission_id for _, value in permissions)
-            else Select.NULL
+        permission = next(
+            (value for _, value in permissions if value == state.permission_id), Select.NULL
         )
-        if permission_select.value != permission:
+        if permission_select.value != permission and (
+            selection_changed
+            or not permission_select.has_focus
+            or not any(value == permission_select.value for _, value in permissions)
+        ):
             permission_select.value = permission
         permission_select.display = bool(permissions)
 

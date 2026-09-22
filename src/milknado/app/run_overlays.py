@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from typing import ClassVar, Protocol, cast, final
+from typing import ClassVar, Protocol, TypeAlias, cast, final
 
-from textual.app import ComposeResult
+from textual.app import App, ComposeResult
 from textual.binding import ActiveBinding, BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.dom import DOMNode
 from textual.events import Click, Resize
 from textual.geometry import Size
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Static
 from typing_extensions import override
+
+_Hint: TypeAlias = tuple[str, str, DOMNode]
 
 
 class _FooterHost(Protocol):
@@ -22,20 +25,20 @@ class _FooterHost(Protocol):
 
     def get_key_display(self, binding: object) -> str: ...
 
-    async def run_action(self, action: str) -> bool: ...
-
 
 @final
 class FooterHint(Static):
     """Clickable compact footer action."""
 
-    def __init__(self, label: str, action: str) -> None:
+    def __init__(self, label: str, action: str, owner: DOMNode) -> None:
         super().__init__(label, markup=False)
         self._action: str = action
+        self._owner: DOMNode = owner
 
     async def on_click(self, event: Click) -> None:
         _ = event.stop()
-        _ = await cast(_FooterHost, cast(object, self.app)).run_action(self._action)
+        host = cast(App[object], cast(object, self.app))
+        _ = await host.run_action(self._action, default_namespace=self._owner)
 
 
 class RunFooter(Footer):
@@ -49,7 +52,7 @@ class RunFooter(Footer):
     FooterHint:hover { background: $boost; }
     """
     _hint_width: int | None = None
-    _hint_signature: tuple[tuple[str, str], ...] = ()
+    _hint_signature: tuple[_Hint, ...] = ()
 
     @override
     def compose(self) -> ComposeResult:
@@ -61,30 +64,27 @@ class RunFooter(Footer):
         with Vertical(id="footer-hints"):
             for row in self._pack_hints(hints, width):
                 with Horizontal(classes="footer-row"):
-                    for label, action in row:
-                        yield FooterHint(label, action)
+                    for label, action, owner in row:
+                        yield FooterHint(label, action, owner)
 
-    def _available_hints(self) -> tuple[tuple[str, str], ...]:
+    def _available_hints(self) -> tuple[_Hint, ...]:
         host = cast(_FooterHost, cast(object, self.app))
-        hints: list[tuple[str, str]] = []
-        seen: set[str] = set()
+        hints: list[_Hint] = []
+        seen: set[tuple[DOMNode, str]] = set()
         for active in host.active_bindings.values():
             binding = active.binding
-            if (
-                not binding.show
-                or binding.action in seen
-                or not active.enabled
-                or host.check_action(binding.action, ()) is False
-            ):
+            owner_action = (active.node, binding.action)
+            if not binding.show or owner_action in seen or not active.enabled:
                 continue
             key = host.get_key_display(binding)
             if key in {"enter", "⏎", "esc"}:
                 key = "Enter" if key in {"enter", "⏎"} else "Esc"
             if not binding.description:
                 continue
-            hints.append((f"{key} {binding.description}", binding.action))
-            seen.add(binding.action)
-        if "open_detail" not in seen and host.check_action("open_detail", ()) is True:
+            hints.append((f"{key} {binding.description}", binding.action, active.node))
+            seen.add(owner_action)
+        owner = cast(DOMNode, cast(object, host))
+        if (owner, "open_detail") not in seen and host.check_action("open_detail", ()) is True:
             enter = next(
                 (
                     host.get_key_display(active.binding)
@@ -94,15 +94,13 @@ class RunFooter(Footer):
                 "Enter",
             )
             enter_label = "Enter" if enter in {"enter", "⏎"} else enter.capitalize()
-            hints.append((f"{enter_label} Open", "open_detail"))
+            hints.append((f"{enter_label} Open", "open_detail", owner))
         return tuple(hints)
 
     @staticmethod
-    def _pack_hints(
-        hints: tuple[tuple[str, str], ...], width: int
-    ) -> tuple[tuple[tuple[str, str], ...], ...]:
-        rows: list[list[tuple[str, str]]] = []
-        row: list[tuple[str, str]] = []
+    def _pack_hints(hints: tuple[_Hint, ...], width: int) -> tuple[tuple[_Hint, ...], ...]:
+        rows: list[list[_Hint]] = []
+        row: list[_Hint] = []
         row_width = 0
         for hint in hints:
             needed = len(hint[0]) + (3 if row else 0)

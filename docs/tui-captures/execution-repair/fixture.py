@@ -97,8 +97,6 @@ def _snapshot(workspace: Path, state: str, family: str) -> ExecutionSnapshot:
         return replace(
             initial,
             graph=GraphSnapshot((), (), ()),
-            active_runs=(),
-            terminal_runs=(),
             event_lines=(),
         )
     run = replace(

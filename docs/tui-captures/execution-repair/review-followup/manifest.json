@@ -1,0 +1,653 @@
+{
+  "baseline_commit": "0c5222b6189af5c956c0e20f36020bd2a7c8c0d5",
+  "after_source": "Review-fix working tree committed with this manifest; later type annotations and casts do not change the captured behavior.",
+  "pair_count": 14,
+  "image_count": 28,
+  "total_bytes": 0,
+  "facts_timing": "Recorded immediately after each scripted interaction, before the helper publishes its readiness snapshot. Screenshots may show the next refresh.",
+  "limits": [
+    "Synthetic worker I/O; no live-provider claim.",
+    "Attached permission frames use writable WatchApp, not the read-only observer.",
+    "Footer-owner frames add a focused synthetic widget whose banner covers the usual header.",
+    "The production confirmation modal blocks mouse access to the underlying footer in both versions. Confirmation frames verify layout only.",
+    "reference-dark is not proof of the user terminal palette."
+  ],
+  "captures": [
+    {
+      "path": "after/attached-permission-120x40.png",
+      "mode": "attached",
+      "state": "permission",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "cb1d9491a75b601fdb5379827e6ac584f6b83166b0f7363204aa8651073ede35",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "attached",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "second",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "after/attached-permission-80x24.png",
+      "mode": "attached",
+      "state": "permission",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "096b5f0db04a3e323ae114388ddfbf86a79278530c6564bfb5403e425c86e1a3",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "attached",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "second",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "after/run-confirmation-120x40.png",
+      "mode": "run",
+      "state": "confirmation",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "50db4bd902661c57c9494826e59fbfbdb5a363d95d06c4ca8420aecd83104ba0",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "confirmation",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "_ConfirmationOverlay",
+        "cancel_footer_click_handled": false
+      }
+    },
+    {
+      "path": "after/run-confirmation-80x24.png",
+      "mode": "run",
+      "state": "confirmation",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "2472b4b489b6ab20900056bb37a2e852d87f4c98eb52e5e4ed9b9cbd258395ed",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "confirmation",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "_ConfirmationOverlay",
+        "cancel_footer_click_handled": false
+      }
+    },
+    {
+      "path": "after/run-empty-graph-120x40.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "6c256148870ee344ef144d1229faa1799d2656060c9d9aded2a2661b41dda2e0",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "empty-graph",
+        "selected_run_id": "demo-failed",
+        "active_run_ids": [
+          "demo-active"
+        ],
+        "terminal_run_ids": [
+          "demo-failed"
+        ],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "after/run-empty-graph-80x24.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "2d8c770ac6e62d6d9940bba75d622ae56892ad5b6c692351d4899eed24237c38",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "empty-graph",
+        "selected_run_id": "demo-failed",
+        "active_run_ids": [
+          "demo-active"
+        ],
+        "terminal_run_ids": [
+          "demo-failed"
+        ],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "after/run-footer-owner-120x40.png",
+      "mode": "run",
+      "state": "footer-owner",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "5066b572670b33e2e36561f09b0c8b1c093444f30da4125a6fa7fca8bafcb5e0",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": true
+      }
+    },
+    {
+      "path": "after/run-footer-owner-80x24.png",
+      "mode": "run",
+      "state": "footer-owner",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "3d238a1c2130c05f402cfcce1617b7e14f233e81da2a11125f22bdc41ccb8db7",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": true
+      }
+    },
+    {
+      "path": "after/run-permission-120x40.png",
+      "mode": "run",
+      "state": "permission",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "c91b8129a6ae11e2c28221a4fa428cb836e1304d29347c27ac20802d18aaa64a",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "second",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "after/run-permission-80x24.png",
+      "mode": "run",
+      "state": "permission",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "7169e590b2b7de6c92c83ea986c84798eda122dd2801dbfb9ae50f9dc65659b5",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "second",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "after/watch-empty-graph-120x40.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "e3cef69ee36e8636099d0e356a19131084342bf715f35f06bcc3f3b6096b1c0f",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "empty-graph",
+        "selected_run_id": "demo-failed",
+        "active_run_ids": [
+          "demo-active"
+        ],
+        "terminal_run_ids": [
+          "demo-failed"
+        ],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "after/watch-empty-graph-80x24.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "13b9aa22a2f6d856f36fb96fa68deff6ebcd59f1b30c6472d36ee20659b9a687",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "empty-graph",
+        "selected_run_id": "demo-failed",
+        "active_run_ids": [
+          "demo-active"
+        ],
+        "terminal_run_ids": [
+          "demo-failed"
+        ],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "after/watch-footer-owner-120x40.png",
+      "mode": "watch",
+      "state": "footer-owner",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "bf50d88b992dbed9be2c1bff25e6e9d0618df072c7bcd503f6847a390d87f65b",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": true
+      }
+    },
+    {
+      "path": "after/watch-footer-owner-80x24.png",
+      "mode": "watch",
+      "state": "footer-owner",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "994082d50e08c85027d49ec8669535a7b9d018047d79be3b0b373cb8cbfdcb1b",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": true
+      }
+    },
+    {
+      "path": "before/attached-permission-120x40.png",
+      "mode": "attached",
+      "state": "permission",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "0ed1cd43c360a05426e3fd2b21b70320e12d97f9c313e41ba4918ab5ec3334b3",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "attached",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "first",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "before/attached-permission-80x24.png",
+      "mode": "attached",
+      "state": "permission",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "b03bf107ec3e58736c44c2671caf99f9c399f4831d21c777d46cb683750c8df0",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "attached",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "first",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "before/run-confirmation-120x40.png",
+      "mode": "run",
+      "state": "confirmation",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "a7d7cddf65b17421effd1a5b22e44cead2d318901ece25ec7937b409931c0b6f",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "confirmation",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "_ConfirmationOverlay",
+        "cancel_footer_click_handled": false
+      }
+    },
+    {
+      "path": "before/run-confirmation-80x24.png",
+      "mode": "run",
+      "state": "confirmation",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "38ee66c27dbe078e203c805211f45e24e895acee88d2065116e71e5c417cc7c6",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "confirmation",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "_ConfirmationOverlay",
+        "cancel_footer_click_handled": false
+      }
+    },
+    {
+      "path": "before/run-empty-graph-120x40.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "cab4f424f91d3ac57a8d209b45fb23f8715a37e61cd98d999bdb2fc2582c8e20",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "empty-graph",
+        "selected_run_id": null,
+        "active_run_ids": [],
+        "terminal_run_ids": [],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "before/run-empty-graph-80x24.png",
+      "mode": "run",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "08721699e12ff9b7f03b08a396f1e56eaa1a9997b30ede7e05f1691040120059",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "empty-graph",
+        "selected_run_id": null,
+        "active_run_ids": [],
+        "terminal_run_ids": [],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "before/run-footer-owner-120x40.png",
+      "mode": "run",
+      "state": "footer-owner",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "0e38dceac4b0f5c24c34f03e9df72023180d3a64d54c57b92babd4759590d30e",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": false
+      }
+    },
+    {
+      "path": "before/run-footer-owner-80x24.png",
+      "mode": "run",
+      "state": "footer-owner",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "869bb0c4018b9242c938e509161b980cc61c04743a206a36ad29bd1c1a809599",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": false
+      }
+    },
+    {
+      "path": "before/run-permission-120x40.png",
+      "mode": "run",
+      "state": "permission",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "d313cb48d29c8f0eea1e2346497937ad364cc9d3dddf3a7bc7f24efec4cc1adc",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "first",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "before/run-permission-80x24.png",
+      "mode": "run",
+      "state": "permission",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "1aee9cfa916635333102c94c88105fea50218a42ef9d07ceb228f3b5bf5cb2d3",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "run",
+        "state": "permission",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "permission_value": "first",
+        "permission_focused": true
+      }
+    },
+    {
+      "path": "before/watch-empty-graph-120x40.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "2c64253eca460944539d9e0d6edc52cae319d6a7b9252cf182f0ee1679ada366",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "empty-graph",
+        "selected_run_id": null,
+        "active_run_ids": [],
+        "terminal_run_ids": [],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "before/watch-empty-graph-80x24.png",
+      "mode": "watch",
+      "state": "empty-graph",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "9d294e4be046059f0d707d010fe87ef8e0eb53203781768a91cc4f40a4d72abc",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "empty-graph",
+        "selected_run_id": null,
+        "active_run_ids": [],
+        "terminal_run_ids": [],
+        "screen": "Screen"
+      }
+    },
+    {
+      "path": "before/watch-footer-owner-120x40.png",
+      "mode": "watch",
+      "state": "footer-owner",
+      "cols": 120,
+      "rows": 40,
+      "sha256": "a57dddacdf787096041460353a1b662fcde3eec476ecb89295d05141909c4b85",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": false
+      }
+    },
+    {
+      "path": "before/watch-footer-owner-80x24.png",
+      "mode": "watch",
+      "state": "footer-owner",
+      "cols": 80,
+      "rows": 24,
+      "sha256": "2fd07620460bc4de5f5d8eb0d471375ceecd7ef5f094fb4edbb78fb66930b079",
+      "renderer": "ghostty-web",
+      "profile": "reference-dark",
+      "facts": {
+        "mode": "watch",
+        "state": "footer-owner",
+        "selected_run_id": "run-12",
+        "active_run_ids": [
+          "run-12"
+        ],
+        "terminal_run_ids": [
+          "run-13"
+        ],
+        "screen": "Screen",
+        "footer_click_handled": true,
+        "binding_owner_reached": false
+      }
+    }
+  ]
+}
