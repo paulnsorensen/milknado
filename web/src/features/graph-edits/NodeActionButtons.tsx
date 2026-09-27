@@ -17,17 +17,27 @@ export function NodeActionButtons(): ReactElement | null {
   }
 
   return (
-    <div className="mk-node-actions">
-      <Button disabled={!capability.available} onClick={() => openDialog('edit', selection)}>
-        Edit node
-      </Button>
-      <Button disabled={!capability.available} onClick={() => openDialog('move', selection)}>
-        Move node
-      </Button>
-      <Button disabled={!capability.available} onClick={() => openDialog('archive', selection)}>
-        Archive node
-      </Button>
-      {!capability.available && <p role="note">{capability.reason}</p>}
-    </div>
+    <section className="mk-section" aria-label="Node actions">
+      <div className="mk-button-row">
+        <Button className="mk-btn-sm" disabled={!capability.available} onClick={() => openDialog('edit', selection)}>
+          Edit node
+        </Button>
+        <Button className="mk-btn-sm" disabled={!capability.available} onClick={() => openDialog('move', selection)}>
+          Move node
+        </Button>
+        <Button
+          className="mk-btn-sm"
+          disabled={!capability.available}
+          onClick={() => openDialog('archive', selection)}
+        >
+          Archive node
+        </Button>
+      </div>
+      {!capability.available && (
+        <p role="note" className="mk-text-caption mk-muted">
+          {capability.reason}
+        </p>
+      )}
+    </section>
   );
 }

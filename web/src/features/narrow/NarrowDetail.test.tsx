@@ -50,4 +50,13 @@ describe('NarrowDetail', () => {
 
     expect(onBack).toHaveBeenCalledOnce();
   });
+
+  it('calls onBack when the sidecar close button is used', () => {
+    const onBack = vi.fn();
+    render(<NarrowDetail onBack={onBack} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close the sidecar' }));
+
+    expect(onBack).toHaveBeenCalledOnce();
+  });
 });

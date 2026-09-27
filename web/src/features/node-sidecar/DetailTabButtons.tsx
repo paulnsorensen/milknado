@@ -1,38 +1,41 @@
+// The `sidecar-tab` contributions: Session, Changes and Details as console
+// tabs (kicker type, the active one lit). Changes goes through the
+// `changes.open` action so the changes feature owns that transition.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { dispatchAction } from '../../app/actions';
-import { Milknado } from '../../design-system';
 import { getActiveTab, setActiveTab, subscribeTab, type DetailTab } from '../../shared/node-detail';
 
-function TabButton({ tab, label }: { tab: DetailTab; label: string }): ReactElement {
+interface TabProps {
+  tab: DetailTab;
+  label: string;
+  onSelect: () => void;
+}
+
+function Tab({ tab, label, onSelect }: TabProps): ReactElement {
   const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
-  const { Button } = Milknado;
+  const active = activeTab === tab;
 
   return (
-    <Button variant={activeTab === tab ? 'primary' : 'secondary'} onClick={() => setActiveTab(tab)}>
+    <button
+      type="button"
+      aria-pressed={active}
+      className={active ? 'mk-console-tab mk-kicker is-live' : 'mk-console-tab mk-kicker'}
+      onClick={onSelect}
+    >
       {label}
-    </Button>
+    </button>
   );
 }
 
 export function SessionTabButton(): ReactElement {
-  return <TabButton tab="session" label="Session" />;
+  return <Tab tab="session" label="Session" onSelect={() => setActiveTab('session')} />;
 }
 
 export function DetailsTabButton(): ReactElement {
-  return <TabButton tab="details" label="Details" />;
+  return <Tab tab="details" label="Details" onSelect={() => setActiveTab('details')} />;
 }
 
 export function ChangesTabButton(): ReactElement {
-  const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
-  const { Button } = Milknado;
-
-  return (
-    <Button
-      variant={activeTab === 'changes' ? 'primary' : 'secondary'}
-      onClick={() => dispatchAction('changes.open')}
-    >
-      Changes
-    </Button>
-  );
+  return <Tab tab="changes" label="Changes" onSelect={() => dispatchAction('changes.open')} />;
 }

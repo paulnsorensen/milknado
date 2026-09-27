@@ -30,7 +30,7 @@ describe('RunModeHeader', () => {
 
   afterEach(cleanup);
 
-  it('shows the Observer badge and disables Stop scheduling with a reason', () => {
+  it('shows the Read-only badge and disables Stop scheduling with a reason', () => {
     setSnapshot({
       goal: null,
       graph: null,
@@ -40,12 +40,12 @@ describe('RunModeHeader', () => {
     });
     render(<RunModeHeader />);
 
-    expect(screen.getByText('Observer')).toBeTruthy();
+    expect(screen.getByText('Read-only')).toBeTruthy();
     expect(screen.getByText('Stop scheduling')).toBeDisabled();
     expect(screen.getByText('Stop scheduling is unavailable.')).toBeTruthy();
   });
 
-  it('shows the Owner badge and posts once Confirm runs the pending request', () => {
+  it('shows the Run active badge and posts once Confirm runs the pending request', () => {
     setSnapshot({
       goal: null,
       graph: null,
@@ -53,7 +53,7 @@ describe('RunModeHeader', () => {
     });
     render(<RunModeHeader />);
 
-    expect(screen.getByText('Owner')).toBeTruthy();
+    expect(screen.getByText('Run active')).toBeTruthy();
 
     screen.getByText('Stop scheduling').click();
     confirmPending();

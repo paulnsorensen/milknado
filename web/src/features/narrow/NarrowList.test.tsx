@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
+import { NoticeToasts } from '../errors/NoticeToasts';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
 import { NarrowList } from './NarrowList';
 
@@ -44,14 +45,53 @@ describe('NarrowList', () => {
     expect(getState().selection).toBe(2);
   });
 
-  it('jumping to an unknown node id leaves the selection unchanged', () => {
-    render(<NarrowList onOpen={vi.fn()} />);
+  it('jumping to an unknown node id leaves the selection unchanged and shows a notice', () => {
+    render(
+      <>
+        <NarrowList onOpen={vi.fn()} />
+        <NoticeToasts />
+      </>,
+    );
 
     fireEvent.change(screen.getByLabelText('Jump to node'), { target: { value: '99' } });
     fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
 
     expect(getState().selection).toBeNull();
+    expect(screen.getByText('Node 99 was not found.')).toBeInTheDocument();
   });
+
+  it('rejects empty jump input without a notice', () => {
+    render(
+      <>
+        <NarrowList onOpen={vi.fn()} />
+        <NoticeToasts />
+      </>,
+    );
+
+    fireEvent.change(screen.getByLabelText('Jump to node'), { target: { value: '  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+
+    expect(getState().selection).toBeNull();
+    expect(getState().notices).toHaveLength(0);
+  });
+
+  it.each(['abc', '0x1f', '1e1', '1.5', 'Infinity'])(
+    'rejects non-numeric jump input %s with a notice',
+    (value) => {
+      render(
+        <>
+          <NarrowList onOpen={vi.fn()} />
+          <NoticeToasts />
+        </>,
+      );
+
+      fireEvent.change(screen.getByLabelText('Jump to node'), { target: { value } });
+      fireEvent.click(screen.getByRole('button', { name: 'Jump' }));
+
+      expect(getState().selection).toBeNull();
+      expect(screen.getByText(`Node ${value} was not found.`)).toBeInTheDocument();
+    },
+  );
 
   it('disables the open-node bar until a node is selected', () => {
     render(<NarrowList onOpen={vi.fn()} />);

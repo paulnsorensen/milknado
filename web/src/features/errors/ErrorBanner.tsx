@@ -18,7 +18,7 @@ export function ErrorBanner(): ReactElement | null {
   }
 
   return (
-    <div role="alert" className="mk-error-banner">
+    <div role="alert" className="mk-banner">
       {errors.map((error, index) => (
         <p key={`${index}-${error}`}>{error}</p>
       ))}
