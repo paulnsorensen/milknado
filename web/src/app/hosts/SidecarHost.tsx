@@ -23,7 +23,7 @@ export function SidecarHost(): ReactElement {
       {renderSlot('sidecar')}
       <div data-region="sidecar-action">{renderSlot('sidecar-action')}</div>
       {nodeSelected && (
-        <div data-region="sidecar-tab" role="group" aria-label="Node detail">
+        <div data-region="sidecar-tab" role="tablist" aria-label="Node detail">
           {renderSlot('sidecar-tab')}
         </div>
       )}

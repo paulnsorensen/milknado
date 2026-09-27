@@ -1,7 +1,13 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
-import { getDetailState, resetTab, setActiveTab, type DetailState } from '../../shared/node-detail';
+import { resetStore, setSelection } from '../../app/store';
+import {
+  getDetailState,
+  resetTab,
+  setActiveTab,
+  type DetailState,
+} from '../../shared/node-detail';
 import { resetChanges } from './changesState';
 import { ChangesSection } from './ChangesSection';
 
@@ -41,6 +47,8 @@ function detailStateWithRun(runId: string | null): DetailState {
 
 describe('ChangesSection', () => {
   beforeEach(() => {
+    resetStore();
+    setSelection(7);
     resetTab();
     resetChanges();
     vi.mocked(get).mockResolvedValue([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]);
@@ -49,14 +57,18 @@ describe('ChangesSection', () => {
 
   afterEach(() => {
     cleanup();
+    resetStore();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
-  it('renders nothing outside the changes tab', () => {
+  it('keeps an inactive tabpanel hidden outside the changes tab', () => {
     vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
     const { container } = render(<ChangesSection />);
-    expect(container.children.length).toBe(0);
+    const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
+
+    expect(panel).not.toBeNull();
+    expect(panel.hidden).toBe(true);
   });
 
   it('lists changed files and shows the diff for the selected file', async () => {

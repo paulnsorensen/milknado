@@ -2,6 +2,13 @@
 // Details. A plain pub-sub so features across the app can read it without a
 // shared parent component.
 export type DetailTab = 'session' | 'changes' | 'details';
+export function detailTabId(tab: DetailTab): string {
+  return `node-detail-tab-${tab}`;
+}
+
+export function detailTabPanelId(tab: DetailTab): string {
+  return `node-detail-panel-${tab}`;
+}
 
 let activeTab: DetailTab = 'session';
 const listeners = new Set<() => void>();
