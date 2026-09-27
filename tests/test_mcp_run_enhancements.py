@@ -945,12 +945,12 @@ class TestRunCancel:
         import signal as sig_mod
 
         run_id = "node-1-20260101T000000Z-abcd"
-        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=9999)
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=2_000_000_000)
         killed: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         _ = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
-        assert killed == [(9999, sig_mod.SIGTERM)], "must send SIGTERM to process group"
+        assert killed == [(2_000_000_000, sig_mod.SIGTERM)], "must send SIGTERM to process group"
 
     def test_cancel_writes_failed_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1351,7 +1351,7 @@ class TestPidCancelReconcile:
         return node_id
 
     def _write_pid_state(self, tmp_path: Path, run_id: str, node_id: int) -> None:
-        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running", pid=9999)
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running", pid=2_000_000_000)
 
     def test_pid_cancel_reconciles_node_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1371,7 +1371,9 @@ class TestPidCancelReconcile:
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
-        assert killed == [(9999, sig_mod.SIGTERM)], "pid branch must SIGTERM the process group"
+        assert killed == [(2_000_000_000, sig_mod.SIGTERM)], (
+            "pid branch must SIGTERM the process group"
+        )
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
         graph2, _cfg2 = open_graph(tmp_path)
