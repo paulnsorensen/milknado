@@ -4,6 +4,7 @@ import { get } from '../../app/api';
 import { resetStore, setSelection } from '../../app/store';
 import { resetDetail, resetTab, setActiveTab, type WireNodeDetailResponse } from '../../shared/node-detail';
 import { NodeSidecar } from './NodeSidecar';
+import { DetailsTabSection } from './TabSections';
 
 vi.mock('../../app/api', () => ({ get: vi.fn() }));
 
@@ -76,7 +77,12 @@ describe('NodeSidecar', () => {
     setSelection(7);
     setActiveTab('details');
 
-    render(<NodeSidecar />);
+    render(
+      <>
+        <NodeSidecar />
+        <DetailsTabSection />
+      </>,
+    );
 
     expect(await screen.findByText('Parent')).toBeTruthy();
   });

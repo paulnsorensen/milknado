@@ -30,31 +30,47 @@ export function SessionInputSection(): ReactElement {
   }
 
   if (!sessionInput?.available) {
-    return <p role="note">{sessionInput?.reason ?? 'Session input is not available.'}</p>;
+    return (
+      <p role="note" className="mk-note">
+        {sessionInput?.reason ?? 'Session input is not available.'}
+      </p>
+    );
   }
 
   const textEmpty = draft.trim() === '';
 
   return (
-    <div className="mk-session-input">
+    <section className="mk-stack" aria-label="Session input">
+      <span className="mk-kicker is-live">Session input</span>
       <textarea
+        className="mk-input"
         aria-label="Session guidance"
+        rows={2}
+        placeholder="Guidance for the agent"
         ref={registerInputEl}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <Button onClick={() => send('steer')} disabled={textEmpty || !actions.includes('steer')}>
-        Steer
-      </Button>
-      <Button
-        onClick={() => send('follow_up')}
-        disabled={textEmpty || !actions.includes('follow_up')}
-      >
-        Follow up
-      </Button>
-      <Button onClick={interrupt} disabled={!actions.includes('interrupt')}>
-        Interrupt
-      </Button>
-    </div>
+      <div className="mk-button-row">
+        <Button
+          variant="primary"
+          className="mk-btn-sm"
+          onClick={() => send('steer')}
+          disabled={textEmpty || !actions.includes('steer')}
+        >
+          Steer
+        </Button>
+        <Button
+          className="mk-btn-sm"
+          onClick={() => send('follow_up')}
+          disabled={textEmpty || !actions.includes('follow_up')}
+        >
+          Follow up
+        </Button>
+        <Button className="mk-btn-sm" onClick={interrupt} disabled={!actions.includes('interrupt')}>
+          Interrupt
+        </Button>
+      </div>
+    </section>
   );
 }

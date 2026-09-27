@@ -1,7 +1,7 @@
-// The `sidecar-action` contribution: Cancel run and Force stop. Cancel is
-// always active (the server rejects it with a domain reason when there is
-// no live run); Force stop is gated by capabilities, matching the server's
-// owner-only enforcement.
+// The `sidecar-action` contribution: Cancel run and Force stop for the
+// owner's run. Cancel is always active (the server rejects it with a domain
+// reason when there is no live run); Force stop is gated by capabilities,
+// matching the server's owner-only enforcement.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
@@ -22,20 +22,28 @@ export function RunControlsSidecar(): ReactElement | null {
   const forceStop = capabilities.force_stop;
 
   return (
-    <div className="mk-run-controls">
-      <Button
-        disabled={runId === ''}
-        onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}
-      >
-        Cancel run
-      </Button>
-      <Button
-        disabled={!forceStop.available}
-        onClick={() => requestConfirm('Force stop this run?', () => void forceStopRun(runId))}
-      >
-        Force stop
-      </Button>
-      {!forceStop.available && <p role="note">{forceStop.reason}</p>}
-    </div>
+    <section className="mk-section" aria-label="Run controls">
+      <div className="mk-button-row">
+        <Button
+          className="mk-btn-sm"
+          disabled={runId === ''}
+          onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}
+        >
+          Cancel run
+        </Button>
+        <Button
+          className="mk-btn-sm"
+          disabled={!forceStop.available}
+          onClick={() => requestConfirm('Force stop this run?', () => void forceStopRun(runId))}
+        >
+          Force stop
+        </Button>
+      </div>
+      {!forceStop.available && (
+        <p role="note" className="mk-text-caption mk-muted">
+          {forceStop.reason}
+        </p>
+      )}
+    </section>
   );
 }

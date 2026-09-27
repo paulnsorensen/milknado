@@ -56,6 +56,11 @@ export interface WireExecutionSnapshot {
   goal: string | null;
   graph: WireGraphSnapshot | null;
   capabilities: WireCapabilities;
+  /** Run totals; the stream carries them, the first `/api/snapshot` may not. */
+  completed?: number;
+  failed?: number;
+  stopped?: number;
+  available?: number;
 }
 
 export interface GraphNodeData {

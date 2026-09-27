@@ -1,27 +1,42 @@
+// The `sidecar` slot contribution: the selected node's header (ancestor
+// path, title, badges) and its run summary. The tab bodies are separate
+// `sidecar-section` contributions (TabSections.tsx) so the tab strip sits
+// between the run summary and the active body.
 import type { ReactElement } from 'react';
 import { useEffect, useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { getState, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { toGraphNodes } from '../../app/wire';
 import { toBadgeState } from './badgeState';
-import { DetailsTab } from './DetailsTab';
-import {
-  detailHasMore,
-  getActiveTab,
-  getDetailState,
-  selectNode,
-  sessionHasMore,
-  subscribeDetail,
-  subscribeTab,
-} from '../../shared/node-detail';
-import { SessionTab } from './SessionTab';
+import { getDetailState, selectNode, subscribeDetail, type WireRunRecord } from '../../shared/node-detail';
 
-/** The `sidecar` slot contribution: the node detail panel for the selected node. */
+function RunRows({ run }: { run: WireRunRecord }): ReactElement {
+  return (
+    <>
+      <div className="mk-kv">
+        <dt>Run</dt>
+        <dd>{run.run_id}</dd>
+      </div>
+      <div className="mk-kv">
+        <dt>Status</dt>
+        <dd>{run.status}</dd>
+      </div>
+      <div className="mk-kv">
+        <dt>Started</dt>
+        <dd>{run.started_at}</dd>
+      </div>
+      <div className="mk-kv">
+        <dt>Ended</dt>
+        <dd>{run.ended_at ?? 'running'}</dd>
+      </div>
+    </>
+  );
+}
+
 export function NodeSidecar(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const detailState = useSyncExternalStore(subscribeDetail, getDetailState);
-  const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
-  const { AncestorPath, StatusBadge } = Milknado;
+  const { AncestorPath, Button, StatusBadge } = Milknado;
 
   const nodeId = typeof store.selection === 'number' ? store.selection : null;
 
@@ -35,29 +50,40 @@ export function NodeSidecar(): ReactElement | null {
 
   const detail = detailState.detail?.detail ?? null;
   const nodes = store.snapshot?.graph ? toGraphNodes(store.snapshot.graph) : [];
-  const title = detail?.description ?? '';
   const runs = detail?.runs.items ?? [];
-  const events = detail?.sessions.items?.[0]?.event_history.items ?? [];
+  const errors = runs.map((run) => run.error).filter((error): error is string => error !== null);
 
   return (
-    <div className="mk-node-sidecar">
-      <AncestorPath nodes={nodes} id={nodeId} />
-      <h2>{title}</h2>
-      {detail && <StatusBadge state={toBadgeState(detail.node.status)} />}
-      <ul>
-        {runs.length === 0 && <li>This node has no runs yet.</li>}
-        {runs.map((run) => (
-          <li key={run.run_id}>
-            {run.run_id} <StatusBadge state={toBadgeState(run.status)} />
-          </li>
-        ))}
-      </ul>
-      {activeTab === 'session' && (
-        <SessionTab events={events} hasMore={sessionHasMore(detailState)} />
-      )}
-      {activeTab === 'details' && detail && (
-        <DetailsTab detail={detail} hasMore={detailHasMore(detailState)} />
-      )}
+    <div className="mk-stack">
+      <div className="mk-sidecar-head">
+        <AncestorPath nodes={nodes} id={nodeId} onSelect={setSelection} />
+        <Button icon className="mk-btn-ctl" ariaLabel="Close the sidecar" onClick={() => setSelection(null)}>
+          {'×'}
+        </Button>
+      </div>
+      <h2 className="mk-sidecar-title">{detail?.description ?? ''}</h2>
+      <div className="mk-badge-row">
+        {detail && <StatusBadge state={toBadgeState(detail.node.status)} />}
+        {detail?.node.flavor && <span className="mk-node-flavor">{detail.node.flavor}</span>}
+        <span className="mk-text-data mk-muted">node {nodeId}</span>
+      </div>
+      <section className="mk-section" aria-label="Run">
+        <span className="mk-kicker">Run</span>
+        {runs.length === 0 && <p className="mk-text-caption mk-faint">This node has no runs yet.</p>}
+        {runs.length > 0 && (
+          <dl>
+            {runs.map((run) => (
+              <RunRows key={run.run_id} run={run} />
+            ))}
+          </dl>
+        )}
+      </section>
+      {errors.map((error) => (
+        <div key={error} role="alert" className="mk-alert">
+          <span className="mk-glyph mk-glyph-at-risk" aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+      ))}
     </div>
   );
 }

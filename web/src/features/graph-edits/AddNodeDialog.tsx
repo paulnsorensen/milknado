@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
+import { Dialog } from '../../shared/dialog/Dialog';
 import { addNode } from './commands';
 import { closeDialog, getDialogState, subscribeDialog } from './dialogState';
 
@@ -56,50 +57,78 @@ export function AddNodeDialog(): ReactElement | null {
   }
 
   return (
-    <div role="dialog" aria-label="Add node" className="mk-add-node-dialog">
-      <label>
-        Description
-        <input
-          aria-label="Description"
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
-      <label>
-        Parent
-        <select
-          aria-label="Parent"
-          value={parentId}
-          onChange={(event) => setParentId(event.target.value)}
-        >
-          <option value="">None</option>
-          {nodes.map((node) => (
-            <option key={node.id} value={node.id}>
-              {node.description}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Flavor
-        <input aria-label="Flavor" value={flavor} onChange={(event) => setFlavor(event.target.value)} />
-      </label>
-      <label>
-        Prerequisites
-        <input
-          aria-label="Prerequisites"
-          value={prereqs}
-          onChange={(event) => setPrereqs(event.target.value)}
-        />
-      </label>
-      <label>
-        Files
-        <textarea aria-label="Files" value={files} onChange={(event) => setFiles(event.target.value)} />
-      </label>
-      <Button onClick={submit} disabled={description.trim() === ''}>
-        Add node
-      </Button>
-      <Button onClick={closeDialog}>Cancel</Button>
-    </div>
+    <Dialog
+      title="Add a node"
+      label="Add node"
+      actions={
+        <>
+          <Button onClick={closeDialog}>Cancel</Button>
+          <Button variant="primary" glyph="+" onClick={submit} disabled={description.trim() === ''}>
+            Add node
+          </Button>
+        </>
+      }
+    >
+      <div className="mk-fields">
+        <div className="mk-field">
+          <label htmlFor="mk-add-description">Description</label>
+          <textarea
+            id="mk-add-description"
+            className="mk-input"
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </div>
+        <div className="mk-field">
+          <label htmlFor="mk-add-parent">Parent</label>
+          <select
+            id="mk-add-parent"
+            className="mk-input"
+            value={parentId}
+            onChange={(event) => setParentId(event.target.value)}
+          >
+            <option value="">None</option>
+            {nodes.map((node) => (
+              <option key={node.id} value={node.id}>
+                {node.id} {'·'} {node.description}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mk-field">
+          <label htmlFor="mk-add-flavor">Flavor</label>
+          <input
+            id="mk-add-flavor"
+            className="mk-input"
+            placeholder="implement, spec, spike, prototype, research"
+            value={flavor}
+            onChange={(event) => setFlavor(event.target.value)}
+          />
+        </div>
+        <div className="mk-field">
+          <label htmlFor="mk-add-prereqs">Prerequisites</label>
+          <input
+            id="mk-add-prereqs"
+            className="mk-input"
+            placeholder="Node ids, comma separated"
+            value={prereqs}
+            onChange={(event) => setPrereqs(event.target.value)}
+          />
+        </div>
+        <div className="mk-field">
+          <label htmlFor="mk-add-files">Files</label>
+          <textarea
+            id="mk-add-files"
+            className="mk-input"
+            rows={2}
+            placeholder="One path per line"
+            style={{ fontFamily: 'var(--mk-font-mono)' }}
+            value={files}
+            onChange={(event) => setFiles(event.target.value)}
+          />
+        </div>
+      </div>
+    </Dialog>
   );
 }

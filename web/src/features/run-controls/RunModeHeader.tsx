@@ -1,5 +1,6 @@
-// The `header-control` contribution: the run-mode badge (owner vs
-// observer) and Stop scheduling, gated by capabilities like the server.
+// The `header-control` contribution: the run-mode badge (Run active for an
+// owner, Read-only for an observer) and Stop scheduling, gated by
+// capabilities like the server.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
@@ -20,12 +21,13 @@ export function RunModeHeader(): ReactElement | null {
   const stop = capabilities.stop_scheduling;
 
   return (
-    <div className="mk-run-mode">
+    <div className="mk-button-row">
       <StatusBadge state={isOwner ? 'running' : 'pending'}>
-        {isOwner ? 'Owner' : 'Observer'}
+        {isOwner ? 'Run active' : 'Read-only'}
       </StatusBadge>
       <Button
         disabled={!stop.available}
+        title={stop.available ? undefined : (stop.reason ?? undefined)}
         onClick={() => requestConfirm('Stop scheduling?', () => void stopScheduling())}
       >
         Stop scheduling

@@ -1,5 +1,6 @@
-// The narrow list view: header, status strip, a jump-to-node input, the
-// outline tree, and an explicit "Open node" bar for the selected node.
+// The narrow list view: a header bar, the mode kicker and goal title, the
+// status strip and totals, a jump-to-node input, the outline tree, and an
+// explicit "Open node" bar for the selected node.
 import type { FormEvent, ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
 import { getState, setSelection, subscribe } from '../../app/store';
@@ -19,10 +20,11 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
   const [collapsed, setCollapsed] = useState<Array<string | number>>([]);
   const [jumpValue, setJumpValue] = useState('');
-  const { StatusStrip, OutlineTree, Button } = Milknado;
+  const { StatusBadge, StatusStrip, OutlineTree, Button } = Milknado;
 
   const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
   const selectedNode = nodes.find((node) => node.id === state.selection) ?? null;
+  const owner = state.capabilities?.owner.available ?? false;
 
   function jumpToNode(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -35,30 +37,49 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
 
   return (
     <div className="mk-narrow-root mk-narrow-list">
-      <h1>{state.snapshot?.goal ?? 'Milknado'}</h1>
-      <StatusStrip nodes={nodes} />
-      <form className="mk-narrow-jump" onSubmit={jumpToNode}>
-        <label htmlFor="mk-narrow-jump-input">Jump to node</label>
-        <input
-          id="mk-narrow-jump-input"
-          value={jumpValue}
-          onChange={(event) => setJumpValue(event.target.value)}
+      <header className="mk-narrow-bar">
+        <div className="mk-wordmark">
+          <img src="/assets/milknado-mark.png" alt="" />
+          <span className="mk-text-wordmark">Milknado</span>
+        </div>
+        <StatusBadge state={owner ? 'running' : 'pending'}>{owner ? 'Run active' : 'Read-only'}</StatusBadge>
+      </header>
+      <div className="mk-narrow-intro">
+        <span className="mk-kicker">{owner ? 'Run' : 'Watch'}</span>
+        <h1 className="mk-sidecar-title">{state.snapshot?.goal ?? 'Milknado'}</h1>
+        <StatusStrip nodes={nodes} />
+        <form className="mk-narrow-jump" onSubmit={jumpToNode}>
+          <label htmlFor="mk-narrow-jump-input" className="mk-kicker">
+            Jump to node
+          </label>
+          <input
+            id="mk-narrow-jump-input"
+            className="mk-input"
+            inputMode="numeric"
+            placeholder="Node id"
+            value={jumpValue}
+            onChange={(event) => setJumpValue(event.target.value)}
+          />
+          <Button type="submit">Jump</Button>
+        </form>
+      </div>
+      <div className="mk-narrow-tree">
+        <OutlineTree
+          nodes={nodes}
+          selected={state.selection}
+          onSelect={setSelection}
+          onOpen={onOpen}
+          collapsed={collapsed}
+          onToggle={(id) => setCollapsed((current) => toggle(current, id))}
+          label="Graph outline"
         />
-        <Button type="submit">Jump</Button>
-      </form>
-      <OutlineTree
-        nodes={nodes}
-        selected={state.selection}
-        onSelect={setSelection}
-        onOpen={onOpen}
-        collapsed={collapsed}
-        onToggle={(id) => setCollapsed((current) => toggle(current, id))}
-      />
+      </div>
       <div className="mk-narrow-open-bar">
-        <Button
-          disabled={selectedNode === null}
-          onClick={() => selectedNode && onOpen(selectedNode.id)}
-        >
+        <div className="mk-narrow-selected">
+          <span className="mk-text-label">{selectedNode?.title ?? 'No node selected'}</span>
+          <span className="mk-text-caption mk-muted">{selectedNode ? `node ${selectedNode.id}` : ''}</span>
+        </div>
+        <Button variant="primary" disabled={selectedNode === null} onClick={() => selectedNode && onOpen(selectedNode.id)}>
           Open node
         </Button>
       </div>

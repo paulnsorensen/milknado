@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
+import { Dialog } from '../../shared/dialog/Dialog';
 import { editNode } from './commands';
 import { closeDialog, getDialogState, subscribeDialog } from './dialogState';
 
@@ -15,11 +16,12 @@ export function EditNodeDialog(): ReactElement | null {
   const [description, setDescription] = useState(node?.description ?? '');
   const [flavor, setFlavor] = useState(node?.flavor ?? '');
 
+  // Seed only on a node switch; a live snapshot must not overwrite
+  // in-progress edits.
   useEffect(() => {
     setDescription(node?.description ?? '');
     setFlavor(node?.flavor ?? '');
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- seed only on a
-    // node switch; a live snapshot must not overwrite in-progress edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialog.nodeId]);
 
   if (dialog.kind !== 'edit' || dialog.nodeId === null) {
@@ -36,25 +38,40 @@ export function EditNodeDialog(): ReactElement | null {
   }
 
   return (
-    <div role="dialog" aria-label="Edit node" className="mk-edit-node-dialog">
-      <label>
-        Description
-        <input
-          aria-label="Edit description"
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
-      <label>
-        Flavor
-        <input
-          aria-label="Edit flavor"
-          value={flavor}
-          onChange={(event) => setFlavor(event.target.value)}
-        />
-      </label>
-      <Button onClick={submit}>Save changes</Button>
-      <Button onClick={closeDialog}>Cancel</Button>
-    </div>
+    <Dialog
+      title="Edit node"
+      actions={
+        <>
+          <Button onClick={closeDialog}>Cancel</Button>
+          <Button variant="primary" onClick={submit}>
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      <div className="mk-fields">
+        <div className="mk-field">
+          <label htmlFor="mk-edit-description">Description</label>
+          <textarea
+            id="mk-edit-description"
+            className="mk-input"
+            aria-label="Edit description"
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+        </div>
+        <div className="mk-field">
+          <label htmlFor="mk-edit-flavor">Flavor</label>
+          <input
+            id="mk-edit-flavor"
+            className="mk-input"
+            aria-label="Edit flavor"
+            value={flavor}
+            onChange={(event) => setFlavor(event.target.value)}
+          />
+        </div>
+      </div>
+    </Dialog>
   );
 }

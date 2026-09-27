@@ -8,7 +8,7 @@ export function HelpControl(): ReactElement {
   const { Button } = Milknado;
 
   return (
-    <Button ariaLabel="Keyboard shortcuts" onClick={openHelp}>
+    <Button variant="ghost" ariaLabel="Keyboard shortcuts" title="Keyboard shortcuts" onClick={openHelp}>
       Keys
     </Button>
   );
