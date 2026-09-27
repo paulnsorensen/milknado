@@ -1,4 +1,6 @@
-/* Generated from tokens.json (Milknado design system 1789801777-16ad). Do not edit by hand. */
+/* Milknado design tokens. Source: claude.ai/design project 68ad3112 (Milknado Design System), tokens/colors.css + typography.css + spacing.css + motion.css. Do not edit by hand. */
+
+/* colour: dark is the default theme; set data-theme="light" on <html> for light */
 :root, :root[data-theme="dark"] {
   --mk-surface: #161826;
   --mk-surface-raised: #232532;
@@ -28,6 +30,10 @@
   --mk-series-4: #eb93a7;
   --mk-series-5: #c9c768;
   --mk-series-6: #8c83d9;
+  --mk-shadow-popover: 0 0 0 1px #2c2f40, 0 8px 24px rgba(0,0,0,0.45);
+  --mk-shadow-glow-running: 0 0 16px rgba(145,132,217,0.45);
+  --mk-glow-pulse-rgb: 145,132,217;
+  color-scheme: dark;
 }
 :root[data-theme="light"] {
   --mk-surface: #e6e8ef;
@@ -58,8 +64,60 @@
   --mk-series-4: #b8506a;
   --mk-series-5: #7d7d24;
   --mk-series-6: #3a3190;
+  --mk-shadow-popover: 0 1px 2px rgba(27,29,41,0.10), 0 6px 20px rgba(27,29,41,0.14);
+  --mk-shadow-glow-running: 0 0 14px rgba(93,82,148,0.30);
+  --mk-glow-pulse-rgb: 93,82,148;
+  color-scheme: light;
 }
-/* spacing */
+/* semantic aliases */
+:root {
+  --mk-text-body: var(--mk-ink);
+  --mk-text-secondary: var(--mk-ink-muted);
+  --mk-text-placeholder: var(--mk-ink-faint);
+  --mk-text-link: var(--mk-accent-text);
+  --mk-surface-page: var(--mk-surface);
+  --mk-surface-panel: var(--mk-surface-raised);
+  --mk-surface-well: var(--mk-surface-sunken);
+  --mk-border-hairline: var(--mk-line);
+  --mk-border-control: var(--mk-line-strong);
+  --mk-focus-ring: var(--mk-accent);
+  --mk-selection: var(--mk-accent-soft);
+}
+
+/* type: families + the fourteen named styles; titles serif, interface sans, data mono */
+:root {
+  --mk-font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mk-font-serif: "Source Serif 4", Georgia, serif;
+  --mk-font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --mk-type-display: 600 32px/38px var(--mk-font-serif);
+  --mk-type-title: 600 22px/28px var(--mk-font-serif);
+  --mk-type-goal: 600 18px/24px var(--mk-font-serif);
+  --mk-type-heading: 500 15px/20px var(--mk-font-sans);
+  --mk-type-stat: 500 26px/30px var(--mk-font-sans);
+  --mk-type-body: 400 13px/19px var(--mk-font-sans);
+  --mk-type-label: 500 13px/18px var(--mk-font-sans);
+  --mk-type-caption: 400 11.5px/16px var(--mk-font-sans);
+  --mk-type-kicker: 500 10px/14px var(--mk-font-sans);
+  --mk-type-wordmark: 500 14px/18px var(--mk-font-sans);
+  --mk-type-stat-small: 500 13px/16px var(--mk-font-sans);
+  --mk-type-console: 400 11.5px/18px var(--mk-font-mono);
+  --mk-type-data: 400 11.5px/16px var(--mk-font-mono);
+}
+.mk-text-display { font: var(--mk-type-display); letter-spacing: -0.01em; }
+.mk-text-title { font: var(--mk-type-title); }
+.mk-text-goal { font: var(--mk-type-goal); }
+.mk-text-heading { font: var(--mk-type-heading); }
+.mk-text-stat { font: var(--mk-type-stat); }
+.mk-text-body { font: var(--mk-type-body); }
+.mk-text-label { font: var(--mk-type-label); }
+.mk-text-caption { font: var(--mk-type-caption); }
+.mk-text-kicker { font: var(--mk-type-kicker); letter-spacing: 0.1em; text-transform: uppercase; }
+.mk-text-wordmark { font: var(--mk-type-wordmark); letter-spacing: 0.14em; text-transform: uppercase; }
+.mk-text-stat-small { font: var(--mk-type-stat-small); }
+.mk-text-console { font: var(--mk-type-console); }
+.mk-text-data { font: var(--mk-type-data); }
+
+/* spacing, radius and fixed chrome sizes */
 :root {
   --mk-space-1: 4px;
   --mk-space-2: 8px;
@@ -67,147 +125,40 @@
   --mk-space-4: 16px;
   --mk-space-6: 24px;
   --mk-space-8: 32px;
-}
-/* radius */
-:root {
   --mk-radius-sm: 3px;
   --mk-radius-md: 6px;
   --mk-radius-lg: 10px;
   --mk-radius-pill: 999px;
-}
-/* size */
-:root {
   --mk-rail-width: 216px;
   --mk-sidecar-width: 360px;
+  --mk-sidecar-width-review: 560px;
   --mk-dock-height: 250px;
   --mk-node-width: 208px;
   --mk-row-height: 32px;
   --mk-hovercard-width: 320px;
   --mk-dot: 8px;
-  --mk-sidecar-width-review: 560px;
   --mk-dialog-width: 440px;
   --mk-dialog-width-wide: 760px;
   --mk-toast-width: 320px;
   --mk-canvas-min-width: 1180px;
   --mk-control-height: 26px;
 }
-/* opacity */
+
+/* opacity steps, durations and stack order */
 :root {
   --mk-opacity-edge: 0.6;
   --mk-opacity-tint-hover: 0.07;
   --mk-opacity-tint-accent: 0.12;
+  --mk-opacity-tint-accent-pressed: 0.22;
   --mk-opacity-disabled: 0.45;
-}
-/* duration */
-:root {
   --mk-duration-fast: 100ms;
   --mk-duration-base: 150ms;
   --mk-duration-rise: 180ms;
   --mk-duration-meter: 300ms;
   --mk-duration-pulse: 1800ms;
-}
-/* layer */
-:root {
   --mk-layer-canvas: 0;
   --mk-layer-toolbar: 2;
   --mk-layer-sidecar: 4;
   --mk-layer-dialog: 6;
   --mk-layer-toast: 9;
-}
-/* shadow (theme dependent) */
-:root, :root[data-theme="dark"] {
-  --mk-shadow-popover: 0 0 0 1px #2c2f40, 0 8px 24px rgba(0,0,0,0.45);
-  --mk-shadow-glow-running: 0 0 16px rgba(145,132,217,0.45);
-}
-:root[data-theme="light"] {
-  --mk-shadow-popover: 0 1px 2px rgba(27,29,41,0.10), 0 6px 20px rgba(27,29,41,0.14);
-  --mk-shadow-glow-running: 0 0 14px rgba(93,82,148,0.30);
-}
-/* type families */
-:root {
-  --mk-font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mk-font-serif: "Source Serif 4", Georgia, serif;
-  --mk-font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
-}
-/* type scale utility classes */
-.mk-text-display {
-  font-family: var(--mk-font-serif);
-  font-size: 32px;
-  line-height: 38px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-.mk-text-title {
-  font-family: var(--mk-font-serif);
-  font-size: 22px;
-  line-height: 28px;
-  font-weight: 600;
-}
-.mk-text-goal {
-  font-family: var(--mk-font-serif);
-  font-size: 18px;
-  line-height: 24px;
-  font-weight: 600;
-}
-.mk-text-heading {
-  font-family: var(--mk-font-sans);
-  font-size: 15px;
-  line-height: 20px;
-  font-weight: 500;
-}
-.mk-text-stat {
-  font-family: var(--mk-font-sans);
-  font-size: 26px;
-  line-height: 30px;
-  font-weight: 500;
-}
-.mk-text-body {
-  font-family: var(--mk-font-sans);
-  font-size: 13px;
-  line-height: 19px;
-  font-weight: 400;
-}
-.mk-text-label {
-  font-family: var(--mk-font-sans);
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
-}
-.mk-text-caption {
-  font-family: var(--mk-font-sans);
-  font-size: 11.5px;
-  line-height: 16px;
-  font-weight: 400;
-}
-.mk-text-kicker {
-  font-family: var(--mk-font-sans);
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-}
-.mk-text-wordmark {
-  font-family: var(--mk-font-sans);
-  font-size: 14px;
-  line-height: 18px;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-}
-.mk-text-stat-small {
-  font-family: var(--mk-font-sans);
-  font-size: 13px;
-  line-height: 16px;
-  font-weight: 500;
-}
-.mk-text-console {
-  font-family: var(--mk-font-mono);
-  font-size: 11.5px;
-  line-height: 18px;
-  font-weight: 400;
-}
-.mk-text-data {
-  font-family: var(--mk-font-mono);
-  font-size: 11.5px;
-  line-height: 16px;
-  font-weight: 400;
 }
