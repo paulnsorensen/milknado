@@ -1,6 +1,6 @@
 """Capture the dashboard screens with a seeded graph.db and Playwright.
 
-Usage: uv run python capture_web.py <out-dir>
+Usage: uv run python scripts/capture_web_ui.py <out-dir> [--serve]
 The fixture mirrors the Milknado Web canvas: one goal, five sub-goals, tasks in
 every state, two active runs, a permission request and a pending goal review.
 Run output, session transcripts and changed files are synthetic; no worker runs.
@@ -12,35 +12,46 @@ import dataclasses
 import re
 import sys
 import tempfile
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from playwright.sync_api import sync_playwright  # noqa: E402
+from playwright.sync_api import Page, sync_playwright  # noqa: E402
 
 from milknado.adapters import ChangedFile  # noqa: E402
 from milknado.app.run_source import (  # noqa: E402
     ActiveRunSnapshot,
     ExecutionRunStatus,
+    ExecutionSnapshot,
     NodeSnapshotRequest,
     RunActionAvailability,
 )
 from milknado.app.watch import WatchSnapshotSource  # noqa: E402
-from milknado.domains.common import NodeKind, NodeSpec, SessionContext, SessionView  # noqa: E402
-from milknado.domains.common.session import SessionEvent  # noqa: E402
+from milknado.domains.common import (  # noqa: E402
+    NodeKind,
+    NodeSpec,
+    SessionContext,
+    SessionInput,
+    SessionView,
+)
+from milknado.domains.common.session import SessionEvent, SessionKind  # noqa: E402
 from milknado.domains.graph import (  # noqa: E402
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
     GoalReviewRequest,
     MikadoGraph,
+    NodeDetailResponse,
     NodeSessionSnapshot,
     SnapshotPage,
 )
 from milknado.domains.graph.commands import OwnerCapabilities  # noqa: E402
 from milknado.web import LaunchToken, PolledSnapshotSource, WebCommands, create_app  # noqa: E402
 from milknado.web.commands import GraphEditCommands  # noqa: E402
-from tests.browser.conftest import BROWSER_TOKEN, BrowserServer  # noqa: E402
+from scripts._browser_server import BROWSER_TOKEN, BrowserServer  # noqa: E402
 
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "docs" / "web-ui"
 RUN_8 = "node-8-20260919T140211Z-7c1e"
 RUN_9 = "node-9-20260919T134702Z-a3f0"
 
@@ -53,7 +64,7 @@ EVENTS = (
     "14:04:19  node 8 · gate PASS · diff coverage 96.4%",
 )
 
-SESSION_8 = (
+SESSION_8: tuple[tuple[SessionKind, str], ...] = (
     ("status", "turn 4 started · brief unchanged"),
     ("tool", "tilth_read src/milknado/app/session_commands.py"),
     ("assistant", "edit: queue session input in FIFO order"),
@@ -63,6 +74,13 @@ SESSION_8 = (
     ("assistant", "PASS · diff coverage 96.4%"),
     ("status", "result deposited → reviewer"),
 )
+
+
+def _parse_args(argv: Sequence[str]) -> tuple[Path, bool]:
+    serve = "--serve" in argv
+    positionals = [arg for arg in argv[1:] if arg != "--serve"]
+    out = Path(positionals[0]) if positionals else REPO / "docs" / "web-ui"
+    return out, serve
 
 
 def seed(graph: MikadoGraph) -> dict[str, int]:
@@ -97,11 +115,11 @@ def seed(graph: MikadoGraph) -> dict[str, int]:
     g12 = sub("Follow-up provenance")
     n13 = task("Track follow-up nodes", g12)
     n14 = task("Review receipt store", g12)
-    task("Harvest outcome block", g12, "spec")
+    _ = task("Harvest outcome block", g12, "spec")
     g16 = sub("Web interface")
     n17 = task("Snapshot JSON endpoint", g16, "spike")
-    task("Event stream", g16, prereqs=(n17,))
-    task("Graph screen", g16, "prototype", prereqs=(n17,))
+    _ = task("Event stream", g16, prereqs=(n17,))
+    _ = task("Graph screen", g16, "prototype", prereqs=(n17,))
     g20 = sub("Steering evidence")
     for title, flavor in (
         ("Deterministic capture tapes", "implement"),
@@ -122,14 +140,14 @@ def seed(graph: MikadoGraph) -> dict[str, int]:
     graph.mark_running(g12)
     graph.mark_running(g20)
     graph.mark_done(g20)
-    graph.request_goal_review(
+    _ = graph.request_goal_review(
         GoalReviewRequest(
             goal.id,
             "4f2a",
             "The snapshot source gives data that a browser can read. "
-            "The spike in node 17 reads one snapshot as JSON.",
+            + "The spike in node 17 reads one snapshot as JSON.",
             "Add a web interface to the goal. "
-            "The interface gives the same functions as the terminal interface.",
+            + "The interface gives the same functions as the terminal interface.",
             reviewer="reviewer",
             affected_node_ids=(n17,),
         )
@@ -165,10 +183,10 @@ class DemoSource:
     """The polled watch source plus synthetic runs, events and one session transcript."""
 
     def __init__(self, inner: PolledSnapshotSource, ids: dict[str, int]) -> None:
-        self.inner = inner
-        self.ids = ids
+        self.inner: PolledSnapshotSource = inner
+        self.ids: dict[str, int] = ids
 
-    def _decorate(self, snapshot):  # noqa: ANN001, ANN202
+    def _decorate(self, snapshot: ExecutionSnapshot) -> ExecutionSnapshot:
         return dataclasses.replace(
             snapshot,
             active_runs=(
@@ -178,13 +196,13 @@ class DemoSource:
             event_lines=EVENTS,
         )
 
-    def snapshot(self):  # noqa: ANN201
+    def snapshot(self) -> ExecutionSnapshot:
         return self._decorate(self.inner.snapshot())
 
-    def subscribe(self, listener):  # noqa: ANN001, ANN201
+    def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         return self.inner.subscribe(lambda snapshot: listener(self._decorate(snapshot)))
 
-    def node_snapshot(self, request: NodeSnapshotRequest):  # noqa: ANN201
+    def node_snapshot(self, request: NodeSnapshotRequest) -> NodeDetailResponse:
         response = self.inner.node_snapshot(request)
         if request.node_id != self.ids["n8"] or response.detail is None:
             return response
@@ -267,11 +285,15 @@ class FakeGit:
 
 
 def build_commands(graph: MikadoGraph, root: Path, ids: dict[str, int]) -> WebCommands:
-    def decide(request, *, decided_by):  # noqa: ANN001, ANN202
+    def session_input(run_id: str, request: SessionInput) -> SessionInput | None:
+        del run_id
+        return request
+
+    def decide(request: GoalReviewDecisionRequest, *, decided_by: str) -> GoalReviewRecord:
         return graph.decide_goal_review(request, decided_by=decided_by)
 
     return WebCommands(
-        session_input=lambda _run_id, request: request,
+        session_input=session_input,
         cancel=lambda run_id: {"run_id": run_id, "status": "cancelled", "terminal": True},
         force_stop=lambda run_id: {"run_id": run_id},
         stop_scheduling=lambda: None,
@@ -292,12 +314,12 @@ def build_commands(graph: MikadoGraph, root: Path, ids: dict[str, int]) -> WebCo
     )
 
 
-def shot(page, out: Path, name: str, settle: int = 300) -> None:  # noqa: ANN001
+def shot(page: Page, out: Path, name: str, settle: int = 300) -> None:
     page.wait_for_timeout(settle)
-    page.screenshot(path=str(out / name))
+    _ = page.screenshot(path=str(out / name))
 
 
-def capture_main(page, out: Path) -> None:  # noqa: ANN001
+def capture_main(page: Page, out: Path) -> None:
     page.get_by_role("button", name=re.compile("Structured session input")).wait_for()
     page.get_by_role("button", name="Dark", exact=True).click()
     shot(page, out, "00-main-empty.png", 600)
@@ -317,7 +339,7 @@ def capture_main(page, out: Path) -> None:  # noqa: ANN001
     page.get_by_role("button", name="Session", exact=True).click()
 
 
-def capture_overlays(page, out: Path) -> None:  # noqa: ANN001
+def capture_overlays(page: Page, out: Path) -> None:
     page.get_by_role("button", name="Force stop", exact=True).click()
     page.get_by_role("alertdialog").wait_for()
     shot(page, out, "05-run-confirm.png", 400)
@@ -342,25 +364,28 @@ def capture(server: BrowserServer, out: Path) -> None:
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme="dark")
-        page.goto(server.login_url)
+        _ = page.goto(server.login_url)
         capture_main(page, out)
         capture_overlays(page, out)
         page.close()
 
-        narrow = browser.new_page(viewport={"width": 400, "height": 800}, color_scheme="dark")
-        narrow.goto(server.login_url)
+        narrow: Page = browser.new_page(
+            viewport={"width": 400, "height": 800}, color_scheme="dark"
+        )
+        _ = narrow.goto(server.login_url)
         narrow.get_by_role("button", name="Open node").wait_for()
         narrow.wait_for_timeout(400)
-        narrow.screenshot(path=str(out / "08-narrow-list.png"))
+        _ = narrow.screenshot(path=str(out / "08-narrow-list.png"))
         narrow.get_by_role("treeitem", name=re.compile("Structured session input")).click()
         narrow.get_by_role("button", name="Open node").click()
         narrow.get_by_text(RUN_8).first.wait_for()
         narrow.wait_for_timeout(300)
-        narrow.screenshot(path=str(out / "09-narrow-detail.png"))
+        _ = narrow.screenshot(path=str(out / "09-narrow-detail.png"))
         browser.close()
 
 
 def main() -> None:
+    out, serve = _parse_args(sys.argv)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         graph = MikadoGraph(root / "graph.db")
@@ -374,14 +399,12 @@ def main() -> None:
             server = BrowserServer(app=app, login=login)
             server.start()
             try:
-                if "--serve" in sys.argv:
+                if serve:
                     print(server.login_url, flush=True)
-                    import time
-
                     while True:
                         time.sleep(3600)
-                capture(server, OUT)
-                print(f"captured to {OUT}")
+                capture(server, out)
+                print(f"captured to {out}")
             finally:
                 server.stop()
                 polled.close()

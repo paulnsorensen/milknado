@@ -26,6 +26,7 @@ export function ArchiveNodeDialog(): ReactElement | null {
       role="alertdialog"
       title="Archive this node and its subtree?"
       label="Archive node"
+      onClose={closeDialog}
       actions={
         <>
           <Button onClick={closeDialog}>Cancel</Button>

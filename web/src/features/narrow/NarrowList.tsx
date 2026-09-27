@@ -3,9 +3,11 @@
 // explicit "Open node" bar for the selected node.
 import type { FormEvent, ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
-import { getState, setSelection, subscribe } from '../../app/store';
+import { getState, pushNotice, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { toGraphNodes } from '../../app/wire';
+import { ownerLabel } from '../../shared/ownerLabel';
+import { Wordmark } from '../../shared/Wordmark';
 
 export interface NarrowListProps {
   onOpen: (id: string | number) => void;
@@ -28,8 +30,17 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
 
   function jumpToNode(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    const id = Number(jumpValue);
-    if (Number.isNaN(id) || !nodes.some((node) => node.id === id)) {
+    const trimmed = jumpValue.trim();
+    if (trimmed === '') {
+      return;
+    }
+    if (!/^\d+$/.test(trimmed)) {
+      pushNotice(`Node ${trimmed} was not found.`);
+      return;
+    }
+    const id = Number(trimmed);
+    if (!nodes.some((node) => node.id === id)) {
+      pushNotice(`Node ${id} was not found.`);
       return;
     }
     setSelection(id);
@@ -38,14 +49,11 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   return (
     <div className="mk-narrow-root mk-narrow-list">
       <header className="mk-narrow-bar">
-        <div className="mk-wordmark">
-          <img src="/assets/milknado-mark.png" alt="" />
-          <span className="mk-text-wordmark">Milknado</span>
-        </div>
-        <StatusBadge state={owner ? 'running' : 'pending'}>{owner ? 'Run active' : 'Read-only'}</StatusBadge>
+        <Wordmark />
+        <StatusBadge state={owner ? 'running' : 'pending'}>{ownerLabel(owner).badge}</StatusBadge>
       </header>
       <div className="mk-narrow-intro">
-        <span className="mk-kicker">{owner ? 'Run' : 'Watch'}</span>
+        <span className="mk-kicker">{ownerLabel(owner).kicker}</span>
         <h1 className="mk-sidecar-title">{state.snapshot?.goal ?? 'Milknado'}</h1>
         <StatusStrip nodes={nodes} />
         <form className="mk-narrow-jump" onSubmit={jumpToNode}>

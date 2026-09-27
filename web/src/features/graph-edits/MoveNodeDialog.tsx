@@ -30,6 +30,7 @@ export function MoveNodeDialog(): ReactElement | null {
     <Dialog
       title="Move this node"
       label="Move node"
+      onClose={closeDialog}
       actions={
         <>
           <Button onClick={closeDialog}>Cancel</Button>

@@ -40,6 +40,7 @@ export function EditNodeDialog(): ReactElement | null {
   return (
     <Dialog
       title="Edit node"
+      onClose={closeDialog}
       actions={
         <>
           <Button onClick={closeDialog}>Cancel</Button>

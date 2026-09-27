@@ -5,6 +5,7 @@ import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
+import { ownerLabel } from '../../shared/ownerLabel';
 import { stopScheduling } from './commands';
 import { requestConfirm } from './confirmState';
 
@@ -22,9 +23,7 @@ export function RunModeHeader(): ReactElement | null {
 
   return (
     <div className="mk-button-row">
-      <StatusBadge state={isOwner ? 'running' : 'pending'}>
-        {isOwner ? 'Run active' : 'Read-only'}
-      </StatusBadge>
+      <StatusBadge state={isOwner ? 'running' : 'pending'}>{ownerLabel(isOwner).badge}</StatusBadge>
       <Button
         disabled={!stop.available}
         title={stop.available ? undefined : (stop.reason ?? undefined)}

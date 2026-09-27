@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
 import { ReviewsRail } from './ReviewsRail';
 import { resetReviews } from './reviewsState';
+import { getState, resetStore, setSelection } from '../../app/store';
 import { getSelectedReviewId, resetReviewSelection } from './selection';
 
 vi.mock('../../app/api', () => ({ get: vi.fn(), post: vi.fn() }));
@@ -45,5 +46,17 @@ describe('ReviewsRail', () => {
     screen.getByText('Open').click();
 
     expect(getSelectedReviewId()).toBe(1);
+  });
+
+  it('clears the node selection when a review opens', async () => {
+    resetStore();
+    setSelection(9);
+    vi.mocked(get).mockResolvedValue([REVIEW]);
+    render(<ReviewsRail />);
+
+    await waitFor(() => screen.getByText('evidence text'));
+    screen.getByText('Open').click();
+
+    expect(getState().selection).toBeNull();
   });
 });

@@ -44,6 +44,17 @@ RUN_ID = "run-1"
 _T = TypeVar("_T")
 
 
+def _expect_transcript_line(page: Page, page_text: str) -> None:
+    """Assert one assistant transcript line is visible for `page_text`.
+
+    The console splits each line into a `.mk-line-time` actor column and a
+    text column, so the row no longer reads as one `kind: text` string.
+    """
+    line = page.locator(".mk-line", has_text=page_text)
+    expect(line).to_be_visible()
+    expect(line.locator(".mk-line-time")).to_have_text("assistant")
+
+
 def _empty_page() -> SnapshotPage[_T]:
     return SnapshotPage(items=(), offset=0, limit=50, total=0, has_more=False)
 
@@ -189,13 +200,13 @@ def test_node_sidecar_shows_run_paging_and_changes(
     page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
 
     expect(page.get_by_text(RUN_ID)).to_be_visible()
-    expect(page.get_by_text("assistant: Transcript page 0")).to_be_visible()
+    _expect_transcript_line(page, "Transcript page 0")
 
     page.get_by_role("button", name="Next").click()
-    expect(page.get_by_text("assistant: Transcript page 1")).to_be_visible()
+    _expect_transcript_line(page, "Transcript page 1")
 
     page.get_by_role("button", name="Previous").click()
-    expect(page.get_by_text("assistant: Transcript page 0")).to_be_visible()
+    _expect_transcript_line(page, "Transcript page 0")
 
     page.get_by_role("button", name="Details").click()
     expect(page.get_by_text("file-page-0.py")).to_be_visible()

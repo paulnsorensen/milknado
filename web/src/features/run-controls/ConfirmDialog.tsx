@@ -19,6 +19,7 @@ export function ConfirmDialog(): ReactElement | null {
     <Dialog
       role="alertdialog"
       title={pending.prompt}
+      onClose={dismissConfirm}
       actions={
         <>
           <Button onClick={dismissConfirm}>Dismiss</Button>

@@ -1,6 +1,7 @@
 // The design system loader. Import this module once, before any component
 // use, so window.Milknado (and window.Milknado.React) are ready.
 import { React } from './globals';
+import './fonts.css';
 import '../../vendor/milknado/tokens.css';
 import '../../vendor/milknado/components/bundle.css';
 import '../../vendor/milknado/components/bundle.js';

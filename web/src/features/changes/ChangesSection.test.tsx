@@ -81,4 +81,22 @@ describe('ChangesSection', () => {
 
     expect(await screen.findByText('No changed files yet.')).toBeTruthy();
   });
+
+  it('classifies each diff line kind by its unified-diff prefix', async () => {
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('@@ -1,1 +1,1 @@\n+added\n-removed\ncontext', { status: 200 })),
+    );
+    setActiveTab('changes');
+
+    render(<ChangesSection />);
+    (await screen.findByText('a.py')).click();
+
+    const diff = await screen.findByRole('region', { name: 'Unified diff' });
+    expect(diff.querySelector('.mk-dl-hunk')?.textContent).toContain('@@ -1,1 +1,1 @@');
+    expect(diff.querySelector('.mk-dl-add')?.textContent).toContain('+added');
+    expect(diff.querySelector('.mk-dl-del')?.textContent).toContain('-removed');
+    expect(diff.querySelector('.mk-dl-ctx')?.textContent).toContain('context');
+  });
 });

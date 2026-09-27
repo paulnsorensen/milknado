@@ -39,6 +39,7 @@ export function DefaultLayout(): ReactElement {
             zoom={state.graphView.zoom}
             collapsed={state.graphView.collapsed}
             onLayout={(layout) => setGraphView({ lod: layout.lod })}
+            autoLod={false}
             width={canvasSize?.width}
             height={canvasSize?.height ?? 'auto'}
           />

@@ -51,7 +51,9 @@ export function NodeSidecar(): ReactElement | null {
   const detail = detailState.detail?.detail ?? null;
   const nodes = store.snapshot?.graph ? toGraphNodes(store.snapshot.graph) : [];
   const runs = detail?.runs.items ?? [];
-  const errors = runs.map((run) => run.error).filter((error): error is string => error !== null);
+  const errors = runs
+    .filter((run): run is WireRunRecord & { error: string } => run.error !== null)
+    .map((run) => ({ runId: run.run_id, error: run.error }));
 
   return (
     <div className="mk-stack">
@@ -78,8 +80,8 @@ export function NodeSidecar(): ReactElement | null {
           </dl>
         )}
       </section>
-      {errors.map((error) => (
-        <div key={error} role="alert" className="mk-alert">
+      {errors.map(({ runId, error }) => (
+        <div key={runId} role="alert" className="mk-alert">
           <span className="mk-glyph mk-glyph-at-risk" aria-hidden="true" />
           <span>{error}</span>
         </div>

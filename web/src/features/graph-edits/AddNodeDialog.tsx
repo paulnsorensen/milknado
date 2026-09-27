@@ -60,6 +60,7 @@ export function AddNodeDialog(): ReactElement | null {
     <Dialog
       title="Add a node"
       label="Add node"
+      onClose={closeDialog}
       actions={
         <>
           <Button onClick={closeDialog}>Cancel</Button>

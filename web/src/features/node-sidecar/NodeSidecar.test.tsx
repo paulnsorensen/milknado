@@ -35,7 +35,10 @@ describe('NodeSidecar', () => {
     vi.mocked(get).mockReset();
   });
 
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it('renders nothing without a numeric selection', () => {
     const { container } = render(<NodeSidecar />);
@@ -70,6 +73,34 @@ describe('NodeSidecar', () => {
     render(<NodeSidecar />);
 
     expect(await screen.findByText('run-1', { exact: false })).toBeTruthy();
+  });
+
+  it('keys error rows by run id, not by index, when two runs share the same error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(get).mockResolvedValue(
+      detailResponse({
+        runs: {
+          items: [
+            { run_id: 'run-1', node_id: 7, status: 'failed', started_at: '', ended_at: '', error: 'boom' },
+            { run_id: 'run-2', node_id: 7, status: 'failed', started_at: '', ended_at: '', error: 'boom' },
+          ],
+          offset: 0,
+          limit: 50,
+          total: 2,
+          has_more: false,
+          state: 'loaded',
+        },
+      }),
+    );
+    setSelection(7);
+
+    render(<NodeSidecar />);
+
+    expect((await screen.findAllByRole('alert')).length).toBe(2);
+    const keyWarning = errorSpy.mock.calls.some((call) =>
+      String(call[0]).includes('two children with the same key'),
+    );
+    expect(keyWarning).toBe(false);
   });
 
   it('renders the details tab body when the details tab is active', async () => {

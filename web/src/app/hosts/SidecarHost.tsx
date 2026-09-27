@@ -8,7 +8,9 @@ import { renderSlot } from './renderSlot';
  * The sidecar: the node or review panel, the owner-run actions, then the
  * detail tabs and their sections. The tab strip needs a selected node; the
  * sections and actions also carry owner-run controls, so they always render.
- * The Changes tab widens the panel to the review width.
+ * The Changes tab widens the panel to the review width. The goal-review
+ * feature clears its own selection when a node is selected, so the two
+ * panels never render at once.
  */
 export function SidecarHost(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
