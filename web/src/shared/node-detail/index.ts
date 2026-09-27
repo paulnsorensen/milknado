@@ -3,7 +3,14 @@
 // feature, because `node-sidecar`, `changes`, `session-input` and
 // `shortcuts` all read or drive it.
 export type { DetailTab } from './detailTab';
-export { getActiveTab, setActiveTab, subscribeTab, resetTab } from './detailTab';
+export {
+  detailTabId,
+  detailTabPanelId,
+  getActiveTab,
+  setActiveTab,
+  subscribeTab,
+  resetTab,
+} from './detailTab';
 
 export type { DetailState } from './nodeDetail';
 export {

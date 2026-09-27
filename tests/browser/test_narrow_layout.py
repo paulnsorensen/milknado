@@ -101,3 +101,42 @@ def test_narrow_detail_view_is_full_width_with_44px_controls_and_no_horizontal_s
     assert box["height"] >= MIN_TOUCH_TARGET
 
     assert _has_no_horizontal_scroll(page)
+
+
+def test_narrow_detail_tabs_use_aria_roles_and_roving_focus(
+    page: Page, narrow_server: BrowserServer
+) -> None:
+    page.set_viewport_size(NARROW_VIEWPORT)
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
+
+    page.get_by_role("treeitem", name=NODE_DESCRIPTION).click()
+    page.get_by_role("button", name="Open node").click()
+
+    tablist = page.get_by_role("tablist", name="Node detail")
+    expect(tablist).to_be_visible()
+    expect(tablist.get_by_role("tab")).to_have_count(3)
+
+    tabs = {
+        label: tablist.get_by_role("tab", name=label)
+        for label in ("Session", "Changes", "Details")
+    }
+    for label, slug in (("Session", "session"), ("Changes", "changes"), ("Details", "details")):
+        tab = tabs[label]
+        panel = page.locator(f"#node-detail-panel-{slug}")
+        expect(tab).to_have_attribute("aria-controls", f"node-detail-panel-{slug}")
+        expect(panel).to_have_attribute("role", "tabpanel")
+        expect(panel).to_have_attribute("aria-labelledby", f"node-detail-tab-{slug}")
+
+    session = tabs["Session"]
+    changes = tabs["Changes"]
+    details = tabs["Details"]
+    expect(session).to_have_attribute("aria-selected", "true")
+    expect(session).to_have_attribute("tabindex", "0")
+
+    session.press("ArrowRight")
+    expect(changes).to_be_focused()
+    expect(changes).to_have_attribute("aria-selected", "true")
+    changes.press("ArrowRight")
+    expect(details).to_be_focused()
+    details.press("ArrowRight")
+    expect(session).to_be_focused()

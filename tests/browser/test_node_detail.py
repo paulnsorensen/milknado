@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from typing import TypeVar
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Locator, Page, expect
 
 from milknado.adapters import ChangedFile
 from milknado.app.run_source import (
@@ -87,14 +87,15 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
         total=2,
         has_more=request.session_event_page == 0,
     )
+    description = CHILD_DESCRIPTION if request.node_id == 2 else FIXTURE_NODE_DESCRIPTION
     return NodeDetailResponse(
         node_id=request.node_id,
         request_generation=request.request_generation,
         detail=NodeDetailSnapshot(
             node=MikadoNode(
-                id=request.node_id, description=CHILD_DESCRIPTION, kind=NodeKind.TASK, parent_id=1
+                id=request.node_id, description=description, kind=NodeKind.TASK, parent_id=1
             ),
-            description=CHILD_DESCRIPTION,
+            description=description,
             parent=None,
             children=_empty_page(),
             ancestors=_empty_page(),
@@ -188,6 +189,38 @@ def node_detail_server() -> Iterator[BrowserServer]:
     server.stop()
 
 
+def _exercise_detail_tabs(page: Page) -> tuple[Locator, Locator]:
+    """Assert tab semantics and return the Changes and Details controls."""
+    tablist = page.get_by_role("tablist", name="Node detail")
+    expect(tablist).to_be_visible()
+    expect(tablist.get_by_role("tab")).to_have_count(3)
+    for label, slug in (("Session", "session"), ("Changes", "changes"), ("Details", "details")):
+        tab = tablist.get_by_role("tab", name=label)
+        panel = page.locator(f"#node-detail-panel-{slug}")
+        expect(tab).to_have_attribute("aria-controls", f"node-detail-panel-{slug}")
+        expect(panel).to_have_attribute("role", "tabpanel")
+        expect(panel).to_have_attribute("aria-labelledby", f"node-detail-tab-{slug}")
+
+    session_tab = tablist.get_by_role("tab", name="Session")
+    changes_tab = tablist.get_by_role("tab", name="Changes")
+    details_tab = tablist.get_by_role("tab", name="Details")
+    expect(session_tab).to_have_attribute("aria-selected", "true")
+    expect(session_tab).to_have_attribute("tabindex", "0")
+
+    session_tab.press("ArrowRight")
+    expect(changes_tab).to_be_focused()
+    expect(changes_tab).to_have_attribute("aria-selected", "true")
+    changes_tab.press("ArrowRight")
+    expect(details_tab).to_be_focused()
+    expect(details_tab).to_have_attribute("aria-selected", "true")
+    details_tab.press("ArrowLeft")
+    expect(changes_tab).to_be_focused()
+    changes_tab.press("ArrowLeft")
+    expect(session_tab).to_be_focused()
+    expect(page.locator(".mk-sidecar-title")).to_have_text(CHILD_DESCRIPTION)
+    return changes_tab, details_tab
+
+
 def test_node_sidecar_shows_run_paging_and_changes(
     page: Page, node_detail_server: BrowserServer
 ) -> None:
@@ -202,13 +235,15 @@ def test_node_sidecar_shows_run_paging_and_changes(
     expect(page.get_by_text(RUN_ID)).to_be_visible()
     _expect_transcript_line(page, "Transcript page 0")
 
+    changes_tab, details_tab = _exercise_detail_tabs(page)
+
     page.get_by_role("button", name="Next").click()
     _expect_transcript_line(page, "Transcript page 1")
 
     page.get_by_role("button", name="Previous").click()
     _expect_transcript_line(page, "Transcript page 0")
 
-    page.get_by_role("button", name="Details").click()
+    details_tab.click()
     expect(page.get_by_text("file-page-0.py")).to_be_visible()
 
     page.get_by_role("button", name="Next").click()
@@ -217,7 +252,7 @@ def test_node_sidecar_shows_run_paging_and_changes(
     page.get_by_role("button", name="Previous").click()
     expect(page.get_by_text("file-page-0.py")).to_be_visible()
 
-    page.get_by_role("button", name="Changes").click()
+    changes_tab.click()
     expect(page.get_by_text("a.py")).to_be_visible()
 
     page.get_by_text("a.py").click()
