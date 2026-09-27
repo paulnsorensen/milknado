@@ -33,7 +33,12 @@ function RunRows({ run }: { run: WireRunRecord }): ReactElement {
   );
 }
 
-export function NodeSidecar(): ReactElement | null {
+export interface NodeSidecarProps {
+  /** Runs on the close button instead of clearing the selection. */
+  onClose?: () => void;
+}
+
+export function NodeSidecar({ onClose }: NodeSidecarProps = {}): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const detailState = useSyncExternalStore(subscribeDetail, getDetailState);
   const { AncestorPath, Button, StatusBadge } = Milknado;
@@ -59,7 +64,7 @@ export function NodeSidecar(): ReactElement | null {
     <div className="mk-stack">
       <div className="mk-sidecar-head">
         <AncestorPath nodes={nodes} id={nodeId} onSelect={setSelection} />
-        <Button icon className="mk-btn-ctl" ariaLabel="Close the sidecar" onClick={() => setSelection(null)}>
+        <Button icon className="mk-btn-ctl" ariaLabel="Close the sidecar" onClick={onClose ?? (() => setSelection(null))}>
           {'×'}
         </Button>
       </div>

@@ -21,7 +21,7 @@ export function NarrowDetail({ onBack }: NarrowDetailProps): ReactElement {
         </Button>
       </header>
       <div className="mk-narrow-body">
-        <NodeSidecar />
+        <NodeSidecar onClose={onBack} />
         <div data-region="sidecar-action">{renderSlot('sidecar-action')}</div>
         <div role="group" aria-label="Node detail" className="mk-narrow-tabs">
           {renderSlot('sidecar-tab')}

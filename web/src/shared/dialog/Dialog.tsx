@@ -1,7 +1,10 @@
 // The one modal card every feature dialog renders into: a scrim over the
 // shell, a serif title, the body, and right-aligned actions.
-import type { ReactElement, ReactNode } from 'react';
+import type { KeyboardEvent, ReactElement, ReactNode } from 'react';
 import { useEffect, useRef } from 'react';
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export interface DialogProps {
   /** The visible heading. */
@@ -39,14 +42,41 @@ export function Dialog({
     if (!onClose) {
       return;
     }
-    function handleKeyDown(event: KeyboardEvent): void {
+    function handleEscape(event: globalThis.KeyboardEvent): void {
       if (event.key === 'Escape') {
         onClose?.();
       }
     }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
   }, [onClose]);
+
+  function trapTab(event: KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'Tab') {
+      return;
+    }
+    const dialog = dialogRef.current;
+    if (!dialog) {
+      return;
+    }
+    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusable.length === 0) {
+      event.preventDefault();
+      dialog.focus();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const onCard = active === dialog || !focusable.includes(active as HTMLElement);
+    if (event.shiftKey && (onCard || active === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (onCard || active === last)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   return (
     <div className="mk-scrim">
@@ -57,6 +87,7 @@ export function Dialog({
         aria-label={label}
         tabIndex={-1}
         className={wide ? 'mk-dialog is-wide' : 'mk-dialog'}
+        onKeyDown={trapTab}
       >
         <h2 className="mk-dialog-title">{title}</h2>
         {children}

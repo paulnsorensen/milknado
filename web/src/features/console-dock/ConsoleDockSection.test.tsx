@@ -1,11 +1,15 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resetStore, setSnapshot } from '../../app/store';
+import { resetConnectionStatus, setConnectionStatus } from '../live-state/connection';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
 import { ConsoleDockSection } from './ConsoleDockSection';
 
 describe('ConsoleDockSection', () => {
-  beforeEach(resetStore);
+  beforeEach(() => {
+    resetStore();
+    resetConnectionStatus();
+  });
   afterEach(cleanup);
 
   it('renders a console line for each event line', () => {
@@ -26,6 +30,20 @@ describe('ConsoleDockSection', () => {
     render(<ConsoleDockSection />);
 
     expect(screen.queryByPlaceholderText(/./)).toBeNull();
+  });
+
+  it('marks the coordinator live while the stream connection is connected', () => {
+    render(<ConsoleDockSection />);
+
+    expect(document.querySelector('.mk-live-dot.is-live')).not.toBeNull();
+  });
+
+  it('marks the coordinator not live while the stream connection is reconnecting', () => {
+    setConnectionStatus('reconnecting');
+
+    render(<ConsoleDockSection />);
+
+    expect(document.querySelector('.mk-live-dot.is-live')).toBeNull();
   });
 
   it('opens and hides the events console on the Events toggle', () => {

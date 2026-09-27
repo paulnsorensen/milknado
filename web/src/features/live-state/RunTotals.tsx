@@ -6,6 +6,10 @@ import { toGraphNodes } from '../../app/wire';
 import { Milknado } from '../../design-system';
 import type { StreamSnapshot } from './runtimeSnapshot';
 
+function totalLabel(value: number | undefined, label: string): string {
+  return value === undefined ? `– ${label}` : `${value} ${label}`;
+}
+
 export function RunTotals(): ReactElement | null {
   const state = useSyncExternalStore(subscribe, getState);
   const { StatusStrip } = Milknado;
@@ -18,10 +22,10 @@ export function RunTotals(): ReactElement | null {
   const nodes = snapshot.graph ? toGraphNodes(snapshot.graph) : [];
   const totals = [
     `${snapshot.active_runs?.length ?? 0} active`,
-    `${snapshot.completed ?? 0} completed`,
-    `${snapshot.failed ?? 0} failed`,
-    `${snapshot.stopped ?? 0} stopped`,
-    `${snapshot.available ?? 0} available`,
+    totalLabel(snapshot.completed, 'completed'),
+    totalLabel(snapshot.failed, 'failed'),
+    totalLabel(snapshot.stopped, 'stopped'),
+    totalLabel(snapshot.available, 'available'),
   ].join(' · ');
   const runId = state.capabilities?.owner.run_id;
 

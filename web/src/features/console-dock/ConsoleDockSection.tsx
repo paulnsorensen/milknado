@@ -6,16 +6,18 @@ import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getState, setActiveSidecar, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
+import { getConnectionStatus, subscribeConnection } from '../live-state/connection';
 import type { StreamSnapshot } from '../live-state/runtimeSnapshot';
 import { toConsoleLines } from './lines';
 
 export function ConsoleDockSection(): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
+  const connectionStatus = useSyncExternalStore(subscribeConnection, getConnectionStatus);
   const { Button, Console } = Milknado;
   const snapshot = state.snapshot as Partial<StreamSnapshot> | null;
   const eventLines = snapshot?.event_lines ?? [];
   const open = state.activeSidecar === 'events';
-  const live = state.capabilities?.owner.available ?? false;
+  const live = connectionStatus === 'connected';
   const last = eventLines[eventLines.length - 1] ?? 'No events yet';
 
   return (

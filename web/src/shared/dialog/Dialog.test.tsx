@@ -41,4 +41,65 @@ describe('Dialog', () => {
     expect(trigger).toHaveFocus();
     trigger.remove();
   });
+
+  it('wraps Tab from the last control to the first', () => {
+    render(
+      <Dialog title="Title" actions={<button>Last</button>}>
+        <button>First</button>
+        <button>Middle</button>
+      </Dialog>,
+    );
+
+    screen.getByText('Last').focus();
+    fireEvent.keyDown(screen.getByText('Last'), { key: 'Tab' });
+
+    expect(screen.getByText('First')).toHaveFocus();
+  });
+
+  it('wraps Shift+Tab from the first control to the last', () => {
+    render(
+      <Dialog title="Title" actions={<button>Last</button>}>
+        <button>First</button>
+        <button>Middle</button>
+      </Dialog>,
+    );
+
+    screen.getByText('First').focus();
+    fireEvent.keyDown(screen.getByText('First'), { key: 'Tab', shiftKey: true });
+
+    expect(screen.getByText('Last')).toHaveFocus();
+  });
+
+  it('sends Shift+Tab from the freshly opened card to the last control', () => {
+    render(
+      <Dialog title="Title" actions={<button>Last</button>}>
+        <button>First</button>
+      </Dialog>,
+    );
+
+    expect(screen.getByRole('dialog')).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Tab', shiftKey: true });
+
+    expect(screen.getByText('Last')).toHaveFocus();
+  });
+
+  it('sends Tab from the freshly opened card to the first control', () => {
+    render(
+      <Dialog title="Title" actions={<button>Last</button>}>
+        <button>First</button>
+      </Dialog>,
+    );
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Tab' });
+
+    expect(screen.getByText('First')).toHaveFocus();
+  });
+
+  it('keeps focus on the card when Tab is pressed with no focusable descendants', () => {
+    render(<Dialog title="Title" actions={null} />);
+
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Tab' });
+
+    expect(screen.getByRole('dialog')).toHaveFocus();
+  });
 });

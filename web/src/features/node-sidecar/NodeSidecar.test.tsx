@@ -1,7 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
-import { resetStore, setSelection } from '../../app/store';
+import { getState, resetStore, setSelection } from '../../app/store';
 import { resetDetail, resetTab, setActiveTab, type WireNodeDetailResponse } from '../../shared/node-detail';
 import { NodeSidecar } from './NodeSidecar';
 import { DetailsTabSection } from './TabSections';
@@ -101,6 +101,30 @@ describe('NodeSidecar', () => {
       String(call[0]).includes('two children with the same key'),
     );
     expect(keyWarning).toBe(false);
+  });
+
+  it('calls onClose on the close button when provided', async () => {
+    vi.mocked(get).mockResolvedValue(detailResponse());
+    setSelection(7);
+    const onClose = vi.fn();
+
+    render(<NodeSidecar onClose={onClose} />);
+    await screen.findByText('Bake the roadmap');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the sidecar' }));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(getState().selection).toBe(7);
+  });
+
+  it('clears the selection on the close button when onClose is omitted', async () => {
+    vi.mocked(get).mockResolvedValue(detailResponse());
+    setSelection(7);
+
+    render(<NodeSidecar />);
+    await screen.findByText('Bake the roadmap');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the sidecar' }));
+
+    expect(getState().selection).toBeNull();
   });
 
   it('renders the details tab body when the details tab is active', async () => {

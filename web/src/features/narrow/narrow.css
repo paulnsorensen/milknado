@@ -81,8 +81,12 @@
   min-height: 44px;
 }
 
+/* Out-specifies the vendor bundle's `.mk-btn-ctl.mk-btn-icon` (26px) so
+   icon buttons keep a 44px touch target at the narrow breakpoint. */
+.mk-narrow-root .mk-btn-ctl.mk-btn-icon,
 .mk-narrow-root .mk-btn-icon {
-  min-height: 28px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .mk-narrow-open-bar {
