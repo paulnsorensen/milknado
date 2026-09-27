@@ -18,6 +18,7 @@ interface TabProps {
   label: string;
   onSelect: () => void;
 }
+
 function moveTab(event: KeyboardEvent<HTMLButtonElement>, direction: -1 | 1): void {
   const tablist = event.currentTarget.closest('[role="tablist"]');
   const tabs = Array.from(tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);

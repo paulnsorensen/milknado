@@ -87,14 +87,15 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
         total=2,
         has_more=request.session_event_page == 0,
     )
+    description = CHILD_DESCRIPTION if request.node_id == 2 else FIXTURE_NODE_DESCRIPTION
     return NodeDetailResponse(
         node_id=request.node_id,
         request_generation=request.request_generation,
         detail=NodeDetailSnapshot(
             node=MikadoNode(
-                id=request.node_id, description=CHILD_DESCRIPTION, kind=NodeKind.TASK, parent_id=1
+                id=request.node_id, description=description, kind=NodeKind.TASK, parent_id=1
             ),
-            description=CHILD_DESCRIPTION,
+            description=description,
             parent=None,
             children=_empty_page(),
             ancestors=_empty_page(),
@@ -216,6 +217,7 @@ def _exercise_detail_tabs(page: Page) -> tuple[Locator, Locator]:
     expect(changes_tab).to_be_focused()
     changes_tab.press("ArrowLeft")
     expect(session_tab).to_be_focused()
+    expect(page.locator(".mk-sidecar-title")).to_have_text(CHILD_DESCRIPTION)
     return changes_tab, details_tab
 
 
