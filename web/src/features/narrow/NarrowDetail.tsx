@@ -23,7 +23,7 @@ export function NarrowDetail({ onBack }: NarrowDetailProps): ReactElement {
       <div className="mk-narrow-body">
         <NodeSidecar onClose={onBack} />
         <div data-region="sidecar-action">{renderSlot('sidecar-action')}</div>
-        <div role="group" aria-label="Node detail" className="mk-narrow-tabs">
+        <div role="tablist" aria-label="Node detail" className="mk-narrow-tabs">
           {renderSlot('sidecar-tab')}
         </div>
         <div data-region="sidecar-section">{renderSlot('sidecar-section')}</div>
