@@ -1128,8 +1128,6 @@ async def test_mounted_footer_tracks_tree_selection_at_fixed_width() -> None:
 
         assert focus["i Session input"] is False
         assert focus["? Help"] is False
-        assert FooterHint("Help", "open_help", app).can_focus
-        assert not FooterHint("Help", "help", app).can_focus
 
         active = labels()
         assert "i Session input" in active

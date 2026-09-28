@@ -20,6 +20,10 @@ The task node was selected and the Session tab was open. The visible transcript 
   Assistant [complete]: LIVE WORKER COMPLETED with command receipt.
   <promise>MILKNADO_NODE_COMPLETE</promise>
 
-The screenshot also shows the SESSION, CHANGES, and DETAILS tabs and the session controls.
+The screenshot also shows the SESSION, CHANGES, and DETAILS tabs. An error toast covers the
+session controls: "git session changes failed: worktree is unavailable: /private/tmp/milknado-pass3-real-final9/milknado-2-...".
+The finished run's worktree was removed at merge-back; `GET /api/runs/<id>/changes` answers 409 and the
+dashboard raises a global toast, while `milknado watch` shows the same error inline in the Changes pane.
+This divergence is recorded as a defect row on the campaign page and deferred to a follow-up node.
 The superseded 648px capture is retained only as evidence of narrow-layout clipping; it is not the completion claim.
 No host hook text, authentication token, or home-directory content appears in the capture.
