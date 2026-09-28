@@ -11,7 +11,7 @@ The shared `milknado watch` and `milknado run` workspace passes the 80x24 compac
 
 ## Evidence
 
-The reviewer-accessible evidence bundle is [published on GitHub Gist](https://gist.github.com/paulnsorensen/340ed730f5485c4f8345c3ab155d195f). It contains the 12 before/after SVG captures, the deterministic fixture launcher, and the VHS tapes.
+The reviewer-accessible evidence bundle is [published on GitHub Gist](https://gist.github.com/paulnsorensen/340ed730f5485c4f8345c3ab155d195f). The implementation and evidence are tracked in [PR #480](https://github.com/paulnsorensen/milknado/pull/480). It contains the 12 before/after SVG captures, the deterministic fixture launcher, and the VHS tapes.
 
 The capture pairs use the same fixture data, interaction state, terminal size, Catppuccin Mocha theme, and pinned `12:34:56` header clock:
 
