@@ -294,6 +294,10 @@ async def test_switching_shared_context_preserves_keyboard_file_choice(tmp_path:
 
         await pilot.press("escape")
         await pilot.pause()
+        run_table = cast(DataTable[object], app.query_one("#runs", DataTable))
+        _ = run_table.focus()
+        await pilot.pause()
+        assert app.selected_run_id == "run-1"
         await pilot.press("j")
         await pilot.pause()
         assert app.selected_run_id == "run-2"
