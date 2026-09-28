@@ -8,6 +8,7 @@ import { Milknado } from '../../design-system';
 import { formatRunTotals } from '../../shared/runTotals';
 import { toGraphNodes } from '../../app/wire';
 import { ownerLabel } from '../../shared/ownerLabel';
+import { PendingPermissionIndicator } from '../session-input/PendingPermissionIndicator';
 import { Wordmark } from '../../shared/Wordmark';
 
 export interface NarrowListProps {
@@ -53,7 +54,10 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
     <div className="mk-narrow-root mk-narrow-list">
       <header className="mk-narrow-bar">
         <Wordmark />
-        <StatusBadge state={owner ? 'running' : 'pending'}>{ownerLabel(owner).badge}</StatusBadge>
+        <div className="mk-button-row">
+          <StatusBadge state={owner ? 'running' : 'pending'}>{ownerLabel(owner).badge}</StatusBadge>
+          <PendingPermissionIndicator />
+        </div>
       </header>
       <div className="mk-narrow-intro">
         <span className="mk-kicker">{ownerLabel(owner).kicker}</span>

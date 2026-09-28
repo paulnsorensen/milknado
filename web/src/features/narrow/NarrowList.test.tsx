@@ -63,6 +63,20 @@ function setHostOwnerCapabilities(): void {
     expect(screen.getByText('Run active')).toBeInTheDocument();
     expect(screen.queryByText('Read-only')).toBeNull();
   });
+  it('shows pending permission requests in the narrow header', () => {
+    setSnapshot({
+      ...getState().snapshot!,
+      capabilities: {
+        ...getState().capabilities!,
+        owner: { available: true, permission_ids: ['perm-1'] },
+      },
+    });
+    render(<NarrowList onOpen={vi.fn()} />);
+
+    expect(screen.getByRole('status', { name: 'Pending permission requests' })).toHaveTextContent(
+      'Permission requested',
+    );
+  });
 
   it('jumping to a known node id selects it', () => {
     render(<NarrowList onOpen={vi.fn()} />);
