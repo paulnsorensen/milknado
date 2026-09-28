@@ -2241,3 +2241,84 @@ class TestDispatchBatchFlavoredGates:
         assert captured[0].max_iterations == 3
         assert captured[0].attempt_timeout_seconds == 1800.0
         assert captured[0].completion_timeout_seconds == 5400
+
+
+def _wait_for_owner_work(loop: RunLoop, config: ExecutionConfig, concurrency_limit: int) -> int:
+    method = cast(Callable[[ExecutionConfig, int], int], attrgetter("_wait_for_owner_work")(loop))
+    return method(config, concurrency_limit)
+
+
+class TestOwnerIdleWait:
+    """An owner-attached run keeps scheduling while the graph has nothing ready."""
+
+    @staticmethod
+    def _owner_loop(
+        graph: MikadoGraph, fake_ralph: FakeRalph, controls: Callable[[], None]
+    ) -> tuple[RunLoop, MagicMock, list[float]]:
+        executor = MagicMock()
+
+        def dispatch(node_id: int, _cfg: ExecutionConfig) -> MagicMock:
+            return MagicMock(run_id=f"r{node_id}")
+
+        _mock_attr(executor, "dispatch").side_effect = dispatch
+        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        sleeps: list[float] = []
+        _set_attr(loop, "_await_owner_work", True)
+        _set_attr(loop, "_process_controls", controls)
+        _set_attr(loop, "_idle_sleep", sleeps.append)
+        return loop, executor, sleeps
+
+    def test_dispatches_a_node_the_owner_readies_while_idle(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        calls: list[int] = []
+
+        def controls() -> None:
+            calls.append(len(calls))
+            if len(calls) == 2:
+                _ = graph.add_node("late leaf", parent_id=root.id)
+
+        loop, executor, sleeps = self._owner_loop(graph, fake_ralph, controls)
+
+        assert _wait_for_owner_work(loop, config, 4) == 1
+        assert sleeps == [1.0], "the loop must sleep once before the node became ready"
+        assert _mock_attr(executor, "dispatch").call_count == 1
+        assert list(_active(loop).values()) == [root.id + 1]
+
+    def test_stops_waiting_when_the_owner_closes_scheduling(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        _ = graph.add_node("root")
+        loop, executor, sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+        _set_attr(loop, "_process_controls", loop.stop_scheduling)
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        assert sleeps == []
+        _mock_attr(executor, "dispatch").assert_not_called()
+
+    def test_batch_run_ends_instead_of_waiting(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        _ = graph.add_node("root")
+        controls = MagicMock()
+        loop, _executor, sleeps = self._owner_loop(graph, fake_ralph, controls)
+        _set_attr(loop, "_await_owner_work", False)
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        controls.assert_not_called()
+        assert sleeps == []
+
+    def test_execute_run_returns_once_the_owner_stops_an_idle_run(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        _ = graph.add_node("root")
+        loop, executor, _sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+        _set_attr(loop, "_process_controls", loop.stop_scheduling)
+
+        dispatched, completed, failed, conflicts, timed_out = _execute_run(
+            loop, config, "main", 4, None, False
+        )
+
+        assert (dispatched, completed, failed, conflicts, timed_out) == (0, 0, 0, [], False)
+        _mock_attr(executor, "dispatch").assert_not_called()

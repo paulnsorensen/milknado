@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from milknado.domains.planning import Planner
 
 _logger = logging.getLogger("milknado")
+IDLE_RESCAN_SECONDS = 1.0
 _ETA_SAMPLE_SIZE_DEFAULT = 10
 _STALL_THRESHOLD_DEFAULT = 300
 
@@ -91,6 +92,8 @@ class RunLoop:
         self._stopped: int = 0
         self._state_listener: Callable[[RunLoopState], None] | None = None
         self._process_controls: Callable[[], None] | None = None
+        self._await_owner_work: bool = False
+        self._idle_sleep: Callable[[float], None] = time.sleep
         self._completion_wait_started: float = 0.0
         self._scheduling_stopped: bool = False
         self._scheduling_lock: Lock = Lock()
@@ -221,10 +224,12 @@ class RunLoop:
         process_controls: Callable[[], None] | None = None,
         *,
         interactive: bool = True,
+        await_owner_work: bool = False,
     ) -> RunLoopResult:
         self._strict = strict
         self._exec_config = config
         self._process_controls = process_controls
+        self._await_owner_work = await_owner_work
         self._stopped_nodes.clear()
         self._logged_blocks.clear()
         self._terminal_runs.clear()
@@ -248,8 +253,8 @@ class RunLoop:
             dispatched, completed, failed, conflicts, interrupted = self._execute_run(
                 config, feature_branch, concurrency_limit, timeout, interactive
             )
+            self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
 
-        self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
         verify_outcome = self._verify_if_scheduling_open(spec_text, spec_path, config)
         root = self._graph.get_root()
         return RunLoopResult(
@@ -283,7 +288,12 @@ class RunLoop:
             self._failed += failed
             self._completion_wait_started = time.monotonic()
             self._publish_state()
-            while self._active:
+            idle_added = 0
+            while self._active or (
+                idle_added := self._wait_for_owner_work(config, concurrency_limit)
+            ):
+                dispatched += idle_added
+                idle_added = 0
                 added, completed, failed, new_conflicts, timed_out = self._poll_and_complete(
                     config, feature_branch, concurrency_limit, timeout, interactive
                 )
@@ -303,6 +313,32 @@ class RunLoop:
                 stop_input_thread(self._input)
             self._publish_state()
         return dispatched, self._completed, self._failed, conflicts, interrupted
+
+    def _wait_for_owner_work(self, config: ExecutionConfig, concurrency_limit: int) -> int:
+        """Idle until the owner readies a node, then dispatch it.
+
+        Only an owner-attached run waits; a batch run ends when nothing is dispatchable.
+        Returns the number of nodes dispatched, or 0 when scheduling closed or the root is done.
+        """
+        if not self._await_owner_work or self._process_controls is None:
+            return 0
+        while True:
+            self._process_controls()
+            if self._strict and self._failure_triggered:
+                return 0
+            with self._scheduling_lock:
+                if self._scheduling_stopped:
+                    return 0
+            root = self._graph.get_root()
+            if root is not None and root.status == NodeStatus.DONE:
+                return 0
+            added, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+            self._failed += failed
+            if added:
+                self._completion_wait_started = time.monotonic()
+                self._publish_state()
+                return added
+            self._idle_sleep(IDLE_RESCAN_SECONDS)
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
         _logger.warning(
