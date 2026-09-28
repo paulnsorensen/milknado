@@ -1123,6 +1123,14 @@ async def test_mounted_footer_tracks_tree_selection_at_fixed_width() -> None:
         def labels() -> set[str]:
             return {cast(Text, hint.render()).plain for hint in app.query(FooterHint)}
 
+        hints = tuple(app.query(FooterHint))
+        focus = {cast(Text, hint.render()).plain: hint.can_focus for hint in hints}
+
+        assert focus["i Session input"] is False
+        assert focus["? Help"] is False
+        assert FooterHint("Help", "open_help", app).can_focus
+        assert not FooterHint("Help", "help", app).can_focus
+
         active = labels()
         assert "i Session input" in active
         assert "g Guidance" in active

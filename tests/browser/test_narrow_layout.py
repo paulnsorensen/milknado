@@ -1,14 +1,18 @@
 """AC-15: at 400px, the narrow list and detail views hold no horizontal scroll."""
 
-from __future__ import annotations
-
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
 from playwright.sync_api import Page, ViewportSize, expect
 
-from milknado.app.run_source import NodeSnapshotRequest
+from milknado.app.run_source import (
+    ActiveRunSnapshot,
+    ExecutionRunStatus,
+    NodeSnapshotRequest,
+    RunActionAvailability,
+)
 from milknado.domains.common import MikadoNode, NodeKind
 from milknado.domains.graph import (
     NodeDetailResponse,
@@ -17,12 +21,23 @@ from milknado.domains.graph import (
     SnapshotValue,
 )
 from milknado.web import LaunchToken, WebCommands, create_app
-from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, BrowserSnapshotSource, open_app
+from tests.browser.conftest import (
+    BROWSER_TOKEN,
+    BrowserServer,
+    BrowserSnapshotSource,
+    open_app,
+)
 
 pytestmark = pytest.mark.browser
 
 NARROW_VIEWPORT: ViewportSize = {"width": 400, "height": 800}
+ROSTER_VIEWPORT: ViewportSize = {"width": 800, "height": 800}
 NODE_DESCRIPTION = "Tracer fixture node"
+
+LONG_AGENT_DESCRIPTION = (
+    "Deterministic fixture only. Do not inspect the repository, edit files, "
+    "or report success with a fake receipt."
+)
 MIN_TOUCH_TARGET = 44
 
 
@@ -140,3 +155,51 @@ def test_narrow_detail_tabs_use_aria_roles_and_roving_focus(
     expect(details).to_be_focused()
     details.press("ArrowRight")
     expect(session).to_be_focused()
+
+
+def test_long_agent_description_is_clamped_in_the_roster(
+    page: Page, browser_server: BrowserServer, browser_source: BrowserSnapshotSource
+) -> None:
+    page.set_viewport_size(ROSTER_VIEWPORT)
+    browser_source.publish(
+        replace(
+            browser_source.snapshot(),
+            active_runs=(
+                ActiveRunSnapshot(
+                    run_id="run-long-description",
+                    node_id=1,
+                    description=LONG_AGENT_DESCRIPTION,
+                    status=ExecutionRunStatus.RUNNING,
+                    progress=None,
+                    stop_requested=False,
+                    actions=RunActionAvailability(),
+                    output=(),
+                    pending_guidance=None,
+                    elapsed_seconds=0,
+                    progress_pct=None,
+                    eta_seconds=None,
+                    attempt=None,
+                    max_attempts=None,
+                    stalled=False,
+                ),
+            ),
+            available=0,
+        )
+    )
+    agent_name = page.locator(".mk-agent-roster .mk-agent-name b").first
+    open_app(page, browser_server.login_url, agent_name)
+
+    expect(agent_name).to_be_visible()
+    expect(agent_name).to_have_text(LONG_AGENT_DESCRIPTION)
+    expect(agent_name).to_have_css("display", "block")
+    expect(agent_name).to_have_css("overflow", "hidden")
+    expect(agent_name).to_have_css("text-overflow", "ellipsis")
+    expect(agent_name).to_have_css("white-space", "nowrap")
+
+    agent_row = agent_name.locator("..").locator("..")
+    agent_box = agent_name.bounding_box()
+    row_box = agent_row.bounding_box()
+    assert agent_box is not None
+    assert row_box is not None
+    assert agent_box["height"] <= 16
+    assert row_box["height"] <= 32

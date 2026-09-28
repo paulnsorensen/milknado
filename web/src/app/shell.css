@@ -216,6 +216,13 @@ body {
   white-space: nowrap;
 }
 
+.mk-agent-roster .mk-agent-name b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .mk-rail-empty {
   padding: var(--mk-space-1) var(--mk-space-2);
   color: var(--mk-ink-faint);

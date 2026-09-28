@@ -271,6 +271,33 @@ def test_detail_dag_references_hide_archived_nodes_consistently(tmp_path: Path) 
     graph.close()
 
 
+def test_observer_hides_runs_for_archived_nodes(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    node = graph.add_node("archived run")
+    graph.mark_running(node.id, run_id="archived-run")
+    graph.runs.start(
+        "archived-run", node.id, str(tmp_path / "run.log"), "2026-09-12T00:00:00+00:00", 60
+    )
+    graph.runs.finish(
+        "archived-run",
+        RunResult(
+            status="done",
+            exit_code=0,
+            timed_out=False,
+            ended_at="2026-09-12T00:01:00+00:00",
+        ),
+    )
+    assert graph.mark_terminal(node.id, "archived-run", NodeStatus.DONE)
+    assert graph.archive_subtree(node.id) == 1
+    graph.close()
+
+    snapshot = read_observer_snapshot(db_path)
+    assert snapshot.runs == ()
+    assert snapshot.graph is not None
+    assert snapshot.graph.nodes == ()
+
+
 def test_graph_snapshot_cache_refreshes_after_graph_mutation(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
     graph = MikadoGraph(db_path)

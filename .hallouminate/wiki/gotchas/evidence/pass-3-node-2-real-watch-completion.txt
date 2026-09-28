@@ -1,0 +1,23 @@
+Pass 3 real deterministic worker watch completion capture
+=========================================================
+
+Surface: `milknado watch --project-root /tmp/milknado-pass3-real-final9`
+Receipt-capable capture: attached watch, same fixture and run as the web capture.
+Run: node-2-20260928T070051Z-0f8909e3
+Terminal: 120x40
+
+Observed after the receipt was delivered and the worker exited:
+
+  Pass 3 real web and watch parity — 0 active · 1 completed · 0 failed · 0 stopped
+  node 2 · node-2-20260928T070051Z-0f8909e3
+  2 task · Deterministic live worker with receipts · completed · ran 01:10
+  Session stopped · omp
+  Assistant [complete]: LIVE WORKER STARTED; receipt follows.
+  You [delivered]: proof
+  Assistant [complete]: LIVE WORKER COMPLETED with command receipt.
+  <promise>MILKNADO_NODE_COMPLETE</promise>
+  Status [complete]: OMP agent turn complete
+  node-2-20260928T070051Z-0f8909e3 · done
+
+The watch frame was captured from the live PTY after the same refresh interval as the web observation.
+No host hook text or personal session content appears in the fixture output.

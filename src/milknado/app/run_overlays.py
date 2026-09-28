@@ -32,6 +32,7 @@ class FooterHint(Static):
 
     def __init__(self, label: str, action: str, owner: DOMNode) -> None:
         super().__init__(label, markup=False)
+        self.can_focus = action == "open_help"  # noqa: V101 - Textual reads the widget attribute
         self._action: str = action
         self._owner: DOMNode = owner
 

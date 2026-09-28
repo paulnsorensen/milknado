@@ -79,7 +79,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
 def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...]:
     rows: list[sqlite3.Row] = conn.execute(
         "SELECT r.*, n.description FROM runs r JOIN nodes n ON n.id = r.node_id "
-        + "ORDER BY r.started_at DESC LIMIT ?",
+        + "WHERE n.archived_at IS NULL ORDER BY r.started_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return tuple(_durable_run(conn, row) for row in rows)

@@ -171,10 +171,13 @@ def _spec(worker: Path, tmp_path: Path, args: tuple[str, ...]) -> AgentRunSpec:
 
 def _wait_for_pid(pid_path: Path) -> int:
     deadline = time.monotonic() + 3.0
-    while not pid_path.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        if pid_path.exists():
+            value = pid_path.read_text(encoding="utf-8").strip()
+            if value:
+                return int(value)
         time.sleep(0.02)
-    assert pid_path.exists()
-    return int(pid_path.read_text(encoding="utf-8"))
+    pytest.fail(f"worker PID was not written to {pid_path}")
 
 
 def _running_graph(tmp_path: Path) -> tuple[MikadoGraph, int]:
