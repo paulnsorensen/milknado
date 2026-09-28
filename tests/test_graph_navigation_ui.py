@@ -6,7 +6,7 @@ from typing import Protocol, cast
 import pytest
 from textual.events import Key
 from textual.pilot import Pilot
-from textual.widgets import TabbedContent, Tree
+from textual.widgets import Static, TabbedContent, Tree
 
 from milknado.app.graph_view import GraphTreeEntry
 from milknado.app.run_source import NodeSnapshotRequest
@@ -187,3 +187,24 @@ async def test_queued_tree_keys_preserve_latest_cursor() -> None:
         assert tree.cursor_node.data is not None
         assert tree.cursor_node.data.node_id == 4
         assert tree.has_focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("run", "watch"))
+@pytest.mark.parametrize("size", ((120, 40), (80, 24)))
+async def test_detail_help_exposes_paging_key_hints(kind: str, size: tuple[int, int]) -> None:
+    source_value = source()
+    app = run_app(source_value, kind)
+
+    async with app.run_test(size=size) as pilot:
+        await wait_for_requests(pilot, source_value, 1)
+        app.query_one("#run-tabs", TabbedContent).active = "details"
+        _ = app.query_one("#details-panel").focus()
+        await pilot.pause()
+
+        app.action_help()
+        await pilot.pause()
+
+        help_text = str(app.screen.query_one("#help-overlay", Static).render())
+        assert "[ ] related values pages" in help_text
+        assert "( ) session history pages" in help_text

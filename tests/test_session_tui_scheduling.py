@@ -271,41 +271,34 @@ async def test_file_change_clears_previous_diff_until_selected_file_loads(
 
 
 @pytest.mark.asyncio
-async def test_periodic_refresh_preserves_keyboard_file_choice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_switching_shared_context_preserves_keyboard_file_choice(tmp_path: Path) -> None:
     context = changed_context(tmp_path / "repo", "first.txt", "first-only\n")
     _ = (Path(context.cwd) / "second.txt").write_text("second-only\n")
     controller = SnapshotController(
         initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
     )
-    ready, refreshed = Event(), Event()
-    original = GitAdapter.session_changes
-
-    def inspected(adapter: GitAdapter, selected: SessionContext) -> tuple[ChangedFile, ...]:
-        result = original(adapter, selected)
-        if ready.is_set():
-            refreshed.set()
-        return result
-
-    monkeypatch.setattr(GitAdapter, "session_changes", inspected)
-    # A fake clock drives the refresh throttle, so the test does not wait on the 1 s timer.
-    clock = [0.0]
-    monkeypatch.setattr("milknado.app.session_changes.monotonic", lambda: clock[0])
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
-        await pilot.press("x", "down")
-        ready.set()
-        clock[0] += 2.0
-        app.refresh_session_changes()
-        await _wait_for_workers(app).wait_for_complete()
-        assert refreshed.is_set()
+        await pilot.press("x")
+        await _wait_for_change_pipeline(app, pilot)
+        table = cast(DataTable[object], app.query_one("#changes-files", DataTable))
+        assert table.get_row_at(1)[1] == "second.txt"
+        _ = table.focus()
         await pilot.pause()
-        await pilot.press("enter")
-        await _wait_for_workers(app).wait_for_complete()
+        await pilot.press("down", "enter")
+        await _wait_for_change_pipeline(app, pilot)
+        assert app.selected_file_path == "second.txt"
+        assert "+second-only" in plain(app, "#diff-text")
+
+        await pilot.press("escape")
         await pilot.pause()
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.selected_run_id == "run-2"
+        await _wait_for_change_pipeline(app, pilot)
+        assert app.selected_file_path == "second.txt"
         assert "+second-only" in plain(app, "#diff-text")
 
 

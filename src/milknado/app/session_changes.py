@@ -87,6 +87,12 @@ class SessionChangesMixin(metaclass=type(MessagePump)):
         identity = (selected.run_id, context) if selected and context else None
         changed = identity != self._changes_identity
         if changed:
+            previous_identity = self._changes_identity
+            preserve_path = (
+                previous_identity is not None
+                and identity is not None
+                and previous_identity[1] == identity[1]
+            )
             self._changes_identity = identity
             self._changes_token += 1
             self._diff_token += 1
@@ -95,6 +101,7 @@ class SessionChangesMixin(metaclass=type(MessagePump)):
             self._clear_changes(
                 None if identity else "Changes unavailable: no session worktree.",
                 loading=identity is not None,
+                preserve_path=preserve_path,
             )
         if identity is None:
             return
@@ -108,9 +115,16 @@ class SessionChangesMixin(metaclass=type(MessagePump)):
         else:
             self._start_changes(request)
 
-    def _clear_changes(self, error: str | None, *, loading: bool) -> None:
+    def _clear_changes(
+        self,
+        error: str | None,
+        *,
+        loading: bool,
+        preserve_path: bool = False,
+    ) -> None:
         self._changes_files = ()
-        self.selected_file_path = None
+        if not preserve_path:
+            self.selected_file_path = None
         self._changes_diff = ""
         self._changes_error = error
         self._changes_loading = loading
