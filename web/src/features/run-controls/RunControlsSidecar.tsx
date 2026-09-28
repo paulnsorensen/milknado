@@ -1,10 +1,9 @@
 // The `sidecar-action` contribution: Cancel run and Force stop for the
-// owner's run. Cancel is always active (the server rejects it with a domain
-// reason when there is no live run); Force stop is gated by capabilities,
-// matching the server's owner-only enforcement.
+// owner's selected active run. A selected non-owner node sees disabled
+// controls with the server reason; no node selection renders no controls.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { canActOnSelectedRun, getState, selectedNodeId, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { cancelRun, forceStopRun } from './commands';
 import { requestConfirm } from './confirmState';
@@ -13,20 +12,20 @@ export function RunControlsSidecar(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const { Button } = Milknado;
   const capabilities = store.capabilities;
+  const canAct = canActOnSelectedRun(store);
 
-  if (!capabilities) {
+  if (!capabilities || selectedNodeId(store) === null) {
     return null;
   }
 
   const runId = capabilities.owner.run_id ?? '';
   const forceStop = capabilities.force_stop;
-
   return (
     <section className="mk-section" aria-label="Run controls">
       <div className="mk-button-row">
         <Button
           className="mk-btn-sm"
-          disabled={runId === ''}
+          disabled={!canAct || runId === ''}
           onClick={() =>
             requestConfirm({
               prompt: 'Cancel this run?',
@@ -40,7 +39,7 @@ export function RunControlsSidecar(): ReactElement | null {
         </Button>
         <Button
           className="mk-btn-sm"
-          disabled={!forceStop.available}
+          disabled={!canAct || !forceStop.available}
           onClick={() =>
             requestConfirm({
               prompt: 'Force stop the run?',

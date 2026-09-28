@@ -19,6 +19,7 @@ from milknado.web import LaunchToken, PolledSnapshotSource, WebCommands, create_
 from milknado.web.commands import GraphEditCommands
 from tests.browser.conftest import (
     BROWSER_TOKEN,
+    FIXTURE_NODE_DESCRIPTION,
     BrowserServer,
     BrowserSnapshotSource,
     build_fixture_snapshot,
@@ -91,11 +92,15 @@ def inactive_session_server() -> Iterator[BrowserServer]:
 def test_409_domain_reason_shows_toast(
     page: Page, unavailable_cancel_server: BrowserServer
 ) -> None:
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
+    )
     open_app(
         page,
         unavailable_cancel_server.login_url,
-        page.get_by_role("button", name="Cancel run", exact=True),
+        node_button,
     )
+    node_button.click()
 
     page.get_by_role("button", name="Cancel run", exact=True).click()
     page.get_by_role("alertdialog").get_by_role("button", name="Cancel run", exact=True).click()
@@ -106,11 +111,11 @@ def test_409_domain_reason_shows_toast(
 def test_inactive_session_rejection_includes_run_reason(
     page: Page, inactive_session_server: BrowserServer
 ) -> None:
-    open_app(
-        page,
-        inactive_session_server.login_url,
-        page.get_by_role("button", name="Interrupt", exact=True),
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
     )
+    open_app(page, inactive_session_server.login_url, node_button)
+    node_button.click()
 
     page.get_by_role("button", name="Interrupt", exact=True).click()
     page.get_by_role("button", name="Send", exact=True).click()

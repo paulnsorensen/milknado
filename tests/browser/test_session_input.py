@@ -12,6 +12,7 @@ from milknado.domains.graph import OwnerCapabilities
 from milknado.web import LaunchToken, WebCommands, create_app
 from tests.browser.conftest import (
     BROWSER_TOKEN,
+    FIXTURE_NODE_DESCRIPTION,
     BrowserServer,
     BrowserSnapshotSource,
     RecordingCommands,
@@ -90,7 +91,12 @@ def test_session_input_buttons_each_mint_one_fresh_command(
     page: Page, session_input_server: tuple[BrowserServer, RecordingCommands]
 ) -> None:
     server, recorder = session_input_server
-    open_app(page, server.login_url, page.get_by_label("Session guidance"))
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
+    )
+    open_app(page, server.login_url, node_button)
+    node_button.click()
+    page.get_by_label("Session guidance").wait_for(state="visible")
     page.locator("button.mk-node", has_text="Tracer fixture node").click()
     expect(page.get_by_text("git status", exact=True)).to_be_visible()
 
@@ -120,7 +126,12 @@ def test_session_input_interrupt_without_text(
     page: Page, session_input_server: tuple[BrowserServer, RecordingCommands]
 ) -> None:
     server, recorder = session_input_server
-    open_app(page, server.login_url, page.get_by_label("Session guidance"))
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
+    )
+    open_app(page, server.login_url, node_button)
+    node_button.click()
+    page.get_by_label("Session guidance").wait_for(state="visible")
 
     page.get_by_role("button", name="Interrupt").click()
     page.get_by_role("button", name="Send").click()
@@ -134,11 +145,11 @@ def test_session_input_interrupt_without_text(
 def test_rejected_inactive_session_input_shows_reason(
     page: Page, rejected_session_input_server: BrowserServer
 ) -> None:
-    open_app(
-        page,
-        rejected_session_input_server.login_url,
-        page.get_by_role("button", name="Interrupt", exact=True),
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
     )
+    open_app(page, rejected_session_input_server.login_url, node_button)
+    node_button.click()
 
     page.get_by_role("button", name="Interrupt", exact=True).click()
     page.get_by_role("button", name="Send", exact=True).click()
@@ -148,4 +159,5 @@ def test_rejected_inactive_session_input_shows_reason(
         exact=True,
     )
     expect(rejection).to_be_visible()
-    expect(page.get_by_role("button", name="Dismiss", exact=True)).to_be_visible()
+    toast = page.get_by_role("alert").filter(has_text="Session input was rejected")
+    expect(toast.get_by_role("button", name="Dismiss", exact=True)).to_be_visible()

@@ -24,6 +24,13 @@ export interface WireGraphSnapshot {
   root_ids: number[];
 }
 
+export interface WireActiveRun {
+  run_id: string;
+  node_id: number;
+  description?: string;
+  status?: string;
+}
+
 export interface WireCapability {
   available: boolean;
   reason: string | null;
@@ -59,7 +66,7 @@ export interface WireExecutionSnapshot {
   graph: WireGraphSnapshot | null;
   capabilities: WireCapabilities;
   /** Run totals; the stream carries them, the first `/api/snapshot` may not. */
-  active_runs?: Array<{ run_id: string; node_id: number; description: string; status: string }>;
+  active_runs?: WireActiveRun[];
   completed?: number;
   failed?: number;
   stopped?: number;

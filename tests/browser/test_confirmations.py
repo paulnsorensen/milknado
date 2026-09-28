@@ -11,6 +11,7 @@ from milknado.domains.graph import OwnerCapabilities
 from milknado.web import LaunchToken, WebCommands, create_app
 from tests.browser.conftest import (
     BROWSER_TOKEN,
+    FIXTURE_NODE_DESCRIPTION,
     BrowserServer,
     BrowserSnapshotSource,
     RecordingCommands,
@@ -83,13 +84,17 @@ def test_confirm_records_one_command(
     trigger_label, call_count = case
     confirm_label, _ = CONFIRM_LABELS[trigger_label]
     server, recorder = confirm_server
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
+    )
+    open_app(page, server.login_url, node_button)
+    node_button.click()
     controls = page.get_by_role("region", name="Run controls")
     trigger = (
         page.get_by_role("button", name=trigger_label, exact=True)
         if trigger_label == "Stop scheduling"
         else controls.get_by_role("button", name=trigger_label, exact=True)
     )
-    open_app(page, server.login_url, trigger)
     trigger.click()
     dialog = page.get_by_role("alertdialog")
     assert dialog.get_by_text(CONFIRM_BODIES[trigger_label], exact=True).is_visible()
@@ -107,13 +112,17 @@ def test_dismiss_records_zero_commands(
     trigger_label, call_count = case
     _, dismiss_label = CONFIRM_LABELS[trigger_label]
     server, recorder = confirm_server
+    node_button = page.get_by_role(
+        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
+    )
+    open_app(page, server.login_url, node_button)
+    node_button.click()
     controls = page.get_by_role("region", name="Run controls")
     trigger = (
         page.get_by_role("button", name=trigger_label, exact=True)
         if trigger_label == "Stop scheduling"
         else controls.get_by_role("button", name=trigger_label, exact=True)
     )
-    open_app(page, server.login_url, trigger)
     trigger.click()
     page.get_by_role("alertdialog").get_by_role("button", name=dismiss_label, exact=True).click()
     page.wait_for_timeout(200)

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
-import { resetStore, setSnapshot } from '../../app/store';
+import { resetStore, setSelection, setSnapshot } from '../../app/store';
 import { getDraft, resetDraft, setDraft } from './draft';
 import { SessionInputSection } from './SessionInputSection';
 
@@ -17,7 +17,7 @@ function capabilities(overrides: Record<string, unknown> = {}) {
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
     host_owner: { available: true, reason: null },
-    owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up', 'interrupt'] },
+    owner: { available: true, run_id: 'run-1', node_id: 1, actions: ['steer', 'follow_up', 'interrupt'] },
     ...overrides,
   };
 }
@@ -27,6 +27,7 @@ describe('SessionInputSection', () => {
     resetStore();
     resetDraft();
     vi.mocked(post).mockClear();
+    setSelection(1);
   });
 
   afterEach(cleanup);
@@ -37,6 +38,7 @@ describe('SessionInputSection', () => {
       graph: null,
       capabilities: capabilities({ session_input: { available: false, reason: 'The run has finished.' } }),
     });
+    setSelection(1);
 
     render(<SessionInputSection />);
 
@@ -58,27 +60,37 @@ describe('SessionInputSection', () => {
     expect(screen.getByText('Read-only')).toBeVisible();
     expect(screen.queryByLabelText('Session guidance')).toBeNull();
   });
-
-  it('sends the draft as a steer command and clears it', () => {
+  it('renders nothing without the selected owner run', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setSelection(null);
 
     render(<SessionInputSection />);
 
-    const textarea = screen.getByLabelText('Session guidance') as HTMLTextAreaElement;
-    textarea.focus();
-    Object.defineProperty(textarea, 'value', { writable: true, value: 'Slow down' });
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-
-    screen.getByText('Send').click();
-
-    expect(post).toHaveBeenCalledWith(
-      '/api/runs/run-1/session-input',
-      expect.objectContaining({ action: 'steer' }),
-    );
+    expect(screen.queryByLabelText('Session guidance')).toBeNull();
   });
+
+  it('sends the draft as a steer command and clears it', () => {
+  setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+  setSelection(1);
+
+  render(<SessionInputSection />);
+
+  const textarea = screen.getByLabelText('Session guidance') as HTMLTextAreaElement;
+  textarea.focus();
+  Object.defineProperty(textarea, 'value', { writable: true, value: 'Slow down' });
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+  screen.getByText('Send').click();
+
+  expect(post).toHaveBeenCalledWith(
+    '/api/runs/run-1/session-input',
+    expect.objectContaining({ action: 'steer' }),
+  );
+});
 
   it('keeps message modes selectable with an empty draft and disables Send', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setSelection(1);
 
     render(<SessionInputSection />);
 
@@ -89,6 +101,7 @@ describe('SessionInputSection', () => {
 
   it('sends the selected action from Send', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setSelection(1);
     setDraft('Send this guidance');
 
     render(<SessionInputSection />);
@@ -113,6 +126,7 @@ describe('SessionInputSection', () => {
 
   it('sends the selected interrupt after typing guidance', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setSelection(1);
     setDraft('Send this after the stop');
 
     render(<SessionInputSection />);
@@ -158,7 +172,7 @@ describe('SessionInputSection', () => {
       goal: null,
       graph: null,
       capabilities: capabilities({
-        owner: { available: true, run_id: 'run-1', actions: ['follow_up', 'interrupt'] },
+        owner: { available: true, run_id: 'run-1', node_id: 1, actions: ['follow_up', 'interrupt'] },
       }),
     });
     setDraft('Continue from here');
@@ -179,8 +193,11 @@ describe('SessionInputSection', () => {
     setSnapshot({
       goal: null,
       graph: null,
-      capabilities: capabilities({ owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up'] } }),
+      capabilities: capabilities({
+        owner: { available: true, run_id: 'run-1', node_id: 1, actions: ['steer', 'follow_up'] },
+      }),
     });
+    setSelection(1);
 
     render(<SessionInputSection />);
 

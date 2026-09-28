@@ -267,7 +267,11 @@ def node_detail_server() -> Iterator[BrowserServer]:
     server.stop()
 
 
-LONG_PARENT = "A parent description that must remain fully visible in the breadcrumb"
+LONG_PARENT = (
+    "A parent description that must remain concise in the breadcrumb. "
+    "Additional context stays outside the path item."
+)
+LONG_PARENT_SUMMARY = "A parent description that must remain concise in the breadcrumb."
 
 
 @pytest.fixture
@@ -400,6 +404,21 @@ def test_long_description_shows_expand_control_only_when_clamped(
     expect(page.get_by_role("button", name="Collapse description", exact=True)).to_be_visible()
 
 
+def test_empty_sidecar_has_no_controls_before_selection(
+    page: Page, node_detail_server: BrowserServer
+) -> None:
+    open_app(
+        page,
+        node_detail_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    sidecar = page.get_by_role("complementary", name="Detail")
+    expect(sidecar).to_contain_text("Select a node to inspect its details.")
+    expect(sidecar.locator("button")).to_have_count(0)
+    expect(sidecar.locator("textarea")).to_have_count(0)
+
+
 def test_failed_run_without_worktree_uses_real_no_changes_state(
     page: Page, no_worktree_server: BrowserServer
 ) -> None:
@@ -421,7 +440,7 @@ def test_failed_run_without_worktree_uses_real_no_changes_state(
     assert page_errors == []
 
 
-def test_ancestor_path_caps_at_four_items_without_truncating_parent(
+def test_ancestor_path_caps_at_four_items_with_single_line_ellipsis(
     page: Page, long_path_server: BrowserServer
 ) -> None:
     open_app(
@@ -431,16 +450,25 @@ def test_ancestor_path_caps_at_four_items_without_truncating_parent(
     )
 
     page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
-
     expect(page.locator(".mk-path-gap")).to_have_count(0)
-    expect(page.locator(".mk-path-item").first).to_have_text(LONG_PARENT)
+    path_item = page.get_by_role("button", name=LONG_PARENT_SUMMARY, exact=True)
+    expect(path_item).to_have_text(LONG_PARENT_SUMMARY)
+    expect(path_item).to_have_attribute("aria-label", LONG_PARENT_SUMMARY)
+
     style = cast(
         dict[str, str],
         page.locator(".mk-path-item").first.evaluate(
             """(element) => ({
                 maxWidth: getComputedStyle(element).maxWidth,
+                overflow: getComputedStyle(element).overflow,
+                textOverflow: getComputedStyle(element).textOverflow,
                 whiteSpace: getComputedStyle(element).whiteSpace
             })"""
         ),
     )
-    assert style == {"maxWidth": "none", "whiteSpace": "normal"}
+    assert style == {
+        "maxWidth": "160px",
+        "overflow": "hidden",
+        "textOverflow": "ellipsis",
+        "whiteSpace": "nowrap",
+    }

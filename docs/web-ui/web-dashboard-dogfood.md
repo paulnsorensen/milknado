@@ -24,6 +24,16 @@ Narrow owner-mode captures use the same 390x844 viewport and fixture:
 
 The wide long-description captures use the same viewport and theme as the live captures. They isolate the detail response from the graph-card title, so the three-line sidecar clamp and control visibility are directly reviewable.
 
+## Sidecar header and empty-state evidence (2026-09-28)
+
+The fixture pairs use the same graph, light theme, and 1440x900 viewport. Baseline captures use the `HEAD` bundle; after captures use the rebuilt bundle. The fixture has no graph-edit backend, so its visible "Graph edits are unavailable." notice is unrelated.
+
+- Empty sidecar: [before](sidecar-before-empty.png) → [after](sidecar-after-empty.png)
+- Deep-node path: [before](sidecar-before-long-path.png) → [after](sidecar-after-long-path.png)
+- Pending permission on a non-owner selection: [before](permission-before-non-owner.png) → [after](permission-after-non-owner.png)
+
+The empty-state interaction loads the dashboard before selecting a node. The path interaction selects `Child task` beneath three ancestors. The permission interaction selects node 2 while the pending request belongs to owner node 1. The after states show the caption, no sidecar buttons or textarea before selection, a four-item path, single-line path ellipsis, and no Approve/Deny controls for a non-owner selection. Full ancestor names remain available in `title`; the accessible name uses the concise summary.
+
 ## Defect table
 
 | Defect | Found interaction and evidence | Result and regression check | Deferred |
@@ -38,7 +48,10 @@ The wide long-description captures use the same viewport and theme as the live c
 | 8. Long sidecar description | Select node 89 after the MCP edit. `dogfood-round2-long-description.png` shows the collapsed three-line heading, expand control, status, run, and tabs before the fold. | The sidecar measures real unclamped height and expands only when needed. `tests/browser/test_node_detail.py::test_long_description_shows_expand_control_only_when_clamped`, `web/src/features/node-sidecar/NodeSidecar.test.tsx`. | None |
 | 9. Active Ended row | Select `Live worker task` and inspect its run details. `dogfood-round2-active-run.png` shows `Completed: none`. | Active runs show `Completed: none`; the UI has no Ended row. `tests/browser/test_node_detail.py`, `tests/browser/test_session_input.py`. | None |
 | 10. Failed changes route | Select `Failed worker 0`, open Changes, and inspect the sidecar. `dogfood-round2-failed-no-changes.png` shows `worker session gone` above the session input and `No changes`. | A no-worktree run returns the same empty state as a 404, without a page error. `tests/browser/test_node_detail.py::test_failed_run_without_worktree_uses_real_no_changes_state`. | None |
-| 11. Ancestor path | Select a deep node and inspect the breadcrumb. `dogfood-round2-failed-no-changes.png` shows the full short parent name; the long-path fixture covers four items. | AncestorPath caps at four items and keeps each item untruncated. `tests/browser/test_node_detail.py::test_ancestor_path_caps_at_four_items_without_truncating_parent`. | None |
+| 11. Ancestor path | Select a deep node and inspect the breadcrumb. `dogfood-round2-failed-no-changes.png` shows the full short parent name; the long-path fixture covers four items. | AncestorPath caps at four items, summarizes long titles, and applies single-line ellipsis. `tests/browser/test_node_detail.py::test_ancestor_path_caps_at_four_items_with_single_line_ellipsis`; `web/src/features/node-sidecar/NodeSidecar.test.tsx`. | None |
+| 12. Permission action ownership | With pending request `perm-1` owned by node 1, select node 2. Before: `permission-before-non-owner.png` shows Approve/Deny under node 2. | PermissionActions requires `canActOnSelectedRun`, so node 2 has no permission block. `web/src/features/session-input/PermissionActions.test.tsx`. | Graph task #116 tracks the pending permission indicator. |
+
+| 13. Run selection tab panels | Press `N` to select an active run and inspect the sidecar tabs. | `selectedNodeId` gates tab bodies, Changes, and graph actions for run selections. `web/src/features/node-sidecar/NodeSidecar.test.tsx`, `web/src/features/changes/ChangesSection.test.tsx`, `web/src/features/graph-edits/NodeActions.test.tsx`. | None |
 
 ## Capture protocol
 
@@ -57,4 +70,4 @@ The wide long-description captures use the same viewport and theme as the live c
 - Stale build: `tests/browser/test_stale_build.py` verifies that committed static files match `web/`.
 - Live MCP refresh: the capture command reports the edited goal title and the live graph renders it without navigation.
 
-Deferred: none.
+Deferred: pending permission indicator (graph task #116).

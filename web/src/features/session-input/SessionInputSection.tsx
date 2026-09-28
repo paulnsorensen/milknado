@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { canActOnSelectedRun, getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { getDraft, registerInputEl, setDraft, subscribeDraft } from './draft';
 import { sendSessionCommand } from './sessionCommand';
@@ -23,12 +23,12 @@ export function SessionInputSection(): ReactElement | null {
   const activeAction = actions.includes(selectedAction) ? selectedAction : firstAllowedAction;
 
   function sendMessage(action: MessageAction): void {
-  const text = draft;
-  void sendSessionCommand(action, { text }).then((sent) => {
-    if (sent && getDraft() === text) {
-      setDraft('');
-    }
-  });
+const text = draft;
+void sendSessionCommand(action, { text }).then((sent) => {
+  if (sent && getDraft() === text) {
+    setDraft('');
+  }
+});
 }
 
   function sendSelectedAction(): void {
@@ -48,6 +48,9 @@ export function SessionInputSection(): ReactElement | null {
   }
   if (!store.capabilities?.host_owner.available) {
     return <p className="mk-text-caption mk-faint">Read-only</p>;
+  }
+  if (!canActOnSelectedRun(store)) {
+    return null;
   }
 
   if (!sessionInput?.available) {

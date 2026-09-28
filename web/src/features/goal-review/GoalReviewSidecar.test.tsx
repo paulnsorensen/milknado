@@ -2,6 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
 import { resetStore, setSnapshot } from '../../app/store';
+import { NodeSidecar } from '../node-sidecar/NodeSidecar';
 import { GoalReviewSidecar } from './GoalReviewSidecar';
 import { loadReviews, resetReviews } from './reviewsState';
 import { resetReviewSelection, selectReview } from './selection';
@@ -54,6 +55,25 @@ describe('GoalReviewSidecar', () => {
   it('renders nothing without a selected review', () => {
     const { container } = render(<GoalReviewSidecar />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it('does not render the node empty caption while a review is open', () => {
+    setSnapshot({
+      goal: null,
+      graph: { nodes: [], edges: [], root_ids: [] },
+      capabilities: capabilities(),
+    });
+    selectReview(1);
+
+    render(
+      <>
+        <NodeSidecar />
+        <GoalReviewSidecar />
+      </>,
+    );
+
+    expect(screen.queryByText('Select a node to inspect its details.')).toBeNull();
+    expect(screen.getByText('evidence text')).toBeTruthy();
   });
 
   it('shows evidence, proposed change and held nodes for the selected review', () => {
