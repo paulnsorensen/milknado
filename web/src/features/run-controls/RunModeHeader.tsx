@@ -18,7 +18,7 @@ export function RunModeHeader(): ReactElement | null {
     return null;
   }
 
-  const isOwner = capabilities.owner.available;
+  const isOwner = capabilities.host_owner.available;
   const stop = capabilities.stop_scheduling;
   const activeRuns = store.snapshot?.active_runs;
 

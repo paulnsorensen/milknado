@@ -68,6 +68,7 @@ def steering_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
         cancel=commands.cancel,
         force_stop=commands.force_stop,
         stop_scheduling=commands.stop_scheduling,
+        host_owner=True,
         owner_capabilities=OwnerCapabilities(
             run_id=RUN_ID,
             node_id=1,

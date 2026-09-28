@@ -9,7 +9,9 @@ boards (390x844).
 - **Main** — run, sel 8, tab Session, dialog none: base run view.
 - **Changes** — run, sel 8, tab Changes: 560px sidecar, file list + diff.
 - **Details** — run, sel 8, tab Details: 560px sidecar, Brief + kv groups, paginated.
+- **Header** — run mode shows `StatusBadge running` "Run active" plus "Stop scheduling"; watch mode shows `StatusBadge pending` "Read-only" only.
 - **Watch** — watch, sel 8: "Read-only" badge only, no Stop scheduling, ETA/Attempt/guidance = `unavailable`, no session input.
+- [x] Watch — verified with one live owner row: host watch mode shows "Read-only" only, no Stop scheduling, unavailable ETA/Attempt/guidance, and no session input.
 - **Permission** — run, sel 9: at-risk "Permission requested" block, Approve/Deny.
 - **ForceStop** — dialog "force": "Force stop the run?" confirm.
 - **StopScheduling** — dialog "stop": "Stop scheduling and stop 2 active runs?" confirm.

@@ -16,6 +16,7 @@ function capabilities(overrides: Record<string, unknown> = {}) {
     graph_edits: { available: true, reason: null },
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
+    host_owner: { available: false, reason: null },
     owner: { available: false },
     ...overrides,
   };
@@ -45,7 +46,10 @@ describe('RunModeHeader', () => {
     setSnapshot({
       goal: null,
       graph: null,
-      capabilities: capabilities({ owner: { available: true, run_id: 'run-1' } }),
+      capabilities: capabilities({
+        host_owner: { available: true, reason: null },
+        owner: { available: true, run_id: 'run-1' },
+      }),
     });
     render(<RunModeHeader />);
 
@@ -63,7 +67,10 @@ describe('RunModeHeader', () => {
         { run_id: 'run-1', node_id: 1, description: 'First', status: 'running' },
         { run_id: 'run-2', node_id: 2, description: 'Second', status: 'running' },
       ],
-      capabilities: capabilities({ owner: { available: true, run_id: 'run-1' } }),
+      capabilities: capabilities({
+        host_owner: { available: true, reason: null },
+        owner: { available: true, run_id: 'run-1' },
+      }),
     });
     render(<RunModeHeader />);
 

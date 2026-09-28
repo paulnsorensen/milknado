@@ -50,6 +50,7 @@ export interface WireCapabilities {
   graph_edits: WireCapability;
   review_decision: WireCapability;
   git: WireCapability;
+  host_owner: WireCapability;
   owner: WireOwnerCapabilities;
 }
 

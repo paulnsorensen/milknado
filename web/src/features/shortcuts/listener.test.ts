@@ -15,6 +15,7 @@ function capabilities(overrides: Partial<WireCapabilities> = {}): WireCapabiliti
     graph_edits: unavailable,
     review_decision: unavailable,
     git: unavailable,
+    host_owner: unavailable,
     owner: { available: false },
     ...overrides,
   };

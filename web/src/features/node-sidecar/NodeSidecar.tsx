@@ -131,7 +131,7 @@ export function NodeSidecar({ onClose }: NodeSidecarProps = {}): ReactElement | 
             ))}
           </dl>
         )}
-        {store.capabilities !== null && !store.capabilities.owner.available && (
+        {store.capabilities !== null && !store.capabilities.host_owner.available && (
           <dl>
             <div className="mk-kv">
               <dt>ETA</dt>

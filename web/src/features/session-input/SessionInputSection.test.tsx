@@ -16,6 +16,7 @@ function capabilities(overrides: Record<string, unknown> = {}) {
     graph_edits: { available: true, reason: null },
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
+    host_owner: { available: true, reason: null },
     owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up', 'interrupt'] },
     ...overrides,
   };
@@ -47,7 +48,10 @@ describe('SessionInputSection', () => {
     setSnapshot({
       goal: null,
       graph: null,
-      capabilities: capabilities({ owner: { available: false } }),
+      capabilities: capabilities({
+        host_owner: { available: false, reason: null },
+        owner: { available: true, run_id: 'run-1', actions: ['steer', 'follow_up', 'interrupt'] },
+      }),
     });
 
     render(<SessionInputSection />);

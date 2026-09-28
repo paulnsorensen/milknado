@@ -17,6 +17,7 @@ function snapshotWithOwner(overrides: Record<string, unknown> = {}) {
       graph_edits: { available: true, reason: null },
       review_decision: { available: true, reason: null },
       git: { available: true, reason: null },
+      host_owner: { available: true, reason: null },
       owner: { available: true, run_id: 'run-1', owner_incarnation: 3, invocation_id: 'inv-1', permission_ids: [], ...overrides },
     },
   };

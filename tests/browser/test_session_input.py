@@ -50,7 +50,11 @@ def rejected_session_input_server() -> Iterator[BrowserServer]:
 
     app = create_app(
         source,
-        WebCommands(session_input=reject, owner_capabilities=_owner_capabilities()),
+        WebCommands(
+            host_owner=True,
+            session_input=reject,
+            owner_capabilities=_owner_capabilities(),
+        ),
         login,
     )
     server = BrowserServer(app=app, login=login)
@@ -65,6 +69,7 @@ def session_input_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
     source = BrowserSnapshotSource()
     commands, recorder = owner_web_commands()
     commands = WebCommands(
+        host_owner=True,
         session_input=commands.session_input,
         owner_capabilities=_owner_capabilities(),
     )

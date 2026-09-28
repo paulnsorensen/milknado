@@ -29,7 +29,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
   const totals = formatRunTotals(state.snapshot);
   const selectedNode = nodes.find((node) => node.id === state.selection) ?? null;
-  const owner = state.capabilities?.owner.available ?? false;
+  const owner = state.capabilities?.host_owner.available ?? false;
 
   function jumpToNode(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();

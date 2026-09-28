@@ -6,17 +6,23 @@ The live smoke used `milknado web --project-root /tmp/milknado-web-round2 --port
 
 ## Reviewer-accessible captures
 
-All captures are committed under `docs/web-ui/` and use the same 1440x900 viewport.
+Wide captures use the same 1440x900 viewport and theme.
 - [Before live dashboard](dogfood-before-live.png)
 - [Before selected sidecar](dogfood-before-selected.png)
 - [After live dashboard and MCP refresh](dogfood-round2-live.png)
 - [After root switch](dogfood-round2-root-switcher.png)
 - [After active-run selection](dogfood-round2-active-run.png)
+- [Owner header before fix](owner-run-mode-before.png)
+- [Owner header after fix](owner-run-mode-after.png)
 - [After failed run: error and no changes](dogfood-round2-failed-no-changes.png)
 - [After long description, collapsed](dogfood-round2-long-description.png)
 - [After long description, expanded](dogfood-round2-long-description-expanded.png)
 
-The fixture long-description captures use the same viewport and theme as the live captures. They isolate the detail response from the graph-card title, so the three-line sidecar clamp and control visibility are directly reviewable.
+Narrow owner-mode captures use the same 390x844 viewport and fixture:
+- [Owner header before fix, narrow](owner-run-mode-narrow-before.png)
+- [Owner header after fix, narrow](owner-run-mode-narrow-after.png)
+
+The wide long-description captures use the same viewport and theme as the live captures. They isolate the detail response from the graph-card title, so the three-line sidecar clamp and control visibility are directly reviewable.
 
 ## Defect table
 
@@ -26,7 +32,7 @@ The fixture long-description captures use the same viewport and theme as the liv
 | 2. REVIEWS row format | Open a goal with a pending review and inspect the REVIEWS rail. `dogfood-round2-live.png` shows the row and its decision state. | Rows render `▣ Goal review N`, `node X`, and the decision state. `tests/browser/test_goal_review.py`. | None |
 | 3. Footer totals | Open the live dashboard and read the rail footer. `dogfood-round2-live.png` shows `1 active · 0 completed · 4 failed · 0 stopped · 5 available`. | Watch and run snapshots read durable totals, while omitted wire totals remain unknown. `tests/test_graph_observer_snapshots.py::test_watch_totals_include_runs_outside_the_bounded_run_page`, `tests/test_execution_controller.py::test_controller_snapshot_uses_durable_run_totals`, `web/src/features/live-state/RunTotals.test.tsx`. | None |
 | 4. Running-goal title | Start with roots 43 and 87, then inspect the header. `dogfood-round2-root-switcher.png` shows the root switch interaction; `dogfood-round2-live.png` shows the active goal. | Header title follows the running goal, with a switcher when multiple roots exist. `web/src/app/hosts/GoalTitle.test.tsx`. | None |
-| 5. Run/watch controls | Open watch mode and inspect the header badge and controls. `dogfood-round2-live.png` shows `Read-only` and no Stop scheduling control. | Run mode and watch mode use mutually exclusive control branches. `tests/browser/test_observer_mode.py::test_observer_header_omits_stop_scheduling`, `tests/browser/test_session_input.py`. | None |
+| 5. Run/watch controls | Start `milknado run --web` with two active runs, then inspect the header, sidecar, and Session tab. `owner-run-mode-before.png` shows the incorrect Read-only header; the narrow pair uses the same fixture at 390x844. | `host_owner` drives run/watch presentation while `owner.run_id` remains the command-routing fact. Run mode and watch mode use mutually exclusive control branches. `tests/browser/test_observer_mode.py`, `tests/web/test_capabilities.py`. | None |
 | 6. Minimap placeholder | Open the canvas and inspect its top-right corner. `dogfood-round2-live.png` has no empty grey minimap grid. | The placeholder is not mounted. `tests/browser/test_graph_view.py::test_wide_canvas_does_not_mount_placeholder_minimap`. | None |
 | 7. Graph title clamp | Open the live graph and inspect the cards. `dogfood-round2-live.png` shows balanced two-line titles without node IDs. | Compact cards keep vendor spacing and use the two-line title clamp. `tests/browser/test_graph_view.py::test_compact_graph_cards_do_not_intersect`. | None |
 | 8. Long sidecar description | Select node 89 after the MCP edit. `dogfood-round2-long-description.png` shows the collapsed three-line heading, expand control, status, run, and tabs before the fold. | The sidecar measures real unclamped height and expands only when needed. `tests/browser/test_node_detail.py::test_long_description_shows_expand_control_only_when_clamped`, `web/src/features/node-sidecar/NodeSidecar.test.tsx`. | None |

@@ -72,6 +72,7 @@ describe('NodeSidecar', () => {
         graph_edits: { available: false, reason: null },
         review_decision: { available: false, reason: null },
         git: { available: false, reason: null },
+        host_owner: { available: false, reason: null },
         owner: { available: false },
       },
     });

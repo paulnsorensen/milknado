@@ -35,6 +35,7 @@ def unavailable_cancel_server() -> Iterator[BrowserServer]:
     login = LaunchToken(BROWSER_TOKEN)
     source = BrowserSnapshotSource()
     commands = WebCommands(
+        host_owner=True,
         owner_capabilities=OwnerCapabilities(
             run_id=RUN_ID,
             node_id=1,
@@ -68,6 +69,7 @@ def inactive_session_server() -> Iterator[BrowserServer]:
         snapshot=replace(build_fixture_snapshot(), terminal_runs=(terminal,))
     )
     commands = WebCommands(
+        host_owner=True,
         session_input=lambda run_id, request: False,
         owner_capabilities=OwnerCapabilities(
             run_id=RUN_ID,

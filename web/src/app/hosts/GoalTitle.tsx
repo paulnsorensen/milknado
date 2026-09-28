@@ -22,7 +22,7 @@ function rootForNode(nodes: WireNode[], nodeId: number): WireNode | null {
 /** The mode kicker and the active root goal title, with a visible root switcher when needed. */
 export function GoalTitle(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
-  const owner = store.capabilities?.owner.available ?? false;
+  const owner = store.capabilities?.host_owner.available ?? false;
   const snapshot = store.snapshot as Partial<StreamSnapshot> | null;
   const [selectedRootId, setSelectedRootId] = useState<number | null>(null);
   const graph = snapshot?.graph;

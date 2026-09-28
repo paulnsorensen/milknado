@@ -13,13 +13,14 @@ const CAPABILITIES = {
   graph_edits: { available: false, reason: null },
   review_decision: { available: false, reason: null },
   git: { available: false, reason: null },
-  owner: { available: false },
+  host_owner: { available: false, reason: null },
+  owner: { available: false, reason: null },
 };
 
-function setGraphSnapshot(): void {
+function setGraphSnapshot(capabilities = CAPABILITIES): void {
   const snapshot = {
     goal: 'Parked roadmap',
-    capabilities: CAPABILITIES,
+    capabilities,
     graph: {
       nodes: [
         { id: 43, description: 'Parked roadmap', status: 'pending', parent_id: null, kind: 'roadmap', flavor: null },
@@ -45,6 +46,18 @@ describe('GoalTitle', () => {
 
     expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Running goal');
     expect(screen.getByRole('combobox', { name: 'Root goal' })).toBeTruthy();
+  });
+
+  it('uses the host owner role when the per-run owner is unavailable', () => {
+    setGraphSnapshot({
+      ...CAPABILITIES,
+      host_owner: { available: true, reason: null },
+      owner: { available: false, reason: null },
+    });
+    render(<GoalTitle />);
+
+    expect(screen.getByText('Run')).toBeInTheDocument();
+    expect(screen.queryByText('Watch')).toBeNull();
   });
 
   it('switches between visible roots without changing the active run', () => {

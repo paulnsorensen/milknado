@@ -42,6 +42,7 @@ export const DEFAULT_CAPABILITIES: WireCapabilities = {
   graph_edits: EMPTY_CAPABILITY,
   review_decision: EMPTY_CAPABILITY,
   git: EMPTY_CAPABILITY,
+  host_owner: EMPTY_CAPABILITY,
   owner: { available: false },
 };
 

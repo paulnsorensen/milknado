@@ -46,7 +46,7 @@ export function SessionInputSection(): ReactElement | null {
   if (store.capabilities === null) {
     return null;
   }
-  if (!owner?.available) {
+  if (!store.capabilities?.host_owner.available) {
     return <p className="mk-text-caption mk-faint">Read-only</p>;
   }
 
