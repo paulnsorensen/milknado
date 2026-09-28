@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable
 from typing import cast
 
+import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._run_persistence as _run_persistence
@@ -12,6 +14,17 @@ from milknado.domains.graph._analytics_facade import synchronized
 from milknado.domains.graph._command_facade import _CommandFacade
 from milknado.domains.graph._facade_base import SubFacade as _SubFacade
 from milknado.domains.graph._sqlite_rows import as_tuple, fetchone
+from milknado.domains.graph.goal_review import GoalReviewRecord
+
+
+class _GoalReviewFacade:
+    @property
+    def _conn(self) -> sqlite3.Connection:  # pragma: no cover
+        raise NotImplementedError
+
+    @synchronized
+    def pending_goal_reviews(self) -> tuple[GoalReviewRecord, ...]:
+        return _goal_review.pending_goal_reviews(self._conn)
 
 
 class _RunFacade(_SubFacade):
@@ -139,4 +152,11 @@ class _GithubFacade(_SubFacade):
         _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
 
-__all__ = ["_CommandFacade", "_FileFacade", "_GithubFacade", "_RunFacade", "_SessionFacade"]
+__all__ = [
+    "_CommandFacade",
+    "_FileFacade",
+    "_GithubFacade",
+    "_GoalReviewFacade",
+    "_RunFacade",
+    "_SessionFacade",
+]

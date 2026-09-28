@@ -312,6 +312,7 @@ class ExecutionController:
             available=state.available,
             event_lines=state.event_lines,
             graph=graph.get_graph_snapshot() if graph is not None else None,
+            pending_goal_reviews=graph.pending_goal_reviews() if graph is not None else (),
         )
 
     def queue_guidance(self, run_id: str, text: str) -> bool:

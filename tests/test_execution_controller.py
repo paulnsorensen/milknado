@@ -21,14 +21,28 @@ from milknado.app.run import (
     RunActionAvailability,
 )
 from milknado.app.run_source import NodeSnapshotRequest
-from milknado.domains.common import MilknadoConfig, RunResult, SessionContext, SessionEvent
+from milknado.app.watch import WatchSnapshotSource
+from milknado.domains.common import (
+    MilknadoConfig,
+    NodeKind,
+    NodeSpec,
+    RunResult,
+    SessionContext,
+    SessionEvent,
+)
 from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
     ActiveRunState,
     RunActionState,
     RunLoopState,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    MikadoGraph,
+)
 from milknado.loop import RunStatus
 
 
@@ -153,6 +167,19 @@ def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
     )
 
 
+def _request_goal_review(graph: MikadoGraph, goal_id: int, evidence: str) -> GoalReviewRecord:
+    return graph.request_goal_review(
+        GoalReviewRequest(
+            goal_id=goal_id,
+            goal_revision="sha256:goal",
+            evidence=evidence,
+            proposed_change="Review proposed change",
+            reviewer="worker",
+            assessed_at="2026-09-13T12:00:00+00:00",
+        )
+    )
+
+
 def test_controller_delegates_run_and_control_ports() -> None:
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
@@ -182,6 +209,49 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.cancelled == ["run-1"]
     assert loop.force_stops == [("run-1", 2.5)]
     assert loop.stop_scheduling_calls == 1
+
+
+def test_project_and_watch_snapshots_share_pending_goal_review_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    pending_goal = graph.add_node("Pause execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    archived_goal = graph.add_node("Archived execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    graph.mark_running(archived_goal.id)
+    graph.mark_done(archived_goal.id)
+    archived_review = _request_goal_review(graph, archived_goal.id, "Archived evidence")
+    _ = graph.archive_subtree(archived_goal.id)
+
+    accepted_goal = graph.add_node("Accepted execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    accepted_review = _request_goal_review(graph, accepted_goal.id, "Accepted evidence")
+    rejected_goal = graph.add_node("Rejected execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    rejected_review = _request_goal_review(graph, rejected_goal.id, "Rejected evidence")
+    graph.register_controller_master()
+    _ = graph.decide_goal_review(
+        GoalReviewDecisionRequest(accepted_review.review_id, GoalReviewDecision.ACCEPTED),
+        decided_by="controller",
+    )
+    _ = graph.decide_goal_review(
+        GoalReviewDecisionRequest(rejected_review.review_id, GoalReviewDecision.REJECTED),
+        decided_by="controller",
+    )
+    pending_review = _request_goal_review(graph, pending_goal.id, "Pending evidence")
+
+    try:
+        run_snapshot = ExecutionController._project_snapshot(  # pyright: ignore[reportPrivateUsage]
+            loop_state(), graph
+        )
+    finally:
+        graph.close()
+
+    source = WatchSnapshotSource(tmp_path, db_path)
+    try:
+        watch_snapshot = source.snapshot()
+    finally:
+        source.close()
+
+    assert archived_review not in run_snapshot.pending_goal_reviews
+    assert run_snapshot.pending_goal_reviews == watch_snapshot.pending_goal_reviews
+    assert run_snapshot.pending_goal_reviews == (pending_review,)
 
 
 def test_controller_refuses_protected_branch_before_run() -> None:

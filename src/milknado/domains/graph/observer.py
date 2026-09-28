@@ -10,9 +10,11 @@ from typing import Literal, cast
 import msgspec
 
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
+import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph.goal_review import GoalReviewRecord
 from milknado.domains.graph.snapshot import (
     connect_readonly,
     read_graph_snapshot_connection,
@@ -54,6 +56,7 @@ class ObserverSnapshot:
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
     graph_revision: int | None = None
+    pending_goal_reviews: tuple[GoalReviewRecord, ...] = ()
 
 
 def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
@@ -196,6 +199,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
             graph=graph,
             node=node,
             graph_revision=revision,
+            pending_goal_reviews=_goal_review.pending_goal_reviews(conn),
         )
     finally:
         conn.rollback()

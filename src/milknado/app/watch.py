@@ -107,6 +107,7 @@ class WatchSnapshotSource:
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
             graph=observed.graph,
             node=observed.node,
+            pending_goal_reviews=observed.pending_goal_reviews,
         )
 
     def node_snapshot(  # noqa: V105 - shared source contract consumed by the watch view

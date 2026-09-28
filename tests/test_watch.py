@@ -271,6 +271,29 @@ def test_observer_available_matches_execution_admission(
     graph.close()
 
 
+def test_watch_snapshot_includes_durable_pending_goal_review(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    goal = graph.add_node("Pause review", spec=NodeSpec(kind=NodeKind.GOAL))
+    review = graph.request_goal_review(
+        GoalReviewRequest(
+            goal_id=goal.id,
+            goal_revision="sha256:goal",
+            evidence="Review evidence",
+            proposed_change="Review proposed change",
+            reviewer="worker",
+            assessed_at="2026-09-13T12:00:00+00:00",
+        )
+    )
+    graph.close()
+
+    source = WatchSnapshotSource(tmp_path, db_path)
+    try:
+        assert source.snapshot().pending_goal_reviews == (review,)
+    finally:
+        source.close()
+
+
 def test_watch_source_assembles_requested_detail_with_graph(tmp_path: Path) -> None:
     db_path = tmp_path / "milknado.db"
     writer = MikadoGraph(db_path)

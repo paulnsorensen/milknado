@@ -68,12 +68,23 @@ def status_style(status: ExecutionRunStatus) -> str:
     return _STATUS_STYLES[status]
 
 
+def goal_review_prompt(snapshot: ExecutionSnapshot) -> str | None:
+    if not snapshot.pending_goal_reviews:
+        return None
+    review = snapshot.pending_goal_reviews[0]
+    remaining = len(snapshot.pending_goal_reviews) - 1
+    suffix = f" (+{remaining} more)" if remaining else ""
+    return f"Review pending: goal {review.goal_id} · review {review.review_id}{suffix}"
+
+
 def subtitle_text(snapshot: ExecutionSnapshot) -> str:
-    return (
+    totals = (
         f"{len(snapshot.active_runs)} active · {snapshot.completed} completed · "
         f"{snapshot.failed} failed · {snapshot.stopped} stopped · "
         f"{snapshot.available} available"
     )
+    prompt = goal_review_prompt(snapshot)
+    return f"{totals} · {prompt}" if prompt else totals
 
 
 def session_view(run: RunSnapshot | None) -> SessionView:
