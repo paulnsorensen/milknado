@@ -28,22 +28,22 @@ boards (390x844).
 
 Spec: `nav` width `var(--rail-width)`=216px. `rail-btn` (full-width, glyph+count): "Dispatch ready", "Add node", "Harvest done". `Milknado.AgentRoster`. Reviews: kicker+count, `rail-row` "▣ Goal review 3" / "node 1", else "No pending reviews". Project: `rail-row` Graph(23, selected)/Outline/Roadmap(0.3.0). Footer: `StatusStrip short` + `{{totals}}` caption + "goal run 7c1e · 2h 04m". `.rail-row` = grid `1fr auto`, height 32px, 13px/500.
 
-- [ ] AGENTS/REVIEWS panels overprint — live renders unclamped free-text description instead of `AgentRow`'s fixed `sub`/`figure` line.
+- [x] AGENTS/REVIEWS panels overprint — live renders unclamped free-text description instead of `AgentRow`'s fixed `sub`/`figure` line. — **2026-09-28:** rail rows clamp to one line with the node id on a second line (live capture, node 96 running).
 - [ ] Review rows show only evidence text + "Open" link, not the `rail-row` "▣ Goal review N" / "node X" layout.
-- [ ] Footer "0 / 51" ignores 4 failed — spec totals string is `"2 active · 9 completed · 1 failed · 0 stopped · {ready} available"` (all 5 figures).
+- [x] Footer "0 / 51" ignores 4 failed — spec totals string is `"2 active · 9 completed · 1 failed · 0 stopped · {ready} available"` (all 5 figures). — **2026-09-28:** live footer reads `1 active · 57 completed · 43 failed · 0 stopped · 16 available` (node 115).
 
 ## Header
 
 Spec: kicker `{{modeKicker}}` = `"(Run|Watch) · feat/run-steering"`; `h1.t-display` = running goal's title (canvas: node 1's title, single-line ellipsis, 32px/38px serif). Run mode: `StatusBadge running` "Run active" + "Stop scheduling". Watch mode (mutually exclusive): `StatusBadge pending` "Read-only", no Stop scheduling. "Keys" button always present.
 
 - [ ] Header title is the first root, not the running goal — spec drives `h1` from the running/selected node.
-- [ ] "Read-only" badge shown together with "Stop scheduling" in owner run mode — spec branches are mutually exclusive.
+- [x] "Read-only" badge shown together with "Stop scheduling" in owner run mode — spec branches are mutually exclusive. — **2026-09-28:** branches are exclusive; watch mode shows only `Read-only` (node 99).
 
 ## Graph
 
 Spec: `GraphToolbar` (filter/hideDone/focus/lod cards-pills-dots/jump/collapse-expand/zoom/fit) over `MikadoGraph` (levelGap 96). Card `.mk-node` width `var(--node-width)`=208px; `.mk-node-title` = `font-weight:500; -webkit-line-clamp:2; box-orient:vertical; text-wrap:balance` (2-line clamp, not 1-line ellipsis); compact variant 148-160px one-line. `GraphNodeProps` has no id field — canvas never shows a node id on the card. `Milknado.Minimap` exists in the design system (`nodes`/`selected`/`viewport`, `.mk-minimap-block` filled, `.mk-minimap-viewport` outlined) but **no wide artboard mounts it** (grep of all 13 files: zero `Minimap` uses).
 
-- [ ] Card titles truncate ~18 chars single-line — spec is a 2-line balanced clamp, not 1-line ellipsis.
+- [x] Card titles truncate ~18 chars single-line — spec is a 2-line balanced clamp, not 1-line ellipsis. — **2026-09-28:** cards clamp to two balanced lines (node 103 capture).
 - [ ] Card titles show no node id — not a canvas gap; `GraphNodeProps`/`.mk-node` never render an id on the card in this design.
 - [ ] Minimap is an empty grey grid — canvas mounts no `Minimap` component on this screen at all; either remove it or build it against the real component (not currently either).
 
@@ -52,9 +52,9 @@ Spec: `GraphToolbar` (filter/hideDone/focus/lod cards-pills-dots/jump/collapse-e
 Spec: `aside` `side-360`(360px)/`side-560`(560px, Changes tab or review). Header: `AncestorPath`(max 4) + close button. `h2.t-title` (22px/28px serif) = full `{{n.title}}`, no clamp specified. Badge row: `StatusBadge`, agent/flavor chips, `"node {{id}}"`. Run `kv`: Node/Run/Status/Elapsed/ETA/Attempt/guidance (watch→`unavailable`). `canAct`→ Cancel run/Force stop. Permission block: at-risk bg, `perm_41` id, command line, Approve/Deny. Session tab: `Console` (`con-tall` 340px / `con-short` 236px when perm/error shown), error alert row (`role=alert`, `errText`), `mk-seg` Steer/Follow up/Interrupt + input + "Send to agent"; watch → read-only caption; inactive run → "no longer accepts session input." Changes tab: `mk-console-tab` tabs in `.con-well`(520px), file grid `St/Path/+/−`, diff. Details tab: Brief + Identity/Execution/Paths/Time `kv` groups, `"Detail page {{page}} of 2"`.
 
 - [ ] Review rows show only evidence text + "Open" link — should match rail-row / kicker+data layout (see Rail).
-- [ ] Sidecar description in unclamped 22px serif pushes tabs below fold — spec's `h2.t-title` has no line-clamp (fixture titles are short); adding a clamp is new scope, not a spec violation.
+- [x] Sidecar description in unclamped 22px serif pushes tabs below fold — spec's `h2.t-title` has no line-clamp (fixture titles are short); adding a clamp is new scope, not a spec violation. — **2026-09-28:** title clamps to three lines with an `Expand description` control (node 100).
 - [ ] "Ended: running" — spec has no such literal row; `completed_at` stays `"none"` while active, with no separate "Ended" field.
-- [ ] Failed node shows no error text — spec's `hasErr`/`errText` alert (e.g. `"Error: the gate failed. 2 tests failed in tests/graph/test_reviews.py."`) must render above the input area when `run.error` is set.
+- [x] Failed node shows no error text — spec's `hasErr`/`errText` alert (e.g. `"Error: the gate failed. 2 tests failed in tests/graph/test_reviews.py."`) must render above the input area when `run.error` is set. — **2026-09-28:** failed node 102 renders the `worker session gone` alert above the actions (node 96).
 - [ ] `/api/runs/<id>/changes` 404 uncaught — **not specified**; canvas is a static mock with no real network calls (only empty state is "No changes").
 - [ ] Breadcrumb parent truncated — `AncestorPath` takes `max` (default 4); no per-item truncation CSS found (`.mk-ancestor*`/`.mk-crumb*` absent from `bundle.css`) — **not specified** beyond the 4-item cap.
 
@@ -88,3 +88,15 @@ Per `.cheese/web-canvas-parity-findings.md` (decision `d-ec38938f369d`): no back
 - "Harvest done" rail button.
 - Coordinator message input ("Message the coordinator"; Events dock/toggle itself is real).
 - Project rail rows "Outline" and "Roadmap" (only "Graph" is wired).
+
+## Pass 3 live comparison (2026-09-28, viewer mode, 1440x900 and 390x844)
+
+Captured through a temporary `milknado web --port 8765` viewer against the real goal-87 graph; the
+light capture is uploaded to the design project as `docs/web-ui/build-2026-09-28-main-light.png`.
+
+- [x] Help dialog matches `07-help.png` (three columns, same key list, Close button).
+- [x] Narrow list matches `08-narrow-list.png` (tree rows, Jump to node, `Open node` footer).
+- [x] Narrow detail opens from the list footer (`09-narrow-detail.png`).
+- [ ] Sidecar RUN kv repeats every historical run (four blocks on node 100) — spec is one run with `Elapsed`; history should collapse. Filed as a goal-87 node.
+- [ ] Graph toolbar wraps to two rows at 1440px with the 560px Changes sidecar open — mockups keep one row. Filed as a goal-87 node.
+- [ ] Changes tab on a landed node shows `No changes` plus the removed-worktree toast — node 108 (pending).
