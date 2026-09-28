@@ -1,6 +1,14 @@
 import type { ReactElement } from 'react';
 import { useEffect, useSyncExternalStore } from 'react';
-import { getActiveTab, getDetailState, subscribeDetail, subscribeTab } from '../../shared/node-detail';
+import { getState, subscribe } from '../../app/store';
+import {
+  detailTabId,
+  detailTabPanelId,
+  getActiveTab,
+  getDetailState,
+  subscribeDetail,
+  subscribeTab,
+} from '../../shared/node-detail';
 import { getChangesState, selectPath, setRunId, subscribeChanges } from './changesState';
 
 type DiffLineKind = 'add' | 'del' | 'hunk' | 'ctx';
@@ -24,6 +32,7 @@ function diffLineKind(line: string): DiffLineKind {
 /** The `sidecar-section` contribution for the Changes tab: a file table and the selected diff. */
 export function ChangesSection(): ReactElement | null {
   const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
+  const store = useSyncExternalStore(subscribe, getState);
   const detailState = useSyncExternalStore(subscribeDetail, getDetailState);
   const changesState = useSyncExternalStore(subscribeChanges, getChangesState);
 
@@ -33,7 +42,7 @@ export function ChangesSection(): ReactElement | null {
     setRunId(runId);
   }, [runId]);
 
-  if (activeTab !== 'changes') {
+  if (typeof store.selection !== 'number') {
     return null;
   }
 
@@ -41,7 +50,13 @@ export function ChangesSection(): ReactElement | null {
   const diffLines = diffText === '' ? [] : diffText.split('\n');
 
   return (
-    <div className="mk-console mk-well mk-stack">
+    <div
+      id={detailTabPanelId('changes')}
+      role="tabpanel"
+      aria-labelledby={detailTabId('changes')}
+      hidden={activeTab !== 'changes'}
+      className="mk-console mk-well mk-stack"
+    >
       {files.length === 0 && (
         <div className="mk-console-empty">
           <div>No changed files yet.</div>
@@ -69,7 +84,10 @@ export function ChangesSection(): ReactElement | null {
                 <span>{file.status}</span>
                 <span className="mk-file-path">{file.path}</span>
                 <span className="mk-file-add">+{file.added}</span>
-                <span className="mk-file-del">{'−'}{file.removed}</span>
+                <span className="mk-file-del">
+                  {'−'}
+                  {file.removed}
+                </span>
               </button>
             ))}
           </div>
