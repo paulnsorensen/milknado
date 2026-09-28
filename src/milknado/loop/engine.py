@@ -212,6 +212,7 @@ def _launch_agent(
         max_turns_grace=config.max_turns_grace,
         force_stop_event=state.force_stop_event,
         cwd=config.project_root,
+        env=config.env,
     )
     try:
         if is_supported(tuple(cmd)):

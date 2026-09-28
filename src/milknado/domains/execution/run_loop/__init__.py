@@ -491,6 +491,11 @@ class RunLoop:
                     review_timeout_seconds=profile.review_timeout_seconds,
                     on_reject=profile.on_reject,
                     session_mode=profile.session_mode,
+                    max_iterations=profile.max_iterations,
+                    attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
+                    completion_timeout_seconds=(
+                        profile.attempt_timeout_seconds * profile.max_iterations
+                    ),
                 )
             try:
                 result = self._executor.dispatch(node_id, node_config)

@@ -590,6 +590,7 @@ class _DispatchRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _Run:
         _ = (
             agent,
@@ -603,6 +604,7 @@ class _DispatchRalph:
             completion_probe,
             max_iterations,
             timeout,
+            env,
         )
         return _Run(_RunState(run_id or "run-1"))
 

@@ -54,6 +54,7 @@ class LoopAdapter(LoopSessionMixin):
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _RunHandle:
         mcp_config = project_root / ".mcp.json" if project_root else None
         agent_cmd = agent
@@ -79,6 +80,7 @@ class LoopAdapter(LoopSessionMixin):
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             max_iterations=max_iterations,
             timeout=timeout,
+            env=env,
         )
         if context is not None:
             config.session_context = context

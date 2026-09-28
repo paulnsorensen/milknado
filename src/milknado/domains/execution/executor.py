@@ -160,6 +160,7 @@ class _RalphRunKwargs(TypedDict, total=False):
     runtime_policy: RuntimePolicy
     max_iterations: int | None
     timeout: float
+    env: dict[str, str]
 
 
 def _build_commit_message(node_id: int, description: str) -> str:
@@ -639,6 +640,11 @@ class Executor:
             "commit_footer": config.commit_footer,
             "base_oid": base_oid,
             "run_id": ralph_run_id,
+            "env": {
+                "MILKNADO_NODE_ID": str(node.id),
+                "MILKNADO_RUN_ID": ralph_run_id,
+                "MILKNADO_PROJECT_ROOT": str(config.project_root.resolve()),
+            },
         }
         if config.max_iterations is not None:
             create_kwargs["max_iterations"] = config.max_iterations

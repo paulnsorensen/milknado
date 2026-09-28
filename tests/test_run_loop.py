@@ -294,6 +294,7 @@ class FakeRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> FakeRun:
         _ = (
             agent,
@@ -307,6 +308,7 @@ class FakeRalph:
             completion_probe,
             max_iterations,
             timeout,
+            env,
         )
         self._run_counter += 1
         ordinal_id = f"run-{self._run_counter}"
@@ -2196,3 +2198,46 @@ class TestDispatchBatchFlavoredGates:
             "flavored node with quality_gates=() must propagate empty gates to executor"
         )
         assert captured[0].brief_prepend == "Research only."
+
+    def test_flavored_node_dispatches_with_attempt_caps(
+        self,
+        graph: MikadoGraph,
+        fake_ralph: FakeRalph,
+        config: ExecutionConfig,
+        tmp_path: Path,
+    ) -> None:
+        """The CLI loop must carry the flavor's iteration and attempt caps to the executor."""
+        from unittest.mock import MagicMock
+
+        from milknado.domains.common.config import FlavorOverride, MilknadoConfig
+        from milknado.domains.execution.run_loop import RunLoop
+
+        milknado_cfg = MilknadoConfig(
+            agent_family="claude",
+            project_root=tmp_path,
+            db_path=tmp_path / ".milknado" / "milknado.db",
+            flavors={
+                "runner": FlavorOverride(max_iterations=3, attempt_timeout_seconds=1800),
+            },
+        )
+
+        root = graph.add_node("root")
+        _ = graph.add_node("runner leaf", parent_id=root.id, spec=NodeSpec(flavor="runner"))
+
+        captured: list[ExecutionConfig] = []
+        executor = MagicMock()
+
+        def dispatch(node_id: int, cfg: ExecutionConfig) -> MagicMock:
+            _ = node_id
+            captured.append(cfg)
+            return MagicMock(run_id="r1")
+
+        _mock_attr(executor, "dispatch").side_effect = dispatch
+
+        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
+        _ = _dispatch_batch(loop, config, 4)
+
+        assert len(captured) == 1, "expected exactly one dispatch call"
+        assert captured[0].max_iterations == 3
+        assert captured[0].attempt_timeout_seconds == 1800.0
+        assert captured[0].completion_timeout_seconds == 5400

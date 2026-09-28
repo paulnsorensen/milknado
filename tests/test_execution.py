@@ -268,6 +268,7 @@ class FakeRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> FakeRun:
         _ = (
             ralph_file,
@@ -276,6 +277,7 @@ class FakeRalph:
             runtime_policy,
             completion_probe,
             timeout,
+            env,
         )
         self.max_iterations_seen.append(max_iterations)
         self.timeouts_seen.append(timeout)
@@ -288,6 +290,7 @@ class FakeRalph:
                 "dir": ralph_dir,
                 "commit_footer": commit_footer,
                 "base_oid": base_oid,
+                "env": env,
             }
         )
         resolved_run_id = run_id or f"{self._id_prefix}-{len(self.runs_created)}"
@@ -610,6 +613,27 @@ class TestExecutorDispatch:
 
         footer = "Co-authored-by: Team <team@example.com>"
         assert fake_ralph.runs_created[0]["commit_footer"] == footer
+
+    def test_worker_identity_env_threaded_to_create_run(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        """``_create_ralph_run`` hands the worker's identity to ``create_run``:
+        the run id later registered with ``graph.runs.start``, and the
+        canonical project root — not the dispatch worktree."""
+        fake_ralph = FakeRalph()
+        ex = Executor(graph=graph, git=FakeGit(), ralph=fake_ralph, crg=FakeCrg())
+        _ = graph.add_node("task")
+
+        result = ex.dispatch(1, config)
+
+        env = fake_ralph.runs_created[0]["env"]
+        assert isinstance(env, dict)
+        assert env["MILKNADO_NODE_ID"] == "1"
+        assert env["MILKNADO_RUN_ID"] == result.run_id
+        assert env["MILKNADO_PROJECT_ROOT"] == str(config.project_root.resolve())
+        assert env["MILKNADO_PROJECT_ROOT"] != str(result.worktree)
 
     def test_generates_ralph_md(
         self,
@@ -1678,6 +1702,7 @@ class TestDispatchRetry:
                 completion_probe: Callable[[], bool] | None = None,
                 max_iterations: int | None = None,
                 timeout: float | None = None,
+                env: dict[str, str] | None = None,
             ) -> FakeRun:
                 nonlocal call_count
                 call_count += 1
@@ -1719,6 +1744,7 @@ class TestDispatchRetry:
                 completion_probe: Callable[[], bool] | None = None,
                 max_iterations: int | None = None,
                 timeout: float | None = None,
+                env: dict[str, str] | None = None,
             ) -> FakeRun:
                 raise ValueError("bad config")
 
@@ -1748,6 +1774,7 @@ class TestDispatchRetry:
                 completion_probe: Callable[[], bool] | None = None,
                 max_iterations: int | None = None,
                 timeout: float | None = None,
+                env: dict[str, str] | None = None,
             ) -> FakeRun:
                 raise TransientDispatchError("always fails")
 
