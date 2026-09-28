@@ -46,6 +46,9 @@ class ObserverSnapshot:
     runs: tuple[DurableRun, ...]
     goal: str
     available: int
+    completed: int
+    failed: int
+    stopped: int
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
     graph_revision: int | None = None
@@ -80,6 +83,20 @@ def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...
         (limit,),
     ).fetchall()
     return tuple(_durable_run(conn, row) for row in rows)
+
+
+def _run_totals(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    row = cast(
+        sqlite3.Row,
+        conn.execute(
+            "SELECT "
+            + "COALESCE(SUM(status = 'done'), 0), "
+            + "COALESCE(SUM(status = 'failed'), 0), "
+            + "COALESCE(SUM(status = 'stopped'), 0) "
+            + "FROM runs"
+        ).fetchone(),
+    )
+    return cast(int, row[0]), cast(int, row[1]), cast(int, row[2])
 
 
 def _goal_description(conn: sqlite3.Connection) -> str:
@@ -142,6 +159,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
     try:
         available = _available_count(conn)
         revision = _graph_revision(conn)
+        completed, failed, stopped = _run_totals(conn)
         graph = (
             cached_graph
             if cached_graph is not None and revision == cached_graph_revision
@@ -158,6 +176,9 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
             available=available,
+            completed=completed,
+            failed=failed,
+            stopped=stopped,
             graph=graph,
             node=node,
             graph_revision=revision,

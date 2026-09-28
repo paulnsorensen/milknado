@@ -297,13 +297,18 @@ class ExecutionController:
             )
             for run in state.terminal_runs
         )
+        completed, failed, stopped = (
+            graph.runs.totals()
+            if graph is not None
+            else (state.completed, state.failed, state.stopped)
+        )
         return ExecutionSnapshot(
             goal=state.goal,
             active_runs=active_runs,
             terminal_runs=terminal_runs,
-            completed=state.completed,
-            failed=state.failed,
-            stopped=state.stopped,
+            completed=completed,
+            failed=failed,
+            stopped=stopped,
             available=state.available,
             event_lines=state.event_lines,
             graph=graph.get_graph_snapshot() if graph is not None else None,

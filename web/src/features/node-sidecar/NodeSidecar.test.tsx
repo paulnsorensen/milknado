@@ -73,6 +73,27 @@ describe('NodeSidecar', () => {
     render(<NodeSidecar />);
 
     expect(await screen.findByText('run-1', { exact: false })).toBeTruthy();
+    expect(screen.getByText('Completed')).toBeTruthy();
+    expect(screen.getByText('none')).toBeTruthy();
+  });
+
+  it('clamps long descriptions until the expand control is used', async () => {
+    const description = 'A'.repeat(600);
+    vi.mocked(get).mockResolvedValue(detailResponse({ description }));
+    setSelection(7);
+    const bounds = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return { height: this.classList.contains('is-expanded') ? 600 : 100 } as DOMRect;
+      });
+
+    render(<NodeSidecar />);
+
+    expect(await screen.findByRole('button', { name: 'Expand description' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: description })).not.toHaveClass('is-expanded');
+    fireEvent.click(screen.getByRole('button', { name: 'Expand description' }));
+    expect(screen.getByRole('heading', { name: description })).toHaveClass('is-expanded');
+    bounds.mockRestore();
   });
 
   it('keys error rows by run id, not by index, when two runs share the same error', async () => {
@@ -97,6 +118,7 @@ describe('NodeSidecar', () => {
     render(<NodeSidecar />);
 
     expect((await screen.findAllByRole('alert')).length).toBe(2);
+    expect(screen.getAllByText('boom')).toHaveLength(2);
     const keyWarning = errorSpy.mock.calls.some((call) =>
       String(call[0]).includes('two children with the same key'),
     );

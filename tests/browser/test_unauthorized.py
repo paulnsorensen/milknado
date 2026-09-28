@@ -12,7 +12,7 @@ pytestmark = pytest.mark.browser
 
 def test_cleared_cookie_returns_to_login_page(page: Page, browser_server: BrowserServer) -> None:
     _ = page.goto(browser_server.login_url)
-    expect(page.get_by_text(FIXTURE_NODE_DESCRIPTION)).to_be_visible()
+    expect(page.get_by_role("heading", name=FIXTURE_NODE_DESCRIPTION)).to_be_visible()
 
     page.context.clear_cookies()
     browser_server.restart(browser_server.app)

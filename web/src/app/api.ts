@@ -18,7 +18,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     return null;
   }
   if (!response.ok) {
-    throw new Error(`${method} ${path} failed with status ${response.status}.`);
+    const error = new Error(`${method} ${path} failed with status ${response.status}.`);
+    Object.assign(error, { status: response.status });
+    throw error;
   }
   if (response.status === 204) {
     return null;

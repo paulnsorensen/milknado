@@ -24,14 +24,16 @@ export function RunModeHeader(): ReactElement | null {
   return (
     <div className="mk-button-row">
       <StatusBadge state={isOwner ? 'running' : 'pending'}>{ownerLabel(isOwner).badge}</StatusBadge>
-      <Button
-        disabled={!stop.available}
-        title={stop.available ? undefined : (stop.reason ?? undefined)}
-        onClick={() => requestConfirm('Stop scheduling?', () => void stopScheduling())}
-      >
-        Stop scheduling
-      </Button>
-      {!stop.available && <p role="note">{stop.reason}</p>}
+      {isOwner && (
+        <Button
+          disabled={!stop.available}
+          title={stop.available ? undefined : (stop.reason ?? undefined)}
+          onClick={() => requestConfirm('Stop scheduling?', () => void stopScheduling())}
+        >
+          Stop scheduling
+        </Button>
+      )}
+      {isOwner && !stop.available && <p role="note">{stop.reason}</p>}
     </div>
   );
 }

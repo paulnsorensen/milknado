@@ -21,6 +21,7 @@ describe('toRosterAgents', () => {
       name: 'Ship the tracer',
       status: 'running',
       sub: 'node 3',
+      figure: 'RUNNING',
     });
   });
 

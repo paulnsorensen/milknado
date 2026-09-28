@@ -21,7 +21,7 @@ export function RunTotals(): ReactElement | null {
 
   const nodes = snapshot.graph ? toGraphNodes(snapshot.graph) : [];
   const totals = [
-    `${snapshot.active_runs?.length ?? 0} active`,
+    totalLabel(snapshot.active_runs?.length, 'active'),
     totalLabel(snapshot.completed, 'completed'),
     totalLabel(snapshot.failed, 'failed'),
     totalLabel(snapshot.stopped, 'stopped'),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from operator import attrgetter
+from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, get_ident
 from time import monotonic, sleep
@@ -20,7 +21,7 @@ from milknado.app.run import (
     RunActionAvailability,
 )
 from milknado.app.run_source import NodeSnapshotRequest
-from milknado.domains.common import MilknadoConfig, SessionContext, SessionEvent
+from milknado.domains.common import MilknadoConfig, RunResult, SessionContext, SessionEvent
 from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
     ActiveRunState,
@@ -243,6 +244,39 @@ def test_controller_waits_for_worker_cleanup_before_return(
 
     assert first_result == ["result"]
     assert controller.run(feature_branch="feature") == "result"
+
+
+def test_controller_snapshot_uses_durable_run_totals(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        node = graph.add_node("node")
+        for index, status in enumerate(("failed", "failed", "done")):
+            run_id = f"run-{index}"
+            graph.runs.start(run_id, node.id, "", "2026-09-11T00:00:00+00:00", 60)
+            graph.runs.finish(
+                run_id,
+                RunResult(
+                    status=status,
+                    exit_code=0 if status == "done" else 1,
+                    timed_out=False,
+                    ended_at="2026-09-11T00:00:01+00:00",
+                    error=None if status == "done" else "worker failed",
+                    detail=None,
+                    rebased=None,
+                ),
+            )
+
+        controller = ExecutionController(
+            _as_run_loop(FakeLoop(loop_state())),
+            _none_config(),
+            _none_limit(),
+            _policy_config(),
+            graph,
+        )
+        snapshot = controller.snapshot()
+        assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 2, 0)
+    finally:
+        graph.close()
 
 
 def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes() -> None:

@@ -59,7 +59,7 @@ export function ChangesSection(): ReactElement | null {
     >
       {files.length === 0 && (
         <div className="mk-console-empty">
-          <div>No changed files yet.</div>
+          <div>No changes</div>
           <div>Files that the agent changes appear here.</div>
         </div>
       )}

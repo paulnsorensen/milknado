@@ -112,6 +112,104 @@ body {
   font: var(--mk-type-label);
 }
 
+.mk-review-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.mk-review-row .mk-rail-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.mk-review-row .mk-rail-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-sub {
+  overflow: hidden;
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-state {
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-transform: capitalize;
+}
+
+.mk-shell .mk-agent-name {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-shell .mk-agent-name b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mk-shell .mk-node-compact .mk-node-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-wrap: balance;
+  white-space: normal;
+}
+
+
+.mk-shell .mk-root-switcher {
+  max-width: 216px;
+  min-height: 28px;
+  padding: 2px var(--mk-space-2);
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-raised);
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+}
+
+.mk-shell .mk-root-switcher:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
+}
+
+.mk-shell .mk-path-item {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.mk-sidecar-description {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--mk-space-1);
+}
+
+.mk-sidecar-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.mk-sidecar-title.is-expanded {
+  display: block;
+  overflow: visible;
+}
+
 .mk-rail-row > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -135,9 +233,10 @@ body {
 }
 
 .mk-rail-footer > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* main */

@@ -3,7 +3,7 @@
 // `sidecar-section` contributions (TabSections.tsx) so the tab strip sits
 // between the run summary and the active body.
 import type { ReactElement } from 'react';
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { getState, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { toGraphNodes } from '../../app/wire';
@@ -26,8 +26,8 @@ function RunRows({ run }: { run: WireRunRecord }): ReactElement {
         <dd>{run.started_at}</dd>
       </div>
       <div className="mk-kv">
-        <dt>Ended</dt>
-        <dd>{run.ended_at ?? 'running'}</dd>
+        <dt>Completed</dt>
+        <dd>{run.ended_at ?? 'none'}</dd>
       </div>
     </>
   );
@@ -42,18 +42,48 @@ export function NodeSidecar({ onClose }: NodeSidecarProps = {}): ReactElement | 
   const store = useSyncExternalStore(subscribe, getState);
   const detailState = useSyncExternalStore(subscribeDetail, getDetailState);
   const { AncestorPath, Button, StatusBadge } = Milknado;
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [descriptionExpandable, setDescriptionExpandable] = useState(false);
+  const descriptionRef = useRef<HTMLHeadingElement>(null);
 
   const nodeId = typeof store.selection === 'number' ? store.selection : null;
+  const detail = detailState.detail?.detail ?? null;
 
   useEffect(() => {
     selectNode(nodeId);
+    setDescriptionExpanded(false);
+    setDescriptionExpandable(false);
   }, [nodeId]);
+  useLayoutEffect(() => {
+    const title = descriptionRef.current;
+    if (!title || descriptionExpanded) {
+      return;
+    }
+    const updateExpandable = () => {
+      const clone = title.cloneNode(true) as HTMLElement;
+      clone.classList.add('is-expanded');
+      clone.style.position = 'absolute';
+      clone.style.visibility = 'hidden';
+      clone.style.width = `${title.clientWidth}px`;
+      title.parentElement?.append(clone);
+      const fullHeight = clone.getBoundingClientRect().height;
+      const collapsedHeight = title.getBoundingClientRect().height;
+      clone.remove();
+      setDescriptionExpandable(fullHeight > collapsedHeight + 1);
+    };
+    updateExpandable();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver(updateExpandable);
+    observer.observe(title);
+    return () => observer.disconnect();
+  }, [detail?.description, descriptionExpanded]);
 
   if (nodeId === null) {
     return null;
   }
 
-  const detail = detailState.detail?.detail ?? null;
   const nodes = store.snapshot?.graph ? toGraphNodes(store.snapshot.graph) : [];
   const runs = detail?.runs.items ?? [];
   const errors = runs
@@ -63,12 +93,29 @@ export function NodeSidecar({ onClose }: NodeSidecarProps = {}): ReactElement | 
   return (
     <div className="mk-stack">
       <div className="mk-sidecar-head">
-        <AncestorPath nodes={nodes} id={nodeId} onSelect={setSelection} />
+        <AncestorPath nodes={nodes} id={nodeId} max={4} onSelect={setSelection} />
         <Button icon className="mk-btn-ctl" ariaLabel="Close the sidecar" onClick={onClose ?? (() => setSelection(null))}>
           {'×'}
         </Button>
       </div>
-      <h2 className="mk-sidecar-title">{detail?.description ?? ''}</h2>
+      <div className="mk-sidecar-description">
+        <h2
+          ref={descriptionRef}
+          className={descriptionExpanded ? 'mk-sidecar-title is-expanded' : 'mk-sidecar-title'}
+        >
+          {detail?.description ?? ''}
+        </h2>
+        {descriptionExpandable && (
+          <button
+            type="button"
+            className="mk-btn mk-btn-sm mk-btn-ghost"
+            aria-expanded={descriptionExpanded}
+            onClick={() => setDescriptionExpanded((expanded) => !expanded)}
+          >
+            {descriptionExpanded ? 'Collapse description' : 'Expand description'}
+          </button>
+        )}
+      </div>
       <div className="mk-badge-row">
         {detail && <StatusBadge state={toBadgeState(detail.node.status)} />}
         {detail?.node.flavor && <span className="mk-node-flavor">{detail.node.flavor}</span>}

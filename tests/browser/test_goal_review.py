@@ -16,7 +16,7 @@ pytestmark = pytest.mark.browser
 
 
 def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbServer) -> None:
-    open_app(page, graph_db_server.login_url, page.get_by_text("evidence for the change"))
+    open_app(page, graph_db_server.login_url, page.get_by_text("Goal review 1"))
 
     page.get_by_role("button", name="Open").click()
 

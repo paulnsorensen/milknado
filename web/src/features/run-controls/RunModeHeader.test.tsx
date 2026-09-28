@@ -29,20 +29,16 @@ describe('RunModeHeader', () => {
   });
 
   afterEach(cleanup);
-
-  it('shows the Read-only badge and disables Stop scheduling with a reason', () => {
+  it('shows only the Read-only badge for watch mode', () => {
     setSnapshot({
       goal: null,
       graph: null,
-      capabilities: capabilities({
-        stop_scheduling: { available: false, reason: 'Stop scheduling is unavailable.' },
-      }),
+      capabilities: capabilities(),
     });
     render(<RunModeHeader />);
 
     expect(screen.getByText('Read-only')).toBeTruthy();
-    expect(screen.getByText('Stop scheduling')).toBeDisabled();
-    expect(screen.getByText('Stop scheduling is unavailable.')).toBeTruthy();
+    expect(screen.queryByText('Stop scheduling')).toBeNull();
   });
 
   it('shows the Run active badge and posts once Confirm runs the pending request', () => {

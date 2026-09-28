@@ -91,7 +91,7 @@ describe('ChangesSection', () => {
 
     render(<ChangesSection />);
 
-    expect(await screen.findByText('No changed files yet.')).toBeTruthy();
+    expect(await screen.findByText('No changes')).toBeTruthy();
   });
 
   it('classifies each diff line kind by its unified-diff prefix', async () => {

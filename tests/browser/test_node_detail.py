@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TypeVar
+from dataclasses import replace
+from typing import TypeVar, cast
 
 import pytest
 from playwright.sync_api import Locator, Page, expect
@@ -15,6 +16,7 @@ from milknado.app.run_source import (
     ExecutionSnapshot,
     NodeSnapshotRequest,
     RunActionAvailability,
+    TerminalRunSnapshot,
 )
 from milknado.domains.common import MikadoEdge, MikadoNode, NodeKind, SessionContext, SessionView
 from milknado.domains.common.session import SessionEvent
@@ -39,6 +41,9 @@ from tests.browser.conftest import (
 pytestmark = pytest.mark.browser
 
 CHILD_DESCRIPTION = "Child task"
+LONG_DESCRIPTION = (
+    "A long sidecar description that must clamp before the detail controls. " * 12
+).strip()
 RUN_ID = "run-1"
 
 _T = TypeVar("_T")
@@ -59,25 +64,30 @@ def _empty_page() -> SnapshotPage[_T]:
     return SnapshotPage(items=(), offset=0, limit=50, total=0, has_more=False)
 
 
-def _run_record() -> RunRecord:
+def _run_record(status: str = "running", error: str | None = None) -> RunRecord:
     return {
         "run_id": RUN_ID,
         "node_id": 2,
-        "status": "running",
+        "status": status,
         "pid": None,
         "log_path": "",
         "started_at": "",
         "ended_at": None,
         "timed_out": False,
         "exit_code": None,
-        "error": None,
+        "error": error,
         "timeout_seconds": None,
         "detail": None,
         "rebased": None,
     }
 
 
-def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
+def _detail_response(
+    request: NodeSnapshotRequest,
+    *,
+    description: str = CHILD_DESCRIPTION,
+    run_record: RunRecord | None = None,
+) -> NodeDetailResponse:
     session_page = SnapshotPage(
         items=(
             SessionEvent(kind="assistant", text=f"Transcript page {request.session_event_page}"),
@@ -109,7 +119,9 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
                 total=2,
                 has_more=request.page == 0,
             ),
-            runs=SnapshotPage(items=(_run_record(),), offset=0, limit=50, total=1, has_more=False),
+            runs=SnapshotPage(
+                items=(run_record or _run_record(),), offset=0, limit=50, total=1, has_more=False
+            ),
             reviews=_empty_page(),
             sessions=SnapshotPage(
                 items=(
@@ -126,6 +138,17 @@ def _detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
             goal_claim=SnapshotValue(value=None, state="not_stored"),
             artifacts=_empty_page(),
         ),
+    )
+
+
+def _long_detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
+    return _detail_response(request, description=LONG_DESCRIPTION)
+
+
+def _failed_detail_response(request: NodeSnapshotRequest) -> NodeDetailResponse:
+    return _detail_response(
+        request,
+        run_record=_run_record(status="failed", error="worker session gone"),
     )
 
 
@@ -176,6 +199,61 @@ def _fixture_snapshot() -> ExecutionSnapshot:
     )
 
 
+def _no_worktree_snapshot() -> ExecutionSnapshot:
+    return replace(
+        _fixture_snapshot(),
+        active_runs=(),
+        terminal_runs=(
+            TerminalRunSnapshot(
+                run_id=RUN_ID,
+                node_id=2,
+                description=CHILD_DESCRIPTION,
+                status=ExecutionRunStatus.FAILED,
+                output=(),
+                pending_guidance=None,
+                duration_seconds=0.0,
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def long_description_server() -> Iterator[BrowserServer]:
+    login = LaunchToken(BROWSER_TOKEN)
+    source = BrowserSnapshotSource(snapshot=_fixture_snapshot())
+    source.node_snapshot = _long_detail_response  # type: ignore[method-assign]
+    app = create_app(source, WebCommands(git=_FakeGit()), login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def no_worktree_server() -> Iterator[BrowserServer]:
+    login = LaunchToken(BROWSER_TOKEN)
+    source = BrowserSnapshotSource(snapshot=_no_worktree_snapshot())
+    source.node_snapshot = _failed_detail_response  # type: ignore[method-assign]
+    app = create_app(source, WebCommands(git=_FakeGit()), login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def missing_changes_server() -> Iterator[BrowserServer]:
+    login = LaunchToken(BROWSER_TOKEN)
+    snapshot = replace(_fixture_snapshot(), active_runs=(), terminal_runs=())
+    source = BrowserSnapshotSource(snapshot=snapshot)
+    source.node_snapshot = _detail_response  # type: ignore[method-assign]
+    app = create_app(source, WebCommands(git=_FakeGit()), login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server
+    server.stop()
+
+
 @pytest.fixture
 def node_detail_server() -> Iterator[BrowserServer]:
     login = LaunchToken(BROWSER_TOKEN)
@@ -183,6 +261,35 @@ def node_detail_server() -> Iterator[BrowserServer]:
     source.node_snapshot = _detail_response  # type: ignore[method-assign]
     commands = WebCommands(git=_FakeGit())
     app = create_app(source, commands, login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server
+    server.stop()
+
+
+LONG_PARENT = "A parent description that must remain fully visible in the breadcrumb"
+
+
+@pytest.fixture
+def long_path_server() -> Iterator[BrowserServer]:
+    nodes = [
+        MikadoNode(id=1, description=LONG_PARENT, kind=NodeKind.GOAL),
+        MikadoNode(id=3, description="Ancestor three", kind=NodeKind.TASK, parent_id=1),
+        MikadoNode(id=4, description="Ancestor four", kind=NodeKind.TASK, parent_id=3),
+        MikadoNode(id=2, description=CHILD_DESCRIPTION, kind=NodeKind.TASK, parent_id=4),
+    ]
+    graph = GraphSnapshot(
+        nodes=tuple(nodes),
+        edges=tuple(
+            MikadoEdge(parent.id, child.id)
+            for parent, child in zip(nodes, nodes[1:], strict=False)
+        ),
+        root_ids=(1,),
+    )
+    source = BrowserSnapshotSource(snapshot=replace(_fixture_snapshot(), graph=graph))
+    source.node_snapshot = _detail_response  # type: ignore[method-assign]
+    login = LaunchToken(BROWSER_TOKEN)
+    app = create_app(source, WebCommands(git=_FakeGit()), login)
     server = BrowserServer(app=app, login=login)
     server.start()
     yield server
@@ -257,3 +364,83 @@ def test_node_sidecar_shows_run_paging_and_changes(
 
     page.get_by_text("a.py").click()
     expect(page.get_by_text("-old", exact=False)).to_be_visible()
+
+
+def test_missing_changes_endpoint_is_an_empty_state_without_page_error(
+    page: Page, missing_changes_server: BrowserServer
+) -> None:
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    open_app(
+        page,
+        missing_changes_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
+    page.get_by_role("tab", name="Changes").click()
+
+    expect(page.get_by_text("No changes")).to_be_visible()
+    assert page_errors == []
+
+
+def test_long_description_shows_expand_control_only_when_clamped(
+    page: Page, long_description_server: BrowserServer
+) -> None:
+    open_app(
+        page,
+        long_description_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
+
+    expect(page.get_by_role("button", name="Expand description", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Expand description", exact=True).click()
+    expect(page.get_by_role("button", name="Collapse description", exact=True)).to_be_visible()
+
+
+def test_failed_run_without_worktree_uses_real_no_changes_state(
+    page: Page, no_worktree_server: BrowserServer
+) -> None:
+    page_errors: list[str] = []
+    page.on("pageerror", lambda error: page_errors.append(str(error)))
+    open_app(
+        page,
+        no_worktree_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
+
+    expect(page.get_by_role("complementary", name="Detail").get_by_role("alert")).to_contain_text(
+        "worker session gone"
+    )
+    page.get_by_role("tab", name="Changes").click()
+    expect(page.get_by_text("No changes")).to_be_visible()
+    assert page_errors == []
+
+
+def test_ancestor_path_caps_at_four_items_without_truncating_parent(
+    page: Page, long_path_server: BrowserServer
+) -> None:
+    open_app(
+        page,
+        long_path_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
+
+    expect(page.locator(".mk-path-gap")).to_have_count(0)
+    expect(page.locator(".mk-path-item").first).to_have_text(LONG_PARENT)
+    style = cast(
+        dict[str, str],
+        page.locator(".mk-path-item").first.evaluate(
+            """(element) => ({
+                maxWidth: getComputedStyle(element).maxWidth,
+                whiteSpace: getComputedStyle(element).whiteSpace
+            })"""
+        ),
+    )
+    assert style == {"maxWidth": "none", "whiteSpace": "normal"}

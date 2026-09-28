@@ -14,6 +14,7 @@ from milknado.domains.common import (
     NodeKind,
     NodeSpec,
     NodeStatus,
+    RunResult,
     SessionContext,
     SessionEvent,
 )
@@ -305,7 +306,39 @@ def test_graph_snapshot_roots_follow_parent_identity_not_dag_edges(tmp_path: Pat
     detail = graph.get_node_detail_snapshot(root.id, limit=10).detail
     assert detail is not None
     assert tuple(node.id for node in detail.children.items or ()) == (child.id,)
+
     assert detail.prerequisite_ids.items == (child.id,)
+    graph.close()
+
+
+def test_watch_totals_include_runs_outside_the_bounded_run_page(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    for index, status in enumerate(("failed", "failed", "done")):
+        node = graph.add_node(f"worker {index}")
+        run_id = f"run-{index}"
+        graph.runs.start(
+            run_id, node.id, str(tmp_path / f"{run_id}.log"), "2026-09-11T00:00:00+00:00", 60
+        )
+        graph.runs.finish(
+            run_id,
+            RunResult(
+                status=status,
+                exit_code=0 if status == "done" else 1,
+                timed_out=False,
+                ended_at="2026-09-11T00:00:01+00:00",
+                error=None if status == "done" else "worker failed",
+                detail=None,
+                rebased=None,
+            ),
+        )
+
+    source = WatchSnapshotSource(tmp_path, db_path, limit=1)
+    snapshot = source.snapshot()
+
+    assert len(snapshot.terminal_runs) == 1
+    assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 2, 0)
+    source.close()
     graph.close()
 
 
