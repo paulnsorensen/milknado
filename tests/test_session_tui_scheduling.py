@@ -271,12 +271,22 @@ async def test_file_change_clears_previous_diff_until_selected_file_loads(
 
 
 @pytest.mark.asyncio
-async def test_switching_shared_context_preserves_keyboard_file_choice(tmp_path: Path) -> None:
+async def test_switching_shared_context_preserves_keyboard_file_choice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     context = changed_context(tmp_path / "repo", "first.txt", "first-only\n")
     _ = (Path(context.cwd) / "second.txt").write_text("second-only\n")
     controller = SnapshotController(
         initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
     )
+    diff_paths: list[str] = []
+    original_diff = GitAdapter.session_diff
+
+    def tracked_diff(adapter: GitAdapter, selected: SessionContext, path: str) -> str:
+        diff_paths.append(path)
+        return original_diff(adapter, selected, path)
+
+    monkeypatch.setattr(GitAdapter, "session_diff", tracked_diff)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_for_workers(app).wait_for_complete()
@@ -291,6 +301,7 @@ async def test_switching_shared_context_preserves_keyboard_file_choice(tmp_path:
         await _wait_for_change_pipeline(app, pilot)
         assert app.selected_file_path == "second.txt"
         assert "+second-only" in plain(app, "#diff-text")
+        requests_before_switch = len(diff_paths)
 
         await pilot.press("escape")
         await pilot.pause()
@@ -302,6 +313,8 @@ async def test_switching_shared_context_preserves_keyboard_file_choice(tmp_path:
         await pilot.pause()
         assert app.selected_run_id == "run-2"
         await _wait_for_change_pipeline(app, pilot)
+        assert len(diff_paths) > requests_before_switch
+        assert diff_paths[-1] == "second.txt"
         assert app.selected_file_path == "second.txt"
         assert "+second-only" in plain(app, "#diff-text")
 
