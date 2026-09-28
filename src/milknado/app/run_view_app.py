@@ -158,6 +158,8 @@ class ExecutionSnapshotApp(
                 selected,
                 HelpOptions(self.compact, self.route, self.auto_follow, self.SHOW_STOP_HINT),
             )
+            if self.selected_node_id is not None and self._detail_focused():
+                body += "\n[ ] related values pages\n( ) session history pages"
             if self.compact and self.selected_node_id is not None and selected is None:
                 body += "\nenter open" if self.route == "list" else "\nescape back"
             session = session_view(selected)
