@@ -111,6 +111,7 @@ def test_inactive_session_rejection_includes_run_reason(
     )
 
     page.get_by_role("button", name="Interrupt", exact=True).click()
+    page.get_by_role("button", name="Send", exact=True).click()
 
     expect(
         page.get_by_text("Session input was rejected: the run is not active.", exact=True)

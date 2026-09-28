@@ -230,9 +230,9 @@ def test_narrow_owner_footer_controls_confirm_commands(
     assert request.text == ""
 
     page.get_by_role("button", name="Cancel run").click()
-    page.get_by_role("button", name="Confirm").click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Cancel run", exact=True).click()
     page.get_by_role("button", name="Force stop").click()
-    page.get_by_role("button", name="Confirm").click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Force stop", exact=True).click()
 
     wait_until(lambda: recorder.cancel_calls == ["narrow-run"])
     wait_until(lambda: recorder.force_stop_calls == ["narrow-run"])

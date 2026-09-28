@@ -136,6 +136,7 @@ def test_rejected_inactive_session_input_shows_reason(
     )
 
     page.get_by_role("button", name="Interrupt", exact=True).click()
+    page.get_by_role("button", name="Send", exact=True).click()
 
     rejection = page.get_by_text(
         "Session input was rejected: the run is not active.",

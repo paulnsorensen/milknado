@@ -27,7 +27,6 @@ class _CommandFacade(SubFacade):
         permission_commands: tuple[tuple[str, str], ...] = (),
         *,
         published_at: str | None = None,
-        _in_transaction: bool = False,
     ) -> OwnerCapabilities:
         _ = self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
