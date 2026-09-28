@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 import pytest
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
 from milknado.domains.common import SessionInput
 from milknado.domains.graph import OwnerCapabilities
@@ -26,6 +26,39 @@ RUN_ID = "run-1"
 PERMISSION_ID = "perm-1"
 
 
+def _owner_capabilities() -> OwnerCapabilities:
+    return OwnerCapabilities(
+        run_id=RUN_ID,
+        node_id=1,
+        invocation_id="invocation-1",
+        owner_incarnation="1",
+        actions=("steer", "follow_up", "interrupt", "approve", "deny"),
+        permission_ids=(PERMISSION_ID,),
+        permission_commands=((PERMISSION_ID, "git status"),),
+        published_at="",
+    )
+
+
+@pytest.fixture
+def rejected_session_input_server() -> Iterator[BrowserServer]:
+    login = LaunchToken(BROWSER_TOKEN)
+    source = BrowserSnapshotSource()
+
+    def reject(run_id: str, request: SessionInput) -> bool:
+        del run_id, request
+        return False
+
+    app = create_app(
+        source,
+        WebCommands(session_input=reject, owner_capabilities=_owner_capabilities()),
+        login,
+    )
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server
+    server.stop()
+
+
 @pytest.fixture
 def session_input_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
     login = LaunchToken(BROWSER_TOKEN)
@@ -33,15 +66,7 @@ def session_input_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
     commands, recorder = owner_web_commands()
     commands = WebCommands(
         session_input=commands.session_input,
-        owner_capabilities=OwnerCapabilities(
-            run_id=RUN_ID,
-            node_id=1,
-            invocation_id="invocation-1",
-            owner_incarnation="1",
-            actions=("steer", "follow_up", "interrupt", "approve", "deny"),
-            permission_ids=(PERMISSION_ID,),
-            published_at="",
-        ),
+        owner_capabilities=_owner_capabilities(),
     )
     app = create_app(source, commands, login)
     server = BrowserServer(app=app, login=login)
@@ -61,6 +86,8 @@ def test_session_input_buttons_each_mint_one_fresh_command(
 ) -> None:
     server, recorder = session_input_server
     open_app(page, server.login_url, page.get_by_label("Session guidance"))
+    page.locator("button.mk-node", has_text="Tracer fixture node").click()
+    expect(page.get_by_text("git status", exact=True)).to_be_visible()
 
     seen_command_ids: list[str] = []
 
@@ -97,3 +124,22 @@ def test_session_input_interrupt_without_text(
     assert run_id == RUN_ID
     assert request.action == "interrupt"
     assert request.text == ""
+
+
+def test_rejected_inactive_session_input_shows_reason(
+    page: Page, rejected_session_input_server: BrowserServer
+) -> None:
+    open_app(
+        page,
+        rejected_session_input_server.login_url,
+        page.get_by_role("button", name="Interrupt", exact=True),
+    )
+
+    page.get_by_role("button", name="Interrupt", exact=True).click()
+
+    rejection = page.get_by_text(
+        "Session input was rejected: the run is not active.",
+        exact=True,
+    )
+    expect(rejection).to_be_visible()
+    expect(page.get_by_role("button", name="Dismiss", exact=True)).to_be_visible()

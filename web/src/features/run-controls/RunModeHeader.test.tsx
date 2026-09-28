@@ -2,7 +2,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
 import { resetStore, setSnapshot } from '../../app/store';
-import { confirmPending, resetConfirm } from './confirmState';
+import { resetConfirm, confirmPending, getPendingConfirm } from './confirmState';
 import { RunModeHeader } from './RunModeHeader';
 
 vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
@@ -41,7 +41,7 @@ describe('RunModeHeader', () => {
     expect(screen.queryByText('Stop scheduling')).toBeNull();
   });
 
-  it('shows the Run active badge and posts once Confirm runs the pending request', () => {
+  it('does not offer a zero-count stop prompt before run totals arrive', () => {
     setSnapshot({
       goal: null,
       graph: null,
@@ -49,9 +49,32 @@ describe('RunModeHeader', () => {
     });
     render(<RunModeHeader />);
 
+    const button = screen.getByRole('button', { name: 'Stop scheduling' });
+    expect(button).toBeDisabled();
+    button.click();
+    expect(getPendingConfirm()).toBeNull();
+  });
+
+  it('shows the Run active badge and posts once Confirm runs the pending request', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      active_runs: [
+        { run_id: 'run-1', node_id: 1, description: 'First', status: 'running' },
+        { run_id: 'run-2', node_id: 2, description: 'Second', status: 'running' },
+      ],
+      capabilities: capabilities({ owner: { available: true, run_id: 'run-1' } }),
+    });
+    render(<RunModeHeader />);
+
     expect(screen.getByText('Run active')).toBeTruthy();
 
     screen.getByText('Stop scheduling').click();
+    expect(getPendingConfirm()).toMatchObject({
+      prompt: 'Stop scheduling and stop 2 active runs?',
+      dismissLabel: 'Keep running',
+      confirmLabel: 'Stop runs',
+    });
     confirmPending();
 
     expect(post).toHaveBeenCalledWith('/api/scheduling/stop');

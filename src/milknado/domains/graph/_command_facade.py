@@ -24,8 +24,10 @@ class _CommandFacade(SubFacade):
         owner_incarnation: str,
         actions: tuple[str, ...],
         permission_ids: tuple[str, ...] = (),
+        permission_commands: tuple[tuple[str, str], ...] = (),
         *,
         published_at: str | None = None,
+        _in_transaction: bool = False,
     ) -> OwnerCapabilities:
         _ = self._conn.execute("BEGIN IMMEDIATE")
         with self._conn:
@@ -37,6 +39,7 @@ class _CommandFacade(SubFacade):
                 owner_incarnation,
                 actions,
                 permission_ids,
+                permission_commands,
                 published_at=published_at,
                 _in_transaction=True,
             )

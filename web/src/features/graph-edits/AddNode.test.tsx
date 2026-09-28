@@ -84,12 +84,14 @@ describe('AddNodeDialog', () => {
     render(<AddNodeDialog />);
 
     fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'New node' } });
+    expect(screen.getByRole('group', { name: 'Flavor' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'prototype' }));
     screen.getByText('Add node').click();
 
     expect(post).toHaveBeenCalledWith('/api/nodes', {
       description: 'New node',
       parent_id: null,
-      flavor: null,
+      flavor: 'prototype',
       files: null,
       prereqs: null,
     });

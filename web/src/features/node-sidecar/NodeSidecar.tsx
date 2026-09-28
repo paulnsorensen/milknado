@@ -131,6 +131,22 @@ export function NodeSidecar({ onClose }: NodeSidecarProps = {}): ReactElement | 
             ))}
           </dl>
         )}
+        {store.capabilities !== null && !store.capabilities.owner.available && (
+          <dl>
+            <div className="mk-kv">
+              <dt>ETA</dt>
+              <dd>unavailable</dd>
+            </div>
+            <div className="mk-kv">
+              <dt>Attempt</dt>
+              <dd>unavailable</dd>
+            </div>
+            <div className="mk-kv">
+              <dt>guidance</dt>
+              <dd>unavailable</dd>
+            </div>
+          </dl>
+        )}
       </section>
       {errors.map(({ runId, error }) => (
         <div key={runId} role="alert" className="mk-alert">

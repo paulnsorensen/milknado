@@ -535,6 +535,11 @@ body {
   color: var(--mk-ink);
   font: var(--mk-type-console);
 }
+.mk-permission .mk-code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 /* changes tab */
 .mk-file-head,

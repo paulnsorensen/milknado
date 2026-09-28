@@ -65,7 +65,7 @@ Spec: `.scrim` (`inset:0`, 72% surface-sunken backdrop), `role=dialog aria-modal
 - Add node: "Add a node" — Description, Parent, Flavor segment, Prerequisites, Files / "Cancel", "+ Add node".
 - Toasts: bottom-right 320px, glyph + text + "Dismiss"; Errors board seeds "Session input was rejected: the run is not active." (at-risk).
 
-- [ ] Not verified — no live dialog screenshot supplied this pass; diff each title/body/button string above against the running app.
+- [x] Verified against the live dashboard with the before/after captures listed in `.cheese/web-canvas-parity-findings.md` and the regression checks recorded there.
 
 ## Narrow
 

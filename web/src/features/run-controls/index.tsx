@@ -20,13 +20,34 @@ export function register(): void {
 
   registerAction('run.cancel', () => {
     const runId = currentRunId() ?? '';
-    requestConfirm('Cancel this run?', () => void cancelRun(runId));
+    requestConfirm({
+      prompt: 'Cancel this run?',
+      dismissLabel: 'Keep the run',
+      confirmLabel: 'Cancel run',
+      action: () => void cancelRun(runId),
+    });
   });
   registerAction('run.force-stop', () => {
     const runId = currentRunId() ?? '';
-    requestConfirm('Force stop this run?', () => void forceStopRun(runId));
+    requestConfirm({
+      prompt: 'Force stop the run?',
+      body: 'The run stops now. It does not wait for the current turn. Changes that are not committed stay in the worktree.',
+      dismissLabel: 'Keep the run',
+      confirmLabel: 'Force stop',
+      action: () => void forceStopRun(runId),
+    });
   });
   registerAction('scheduling.stop', () => {
-    requestConfirm('Stop scheduling?', () => void stopScheduling());
+    const snapshot = getState().snapshot;
+    if (!snapshot?.active_runs) {
+      return;
+    }
+    requestConfirm({
+      prompt: `Stop scheduling and stop ${snapshot.active_runs.length} active runs?`,
+      body: 'Milknado dispatches no more nodes. Each active run stops after its current turn. Done work stays in the graph.',
+      dismissLabel: 'Keep running',
+      confirmLabel: 'Stop runs',
+      action: () => void stopScheduling(),
+    });
   });
 }

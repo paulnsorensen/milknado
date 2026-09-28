@@ -10,25 +10,26 @@ type SessionAction = MessageAction | 'interrupt';
 const SESSION_ACTIONS: SessionAction[] = ['steer', 'follow_up', 'interrupt'];
 
 /** The `sidecar-section` contribution: the guidance draft and its send actions. */
-export function SessionInputSection(): ReactElement {
+export function SessionInputSection(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const draft = useSyncExternalStore(subscribeDraft, getDraft);
   const { Button } = Milknado;
   const sessionInput = store.capabilities?.session_input;
-  const actions = store.capabilities?.owner?.actions ?? [];
+  const owner = store.capabilities?.owner;
+  const actions = owner?.actions ?? [];
   const firstAllowedAction =
     SESSION_ACTIONS.find((action) => actions.includes(action)) ?? 'steer';
   const [selectedAction, setSelectedAction] = useState<SessionAction>(firstAllowedAction);
   const activeAction = actions.includes(selectedAction) ? selectedAction : firstAllowedAction;
 
   function sendMessage(action: MessageAction): void {
-    const text = draft;
-    void sendSessionCommand(action, { text }).then((sent) => {
-      if (sent && getDraft() === text) {
-        setDraft('');
-      }
-    });
-  }
+  const text = draft;
+  void sendSessionCommand(action, { text }).then((sent) => {
+    if (sent && getDraft() === text) {
+      setDraft('');
+    }
+  });
+}
 
   function sendSelectedAction(): void {
     if (activeAction === 'interrupt') {
@@ -40,6 +41,13 @@ export function SessionInputSection(): ReactElement {
       return;
     }
     sendMessage(activeAction);
+  }
+
+  if (store.capabilities === null) {
+    return null;
+  }
+  if (!owner?.available) {
+    return <p className="mk-text-caption mk-faint">Read-only</p>;
   }
 
   if (!sessionInput?.available) {

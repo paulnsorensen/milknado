@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
-import { getState, resetStore, setSelection } from '../../app/store';
+import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
 import { resetDetail, resetTab, setActiveTab, type WireNodeDetailResponse } from '../../shared/node-detail';
 import { NodeSidecar } from './NodeSidecar';
 import { DetailsTabSection } from './TabSections';
@@ -53,6 +53,34 @@ describe('NodeSidecar', () => {
 
     expect(await screen.findByText('This node has no runs yet.')).toBeTruthy();
     expect(screen.getByText('Bake the roadmap')).toBeTruthy();
+  });
+
+  it('keeps watch metrics inside the Run group and waits for capabilities', async () => {
+    vi.mocked(get).mockResolvedValue(detailResponse());
+    setSelection(7);
+    render(<NodeSidecar />);
+
+    expect(screen.queryByText('unavailable')).toBeNull();
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: {
+        session_input: { available: false, reason: null },
+        cancel: { available: false, reason: null },
+        force_stop: { available: false, reason: null },
+        stop_scheduling: { available: false, reason: null },
+        graph_edits: { available: false, reason: null },
+        review_decision: { available: false, reason: null },
+        git: { available: false, reason: null },
+        owner: { available: false },
+      },
+    });
+
+    const run = await screen.findByRole('region', { name: 'Run' });
+    expect(run).toHaveTextContent('ETAunavailable');
+    expect(run).toHaveTextContent('Attemptunavailable');
+    expect(run).toHaveTextContent('guidanceunavailable');
+    expect(screen.queryByRole('region', { name: 'Watch mode availability' })).toBeNull();
   });
 
   it('renders a run row for each run', async () => {

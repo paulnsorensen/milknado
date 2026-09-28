@@ -27,14 +27,29 @@ export function RunControlsSidecar(): ReactElement | null {
         <Button
           className="mk-btn-sm"
           disabled={runId === ''}
-          onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}
+          onClick={() =>
+            requestConfirm({
+              prompt: 'Cancel this run?',
+              action: () => void cancelRun(runId),
+              dismissLabel: 'Keep the run',
+              confirmLabel: 'Cancel run',
+            })
+          }
         >
           Cancel run
         </Button>
         <Button
           className="mk-btn-sm"
           disabled={!forceStop.available}
-          onClick={() => requestConfirm('Force stop this run?', () => void forceStopRun(runId))}
+          onClick={() =>
+            requestConfirm({
+              prompt: 'Force stop the run?',
+              body: 'The run stops now. It does not wait for the current turn. Changes that are not committed stay in the worktree.',
+              dismissLabel: 'Keep the run',
+              confirmLabel: 'Force stop',
+              action: () => void forceStopRun(runId),
+            })
+          }
         >
           Force stop
         </Button>

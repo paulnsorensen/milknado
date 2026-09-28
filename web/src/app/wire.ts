@@ -38,6 +38,7 @@ export interface WireOwnerCapabilities {
   owner_incarnation?: number;
   actions?: string[];
   permission_ids?: string[];
+  permission_commands?: Array<[string, string]>;
   published_at?: string;
 }
 
@@ -57,6 +58,7 @@ export interface WireExecutionSnapshot {
   graph: WireGraphSnapshot | null;
   capabilities: WireCapabilities;
   /** Run totals; the stream carries them, the first `/api/snapshot` may not. */
+  active_runs?: Array<{ run_id: string; node_id: number; description: string; status: string }>;
   completed?: number;
   failed?: number;
   stopped?: number;

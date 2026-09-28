@@ -32,8 +32,9 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
         invocation_id="inv-1",
         owner_incarnation="owner-1",
         actions=(),
-        permission_ids=(),
+        permission_ids=("permission-1",),
         published_at="now",
+        permission_commands=(("permission-1", "git status"),),
     )
     commands = owner_commands(
         OwnerHandlers(
@@ -50,6 +51,7 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
         for name in ("session_input", "cancel", "force_stop", "stop_scheduling")
     )
     assert capabilities["owner"]["available"] is True
+    assert capabilities["owner"]["permission_commands"] == [["permission-1", "git status"]]
     assert capabilities["owner"]["published_at"] == "now"
 
 
@@ -129,7 +131,7 @@ def test_observer_session_input_reads_new_owner_fence_per_request(
 
     admitted = commands.session_input("run-1", command)
 
-    assert admitted is not None
+    assert isinstance(admitted, SessionInput)
     assert admitted.command_id == "request-1"
 
 

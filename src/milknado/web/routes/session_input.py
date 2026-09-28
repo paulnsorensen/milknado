@@ -26,6 +26,11 @@ def _command(body: object) -> SessionInput:
     return command
 
 
+def _rejection_reason(context: WebContext, run_id: str) -> str:
+    active = any(run.run_id == run_id for run in context.source.snapshot().active_runs)
+    return "the command is unavailable" if active else "the run is not active"
+
+
 async def session_input_route(request: Request) -> Response:
     context = cast(WebContext, request.app.state.web)  # pyright: ignore[reportAny]
     handler = context.commands.session_input
@@ -40,9 +45,11 @@ async def session_input_route(request: Request) -> Response:
             handler, cast(str, request.path_params["run_id"]), command
         )
     except ValueError as exc:
-        return json_response({"reason": str(exc)}, status_code=409)
-    if admitted is None:
-        return json_response({"reason": "Session input was rejected."}, status_code=409)
+        return json_response({"reason": f"Session input was rejected: {exc}"}, status_code=409)
+    if admitted is None or admitted is False:
+        run_id = cast(str, request.path_params["run_id"])
+        reason = _rejection_reason(context, run_id)
+        return json_response({"reason": f"Session input was rejected: {reason}."}, status_code=409)
     return json_response(admitted)
 
 

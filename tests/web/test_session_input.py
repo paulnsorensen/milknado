@@ -1,8 +1,8 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false
 import pytest
 
-from milknado.web import HostDependencies, observer_commands
-from tests.web.support import client, headers
+from milknado.web import HostDependencies, WebCommands, observer_commands
+from tests.web.support import client, client_with_source, headers
 
 
 def _commands(graph):
@@ -61,6 +61,19 @@ def test_session_input_rejects_malformed_payload(graph, payload, reason) -> None
     )
     assert response.status_code == 400
     assert reason in response.json()["reason"]
+
+
+def test_session_input_rejection_includes_run_reason() -> None:
+    commands = WebCommands(session_input=lambda run_id, request: None)
+    test_client = client_with_source(commands)[0]
+    response = test_client.post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-rejected", "action": "interrupt"},
+        headers=headers(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "Session input was rejected: the run is not active."
 
 
 def test_session_input_admits_interrupt_without_text(graph) -> None:

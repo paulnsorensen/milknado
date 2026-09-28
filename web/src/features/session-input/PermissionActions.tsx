@@ -8,19 +8,31 @@ import { sendSessionCommand } from './sessionCommand';
 export function PermissionActions(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const { Button, StatusBadge } = Milknado;
-  const permissionId = store.capabilities?.owner.permission_ids?.[0];
+  const owner = store.capabilities?.owner;
+  const permissionId = owner?.permission_ids?.[0];
+  const permissionCommand = owner?.permission_commands?.find(([id]) => id === permissionId)?.[1];
 
-  if (!permissionId) {
+  if (
+    !owner?.available ||
+    typeof store.selection !== 'number' ||
+    (owner.node_id !== undefined && owner.node_id !== store.selection) ||
+    !permissionId ||
+    !permissionCommand
+  ) {
     return null;
   }
 
   return (
-    <section className="mk-permission" aria-label="Permission request">
-      <div className="mk-rail-head">
+    <section className="mk-section mk-permission" aria-label="Permission requested">
+      <div className="mk-badge-row">
         <StatusBadge state="at-risk">Permission requested</StatusBadge>
-        <span className="mk-text-data" style={{ color: 'var(--mk-at-risk)' }}>
+        <span className="mk-text-data" aria-label={`Request ID ${permissionId}`} style={{ color: 'var(--mk-at-risk)' }}>
           {permissionId}
         </span>
+      </div>
+      <div className="mk-section">
+        <span className="mk-kicker">Command line</span>
+        <code className="mk-code">{permissionCommand}</code>
       </div>
       <p className="mk-text-body">The agent waits for a decision on this request.</p>
       <div className="mk-button-row">

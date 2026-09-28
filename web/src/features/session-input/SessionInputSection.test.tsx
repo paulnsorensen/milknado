@@ -43,6 +43,18 @@ describe('SessionInputSection', () => {
     expect(screen.queryByLabelText('Session guidance')).toBeNull();
   });
 
+  it('omits session input entirely in watch mode', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({ owner: { available: false } }),
+    });
+
+    render(<SessionInputSection />);
+    expect(screen.getByText('Read-only')).toBeVisible();
+    expect(screen.queryByLabelText('Session guidance')).toBeNull();
+  });
+
   it('sends the draft as a steer command and clears it', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
 

@@ -19,8 +19,17 @@ def test_add_node_mutates_db_and_page(page: Page, graph_db_server: GraphDbServer
     )
 
     page.get_by_role("button", name="Add node", exact=True).click()
+    dialog = page.get_by_role("dialog", name="Add node")
+    for field in ("Description", "Parent", "Prerequisites", "Files"):
+        assert dialog.get_by_label(field).is_visible()
+    flavor = dialog.get_by_role("group", name="Flavor")
+    assert flavor.is_visible()
+    for option in ("implement", "spec", "spike", "prototype", "research"):
+        assert flavor.get_by_role("button", name=option, exact=True).is_visible()
+    assert dialog.get_by_role("button", name="Cancel", exact=True).is_visible()
+    assert dialog.get_by_role("button", name="Add node", exact=True).is_visible()
     page.get_by_label("Description").fill("Newly added node")
-    page.get_by_role("dialog", name="Add node").get_by_role("button", name="Add node").click()
+    dialog.get_by_role("button", name="Add node", exact=True).click()
 
     wait_until(
         lambda: any(
