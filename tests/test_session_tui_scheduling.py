@@ -300,6 +300,7 @@ async def test_switching_shared_context_preserves_keyboard_file_choice(
         await pilot.press("down", "enter")
         await _wait_for_change_pipeline(app, pilot)
         assert app.selected_file_path == "second.txt"
+        assert diff_paths[-1] == "second.txt"
         assert "+second-only" in plain(app, "#diff-text")
         requests_before_switch = len(diff_paths)
 
