@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
 from typing import cast
 
@@ -36,8 +36,10 @@ class Controller:
         self.stopped = 0
         self.started = Event()
         self.completed = Event()
+        self.thread: Thread | None = None
 
     def run(self, **kwargs):
+        self.thread = current_thread()
         self.started.set()
         self.completed.set()
         return SimpleNamespace(strict_exit=False)
@@ -229,6 +231,10 @@ def test_owner_host_exits_on_first_interrupt_after_controller_completes(
     def interrupting_sleep(_seconds: float) -> None:
         assert controller.started.wait(timeout=1.0)
         assert controller.completed.is_set()
+        # completed is set inside run(); wait until the controller thread itself exits.
+        assert controller.thread is not None
+        controller.thread.join(timeout=1.0)
+        assert not controller.thread.is_alive()
         raise next(interrupts)
 
     monkeypatch.setattr(web_module, "sleep", interrupting_sleep)

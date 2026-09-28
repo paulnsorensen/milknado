@@ -2,7 +2,8 @@ set dotenv-load := true
 
 # Matches codecov.yml project/patch target (95%)
 COVERAGE_THRESHOLD := "95"
-TEST_WORKERS := "4"
+TEST_WORKERS := "auto"
+BROWSER_WORKERS := "4"
 
 # Show all available recipes
 default:
@@ -45,6 +46,12 @@ test-file file *args:
 # Run tests with verbose output
 test-verbose *args:
     uv run pytest tests/ -vv -n {{TEST_WORKERS}} {{args}}
+
+# Inner loop only, never a gate: run tests affected since the last run (pytest-testmon).
+# Excludes browser tests by path because testmon disables selection under -m.
+# testmon misses data-file, subprocess, and dynamic-import dependencies; gate with check-llm.
+test-affected *args:
+    uv run pytest tests/ -n {{TEST_WORKERS}} --ignore=tests/browser --testmon {{args}}
 
 # Run tests with coverage report
 test-coverage:
@@ -100,15 +107,16 @@ build-ci: lint file-size dead-code coverage-check dead-code-coverage typecheck
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + dead code + tests + project coverage + diff coverage + typecheck.
-# Quiet on success (one line), full output only on the failing step. Non-mutating.
-# typecheck runs LAST: the runner exits at the first failing step, so a typecheck
-# failure must not suppress lint, test, or coverage signal from this sole gate command.
+# Quiet on success (one line), full output only on failing steps. Non-mutating.
+# Independent lanes run concurrently; every failing lane is reported, so one
+# failure never suppresses another lane's signal.
 # diff-coverage mirrors codecov/patch: it fails if the lines THIS branch changes
 # (vs origin/main, including staged/uncommitted edits) aren't covered to threshold.
 check-llm:
     #!/usr/bin/env python3
     import subprocess
     import sys
+    from concurrent.futures import ThreadPoolExecutor
 
     threshold = "{{COVERAGE_THRESHOLD}}"
     base = "origin/main"
@@ -116,48 +124,77 @@ check-llm:
     # Best-effort refresh of the base ref so diff coverage matches codecov/patch.
     subprocess.run(["git", "fetch", "-q", "origin", "main"], capture_output=True, text=True)
 
-    steps = [
-        ("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"]),
-        ("import-contracts", ["uv", "run", "lint-imports"]),
-        ("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"]),
-        ("lint+format", ["just", "lint"]),
-        ("web-typecheck", ["npm", "--prefix", "web", "run", "typecheck"]),
-        ("web-lint", ["npm", "--prefix", "web", "run", "lint"]),
-        ("web-test", ["npm", "--prefix", "web", "run", "test"]),
-        (
-            "tests+coverage",
-            [
-                "uv", "run", "pytest", "tests/", "-q",
-                "-n", "{{TEST_WORKERS}}",
-                "-m", "not browser",
-                "--cov=src/milknado",
-                "--cov-report=term-missing",
-                "--cov-report=xml:coverage.xml",
-                f"--cov-fail-under={threshold}",
-            ],
-        ),
-        (
-            "dead-code-coverage",
-            ["uv", "run", "python", "scripts/check_dead_code_coverage.py"],
-        ),
-        (
-            "diff-coverage",
-            [
-                "uv", "run", "diff-cover", "coverage.xml",
-                f"--compare-branch={base}",
-                f"--fail-under={threshold}",
-            ],
-        ),
-        ("browser", ["uv", "run", "pytest", "tests/browser", "-m", "browser", "-q"]),
-        ("typecheck", ["just", "typecheck"]),
+    # Each lane runs its steps in order; lanes run concurrently. Every step is
+    # read-only against the tree, and each writes only its own artifacts
+    # (coverage.xml is produced and consumed inside the coverage lane).
+    lanes = [
+        [("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"])],
+        [("import-contracts", ["uv", "run", "lint-imports"])],
+        [("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"])],
+        [("lint+format", ["just", "lint"])],
+        [
+            ("web-typecheck", ["npm", "--prefix", "web", "run", "typecheck"]),
+            ("web-lint", ["npm", "--prefix", "web", "run", "lint"]),
+            ("web-test", ["npm", "--prefix", "web", "run", "test"]),
+        ],
+        [
+            (
+                "tests+coverage",
+                [
+                    "uv", "run", "pytest", "tests/", "-q",
+                    "-n", "{{TEST_WORKERS}}", "--dist", "worksteal",
+                    "-m", "not browser",
+                    "--cov=src/milknado",
+                    "--cov-report=term-missing",
+                    "--cov-report=xml:coverage.xml",
+                    f"--cov-fail-under={threshold}",
+                ],
+            ),
+            (
+                "dead-code-coverage",
+                ["uv", "run", "python", "scripts/check_dead_code_coverage.py"],
+            ),
+            (
+                "diff-coverage",
+                [
+                    "uv", "run", "diff-cover", "coverage.xml",
+                    f"--compare-branch={base}",
+                    f"--fail-under={threshold}",
+                ],
+            ),
+        ],
+        [
+            (
+                "browser",
+                [
+                    "uv", "run", "pytest", "tests/browser", "-m", "browser", "-q",
+                    "-n", "{{BROWSER_WORKERS}}",
+                    # Own cache dir: the coverage lane writes .pytest_cache concurrently.
+                    "-o", "cache_dir=.pytest_cache/browser",
+                ],
+            ),
+        ],
+        [("typecheck", ["just", "typecheck"])],
     ]
 
-    for name, cmd in steps:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"❌ check:llm FAILED at: {name}\n")
-            print((result.stdout + result.stderr).strip())
-            sys.exit(result.returncode)
+
+    def run_lane(lane):
+        for name, cmd in lane:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                return name, result
+        return None
+
+
+    with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+        failures = [failure for failure in pool.map(run_lane, lanes) if failure]
+
+    # Report every failing lane in declared order so one failure never hides another.
+    for name, result in failures:
+        print(f"❌ check:llm FAILED at: {name}\n")
+        print((result.stdout + result.stderr).strip() + "\n")
+    if failures:
+        sys.exit(failures[0][1].returncode)
 
     print(
         f"✅ check:llm PASS — lint+format clean, no dead code, "
