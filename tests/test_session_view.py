@@ -67,3 +67,18 @@ def test_permission_choices_keep_exact_request_ids() -> None:
         ("Deny permission request", "deny"),
     )
     assert permission_options(view) == (("request-1: read source", "request-1"),)
+
+
+def test_permission_options_does_not_repeat_synthetic_request_id() -> None:
+    view = SessionView(
+        permissions=(
+            SessionEvent(
+                kind="permission",
+                text="permission-1",
+                event_id="permission-1",
+                state="requested",
+            ),
+        )
+    )
+
+    assert permission_options(view) == (("permission-1", "permission-1"),)

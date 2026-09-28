@@ -17,8 +17,9 @@ from milknado.domains.common import (
     RunResult,
     SessionContext,
     SessionEvent,
+    SessionInput,
 )
-from milknado.domains.graph import MikadoGraph, read_observer_snapshot
+from milknado.domains.graph import MikadoGraph, admit_session_command, read_observer_snapshot
 from milknado.domains.graph import snapshot_history as history
 from milknado.domains.graph.snapshot import connect_readonly
 
@@ -151,6 +152,53 @@ def test_observer_snapshot_uses_readonly_connection_and_response_fences(tmp_path
     assert missing is not None
     assert missing.matches(999, 4)
     assert missing.detail is None
+
+
+def test_observer_snapshot_projects_queued_guidance(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    node = graph.add_node("node")
+    assert graph.claim_node(node.id, "run-1", now="2026-09-12T00:00:00+00:00")
+    graph.runs.start("run-1", node.id, str(tmp_path / "run.log"), "2026-09-12T00:00:00+00:00", 60)
+    graph.sessions.start("run-1", SessionContext(family="codex", cwd=str(tmp_path)))
+    _ = graph.commands.publish_capabilities(
+        "run-1",
+        node.id,
+        "invoke-1",
+        "owner-1",
+        ("steer", "approve", "interrupt"),
+        ("permission-1",),
+        published_at="2026-09-12T00:00:00+00:00",
+    )
+    admitted = admit_session_command(
+        graph,
+        "run-1",
+        SessionInput(action="steer", text="guidance"),
+        owner_incarnation="owner-1",
+    )
+    assert admitted is not None
+    assert (
+        admit_session_command(
+            graph,
+            "run-1",
+            SessionInput(action="approve", request_id="permission-1"),
+            owner_incarnation="owner-1",
+        )
+        is not None
+    )
+    assert (
+        admit_session_command(
+            graph,
+            "run-1",
+            SessionInput(action="interrupt", text="goal review 1 pending"),
+            owner_incarnation="owner-1",
+        )
+        is not None
+    )
+
+    snapshot = read_observer_snapshot(db_path)
+    assert snapshot.runs[0].pending_guidance == ("guidance",)
+    graph.close()
 
 
 def test_detail_history_pages_are_bounded_and_keep_retained_state(tmp_path: Path) -> None:

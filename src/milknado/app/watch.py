@@ -142,7 +142,7 @@ class WatchSnapshotSource:
             stop_requested=False,
             actions=_OBSERVER_ACTIONS,
             output=self._output(run),
-            pending_guidance=None,
+            pending_guidance=run.pending_guidance or None,
             elapsed_seconds=self._duration(run.started_at, None),
             progress_pct=None,
             session=run.session,
@@ -162,7 +162,7 @@ class WatchSnapshotSource:
             description=description,
             status=status,
             output=self._output(run),
-            pending_guidance=None,
+            pending_guidance=run.pending_guidance or None,
             session=run.session,
             duration_seconds=self._duration(run.started_at, run.ended_at),
         )

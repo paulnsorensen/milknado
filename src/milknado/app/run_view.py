@@ -1,5 +1,7 @@
 """Pure string/style formatting for the execution TUI — no Textual imports."""
 
+from dataclasses import dataclass
+
 from rich.text import Text
 
 from milknado.app.run import (
@@ -12,6 +14,15 @@ from milknado.app.session_view import action_label, full_brief, short_title
 from milknado.domains.common import SessionView
 
 RunSnapshot = ActiveRunSnapshot | TerminalRunSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class HelpOptions:
+    compact: bool
+    route: str
+    auto_follow: bool
+    show_stop_scheduling: bool = False
+
 
 _STATUS_STYLES: dict[ExecutionRunStatus, str] = {
     ExecutionRunStatus.RUNNING: "cyan",
@@ -147,17 +158,11 @@ def session_help_text(session: SessionView) -> str:
     return f"Session actions: {labels}"
 
 
-def help_text(
-    run: RunSnapshot | None,
-    *,
-    compact: bool,
-    route: str,
-    auto_follow: bool,
-) -> str:
+def help_text(run: RunSnapshot | None, options: HelpOptions) -> str:
     actions = ["↑/↓ or j/k select", "?/F1/h toggle help", "q quit"]
     actions.append("e events; ↑/↓ Home/End scroll")
-    if compact and run is not None:
-        actions.append("enter open" if route == "list" else "escape back")
+    if options.compact and run is not None:
+        actions.append("enter open" if options.route == "list" else "escape back")
     if isinstance(run, ActiveRunSnapshot):
         if run.actions.can_queue_guidance and not session_view(run).actions:
             actions.append("g queue guidance")
@@ -165,7 +170,9 @@ def help_text(
             actions.append("c cancel")
         if run.actions.can_force_stop:
             actions.append("f force stop")
-    if not auto_follow:
+        if options.show_stop_scheduling:
+            actions.append("s stop scheduling")
+    if not options.auto_follow:
         actions.append("r resume output")
     return "Help\n" + "\n".join(actions)
 

@@ -18,6 +18,7 @@ class ActionAvailabilityContext:
     auto_follow: bool
     node_selected: bool
     route: str
+    stop_scheduling_available: bool
 
 
 def action_availability(action: str, context: ActionAvailabilityContext) -> bool | None:
@@ -56,4 +57,6 @@ def action_availability(action: str, context: ActionAvailabilityContext) -> bool
         return not context.minimum and active is not None and active.actions.can_cancel
     if action == "force":
         return not context.minimum and active is not None and active.actions.can_force_stop
+    if action == "stop_scheduling":
+        return not context.minimum and context.stop_scheduling_available
     return None

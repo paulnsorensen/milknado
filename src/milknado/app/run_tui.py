@@ -68,10 +68,13 @@ class _ConfirmationOverlay(ModalScreen[bool]):
 class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     """Controller-backed operator view for one execution."""
 
+    SHOW_STOP_HINT: ClassVar[bool] = True
+
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("g", "focus_guidance", "Guidance"),
         ("c", "cancel", "Cancel"),
         ("f", "force", "Force"),
+        ("s", "stop_scheduling", "Stop scheduling"),
     ]
 
     def __init__(
@@ -136,7 +139,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         if self._confirmation is None:
             return False
         action, run_id = self._confirmation
-        if action == "quit":
+        if action in {"quit", "stop"}:
             return self._confirmation_run_ids == frozenset(
                 run.run_id for run in snapshot.active_runs
             )
@@ -157,8 +160,12 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             action, run_id = request
             if action == "force" and run_id is not None:
                 _ = self._force_stop(run_id)
-            elif action == "quit":
+            elif action in {"quit", "stop"}:
                 _ = self._stop_scheduling()
+
+    def action_stop_scheduling(self) -> None:  # noqa: V105 - Textual binding action
+        if self.snapshot.active_runs or self._execution_in_flight():
+            self._set_confirmation("stop", None)
 
     @override
     async def action_back(self) -> None:
@@ -193,6 +200,11 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             self._set_confirmation("quit", None)
         else:
             self.exit()
+
+    @property
+    @override
+    def stop_scheduling_available(self) -> bool:
+        return bool(self.snapshot.active_runs) or self._execution_in_flight()
 
     def _execution_in_flight(self) -> bool:
         return self._execution_worker is not None and not self._execution_worker.is_finished

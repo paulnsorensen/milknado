@@ -20,6 +20,7 @@ from milknado.app.run_overlays import HelpScreen, RunFooter
 from milknado.app.run_panels import RunDetailPanel, RunListPanel
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.app.run_view import (
+    HelpOptions,
     events_text,
     help_text,
     session_help_text,
@@ -44,6 +45,7 @@ class ExecutionSnapshotApp(
     AUTO_FOCUS: ClassVar[str | None] = "#runs"  # noqa: V107 - Textual reads initial focus
 
     CSS: ClassVar[str] = RUN_VIEW_CSS
+    SHOW_STOP_HINT: ClassVar[bool] = False
 
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("?", "help", "Help"),
@@ -154,9 +156,7 @@ class ExecutionSnapshotApp(
         else:
             body = help_text(
                 selected,
-                compact=self.compact,
-                route=self.route,
-                auto_follow=self.auto_follow,
+                HelpOptions(self.compact, self.route, self.auto_follow, self.SHOW_STOP_HINT),
             )
             if self.compact and self.selected_node_id is not None and selected is None:
                 body += "\nenter open" if self.route == "list" else "\nescape back"

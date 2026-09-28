@@ -21,6 +21,7 @@ from milknado.domains.graph.snapshot import (
 from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 _NODE_DETAIL_DEFAULT_LIMIT = 50
+_MAX_PENDING_GUIDANCE = 64
 
 
 class DurableRun(msgspec.Struct, frozen=True):
@@ -38,6 +39,7 @@ class DurableRun(msgspec.Struct, frozen=True):
     timeout_seconds: int | None
     detail: str | None
     rebased: bool | None
+    pending_guidance: tuple[str, ...] = ()
     session: SessionView = SessionView()
 
 
@@ -52,6 +54,17 @@ class ObserverSnapshot:
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
     graph_revision: int | None = None
+
+
+def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
+    query = (
+        "SELECT action, text FROM session_commands "
+        "WHERE run_id = ? AND status = 'queued' "
+        "AND action IN ('steer', 'follow_up') "
+        "ORDER BY admission_seq LIMIT ?"
+    )
+    rows: list[sqlite3.Row] = conn.execute(query, (run_id, _MAX_PENDING_GUIDANCE)).fetchall()
+    return tuple(cast(str, row[1]) or cast(str, row[0]) for row in rows)
 
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
@@ -72,6 +85,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
         timeout_seconds=record["timeout_seconds"],
         detail=record["detail"],
         rebased=record["rebased"],
+        pending_guidance=_pending_guidance(conn, record["run_id"]),
         session=session,
     )
 

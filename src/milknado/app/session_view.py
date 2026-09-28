@@ -108,7 +108,10 @@ def permission_options(view: SessionView) -> tuple[tuple[str, str], ...]:
     for event in view.permissions:
         if event.event_id and event.state == "requested":
             text = " ".join(event.text.split())
-            label = f"{event.event_id}: {text}" if text else event.event_id
+            if not text or text == event.event_id:
+                label = event.event_id
+            else:
+                label = f"{event.event_id}: {text}"
             options.append((label, event.event_id))
     return tuple(options)
 
