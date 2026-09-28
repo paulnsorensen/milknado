@@ -243,12 +243,12 @@ def require_web_node_modules() -> None:
         )
 
 
-def build_web_to(out_dir: Path) -> None:
-    """Build the web app to `out_dir` using the committed source, byte-stable."""
+def build_web_to(out_dir: Path, web_dir: Path = WEB_DIR) -> None:
+    """Build the web app in `web_dir` to `out_dir`, byte-stable."""
     require_web_node_modules()
     result = subprocess.run(
         ["npx", "vite", "build", "--outDir", str(out_dir), "--emptyOutDir"],
-        cwd=WEB_DIR,
+        cwd=web_dir,
         capture_output=True,
         text=True,
         check=False,
