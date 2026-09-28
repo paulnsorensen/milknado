@@ -1,4 +1,4 @@
-"""AC-15: at 400px, the narrow list and detail views hold no horizontal scroll."""
+"""Narrow list and detail parity at a 390x844 viewport."""
 
 from collections.abc import Iterator
 from dataclasses import replace
@@ -17,6 +17,7 @@ from milknado.domains.common import MikadoNode, NodeKind
 from milknado.domains.graph import (
     NodeDetailResponse,
     NodeDetailSnapshot,
+    OwnerCapabilities,
     SnapshotPage,
     SnapshotValue,
 )
@@ -25,12 +26,15 @@ from tests.browser.conftest import (
     BROWSER_TOKEN,
     BrowserServer,
     BrowserSnapshotSource,
+    RecordingCommands,
     open_app,
+    owner_web_commands,
+    wait_until,
 )
 
 pytestmark = pytest.mark.browser
 
-NARROW_VIEWPORT: ViewportSize = {"width": 400, "height": 800}
+NARROW_VIEWPORT: ViewportSize = {"width": 390, "height": 844}
 ROSTER_VIEWPORT: ViewportSize = {"width": 800, "height": 800}
 NODE_DESCRIPTION = "Tracer fixture node"
 
@@ -82,6 +86,31 @@ def narrow_server() -> Iterator[BrowserServer]:
     server.stop()
 
 
+@pytest.fixture
+def owner_narrow_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
+    login = LaunchToken(BROWSER_TOKEN)
+    source = BrowserSnapshotSource()
+    source.node_snapshot = _detail_response  # type: ignore[method-assign]
+    commands, recorder = owner_web_commands()
+    commands = replace(
+        commands,
+        owner_capabilities=OwnerCapabilities(
+            run_id="narrow-run",
+            node_id=1,
+            invocation_id="narrow-invocation",
+            owner_incarnation="narrow-owner",
+            actions=("steer", "follow_up", "interrupt"),
+            permission_ids=(),
+            published_at="2026-09-28T00:00:00Z",
+        ),
+    )
+    app = create_app(source, commands, login)
+    server = BrowserServer(app=app, login=login)
+    server.start()
+    yield server, recorder
+    server.stop()
+
+
 def _has_no_horizontal_scroll(page: Page) -> bool:
     overflow = page.evaluate(  # pyright: ignore[reportAny]
         "() => document.scrollingElement.scrollWidth <= document.scrollingElement.clientWidth"
@@ -97,6 +126,32 @@ def test_narrow_list_view_shows_outline_with_no_horizontal_scroll(
 
     expect(page.get_by_label("Jump to node")).to_be_visible()
     assert _has_no_horizontal_scroll(page)
+
+
+def test_narrow_list_navigation_opens_the_selected_node(
+    page: Page, narrow_server: BrowserServer
+) -> None:
+    page.set_viewport_size(NARROW_VIEWPORT)
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
+
+    page.get_by_role("treeitem", name=NODE_DESCRIPTION).click()
+    expect(page.get_by_text("node 1", exact=True)).to_be_visible()
+    page.get_by_role("button", name="Open node").click()
+
+    expect(page.get_by_role("button", name="Back to list")).to_be_visible()
+
+
+def test_narrow_list_jump_to_node_selects_the_requested_node(
+    page: Page, narrow_server: BrowserServer
+) -> None:
+    page.set_viewport_size(NARROW_VIEWPORT)
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
+
+    jump = page.get_by_label("Jump to node")
+    jump.fill("1")
+    jump.press("Enter")
+
+    expect(page.get_by_text("node 1", exact=True)).to_be_visible()
 
 
 def test_narrow_detail_view_is_full_width_with_44px_controls_and_no_horizontal_scroll(
@@ -116,6 +171,71 @@ def test_narrow_detail_view_is_full_width_with_44px_controls_and_no_horizontal_s
     assert box["height"] >= MIN_TOUCH_TARGET
 
     assert _has_no_horizontal_scroll(page)
+
+
+def test_narrow_detail_back_link_returns_to_the_list(
+    page: Page, narrow_server: BrowserServer
+) -> None:
+    page.set_viewport_size(NARROW_VIEWPORT)
+    open_app(page, narrow_server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
+
+    page.get_by_role("treeitem", name=NODE_DESCRIPTION).click()
+    page.get_by_role("button", name="Open node").click()
+    page.get_by_role("button", name="Back to list").click()
+
+    expect(page.get_by_label("Jump to node")).to_be_visible()
+
+
+def test_narrow_owner_footer_controls_confirm_commands(
+    page: Page, owner_narrow_server: tuple[BrowserServer, RecordingCommands]
+) -> None:
+    server, recorder = owner_narrow_server
+    page.set_viewport_size(NARROW_VIEWPORT)
+    open_app(page, server.login_url, page.get_by_role("treeitem", name=NODE_DESCRIPTION))
+
+    page.get_by_role("treeitem", name=NODE_DESCRIPTION).click()
+    page.get_by_role("button", name="Open node").click()
+
+    expect(page.get_by_role("button", name="Cancel run")).to_be_enabled()
+    expect(page.get_by_role("button", name="Force stop")).to_be_enabled()
+    for label in ("Steer", "Follow up", "Interrupt", "Send"):
+        control = page.get_by_role("button", name=label)
+        expect(control).to_be_visible()
+        box = control.bounding_box()
+        assert box is not None
+        assert box["width"] >= MIN_TOUCH_TARGET
+        assert box["height"] >= MIN_TOUCH_TARGET
+    segment_box = page.locator(".mk-seg").bounding_box()
+    send_box = page.get_by_role("button", name="Send").bounding_box()
+    assert segment_box is not None
+    assert send_box is not None
+    assert segment_box["width"] < NARROW_VIEWPORT["width"] - 32
+    assert send_box["width"] < NARROW_VIEWPORT["width"] - 32
+    footer = page.locator('[data-region="run-controls"]')
+    footer_box = footer.bounding_box()
+    assert footer_box is not None
+    assert footer_box["y"] + footer_box["height"] >= page.evaluate("window.innerHeight") - 1
+
+    guidance = page.get_by_label("Session guidance")
+    guidance.fill("Pause before the next turn")
+    page.get_by_role("button", name="Interrupt").click()
+    assert recorder.session_input_calls == []
+    expect(page.get_by_role("button", name="Interrupt")).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("button", name="Send").click()
+
+    wait_until(lambda: len(recorder.session_input_calls) == 1)
+    run_id, request = recorder.session_input_calls[0]
+    assert run_id == "narrow-run"
+    assert request.action == "interrupt"
+    assert request.text == ""
+
+    page.get_by_role("button", name="Cancel run").click()
+    page.get_by_role("button", name="Confirm").click()
+    page.get_by_role("button", name="Force stop").click()
+    page.get_by_role("button", name="Confirm").click()
+
+    wait_until(lambda: recorder.cancel_calls == ["narrow-run"])
+    wait_until(lambda: recorder.force_stop_calls == ["narrow-run"])
 
 
 def test_narrow_detail_tabs_use_aria_roles_and_roving_focus(

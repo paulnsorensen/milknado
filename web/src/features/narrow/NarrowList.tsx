@@ -5,6 +5,7 @@ import type { FormEvent, ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
 import { getState, pushNotice, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
+import { formatRunTotals } from '../../shared/runTotals';
 import { toGraphNodes } from '../../app/wire';
 import { ownerLabel } from '../../shared/ownerLabel';
 import { Wordmark } from '../../shared/Wordmark';
@@ -17,6 +18,7 @@ function toggle(collapsed: Array<string | number>, id: string | number): Array<s
   return collapsed.includes(id) ? collapsed.filter((value) => value !== id) : [...collapsed, id];
 }
 
+
 /** The `layout` slot's list view, shown at or below the 400px breakpoint. */
 export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
@@ -25,6 +27,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const { StatusBadge, StatusStrip, OutlineTree, Button } = Milknado;
 
   const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
+  const totals = formatRunTotals(state.snapshot);
   const selectedNode = nodes.find((node) => node.id === state.selection) ?? null;
   const owner = state.capabilities?.owner.available ?? false;
 
@@ -56,6 +59,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
         <span className="mk-kicker">{ownerLabel(owner).kicker}</span>
         <h1 className="mk-sidecar-title">{state.snapshot?.goal ?? 'Milknado'}</h1>
         <StatusStrip nodes={nodes} />
+        <span className="mk-narrow-totals mk-text-caption mk-muted">{totals}</span>
         <form className="mk-narrow-jump" onSubmit={jumpToNode}>
           <label htmlFor="mk-narrow-jump-input" className="mk-kicker">
             Jump to node

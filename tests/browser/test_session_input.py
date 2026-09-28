@@ -68,6 +68,8 @@ def test_session_input_buttons_each_mint_one_fresh_command(
         if fill:
             page.get_by_label("Session guidance").fill(f"guidance for {action}")
         page.get_by_role("button", name=button_name).click()
+        if action in ("steer", "follow_up", "interrupt"):
+            page.get_by_role("button", name="Send").click()
         run_id, request = _wait_for_call_count(recorder, len(seen_command_ids) + 1)
         assert run_id == RUN_ID
         assert request.action == action
@@ -89,6 +91,7 @@ def test_session_input_interrupt_without_text(
     open_app(page, server.login_url, page.get_by_label("Session guidance"))
 
     page.get_by_role("button", name="Interrupt").click()
+    page.get_by_role("button", name="Send").click()
 
     run_id, request = _wait_for_call_count(recorder, 1)
     assert run_id == RUN_ID

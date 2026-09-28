@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
 import { resetStore, setSnapshot } from '../../app/store';
@@ -53,7 +53,7 @@ describe('SessionInputSection', () => {
     Object.defineProperty(textarea, 'value', { writable: true, value: 'Slow down' });
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
 
-    screen.getByText('Steer').click();
+    screen.getByText('Send').click();
 
     expect(post).toHaveBeenCalledWith(
       '/api/runs/run-1/session-input',
@@ -61,43 +61,102 @@ describe('SessionInputSection', () => {
     );
   });
 
-  it('disables steer and follow up with an empty draft', () => {
+  it('keeps message modes selectable with an empty draft and disables Send', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
 
     render(<SessionInputSection />);
 
-    expect(screen.getByText('Steer')).toBeDisabled();
-    expect(screen.getByText('Follow up')).toBeDisabled();
+    expect(screen.getByText('Steer')).toBeEnabled();
+    expect(screen.getByText('Follow up')).toBeEnabled();
+    expect(screen.getByText('Send')).toBeDisabled();
   });
 
-  it('sends interrupt with an empty draft and leaves it enabled', () => {
+  it('sends the selected action from Send', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+    setDraft('Send this guidance');
 
     render(<SessionInputSection />);
-
-    expect(screen.getByText('Interrupt')).not.toBeDisabled();
-
-    screen.getByText('Interrupt').click();
+    screen.getByText('Send').click();
 
     expect(post).toHaveBeenCalledWith(
       '/api/runs/run-1/session-input',
-      expect.objectContaining({ action: 'interrupt', text: '' }),
+      expect.objectContaining({ action: 'steer', text: 'Send this guidance' }),
     );
   });
 
-  it('sends interrupt without the typed draft and keeps the draft', async () => {
+  it('selects interrupt without dispatching immediately', () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+
+    render(<SessionInputSection />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Interrupt' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('sends the selected interrupt after typing guidance', () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
     setDraft('Send this after the stop');
 
     render(<SessionInputSection />);
-    screen.getByText('Interrupt').click();
-    await Promise.resolve();
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
+    expect(post).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenCalledWith(
       '/api/runs/run-1/session-input',
       expect.objectContaining({ action: 'interrupt', text: '' }),
     );
     expect(getDraft()).toBe('Send this after the stop');
+  });
+
+  it('returns to the first allowed action after sending an interrupt', async () => {
+    setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
+
+    render(<SessionInputSection />);
+    fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Steer' })).toHaveAttribute('aria-pressed', 'true');
+    });
+
+    setDraft('Deliver this next');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledTimes(2);
+    });
+    expect(post).toHaveBeenLastCalledWith(
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'steer', text: 'Deliver this next' }),
+    );
+  });
+
+  it('selects the first allowed action when steer is unavailable', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({
+        owner: { available: true, run_id: 'run-1', actions: ['follow_up', 'interrupt'] },
+      }),
+    });
+    setDraft('Continue from here');
+
+    render(<SessionInputSection />);
+
+    expect(screen.getByRole('button', { name: 'Follow up' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(post).toHaveBeenCalledWith(
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'follow_up', text: 'Continue from here' }),
+    );
   });
 
   it('disables interrupt when the owner lacks the interrupt action', () => {

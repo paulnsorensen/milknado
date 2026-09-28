@@ -16,6 +16,7 @@ export const SLOT_IDS = [
   'sidecar',
   'sidecar-tab',
   'sidecar-section',
+  'run-controls',
   'sidecar-action',
   'dialog',
   'toast',

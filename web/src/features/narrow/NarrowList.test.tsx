@@ -17,6 +17,10 @@ function snapshotWithNodes(): RawStreamSnapshot {
       root_ids: [1],
     },
     active_runs: [],
+    completed: 3,
+    failed: 4,
+    stopped: 5,
+    available: 6,
     event_lines: [],
   };
 }
@@ -34,6 +38,7 @@ describe('NarrowList', () => {
 
     expect(screen.getByText('Goal')).toBeInTheDocument();
     expect(screen.getByText('Task one')).toBeInTheDocument();
+    expect(screen.getByText('0 active · 3 completed · 4 failed · 5 stopped · 6 available')).toBeInTheDocument();
   });
 
   it('jumping to a known node id selects it', () => {

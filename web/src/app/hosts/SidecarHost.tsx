@@ -22,6 +22,7 @@ export function SidecarHost(): ReactElement {
     <aside data-region="sidecar" aria-label="Detail" className={wide ? 'is-wide' : undefined}>
       {renderSlot('sidecar')}
       <div data-region="sidecar-action">{renderSlot('sidecar-action')}</div>
+      <div data-region="run-controls">{renderSlot('run-controls')}</div>
       {nodeSelected && (
         <div data-region="sidecar-tab" role="tablist" aria-label="Node detail">
           {renderSlot('sidecar-tab')}

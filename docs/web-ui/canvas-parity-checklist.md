@@ -71,8 +71,13 @@ Spec: `.scrim` (`inset:0`, 72% surface-sunken backdrop), `role=dialog aria-modal
 
 Spec: 390x844, 44px min touch targets. NarrowList: header+badge → kicker/title/StatusStrip/totals/search → `OutlineTree` → footer node title+id + "Open node". NarrowDetail: back-link header → AncestorPath/title/badge/kv/console/seg+Send → footer Cancel run/Force stop.
 
-- [ ] 390px view renders only the description paragraph — no header, StatusStrip, totals, search, OutlineTree, or footer bar; effectively unimplemented, not a styling gap.
-- [ ] No NarrowDetail route/back-link/console/footer observed at 390px either.
+- [x] 390px view renders the header, StatusStrip, totals, search, OutlineTree, and footer bar at 390px.
+- [x] 390px view renders NarrowDetail with its back link, console tabs, session controls, and owner controls.
+- Evidence: [`narrow-before-list-390x844.png`](narrow-before-list-390x844.png) → [`narrow-after-list-390x844.png`](narrow-after-list-390x844.png); [`narrow-before-detail-390x844.png`](narrow-before-detail-390x844.png) → [`narrow-after-detail-390x844.png`](narrow-after-detail-390x844.png); [`wide-before-sidecar-1440x900.png`](wide-before-sidecar-1440x900.png) → [`wide-after-sidecar-1440x900.png`](wide-after-sidecar-1440x900.png).
+- Captures use the owner fixture, the same graph and run state, and the same interaction sequence: open the fixture node, open its detail view, and switch to 1440px for the wide pair.
+- The narrow detail pair was regenerated on 2026-09-28 with one Playwright script run twice at 390x844, bottom-scrolled: `before` against the committed build at the branch base `88f62cdf`, `after` against this branch's committed build. The before image shows the base's three separate session buttons with no Send and no sticky run footer; the after image shows the segment, Send, and the sticky Cancel run / Force stop footer.
+- Deterministic interaction tape: `just test-file tests/browser/test_narrow_layout.py`; `NARROW_VIEWPORT` is 390x844, and the owner test opens the node, checks the bottom run footer, selects Interrupt, and sends through Send.
+- Verification: `just check-llm` passes on the captured source and regenerated static build.
 
 ## Out of scope
 

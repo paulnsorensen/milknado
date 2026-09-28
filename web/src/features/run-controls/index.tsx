@@ -1,4 +1,4 @@
-// The `sidecar-action` and `header-control` run controls, their shared
+// The `run-controls` and `header-control` contributions, their shared
 // confirmation dialog, and the `run.*`/`scheduling.stop` action ids.
 import { registerAction } from '../../app/actions';
 import { registerSlot } from '../../app/slots';
@@ -14,7 +14,7 @@ function currentRunId(): string | undefined {
 }
 
 export function register(): void {
-  registerSlot('sidecar-action', () => <RunControlsSidecar />);
+  registerSlot('run-controls', () => <RunControlsSidecar />);
   registerSlot('header-control', () => <RunModeHeader />);
   registerSlot('dialog', () => <ConfirmDialog />);
 
