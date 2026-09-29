@@ -56,7 +56,11 @@ function seedSnapshot(
       root_ids: [1],
     },
     capabilities: capabilities(),
-    active_runs: activeRuns,
+    active_runs: activeRuns.map((run) => ({
+      ...run,
+      description: "Fixture run",
+      status: "running",
+    })),
   });
 }
 

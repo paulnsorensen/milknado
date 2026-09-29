@@ -67,7 +67,7 @@ Spec: `.scrim` (`inset:0`, 72% surface-sunken backdrop), `role=dialog aria-modal
 - Add node: "Add a node" — Description, Parent, Flavor segment, Prerequisites, Files / "Cancel", "+ Add node".
 - Toasts: bottom-right 320px, glyph + text + "Dismiss"; Errors board seeds "Session input was rejected: the run is not active." (at-risk).
 
-- [x] Verified against the live dashboard with the before/after captures listed in `.cheese/web-canvas-parity-findings.md` and the regression checks recorded there.
+- [x] Verified against the live dashboard with the before/after captures listed in `web-canvas-parity-findings.md` and the regression checks recorded there.
 
 ## Narrow
 
@@ -83,7 +83,7 @@ Spec: 390x844, 44px min touch targets. NarrowList: header+badge → kicker/title
 
 ## Out of scope
 
-Per `.cheese/web-canvas-parity-findings.md` (decision `d-ec38938f369d`): no backend exists — leave out:
+Per `web-canvas-parity-findings.md` (decision `d-ec38938f369d`): no backend exists — leave out:
 - "Dispatch ready" rail button.
 - "Harvest done" rail button.
 - Coordinator message input ("Message the coordinator"; Events dock/toggle itself is real).

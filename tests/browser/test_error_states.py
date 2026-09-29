@@ -71,7 +71,7 @@ def inactive_session_server() -> Iterator[BrowserServer]:
     )
     commands = WebCommands(
         host_owner=True,
-        session_input=lambda run_id, request: False,
+        session_input=lambda run_id, request: None,
         owner_capabilities=OwnerCapabilities(
             run_id=RUN_ID,
             node_id=1,

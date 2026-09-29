@@ -281,7 +281,9 @@ def long_path_server() -> Iterator[BrowserServer]:
         MikadoNode(id=1, description=LONG_PARENT, kind=NodeKind.GOAL),
         MikadoNode(id=3, description="Ancestor three", kind=NodeKind.TASK, parent_id=1),
         MikadoNode(id=4, description="Ancestor four", kind=NodeKind.TASK, parent_id=3),
-        MikadoNode(id=2, description=CHILD_DESCRIPTION, kind=NodeKind.TASK, parent_id=4),
+        MikadoNode(id=5, description="Ancestor five", kind=NodeKind.TASK, parent_id=4),
+        MikadoNode(id=6, description="Ancestor six", kind=NodeKind.TASK, parent_id=5),
+        MikadoNode(id=2, description=CHILD_DESCRIPTION, kind=NodeKind.TASK, parent_id=6),
     ]
     graph = GraphSnapshot(
         nodes=tuple(nodes),
@@ -466,7 +468,12 @@ def test_ancestor_path_caps_at_four_items_with_single_line_ellipsis(
     )
 
     page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
-    expect(page.locator(".mk-path-gap")).to_have_count(0)
+    expect(page.locator(".mk-path-gap")).to_have_count(1)
+    after_gap = page.locator(".mk-path-gap ~ .mk-path-item")
+    expected_tail = ["Ancestor five", "Ancestor six", CHILD_DESCRIPTION]
+    expect(after_gap).to_have_text(expected_tail)
+    for index, label in enumerate(expected_tail):
+        expect(after_gap.nth(index)).to_have_attribute("aria-label", label)
     path_item = page.get_by_role("button", name=LONG_PARENT_SUMMARY, exact=True)
     expect(path_item).to_have_text(LONG_PARENT_SUMMARY)
     expect(path_item).to_have_attribute("aria-label", LONG_PARENT_SUMMARY)

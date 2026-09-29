@@ -23,21 +23,13 @@ const CAPABILITIES = {
 
 describe("store", () => {
   beforeEach(resetStore);
-  it("treats a snapshot without host_owner as an observer", () => {
-    const legacy = Object.fromEntries(
-      Object.entries(CAPABILITIES).filter(([key]) => key !== "host_owner"),
-    ) as typeof CAPABILITIES;
-    setSnapshot({ goal: null, graph: null, capabilities: legacy });
-
-    expect(getState().capabilities?.host_owner).toEqual({ available: false, reason: null });
-  });
 
   it("maps a selected active run to its node", () => {
     setSnapshot({
       goal: null,
       graph: null,
       capabilities: CAPABILITIES,
-      active_runs: [{ run_id: "run-1", node_id: 7 }],
+      active_runs: [{ run_id: "run-1", node_id: 7, description: "work", status: "running" }],
     });
     setSelection("run-1");
 

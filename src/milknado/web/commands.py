@@ -20,7 +20,7 @@ OwnerCapabilitiesProvider = Callable[[str | None], OwnerCapabilities | None]
 
 
 class SessionInputHandler(Protocol):
-    def __call__(self, run_id: str, request: SessionInput) -> bool | SessionInput | None: ...
+    def __call__(self, run_id: str, request: SessionInput) -> SessionInput | None: ...
 
 
 class RunHandler(Protocol):

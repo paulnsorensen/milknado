@@ -2,7 +2,7 @@
 // confirmation dialog, and the `run.*`/`scheduling.stop` action ids.
 import { registerAction } from '../../app/actions';
 import { registerSlot } from '../../app/slots';
-import { getState } from '../../app/store';
+import { getState, pushNotice } from '../../app/store';
 import { cancelRun, forceStopRun, stopScheduling } from './commands';
 import { ConfirmDialog } from './ConfirmDialog';
 import { requestConfirm } from './confirmState';
@@ -38,12 +38,13 @@ export function register(): void {
     });
   });
   registerAction('scheduling.stop', () => {
-    const snapshot = getState().snapshot;
-    if (!snapshot?.active_runs) {
+    const activeRuns = getState().snapshot?.active_runs;
+    if (activeRuns === undefined) {
+      pushNotice('Run totals are not available yet.');
       return;
     }
     requestConfirm({
-      prompt: `Stop scheduling and stop ${snapshot.active_runs.length} active runs?`,
+      prompt: `Stop scheduling and stop ${activeRuns.length} active ${activeRuns.length === 1 ? 'run' : 'runs'}?`,
       body: 'Milknado dispatches no more nodes. Each active run stops after its current turn. Done work stays in the graph.',
       dismissLabel: 'Keep running',
       confirmLabel: 'Stop runs',

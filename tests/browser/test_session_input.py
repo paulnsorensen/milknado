@@ -45,9 +45,9 @@ def rejected_session_input_server() -> Iterator[BrowserServer]:
     login = LaunchToken(BROWSER_TOKEN)
     source = BrowserSnapshotSource()
 
-    def reject(run_id: str, request: SessionInput) -> bool:
+    def reject(run_id: str, request: SessionInput) -> SessionInput | None:
         del run_id, request
-        return False
+        return None
 
     app = create_app(
         source,

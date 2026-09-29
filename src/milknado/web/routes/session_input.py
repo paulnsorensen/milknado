@@ -46,7 +46,7 @@ async def session_input_route(request: Request) -> Response:
         )
     except ValueError as exc:
         return json_response({"reason": f"Session input was rejected: {exc}"}, status_code=409)
-    if admitted is None or admitted is False:
+    if admitted is None:
         run_id = cast(str, request.path_params["run_id"])
         reason = _rejection_reason(context, run_id)
         return json_response({"reason": f"Session input was rejected: {reason}."}, status_code=409)

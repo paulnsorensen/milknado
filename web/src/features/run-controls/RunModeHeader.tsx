@@ -3,11 +3,10 @@
 // capabilities like the server.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
+import { dispatchAction } from '../../app/actions';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { ownerLabel } from '../../shared/ownerLabel';
-import { stopScheduling } from './commands';
-import { requestConfirm } from './confirmState';
 
 export function RunModeHeader(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
@@ -39,13 +38,7 @@ export function RunModeHeader(): ReactElement | null {
             if (activeRuns === undefined) {
               return;
             }
-            requestConfirm({
-              prompt: `Stop scheduling and stop ${activeRuns.length} active runs?`,
-              body: 'Milknado dispatches no more nodes. Each active run stops after its current turn. Done work stays in the graph.',
-              dismissLabel: 'Keep running',
-              confirmLabel: 'Stop runs',
-              action: () => void stopScheduling(),
-            });
+            dispatchAction('scheduling.stop');
           }}
         >
           Stop scheduling

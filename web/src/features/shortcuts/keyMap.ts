@@ -2,7 +2,7 @@
 // `event.key` against these entries, and the Help dialog renders one row per
 // entry, so a listed shortcut always has a working binding.
 import { dispatchAction, type ActionId } from '../../app/actions';
-import { getState } from '../../app/store';
+import { canActOnSelectedRun, getState } from '../../app/store';
 import type { WireCapabilities } from '../../app/wire';
 import {
   clearSelection,
@@ -183,14 +183,14 @@ export const KEY_BINDINGS: Shortcut[] = [
     label: 'X',
     description: 'Cancel the current run',
     column: 'Steering',
-    run: gated((c) => c.cancel.available && Boolean(c.owner.run_id), 'run.cancel'),
+    run: gated((c) => c.cancel.available && canActOnSelectedRun(getState()), 'run.cancel'),
   },
   {
     key: 'X',
     label: 'Shift+X',
     description: 'Force stop the current run',
     column: 'Steering',
-    run: gated((c) => c.force_stop.available, 'run.force-stop'),
+    run: gated((c) => c.force_stop.available && canActOnSelectedRun(getState()), 'run.force-stop'),
   },
   {
     key: 's',

@@ -100,6 +100,17 @@ describe("PermissionActions", () => {
     expect(screen.getByText('git status')).toBeVisible();
   });
 
+  it('shows Approve and Deny for an empty-string permission command', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1'], [['perm-1', '']]));
+
+    render(<PermissionActions />);
+
+    expect(screen.getByText('Approve')).toBeVisible();
+    expect(screen.getByText('Deny')).toBeVisible();
+    expect(screen.queryByText('Command line')).toBeNull();
+  });
+
   it("denies the oldest pending permission request", () => {
     setSelection(1);
     setSnapshot(snapshotWithPermissions(["perm-1"]));

@@ -124,7 +124,7 @@ describe('SessionInputSection', () => {
     expect(screen.getByRole('button', { name: 'Interrupt' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('sends the selected interrupt after typing guidance', () => {
+  it('sends the selected interrupt after typing guidance', async () => {
     setSnapshot({ goal: null, graph: null, capabilities: capabilities() });
     setSelection(1);
     setDraft('Send this after the stop');
@@ -133,7 +133,9 @@ describe('SessionInputSection', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Interrupt' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    expect(post).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(post).toHaveBeenCalledTimes(1);
+    });
     expect(post).toHaveBeenCalledWith(
       '/api/runs/run-1/session-input',
       expect.objectContaining({ action: 'interrupt', text: '' }),

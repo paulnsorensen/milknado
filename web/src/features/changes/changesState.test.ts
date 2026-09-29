@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
+import * as store from '../../app/store';
 import { getChangesState, resetChanges, selectPath, setRunId } from './changesState';
 
 vi.mock('../../app/api', () => ({
@@ -27,6 +28,7 @@ describe('changesState', () => {
   });
 
   it('treats a missing changes endpoint as the no-changes state', async () => {
+    const noticeSpy = vi.spyOn(store, 'pushNotice');
     vi.mocked(get).mockRejectedValueOnce({ status: 404 });
 
     setRunId('run-missing');
@@ -34,6 +36,18 @@ describe('changesState', () => {
 
     expect(getChangesState().files).toEqual([]);
     expect(getChangesState().selectedPath).toBeNull();
+    expect(noticeSpy).not.toHaveBeenCalled();
+  });
+
+  it('pushes one notice when the changes endpoint fails', async () => {
+    const noticeSpy = vi.spyOn(store, 'pushNotice');
+    vi.mocked(get).mockRejectedValueOnce({ status: 500 });
+
+    setRunId('run-failed');
+    await Promise.resolve();
+
+    expect(noticeSpy).toHaveBeenCalledTimes(1);
+    expect(noticeSpy).toHaveBeenCalledWith('Could not load changed files.');
   });
 
   it('resets the file list when the run id changes again', async () => {

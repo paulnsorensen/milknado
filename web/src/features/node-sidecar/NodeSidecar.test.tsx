@@ -178,7 +178,9 @@ describe("NodeSidecar", () => {
       goal: null,
       graph: null,
       capabilities: EMPTY_CAPABILITIES,
-      active_runs: [{ run_id: "run-1", node_id: 7 }],
+      active_runs: [
+        { run_id: "run-1", node_id: 7, description: "Fixture run", status: "running" },
+      ],
     });
     setSelection("run-1");
 

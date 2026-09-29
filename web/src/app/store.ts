@@ -1,6 +1,6 @@
 // A minimal, dependency-free client store. Slot and feature code read a
 // snapshot with `getState()` and re-render on `subscribe(listener)`.
-import type { WireCapabilities, WireCapability, WireExecutionSnapshot } from './wire';
+import type { WireCapabilities, WireExecutionSnapshot } from './wire';
 
 export type GraphFilter = "ready" | "running" | "blocked" | null;
 export type GraphLod = "card" | "pill" | "dot";
@@ -64,16 +64,8 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-const HOST_OWNER_FALLBACK: WireCapability = { available: false, reason: null };
-
-/** A server older than the host_owner capability omits the field; treat it as an observer. */
-function withHostOwner(capabilities: WireCapabilities): WireCapabilities {
-  const partial: Partial<Pick<WireCapabilities, 'host_owner'>> = capabilities;
-  return partial.host_owner ? capabilities : { ...capabilities, host_owner: HOST_OWNER_FALLBACK };
-}
-
 export function setSnapshot(snapshot: WireExecutionSnapshot): void {
-  state = { ...state, snapshot, capabilities: withHostOwner(snapshot.capabilities) };
+  state = { ...state, snapshot, capabilities: snapshot.capabilities };
   emit();
 }
 

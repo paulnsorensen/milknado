@@ -4,13 +4,13 @@
 // re-render; the effect only wires and tears down that subscription.
 import type { ReactElement } from 'react';
 import { useEffect } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { getState, selectedNodeId, subscribe } from '../../app/store';
 import { clearReviewSelection, getSelectedReviewId } from './selection';
 
 export function ReviewSelectionSync(): ReactElement | null {
   useEffect(() => {
     return subscribe(() => {
-      if (typeof getState().selection === 'number' && getSelectedReviewId() !== null) {
+      if (selectedNodeId(getState()) !== null && getSelectedReviewId() !== null) {
         clearReviewSelection();
       }
     });

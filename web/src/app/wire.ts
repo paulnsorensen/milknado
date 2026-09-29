@@ -24,11 +24,13 @@ export interface WireGraphSnapshot {
   root_ids: number[];
 }
 
+export type WireRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
+
 export interface WireActiveRun {
   run_id: string;
   node_id: number;
-  description?: string;
-  status?: string;
+  description: string;
+  status: WireRunStatus;
 }
 
 export interface WireCapability {

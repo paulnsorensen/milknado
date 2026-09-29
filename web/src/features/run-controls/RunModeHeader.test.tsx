@@ -1,8 +1,10 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
+import { clearActions } from '../../app/actions';
 import { resetStore, setSnapshot } from '../../app/store';
 import { resetConfirm, confirmPending, getPendingConfirm } from './confirmState';
+import { register } from './index';
 import { RunModeHeader } from './RunModeHeader';
 
 vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
@@ -26,6 +28,8 @@ describe('RunModeHeader', () => {
   beforeEach(() => {
     resetStore();
     resetConfirm();
+    clearActions();
+    register();
     vi.mocked(post).mockClear();
   });
 

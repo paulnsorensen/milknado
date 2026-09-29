@@ -127,6 +127,7 @@ def test_steering_key_confirms_and_runs_command(
         server.login_url,
         page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True),
     )
+    page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True).click()
     page.keyboard.press("x")
 
     expect(page.get_by_role("alertdialog")).to_be_visible()

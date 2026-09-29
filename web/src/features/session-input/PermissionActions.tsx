@@ -12,8 +12,7 @@ export function PermissionActions(): ReactElement | null {
   const permissionId = owner?.permission_ids?.[0];
   const permissionCommand = owner?.permission_commands?.find(([id]) => id === permissionId)?.[1];
 
-  if (
-    !canActOnSelectedRun(store) || !permissionId || !permissionCommand) {
+  if (!canActOnSelectedRun(store) || !permissionId || permissionCommand === undefined) {
     return null;
   }
 
@@ -25,10 +24,12 @@ export function PermissionActions(): ReactElement | null {
           {permissionId}
         </span>
       </div>
-      <div className="mk-section">
-        <span className="mk-kicker">Command line</span>
-        <code className="mk-code">{permissionCommand}</code>
-      </div>
+      {permissionCommand.length > 0 && (
+        <div className="mk-section">
+          <span className="mk-kicker">Command line</span>
+          <code className="mk-code">{permissionCommand}</code>
+        </div>
+      )}
       <p className="mk-text-body">
         The agent waits for a decision on this request.
       </p>
