@@ -12,6 +12,8 @@ import pytest
 
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
+    CONTROLLER_MASTER_ENV,
+    NodeKind,
     ProgressEvent,
     SessionInput,
     SessionView,
@@ -33,7 +35,12 @@ from milknado.domains.execution.run_loop.state import (
     TerminalRunState,
     summarize_description,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRequest,
+    MikadoGraph,
+)
 from milknado.loop import RunStatus
 
 T = TypeVar("T")
@@ -2341,6 +2348,47 @@ class TestOwnerIdleWait:
         assert settled is not None and settled.status == NodeStatus.DONE
         assert sleeps == []
         _mock_attr(executor, "dispatch").assert_not_called()
+
+    def test_waits_for_a_pending_goal_review_before_completing_the_root(
+        self,
+        graph: MikadoGraph,
+        fake_ralph: FakeRalph,
+        config: ExecutionConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
+        graph.register_controller_master()
+        root = graph.add_node("root", spec=NodeSpec(kind=NodeKind.GOAL))
+        leaf = graph.add_node("finished leaf", parent_id=root.id)
+        graph.mark_running(leaf.id)
+        graph.mark_done(leaf.id)
+        review = graph.request_goal_review(
+            GoalReviewRequest(
+                goal_id=root.id,
+                goal_revision="sha256:goal",
+                evidence="Review evidence",
+                proposed_change="Review proposed change",
+                affected_node_ids=None,
+                reviewer="worker",
+                assessed_at="2026-09-13T12:00:00+00:00",
+            )
+        )
+        scans: list[int] = []
+
+        def decide_on_second_scan() -> None:
+            scans.append(len(scans))
+            if len(scans) == 2:
+                _ = graph.decide_goal_review(
+                    GoalReviewDecisionRequest(review.review_id, GoalReviewDecision.REJECTED),
+                    decided_by="human",
+                )
+
+        loop, _executor, sleeps = self._owner_loop(graph, fake_ralph, decide_on_second_scan)
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        assert sleeps == [1.0]
+        settled = graph.get_node(root.id)
+        assert settled is not None and settled.status == NodeStatus.DONE
 
     def test_verifies_the_spec_once_per_idle_graph_state(
         self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig

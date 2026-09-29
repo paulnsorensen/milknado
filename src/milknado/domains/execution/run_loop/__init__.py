@@ -24,6 +24,7 @@ from milknado.domains.execution.executor import (
     get_execution_overview,
 )
 from milknado.domains.execution.run_loop._completion import handle_completion
+from milknado.domains.execution.run_loop._idle import IdleGraphState, settle_once
 from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
 from milknado.domains.execution.run_loop.input import (
@@ -99,7 +100,7 @@ class RunLoop:
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
         self._spec: tuple[str | None, Path | None] = (None, None)
-        self._idle_settled_graph: tuple[tuple[int, NodeStatus], ...] | None = None
+        self._idle_settled_graph: IdleGraphState | None = None
         self._verify_outcome: VerifyOutcome | None = None
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
@@ -334,7 +335,11 @@ class RunLoop:
             with self._scheduling_lock:
                 if self._scheduling_stopped:
                     return 0
-            self._settle_idle_root(config)
+            self._idle_settled_graph = settle_once(
+                self._graph,
+                self._idle_settled_graph,
+                lambda: self._verify_if_scheduling_open(*self._spec, config),
+            )
             root = self._graph.get_root()
             if root is not None and root.status == NodeStatus.DONE:
                 return 0
@@ -347,13 +352,6 @@ class RunLoop:
             if failed:
                 self._publish_state()
             self._idle_sleep(IDLE_RESCAN_SECONDS)
-
-    def _settle_idle_root(self, config: ExecutionConfig) -> None:
-        """Settle or verify the root once per idle graph state, not on every rescan."""
-        graph_state = tuple((node.id, node.status) for node in self._graph.get_all_nodes())
-        if graph_state != self._idle_settled_graph:
-            self._idle_settled_graph = graph_state
-            _ = self._verify_if_scheduling_open(*self._spec, config)
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
         _logger.warning(
