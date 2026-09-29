@@ -287,6 +287,30 @@ def test_run_session_provides_complete_worker_identity(
     assert len(invocation_id) == 32
 
 
+def test_run_session_threads_spec_env_into_worker_identity(tmp_path: Path) -> None:
+    """``spec.env`` (not the parent process env) supplies worker identity on
+    the session runtime path every claude/codex/omp worker takes."""
+    worker = _worker(tmp_path, "identity")
+    spec = replace(
+        _spec(worker, tmp_path, ("identity",)),
+        env={
+            "MILKNADO_PROJECT_ROOT": str(tmp_path),
+            "MILKNADO_NODE_ID": "17",
+            "MILKNADO_RUN_ID": "run-17",
+        },
+    )
+
+    result = run_session(spec, SessionChannel())
+
+    identity = cast(dict[str, str | None], json.loads(result.result_text or ""))
+    assert identity["MILKNADO_PROJECT_ROOT"] == str(tmp_path)
+    assert identity["MILKNADO_NODE_ID"] == "17"
+    assert identity["MILKNADO_RUN_ID"] == "run-17"
+    invocation_id = identity["MILKNADO_INVOCATION_ID"]
+    assert isinstance(invocation_id, str)
+    assert len(invocation_id) == 32
+
+
 def test_run_session_sends_follow_up_before_first_terminal_result(tmp_path: Path) -> None:
     worker = _worker(tmp_path, "followup")
     channel = SessionChannel()

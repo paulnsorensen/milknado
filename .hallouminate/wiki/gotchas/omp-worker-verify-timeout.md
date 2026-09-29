@@ -28,3 +28,11 @@ The worker also fell back to reading `.milknado/milknado.db` directly to find ou
   and never re-queues them; reset such nodes to `pending` by hand (node 94 tracks the decision).
 - The run loop rescans dispatchable nodes only at start and after a merge-back
   (`executor.py:1214`), so nodes reset or added mid-run wait for the next completion.
+- Before this pass's fix, the CLI run loop (`milknado run`) spawned workers with no
+  `MILKNADO_NODE_ID`/`MILKNADO_RUN_ID`/`MILKNADO_PROJECT_ROOT` at all, so `milknado-mcp`
+  could not resolve the run and workers fell back to reading `.milknado/milknado.db` directly.
+- Before the same fix, the CLI run loop's per-node flavor `dataclasses.replace`
+  (`run_loop/__init__.py`) copied the review settings but dropped `max_iterations`,
+  `attempt_timeout_seconds`, and the derived completion timeout. `milknado run`
+  attempts had no 1800 s cap and ran for 3 to 5 hours; `runs.timeout_seconds` was NULL.
+  The MCP node runner (`_ralph_node_runner.py`) always set all three.

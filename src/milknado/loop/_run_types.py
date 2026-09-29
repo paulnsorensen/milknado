@@ -137,12 +137,12 @@ class RunConfig:
     # Unlike ``completion_verifier``, it can establish completion without a
     # promise tag when an external system commits the terminal signal.
     completion_probe: Callable[[], bool] | None = None
-    # Structured session context and durable event sink, when this run is
     session_context: SessionContext | None = None
     session_sink: Callable[[SessionEvent], None] | None = None
     session_admitter: Callable[[SessionInput], SessionInput | None] | None = None
     session_state_sink: Callable[[SessionInput, str], None] | None = None
     session_durable_drain: Callable[[], tuple[SessionInput, ...]] | None = None
+    env: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         if (self.prompt is None) == (self.ralph_file is None):

@@ -47,6 +47,7 @@ class _DispatchLoopFixture(Protocol):
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> object: ...
 
     def start_run(self, run_id: str) -> None: ...

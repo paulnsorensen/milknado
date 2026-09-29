@@ -80,7 +80,9 @@ class Schedulable(Protocol):
 
 
 class ControllerRunner(Schedulable, Protocol):
-    def run(self, *, feature_branch: str, strict: bool, allow_protected: bool) -> object: ...
+    def run(
+        self, *, feature_branch: str, strict: bool, allow_protected: bool, await_owner_work: bool
+    ) -> object: ...
 
 
 class RunOptions(Protocol):
@@ -152,6 +154,7 @@ def run_controller(task: ControllerTask) -> None:
                 feature_branch=resolve_feature_branch(task.root),
                 strict=task.options.strict,
                 allow_protected=task.options.allow_protected,
+                await_owner_work=True,
             )
         )
     except BaseException as exc:  # noqa: BLE001 - preserve controller failure

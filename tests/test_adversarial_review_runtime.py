@@ -168,8 +168,9 @@ class _ReviewRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _Run:
-        _ = (max_iterations, timeout)
+        _ = (max_iterations, timeout, env)
         self._next_id += 1
         resolved_run_id = run_id or f"run-{self._next_id}"
         self.created.append(

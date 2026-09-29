@@ -136,6 +136,7 @@ class ExecutionController:
         spec_text: str | None = None,
         spec_path: Path | None = None,
         allow_protected: bool = False,
+        await_owner_work: bool = False,
     ) -> RunLoopResult:
         ensure_dispatch_allowed(self._config, feature_branch, allow_protected)
         with self._state_lock:
@@ -156,6 +157,7 @@ class ExecutionController:
                         spec_path=spec_path,
                         process_controls=self._drain_controls,
                         interactive=False,
+                        await_owner_work=await_owner_work,
                     )
                 )
             except BaseException as exc:

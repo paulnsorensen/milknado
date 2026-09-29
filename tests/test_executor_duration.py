@@ -122,6 +122,7 @@ class _FakeRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _FakeRun:
         _ = (
             agent,
@@ -135,6 +136,7 @@ class _FakeRalph:
             completion_probe,
             max_iterations,
             timeout,
+            env,
         )
         return _FakeRun(state=_FakeRunState(run_id=run_id or "run-dur-1"))
 
