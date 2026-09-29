@@ -2327,6 +2327,85 @@ class TestOwnerIdleWait:
         assert received[-1].failed == 1
         assert sleeps == [1.0]
 
+    def test_completes_the_root_once_owner_work_is_done(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        leaf = graph.add_node("finished leaf", parent_id=root.id)
+        graph.mark_running(leaf.id)
+        graph.mark_done(leaf.id)
+        loop, executor, sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        settled = graph.get_node(root.id)
+        assert settled is not None and settled.status == NodeStatus.DONE
+        assert sleeps == []
+        _mock_attr(executor, "dispatch").assert_not_called()
+
+    def test_verifies_the_spec_once_per_idle_graph_state(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        leaf = graph.add_node("finished leaf", parent_id=root.id)
+        graph.mark_running(leaf.id)
+        graph.mark_done(leaf.id)
+        verify_calls: list[str] = []
+
+        def gaps(spec_text: str, _graph_state: str) -> VerifySpecResult:
+            verify_calls.append(spec_text)
+            return VerifySpecResult(outcome="gaps")
+
+        _set_attr(fake_ralph, "verify_spec", gaps)
+        controls: list[int] = []
+        loop, _executor, sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+
+        def stop_on_third_scan() -> None:
+            controls.append(len(controls))
+            if len(controls) == 3:
+                loop.stop_scheduling()
+
+        _set_attr(loop, "_process_controls", stop_on_third_scan)
+        _set_attr(loop, "_spec", ("spec: ship it", None))
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        assert verify_calls == ["spec: ship it"]
+        assert sleeps == [1.0, 1.0]
+        settled = graph.get_node(root.id)
+        assert settled is not None and settled.status == NodeStatus.PENDING
+
+    def test_owner_run_reports_the_idle_spec_verification(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_crg: FakeCrg,
+    ) -> None:
+        ralph = FakeRalph()
+        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        sleeps: list[float] = []
+        _set_attr(loop, "_idle_sleep", sleeps.append)
+        scans: list[int] = []
+
+        def bounded_controls() -> None:
+            scans.append(len(scans))
+            assert len(scans) < 50, "owner-attached run never settled the root"
+
+        root = graph.add_node("root goal")
+        _ = graph.add_node("leaf", parent_id=root.id)
+
+        result = loop.run(
+            config,
+            "main",
+            spec_text="spec: do the thing",
+            process_controls=bounded_controls,
+            interactive=False,
+            await_owner_work=True,
+        )
+
+        assert result.root_done is True
+        assert result.verify_outcome is not None and result.verify_outcome.done is True
+
     def test_execute_run_returns_once_the_owner_stops_an_idle_run(
         self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
     ) -> None:

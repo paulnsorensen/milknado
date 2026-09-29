@@ -198,6 +198,22 @@ def test_observer_snapshot_projects_queued_guidance(tmp_path: Path) -> None:
 
     snapshot = read_observer_snapshot(db_path)
     assert snapshot.runs[0].pending_guidance == ("guidance",)
+    with patch(
+        "milknado.domains.graph.observer.utc_iso", return_value="2999-01-01T00:00:00+00:00"
+    ):
+        expired = read_observer_snapshot(db_path)
+    assert expired.runs[0].pending_guidance == ()
+    _ = graph.runs.finish(
+        "run-1",
+        RunResult(
+            status="failed",
+            exit_code=1,
+            timed_out=False,
+            ended_at="2026-09-12T00:01:00+00:00",
+            error="worker failed",
+        ),
+    )
+    assert read_observer_snapshot(db_path).runs[0].pending_guidance == ()
     graph.close()
 
 

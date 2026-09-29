@@ -12,6 +12,7 @@ import msgspec
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common.session import SessionView
+from milknado.domains.graph._command_records import utc_iso
 from milknado.domains.graph._run_persistence import RUN_TOTALS_SQL, run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
 from milknado.domains.graph.goal_review import GoalReviewRecord
@@ -60,13 +61,15 @@ class ObserverSnapshot:
 
 
 def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
+    """Read deliverable guidance; the read-only observer filters expiry instead of writing it."""
     query = (
         "SELECT action, text FROM session_commands "
-        "WHERE run_id = ? AND status = 'queued' "
+        "WHERE run_id = ? AND status = 'queued' AND expires_at > ? "
         "AND action IN ('steer', 'follow_up') "
         "ORDER BY admission_seq LIMIT ?"
     )
-    rows: list[sqlite3.Row] = conn.execute(query, (run_id, _MAX_PENDING_GUIDANCE)).fetchall()
+    params = (run_id, utc_iso(None), _MAX_PENDING_GUIDANCE)
+    rows: list[sqlite3.Row] = conn.execute(query, params).fetchall()
     return tuple(cast(str, row[1]) or cast(str, row[0]) for row in rows)
 
 
@@ -80,7 +83,8 @@ def _durable_status(
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
     record = run_row_to_dict(row)
-    session = view_session(conn, record["run_id"], active=record["status"] == "running")
+    running = record["status"] == "running"
+    session = view_session(conn, record["run_id"], active=running)
     return DurableRun(
         run_id=record["run_id"],
         node_id=record["node_id"],
@@ -96,7 +100,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
         timeout_seconds=record["timeout_seconds"],
         detail=record["detail"],
         rebased=record["rebased"],
-        pending_guidance=_pending_guidance(conn, record["run_id"]),
+        pending_guidance=_pending_guidance(conn, record["run_id"]) if running else (),
         session=session,
     )
 
