@@ -72,6 +72,7 @@ class TestCreateRun:
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             max_iterations=None,
             timeout=12.5,
+            env=None,
         )
         mock_manager.create_run.assert_called_once_with(  # pyright: ignore[reportAny]
             mock_config,

@@ -405,7 +405,14 @@ because storage alone cannot recover a deliverable the worker never restated.
 `MILKNADO_RUN_ID` is injected into the worker env **only when a `running` run
 row exists**. A DONE-node re-run inserts no row (`start_run` is gated on the
 node actually transitioning), so the worker gets no run_id and the mandated
-deposit soft-no-ops instead of raising "run not found".
+deposit soft-no-ops instead of raising "run not found". The CLI run loop
+(`milknado run`) now injects the same three variables — `MILKNADO_NODE_ID`,
+`MILKNADO_RUN_ID`, `MILKNADO_PROJECT_ROOT` — through `RunConfig.env`, set by
+`Executor._create_ralph_run` and merged into every agent spawn of the run.
+The same per-node flavor replace in `RunLoop._dispatch_batch` also carries
+`max_iterations`, `attempt_timeout_seconds`, and `completion_timeout_seconds`
+(attempt timeout × max iterations) from the flavor profile, matching the MCP
+node runner, so a CLI-dispatched attempt is bounded.
 
 Progress messaging and coordinator→worker inbound are deliberately NOT built;
 the `run_messages` shape permits them later (YAGNI — spec non-goal).

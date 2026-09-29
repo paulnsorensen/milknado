@@ -564,6 +564,7 @@ class AgentRunSpec:
     on_tool_use: ToolUseCallback | None = None
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
+    env: dict[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1199,7 +1200,8 @@ def execute_agent(spec: AgentRunSpec) -> AgentResult:
         on_tool_use=spec.on_tool_use,
         counter_path=wind_down.counter_path if wind_down is not None else None,
     )
-    env = wind_down.env_overrides if wind_down is not None else None
+    wind_down_overrides = wind_down.env_overrides if wind_down is not None else None
+    env = {**(spec.env or {}), **(wind_down_overrides or {})} or None
 
     run = _prepare_agent_run(spec, adapter, inv.argv, inv.stdin_text, wrapped_on_tool_use, env)
 

@@ -171,6 +171,7 @@ def test_controller_delegates_run_and_control_ports() -> None:
         "spec_text": "spec",
         "spec_path": None,
         "interactive": False,
+        "await_owner_work": False,
     }
     assert controller.queue_guidance("run-1", "accepted") is True
     assert controller.queue_guidance("run-1", "rejected") is False

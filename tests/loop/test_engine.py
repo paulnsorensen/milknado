@@ -212,6 +212,45 @@ class TestRunLoop:
 
     @patch("milknado.loop.engine._delay_if_needed")
     @patch("milknado.loop.engine.execute_agent")
+    def test_stop_on_error_retries_a_timed_out_attempt(
+        self, mock_execute_agent: MagicMock, mock_delay: MagicMock, tmp_path: Path
+    ):
+        """An attempt that hits its wall clock spends an iteration; it does not end the run."""
+        del mock_delay
+        config = make_config(tmp_path, max_iterations=2, stop_on_error=True, timeout=5)
+        state = make_state()
+        mock_execute_agent.side_effect = [
+            AgentResult(returncode=None, timed_out=True),
+            AgentResult(returncode=0),
+        ]
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        assert state.timed_out_count == 1
+        assert state.status is RunStatus.COMPLETED
+
+    @patch("milknado.loop.engine._delay_if_needed")
+    @patch("milknado.loop.engine.execute_agent")
+    def test_stop_on_error_still_stops_on_a_crashed_attempt(
+        self, mock_execute_agent: MagicMock, mock_delay: MagicMock, tmp_path: Path
+    ):
+        del mock_delay
+        config = make_config(tmp_path, max_iterations=3, stop_on_error=True, timeout=5)
+        state = make_state()
+        mock_execute_agent.side_effect = [
+            AgentResult(returncode=None, timed_out=True),
+            AgentResult(returncode=1),
+            AgentResult(returncode=0),
+        ]
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == 2
+        assert state.status is RunStatus.FAILED
+
+    @patch("milknado.loop.engine._delay_if_needed")
+    @patch("milknado.loop.engine.execute_agent")
     def test_retriable_timeout_keeps_guidance_open(
         self, mock_execute_agent: MagicMock, mock_delay: MagicMock, tmp_path: Path
     ):

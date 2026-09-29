@@ -7,4 +7,5 @@
 - [review-harness-verdict-loss](./review-harness-verdict-loss.md) — Review verdicts and durable audit records
 - [shared-tui-dogfood-pass-3-2026-09](./shared-tui-dogfood-pass-3-2026-09.md) — Shared TUI dogfood pass 3
 - [web-canvas-auto-lod](./web-canvas-auto-lod.md) — Web canvas: measured width triggers vendor auto-LOD
+- [owner-run-idle-exit](./owner-run-idle-exit.md) — Owner run: `milknado run --web` idles and rescans; batch runs end when nothing is dispatchable
 <!-- HALLOUMINATE:INDEX-END -->
