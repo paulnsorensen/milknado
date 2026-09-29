@@ -29,7 +29,15 @@ from milknado.domains.dispatch.runner import (
 
 @pytest.mark.parametrize(
     "executable",
-    ["/usr/bin/claude", "./claude", "../claude", "claude-evil", r"claude\evil"],
+    [
+        "/usr/bin/claude",
+        "./claude",
+        "../claude",
+        "claude-evil",
+        r"claude\evil",
+        "/usr/local/bin/ap",
+        "ap-evil",
+    ],
 )
 def test_validate_worker_argv_rejects_path_and_prefix_spoofs(executable: str) -> None:
     with pytest.raises(ValueError, match="worker_cmd"):
@@ -46,6 +54,7 @@ def test_validate_worker_argv_rejects_symlink_alias(tmp_path: Path) -> None:
 
 def test_validate_worker_argv_accepts_only_exact_bare_executables() -> None:
     for executable in (
+        "ap",
         "claude",
         "codex",
         "copilot",

@@ -77,11 +77,12 @@ WORKER_ALLOWED_TOOLS: Final[dict[str, tuple[str, ...]]] = {
     ),
 }
 
-# Worker subprocesses may only invoke a known AI-agent CLI. Matching the exact
-# bare token rejects both prefix tricks (`claude-evil`) and absolute/relative
-# paths (`/usr/bin/claude`, `./claude`).
+# Worker subprocesses may only invoke a known AI-agent CLI. `ap` is the profile
+# launcher that execs one of them with its own closed-world MCP and settings
+# flags. Matching the exact bare token rejects both prefix tricks (`claude-evil`)
+# and absolute/relative paths (`/usr/bin/claude`, `./claude`).
 ALLOWED_WORKER_EXECUTABLES: frozenset[str] = frozenset(
-    {"claude", "codex", "copilot", "crush", "cursor-agent", "gemini", "omp", "opencode"}
+    {"ap", "claude", "codex", "copilot", "crush", "cursor-agent", "gemini", "omp", "opencode"}
 )
 
 

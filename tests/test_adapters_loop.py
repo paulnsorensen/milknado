@@ -858,6 +858,30 @@ class TestCreateRunWithProjectRoot:
         assert mock_config_cls.call_args.kwargs["agent"] == "omp"
 
     @patch("milknado.adapters.loop.RunConfig")
+    def test_mcp_config_not_injected_for_ap_launcher(
+        self,
+        mock_config_cls: MagicMock,
+        adapter: LoopAdapter,
+        mock_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """``ap launch`` owns MCP config; a later ``claude`` token must not trigger injection."""
+        _ = (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+        mock_config_cls.return_value = MagicMock()
+        mock_manager.create_run.return_value = MagicMock(id="run-1")  # pyright: ignore[reportAny]
+        launch = "ap launch claude milknado-worker -- --model opus --permission-mode auto -p"
+
+        _ = adapter.create_run(
+            agent=launch,
+            ralph_dir=tmp_path,
+            ralph_file=tmp_path / "ralph.md",
+            quality_gates=(),
+            project_root=tmp_path,
+        )
+
+        assert mock_config_cls.call_args.kwargs["agent"] == launch
+
+    @patch("milknado.adapters.loop.RunConfig")
     def test_no_mcp_config_when_file_missing(
         self,
         mock_config_cls: MagicMock,
