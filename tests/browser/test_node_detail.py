@@ -85,7 +85,7 @@ def _run_record(status: str = "running", error: str | None = None) -> RunRecord:
 def _detail_response(
     request: NodeSnapshotRequest,
     *,
-    description: str = CHILD_DESCRIPTION,
+    description: str | None = None,
     run_record: RunRecord | None = None,
 ) -> NodeDetailResponse:
     session_page = SnapshotPage(
@@ -97,7 +97,8 @@ def _detail_response(
         total=2,
         has_more=request.session_event_page == 0,
     )
-    description = CHILD_DESCRIPTION if request.node_id == 2 else FIXTURE_NODE_DESCRIPTION
+    if description is None:
+        description = CHILD_DESCRIPTION if request.node_id == 2 else FIXTURE_NODE_DESCRIPTION
     return NodeDetailResponse(
         node_id=request.node_id,
         request_generation=request.request_generation,
@@ -386,6 +387,21 @@ def test_missing_changes_endpoint_is_an_empty_state_without_page_error(
 
     expect(page.get_by_text("No changes")).to_be_visible()
     assert page_errors == []
+
+
+def test_short_description_shows_no_expand_control(
+    page: Page, node_detail_server: BrowserServer
+) -> None:
+    open_app(
+        page,
+        node_detail_server.login_url,
+        page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True),
+    )
+
+    page.get_by_role("button", name=f"pending {CHILD_DESCRIPTION}", exact=True).click()
+
+    expect(page.locator(".mk-sidecar-title")).to_have_text(CHILD_DESCRIPTION)
+    expect(page.get_by_role("button", name="Expand description", exact=True)).to_have_count(0)
 
 
 def test_long_description_shows_expand_control_only_when_clamped(

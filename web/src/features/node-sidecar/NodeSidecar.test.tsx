@@ -4,7 +4,9 @@ import { get } from "../../app/api";
 import {
   getState,
   resetStore,
-  setSelection, setSnapshot, } from "../../app/store";
+  setSelection,
+  setSnapshot,
+} from "../../app/store";
 import {
   resetDetail,
   resetTab,
@@ -206,12 +208,12 @@ describe("NodeSidecar", () => {
     expect(screen.getByText("Bake the roadmap")).toBeTruthy();
   });
 
-  it('keeps watch metrics inside the Run group and waits for capabilities', async () => {
+  it("keeps watch metrics inside the Run group and waits for capabilities", async () => {
     vi.mocked(get).mockResolvedValue(detailResponse());
     setSelection(7);
     render(<NodeSidecar />);
 
-    expect(screen.queryByText('unavailable')).toBeNull();
+    expect(screen.queryByText("unavailable")).toBeNull();
     setSnapshot({
       goal: null,
       graph: null,
@@ -228,11 +230,13 @@ describe("NodeSidecar", () => {
       },
     });
 
-    const run = await screen.findByRole('region', { name: 'Run' });
-    expect(run).toHaveTextContent('ETAunavailable');
-    expect(run).toHaveTextContent('Attemptunavailable');
-    expect(run).toHaveTextContent('guidanceunavailable');
-    expect(screen.queryByRole('region', { name: 'Watch mode availability' })).toBeNull();
+    const run = await screen.findByRole("region", { name: "Run" });
+    expect(run).toHaveTextContent("ETAunavailable");
+    expect(run).toHaveTextContent("Attemptunavailable");
+    expect(run).toHaveTextContent("guidanceunavailable");
+    expect(
+      screen.queryByRole("region", { name: "Watch mode availability" }),
+    ).toBeNull();
   });
 
   it("renders a run row for each run", async () => {
@@ -270,13 +274,12 @@ describe("NodeSidecar", () => {
     const description = "A".repeat(600);
     vi.mocked(get).mockResolvedValue(detailResponse({ description }));
     setSelection(7);
-    const bounds = vi
-      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-      .mockImplementation(function (this: HTMLElement) {
-        return {
-          height: this.classList.contains("is-expanded") ? 600 : 100,
-        } as DOMRect;
-      });
+    const scrollHeight = vi
+      .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(600);
+    const clientHeight = vi
+      .spyOn(HTMLElement.prototype, "clientHeight", "get")
+      .mockReturnValue(100);
 
     render(<NodeSidecar />);
 
@@ -290,7 +293,8 @@ describe("NodeSidecar", () => {
     expect(screen.getByRole("heading", { name: description })).toHaveClass(
       "is-expanded",
     );
-    bounds.mockRestore();
+    scrollHeight.mockRestore();
+    clientHeight.mockRestore();
   });
 
   it("keys error rows by run id, not by index, when two runs share the same error", async () => {

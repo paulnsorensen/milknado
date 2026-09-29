@@ -140,16 +140,8 @@ export function NodeSidecar({
       return;
     }
     const updateExpandable = () => {
-      const clone = title.cloneNode(true) as HTMLElement;
-      clone.classList.add("is-expanded");
-      clone.style.position = "absolute";
-      clone.style.visibility = "hidden";
-      clone.style.width = `${title.clientWidth}px`;
-      title.parentElement?.append(clone);
-      const fullHeight = clone.getBoundingClientRect().height;
-      const collapsedHeight = title.getBoundingClientRect().height;
-      clone.remove();
-      setDescriptionExpandable(fullHeight > collapsedHeight + 1);
+      // The clamped box keeps the full text in its scroll extent.
+      setDescriptionExpandable(title.scrollHeight > title.clientHeight + 1);
     };
     updateExpandable();
     if (typeof ResizeObserver === "undefined") {
@@ -243,22 +235,23 @@ export function NodeSidecar({
             ))}
           </dl>
         )}
-        {store.capabilities !== null && !store.capabilities.host_owner.available && (
-          <dl>
-            <div className="mk-kv">
-              <dt>ETA</dt>
-              <dd>unavailable</dd>
-            </div>
-            <div className="mk-kv">
-              <dt>Attempt</dt>
-              <dd>unavailable</dd>
-            </div>
-            <div className="mk-kv">
-              <dt>guidance</dt>
-              <dd>unavailable</dd>
-            </div>
-          </dl>
-        )}
+        {store.capabilities !== null &&
+          !store.capabilities.host_owner.available && (
+            <dl>
+              <div className="mk-kv">
+                <dt>ETA</dt>
+                <dd>unavailable</dd>
+              </div>
+              <div className="mk-kv">
+                <dt>Attempt</dt>
+                <dd>unavailable</dd>
+              </div>
+              <div className="mk-kv">
+                <dt>guidance</dt>
+                <dd>unavailable</dd>
+              </div>
+            </dl>
+          )}
       </section>
       {errors.map(({ runId, error }) => (
         <div key={runId} role="alert" className="mk-alert">
