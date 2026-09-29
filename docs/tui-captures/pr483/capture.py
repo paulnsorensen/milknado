@@ -177,9 +177,9 @@ async def main(args: argparse.Namespace) -> None:
             "Synthetic snapshots, not a live worker or CLI process.",
             "Attached watch uses an in-process synthetic command admission callback.",
             "Submitted input uses synthetic admission; "
-            "no provider transport or database persistence.",
+            + "no provider transport or database persistence.",
             "Before runtime has no durable review field; "
-            "its existing review event stays identical.",
+            + "its existing review event stays identical.",
             "Browser rendering proves Textual layout, not emulator palette fidelity.",
         ],
         "records": records,
