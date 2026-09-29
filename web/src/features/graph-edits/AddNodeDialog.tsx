@@ -23,6 +23,8 @@ function parseLines(value: string): string[] {
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 }
+const FLAVORS = ['implement', 'spec', 'spike', 'prototype', 'research'] as const;
+
 
 export function AddNodeDialog(): ReactElement | null {
   const dialog = useSyncExternalStore(subscribeDialog, getDialogState);
@@ -98,14 +100,20 @@ export function AddNodeDialog(): ReactElement | null {
           </select>
         </div>
         <div className="mk-field">
-          <label htmlFor="mk-add-flavor">Flavor</label>
-          <input
-            id="mk-add-flavor"
-            className="mk-input"
-            placeholder="implement, spec, spike, prototype, research"
-            value={flavor}
-            onChange={(event) => setFlavor(event.target.value)}
-          />
+          <div className="mk-kicker">Flavor</div>
+          <div className="mk-seg" role="group" aria-label="Flavor">
+            {FLAVORS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={flavor === option ? 'mk-seg-opt is-on' : 'mk-seg-opt'}
+                aria-pressed={flavor === option}
+                onClick={() => setFlavor(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="mk-field">
           <label htmlFor="mk-add-prereqs">Prerequisites</label>

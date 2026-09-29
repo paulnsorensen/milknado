@@ -20,7 +20,7 @@ OwnerCapabilitiesProvider = Callable[[str | None], OwnerCapabilities | None]
 
 
 class SessionInputHandler(Protocol):
-    def __call__(self, run_id: str, request: SessionInput) -> SessionInput | None: ...
+    def __call__(self, run_id: str, request: SessionInput) -> bool | SessionInput | None: ...
 
 
 class RunHandler(Protocol):
@@ -59,6 +59,7 @@ class WebCommands:
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
+    host_owner: bool = False
 
 
 def _capability(value: object | None, reason: str) -> dict[str, object]:
@@ -79,6 +80,10 @@ def build_capabilities(commands: WebCommands) -> dict[str, object]:
             commands.review_decision, "Review decisions are unavailable."
         ),
         "git": _capability(commands.git, "Git inspection is unavailable."),
+        "host_owner": {
+            "available": commands.host_owner,
+            "reason": None if commands.host_owner else "This web host is read-only.",
+        },
         "owner": _owner_capabilities(commands.owner_capabilities),
     }
 
@@ -99,5 +104,6 @@ def _owner_capabilities(
         "owner_incarnation": owner.owner_incarnation,
         "actions": owner.actions,
         "permission_ids": owner.permission_ids,
+        "permission_commands": owner.permission_commands,
         "published_at": owner.published_at,
     }

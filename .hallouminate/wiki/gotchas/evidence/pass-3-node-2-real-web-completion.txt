@@ -1,0 +1,29 @@
+Pass 3 real deterministic worker web completion capture
+=======================================================
+
+Surface: `milknado web` on http://127.0.0.1:8922
+Fixture: /tmp/milknado-pass3-real-final9
+Run: node-2-20260928T070051Z-0f8909e3
+Viewport: 1180x900 browser viewport; screenshot is `pass-3-node-2-real-web-completion-wide.webp`.
+
+The browser was open before `milknado run` started. After the worker exited, the dashboard showed the same completed graph as `milknado watch`:
+
+  0 active · 1 completed · 0 failed · 0 stopped
+  goal card: Pass 3 real web and watch parity — DONE
+  task card: Deterministic live worker with receipts — DONE
+  coordinator event: node-2-20260928T070051Z-0f8909e3 · done
+
+The task node was selected and the Session tab was open. The visible transcript included:
+
+  Assistant [complete]: LIVE WORKER STARTED; receipt follows.
+  You [delivered]: proof
+  Assistant [complete]: LIVE WORKER COMPLETED with command receipt.
+  <promise>MILKNADO_NODE_COMPLETE</promise>
+
+The screenshot also shows the SESSION, CHANGES, and DETAILS tabs. An error toast covers the
+session controls: "git session changes failed: worktree is unavailable: /private/tmp/milknado-pass3-real-final9/milknado-2-...".
+The finished run's worktree was removed at merge-back; `GET /api/runs/<id>/changes` answers 409 and the
+dashboard raises a global toast, while `milknado watch` shows the same error inline in the Changes pane.
+This divergence is recorded as a defect row on the campaign page and deferred to a follow-up node.
+The superseded 648px capture is retained only as evidence of narrow-layout clipping; it is not the completion claim.
+No host hook text, authentication token, or home-directory content appears in the capture.

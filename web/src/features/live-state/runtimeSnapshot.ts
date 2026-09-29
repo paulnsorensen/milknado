@@ -13,14 +13,22 @@ export interface WireActiveRun {
   status: WireRunStatus;
 }
 
+export interface WireTerminalRun {
+  run_id: string;
+  node_id: number;
+  description: string;
+  status: Exclude<WireRunStatus, 'running'>;
+}
 export interface RawStreamSnapshot extends Omit<WireExecutionSnapshot, 'capabilities'> {
   active_runs: WireActiveRun[];
+  terminal_runs?: WireTerminalRun[];
   event_lines: string[];
   capabilities?: WireCapabilities;
 }
 
 export interface StreamSnapshot extends WireExecutionSnapshot {
   active_runs: WireActiveRun[];
+  terminal_runs?: WireTerminalRun[];
   event_lines: string[];
 }
 
@@ -34,6 +42,7 @@ export const DEFAULT_CAPABILITIES: WireCapabilities = {
   graph_edits: EMPTY_CAPABILITY,
   review_decision: EMPTY_CAPABILITY,
   git: EMPTY_CAPABILITY,
+  host_owner: EMPTY_CAPABILITY,
   owner: { available: false },
 };
 

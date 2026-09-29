@@ -1,9 +1,9 @@
 // A minimal, dependency-free client store. Slot and feature code read a
 // snapshot with `getState()` and re-render on `subscribe(listener)`.
-import type { WireCapabilities, WireExecutionSnapshot } from './wire';
+import type { WireCapabilities, WireCapability, WireExecutionSnapshot } from './wire';
 
-export type GraphFilter = 'ready' | 'running' | 'blocked' | null;
-export type GraphLod = 'card' | 'pill' | 'dot';
+export type GraphFilter = "ready" | "running" | "blocked" | null;
+export type GraphLod = "card" | "pill" | "dot";
 
 export interface GraphView {
   filter: GraphFilter;
@@ -35,7 +35,13 @@ function initialState(): StoreState {
     capabilities: null,
     selection: null,
     activeSidecar: null,
-    graphView: { filter: null, focus: null, lod: undefined, zoom: undefined, collapsed: [] },
+    graphView: {
+      filter: null,
+      focus: null,
+      lod: undefined,
+      zoom: undefined,
+      collapsed: [],
+    },
     notices: [],
   };
 }
@@ -58,8 +64,16 @@ export function subscribe(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+const HOST_OWNER_FALLBACK: WireCapability = { available: false, reason: null };
+
+/** A server older than the host_owner capability omits the field; treat it as an observer. */
+function withHostOwner(capabilities: WireCapabilities): WireCapabilities {
+  const partial: Partial<Pick<WireCapabilities, 'host_owner'>> = capabilities;
+  return partial.host_owner ? capabilities : { ...capabilities, host_owner: HOST_OWNER_FALLBACK };
+}
+
 export function setSnapshot(snapshot: WireExecutionSnapshot): void {
-  state = { ...state, snapshot, capabilities: snapshot.capabilities };
+  state = { ...state, snapshot, capabilities: withHostOwner(snapshot.capabilities) };
   emit();
 }
 
@@ -68,12 +82,46 @@ export function setSelection(selection: string | number | null): void {
   emit();
 }
 
+export function selectedNodeId(store: StoreState): number | null {
+  if (typeof store.selection === "number") {
+    return store.selection;
+  }
+  if (typeof store.selection !== "string") {
+    return null;
+  }
+  const run = store.snapshot?.active_runs?.find(
+    (candidate) => candidate.run_id === store.selection,
+  );
+  if (run) {
+    return run.node_id;
+  }
+  const owner = store.capabilities?.owner;
+  return owner?.run_id === store.selection && owner.node_id !== undefined
+    ? owner.node_id
+    : null;
+}
+
+export function canActOnSelectedRun(store: StoreState): boolean {
+  const owner = store.capabilities?.owner;
+  if (
+    !owner?.available ||
+    owner.run_id === undefined ||
+    owner.node_id === undefined
+  ) {
+    return false;
+  }
+  return store.selection === owner.run_id || store.selection === owner.node_id;
+}
+
 export function setActiveSidecar(activeSidecar: string | null): void {
   state = { ...state, activeSidecar };
   emit();
 }
 
-function sameCollapsed(a: GraphView['collapsed'], b: GraphView['collapsed']): boolean {
+function sameCollapsed(
+  a: GraphView["collapsed"],
+  b: GraphView["collapsed"],
+): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
@@ -101,12 +149,18 @@ export function setGraphView(patch: Partial<GraphView>): void {
 const NOTICE_TTL_MS = 6000;
 
 export function removeNotice(id: string): void {
-  state = { ...state, notices: state.notices.filter((notice) => notice.id !== id) };
+  state = {
+    ...state,
+    notices: state.notices.filter((notice) => notice.id !== id),
+  };
   emit();
 }
 
 export function pushNotice(reason: string): void {
-  const notice: Notice = { id: `${Date.now()}-${state.notices.length}`, reason };
+  const notice: Notice = {
+    id: `${Date.now()}-${state.notices.length}`,
+    reason,
+  };
   state = { ...state, notices: [...state.notices, notice] };
   emit();
   setTimeout(() => removeNotice(notice.id), NOTICE_TTL_MS);

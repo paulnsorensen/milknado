@@ -25,6 +25,17 @@ describe('SidecarHost', () => {
 
     expect(container.querySelector('[data-region="sidecar-tab"]')).not.toBeNull();
   });
+  it('renders action and section regions for a selected node', () => {
+    const { container } = render(<SidecarHost />);
+
+    expect(container.querySelector('[data-region="sidecar-action"]')).toBeNull();
+    expect(container.querySelector('[data-region="sidecar-section"]')).toBeNull();
+
+    act(() => setSelection(5));
+
+    expect(container.querySelector('[data-region="sidecar-action"]')).not.toBeNull();
+    expect(container.querySelector('[data-region="sidecar-section"]')).not.toBeNull();
+  });
 
   it('widens the sidecar only for a selected node on the changes tab', () => {
     setActiveTab('changes');

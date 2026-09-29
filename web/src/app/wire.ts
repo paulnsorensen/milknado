@@ -24,6 +24,13 @@ export interface WireGraphSnapshot {
   root_ids: number[];
 }
 
+export interface WireActiveRun {
+  run_id: string;
+  node_id: number;
+  description?: string;
+  status?: string;
+}
+
 export interface WireCapability {
   available: boolean;
   reason: string | null;
@@ -38,6 +45,7 @@ export interface WireOwnerCapabilities {
   owner_incarnation?: number;
   actions?: string[];
   permission_ids?: string[];
+  permission_commands?: Array<[string, string]>;
   published_at?: string;
 }
 
@@ -49,6 +57,7 @@ export interface WireCapabilities {
   graph_edits: WireCapability;
   review_decision: WireCapability;
   git: WireCapability;
+  host_owner: WireCapability;
   owner: WireOwnerCapabilities;
 }
 
@@ -57,6 +66,7 @@ export interface WireExecutionSnapshot {
   graph: WireGraphSnapshot | null;
   capabilities: WireCapabilities;
   /** Run totals; the stream carries them, the first `/api/snapshot` may not. */
+  active_runs?: WireActiveRun[];
   completed?: number;
   failed?: number;
   stopped?: number;

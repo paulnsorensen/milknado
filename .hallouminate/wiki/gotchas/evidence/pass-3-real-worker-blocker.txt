@@ -1,0 +1,23 @@
+Pass 3 real worker blocker
+===========================
+
+Command:
+  env -u MILKNADO_WORKER_CONTEXT -u MILKNADO_INVOCATION_ID \
+    -u MILKNADO_NODE_ID -u MILKNADO_RUN_ID -u MILKNADO_PROJECT_ROOT \
+    MILKNADO_CONTROLLER_MASTER=pass3-controller \
+    uv run --project <checkout> milknado run \
+    --project-root /tmp/milknado-pass3-real4
+
+Observed run:
+  Run ID: node-2-20260928T035512Z-8e02e257
+  Worker: omp -p --auto-approve --no-session --model openai-codex/gpt-5.6-luna --thinking low
+  Web and watch both showed 1 active run.
+  The worker inherited the nested worker task context and stopped at the
+  milknado_deposit_result tool call. Two waits of 120 seconds and 300 seconds
+  did not produce a terminal state. The run process was stopped.
+
+Impact:
+  This external-provider attempt remains a deferred engine gap. It does not
+  invalidate the successful final9 deterministic real-worker run, which has a
+  matching web/watch completion pair and durable command receipts. The
+  nested-worker-context stall is registered as a follow-up.

@@ -15,6 +15,7 @@ function capabilities(overrides: Partial<WireCapabilities> = {}): WireCapabiliti
     graph_edits: unavailable,
     review_decision: unavailable,
     git: unavailable,
+    host_owner: unavailable,
     owner: { available: false },
     ...overrides,
   };
@@ -67,6 +68,28 @@ describe('handleShortcutKey', () => {
     handleShortcutKey(event);
 
     expect(spy).toHaveBeenCalledTimes(1);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('ignores an already prevented arrow shortcut', () => {
+    setSnapshot({
+      goal: null,
+      graph: {
+        nodes: [
+          { id: 1, description: 'root', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
+          { id: 2, description: 'a', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
+        ],
+        edges: [],
+        root_ids: [1, 2],
+      },
+      capabilities: capabilities(),
+    });
+
+    const event = press('ArrowDown');
+    event.preventDefault();
+    handleShortcutKey(event);
+
+    expect(getState().selection).toBeNull();
     expect(event.defaultPrevented).toBe(true);
   });
 

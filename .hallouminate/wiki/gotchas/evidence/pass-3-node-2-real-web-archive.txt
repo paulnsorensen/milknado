@@ -1,0 +1,7 @@
+Pass 3 real web archive observation
+====================================
+
+Surface: `milknado web` on http://127.0.0.1:8922
+Fixture: /tmp/milknado-pass3-real-final9
+
+After `milknado graph archive 1`, the browser observer refreshed to an empty graph. Its accessible tree retained only dashboard controls and no goal or task node button. The paired watch capture is `pass-3-node-2-real-archive.txt`.

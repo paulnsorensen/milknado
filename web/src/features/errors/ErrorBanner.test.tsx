@@ -12,6 +12,7 @@ function capabilities() {
     graph_edits: { available: true, reason: null },
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
+    host_owner: { available: false, reason: null },
     owner: { available: false },
   };
 }

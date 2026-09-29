@@ -26,6 +26,16 @@ describe('changesState', () => {
     expect(getChangesState().files).toEqual([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]);
   });
 
+  it('treats a missing changes endpoint as the no-changes state', async () => {
+    vi.mocked(get).mockRejectedValueOnce({ status: 404 });
+
+    setRunId('run-missing');
+    await Promise.resolve();
+
+    expect(getChangesState().files).toEqual([]);
+    expect(getChangesState().selectedPath).toBeNull();
+  });
+
   it('resets the file list when the run id changes again', async () => {
     setRunId('run-1');
     await Promise.resolve();

@@ -16,14 +16,20 @@ pytestmark = pytest.mark.browser
 
 
 def test_pending_review_lists_and_accepts(page: Page, graph_db_server: GraphDbServer) -> None:
-    open_app(page, graph_db_server.login_url, page.get_by_text("evidence for the change"))
-
+    open_app(page, graph_db_server.login_url, page.get_by_text("Goal review 1"))
     page.get_by_role("button", name="Open").click()
 
     expect(page.get_by_text("proposed change text")).to_be_visible()
+    expect(page.get_by_role("button", name="Accept change", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Reject change", exact=True)).to_be_visible()
+    assert (
+        page.locator("[data-region='sidecar']").evaluate(
+            "(element) => element.getBoundingClientRect().width"
+        )
+        == 560
+    )
 
-    page.get_by_role("button", name="Accept change").click()
-
+    page.get_by_role("button", name="Accept change", exact=True).click()
     wait_until(
         lambda: (
             (review := graph_db_server.graph.get_goal_review(graph_db_server.review_id))

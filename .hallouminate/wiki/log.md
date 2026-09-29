@@ -24,3 +24,7 @@
 
 2026-09-21 · 6fb651ad966bd4ce · merged · architecture/watch-observer.md · Correct fixed-width footer ownership. Selection refresh compares effective hints; inherited signals cover binding and focus changes. Native pending-node captures expose the gap, and the mounted transition regression passes after correction.
 
+
+
+2026-09-29 · 17364b51573ac784 · merged · gotchas/campaign-dogfood-2026-09.md · Record PR 483 concern boundaries and historical versus matched TUI evidence limits. Exact and natural retrieval probes return the page at rank 1.
+

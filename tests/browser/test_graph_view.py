@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import cast
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -45,7 +46,7 @@ def _chain_graph_snapshot() -> ExecutionSnapshot:
             nodes.append(
                 MikadoNode(
                     id=_chain_node_id(chain, level),
-                    description=f"Chain {chain} level {level}",
+                    description=f"Chain {chain} level {level} has a balanced title",
                     kind=NodeKind.TASK,
                     parent_id=parent_id,
                 )
@@ -96,13 +97,39 @@ def test_search_jump_focuses_the_matching_subtree(
 ) -> None:
     server, recorder = graph_view_server
     _open(page, server)
-    title = "Chain 3 level 3"
+    title = "Chain 3 level 3 has a balanced title"
 
     expect(page.locator(".mk-graph-node.is-faded")).to_have_count(0)
     page.get_by_label("Jump to node").fill(title)
     page.get_by_role("option", name=title).click()
 
     expect(page.locator(".mk-graph-node.is-faded")).to_have_count(TOTAL_NODES - CHAIN_LENGTH)
+    _assert_no_commands(recorder)
+
+
+def test_compact_graph_cards_do_not_intersect(
+    page: Page, graph_view_server: tuple[BrowserServer, RecordingCommands]
+) -> None:
+    server, recorder = graph_view_server
+    _open(page, server)
+
+    boxes = cast(
+        list[dict[str, float]],
+        page.locator(".mk-graph-node").evaluate_all(
+            """(nodes) => nodes.map((node) => {
+                const box = node.getBoundingClientRect();
+                return {left: box.left, right: box.right, top: box.top, bottom: box.bottom};
+            })"""
+        ),
+    )
+    for index, first in enumerate(boxes):
+        for second in boxes[index + 1 :]:
+            assert (
+                first["right"] <= second["left"]
+                or second["right"] <= first["left"]
+                or first["bottom"] <= second["top"]
+                or second["bottom"] <= first["top"]
+            ), f"graph cards intersect: {first} and {second}"
     _assert_no_commands(recorder)
 
 
@@ -127,7 +154,7 @@ def test_focus_fades_nodes_outside_the_selected_subtree(
 ) -> None:
     server, recorder = graph_view_server
     _open(page, server)
-    title = "Chain 5 level 2"
+    title = "Chain 5 level 2 has a balanced title"
 
     page.get_by_role("button", name=f"pending {title}", exact=True).click()
     page.get_by_role("button", name="Focus", exact=True).click()
@@ -151,15 +178,11 @@ def test_level_of_detail_switches_nodes_to_dots(
     _assert_no_commands(recorder)
 
 
-def test_minimap_jump_focuses_the_clicked_node(
+def test_wide_canvas_does_not_mount_placeholder_minimap(
     page: Page, graph_view_server: tuple[BrowserServer, RecordingCommands]
 ) -> None:
     server, recorder = graph_view_server
     _open(page, server)
-    minimap = page.locator('[aria-label="Overview of the graph"] rect.mk-minimap-block')
 
-    expect(minimap).to_have_count(40)
-    minimap.last.click()
-
-    expect(page.locator(".mk-graph-node.is-faded")).to_have_count(TOTAL_NODES - CHAIN_LENGTH)
+    expect(page.locator('[aria-label="Overview of the graph"]')).to_have_count(0)
     _assert_no_commands(recorder)
