@@ -1,24 +1,31 @@
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { get } from '../../app/api';
-import { resetStore, setSelection } from '../../app/store';
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { get } from "../../app/api";
+import { resetStore, setSelection } from "../../app/store";
 import {
   getDetailState,
   resetTab,
   setActiveTab,
   type DetailState,
-} from '../../shared/node-detail';
-import { resetChanges } from './changesState';
-import { ChangesSection } from './ChangesSection';
+} from "../../shared/node-detail";
+import { resetChanges } from "./changesState";
+import { ChangesSection } from "./ChangesSection";
 
-vi.mock('../../app/api', () => ({ get: vi.fn() }));
-vi.mock('../../shared/node-detail', async (importOriginal) => ({
+vi.mock("../../app/api", () => ({ get: vi.fn() }));
+vi.mock("../../shared/node-detail", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getDetailState: vi.fn(),
   subscribeDetail: vi.fn(() => () => {}),
 }));
 
-const emptyPage = { items: [], offset: 0, limit: 50, total: 0, has_more: false, state: 'loaded' as const };
+const emptyPage = {
+  items: [],
+  offset: 0,
+  limit: 50,
+  total: 0,
+  has_more: false,
+  state: "loaded" as const,
+};
 
 function detailStateWithRun(runId: string | null): DetailState {
   return {
@@ -29,15 +36,34 @@ function detailStateWithRun(runId: string | null): DetailState {
       node_id: 7,
       request_generation: 1,
       detail: {
-        node: { id: 7, description: '', status: 'running', parent_id: null, kind: 'task', flavor: null },
-        description: '',
+        node: {
+          id: 7,
+          description: "",
+          status: "running",
+          parent_id: null,
+          kind: "task",
+          flavor: null,
+        },
+        description: "",
         parent: null,
         ancestors: emptyPage,
         prerequisite_ids: emptyPage,
         dependent_ids: emptyPage,
         owned_files: emptyPage,
         runs: runId
-          ? { ...emptyPage, items: [{ run_id: runId, node_id: 7, status: 'running', started_at: '', ended_at: null, error: null }] }
+          ? {
+              ...emptyPage,
+              items: [
+                {
+                  run_id: runId,
+                  node_id: 7,
+                  status: "running",
+                  started_at: "",
+                  ended_at: null,
+                  error: null,
+                },
+              ],
+            }
           : emptyPage,
         sessions: emptyPage,
       },
@@ -45,14 +71,25 @@ function detailStateWithRun(runId: string | null): DetailState {
   };
 }
 
-describe('ChangesSection', () => {
+describe("ChangesSection", () => {
   beforeEach(() => {
     resetStore();
     setSelection(7);
     resetTab();
     resetChanges();
-    vi.mocked(get).mockResolvedValue([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('diff text', { status: 200 })));
+    vi.mocked(get).mockResolvedValue([
+      {
+        path: "a.py",
+        status: "modified",
+        added: 1,
+        removed: 0,
+        old_path: null,
+      },
+    ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("diff text", { status: 200 })),
+    );
   });
 
   afterEach(() => {
@@ -62,8 +99,8 @@ describe('ChangesSection', () => {
     vi.clearAllMocks();
   });
 
-  it('keeps an inactive tabpanel hidden outside the changes tab', () => {
-    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
+  it("keeps an inactive tabpanel hidden outside the changes tab", () => {
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun("run-1"));
     const { container } = render(<ChangesSection />);
     const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
 
@@ -71,44 +108,52 @@ describe('ChangesSection', () => {
     expect(panel.hidden).toBe(true);
   });
 
-  it('lists changed files and shows the diff for the selected file', async () => {
-    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
-    setActiveTab('changes');
+  it("lists changed files and shows the diff for the selected file", async () => {
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun("run-1"));
+    setActiveTab("changes");
 
     render(<ChangesSection />);
 
-    const fileButton = await screen.findByText('a.py');
+    const fileButton = await screen.findByText("a.py");
     fileButton.click();
 
-    expect(await screen.findByText('diff text')).toBeTruthy();
-    expect(fetch).toHaveBeenCalledWith('/api/runs/run-1/diff?path=a.py');
+    expect(await screen.findByText("diff text")).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith("/api/runs/run-1/diff?path=a.py");
   });
 
-  it('shows an empty state with no changed files', async () => {
+  it("shows an empty state with no changed files", async () => {
     vi.mocked(get).mockResolvedValue([]);
-    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
-    setActiveTab('changes');
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun("run-1"));
+    setActiveTab("changes");
 
     render(<ChangesSection />);
 
-    expect(await screen.findByText('No changes')).toBeTruthy();
+    expect(await screen.findByText("No changes")).toBeTruthy();
   });
 
-  it('classifies each diff line kind by its unified-diff prefix', async () => {
-    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
+  it("classifies each diff line kind by its unified-diff prefix", async () => {
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun("run-1"));
     vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response('@@ -1,1 +1,1 @@\n+added\n-removed\ncontext', { status: 200 })),
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response("@@ -1,1 +1,1 @@\n+added\n-removed\ncontext", {
+            status: 200,
+          }),
+        ),
     );
-    setActiveTab('changes');
+    setActiveTab("changes");
 
     render(<ChangesSection />);
-    (await screen.findByText('a.py')).click();
+    (await screen.findByText("a.py")).click();
 
-    const diff = await screen.findByRole('region', { name: 'Unified diff' });
-    expect(diff.querySelector('.mk-dl-hunk')?.textContent).toContain('@@ -1,1 +1,1 @@');
-    expect(diff.querySelector('.mk-dl-add')?.textContent).toContain('+added');
-    expect(diff.querySelector('.mk-dl-del')?.textContent).toContain('-removed');
-    expect(diff.querySelector('.mk-dl-ctx')?.textContent).toContain('context');
+    const diff = await screen.findByRole("region", { name: "Unified diff" });
+    expect(diff.querySelector(".mk-dl-hunk")?.textContent).toContain(
+      "@@ -1,1 +1,1 @@",
+    );
+    expect(diff.querySelector(".mk-dl-add")?.textContent).toContain("+added");
+    expect(diff.querySelector(".mk-dl-del")?.textContent).toContain("-removed");
+    expect(diff.querySelector(".mk-dl-ctx")?.textContent).toContain("context");
   });
 });

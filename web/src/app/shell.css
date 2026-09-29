@@ -408,11 +408,11 @@ body {
   gap: var(--mk-space-3);
 }
 
-.mk-shell [data-region="sidecar-section"] [role="tabpanel"][hidden] {
+.mk-shell [data-region='sidecar-section'] [role='tabpanel'][hidden] {
   display: none;
 }
 
-.mk-shell [data-region="sidecar-tab"] {
+.mk-shell [data-region='sidecar-tab'] {
   display: flex;
   gap: 14px;
 }

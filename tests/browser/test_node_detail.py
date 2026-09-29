@@ -42,7 +42,7 @@ pytestmark = pytest.mark.browser
 
 CHILD_DESCRIPTION = "Child task"
 LONG_DESCRIPTION = (
-    "A long sidecar description that must clamp before the detail controls. " * 12
+    "A long sidecar description that must clamp before the detail controls. " * 40
 ).strip()
 RUN_ID = "run-1"
 
