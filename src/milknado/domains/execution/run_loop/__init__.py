@@ -24,6 +24,7 @@ from milknado.domains.execution.executor import (
     get_execution_overview,
 )
 from milknado.domains.execution.run_loop._completion import handle_completion
+from milknado.domains.execution.run_loop._idle import IdleGraphState, settle_once
 from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
 from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
 from milknado.domains.execution.run_loop.input import (
@@ -98,6 +99,9 @@ class RunLoop:
         self._scheduling_stopped: bool = False
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
+        self._spec: tuple[str | None, Path | None] = (None, None)
+        self._idle_settled_graph: IdleGraphState | None = None
+        self._verify_outcome: VerifyOutcome | None = None
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
         """Set the application-layer state sink used during execution."""
@@ -237,6 +241,8 @@ class RunLoop:
         self._failed = 0
         self._stopped = 0
         self._log_path = None
+        self._spec = (spec_text, spec_path)
+        self._idle_settled_graph, self._verify_outcome = None, None
         if self._process_controls is not None:
             self._process_controls()
         timeout = (
@@ -329,6 +335,11 @@ class RunLoop:
             with self._scheduling_lock:
                 if self._scheduling_stopped:
                     return 0
+            self._idle_settled_graph = settle_once(
+                self._graph,
+                self._idle_settled_graph,
+                lambda: self._verify_if_scheduling_open(*self._spec, config),
+            )
             root = self._graph.get_root()
             if root is not None and root.status == NodeStatus.DONE:
                 return 0
@@ -338,6 +349,8 @@ class RunLoop:
                 self._completion_wait_started = time.monotonic()
                 self._publish_state()
                 return added
+            if failed:
+                self._publish_state()
             self._idle_sleep(IDLE_RESCAN_SECONDS)
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
@@ -452,7 +465,9 @@ class RunLoop:
             if self._scheduling_stopped:
                 return None
             if spec_text:
-                return self._maybe_verify_spec(spec_text, spec_path, config)
+                outcome = self._maybe_verify_spec(spec_text, spec_path, config)
+                self._verify_outcome = outcome or self._verify_outcome
+                return self._verify_outcome
             self._complete_root_if_settled()
             return None
 

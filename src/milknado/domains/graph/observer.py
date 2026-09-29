@@ -10,9 +10,12 @@ from typing import Literal, cast
 import msgspec
 
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
+import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common.session import SessionView
-from milknado.domains.graph._run_persistence import run_row_to_dict
+from milknado.domains.graph._command_records import utc_iso
+from milknado.domains.graph._run_persistence import RUN_TOTALS_SQL, run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph.goal_review import GoalReviewRecord
 from milknado.domains.graph.snapshot import (
     connect_readonly,
     read_graph_snapshot_connection,
@@ -21,13 +24,14 @@ from milknado.domains.graph.snapshot import (
 from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 _NODE_DETAIL_DEFAULT_LIMIT = 50
+_MAX_PENDING_GUIDANCE = 64
 
 
 class DurableRun(msgspec.Struct, frozen=True):
     run_id: str
     node_id: int
     description: str
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "stopped"]
     pid: int | None
     log_path: str
     started_at: str
@@ -38,6 +42,7 @@ class DurableRun(msgspec.Struct, frozen=True):
     timeout_seconds: int | None
     detail: str | None
     rebased: bool | None
+    pending_guidance: tuple[str, ...] = ()
     session: SessionView = SessionView()
 
 
@@ -46,19 +51,45 @@ class ObserverSnapshot:
     runs: tuple[DurableRun, ...]
     goal: str
     available: int
+    completed: int
+    failed: int
+    stopped: int
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
     graph_revision: int | None = None
+    pending_goal_reviews: tuple[GoalReviewRecord, ...] = ()
+
+
+def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
+    """Read deliverable guidance; the read-only observer filters expiry instead of writing it."""
+    query = (
+        "SELECT action, text FROM session_commands "
+        "WHERE run_id = ? AND status = 'queued' AND expires_at > ? "
+        "AND action IN ('steer', 'follow_up') "
+        "ORDER BY admission_seq LIMIT ?"
+    )
+    params = (run_id, utc_iso(None), _MAX_PENDING_GUIDANCE)
+    rows: list[sqlite3.Row] = conn.execute(query, params).fetchall()
+    return tuple(cast(str, row[1]) or cast(str, row[0]) for row in rows)
+
+
+def _durable_status(
+    status: str, error: str | None
+) -> Literal["running", "done", "failed", "stopped"]:
+    if status == "failed" and error == "cancelled":  # a stop persists as a cancelled failure
+        return "stopped"
+    return cast(Literal["running", "done", "failed"], status)
 
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
     record = run_row_to_dict(row)
-    session = view_session(conn, record["run_id"], active=record["status"] == "running")
+    running = record["status"] == "running"
+    session = view_session(conn, record["run_id"], active=running)
     return DurableRun(
         run_id=record["run_id"],
         node_id=record["node_id"],
         description=cast(str, row["description"]),
-        status=cast(Literal["running", "done", "failed"], record["status"]),
+        status=_durable_status(record["status"], record["error"]),
         pid=record["pid"],
         log_path=record["log_path"],
         started_at=record["started_at"],
@@ -69,6 +100,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
         timeout_seconds=record["timeout_seconds"],
         detail=record["detail"],
         rebased=record["rebased"],
+        pending_guidance=_pending_guidance(conn, record["run_id"]) if running else (),
         session=session,
     )
 
@@ -76,10 +108,18 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
 def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...]:
     rows: list[sqlite3.Row] = conn.execute(
         "SELECT r.*, n.description FROM runs r JOIN nodes n ON n.id = r.node_id "
-        + "ORDER BY r.started_at DESC LIMIT ?",
+        + "WHERE n.archived_at IS NULL ORDER BY r.started_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return tuple(_durable_run(conn, row) for row in rows)
+
+
+def _run_totals(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    row = cast(
+        sqlite3.Row,
+        conn.execute(RUN_TOTALS_SQL).fetchone(),
+    )
+    return cast(int, row[0]), cast(int, row[1]), cast(int, row[2])
 
 
 def _goal_description(conn: sqlite3.Connection) -> str:
@@ -142,6 +182,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
     try:
         available = _available_count(conn)
         revision = _graph_revision(conn)
+        completed, failed, stopped = _run_totals(conn)
         graph = (
             cached_graph
             if cached_graph is not None and revision == cached_graph_revision
@@ -158,9 +199,13 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
             available=available,
+            completed=completed,
+            failed=failed,
+            stopped=stopped,
             graph=graph,
             node=node,
             graph_revision=revision,
+            pending_goal_reviews=_goal_review.pending_goal_reviews(conn),
         )
     finally:
         conn.rollback()

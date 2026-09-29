@@ -94,10 +94,11 @@ class SessionCommandsMixin(SessionChangesMixin):
         host = self._session_host()
         if host.selected_run_id and not host.read_only:
             run_id = host.selected_run_id
-            self._session_drafts[run_id] = event.value
-            self._session_draft_revisions[run_id] = (
-                self._session_draft_revisions.get(run_id, 0) + 1
-            )
+            if self._session_drafts.get(run_id) != event.value:
+                self._session_drafts[run_id] = event.value
+                self._session_draft_revisions[run_id] = (
+                    self._session_draft_revisions.get(run_id, 0) + 1
+                )
 
     @on(Select.Changed, "#session-action")
     def select_session_action(self, event: Select.Changed) -> None:
@@ -135,7 +136,13 @@ class SessionCommandsMixin(SessionChangesMixin):
         action = self._selected_action(actions)
         if action is None:
             return
-        draft = self.session_draft
+        run_id = selected.run_id
+        draft = host.query_one("#session-input", Input).value
+        if self._session_drafts.get(run_id) != draft:
+            self._session_drafts[run_id] = draft
+            self._session_draft_revisions[run_id] = (
+                self._session_draft_revisions.get(run_id, 0) + 1
+            )
         request_id = self._selected_permission() if action in {"approve", "deny"} else ""
         if action in {"steer", "follow_up"} and not draft.strip():
             _ = host.notify("Enter a message for this session action.", severity="warning")
@@ -152,7 +159,6 @@ class SessionCommandsMixin(SessionChangesMixin):
             owner_incarnation=session.owner_incarnation,
             invocation_id=session.invocation_id,
         )
-        run_id = selected.run_id
         submission_id = self._session_submission_ids.get(run_id, 0) + 1
         self._session_submission_ids[run_id] = submission_id
         self._input_queue.append(
@@ -208,11 +214,20 @@ class SessionCommandsMixin(SessionChangesMixin):
         self._input_busy = False
         host = self._session_host()
         if accepted:
+            current_draft = (
+                host.query_one("#session-input", Input).value
+                if host.selected_run_id == submission.run_id
+                else self._session_drafts.get(submission.run_id, "")
+            )
             owns_latest_draft = (
                 submission.command.action != "interrupt"
                 and self._session_draft_revisions.get(submission.run_id, 0)
                 == submission.draft_revision
                 and self._session_submission_ids.get(submission.run_id) == submission.submission_id
+                and (
+                    submission.command.action not in {"steer", "follow_up"}
+                    or current_draft == submission.command.text
+                )
             )
             if owns_latest_draft:
                 self._session_drafts[submission.run_id] = ""

@@ -27,6 +27,30 @@ def _run(graph: MikadoGraph, run_id: str = "run-1") -> int:
     return node.id
 
 
+def test_view_names_requested_permission_outside_event_page(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "session.db")
+    node_id = _run(graph)
+    graph.sessions.start("run-1", SessionContext(family="claude", cwd=str(tmp_path)))
+    _ = graph.commands.publish_capabilities(
+        "run-1",
+        node_id,
+        "invoke-1",
+        "owner-1",
+        ("approve",),
+        ("permission-1",),
+        (("permission-1", "rm -rf build"),),
+    )
+
+    view = graph.sessions.view("run-1")
+
+    assert view.permissions == (
+        SessionEvent(
+            kind="permission", text="rm -rf build", event_id="permission-1", state="requested"
+        ),
+    )
+    graph.close()
+
+
 def test_session_start_append_and_view_normalize_input_trace(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "session.db")
     _ = _run(graph)

@@ -262,6 +262,24 @@ async def test_wide_view_queues_guidance_and_confirms_force_stop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_scheduling_requires_confirmation() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+
+        assert "Stop scheduling and gracefully stop 1 active run?" in _confirmation_text(app)
+        assert controller.stop_requests == 0
+
+        await pilot.press("y")
+        await _wait_for_workers(app).wait_for_complete()
+
+        assert controller.stop_requests == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
 @pytest.mark.parametrize("detail", [False, True])
 async def test_force_confirmation_is_visible_from_each_route(
@@ -449,6 +467,23 @@ async def test_guidance_shortcut_opens_compact_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guidance_escape_returns_focus_to_run_list() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("g")
+        guidance = _input(app, "#guidance")
+        assert guidance.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.route == "list"
+        assert app.query_one("#runs", DataTable).has_focus
+
+
+@pytest.mark.asyncio
 async def test_compact_drilldown_preserves_composer_and_exposes_action_reason() -> None:
 
     controller = FakeController(initial_snapshot=snapshot(second=True))
@@ -486,11 +521,26 @@ async def test_help_and_quit_confirmation_only_show_current_actions() -> None:
         help_body = cast(Text, app.screen.query_one("#help-overlay", Static).render()).plain
         assert "g queue guidance" in help_body
         assert "f force stop" in help_body
+        assert "s stop scheduling" in help_body
         await pilot.press("escape", "q")
         assert "Stop scheduling and gracefully stop 1 active run?" in (_confirmation_text(app))
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
         assert controller.stop_requests == 1
+
+
+@pytest.mark.asyncio
+async def test_stop_scheduling_binding_uses_any_active_run() -> None:
+    terminal = replace(stopped_snapshot().terminal_runs[0], run_id="run-2", node_id=2)
+    controller = FakeController(initial_snapshot=replace(snapshot(), terminal_runs=(terminal,)))
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        app.selected_run_id = terminal.run_id
+        assert app.check_action("stop_scheduling", ()) is True
+        app.action_stop_scheduling()
+        await pilot.pause()
+        assert "Stop scheduling and gracefully stop 1 active run?" in _confirmation_text(app)
 
 
 @pytest.mark.asyncio
@@ -1122,6 +1172,12 @@ async def test_mounted_footer_tracks_tree_selection_at_fixed_width() -> None:
 
         def labels() -> set[str]:
             return {cast(Text, hint.render()).plain for hint in app.query(FooterHint)}
+
+        hints = tuple(app.query(FooterHint))
+        focus = {cast(Text, hint.render()).plain: hint.can_focus for hint in hints}
+
+        assert focus["i Session input"] is False
+        assert focus["? Help"] is False
 
         active = labels()
         assert "i Session input" in active

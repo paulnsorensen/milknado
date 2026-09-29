@@ -31,6 +31,10 @@ class _NavigationHost(Protocol):
     route: str
     read_only: bool
     auto_follow: bool
+
+    @property
+    def stop_scheduling_available(self) -> bool: ...
+
     screen: Screen[object]
 
     def query_one(self, _selector: str, _expect_type: type[_WidgetT], /) -> _WidgetT: ...
@@ -54,6 +58,10 @@ def _navigation_host(value: object) -> _NavigationHost:
 
 class RunNavigationMixin(metaclass=type(MessagePump)):
     """Selection, compact routing, and focus behavior for snapshot apps."""
+
+    @property
+    def stop_scheduling_available(self) -> bool:
+        return bool(_navigation_host(self).snapshot.active_runs)
 
     def _runs(self) -> tuple[RunSnapshot, ...]:
         host = _navigation_host(self)
@@ -126,6 +134,7 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
                 auto_follow=host.auto_follow,
                 node_selected=host.selected_node_id is not None,
                 route=host.route,
+                stop_scheduling_available=host.stop_scheduling_available,
             ),
         )
         return True if available is None else available

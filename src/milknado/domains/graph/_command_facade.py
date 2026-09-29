@@ -24,6 +24,7 @@ class _CommandFacade(SubFacade):
         owner_incarnation: str,
         actions: tuple[str, ...],
         permission_ids: tuple[str, ...] = (),
+        permission_commands: tuple[tuple[str, str], ...] = (),
         *,
         published_at: str | None = None,
     ) -> OwnerCapabilities:
@@ -37,6 +38,7 @@ class _CommandFacade(SubFacade):
                 owner_incarnation,
                 actions,
                 permission_ids,
+                permission_commands,
                 published_at=published_at,
                 _in_transaction=True,
             )

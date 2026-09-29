@@ -4,14 +4,22 @@ from collections.abc import Callable
 
 from milknado.domains.common import SessionAction, SessionContext
 
-CapabilitySink = Callable[[SessionContext, tuple[SessionAction, ...], str, tuple[str, ...]], None]
-CapabilityState = tuple[SessionContext | None, tuple[SessionAction, ...], str, tuple[str, ...]]
+PermissionCapabilities = tuple[tuple[str, ...], tuple[tuple[str, str], ...]]
+CapabilitySink = Callable[
+    [SessionContext, tuple[SessionAction, ...], str, PermissionCapabilities], None
+]
+CapabilityState = tuple[
+    SessionContext | None,
+    tuple[SessionAction, ...],
+    str,
+    PermissionCapabilities,
+]
 
 
 def refresh(sink: CapabilitySink | None, state: CapabilityState) -> None:
-    context, actions, invocation_id, permission_ids = state
+    context, actions, invocation_id, permissions = state
     if context is not None:
-        publish(sink, context, actions, invocation_id, permission_ids)
+        publish(sink, context, actions, invocation_id, permissions)
 
 
 def publish(  # noqa: PLR0913
@@ -19,7 +27,7 @@ def publish(  # noqa: PLR0913
     context: SessionContext,
     actions: tuple[SessionAction, ...],
     invocation_id: str,
-    permission_ids: tuple[str, ...],
+    permissions: PermissionCapabilities,
 ) -> None:
     if sink is not None and invocation_id:
-        sink(context, actions, invocation_id, permission_ids)
+        sink(context, actions, invocation_id, permissions)

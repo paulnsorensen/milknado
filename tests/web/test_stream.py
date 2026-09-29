@@ -29,7 +29,7 @@ def test_stream_asgi_emits_exact_frames_for_two_authenticated_clients() -> None:
         + b'data: {"goal":"fixture goal","active_runs":[],"terminal_runs":[],'
         + b'"completed":0,'
         + b'"failed":0,"stopped":0,"available":1,"event_lines":[],"listener_errors":'
-        + b'["fixture listener error"],"graph":null,"node":null}\r\n\r\n'
+        + b'["fixture listener error"],"graph":null,"node":null,"pending_goal_reviews":[]}\r\n\r\n'
     )
 
     async def request(disconnect: asyncio.Event) -> list[Message]:

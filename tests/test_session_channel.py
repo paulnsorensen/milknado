@@ -11,7 +11,9 @@ _CONTEXT = SessionContext(family="omp", cwd="/repo", base_oid="base")
 
 
 def test_capability_publication_follows_permission_indexing() -> None:
-    publications: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    publications: list[
+        tuple[tuple[str, ...], tuple[tuple[str, ...], tuple[tuple[str, str], ...]]]
+    ] = []
     channel = SessionChannel(
         capability_sink=lambda _context, actions, _invocation, permissions: publications.append(
             (actions, permissions)
@@ -22,7 +24,10 @@ def test_capability_publication_follows_permission_indexing() -> None:
         SessionEvent(kind="permission", text="confirm", event_id="request-1", state="requested")
     )
 
-    assert publications[-1] == (("approve",), ("1/request-1",))
+    assert publications[-1] == (
+        ("approve",),
+        (("1/request-1",), (("1/request-1", "confirm"),)),
+    )
 
 
 def test_durable_permission_identity_stays_separate_from_provider_id() -> None:

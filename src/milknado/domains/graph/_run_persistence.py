@@ -58,6 +58,11 @@ _MAX_RETAINED_RUN_MESSAGES = 1000
 _MAX_RUN_MESSAGE_BYTES = 64 * 1024
 _RUN_MESSAGE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 _RUN_STATUS_RUNNING = "running"  # sole owner: runs.status compares case-sensitively
+RUN_TOTALS_SQL = (
+    "SELECT COALESCE(SUM(status = 'done'), 0), "
+    "COALESCE(SUM(status = 'failed' AND COALESCE(error, '') != 'cancelled'), 0), "
+    "COALESCE(SUM(status = 'failed' AND error = 'cancelled'), 0) FROM runs"
+)
 
 
 def run_row_to_dict(row: sqlite3.Row) -> RunRecord:

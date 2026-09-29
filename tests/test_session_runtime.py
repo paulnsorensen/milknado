@@ -171,10 +171,13 @@ def _spec(worker: Path, tmp_path: Path, args: tuple[str, ...]) -> AgentRunSpec:
 
 def _wait_for_pid(pid_path: Path) -> int:
     deadline = time.monotonic() + 3.0
-    while not pid_path.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        if pid_path.exists():
+            value = pid_path.read_text(encoding="utf-8").strip()
+            if value:
+                return int(value)
         time.sleep(0.02)
-    assert pid_path.exists()
-    return int(pid_path.read_text(encoding="utf-8"))
+    pytest.fail(f"worker PID was not written to {pid_path}")
 
 
 def _running_graph(tmp_path: Path) -> tuple[MikadoGraph, int]:
@@ -215,10 +218,17 @@ def test_terminal_frame_rejects_attached_admission_before_channel_close(
         _context: SessionContext,
         actions: tuple[str, ...],
         invocation_id: str,
-        permission_ids: tuple[str, ...],
+        permissions: tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
     ) -> None:
+        permission_ids, permission_commands = permissions
         _ = graph.commands.publish_capabilities(
-            "run-1", node_id, invocation_id, "owner-1", actions, permission_ids
+            "run-1",
+            node_id,
+            invocation_id,
+            "owner-1",
+            actions,
+            permission_ids,
+            permission_commands,
         )
         if terminal_seen and not attempts:
             probe = admit_from_process(
