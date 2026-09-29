@@ -21,3 +21,16 @@ because it was emitted after the run-log context closed.
   nothing is dispatchable.
 - Restarting the coordinator to load a code fix is safe now; re-queue the swept nodes with
   `milknado_todo_set_status(pending)` and the idle loop picks them up.
+
+## Follow-up: the attempt cap ended runs after one attempt (2026-09-29)
+
+The restarted coordinator dispatched 52, 53, 55, 56 and every one failed 1800 s after dispatch with
+`session stopped` mid-turn. `LoopAdapter.create_run` sets `stop_on_error=True`, and
+`_run_iteration` treated a timed-out attempt like a crashed agent command, so the per-attempt cap
+(`attempt_timeout_seconds`, 1800 by default) ended the whole run on the first attempt and
+`max_iterations` never applied. A timed-out attempt now spends one iteration and the loop retries
+with a fresh session while the budget has room; the last allowed attempt, and any non-zero exit,
+still fail the run. Bound it with `max_iterations` and the
+`max_consecutive_failures` cap, not with `stop_on_error`. Worker logs live under the worktree's
+`.ralph-logs`, which fail-closed teardown removes, so the failure detail in `runs.detail` was the
+only evidence (node 106 tracks persisting it).
