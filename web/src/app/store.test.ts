@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   canActOnSelectedRun,
   getState,
@@ -7,7 +7,7 @@ import {
   setGraphView,
   setSelection,
   setSnapshot,
-} from "./store";
+} from './store';
 
 const CAPABILITIES = {
   session_input: { available: true, reason: null },
@@ -18,20 +18,20 @@ const CAPABILITIES = {
   review_decision: { available: true, reason: null },
   git: { available: true, reason: null },
   host_owner: { available: true, reason: null },
-  owner: { available: true, run_id: "run-1", node_id: 7 },
+  owner: { available: true, run_id: 'run-1', node_id: 7 },
 };
 
-describe("store", () => {
+describe('store', () => {
   beforeEach(resetStore);
 
-  it("maps a selected active run to its node", () => {
+  it('maps a selected active run to its node', () => {
     setSnapshot({
       goal: null,
       graph: null,
       capabilities: CAPABILITIES,
-      active_runs: [{ run_id: "run-1", node_id: 7, description: "work", status: "running" }],
+      active_runs: [{ run_id: 'run-1', node_id: 7, description: 'work', status: 'running' }],
     });
-    setSelection("run-1");
+    setSelection('run-1');
 
     expect(selectedNodeId(getState())).toBe(7);
 
@@ -39,7 +39,7 @@ describe("store", () => {
     expect(selectedNodeId(getState())).toBe(7);
   });
 
-  it("allows actions only for the selected owner run", () => {
+  it('allows actions only for the selected owner run', () => {
     setSnapshot({ goal: null, graph: null, capabilities: CAPABILITIES });
     setSelection(7);
     expect(canActOnSelectedRun(getState())).toBe(true);
@@ -48,14 +48,25 @@ describe("store", () => {
     expect(canActOnSelectedRun(getState())).toBe(false);
   });
 
-  it("round-trips a selection", () => {
+  it('forbids actions on a watch host even when the owner node is selected', () => {
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: { ...CAPABILITIES, host_owner: { available: false, reason: null } },
+    });
+    setSelection(7);
+
+    expect(canActOnSelectedRun(getState())).toBe(false);
+  });
+
+  it('round-trips a selection', () => {
     setSelection(7);
     expect(getState().selection).toBe(7);
   });
 
-  it("merges a graph view patch without dropping other fields", () => {
+  it('merges a graph view patch without dropping other fields', () => {
     setGraphView({ zoom: 1.5 });
-    setGraphView({ filter: "ready" });
-    expect(getState().graphView).toMatchObject({ zoom: 1.5, filter: "ready" });
+    setGraphView({ filter: 'ready' });
+    expect(getState().graphView).toMatchObject({ zoom: 1.5, filter: 'ready' });
   });
 });

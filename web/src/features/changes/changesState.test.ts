@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { get } from '../../app/api';
+import { ApiError, get } from '../../app/api';
 import * as store from '../../app/store';
 import { getChangesState, resetChanges, selectPath, setRunId } from './changesState';
 
-vi.mock('../../app/api', () => ({
-  get: vi.fn().mockResolvedValue([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]),
-}));
+vi.mock('../../app/api', async () => {
+  const actual = await vi.importActual<typeof import('../../app/api')>('../../app/api');
+  return {
+    ApiError: actual.ApiError,
+    get: vi.fn().mockResolvedValue([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]),
+  };
+});
 
 describe('changesState', () => {
   beforeEach(() => {
@@ -29,7 +33,7 @@ describe('changesState', () => {
 
   it('treats a missing changes endpoint as the no-changes state', async () => {
     const noticeSpy = vi.spyOn(store, 'pushNotice');
-    vi.mocked(get).mockRejectedValueOnce({ status: 404 });
+    vi.mocked(get).mockRejectedValueOnce(new ApiError('GET failed with status 404.', 404));
 
     setRunId('run-missing');
     await Promise.resolve();
@@ -41,7 +45,7 @@ describe('changesState', () => {
 
   it('pushes one notice when the changes endpoint fails', async () => {
     const noticeSpy = vi.spyOn(store, 'pushNotice');
-    vi.mocked(get).mockRejectedValueOnce({ status: 500 });
+    vi.mocked(get).mockRejectedValueOnce(new ApiError('GET failed with status 500.', 500));
 
     setRunId('run-failed');
     await Promise.resolve();

@@ -47,7 +47,7 @@ def rejected_session_input_server() -> Iterator[BrowserServer]:
 
     def reject(run_id: str, request: SessionInput) -> SessionInput | None:
         del run_id, request
-        return None
+        raise ValueError("the run is not active")
 
     app = create_app(
         source,

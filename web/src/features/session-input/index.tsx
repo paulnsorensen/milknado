@@ -17,6 +17,7 @@ import { SessionInputSection } from './SessionInputSection';
 
 export function register(): void {
   registerSlot('header-control', () => <PendingPermissionIndicator />);
+  registerSlot('permission-status', () => <PendingPermissionIndicator />);
   registerSlot('sidecar-section', () => <SessionInputSection />);
   registerSlot('sidecar-action', () => <PermissionActions />);
 

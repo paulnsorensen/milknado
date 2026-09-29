@@ -1,14 +1,14 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { patch, post } from "../../app/api";
-import { resetStore, setSelection, setSnapshot } from "../../app/store";
-import { ArchiveNodeDialog } from "./ArchiveNodeDialog";
-import { closeDialog, openDialog, resetDialog } from "./dialogState";
-import { EditNodeDialog } from "./EditNodeDialog";
-import { MoveNodeDialog } from "./MoveNodeDialog";
-import { NodeActionButtons } from "./NodeActionButtons";
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { patch, post } from '../../app/api';
+import { resetStore, setSelection, setSnapshot } from '../../app/store';
+import { ArchiveNodeDialog } from './ArchiveNodeDialog';
+import { closeDialog, openDialog, resetDialog } from './dialogState';
+import { EditNodeDialog } from './EditNodeDialog';
+import { MoveNodeDialog } from './MoveNodeDialog';
+import { NodeActionButtons } from './NodeActionButtons';
 
-vi.mock("../../app/api", () => ({
+vi.mock('../../app/api', () => ({
   post: vi.fn().mockResolvedValue({}),
   patch: vi.fn().mockResolvedValue({}),
 }));
@@ -37,18 +37,18 @@ function seedSnapshot(
       nodes: [
         {
           id: 1,
-          description: "Root",
-          status: "pending",
+          description: 'Root',
+          status: 'pending',
           parent_id: null,
-          kind: "goal",
+          kind: 'goal',
           flavor: null,
         },
         {
           id: 2,
-          description: "Child",
-          status: "pending",
+          description: 'Child',
+          status: 'pending',
           parent_id: 1,
-          kind: "task",
+          kind: 'task',
           flavor: null,
         },
       ],
@@ -58,13 +58,13 @@ function seedSnapshot(
     capabilities: capabilities(),
     active_runs: activeRuns.map((run) => ({
       ...run,
-      description: "Fixture run",
-      status: "running",
+      description: 'Fixture run',
+      status: 'running',
     })),
   });
 }
 
-describe("NodeActionButtons", () => {
+describe('NodeActionButtons', () => {
   beforeEach(() => {
     resetStore();
     resetDialog();
@@ -74,31 +74,31 @@ describe("NodeActionButtons", () => {
 
   afterEach(cleanup);
 
-  it("renders nothing without a selected node", () => {
+  it('renders nothing without a selected node', () => {
     seedSnapshot();
     const { container } = render(<NodeActionButtons />);
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders actions for a selected run node", () => {
-    seedSnapshot([{ run_id: "run-1", node_id: 2 }]);
-    setSelection("run-1");
+  it('renders actions for a selected run node', () => {
+    seedSnapshot([{ run_id: 'run-1', node_id: 2 }]);
+    setSelection('run-1');
     render(<NodeActionButtons />);
 
-    expect(screen.getByRole("button", { name: "Edit node" })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit node' })).toBeVisible();
   });
 
-  it("opens the edit dialog for the selected node", () => {
+  it('opens the edit dialog for the selected node', () => {
     seedSnapshot();
     setSelection(2);
     render(<NodeActionButtons />);
 
-    screen.getByText("Edit node").click();
+    screen.getByText('Edit node').click();
     closeDialog();
   });
 });
 
-describe("EditNodeDialog", () => {
+describe('EditNodeDialog', () => {
   beforeEach(() => {
     resetStore();
     resetDialog();
@@ -107,21 +107,21 @@ describe("EditNodeDialog", () => {
 
   afterEach(cleanup);
 
-  it("patches the exact EditNodeBody shape on submit", () => {
+  it('patches the exact EditNodeBody shape on submit', () => {
     seedSnapshot();
-    openDialog("edit", 2);
+    openDialog('edit', 2);
     render(<EditNodeDialog />);
 
-    screen.getByText("Save changes").click();
+    screen.getByText('Save changes').click();
 
-    expect(patch).toHaveBeenCalledWith("/api/nodes/2", {
-      description: "Child",
+    expect(patch).toHaveBeenCalledWith('/api/nodes/2', {
+      description: 'Child',
       flavor: null,
     });
   });
 });
 
-describe("MoveNodeDialog", () => {
+describe('MoveNodeDialog', () => {
   beforeEach(() => {
     resetStore();
     resetDialog();
@@ -130,20 +130,20 @@ describe("MoveNodeDialog", () => {
 
   afterEach(cleanup);
 
-  it("posts the new parent id on submit", () => {
+  it('posts the new parent id on submit', () => {
     seedSnapshot();
-    openDialog("move", 2);
+    openDialog('move', 2);
     render(<MoveNodeDialog />);
 
-    screen.getByText("Move node").click();
+    screen.getByText('Move node').click();
 
-    expect(post).toHaveBeenCalledWith("/api/nodes/2/move", {
+    expect(post).toHaveBeenCalledWith('/api/nodes/2/move', {
       new_parent_id: null,
     });
   });
 });
 
-describe("ArchiveNodeDialog", () => {
+describe('ArchiveNodeDialog', () => {
   beforeEach(() => {
     resetStore();
     resetDialog();
@@ -152,13 +152,13 @@ describe("ArchiveNodeDialog", () => {
 
   afterEach(cleanup);
 
-  it("posts an archive request on confirm", () => {
+  it('posts an archive request on confirm', () => {
     seedSnapshot();
-    openDialog("archive", 2);
+    openDialog('archive', 2);
     render(<ArchiveNodeDialog />);
 
-    screen.getByText("Archive node").click();
+    screen.getByText('Archive node').click();
 
-    expect(post).toHaveBeenCalledWith("/api/nodes/2/archive");
+    expect(post).toHaveBeenCalledWith('/api/nodes/2/archive');
   });
 });

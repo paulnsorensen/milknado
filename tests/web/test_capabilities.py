@@ -256,7 +256,8 @@ def test_owner_controller_builder_targets_requested_run_id() -> None:
     commands = owner_commands(controller, HostDependencies(owner_capabilities=owner))
     assert commands.session_input is not None
     command = SessionInput(action="steer", request_id="request")
-    assert commands.session_input("request-run", command) is None
+    with pytest.raises(ValueError, match="not active"):
+        _ = commands.session_input("request-run", command)
     assert commands.session_input("owner-run", command) == command
     assert commands.cancel is not None
     assert commands.cancel("owner-run") == {"run_id": "owner-run", "state": "cancelled"}
@@ -274,10 +275,10 @@ def test_observer_builder_wires_graph_process_and_project_dependencies(
         )
     )
     assert commands.session_input is not None
-    assert (
-        commands.session_input("missing-run", SessionInput(action="steer", request_id="request"))
-        is None
-    )
+    with pytest.raises(ValueError, match="not active"):
+        _ = commands.session_input(
+            "missing-run", SessionInput(action="steer", request_id="request")
+        )
     assert commands.cancel is not None
     with pytest.raises(ValueError, match="not found"):
         _ = commands.cancel("missing-run")

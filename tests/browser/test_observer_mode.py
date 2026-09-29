@@ -26,8 +26,6 @@ _ = graph_db_server
 
 pytestmark = pytest.mark.browser
 
-CASES: tuple[tuple[str, str], ...] = (("Force stop", "Force stop is unavailable."),)
-
 
 def _active_run(run_id: str) -> ActiveRunSnapshot:
     return ActiveRunSnapshot(
@@ -75,7 +73,8 @@ def watch_server() -> Iterator[BrowserServer]:
             invocation_id="inv-1",
             owner_incarnation="owner-1",
             actions=(),
-            permission_ids=(),
+            permission_ids=("perm-1",),
+            permission_commands=(("perm-1", "git status"),),
             published_at="now",
         )
     )
@@ -117,20 +116,18 @@ def owner_server() -> Iterator[BrowserServer]:
     server.stop()
 
 
-@pytest.mark.parametrize("case", CASES, ids=[label for label, _ in CASES])
-def test_observer_control_disabled_with_reason(
-    page: Page, observer_server: BrowserServer, case: tuple[str, str]
+def test_observer_selected_node_omits_run_controls(
+    page: Page, observer_server: BrowserServer
 ) -> None:
-    label, reason = case
     node_button = page.get_by_role(
         "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
     )
     open_app(page, observer_server.login_url, node_button)
     node_button.click()
 
-    button = page.get_by_role("button", name=label, exact=True)
-    expect(button).to_be_disabled()
-    expect(page.get_by_text(reason)).to_be_visible()
+    expect(page.locator('[data-region="sidecar"]')).to_be_visible()
+    for name in ("Cancel run", "Force stop"):
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
 
 
 def test_observer_header_omits_stop_scheduling(page: Page, observer_server: BrowserServer) -> None:
@@ -196,3 +193,5 @@ def test_watch_with_one_live_owner_shows_observer_surface(
         sidecar.locator('[data-region="sidecar-section"]').get_by_text("Read-only", exact=True)
     ).to_be_visible()
     expect(sidecar.get_by_label("Session guidance")).not_to_be_visible()
+    for name in ("Approve", "Deny", "Cancel run", "Force stop"):
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)

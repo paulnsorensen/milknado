@@ -1,10 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { post } from "../../app/api";
-import { resetStore, setSelection, setSnapshot } from "../../app/store";
-import { PermissionActions } from "./PermissionActions";
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { post } from '../../app/api';
+import { resetStore, setSelection, setSnapshot } from '../../app/store';
+import { PermissionActions } from './PermissionActions';
 
-vi.mock("../../app/api", () => ({ post: vi.fn().mockResolvedValue({}) }));
+vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
 
 function snapshotWithPermissions(
   permissionIds: string[],
@@ -26,7 +26,7 @@ function snapshotWithPermissions(
       host_owner: { available: true, reason: null },
       owner: {
         available: true,
-        run_id: "run-1",
+        run_id: 'run-1',
         node_id: 1,
         permission_ids: permissionIds,
         permission_commands: permissionCommands,
@@ -35,7 +35,7 @@ function snapshotWithPermissions(
   };
 }
 
-describe("PermissionActions", () => {
+describe('PermissionActions', () => {
   beforeEach(() => {
     resetStore();
     vi.mocked(post).mockClear();
@@ -43,31 +43,22 @@ describe("PermissionActions", () => {
 
   afterEach(cleanup);
 
-  it("renders nothing with no pending permission request", () => {
+  it('renders nothing with no pending permission request', () => {
+    setSelection(1);
     setSnapshot(snapshotWithPermissions([]));
     const { container } = render(<PermissionActions />);
     expect(container.children.length).toBe(0);
   });
 
-  it("hides pending permission requests for a non-owner selection", () => {
-    setSelection(1);
-    setSnapshot(snapshotWithPermissions(["perm-1"]));
-    setSelection(2);
-
-    const { container } = render(<PermissionActions />);
-
-    expect(container.children.length).toBe(0);
-  });
-
-  it("approves the oldest pending permission request", () => {
-    setSnapshot(snapshotWithPermissions(["perm-1", "perm-2"]));
+  it('approves the oldest pending permission request', () => {
+    setSnapshot(snapshotWithPermissions(['perm-1', 'perm-2']));
     setSelection(1);
     render(<PermissionActions />);
-    screen.getByText("Approve").click();
+    screen.getByText('Approve').click();
 
     expect(post).toHaveBeenCalledWith(
-      "/api/runs/run-1/session-input",
-      expect.objectContaining({ action: "approve", request_id: "perm-1" }),
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'approve', request_id: 'perm-1' }),
     );
   });
 
@@ -89,6 +80,16 @@ describe("PermissionActions", () => {
 
     expect(container.firstChild).toBeNull();
   });
+
+  it('hides controls when permission_commands has no entry for the pending permission', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1'], [['perm-2', 'git status']]));
+
+    const { container } = render(<PermissionActions />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
   it('shows the pending request id and command line from owner capabilities', () => {
     setSelection(1);
     setSnapshot(snapshotWithPermissions(['perm-1']));
@@ -111,16 +112,16 @@ describe("PermissionActions", () => {
     expect(screen.queryByText('Command line')).toBeNull();
   });
 
-  it("denies the oldest pending permission request", () => {
+  it('denies the oldest pending permission request', () => {
     setSelection(1);
-    setSnapshot(snapshotWithPermissions(["perm-1"]));
+    setSnapshot(snapshotWithPermissions(['perm-1']));
     setSelection(1);
     render(<PermissionActions />);
-    screen.getByText("Deny").click();
+    screen.getByText('Deny').click();
 
     expect(post).toHaveBeenCalledWith(
-      "/api/runs/run-1/session-input",
-      expect.objectContaining({ action: "deny", request_id: "perm-1" }),
+      '/api/runs/run-1/session-input',
+      expect.objectContaining({ action: 'deny', request_id: 'perm-1' }),
     );
   });
 });
