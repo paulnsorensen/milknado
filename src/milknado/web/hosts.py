@@ -120,6 +120,7 @@ def owner_commands(
         graph_edits=_graph_edits(dependencies),
         review_decision=dependencies.review_decision,
         git=dependencies.git,
+        host_owner=True,
         owner_capabilities=dependencies.owner_capabilities,
     )
 

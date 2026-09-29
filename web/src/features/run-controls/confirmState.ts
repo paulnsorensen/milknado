@@ -1,9 +1,24 @@
-// The single pending confirmation: a prompt plus the action Confirm runs.
+// The single pending confirmation: copy and action details for the prompt.
 // Dismiss (or a second request) clears it without running anything.
 export interface ConfirmRequest {
   prompt: string;
+  body: string;
+  dismissLabel: string;
+  confirmLabel: string;
   action: () => void;
 }
+
+export interface ConfirmOptions {
+  prompt: string;
+  action: () => void;
+  body?: string;
+  dismissLabel?: string;
+  confirmLabel?: string;
+}
+
+const DEFAULT_BODY = 'The action runs once. It cannot be undone from here.';
+const DEFAULT_DISMISS_LABEL = 'Dismiss';
+const DEFAULT_CONFIRM_LABEL = 'Confirm';
 
 let pending: ConfirmRequest | null = null;
 const listeners = new Set<() => void>();
@@ -23,8 +38,14 @@ export function subscribeConfirm(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function requestConfirm(prompt: string, action: () => void): void {
-  pending = { prompt, action };
+export function requestConfirm(options: ConfirmOptions): void {
+  pending = {
+    prompt: options.prompt,
+    body: options.body ?? DEFAULT_BODY,
+    dismissLabel: options.dismissLabel ?? DEFAULT_DISMISS_LABEL,
+    confirmLabel: options.confirmLabel ?? DEFAULT_CONFIRM_LABEL,
+    action: options.action,
+  };
   emit();
 }
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -22,7 +24,10 @@ from tests.browser.conftest import (
 pytestmark = pytest.mark.browser
 
 NEW_NODE_DESCRIPTION = "Freshly published task"
-NEW_RUN_DESCRIPTION = "Bake the new task"
+NEW_RUN_DESCRIPTION = (
+    "Bake the new task with a description long enough to verify the fixed AgentRow "
+    "sub and figure line"
+)
 NEW_EVENT_LINE = "a live console line"
 
 
@@ -66,7 +71,7 @@ def test_published_snapshot_updates_the_page_without_navigating(
     page: Page, browser_server: BrowserServer, browser_source: BrowserSnapshotSource
 ) -> None:
     _ = page.goto(browser_server.login_url)
-    expect(page.get_by_text(FIXTURE_NODE_DESCRIPTION)).to_be_visible()
+    expect(page.get_by_role("heading", name=FIXTURE_NODE_DESCRIPTION)).to_be_visible()
     url_before = page.url
 
     browser_source.publish(_published_snapshot())
@@ -75,3 +80,21 @@ def test_published_snapshot_updates_the_page_without_navigating(
     expect(page.get_by_text(NEW_RUN_DESCRIPTION)).to_be_visible()
     expect(page.get_by_text(NEW_EVENT_LINE)).to_be_visible()
     assert page.url == url_before
+
+    agent = page.locator(".mk-agent")
+    expect(agent).to_have_count(1)
+    box = agent.bounding_box()
+    assert box is not None and box["height"] <= 40
+    styles = cast(
+        dict[str, str],
+        agent.locator(".mk-agent-name b").evaluate(
+            """(element) => ({
+                overflow: getComputedStyle(element).overflow,
+                whiteSpace: getComputedStyle(element).whiteSpace
+            })"""
+        ),
+    )
+    assert styles == {"overflow": "hidden", "whiteSpace": "nowrap"}
+    expect(page.locator(".mk-rail-footer .mk-text-caption")).to_have_text(
+        "1 active · 0 completed · 0 failed · 0 stopped · 1 available"
+    )

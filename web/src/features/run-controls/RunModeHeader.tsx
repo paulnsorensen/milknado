@@ -3,11 +3,10 @@
 // capabilities like the server.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
+import { dispatchAction } from '../../app/actions';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { ownerLabel } from '../../shared/ownerLabel';
-import { stopScheduling } from './commands';
-import { requestConfirm } from './confirmState';
 
 export function RunModeHeader(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
@@ -18,20 +17,34 @@ export function RunModeHeader(): ReactElement | null {
     return null;
   }
 
-  const isOwner = capabilities.owner.available;
+  const isOwner = capabilities.host_owner.available;
   const stop = capabilities.stop_scheduling;
+  const activeRuns = store.snapshot?.active_runs;
 
   return (
     <div className="mk-button-row">
       <StatusBadge state={isOwner ? 'running' : 'pending'}>{ownerLabel(isOwner).badge}</StatusBadge>
-      <Button
-        disabled={!stop.available}
-        title={stop.available ? undefined : (stop.reason ?? undefined)}
-        onClick={() => requestConfirm('Stop scheduling?', () => void stopScheduling())}
-      >
-        Stop scheduling
-      </Button>
-      {!stop.available && <p role="note">{stop.reason}</p>}
+      {isOwner && (
+        <Button
+          disabled={!stop.available || activeRuns === undefined}
+          title={
+            activeRuns === undefined
+              ? 'Run totals are not available yet.'
+              : stop.available
+                ? undefined
+                : (stop.reason ?? undefined)
+          }
+          onClick={() => {
+            if (activeRuns === undefined) {
+              return;
+            }
+            dispatchAction('scheduling.stop');
+          }}
+        >
+          Stop scheduling
+        </Button>
+      )}
+      {isOwner && !stop.available && <p role="note">{stop.reason}</p>}
     </div>
   );
 }

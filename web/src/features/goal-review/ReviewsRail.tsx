@@ -42,14 +42,22 @@ export function ReviewsRail(): ReactElement {
       {reviews.map((review) => (
         <div
           key={review.review_id}
-          className={review.review_id === selectedReviewId ? 'mk-rail-row is-selected' : 'mk-rail-row'}
+          className={
+            review.review_id === selectedReviewId
+              ? 'mk-rail-row mk-review-row is-selected'
+              : 'mk-rail-row mk-review-row'
+          }
         >
-          <span title={review.evidence}>
-            <span className="mk-accent-text" aria-hidden="true">
-              {'▣ '}
+          <span className="mk-rail-row-copy">
+            <span className="mk-rail-row-title">
+              <span className="mk-accent-text" aria-hidden="true">
+                {'▣ '}
+              </span>
+              Goal review {review.review_id}
             </span>
-            <span>{review.evidence}</span>
+            <span className="mk-rail-row-sub">node {review.goal_id}</span>
           </span>
+          <span className="mk-rail-row-state">{review.decision}</span>
           <Button variant="ghost" className="mk-btn-sm" onClick={() => openReview(review.review_id)}>
             Open
           </Button>

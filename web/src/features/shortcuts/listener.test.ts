@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ACTION_IDS, clearActions, registerAction } from '../../app/actions';
-import { getState, resetStore, setSnapshot } from '../../app/store';
+import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
 import type { WireCapabilities } from '../../app/wire';
 import { KEY_BINDINGS } from './keyMap';
 import { handleShortcutKey } from './listener';
@@ -15,6 +15,7 @@ function capabilities(overrides: Partial<WireCapabilities> = {}): WireCapabiliti
     graph_edits: unavailable,
     review_decision: unavailable,
     git: unavailable,
+    host_owner: unavailable,
     owner: { available: false },
     ...overrides,
   };
@@ -92,6 +93,28 @@ describe('handleShortcutKey', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it('ignores an already prevented arrow shortcut', () => {
+    setSnapshot({
+      goal: null,
+      graph: {
+        nodes: [
+          { id: 1, description: 'root', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
+          { id: 2, description: 'a', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
+        ],
+        edges: [],
+        root_ids: [1, 2],
+      },
+      capabilities: capabilities(),
+    });
+
+    const event = press('ArrowDown');
+    event.preventDefault();
+    handleShortcutKey(event);
+
+    expect(getState().selection).toBeNull();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it('moves the graph selection on an arrow key', () => {
     setSnapshot({
       goal: null,
@@ -111,7 +134,7 @@ describe('handleShortcutKey', () => {
     expect(getState().selection).toBe(1);
   });
 
-  it('gates a steering key on its capability', () => {
+  it('gates a steering key on its capability and the selected run', () => {
     const spy = vi.fn();
     registerAction('run.cancel', spy);
     setSnapshot({ goal: null, graph: null, capabilities: capabilities({ cancel: { available: false, reason: null } }) });
@@ -124,11 +147,30 @@ describe('handleShortcutKey', () => {
       graph: null,
       capabilities: capabilities({
         cancel: { available: true, reason: null },
-        owner: { available: true, run_id: 'run-1' },
+        owner: { available: true, run_id: 'run-1', node_id: 5 },
       }),
     });
+    setSelection(5);
     handleShortcutKey(press('x'));
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing for "x" when a different node is selected', () => {
+    const spy = vi.fn();
+    registerAction('run.cancel', spy);
+    setSnapshot({
+      goal: null,
+      graph: null,
+      capabilities: capabilities({
+        cancel: { available: true, reason: null },
+        owner: { available: true, run_id: 'run-1', node_id: 5 },
+      }),
+    });
+    setSelection(99);
+
+    handleShortcutKey(press('x'));
+
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it('gates a session key on session_input availability', () => {

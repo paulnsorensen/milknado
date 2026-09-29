@@ -2,7 +2,7 @@
 // each renders its tab body only for a selected node while its tab is active.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { getState, selectedNodeId, subscribe } from '../../app/store';
 import {
   detailHasMore,
   detailTabId,
@@ -21,7 +21,7 @@ function useTabBody(tab: DetailTab) {
   const store = useSyncExternalStore(subscribe, getState);
   const detailState = useSyncExternalStore(subscribeDetail, getDetailState);
   const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
-  const selected = typeof store.selection === 'number';
+  const selected = selectedNodeId(store) !== null;
   const active = selected && activeTab === tab;
   return { active, detailState, selected };
 }

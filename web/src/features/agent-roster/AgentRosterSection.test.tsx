@@ -20,8 +20,9 @@ describe('AgentRosterSection', () => {
     setSnapshot(mergeSnapshot(raw, null));
 
     render(<AgentRosterSection />);
-
-    expect(screen.getByText('Bake the roadmap')).toBeTruthy();
+    const row = screen.getByRole('button', { name: /Bake the roadmap/ });
+    expect(row.textContent).toContain('node 1');
+    expect(row.textContent).toContain('RUNNING');
   });
 
   it('renders an empty roster with no snapshot yet', () => {

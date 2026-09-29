@@ -17,7 +17,7 @@ export function AgentRosterSection(): ReactElement {
       agents={agents}
       title="Agents"
       count={`${running}/${agents.length} running`}
-      className="mk-rail-section"
+      className="mk-rail-section mk-agent-roster"
     />
   );
 }

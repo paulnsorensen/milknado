@@ -5,10 +5,7 @@ import { getState, subscribe } from '../../app/store';
 import { toGraphNodes } from '../../app/wire';
 import { Milknado } from '../../design-system';
 import type { StreamSnapshot } from './runtimeSnapshot';
-
-function totalLabel(value: number | undefined, label: string): string {
-  return value === undefined ? `– ${label}` : `${value} ${label}`;
-}
+import { formatRunTotals } from '../../shared/runTotals';
 
 export function RunTotals(): ReactElement | null {
   const state = useSyncExternalStore(subscribe, getState);
@@ -20,13 +17,7 @@ export function RunTotals(): ReactElement | null {
   }
 
   const nodes = snapshot.graph ? toGraphNodes(snapshot.graph) : [];
-  const totals = [
-    `${snapshot.active_runs?.length ?? 0} active`,
-    totalLabel(snapshot.completed, 'completed'),
-    totalLabel(snapshot.failed, 'failed'),
-    totalLabel(snapshot.stopped, 'stopped'),
-    totalLabel(snapshot.available, 'available'),
-  ].join(' · ');
+  const totals = formatRunTotals(snapshot);
   const runId = state.capabilities?.owner.run_id;
 
   return (

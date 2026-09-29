@@ -203,10 +203,19 @@ def test_run_inspection_rejects_unknown_run() -> None:
     assert response.json() == {"error": "Run missing was not found."}
 
 
-def test_run_inspection_rejects_missing_session_worktree() -> None:
+def test_run_inspection_returns_no_changes_without_session_worktree() -> None:
     response = request(
         client(run=replace(_run(), session=SessionView()), git=InspectionGit()),
         "/api/runs/run-1/changes",
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_run_diff_rejects_missing_session_worktree() -> None:
+    response = request(
+        client(run=replace(_run(), session=SessionView()), git=InspectionGit()),
+        "/api/runs/run-1/diff?path=README.md",
     )
     assert response.status_code == 409
     assert response.json() == {"error": "Run has no session worktree."}

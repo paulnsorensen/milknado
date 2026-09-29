@@ -68,6 +68,7 @@ def steering_server() -> Iterator[tuple[BrowserServer, RecordingCommands]]:
         cancel=commands.cancel,
         force_stop=commands.force_stop,
         stop_scheduling=commands.stop_scheduling,
+        host_owner=True,
         owner_capabilities=OwnerCapabilities(
             run_id=RUN_ID,
             node_id=1,
@@ -98,6 +99,8 @@ def test_question_mark_opens_help_with_all_columns(
 
     dialog = page.get_by_role("dialog", name="Keyboard shortcuts")
     dialog.wait_for(state="visible")
+    assert dialog.get_by_role("button", name="Close", exact=True).is_visible()
+    assert dialog.evaluate("(element) => element.getBoundingClientRect().width") == 760
     for column in ("Graph", "Runs", "Steering"):
         assert dialog.get_by_role("region", name=column).is_visible()
 
@@ -124,9 +127,11 @@ def test_steering_key_confirms_and_runs_command(
         server.login_url,
         page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True),
     )
-
+    page.get_by_role("button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True).click()
     page.keyboard.press("x")
-    page.get_by_role("button", name="Confirm").click()
+
+    expect(page.get_by_role("alertdialog")).to_be_visible()
+    page.get_by_role("alertdialog").get_by_role("button", name="Cancel run", exact=True).click()
 
     wait_until(lambda: len(recorder.cancel_calls) == 1)
 
