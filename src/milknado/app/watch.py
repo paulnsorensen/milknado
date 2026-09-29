@@ -47,6 +47,11 @@ _OBSERVER_ACTIONS = RunActionAvailability(
 )
 
 
+_TERMINAL_STATUS = {
+    "done": ExecutionRunStatus.COMPLETED,
+    "stopped": ExecutionRunStatus.STOPPED,
+}
+
 _LOG_TAIL_BYTES = 2000
 
 
@@ -154,9 +159,7 @@ class WatchSnapshotSource:
         )
 
     def _terminal_snapshot(self, run: DurableRun, description: str) -> TerminalRunSnapshot:
-        status = (
-            ExecutionRunStatus.COMPLETED if run.status == "done" else ExecutionRunStatus.FAILED
-        )
+        status = _TERMINAL_STATUS.get(run.status, ExecutionRunStatus.FAILED)
         return TerminalRunSnapshot(
             run_id=run.run_id,
             node_id=run.node_id,

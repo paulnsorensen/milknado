@@ -181,8 +181,8 @@ def help_text(run: RunSnapshot | None, options: HelpOptions) -> str:
             actions.append("c cancel")
         if run.actions.can_force_stop:
             actions.append("f force stop")
-        if options.show_stop_scheduling:
-            actions.append("s stop scheduling")
+    if options.show_stop_scheduling:
+        actions.append("s stop scheduling")
     if not options.auto_follow:
         actions.append("r resume output")
     return "Help\n" + "\n".join(actions)

@@ -17,6 +17,7 @@ from milknado.domains.common import (
     normalize_session_event,
 )
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+from milknado.domains.graph.commands import OwnerCapabilities
 from milknado.domains.graph.snapshot_models import SnapshotPage
 
 _SESSION_ROLE = "session"
@@ -151,8 +152,10 @@ def _events(conn: sqlite3.Connection, run_id: str, limit: int) -> tuple[SessionE
 
 
 def _permission_events(
-    events: tuple[SessionEvent, ...], permission_ids: tuple[str, ...]
+    events: tuple[SessionEvent, ...], capabilities: OwnerCapabilities | None
 ) -> tuple[SessionEvent, ...]:
+    permission_ids = capabilities.permission_ids if capabilities is not None else ()
+    commands = dict(capabilities.permission_commands) if capabilities is not None else {}
     permission_events = tuple(event for event in events if event.kind == "permission")
     known = {event.event_id for event in permission_events}
     requested = tuple(event for event in permission_events if event.state == "requested")
@@ -161,7 +164,7 @@ def _permission_events(
         *(
             SessionEvent(
                 kind="permission",
-                text=permission_id,
+                text=commands.get(permission_id, permission_id),
                 event_id=permission_id,
                 state="requested",
             )
@@ -213,9 +216,7 @@ def view_session(
         active=is_active,
         owner_incarnation=capabilities.owner_incarnation if capabilities is not None else "",
         invocation_id=capabilities.invocation_id if capabilities is not None else "",
-        permissions=_permission_events(
-            events, capabilities.permission_ids if capabilities is not None else ()
-        ),
+        permissions=_permission_events(events, capabilities),
     )
 
 

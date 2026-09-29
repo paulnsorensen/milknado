@@ -72,14 +72,7 @@ class _RunFacade(_SubFacade):
 
     @synchronized
     def totals(self) -> tuple[int, int, int]:
-        row = fetchone(
-            self._conn,
-            "SELECT "
-            + "COALESCE(SUM(status = 'done'), 0), "
-            + "COALESCE(SUM(status = 'failed'), 0), "
-            + "COALESCE(SUM(status = 'stopped'), 0) "
-            + "FROM runs",
-        )
+        row = fetchone(self._conn, _run_persistence.RUN_TOTALS_SQL)
         if row is None:
             raise RuntimeError("run totals query returned no row")
         values = as_tuple(row)

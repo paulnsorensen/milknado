@@ -2309,6 +2309,24 @@ class TestOwnerIdleWait:
         controls.assert_not_called()
         assert sleeps == []
 
+    def test_publishes_a_failed_idle_dispatch_before_sleeping(
+        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+    ) -> None:
+        _ = graph.add_node("root")
+        loop, _executor, sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+        received: list[RunLoopState] = []
+        loop.set_state_listener(received.append)
+
+        def dispatch_fails(_config: ExecutionConfig, _limit: int) -> tuple[int, int]:
+            loop.stop_scheduling()
+            return 0, 1
+
+        _set_attr(loop, "_dispatch_if_scheduling_open", dispatch_fails)
+
+        assert _wait_for_owner_work(loop, config, 4) == 0
+        assert received[-1].failed == 1
+        assert sleeps == [1.0]
+
     def test_execute_run_returns_once_the_owner_stops_an_idle_run(
         self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
     ) -> None:

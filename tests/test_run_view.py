@@ -12,12 +12,14 @@ from milknado.app.run import (
     TerminalRunSnapshot,
 )
 from milknado.app.run_view import (
+    HelpOptions,
     actions_text,
     format_attempt,
     format_duration,
     format_eta,
     format_progress,
     goal_review_prompt,
+    help_text,
     output_body,
     output_border_title,
     run_index,
@@ -343,3 +345,14 @@ def test_run_index_selected_absent() -> None:
 
 def test_run_index_empty_runs() -> None:
     assert run_index((), None) == 0
+
+
+@pytest.mark.parametrize("run", [None, terminal_run()])
+def test_help_text_shows_stop_scheduling_without_active_selection(
+    run: TerminalRunSnapshot | None,
+) -> None:
+    shown = help_text(run, HelpOptions(False, "list", True, show_stop_scheduling=True))
+    hidden = help_text(run, HelpOptions(False, "list", True, show_stop_scheduling=False))
+
+    assert "s stop scheduling" in shown
+    assert "s stop scheduling" not in hidden

@@ -338,6 +338,8 @@ class RunLoop:
                 self._completion_wait_started = time.monotonic()
                 self._publish_state()
                 return added
+            if failed:
+                self._publish_state()
             self._idle_sleep(IDLE_RESCAN_SECONDS)
 
     def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:

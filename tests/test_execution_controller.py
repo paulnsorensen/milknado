@@ -321,7 +321,8 @@ def test_controller_snapshot_uses_durable_run_totals(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
         node = graph.add_node("node")
-        for index, status in enumerate(("failed", "failed", "done")):
+        outcomes = (("failed", "worker failed"), ("failed", "cancelled"), ("done", None))
+        for index, (status, error) in enumerate(outcomes):
             run_id = f"run-{index}"
             graph.runs.start(run_id, node.id, "", "2026-09-11T00:00:00+00:00", 60)
             graph.runs.finish(
@@ -331,7 +332,7 @@ def test_controller_snapshot_uses_durable_run_totals(tmp_path: Path) -> None:
                     exit_code=0 if status == "done" else 1,
                     timed_out=False,
                     ended_at="2026-09-11T00:00:01+00:00",
-                    error=None if status == "done" else "worker failed",
+                    error=error,
                     detail=None,
                     rebased=None,
                 ),
@@ -345,7 +346,7 @@ def test_controller_snapshot_uses_durable_run_totals(tmp_path: Path) -> None:
             graph,
         )
         snapshot = controller.snapshot()
-        assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 2, 0)
+        assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 1, 1)
     finally:
         graph.close()
 

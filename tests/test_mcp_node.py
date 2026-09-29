@@ -335,6 +335,24 @@ def test_node_verify_passing_gates_returns_ok(repo: Path) -> None:
     assert verdict == {"ok": True, "feedback": ""}
 
 
+def test_node_verify_reports_missing_dispatch_base_for_empty_base(repo: Path) -> None:
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+    claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    worktree = _worktree(claim)
+    graph, _cfg = open_graph(repo)
+    try:
+        graph.sessions.start(
+            claim["run_id"], SessionContext(family="claude", cwd=str(worktree), base_oid="")
+        )
+    finally:
+        graph.close()
+
+    verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
+    assert verdict["ok"] is False
+    assert "no immutable dispatch base" in verdict["feedback"]
+
+
 def test_node_verify_failing_gate_returns_not_ok_with_feedback(repo: Path) -> None:
     _write_config(repo, gates=["false"])
     node_id = _add_task(repo)

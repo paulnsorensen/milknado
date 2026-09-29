@@ -389,7 +389,8 @@ def test_graph_snapshot_roots_follow_parent_identity_not_dag_edges(tmp_path: Pat
 def test_watch_totals_include_runs_outside_the_bounded_run_page(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
     graph = MikadoGraph(db_path)
-    for index, status in enumerate(("failed", "failed", "done")):
+    outcomes = (("failed", "worker failed"), ("failed", "cancelled"), ("done", None))
+    for index, (status, error) in enumerate(outcomes):
         node = graph.add_node(f"worker {index}")
         run_id = f"run-{index}"
         graph.runs.start(
@@ -402,7 +403,7 @@ def test_watch_totals_include_runs_outside_the_bounded_run_page(tmp_path: Path) 
                 exit_code=0 if status == "done" else 1,
                 timed_out=False,
                 ended_at="2026-09-11T00:00:01+00:00",
-                error=None if status == "done" else "worker failed",
+                error=error,
                 detail=None,
                 rebased=None,
             ),
@@ -412,7 +413,7 @@ def test_watch_totals_include_runs_outside_the_bounded_run_page(tmp_path: Path) 
     snapshot = source.snapshot()
 
     assert len(snapshot.terminal_runs) == 1
-    assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 2, 0)
+    assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 1, 1)
     source.close()
     graph.close()
 

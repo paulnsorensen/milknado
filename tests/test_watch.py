@@ -148,6 +148,29 @@ def test_watch_snapshot_projects_safe_cached_durable_state(tmp_path: Path) -> No
     assert snapshot.terminal_runs[0].duration_seconds == 90.0
 
 
+def test_watch_snapshot_lists_stopped_run_as_stopped(tmp_path: Path) -> None:
+    project_root, db_path = _observed_runs(tmp_path)
+    graph = MikadoGraph(db_path)
+    _ = graph.runs.finish(
+        "active-run",
+        RunResult(
+            status="failed",
+            exit_code=-1,
+            timed_out=False,
+            ended_at="2026-09-03T12:01:00+00:00",
+            error="cancelled",
+        ),
+    )
+    graph.close()
+
+    snapshot = WatchSnapshotSource(project_root, db_path).snapshot()
+
+    assert snapshot.stopped == 1
+    statuses = {run.run_id: run.status for run in snapshot.terminal_runs}
+    assert statuses["active-run"] is ExecutionRunStatus.STOPPED
+    assert statuses["done-run"] is ExecutionRunStatus.COMPLETED
+
+
 def test_watch_rejects_log_replaced_by_out_of_root_symlink(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -154,9 +154,9 @@ class ExecutionSnapshotApp(
         if self.minimum:
             body = f"Help\n{MINIMUM_FALLBACK_TEXT}"
         else:
+            show_stop = self.SHOW_STOP_HINT and self.stop_scheduling_available
             body = help_text(
-                selected,
-                HelpOptions(self.compact, self.route, self.auto_follow, self.SHOW_STOP_HINT),
+                selected, HelpOptions(self.compact, self.route, self.auto_follow, show_stop)
             )
             if self.selected_node_id is not None and self._detail_focused():
                 body += "\n[ ] related values pages\n( ) session history pages"

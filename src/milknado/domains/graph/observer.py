@@ -12,7 +12,7 @@ import msgspec
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common.session import SessionView
-from milknado.domains.graph._run_persistence import run_row_to_dict
+from milknado.domains.graph._run_persistence import RUN_TOTALS_SQL, run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
 from milknado.domains.graph.goal_review import GoalReviewRecord
 from milknado.domains.graph.snapshot import (
@@ -30,7 +30,7 @@ class DurableRun(msgspec.Struct, frozen=True):
     run_id: str
     node_id: int
     description: str
-    status: Literal["running", "done", "failed"]
+    status: Literal["running", "done", "failed", "stopped"]
     pid: int | None
     log_path: str
     started_at: str
@@ -70,6 +70,14 @@ def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
     return tuple(cast(str, row[1]) or cast(str, row[0]) for row in rows)
 
 
+def _durable_status(
+    status: str, error: str | None
+) -> Literal["running", "done", "failed", "stopped"]:
+    if status == "failed" and error == "cancelled":  # a stop persists as a cancelled failure
+        return "stopped"
+    return cast(Literal["running", "done", "failed"], status)
+
+
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
     record = run_row_to_dict(row)
     session = view_session(conn, record["run_id"], active=record["status"] == "running")
@@ -77,7 +85,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
         run_id=record["run_id"],
         node_id=record["node_id"],
         description=cast(str, row["description"]),
-        status=cast(Literal["running", "done", "failed"], record["status"]),
+        status=_durable_status(record["status"], record["error"]),
         pid=record["pid"],
         log_path=record["log_path"],
         started_at=record["started_at"],
@@ -105,13 +113,7 @@ def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...
 def _run_totals(conn: sqlite3.Connection) -> tuple[int, int, int]:
     row = cast(
         sqlite3.Row,
-        conn.execute(
-            "SELECT "
-            + "COALESCE(SUM(status = 'done'), 0), "
-            + "COALESCE(SUM(status = 'failed'), 0), "
-            + "COALESCE(SUM(status = 'stopped'), 0) "
-            + "FROM runs"
-        ).fetchone(),
+        conn.execute(RUN_TOTALS_SQL).fetchone(),
     )
     return cast(int, row[0]), cast(int, row[1]), cast(int, row[2])
 
