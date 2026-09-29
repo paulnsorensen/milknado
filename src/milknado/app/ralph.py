@@ -37,6 +37,7 @@ from milknado.domains.dispatch import (
     make_run_id,
     now_iso,
     reconcile_node_status,
+    reconcile_orphaned_runs,
     runs_dir,
 )
 
@@ -61,6 +62,7 @@ class RalphStartRequest:
     timeout_seconds: int
     use_tmux: bool
     root: Path
+    concurrency_limit: int
 
 
 @dataclass(frozen=True)
@@ -206,13 +208,45 @@ def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception)
         raise RuntimeError(detail) from persistence_error
 
 
+def _deferral(graph: MikadoGraph, request: RalphStartRequest) -> dict[str, object] | None:
+    """Return the deferred result when the graph is at its concurrency limit.
+
+    The sweep of dead runs comes first so a crashed loop does not hold a slot
+    forever. The count covers every dispatch path because all paths share the
+    ``runs`` table.
+    """
+    _ = reconcile_orphaned_runs(graph)
+    running = graph.runs.count_running()
+    if running < request.concurrency_limit:
+        return None
+    _logger.info(
+        "ralph dispatch deferred: node_id=%d running=%d limit=%d",
+        request.node_id,
+        running,
+        request.concurrency_limit,
+    )
+    return {
+        "node_id": request.node_id,
+        "status": "deferred",
+        "running": running,
+        "limit": request.concurrency_limit,
+        "detail": (
+            f"concurrency limit reached: {running} of {request.concurrency_limit} runs are "
+            "running; wait for a run to finish, then start this node again"
+        ),
+    }
+
+
 def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str, object]:
     """Claim a task node and spawn its detached ralph loop; return the run state dict.
 
+    Returns a deferred result instead when the graph is at its concurrency limit.
     Owns the adapter composition (git, process, tmux) and the claim/spawn policy
     so the MCP tool never constructs an adapter or holds this policy inline.
     """
     graph.register_controller_master()
+    if (deferred := _deferral(graph, request)) is not None:
+        return deferred
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)

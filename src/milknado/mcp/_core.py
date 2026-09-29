@@ -102,6 +102,8 @@ class RunDict(TypedDict):
     summary: str | None
     result: str | None
     worktree_preserved: str | None
+    running: int | None  # set with `limit` only on a deferred ralph start
+    limit: int | None
 
 
 def build_run_dict(state: object) -> RunDict:

@@ -72,17 +72,20 @@ def milknado_run_loop_start(
     """Start a task node in a detached worktree-backed Ralph loop.
 
     Returns immediately with a run ID for polling. Refuses concurrent dispatch.
+    At the graph's concurrency_limit it spawns nothing and returns status
+    "deferred" with running, limit, and detail. Wait for a slot, then retry.
     """
     root = resolve_project_root(project_root or None)
-    request = RalphStartRequest(
-        node_id=node_id,
-        runner_cmd=runner_cmd,
-        timeout_seconds=timeout_seconds,
-        use_tmux=use_tmux,
-        root=root,
-    )
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
+        request = RalphStartRequest(
+            node_id=node_id,
+            runner_cmd=runner_cmd,
+            timeout_seconds=timeout_seconds,
+            use_tmux=use_tmux,
+            root=root,
+            concurrency_limit=cfg.concurrency_limit,
+        )
         return build_run_dict(cast(object, start_ralph_run(graph, request)))
     finally:
         graph.close()

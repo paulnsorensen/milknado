@@ -62,6 +62,14 @@ def latest_unowned_terminal_run(conn: sqlite3.Connection, node_id: int) -> RunRe
     return run_row_to_dict(row) if row else None
 
 
+def count_running_runs(conn: sqlite3.Connection) -> int:
+    """Count runs in status running across every dispatch path."""
+    row = fetchone(conn, "SELECT COUNT(*) FROM runs WHERE status = 'running'")
+    if row is None:
+        raise RuntimeError("running run count returned no row")
+    return cast(int, row[0])
+
+
 def get_nodes(conn: sqlite3.Connection, node_ids: Iterable[int]) -> list[MikadoNode]:
     """Load nodes in input order with duplicate IDs preserved."""
     ids = list(node_ids)

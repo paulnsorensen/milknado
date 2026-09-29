@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -9,7 +10,8 @@ from typing import NoReturn, TypedDict, cast
 
 import pytest
 
-from milknado.domains.common import RunResult
+from milknado.domains.common import NodeStatus, RunResult
+from milknado.domains.dispatch import now_iso
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import NodeSummary
 from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
@@ -122,6 +124,8 @@ class _RalphResponse(TypedDict):
     worktree_preserved: str | None
     error: str | None
     detail: str | None
+    running: int | None
+    limit: int | None
 
 
 def _call(tool: object, **kwargs: object) -> _RalphResponse:
@@ -1159,3 +1163,115 @@ def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
         "dirty files" in r.getMessage() and str(orphan_wt) in r.getMessage()
         for r in caplog.records
     ), "refusal must be logged with the worktree path and what is at risk"
+
+
+def _occupy_slot(root: Path, node_id: int, *, pid: int) -> str:
+    """Claim node_id under a running run owned by pid, as a live dispatch does."""
+    run_id = f"node-{node_id}-20260101T000000Z-{node_id:08x}"
+    graph, _cfg = open_graph(root)
+    try:
+        _ = graph.claim_node(node_id, run_id, now=now_iso(), pid=pid)
+        graph.runs.start(
+            run_id,
+            node_id,
+            str(root / ".milknado" / "runs" / f"{run_id}.log"),
+            now_iso(),
+            1800,
+            pid,
+        )
+    finally:
+        graph.close()
+    return run_id
+
+
+def _limited_project(tmp_path: Path, limit: int, *tasks: str) -> tuple[str, list[int]]:
+    """Write concurrency_limit and add one pending task per description."""
+    _ = (tmp_path / "milknado.toml").write_text(
+        f'[milknado]\nagent_family = "claude"\nconcurrency_limit = {limit}\n',
+        encoding="utf-8",
+    )
+    root = str(tmp_path)
+    ids = [
+        _call(milknado_todo_add, description=name, kind="task", project_root=root)["id"]
+        for name in tasks
+    ]
+    return root, ids
+
+
+def _start_noop(root: str, node_id: int) -> _RalphResponse:
+    return _call(
+        milknado_run_loop_start,
+        node_id=node_id,
+        runner_cmd=f"{sys.executable} -c pass",
+        project_root=root,
+    )
+
+
+def test_start_spawns_below_concurrency_limit(tmp_path: Path) -> None:
+    """One live run under a limit of two leaves a slot: the next start spawns."""
+    root, (busy, free) = _limited_project(tmp_path, 2, "busy", "free")
+    _ = _occupy_slot(tmp_path, busy, pid=os.getpid())
+
+    started = _start_noop(root, free)
+
+    assert started["status"] == "running"
+    assert started["run_id"].startswith(f"node-{free}-")
+    assert _read_run(tmp_path, started["run_id"])["status"] == "running"
+
+
+def test_start_defers_at_concurrency_limit_without_claiming(tmp_path: Path) -> None:
+    """At the limit the ralph path spawns nothing: it returns a structured deferred
+    result with the counts and leaves the node pending with no run row."""
+    root, (busy_a, busy_b, waiting) = _limited_project(tmp_path, 2, "a", "b", "waiting")
+    _ = _occupy_slot(tmp_path, busy_a, pid=os.getpid())
+    _ = _occupy_slot(tmp_path, busy_b, pid=os.getpid())
+
+    deferred = _start_noop(root, waiting)
+
+    assert deferred["status"] == "deferred"
+    assert deferred["node_id"] == waiting
+    assert (deferred["running"], deferred["limit"]) == (2, 2)
+    assert deferred["run_id"] is None
+    assert "concurrency limit reached" in (deferred["detail"] or "")
+    assert _node_runs(tmp_path, waiting) == []
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(waiting)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
+
+
+def test_finished_run_frees_a_concurrency_slot(tmp_path: Path) -> None:
+    """A terminal write on the run that holds the last slot lets the deferred
+    node spawn on its retry."""
+    root, (busy, waiting) = _limited_project(tmp_path, 1, "busy", "waiting")
+    busy_run = _occupy_slot(tmp_path, busy, pid=os.getpid())
+    assert _start_noop(root, waiting)["status"] == "deferred"
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.runs.finish(
+            busy_run,
+            RunResult(status="done", exit_code=0, timed_out=False, ended_at=now_iso()),
+        )
+    finally:
+        graph.close()
+
+    retried = _start_noop(root, waiting)
+
+    assert retried["status"] == "running"
+    assert retried["run_id"].startswith(f"node-{waiting}-")
+
+
+def test_dead_owner_frees_a_concurrency_slot(tmp_path: Path) -> None:
+    """A run whose owner pid is gone, as after a host restart, is swept before the
+    count, so stale rows never block the ralph path forever."""
+    root, (dead, waiting) = _limited_project(tmp_path, 1, "dead", "waiting")
+    dead_run = _occupy_slot(tmp_path, dead, pid=2**31 - 1)
+
+    started = _start_noop(root, waiting)
+
+    assert started["status"] == "running"
+    assert _read_run(tmp_path, dead_run)["status"] == "failed"
